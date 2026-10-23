@@ -20,6 +20,7 @@
 #include "sdb/device.h"
 #include "sdb/navigator.h"
 #include "sdb/surfacereadouts.h"
+#include "sdb/valueface.h"
 
 namespace sdb::scn
 {
@@ -93,8 +94,8 @@ public:
     // Called for nav {to: scenario, file} (the owner loads the file and calls reload).
     std::function<void(const std::string&)> onSwitchScenario;
 
-    // State-bound faces (scenarios.md §4): a readout's value (true = face_on). Pushed by the surface client (S4 / SD4)
-    // or polled from the host (ActionHost::Readout) while nobody pushes it.
+    // State-bound faces (scenarios.md §4): a readout's value (true = face_on); value faces (§4.2): the value shown.
+    // Pushed by the surface client (S4 / SD4) or polled from the host (ActionHost::Readout) while nobody pushes it.
     void SetReadout(const std::string& path, const json& value);
     // A context from the core (ctx, architecture §6): the deck goes to the nearest menu declaring it.
     void OnContext(const std::string& context);
@@ -122,6 +123,12 @@ public:
     // The activity look over the scenario's settings.activity (Q-3; unreal-qt's settings page, PUT /api/v1/activity):
     // "" = the scenario's, "off", "flash" (the keys bound to the action), "line" (the keys and a strip line)
     void SetActivityLook(const std::string& look);
+    // The icon pack of the glyph faces over the scenario's settings.pack (the deck's setting, PUT
+    // /api/v1/decks/{serial}/pack): "" = the scenario's. The keys showing a glyph are drawn again at the next step.
+    void SetPack(const std::string& pack);
+    [[nodiscard]] std::string PackSetting() const;  // "" = the scenario's
+    [[nodiscard]] std::string Pack() const;         // the pack drawn: the setting, settings.pack, else magicwb
+    [[nodiscard]] std::string ScenarioPack() const;  // the scenario's settings.pack ("" = none)
     // What the loaded scenario needs from the core: readouts, state paths, target
     [[nodiscard]] SurfaceNeeds Needs() const;
     // After a reload is applied (the device thread, no lock held): the surface client asks Needs() again
@@ -163,6 +170,8 @@ private:
     void NoteMenu();
     [[nodiscard]] bool IsOn(const Node& n) const;
     [[nodiscard]] std::map<std::string, bool> OnStates() const;
+    [[nodiscard]] ValueShown ShownLocked(const FaceValue& v) const;  // a value face's text now (_mu held)
+    [[nodiscard]] json PageLocked() const;  // DescribePage and what the value faces show (_mu held)
     void PollReadouts();
     void EnsureMonitor();
 
@@ -204,6 +213,8 @@ private:
     json _target;                          // the surface's target (null: none)
     std::string _notice;                   // a lasting strip line
     std::string _activityLook;             // SetActivityLook ("" = the scenario's)
+    std::string _pack;                     // SetPack ("" = the scenario's)
+    [[nodiscard]] std::string PackLocked() const;
     std::string _activityLine;             // activity.strip "line": what another surface did
     std::int64_t _activityUntil = 0;
     std::thread _monitor;  // the REST fallback's poller (strip.status "ttd", faces' readouts); none while live

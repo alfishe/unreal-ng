@@ -302,6 +302,8 @@ int Usage()
         "sdctl ws <ws://host:port/path> [message ...] [--token T] [--seconds N] [--count N]   (WebSocket check)\n"
         "sdctl viewer [--port N] [--deck SERIAL | --own MODEL] [--seconds N]   (join unreal-streamdeck as a viewer)\n"
         "sdctl decks [--api PORT] [--json]   (unreal-streamdeck's logical decks)\n"
+        "sdctl packs [--api PORT] | sdctl pack [NAME|scenario] [--deck SERIAL] [--api PORT]   (the icon packs; a "
+        "deck's pack)\n"
         "Stream Deck Studio (any command: --device emu[:host:port] = the studio only, --mirror [host:port] = real deck "
         "+ studio,\n"
         "  the default when the studio runs; --no-mirror = the real deck alone):\n"
@@ -338,14 +340,44 @@ int CmdDecks(const cli::Args& a)
     }
     for (const auto& d : j.value("decks", json::array()))
     {
-        std::printf("%-16s %-22s %-5s %-12s brightness %3d  viewers %zu  %s\n", d.value("serial", "").c_str(),
-                    d.value("model", "").c_str(), d.value("real", false) ? "real" : "own",
+        std::printf("%-16s %-22s %-5s %-12s brightness %3d  pack %-11s viewers %zu  %s\n",
+                    d.value("serial", "").c_str(), d.value("model", "").c_str(), d.value("real", false) ? "real" : "own",
                     d.value("connected", false) ? "connected" : "unplugged", d.value("brightness", 0),
-                    d.value("viewers", json::array()).size(),
+                    d.value("pack", "").c_str(), d.value("viewers", json::array()).size(),
                     d.value("scenario", "").empty() ? "(idle scenario)" : d.value("scenario", "").c_str());
     }
     if (j.value("waiting_mirrors", 0) > 0)
         std::printf("%d mirror(s) waiting for a deck\n", j.value("waiting_mirrors", 0));
+    return 0;
+}
+
+// sdctl packs: the icon packs (GET /api/v1/packs); sdctl pack [NAME|scenario] [--deck S]: a deck's pack (GET / PUT
+// /api/v1/decks/{serial}/pack)
+int CmdPacks(const cli::Args& a)
+{
+    const bool one = a.pos.size() > 0 && a.pos[0] == "pack";
+    const std::string deck = a.Str("deck", "first");
+    const bool set = one && a.pos.size() > 1;
+    const auto r = !one  ? HttpRequest(DaemonUrl(a), "GET", "/api/v1/packs", {}, {}, 2000)
+                   : set ? HttpRequest(DaemonUrl(a), "PUT", "/api/v1/decks/" + deck + "/pack",
+                                       json{{"pack", a.pos[1]}}.dump(), {}, 3000)
+                         : HttpRequest(DaemonUrl(a), "GET", "/api/v1/decks/" + deck + "/pack", {}, {}, 2000);
+    if (!r.Ok())
+    {
+        std::fprintf(stderr, "error: unreal-streamdeck automation at %s: %s\n", DaemonUrl(a).c_str(),
+                     r.status ? r.body.c_str() : r.error.c_str());
+        return 1;
+    }
+    const json j = json::parse(r.body, nullptr, false);
+    if (a.Has("json") || !j.is_object())
+        std::printf("%s\n", r.body.c_str());
+    else if (!one)
+        for (const auto& p : j.value("packs", json::array()))
+            std::printf("%-12s %-20s %s\n", p.value("name", "").c_str(), p.value("title", "").c_str(),
+                        p.value("style", "").c_str());
+    else
+        std::printf("deck %s draws %s (setting %s)\n", j.value("serial", "").c_str(), j.value("pack", "").c_str(),
+                    j.value("setting", "").c_str());
     return 0;
 }
 
@@ -430,6 +462,8 @@ int main(int argc, char** argv)
         }
         if (cmd == "decks")
             return CmdDecks(a);
+        if (cmd == "packs" || cmd == "pack")
+            return CmdPacks(a);
         if (cmd == "emu-snapshot")
         {  // sdctl emu-snapshot --out file.png [--emu host:port] | [--api PORT [--deck SERIAL]]
             std::string err;

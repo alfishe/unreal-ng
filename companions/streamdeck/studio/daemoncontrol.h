@@ -49,6 +49,9 @@ public:
     [[nodiscard]] nlohmann::json Decks(QString* error = nullptr) const;
     bool Brightness(const QString& serial, int* percent, QString* error = nullptr) const;
     bool SetBrightness(const QString& serial, int percent, QString* error = nullptr) const;
+    // A deck's icon pack setting (GET / PUT /api/v1/decks/{serial}/pack): a pack name or "scenario"
+    bool Pack(const QString& serial, QString* setting, QString* error = nullptr) const;
+    bool SetPack(const QString& serial, const QString& pack, QString* error = nullptr) const;
     // The deck plays `file` (watched: edits reload it); Restore gives it the daemon's start scenario back.
     bool PlayScenario(const QString& serial, const QString& file, QString* error = nullptr) const;
     bool RestoreScenario(const QString& serial, QString* error = nullptr) const;

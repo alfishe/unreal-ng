@@ -192,6 +192,29 @@ bool DaemonControl::SetBrightness(const QString& serial, int percent, QString* e
     return r.Ok();
 }
 
+bool DaemonControl::Pack(const QString& serial, QString* setting, QString* error) const
+{
+    const Result r = Call("GET", "/api/v1/decks/" + Segment(serial) + "/pack");
+    if (!r.Ok())
+    {
+        if (error)
+            *error = r.error;
+        return false;
+    }
+    if (setting)
+        *setting = QString::fromStdString(r.body.value("setting", "scenario"));
+    return true;
+}
+
+bool DaemonControl::SetPack(const QString& serial, const QString& pack, QString* error) const
+{
+    const Result r =
+        Call("PUT", "/api/v1/decks/" + Segment(serial) + "/pack", json{{"pack", pack.toStdString()}}, 3000);
+    if (!r.Ok() && error)
+        *error = r.error;
+    return r.Ok();
+}
+
 bool DaemonControl::PlayScenario(const QString& serial, const QString& file, QString* error) const
 {
     const Result r = Call("PUT", "/api/v1/decks/" + Segment(serial) + "/scenario",

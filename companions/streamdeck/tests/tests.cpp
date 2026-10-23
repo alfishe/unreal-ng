@@ -935,6 +935,7 @@ int main()
     TestScenarioV2();
     TestSurfaceClient();
     TestDaemonLife();
+    TestValueFaces();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

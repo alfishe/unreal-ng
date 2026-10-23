@@ -5,6 +5,7 @@
 
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
+#include "sdb/iconpacks.h"
 #include "sdb/idlescenario.h"
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
@@ -125,6 +126,37 @@ void DaemonDecks::Add(const std::string& serial, const Model& model, bool real, 
     e.watched = Stamp(_startFiles);
     e.order = _nextOrder++;
     runtime.SetActivityLook(_activityLook);
+    runtime.SetPack({});
+}
+
+bool DaemonDecks::SetPack(const std::string& serial, const std::string& pack, std::string* error)
+{
+    const std::string word = pack == "scenario" ? std::string() : pack;
+    if (!word.empty() && !packs::Find(word))
+    {
+        if (error)
+        {
+            std::string names;
+            for (const auto& p : packs::List())
+                names += (names.empty() ? "" : ", ") + p.name;
+            *error = "no icon pack '" + word + "' (" + (names.empty() ? std::string("no packs found") : names) +
+                     ", or scenario)";
+        }
+        return false;
+    }
+    std::lock_guard lock(_mutex);
+    const std::string target = ResolveLocked(serial);
+    if (target.empty())
+    {
+        if (error)
+            *error = "no deck '" + serial + "'";
+        return false;
+    }
+    Entry& e = _decks.at(target);
+    e.pack = word;
+    e.runtime->SetPack(word);
+    Say("deck " + target + " draws the icon pack " + (word.empty() ? "of its scenario" : word));
+    return true;
 }
 
 bool DaemonDecks::SetActivityLook(const std::string& look)
@@ -343,6 +375,8 @@ json DaemonDecks::DescribeLocked(const Entry& e) const
            {"start_scenario", e.start},
            {"watch", e.watch},
            {"brightness", e.runtime->Brightness()},
+           {"pack", e.runtime->Pack()},
+           {"pack_setting", e.pack.empty() ? std::string("scenario") : e.pack},
            {"viewers", json::array()}};
     if (_hub)
         for (const auto& d : _hub->Info().decks)
@@ -523,6 +557,64 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                      e.runtime->SetBrightness(v);
                      return Reply::Ok({{"serial", e.serial}, {"brightness", e.runtime->Brightness()}});
                  });
+             }});
+    const auto packReply = [](const Entry& e) {
+        return Reply::Ok({{"serial", e.serial},
+                          {"pack", e.runtime->Pack()},
+                          {"setting", e.pack.empty() ? std::string("scenario") : e.pack},
+                          {"scenario_pack", e.runtime->ScenarioPack()}});
+    };
+    api.Add({"GET",
+             "/api/v1/packs",
+             "The icon packs of the data directory",
+             "name, title, style, source (png-pixel, png-smooth), fallback, background; default: the pack drawn when "
+             "neither the deck nor its scenario names one. A deck draws its glyph faces (face.glyph) from one: PUT "
+             "/api/v1/decks/{serial}/pack",
+             {"decks", "packs", "icons"},
+             {},
+             nullptr,
+             [](const Request&) { return Reply::Ok(packs::ListJson()); }});
+    api.Add({"GET",
+             "/api/v1/decks/{serial}/pack",
+             "The icon pack a deck draws its glyph faces from",
+             "pack: the one drawn; setting: the deck's (scenario = its scenario's settings.pack); scenario_pack: the "
+             "scenario's (\"\" = magicwb)",
+             {"decks", "packs", "icons"},
+             {serialPath},
+             nullptr,
+             [this, packReply](const Request& r) { return WithDeck(r.Str("serial"), packReply); }});
+    api.Add({"PUT",
+             "/api/v1/decks/{serial}/pack",
+             "Set the icon pack a deck draws its glyph faces from: {pack}",
+             "A pack of GET /api/v1/packs, or scenario (the scenario's settings.pack, else magicwb). The keys are "
+             "drawn again at once; answers once the deck shows them (202 when its thread did not come round)",
+             {"decks", "packs", "icons"},
+             {serialPath, {"pack", "body", "string", "a pack name, or scenario", true}},
+             json{{"pack", "duotone"}},
+             [this, packReply](const Request& r) {
+                 const std::string serial = Resolve(r.Str("serial"));
+                 if (serial.empty())
+                     return Reply::Error(404, "no deck '" + r.Str("serial") + "'", "GET /api/v1/decks lists them");
+                 const std::string pack = r.body.is_object() ? r.body.value("pack", "") : r.Str("pack");
+                 if (pack.empty())
+                     return Reply::Error(400, "give 'pack' (a pack of GET /api/v1/packs, or scenario)");
+                 std::string err;
+                 if (!SetPack(serial, pack, &err))
+                     return Reply::Error(400, err, "GET /api/v1/packs lists them");
+                 scn::Runtime::Ticket ticket;
+                 WithDeck(serial, [&](Entry& e) {
+                     ticket = e.runtime->Posted();
+                     return Reply::Ok();
+                 });
+                 const bool applied = ticket.Wait(std::chrono::milliseconds(_options.applyTimeoutMs));
+                 Reply rep = WithDeck(serial, packReply);
+                 if (!rep.IsError())
+                 {
+                     rep.body["applied"] = applied;
+                     if (!applied)
+                         rep.status = 202;
+                 }
+                 return rep;
              }});
     api.Add({"GET",
              "/api/v1/decks/{serial}/scenario",

@@ -53,6 +53,16 @@ public:
         (void)path;
         return nullptr;
     }
+    // Several at once (a page's states and values, one poll): {path: value} of the paths known here. The default asks
+    // Readout for each; the system host makes one request for all of them.
+    virtual json Readouts(const std::vector<std::string>& paths)
+    {
+        json out = json::object();
+        for (const auto& path : paths)
+            if (json v = Readout(path); !v.is_null())
+                out[path] = std::move(v);
+        return out;
+    }
     virtual int Shell(const std::string& command, int timeoutMs,
                       std::string& output) = 0;  // exit code, -1 = could not run / timeout
     virtual bool Open(const std::string& target) = 0;

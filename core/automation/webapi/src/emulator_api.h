@@ -129,6 +129,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::deleteStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::getStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::getStreamDeckPack, "/api/v1/streamdeck/decks/{deck}/pack", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putStreamDeckPack, "/api/v1/streamdeck/decks/{deck}/pack", drogon::Put);
     // Monitoring: the host process, the clients, each instance's pace and summaries (implementation:
     // api/monitoring_api.cpp over monitoring::Call, the verbs of every plane; the WebSocket topics of the same names)
     ADD_METHOD_TO(EmulatorAPI::getMonitor, "/api/v1/monitor", drogon::Get);
@@ -882,7 +884,8 @@ public:
     void getSurfaceReadouts(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     void getSurfaceActivity(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     /// The Stream Deck daemon's verbs (api/streamdeck_api.cpp; companion::streamdeck::Call): GET /api/v1/streamdeck
-    /// = status; GET settings, udev, pair; POST start, stop, restart, pair, revoke; PUT settings; DELETE pair
+    /// = status; GET settings, udev, pair, packs; POST start, stop, restart, pair, revoke; PUT settings; DELETE pair;
+    /// GET / PUT decks/{deck}/brightness and decks/{deck}/pack
     void getStreamDeck(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     void getStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
     void postStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
@@ -893,6 +896,8 @@ public:
                                  const std::string& deck) const;
     void putStreamDeckBrightness(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
                                  const std::string& deck) const;
+    void getStreamDeckPack(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& deck) const;
+    void putStreamDeckPack(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& deck) const;
     /// Monitoring (api/monitoring_api.cpp; monitoring::Call): GET /api/v1/monitor = `all`, /api/v1/monitor/{name} one
     /// name (host.stats, host.clients, emulator.stats, debug.breakpoints, ...); ?instance= an id or an index
     void getMonitor(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;

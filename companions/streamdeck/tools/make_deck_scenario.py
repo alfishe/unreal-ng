@@ -18,6 +18,10 @@ Spec (JSON):
   KEY    = {"id", "title", "at"?, "icon"?, "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?,
             "tags"?, STEP | "steps": [STEP]}
   STEP   = {"action": id, "value"?: ..., "hold"?: true} or {"kind": ..., ...} (any other step kind as it is)
+  INCLUDE = {"id", "include": FILE, "node"?, "at"?, "title"?, "tags"?, "face"?}   (a link to a subtree in FILE)
+  Also (deckflow.py, the scenario pipeline): "face" / "face_on" given as objects are used as they are; "tags" on
+  menus; "navigation" (more nav fields of a menu); "extra" (any other fields of the node, as they are); a spec with
+  "shared": true is a menu of its own to be included: its root keeps a back key.
   DIAL   = {"index", "label", "turn"?: STEP, "press"?: STEP, "left"? / "right"?: STEP (a dir turn)}
   An icon is a picture of the icon set (icons/<name>.png, the label is in the picture) or else a built-in icon drawn
   with the label.
@@ -78,6 +82,8 @@ class Generator:
                 out["value"] = s["value"]
             if s.get("hold"):
                 out["hold"] = True
+            if isinstance(s.get("params"), dict):
+                out["params"] = s["params"]
             self.paths(s.get("value"), where)
             return out
         if "kind" not in s:
@@ -97,6 +103,8 @@ class Generator:
                 self.paths(x, where)
 
     def face(self, n, suffix=""):
+        if isinstance(n.get("face" + suffix), dict):
+            return dict(n["face" + suffix])
         icon, label = n.get("icon" + suffix), n.get("label" + suffix)
         bg = n.get("bg" + suffix)
         if icon:
@@ -121,7 +129,9 @@ class Generator:
         if "at" in n:
             out["at"] = list(n["at"])
         out["face"] = self.face(n)
-        if "icon_on" in n or "label_on" in n or "bg_on" in n:
+        if isinstance(n.get("face_on"), dict):
+            out["face_on"] = dict(n["face_on"])
+        elif "icon_on" in n or "label_on" in n or "bg_on" in n:
             on = dict(n)
             for k in ("icon", "label", "bg"):
                 if k + "_on" in n:
@@ -129,12 +139,31 @@ class Generator:
             out["face_on"] = self.face(on)
         if n.get("state"):
             out["state"] = n["state"]
-        if "steps" in n:
+        if isinstance(n.get("do"), dict):
+            out["do"] = self.step(n["do"], n["id"])
+        elif "steps" in n:
             out["do"] = {"kind": "multi", "steps": [self.step(s, n["id"]) for s in n["steps"]]}
-        else:
+        elif "action" in n or "kind" in n or "value" not in out["face"]:
             out["do"] = self.step(n, n["id"])
+        # else: a display-only key, its face shows a value (face.value) and a press does nothing
         if n.get("then"):
             out["then"] = n["then"]
+        out.update(n.get("extra", {}))
+        return out
+
+    def include(self, n):
+        out = {"id": n["id"], "type": "include", "file": n["include"]}
+        if n.get("node"):
+            out["node"] = n["node"]
+        if "title" in n:
+            out["title"] = n["title"]
+        if n.get("tags"):
+            out["tags"] = list(n["tags"])
+        if "at" in n:
+            out["at"] = list(n["at"])
+        if n.get("face"):
+            out["face"] = dict(n["face"])
+        out.update(n.get("extra", {}))
         return out
 
     def dial(self, d, where):
@@ -152,12 +181,14 @@ class Generator:
 
     def menu(self, n, root=False):
         out = {"id": n["id"], "type": "menu", "title": n.get("title", n["id"])}
+        if n.get("tags"):
+            out["tags"] = list(n["tags"])
         if n.get("context"):
             out["context"] = n["context"]
         if "at" in n:
             out["at"] = list(n["at"])
         out["face"] = self.face(n)
-        back = None if root else n.get("back", [0, 0])
+        back = None if root and not self.spec.get("shared") else n.get("back", [0, 0])
         nav = {}
         if back:
             nav["back"] = list(back)
@@ -165,15 +196,18 @@ class Generator:
             nav["back"] = None
         if n.get("dials"):
             nav["dials"] = "own"
+        nav.update(n.get("navigation", {}))
         if nav:
             out["nav"] = nav
         if n.get("strip"):
             out["strip"] = n["strip"]
         if n.get("dials"):
             out["dials"] = [self.dial(d, n["id"]) for d in n["dials"]]
-        items = [self.menu(c) if c.get("menu") else self.key(c) for c in n.get("items", [])]
+        items = [self.menu(c) if c.get("menu") else self.include(c) if c.get("include") else self.key(c)
+                 for c in n.get("items", [])]
         self.place(n["id"], items, [tuple(back)] if back else [])
         out["items"] = items
+        out.update(n.get("extra", {}))
         return out
 
     def place(self, menu_id, items, reserve):

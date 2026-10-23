@@ -1,0 +1,190 @@
+format: streamdeck-scenario
+model: plusxl
+name: speed
+root:
+  face:
+    glyph: set.speed
+  id: speed
+  items:
+    -
+      at:
+        - 0
+        - 1
+      do:
+        id: set.speed
+        kind: action
+        value: 1
+      face:
+        glyph: set.speed
+        label: X1
+      id: x1
+      tags:
+        - uc:C2.5
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 2
+      do:
+        id: set.speed
+        kind: action
+        value: 2
+      face:
+        glyph: set.speed
+        label: X2
+      id: x2
+      tags:
+        - uc:C2.1
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 3
+      do:
+        id: set.speed
+        kind: action
+        value: 4
+      face:
+        glyph: set.speed
+        label: X4
+      id: x4
+      tags:
+        - uc:C2.1
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 4
+      do:
+        id: set.speed
+        kind: action
+        value: 8
+      face:
+        glyph: set.speed
+        label: X8
+      id: x8
+      tags:
+        - uc:C2.1
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 5
+      do:
+        id: set.speed
+        kind: action
+        value: 16
+      face:
+        glyph: set.speed
+        label: X16
+      id: x16
+      tags:
+        - uc:C2.1
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 6
+      do:
+        id: set.speed
+        kind: action
+      face:
+        glyph: set.speed
+        label: NEXT
+      id: next
+      tags:
+        - uc:C2.1
+      title: "Next speed"
+      type: action
+    -
+      at:
+        - 1
+        - 1
+      do:
+        id: mach.turbo_toggle
+        kind: action
+      face:
+        glyph: mach.turbo
+      face_on:
+        glyph: mach.turbo.on
+      id: turbo
+      state: toggle.mach.turbo_toggle
+      tags:
+        - uc:C2.2
+      title: Turbo
+      type: action
+    -
+      at:
+        - 1
+        - 2
+      do:
+        id: set.toggle
+        kind: action
+        value:
+          name: turbo_audio
+      face:
+        glyph: settings.toggle
+        label: SOUND
+      face_on:
+        glyph: settings.toggle.on
+      id: audio
+      state: toggle.set.toggle.turbo_audio
+      tags:
+        - uc:C2.3
+      title: "Toggle a setting"
+      type: action
+    -
+      at:
+        - 1
+        - 3
+      do:
+        id: set.toggle
+        kind: action
+        value:
+          name: fast_tape
+      face:
+        glyph: settings.toggle
+        label: TAPE
+      face_on:
+        glyph: settings.toggle.on
+      id: tape
+      state: toggle.set.toggle.fast_tape
+      tags:
+        - uc:C2.4
+      title: "Toggle a setting"
+      type: action
+    -
+      at:
+        - 1
+        - 4
+      do:
+        id: set.toggle
+        kind: action
+        value:
+          name: fast_disk
+      face:
+        glyph: settings.toggle
+        label: DISK
+      face_on:
+        glyph: settings.toggle.on
+      id: disk
+      state: toggle.set.toggle.fast_disk
+      tags:
+        - uc:C2.4
+      title: "Toggle a setting"
+      type: action
+  nav:
+    back:
+      - 0
+      - 0
+  tags:
+    - uc:C2
+    - shared
+  title: Speed
+  type: menu
+version: 2

@@ -37,6 +37,7 @@ struct World
     bool launchFails = false;
     bool upOnStart = true;  ///< a started daemon answers at once
     std::vector<LaunchSpec> starts;
+    std::string deckPack = "scenario";  ///< the deck's icon pack setting at the daemon
 
     bool Called(const std::string& prefix) const
     {
@@ -136,7 +137,10 @@ public:
                         _world.pairing + "}",
                     ""};
         if (method == "GET" && path == "/api/v1/decks")
-            return {200, R"({"decks":[{"serial":"A1B2C3","model":"Stream Deck + XL","real":true,"brightness":70}]})", ""};
+            return {200,
+                    R"({"decks":[{"serial":"A1B2C3","model":"Stream Deck + XL","real":true,"brightness":70,"pack_setting":")" +
+                        _world.deckPack + R"("}]})",
+                    ""};
         if (method == "POST" && path == "/api/v1/parents")
         {
             StateNode node;
@@ -150,6 +154,27 @@ public:
             return {200, R"({"state":"requesting","paired":false})", ""};
         if (method == "GET" && path == "/api/v1/pair")
             return {200, _world.pairing, ""};
+        if (method == "GET" && path == "/api/v1/packs")
+            return {200,
+                    R"({"packs":[{"name":"magicwb","title":"MagicWB"},{"name":"os4","title":"OS4"}],)"
+                    R"("default":"magicwb"})",
+                    ""};
+        if (path.find("/pack") != std::string::npos && (method == "GET" || method == "PUT"))
+        {
+            if (method == "PUT")
+            {
+                StateNode node;
+                StateNodeFromJsonText(body, node);
+                const std::string pack = node.find("pack") ? node.find("pack")->s : std::string();
+                if (pack != "scenario" && pack != "magicwb" && pack != "os4" && pack != "keycap" && pack != "duotone")
+                    return {400, R"({"error":"no icon pack ')" + pack + R"('"})", ""};
+                _world.deckPack = pack;
+            }
+            return {200,
+                    R"({"serial":"A1B2C3","pack":")" + (_world.deckPack == "scenario" ? "magicwb" : _world.deckPack) +
+                        R"(","setting":")" + _world.deckPack + R"(","scenario_pack":""})",
+                    ""};
+        }
         if (method == "PUT" && path.find("/brightness") != std::string::npos)
         {
             const size_t at = body.find(':');
@@ -485,6 +510,63 @@ TEST_F(StreamDeckSupervisor_Test, SettingsAreCheckedSavedAndAppliedToTheDaemon)
     EXPECT_TRUE(_world.Called("POST /api/v1/quit")) << "new ports: ours restarts on them";
 }
 
+TEST_F(StreamDeckSupervisor_Test, TheDeckPackIsKeptAndSetAgainOnTheNextDaemon)
+{
+    Attach(Mode::Always);
+    int saved = 0;
+    Settings last;
+    _sup.SetSettingsListener([&](const Settings& s) {
+        ++saved;
+        last = s;
+    });
+    std::string error;
+    StateNode bad = StateNode::Object();
+    bad["pack"] = StateNode::Object();
+    bad["pack"]["A1B2C3"] = "Not A Pack";
+    EXPECT_FALSE(_sup.Update(bad, error));
+    StateNode changes = StateNode::Object();
+    changes["pack"] = StateNode::Object();
+    changes["pack"]["A1B2C3"] = "os4";
+    ASSERT_TRUE(_sup.Update(changes, error)) << error;
+    EXPECT_EQ(saved, 1);
+    At(0);
+    At(200);
+    At(2200);
+    EXPECT_TRUE(_world.Called("PUT /api/v1/decks/A1B2C3/pack {\"pack\":\"os4\"}"));
+    EXPECT_EQ(_world.deckPack, "os4");
+    At(4200);
+    EXPECT_EQ(_world.Count("PUT /api/v1/decks/A1B2C3/pack"), 1u) << "applied once per daemon";
+    EXPECT_EQ(saved, 1) << "the daemon reports what was set: nothing learned";
+
+    // set at the daemon (the studio's toolbar, an agent): kept for that deck
+    _world.deckPack = "keycap";
+    At(6200);
+    EXPECT_EQ(saved, 2);
+    EXPECT_EQ(last.pack.at("A1B2C3"), "keycap");
+    EXPECT_EQ(Str(*_sup.Status().find("pack"), "A1B2C3"), "keycap");
+    EXPECT_EQ(Str(*_sup.Summary().find("pack"), "A1B2C3"), "keycap") << "the topic streamdeck.status carries it";
+    _world.deckPack = "scenario";
+    At(8200);
+    EXPECT_EQ(saved, 3);
+    EXPECT_TRUE(last.pack.empty()) << "scenario: the deck's setting is gone";
+    EXPECT_EQ(_world.Count("PUT /api/v1/decks/A1B2C3/pack"), 1u) << "nothing sent back";
+
+    // changed here (unreal-qt's settings page, the `pack` verb): sent to the daemon, not learned back
+    changes["pack"]["A1B2C3"] = "duotone";
+    ASSERT_TRUE(_sup.Update(changes, error)) << error;
+    EXPECT_EQ(saved, 4);
+    At(8300);
+    EXPECT_TRUE(_world.Called("PUT /api/v1/decks/A1B2C3/pack {\"pack\":\"duotone\"}"));
+    EXPECT_EQ(_world.deckPack, "duotone");
+    At(10200);
+    EXPECT_EQ(saved, 4) << "the daemon reports what was sent: nothing learned";
+    changes["pack"]["A1B2C3"] = "scenario";
+    ASSERT_TRUE(_sup.Update(changes, error)) << error;
+    At(10300);
+    EXPECT_EQ(_world.deckPack, "scenario") << "cleared: the scenario's pack again";
+    EXPECT_EQ(_world.Count("PUT /api/v1/decks/A1B2C3/pack"), 3u);
+}
+
 TEST_F(StreamDeckSupervisor_Test, AMissingBinaryFailsWithTheReasonAndTriesAgainLater)
 {
     _world.launchFails = true;
@@ -586,14 +668,14 @@ TEST_F(StreamDeckApi_Test, WithoutUnrealQtOnlyStatusAndUdevAnswer)
     EXPECT_FALSE(status.body.find("status")->find("attached")->b);
     EXPECT_EQ(Str(*status.body.find("status"), "state"), "detached");
     EXPECT_TRUE(Call("udev", StateNode::Object()).Ok());
-    for (const char* verb : {"start", "stop", "settings", "pair", "brightness"})
+    for (const char* verb : {"start", "stop", "settings", "pair", "brightness", "packs", "pack"})
     {
         const Reply r = Call(verb, StateNode::Object());
         EXPECT_EQ(r.status, 503) << verb;
         EXPECT_EQ(Str(r.body, "error"), "supervisor_unavailable") << verb;
     }
     EXPECT_EQ(Call("nonsense", StateNode::Object()).status, 400);
-    EXPECT_EQ(Verbs().size(), 11u);
+    EXPECT_EQ(Verbs().size(), 13u);
 }
 
 TEST_F(StreamDeckApi_Test, SettingsReadAndChange)
@@ -628,6 +710,43 @@ TEST_F(StreamDeckApi_Test, PairAndBrightnessGoToTheRunningDaemon)
     EXPECT_TRUE(_world.Called("PUT /api/v1/decks/first/brightness {\"value\":40}"));
     EXPECT_EQ(Supervisor::Instance().GetSettings().brightness.at("A1B2C3"), 40) << "kept for that deck";
     EXPECT_EQ(Call("brightness", Args({{"value", "140"}})).status, 400);
+}
+
+TEST_F(StreamDeckApi_Test, PacksAndADecksPackGoToTheRunningDaemon)
+{
+    Attach(Mode::Always);
+    EXPECT_EQ(Call("packs", StateNode::Object()).status, 409) << "nothing runs yet";
+    Supervisor::Instance().Step(0);
+    Supervisor::Instance().Step(200);
+    Reply r = Call("packs", StateNode::Object());
+    ASSERT_TRUE(r.Ok()) << StateNodeToJsonText(r.body);
+    ASSERT_EQ(r.body.find("packs")->items.size(), 2u);
+    EXPECT_EQ(Str(r.body.find("packs")->items[1], "name"), "os4");
+    EXPECT_EQ(Str(r.body, "default"), "magicwb");
+
+    r = Call("pack", StateNode::Object());
+    ASSERT_TRUE(r.Ok()) << StateNodeToJsonText(r.body);
+    EXPECT_TRUE(_world.Called("GET /api/v1/decks/first/pack"));
+    EXPECT_EQ(Str(*r.body.find("deck"), "setting"), "scenario");
+
+    r = Call("pack", Args({{"deck", "A1B2C3"}, {"pack", "os4"}}));
+    ASSERT_TRUE(r.Ok()) << StateNodeToJsonText(r.body);
+    EXPECT_TRUE(_world.Called("PUT /api/v1/decks/A1B2C3/pack {\"pack\":\"os4\"}"));
+    EXPECT_EQ(Str(*r.body.find("deck"), "pack"), "os4");
+    EXPECT_EQ(Supervisor::Instance().GetSettings().pack.at("A1B2C3"), "os4") << "kept for that deck";
+    Supervisor::Instance().Step(2200);
+    EXPECT_EQ(_world.Count("PUT /api/v1/decks/A1B2C3/pack"), 1u) << "known as applied: not sent again";
+    EXPECT_EQ(Supervisor::Instance().GetSettings().pack.at("A1B2C3"), "os4") << "nor taken back";
+
+    EXPECT_EQ(Call("pack", Args({{"pack", "No Such"}})).status, 400) << "not a pack name";
+    r = Call("pack", Args({{"pack", "chrome"}}));
+    EXPECT_EQ(r.status, 400) << "the daemon refused it";
+    EXPECT_EQ(Str(r.body, "error"), "daemon_refused");
+    EXPECT_EQ(Supervisor::Instance().GetSettings().pack.at("A1B2C3"), "os4") << "a refused pack is not kept";
+
+    r = Call("pack", Args({{"pack", "scenario"}}));
+    ASSERT_TRUE(r.Ok()) << StateNodeToJsonText(r.body);
+    EXPECT_TRUE(Supervisor::Instance().GetSettings().pack.empty()) << "scenario: nothing kept";
 }
 
 TEST_F(StreamDeckApi_Test, RevokeTakesTheDaemonsOwnCompanion)

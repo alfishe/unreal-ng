@@ -187,6 +187,7 @@ of its own stepping every 250 ms; the process is `childprocess::Child` (posix_sp
 | Quit | `DELETE /api/v1/parents/<pid>`: the daemon ends unless the studio still holds a lease; never killed |
 | Mode off | The lease back, as at quit (a daemon another starter holds stays) |
 | Applied | The activity look (`PUT /api/v1/activity`) and each deck's kept brightness once per daemon |
+| Icon pack | Each deck's kept pack (`StreamDeck/pack/<serial>` in unreal-qt's settings; none = its scenario's) set on a daemon that reports another (`PUT /api/v1/decks/{serial}/pack`), and again after a change here (Tools > Stream Deck..., the `pack` verb). A pack set at the daemon (the studio's toolbar, `sdctl pack`, an agent) is read from its `/api/v1/decks` (`pack_setting`) and kept for that deck; the topic `streamdeck.status` carries it (`pack`). A daemon without packs reports no `pack_setting`: left alone |
 
 Verbs on every plane: [command-interface.md §16.2](../../emulator/design/control-interfaces/command-interface.md#162-the-stream-deck-daemon);
 the WebSocket topic `streamdeck.status`.

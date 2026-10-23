@@ -1,0 +1,20 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "banner",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings, rendered smooth), the licence of unreal-ng",
+ "source": "png-smooth",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/banner.py",
+ "title": "UnrealNG banner",
+ "style": "White solid glyphs with the UnrealNG banner's blue drop shadow on its navy, no stripes; on = a lit blue tile",
+ "background": "#0A0C28"
+}

@@ -1,0 +1,28 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "glowicons",
+ "author": "unreal-ng",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/glowicons.py",
+ "title": "GlowIcons",
+ "style": "AmigaOS 3.5 / 3.9 GlowIcons: smooth 8-step ramps, a soft dark outline, a soft drop shadow; on = the warm yellow selection glow",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings re-skinned), the licence of unreal-ng; the palette and shading technique of the style are imitated, no original artwork is used",
+ "source": "png-pixel",
+ "native": [
+  32,
+  32
+ ],
+ "pixel_aspect": [
+  1,
+  1
+ ],
+ "background": "#A8ACB4"
+}

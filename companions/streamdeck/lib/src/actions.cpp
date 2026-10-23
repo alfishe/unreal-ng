@@ -13,6 +13,7 @@
 
 #include "sdb/datadir.h"
 #include "sdb/format.h"
+#include "sdb/surfacereadouts.h"
 
 #ifndef _WIN32
 #include <poll.h>
@@ -684,13 +685,16 @@ public:
 
     json Readout(const std::string& path) override
     {
-        if (path != "run.state.paused" && path != "run.state.running")
-            return nullptr;
         std::lock_guard l(_m);
         if (!_resolved || _emuId.empty())
             Resolve();
         if (_emuId.empty())
             return nullptr;
+        if (path != "run.state.paused" && path != "run.state.running")
+        {
+            const json all = ReadoutsLocked({path});
+            return all.contains(path) ? all[path] : json();
+        }
         const auto r = Attempt("GET", "", json(), false);
         if (!r.Ok())
             return nullptr;
@@ -705,6 +709,16 @@ public:
         {
             return nullptr;
         }
+    }
+
+    json Readouts(const std::vector<std::string>& paths) override
+    {
+        std::lock_guard l(_m);
+        if (!_resolved || _emuId.empty())
+            Resolve();
+        if (_emuId.empty())
+            return json::object();
+        return ReadoutsLocked(paths);
     }
 
     HttpResponse Webapi(const std::string& method, const std::string& path, const json& body, bool control) override
@@ -892,6 +906,39 @@ private:
         }
         _resolved = !_emuId.empty();
         return r;
+    }
+
+    // The readouts of `paths` in one request (the readouts route: published state only): {path: value}
+    json ReadoutsLocked(const std::vector<std::string>& paths)
+    {
+        json out = json::object();
+        std::vector<ReadoutRef> refs;
+        std::string names;
+        for (const auto& path : paths)
+        {
+            refs.push_back(SplitReadoutPath(path));
+            if (("," + names + ",").find("," + refs.back().name + ",") == std::string::npos)
+                names += (names.empty() ? "" : ",") + refs.back().name;
+        }
+        if (names.empty())
+            return out;
+        std::vector<std::pair<std::string, std::string>> hdr;
+        if (!_token.empty())
+            hdr.emplace_back("Authorization", "Bearer " + _token);
+        const auto r =
+            HttpRequest(_s.webapi, "GET", "/api/v1/surfaces/readouts?instance=" + _emuId + "&names=" + names, {}, hdr,
+                        2000);
+        if (!r.Ok())
+            return out;
+        const json j = json::parse(r.body, nullptr, false);
+        if (j.is_discarded() || !j.contains("values") || !j["values"].is_object())
+            return out;
+        const json& values = j["values"];
+        for (size_t i = 0; i < paths.size(); ++i)
+            if (values.contains(refs[i].name))
+                if (json v = ReadoutField(refs[i], values[refs[i].name]); !v.is_null())
+                    out[paths[i]] = std::move(v);
+        return out;
     }
 
     HttpResponse Attempt(const std::string& method, const std::string& path, const json& body, bool control)

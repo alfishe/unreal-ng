@@ -45,3 +45,4 @@ void TestIdle();
 void TestScenarioV2();
 void TestSurfaceClient();
 void TestDaemonLife();
+void TestValueFaces();

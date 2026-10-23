@@ -12,6 +12,34 @@ namespace
 constexpr std::array<std::string_view, 7> kBase = {"ttd.position", "run.state",  "machine",   "media.tape",
                                                    "media.disk",   "audio.mute", "debug.mode"};
 
+// readouts.h's table, in its order (toggle.<id> and audio.source.<key> are prefixes)
+constexpr std::array<std::string_view, 27> kKnown = {
+    "ttd.position",    "run.state",         "machine",          "media.tape",       "media.disk",
+    "audio.mute",      "debug.mode",        "audio.mixer",      "host.stats",       "host.clients",
+    "emulator.stats",  "debug.breakpoints", "media.slots",      "recording.state",  "debug.labels",
+    "ttd.status",      "debug.analyzers",   "controllers.state", "video.window",    "video.crt_params",
+    "video.viewport",  "machine.previous",  "machine.switches", "media.recent",     "media.rzx",
+    "input.connectors", "cap.record"};
+
+// The known name a path starts with, the longest ("machine.previous.model" -> machine.previous); "" = none
+std::string_view KnownName(std::string_view path)
+{
+    std::string_view best;
+    for (std::string_view name : kKnown)
+        if (name.size() > best.size() && path.substr(0, name.size()) == name &&
+            (path.size() == name.size() || path[name.size()] == '.'))
+            best = name;
+    return best;
+}
+
+void AddValue(const Face& f, std::set<std::string>& readouts, std::set<std::string>& paths)
+{
+    if (!f.value || f.value->readout.empty())
+        return;
+    paths.insert(f.value->readout);
+    readouts.insert(SplitReadoutPath(f.value->readout).name);
+}
+
 bool Scrubs(const Dial& d)
 {
     return d.turn &&
@@ -25,6 +53,9 @@ void Collect(const Node& n, std::set<std::string>& readouts, std::set<std::strin
         paths.insert(n.state);
         readouts.insert(SplitReadoutPath(n.state).name);
     }
+    AddValue(n.face, readouts, paths);
+    if (n.faceOn)
+        AddValue(*n.faceOn, readouts, paths);
     if (n.IsMenu())
     {
         const std::string& status = n.strip.status;
@@ -62,14 +93,19 @@ ReadoutRef SplitReadoutPath(std::string_view path)
         }
         return r;
     }
-    for (std::string_view base : kBase)
-        if (path.substr(0, base.size()) == base && (path.size() == base.size() || path[base.size()] == '.'))
-        {
-            r.name = std::string(base);
-            if (path.size() > base.size())
-                r.field = std::string(path.substr(base.size() + 1));
-            return r;
-        }
+    if (const std::string_view base = KnownName(path); !base.empty())
+    {
+        r.name = std::string(base);
+        if (path.size() > base.size())
+            r.field = std::string(path.substr(base.size() + 1));
+        return r;
+    }
+    if (path.substr(0, 13) == "audio.source.")
+    {
+        // audio.source.<key>: the key is the readout's last part (audio.source.ay1, audio.source.ay1.a)
+        r.name = std::string(path);
+        return r;
+    }
     const size_t first = path.find('.');
     const size_t second = first == std::string_view::npos ? first : path.find('.', first + 1);
     r.name = std::string(path.substr(0, second));
@@ -86,9 +122,45 @@ json ReadoutField(const ReadoutRef& ref, const json& value)
         return nullptr;
     if (ref.name == "run.state" && (ref.field == "paused" || ref.field == "running" || ref.field == "stopped"))
         return value.value("state", "") == ref.field;
-    if (auto it = value.find(ref.field); it != value.end())
-        return *it;
-    return nullptr;
+    return FieldOf(value, ref.field);
+}
+
+json FieldOf(const json& value, std::string_view field)
+{
+    const json* at = &value;
+    while (!field.empty())
+    {
+        const size_t dot = field.find('.');
+        const std::string part(field.substr(0, dot));
+        field = dot == std::string_view::npos ? std::string_view() : field.substr(dot + 1);
+        if (at->is_object())
+        {
+            auto it = at->find(part);
+            if (it == at->end())
+                return nullptr;
+            at = &*it;
+        }
+        else if (at->is_array() && !part.empty() && part.find_first_not_of("0123456789") == std::string::npos &&
+                 part.size() < 9 && std::stoul(part) < at->size())
+            at = &(*at)[std::stoul(part)];
+        else
+            return nullptr;
+    }
+    return *at;
+}
+
+std::span<const std::string_view> KnownReadouts()
+{
+    return kKnown;
+}
+
+bool IsKnownReadoutPath(std::string_view path)
+{
+    if (!IsReadoutPath(path))
+        return false;
+    if (path.substr(0, 7) == "toggle." || (path.substr(0, 13) == "audio.source." && path.size() > 13))
+        return true;
+    return !KnownName(path).empty();
 }
 
 SurfaceNeeds NeedsOf(const Scenario& s)

@@ -257,7 +257,9 @@ jobs:
         run: ./streamdeck-studio-tests
 
       - name: Scenario generator tests
-        run: python3 companions/streamdeck/tools/tests/test_make_deck_scenario.py
+        run: |
+          python3 companions/streamdeck/tools/tests/test_make_deck_scenario.py
+          python3 companions/streamdeck/tools/tests/test_deckflow.py
 
   build-streamdeck-macos:
     needs: throttle

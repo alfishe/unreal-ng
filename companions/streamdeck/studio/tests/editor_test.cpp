@@ -305,6 +305,51 @@ void TestSaveV2(EditorWidget& w, const QTemporaryDir& dir)
     CHECK(!d->ConvertToV2() || d->Version() == 2);
     CHECK(!d->ConvertToV2());  // v2 already
 }
+void TestValueFace(EditorWidget& w)
+{
+    std::printf("editor: the value face fields\n");
+    EditorDocument* d = w.Document();
+    d->Replace(Doc(json::array({json{{"id", "cpu"}, {"type", "action"}, {"at", {0, 1}}, {"face", {{"label", "CPU"}}},
+                                     {"do", {{"kind", "action"}, {"id", "run.pause_toggle"}}}}})));
+    d->Select(QStringLiteral("cpu"), false);
+    QComboBox* box = Box(&w, "value-readout");
+    CHECK(box && box->currentText().isEmpty() && box->findText(QStringLiteral("host.stats")) > 0 &&
+          box->findText(QStringLiteral("debug.breakpoints")) > 0);
+    auto format = [&]() -> QLineEdit* {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        const auto v = w.findChildren<QLineEdit*>(QStringLiteral("value-format"));
+        return v.size() == 1 ? v[0] : nullptr;
+    };
+    CHECK(!format());  // no readout: no format field
+    if (box)
+    {
+        box->setCurrentText(QStringLiteral("host.stats.cpu_percent"));
+        emit box->lineEdit()->editingFinished();
+    }
+    const json* n = ops::FindNode(d->Doc(), "cpu");
+    CHECK(n && (*n)["face"]["value"] == json({{"readout", "host.stats.cpu_percent"}}) &&
+          (*n)["face"]["label"] == "CPU");
+    if (QLineEdit* e = format())
+    {
+        e->setText(QStringLiteral("{:.0f}%"));
+        emit e->editingFinished();
+    }
+    else
+        CHECK(false);
+    n = ops::FindNode(d->Doc(), "cpu");
+    CHECK(n && (*n)["face"]["value"]["format"] == "{:.0f}%" &&
+          (*n)["face"]["value"]["readout"] == "host.stats.cpu_percent");
+    std::vector<Issue> issues;
+    CHECK(Parse(d->Doc(), issues).has_value());
+    box = Box(&w, "value-readout");
+    if (box)
+    {
+        box->setCurrentText(QString());
+        emit box->lineEdit()->editingFinished();
+    }
+    n = ops::FindNode(d->Doc(), "cpu");
+    CHECK(n && !(*n)["face"].contains("value"));
+}
 }  // namespace
 
 void TestEditor()
@@ -319,4 +364,5 @@ void TestEditor()
     TestRouteExamples(w);
     TestActionStep(w);
     TestSaveV2(w, dir);
+    TestValueFace(w);
 }

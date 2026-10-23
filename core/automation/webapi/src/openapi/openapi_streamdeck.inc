@@ -1,6 +1,6 @@
     // The Stream Deck daemon's supervision by unreal-qt (companion::streamdeck::Supervisor; Stream Deck integration
-    // daemon.md §7), its settings, pairing and deck brightness: the verbs of companion::streamdeck::Call, as the CLI
-    // `streamdeck`, MCP `streamdeck`, Lua / Python streamdeck(); every route is also a WebSocket call, and the topic
+    // daemon.md §7), its settings, pairing, deck brightness and icon pack: the verbs of companion::streamdeck::Call, as
+    // the CLI `streamdeck`, MCP `streamdeck`, Lua / Python streamdeck(); every route is also a WebSocket call, and the topic
     // streamdeck.status pushes the changes
     {
         auto op = [&paths](const char* path, const char* method, const char* summary, const char* description,
@@ -27,7 +27,7 @@
         const char* statusFields =
             "{ok, status: {attached, state: detached | off | waiting | starting | running | adopted | foreign | "
             "backoff | failed | stopped, mode, activity, api_port, viewers_port, binary, own, pid, deck_attached, "
-            "restarts, failures, restart_in_ms?, retry_in_ms?, last_exit, error, log, brightness, daemon: the "
+            "restarts, failures, restart_in_ms?, retry_in_ms?, last_exit, error, log, brightness, pack, daemon: the "
             "daemon's /api/v1/health (version, decks, viewers, parents, host, surface, pairing), decks: its "
             "/api/v1/decks}}";
 
@@ -48,7 +48,7 @@
         op("/api/v1/streamdeck/settings", "get", "The supervisor's settings",
            "mode: off | deck (default) | always; activity: off | flash (default) | line (how a deck shows what "
            "other surfaces do); api_port (37053), viewers_port (37050); binary (\"\" = beside unreal-qt; "
-           "UNREAL_STREAMDECK_BIN wins); brightness per deck serial",
+           "UNREAL_STREAMDECK_BIN wins); brightness and pack (the icon pack) per deck serial",
            "{ok, settings}");
         Json::Value& settings = op("/api/v1/streamdeck/settings", "put", "Change the supervisor's settings",
                                    "Body {mode?, activity?, api_port?, viewers_port?, binary?}: saved in unreal-qt's "
@@ -84,13 +84,33 @@
                                         "{ok, deck: {serial, brightness}}");
         param(putBrightness, "deck", "path", true, "The deck's serial, or first");
         putBrightness["responses"]["400"]["description"] = "Bad Request: value 0-100";
+        Json::Value& packs = op("/api/v1/streamdeck/packs", "get", "The daemon's icon packs",
+                                "The packs of its data directory a deck can draw its glyph faces from (the daemon's "
+                                "GET /api/v1/packs); default: the one drawn when neither the deck nor its scenario "
+                                "names one",
+                                "{ok, packs: [{name, title, style, source, fallback, background}], default}");
+        packs["responses"]["409"]["description"] = "not_running: no daemon answers";
+        Json::Value& getPack = op("/api/v1/streamdeck/decks/{deck}/pack", "get", "A deck's icon pack",
+                                  "pack: the one drawn; setting: the deck's (scenario = its scenario's settings.pack); "
+                                  "scenario_pack: the scenario's (\"\" = the default)",
+                                  "{ok, deck: {serial, pack, setting, scenario_pack}}");
+        param(getPack, "deck", "path", true, "The deck's serial, or first");
+        Json::Value& putPack = op("/api/v1/streamdeck/decks/{deck}/pack", "put", "Set a deck's icon pack",
+                                  "Body {pack: a name of GET /api/v1/streamdeck/packs, or scenario (its scenario's "
+                                  "again)}; the keys are drawn again at once; kept for that serial (unreal-qt's "
+                                  "settings) and set again when the daemon starts again",
+                                  "{ok, deck: {serial, pack, setting, scenario_pack}}");
+        param(putPack, "deck", "path", true, "The deck's serial, or first");
+        putPack["responses"]["400"]["description"] =
+            "Bad Request: no pack given, not a pack name; daemon_refused: the daemon has no such pack";
+        putPack["responses"]["404"]["description"] = "daemon_refused: the daemon has no such deck";
         // The route behind the verbs above: any verb with any method (a verb or a method it does not take: an error)
         for (const char* method : {"get", "post", "put", "delete"})
         {
             Json::Value& verb = op("/api/v1/streamdeck/{verb}", method, "A verb of companion::streamdeck::Call",
-                                   "The verbs above by name (status, start, stop, restart, settings, pair, revoke, udev); "
-                                   "the same as the CLI `streamdeck <verb>`",
+                                   "The verbs above by name (status, start, stop, restart, settings, pair, revoke, "
+                                   "packs, udev); the same as the CLI `streamdeck <verb>`",
                                    "the verb's answer");
-            param(verb, "verb", "path", true, "status, start, stop, restart, settings, pair, revoke, udev");
+            param(verb, "verb", "path", true, "status, start, stop, restart, settings, pair, revoke, packs, udev");
         }
     }
