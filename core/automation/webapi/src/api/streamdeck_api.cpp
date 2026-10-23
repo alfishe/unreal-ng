@@ -76,11 +76,12 @@ void Run(const HttpRequestPtr& req, Callback callback, std::string verb,
     }
     for (const auto& [name, value] : path)
         args[name] = value;
+    const bool blocking = Blocking(verb);  // before the move below: the lambda takes the verb
     auto run = [callback = std::move(callback), verb = std::move(verb), args = std::move(args)] {
         const companion::streamdeck::Reply reply = companion::streamdeck::Call(verb, args);
         Respond(callback, reply.status, StateNodeToJson(reply.body));
     };
-    if (Blocking(verb))
+    if (blocking)
         std::thread(std::move(run)).detach();  // bounded by the daemon call's own timeout
     else
         run();

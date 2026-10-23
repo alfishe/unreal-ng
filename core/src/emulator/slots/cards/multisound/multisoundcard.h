@@ -322,7 +322,6 @@ private:
     };
 
     MultiSoundCardConfig _config;
-    EmulatorContext* _context;
 
     MultiSoundLogic _logic;
     std::unique_ptr<Ym2203Pair> _ym;

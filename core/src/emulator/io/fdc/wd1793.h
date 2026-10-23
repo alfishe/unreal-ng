@@ -595,7 +595,6 @@ public:
     static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;  // 3.5 t-states per microsecond
 
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
-    static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
 
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
