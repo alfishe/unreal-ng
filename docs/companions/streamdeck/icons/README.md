@@ -30,13 +30,12 @@ The packs today:
 | `newicons` | NewIcons: 5-step pastel ramps, black outline, no button | png-pixel 32 x 32 | `reskin.py` |
 | `glowicons` | GlowIcons (OS 3.5 / 3.9): 8-step ramps, soft dark rim, drop shadow; on = yellow glow | png-pixel 32 x 32 | `reskin.py` |
 | `workbench13` | Workbench 1.3: blue / white / black / orange, tall pixels | png-pixel 32 x 16, aspect 1:2 | `reskin.py` + row squash |
-| `line` | Even strokes along every contour, cyan for the drawing's blue parts | png-smooth 256 | `vector.py` |
 | `duotone` | Off-white glyph on a tinted plate per group, one accent per group | png-smooth 256 | `vector.py` |
 | `banner` | White glyph, the UnrealNG banner's blue shadow, navy tile, no stripes | png-smooth 256 | `vector.py` |
 | `keycap` | Matte dark keycap, legend high, a group-coloured bar low with a gap | png-smooth 256 | `vector.py` |
 | `os4` | AmigaOS 4: gentle gradient per shape, thin dark rim, soft shadow on dark blue | png-smooth 256 | `vector.py` |
 
-All nine packs are built from the one set of drawings in `magicwb.py`: change a drawing there and every pack shows
+All eight packs are built from the one set of drawings in `magicwb.py`: change a drawing there and every pack shows
 the change after a regeneration.
 
 ## 2. The drawings: semantic keys
@@ -73,7 +72,7 @@ Run everything from the repository root (Python with Pillow, numpy, scipy, cairo
 |:--|:--|:--|
 | Redraw a glyph | its entry in `magicwb.DRAW` | `python3 tools/icons/regenerate_streamdeck_icons.py` (all packs pick it up) |
 | Tune one pack's colours / treatment | `tools/icons/streamdeck_packs/<pack>.py` | `python3 tools/icons/regenerate_streamdeck_icons.py <pack>` |
-| Add a glyph | `GLYPHS` (and `ACTIONS` if an action shows it) in `streamdeck_glyphs.py`, a `DRAW` entry in `magicwb.py`; a pack drawn by hand (not from `magicwb`) needs its own `src/<id>.*` | the full regeneration; `--validate` names every pack still missing it |
+| Add a glyph | `GLYPHS` (and `ACTIONS` if an action shows it) in `streamdeck_glyphs.py`, a `DRAW` entry in `magicwb.py`; a pack drawn by hand (not from `magicwb`) needs its own `src/<id>.*`. **A new glyph is stylized for every pack and goes into each pack itself** (the deck's pack is the user's choice at run time): the fallback chain is a safety net, not a way to ship a glyph in one style only | the full regeneration; `--validate` names every pack still missing it; `deckflow.py check` errors on a glyph a scenario uses that a pack lacks |
 | Bind an action to a glyph, add an "on" face or a per-parameter glyph | `ACTIONS` in `streamdeck_glyphs.py` (`face`, `face_on` + `state` = the readout, `params`, `label`) | `python3 tools/icons/streamdeck_glyphs.py && python3 tools/icons/streamdeck_icons_doc.py` |
 | A new catalogue action appeared (`GET /api/v1/controllers/actions`) | add it to `ACTIONS` with a face, or to `PRUNED` with the reason (dial-only, GUI-only, set by menus) | the glyph list + the doc; then draw any new glyph |
 | Rename or remove a glyph | `streamdeck_glyphs.py`, `magicwb.py`, scenarios using the id (grep `companions/streamdeck`, `data/streamdeck`), hand-drawn packs | the full regeneration |
@@ -100,14 +99,18 @@ strokes, no chunky clumsy shapes; a restrained palette, **no pink or magenta**, 
 ## 5. Showing a pack on the real deck
 
 Nothing goes on the deck before the owner asked for it. To show a page, write a throwaway scenario in your worktree's
-`scratch/` whose key faces are rendered PNGs (`scratch/streamdeck-icons/<pack>/112/<id>.png` for the + XL) and load
-it on that deck only: `PUT /api/v1/decks/{serial}/scenario {"file": ...}` on the daemon's automation (default
-`127.0.0.1:37053`, see [daemon.md](../daemon.md)); give the deck back with `DELETE /api/v1/decks/{serial}/scenario`.
+`scratch/` whose key faces are glyphs (`"face": {"glyph": "<id>"}`) and load it on that deck only: `PUT
+/api/v1/decks/{serial}/scenario {"file": ...}` on the daemon's automation (default `127.0.0.1:37053`, see
+[daemon.md](../daemon.md)); pick the pack with `PUT /api/v1/decks/{serial}/pack {"pack": ...}`. Give the deck back
+with `DELETE /api/v1/decks/{serial}/scenario` and `PUT /api/v1/decks/{serial}/pack {"pack": "scenario"}`.
 
 ## 6. Status
 
 - The packs live on the branch `streamdeck-iconset` until the owner's review; they are not on master.
-- Scenarios cannot pick a pack yet: the lookup (theme / scenario names a pack, missing glyphs from its `fallback`
-  chain, the key size from the model) is still to be built in the companion (`companions/streamdeck/lib`); keys that
-  need a text over the picture (a key name, a drive letter, a count) need a label on image faces there too.
+- The pack is a run-time choice (2026-10-22, use case C11.2): a scenario's faces name glyphs (`face.glyph`), the
+  daemon draws them from the deck's pack (`PUT /api/v1/decks/{serial}/pack`, Stream Deck Studio's toolbar), else the
+  scenario's `settings.pack`, else `magicwb`, along the pack's `fallback` chain, scaled as `render_streamdeck_icons.py`
+  does (whole factors for pixel art) and cached per pack, glyph and size (`companions/streamdeck/lib`,
+  `sdb/iconpacks.h`); a `label` is drawn under a shrunk glyph. Format: [scenarios.md §4.1](../../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#41-glyph-faces-and-the-icon-pack);
+  the pipeline: [pipeline.md](../pipeline.md).
 - The product scenarios are generated only after the owner approved the packs and the use-case document.

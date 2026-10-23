@@ -5,6 +5,7 @@
 #include <deque>
 
 #include "sdb/format.h"
+#include "sdb/iconpacks.h"
 #include "sdb/scenariorender.h"
 
 namespace sdb::scn
@@ -28,8 +29,10 @@ std::size_t HashStr(const std::string& s)
 std::size_t HashFace(const Face& f)
 {
     std::size_t h = HashStr(f.label);
-    for (const auto* s : {&f.icon, &f.svg, &f.image, &f.fit})
+    for (const auto* s : {&f.icon, &f.svg, &f.image, &f.fit, &f.glyph})
         h = Mix(h, HashStr(*s));
+    if (f.value)
+        h = Mix(h, HashStr(f.value->readout + "|" + f.value->format) + 11);
     return Mix(h, (static_cast<std::size_t>(f.bg.r) << 16 | f.bg.g << 8 | f.bg.b) * 31 +
                       (static_cast<std::size_t>(f.fg.r) << 16 | f.fg.g << 8 | f.fg.b));
 }
@@ -159,10 +162,20 @@ void Runtime::EnsureMonitor()
                 if (!_live && (kick || now >= nextReadouts))
                 {
                     nextReadouts = now + std::chrono::milliseconds(std::max(20, _opt.readoutPollMs));
+                    // the same few paths a page's keys name: its state-bound faces and its value faces
+                    auto add = [&](const std::string& path) {
+                        if (!path.empty() && !_pushed.count(path) &&
+                            std::find(paths.begin(), paths.end(), path) == paths.end())
+                            paths.push_back(path);
+                    };
                     for (const Node* n : _page.keys)
-                        if (n && !n->state.empty() && !_pushed.count(n->state) &&
-                            std::find(paths.begin(), paths.end(), n->state) == paths.end())
-                            paths.push_back(n->state);
+                        if (n)
+                        {
+                            add(n->state);
+                            for (const Face* f : {&n->face, n->faceOn ? &*n->faceOn : nullptr})
+                                if (f && f->value)
+                                    add(f->value->readout);
+                        }
                 }
             }
             if (ttd)
@@ -173,14 +186,14 @@ void Runtime::EnsureMonitor()
                 if (!_live && _page.strip && _page.strip->status == "ttd")
                     _status = std::move(text);
             }
-            for (const auto& path : paths)
+            if (!paths.empty())
             {
-                json v = _host->Readout(path);
-                if (v.is_null())
-                    continue;
+                // one ask for the page's states and values (the system host: one request)
+                const json values = _host->Readouts(paths);
                 std::lock_guard l(_mu);
-                if (!_pushed.count(path))
-                    _readouts[path] = std::move(v);
+                for (const auto& [path, v] : values.items())
+                    if (!v.is_null() && !_pushed.count(path))
+                        _readouts[path] = v;
             }
         }
         std::lock_guard l(_mu);
@@ -323,8 +336,20 @@ void Runtime::Render(bool force)
                 const bool on = IsOn(*n);
                 const Face& f = on && n->faceOn ? *n->faceOn : n->face;
                 h = Mix(Mix(Mix(HashFace(f), HashStr(n->id + n->title)), pressed), n->IsMenu());
+                const std::string pack = f.glyph.empty() ? std::string() : PackLocked();
+                if (!f.glyph.empty())
+                    h = Mix(h, HashStr(pack));  // another pack: the key is drawn again
+                std::optional<ValueShown> shown;
+                if (f.value)
+                {
+                    // a value face: drawn again only when its text or level changed (a readout pushed at 10 Hz
+                    // whose other fields move redraws nothing)
+                    shown = ShownLocked(*f.value);
+                    h = Mix(Mix(h, HashStr(shown->text) + 13), static_cast<std::size_t>(shown->level) + 17);
+                }
                 if (force || h != _sentKey[static_cast<size_t>(k)])
-                    img = RenderFace(f, n->title, pressed, n->IsMenu(), _safePad, _faceSize, _s.dir);
+                    img = RenderFace(f, n->title, pressed, n->IsMenu(), _safePad, _faceSize, _s.dir, pack,
+                                     shown ? &*shown : nullptr);
             }
             if (h == 1 && (force || _sentKey[static_cast<size_t>(k)] != 1))
                 img = RenderEmptyKey(_faceSize);
@@ -374,7 +399,7 @@ void Runtime::Render(bool force)
     std::string pageJson;
     {
         std::lock_guard l(_mu);
-        pageJson = DescribePage(_s, _nav, _m, _page, OnStates()).dump();
+        pageJson = PageLocked().dump();
         if (pageJson == _sentPage && !force)
             pageJson.clear();
         else
@@ -549,6 +574,8 @@ void Runtime::Activate(int key)
         NoteMenu();
         return;
     }
+    if (n->action.kind.empty())
+        return;  // a display-only key (a value face without "do")
     Job j{n->action, n->id, json::object(), n->then, n->action.kind == "toggle"};
     j.state = n->state;
     if (n->action.kind == "action" && n->action.spec.value("hold", false))
@@ -814,6 +841,38 @@ void Runtime::SetActivityLook(const std::string& look)
     _activityLook = look;
 }
 
+void Runtime::SetPack(const std::string& pack)
+{
+    std::lock_guard l(_mu);
+    _pack = pack;
+    ++_posted;  // a Ticket taken now is done once a step has drawn the keys in the new pack
+}
+
+std::string Runtime::PackSetting() const
+{
+    std::lock_guard l(_mu);
+    return _pack;
+}
+
+std::string Runtime::Pack() const
+{
+    std::lock_guard l(_mu);
+    return PackLocked();
+}
+
+std::string Runtime::ScenarioPack() const
+{
+    std::lock_guard l(_mu);
+    return _s.settings.pack;
+}
+
+std::string Runtime::PackLocked() const
+{
+    if (!_pack.empty())
+        return _pack;
+    return _s.settings.pack.empty() ? std::string(packs::kDefaultPack) : _s.settings.pack;
+}
+
 SurfaceNeeds Runtime::Needs() const
 {
     std::lock_guard l(_mu);
@@ -915,7 +974,34 @@ int Runtime::Brightness() const
 json Runtime::CurrentPage() const
 {
     std::lock_guard l(_mu);
-    return DescribePage(_s, _nav, _m, _page, OnStates());
+    return PageLocked();
+}
+
+ValueShown Runtime::ShownLocked(const FaceValue& v) const
+{
+    auto it = _readouts.find(v.readout);
+    return ShowValue(v, it != _readouts.end() ? it->second : json());
+}
+
+json Runtime::PageLocked() const
+{
+    json page = DescribePage(_s, _nav, _m, _page, OnStates());
+    // value faces: what each key shows now ({readout, text, level})
+    if (page.contains("keys"))
+        for (auto& e : page["keys"])
+        {
+            const int k = e.value("key", -1);
+            const Node* n = k >= 0 && k < static_cast<int>(_page.keys.size()) ? _page.keys[static_cast<size_t>(k)]
+                                                                              : nullptr;
+            if (!n || k == _page.backKey)
+                continue;
+            const Face& f = IsOn(*n) && n->faceOn ? *n->faceOn : n->face;
+            if (!f.value)
+                continue;
+            const ValueShown v = ShownLocked(*f.value);
+            e["value"] = {{"readout", f.value->readout}, {"text", v.text}, {"level", v.level}};
+        }
+    return page;
 }
 
 json Runtime::Nodes(const json& filter) const
@@ -934,7 +1020,7 @@ json Runtime::State() const
             {"model", std::string(_m.name)},
             {"stack", stack},
             {"path", _page.path},
-            {"page", DescribePage(_s, _nav, _m, _page, OnStates())},
+            {"page", PageLocked()},
             {"toggles", _toggles},
             {"readouts", _readouts},
             {"context", _context},
@@ -942,6 +1028,8 @@ json Runtime::State() const
              {{"live", _live}, {"target", _target}, {"notice", _notice}, {"strip", _strip}}},
             {"last_actions", _last},
             {"brightness", _brightness},
+            {"pack", PackLocked()},
+            {"scenario_pack", _s.settings.pack},
             {"stats",
              {{"key_writes", _stats.keyWrites}, {"strip_writes", _stats.stripWrites}, {"actions", _stats.actions}}}};
 }

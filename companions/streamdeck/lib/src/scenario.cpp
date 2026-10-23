@@ -10,7 +10,10 @@
 
 #include "sdb/actions.h"
 #include "sdb/datadir.h"
+#include "sdb/iconpacks.h"
 #include "sdb/format.h"
+#include "sdb/surfacereadouts.h"
+#include "sdb/valueface.h"
 
 namespace sdb::scn
 {
@@ -67,6 +70,44 @@ struct Parser
         f.svg = j.value("svg", "");
         f.image = j.value("image", "");
         f.fit = j.value("fit", "contain");
+        if (j.contains("glyph"))
+        {
+            if (j["glyph"].is_string())
+                f.glyph = j["glyph"].get<std::string>();
+            else if (!j["glyph"].is_null())
+                Error(id, "face.glyph must be a glyph id (a string)");
+        }
+        if (j.contains("value") && !j["value"].is_null())
+        {
+            // a live value: {readout, format, warn, alert}
+            const json& v = j["value"];
+            FaceValue fv;
+            if (!v.is_object() || !v.contains("readout") || !v["readout"].is_string())
+                Error(id, "face.value must be {readout: <path>, format, warn, alert}");
+            else
+            {
+                fv.readout = v["readout"].get<std::string>();
+                if (v.contains("format") && !v["format"].is_null())
+                {
+                    if (v["format"].is_string())
+                        fv.format = v["format"].get<std::string>();
+                    else
+                        Error(id, "face.value.format must be a template (a string: \"{:.0f}%\")");
+                }
+                for (const char* t : {"warn", "alert"})
+                    if (v.contains(t) && !v[t].is_null())
+                    {
+                        if (v[t].is_number())
+                            (std::string(t) == "warn" ? fv.warn : fv.alert) = v[t].get<double>();
+                        else
+                            Error(id, std::string("face.value.") + t + " must be a number");
+                    }
+                for (const auto& [k, x] : v.items())
+                    if (k != "readout" && k != "format" && k != "warn" && k != "alert")
+                        Error(id, "face.value: unknown field '" + k + "' (readout, format, warn, alert)");
+                f.value = std::move(fv);
+            }
+        }
         if (j.contains("bg"))
         {
             if (auto c = Hex(j["bg"]))
@@ -232,13 +273,15 @@ struct Parser
         }
         else
         {
+            const bool shows = n.face.value || (j.contains("face_on") && j["face_on"].is_object() &&
+                                                j["face_on"].contains("value") && !j["face_on"]["value"].is_null());
             if (j.contains("do"))
             {
                 if (auto a = ParseAction(j["do"], n.id))
                     n.action = *a;
             }
-            else
-                Error(n.id, "an action node needs \"do\"");
+            else if (!shows)
+                Error(n.id, "an action node needs \"do\" (only a key showing a value, face.value, may go without)");
             n.then = j.value("then", "stay");
             if (n.then != "stay" && n.then != "back" && n.then != "home")
                 Error(n.id, "then must be stay, back or home");
@@ -313,8 +356,33 @@ struct Validator
     }
     void CheckFace(const Face& f, const std::string& node, const std::string& what)
     {
+        CheckValue(f, node, what);
         CheckPath(node, what + ".image", f.image);
         CheckPath(node, what + ".svg", f.svg);
+        if (f.glyph.empty())
+            return;
+        if (f.glyph.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789._-") != std::string::npos ||
+            f.glyph.front() == '.' || f.glyph.find("..") != std::string::npos)
+            Error(node, what + ".glyph '" + f.glyph + "' is not a glyph id (run.pause, nav.folder, ...)");
+        else if (!packs::Dir().empty() && packs::Serving(s.settings.pack, f.glyph).empty())
+            Warn(node, what + ".glyph '" + f.glyph + "' is in no icon pack: the key shows its label");
+        if (!f.image.empty())
+            Warn(node, what + ": glyph and image: the glyph is drawn");
+    }
+    void CheckValue(const Face& f, const std::string& node, const std::string& what)
+    {
+        if (!f.value)
+            return;
+        const FaceValue& v = *f.value;
+        if (!IsReadoutPath(v.readout))
+            Error(node, what + ".value.readout '" + v.readout +
+                            "' is not a readout path (host.stats.cpu_percent, emulator.stats, ...)");
+        else if (!IsKnownReadoutPath(v.readout))
+            Warn(node, what + ".value.readout '" + v.readout + "' is no readout the core publishes: the key shows --");
+        if (const std::string e = CheckValueFormat(v.format); !e.empty())
+            Error(node, what + ".value.format: " + e);
+        if (!f.image.empty() || !f.svg.empty() || !f.icon.empty())
+            Warn(node, what + ": a value face draws no image, svg or icon (a glyph shrinks above the value)");
     }
     // "$root/..." strings inside an action's value (media.open path, snapshot.save path, ...)
     void CheckValuePaths(const json& v, const std::string& node)
@@ -512,7 +580,8 @@ struct Validator
                 Menu(c, path);
             else
             {
-                CheckAction(c.action, c.id, 0);
+                if (!c.action.kind.empty() || !(c.face.value || (c.faceOn && c.faceOn->value)))
+                    CheckAction(c.action, c.id, 0);  // a display-only key (a value face, no "do") has none
                 CheckFace(c.face, c.id, "face");
                 if (c.faceOn)
                     CheckFace(*c.faceOn, c.id, "face_on");
@@ -669,6 +738,13 @@ std::optional<Scenario> Parse(const json& doc, std::vector<Issue>& issues)
             }
         }
     }
+    if (st.contains("pack"))
+    {
+        if (st["pack"].is_string() && packs::ValidName(st["pack"].get<std::string>()))
+            s.settings.pack = st["pack"].get<std::string>();
+        else
+            p.Error("", "settings.pack must be an icon pack name (magicwb, duotone, ...)");
+    }
     const json nv = st.value("navigation", json::object());
     s.settings.stack = nv.value("stack", true);
     if (nv.contains("breadcrumbs"))
@@ -722,7 +798,10 @@ std::optional<Scenario> ParseLoose(const json& doc)
     s.model = FindModelByName(doc.value("model", "plusxl"));
     if (doc.contains("version") && doc["version"].is_number_integer())
         s.version = std::clamp(doc["version"].get<int>(), 1, kFormatVersion);
-    const json nv = doc.value("settings", json::object()).value("navigation", json::object());
+    const json st = doc.value("settings", json::object());
+    if (st.is_object() && st.contains("pack") && st["pack"].is_string())
+        s.settings.pack = st["pack"].get<std::string>();
+    const json nv = st.is_object() ? st.value("navigation", json::object()) : json::object();
     s.settings.stack = nv.value("stack", true);
     if (auto c = CrumbsByName(nv.value("breadcrumbs", "auto")); c && *c != Crumbs::Inherit)
         s.settings.crumbs = *c;
@@ -747,6 +826,9 @@ std::vector<Issue> Validate(const Scenario& s)
         v.Error("", "no model");
         return v.out;
     }
+    if (!s.settings.pack.empty() && !packs::Dir().empty() && !packs::Find(s.settings.pack))
+        v.Warn("", "settings.pack '" + s.settings.pack + "' is not an icon pack of data/streamdeck/icons/packs: " +
+                       packs::kDefaultPack + " is drawn");
     std::map<std::string, int> seen;
     v.Collect(s.root, seen);
     std::vector<const Node*> path;
@@ -769,6 +851,19 @@ json FaceJson(const Face& f)
         j["svg"] = f.svg;
     if (!f.image.empty())
         j["image"] = f.image;
+    if (!f.glyph.empty())
+        j["glyph"] = f.glyph;
+    if (f.value)
+    {
+        json v{{"readout", f.value->readout}};
+        if (!f.value->format.empty())
+            v["format"] = f.value->format;
+        if (f.value->warn)
+            v["warn"] = *f.value->warn;
+        if (f.value->alert)
+            v["alert"] = *f.value->alert;
+        j["value"] = v;
+    }
     if (f.fit != "contain")
         j["fit"] = f.fit;
     const Face d;
@@ -852,7 +947,8 @@ json ToJson(const Node& n)
     {
         if (n.action.kind == "include")
             return n.action.spec;  // placeholders round-trip as written
-        j["do"] = n.action.spec;
+        if (!n.action.kind.empty())
+            j["do"] = n.action.spec;  // none: a display-only key (a value face)
         if (n.then != "stay")
             j["then"] = n.then;
         if (n.faceOn)
@@ -892,6 +988,8 @@ json ToJson(const Scenario& s)
         st["companion_file"] = s.settings.companionFile;
     if (s.settings.target != d.target)
         st["target"] = s.settings.target;
+    if (!s.settings.pack.empty())
+        st["pack"] = s.settings.pack;
     {
         const Activity& a = s.settings.activity;
         const Activity da;

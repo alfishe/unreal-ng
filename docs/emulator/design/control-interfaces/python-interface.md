@@ -761,6 +761,8 @@ st = emu.streamdeck("status")["status"]    # st["state"]: "running", "waiting", 
 emu.streamdeck("settings", mode="always", activity="line")
 emu.streamdeck("pair")                     # the user approves it at the GUI
 emu.streamdeck("brightness", deck="A1B2C3", value=40)
+[p["name"] for p in emu.streamdeck("packs")["packs"]]
+emu.streamdeck("pack", deck="A1B2C3", pack="os4")   # pack="scenario": its scenario's again
 ```
 
 Monitoring (`emu.monitor(name="all", **args)`, [command-interface.md §17](./command-interface.md#17-monitoring)); an

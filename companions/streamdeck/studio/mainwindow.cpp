@@ -39,6 +39,7 @@
 #include "editor/runcontroller.h"
 #include "listenserver.h"
 #include "sdb/eventloop.h"
+#include "sdb/iconpacks.h"
 #include "recorder.h"
 #include "studioapi.h"
 #include "textedit.h"
@@ -102,6 +103,21 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
             QString err;
             if (!_brightnessDeck.isEmpty() && !_daemon->SetBrightness(_brightnessDeck, _brightness->value(), &err))
                 AddLog(Src::Info, QStringLiteral("brightness: ") + err);
+        });
+        _pack = new QComboBox(this);
+        _pack->setObjectName(QStringLiteral("deck-pack"));
+        _pack->addItem(QStringLiteral("Pack: the scenario's"), QStringLiteral("scenario"));
+        for (const auto& p : sdb::packs::List())
+            _pack->addItem(QStringLiteral("Pack: ") + QString::fromStdString(p.title.empty() ? p.name : p.title),
+                           QString::fromStdString(p.name));
+        _pack->setEnabled(false);
+        _pack->setToolTip(QStringLiteral("The icon pack the deck this window shows draws its glyph faces from (over "
+                                         "its scenario's settings.pack), set by unreal-streamdeck"));
+        bar->addWidget(_pack);
+        connect(_pack, &QComboBox::activated, this, [this](int i) {
+            QString err;
+            if (!_brightnessDeck.isEmpty() && !_daemon->SetPack(_brightnessDeck, _pack->itemData(i).toString(), &err))
+                AddLog(Src::Info, QStringLiteral("pack: ") + err);
         });
     }
     bar->addSeparator();
@@ -407,6 +423,16 @@ void MainWindow::FetchBrightness()
         _brightnessDeck = deck;
     }
     _brightness->setEnabled(!_brightnessDeck.isEmpty());
+    QString pack;
+    const bool packKnown = !_brightnessDeck.isEmpty() && _daemon->Pack(_brightnessDeck, &pack);
+    if (packKnown)
+    {
+        const QSignalBlocker b(_pack);
+        if (_pack->findData(pack) < 0)
+            _pack->addItem(QStringLiteral("Pack: ") + pack, pack);
+        _pack->setCurrentIndex(_pack->findData(pack));
+    }
+    _pack->setEnabled(packKnown);
 }
 
 // Q-1: the daemon starts when a deck is attached; the studio, a client, starts one when none answers (its own

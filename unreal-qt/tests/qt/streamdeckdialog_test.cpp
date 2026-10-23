@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QTableWidget>
 
+#include "_helpers/testwaithelper.h"
 #include "controllers/streamdeckpage.h"
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/execution/companionregistry.h"
@@ -23,6 +24,7 @@ struct Daemon
     bool up = false;
     int pid = 0;
     std::string pairing = R"({"state":"idle","paired":false,"companion_id":""})";
+    std::string pack = "scenario";  ///< the deck's icon pack setting
 };
 
 class FakeProcess : public IProcess
@@ -57,7 +59,7 @@ class FakeHttp : public IDaemonHttp
 {
 public:
     explicit FakeHttp(Daemon& d) : _d(d) {}
-    HttpResult Call(int, const std::string& method, const std::string& path, const std::string&, int) override
+    HttpResult Call(int, const std::string& method, const std::string& path, const std::string& body, int) override
     {
         if (!_d.up)
             return {0, "", "refused"};
@@ -67,7 +69,20 @@ public:
                         std::to_string(_d.pid) + R"(,"pairing":)" + _d.pairing + "}",
                     ""};
         if (method == "GET" && path == "/api/v1/decks")
-            return {200, R"({"decks":[{"serial":"A1B2C3","model":"Stream Deck + XL","real":true,"brightness":55}]})", ""};
+            return {200,
+                    R"({"decks":[{"serial":"A1B2C3","model":"Stream Deck + XL","real":true,"brightness":55,)"
+                    R"("pack":"magicwb","pack_setting":")" +
+                        _d.pack + R"("}]})",
+                    ""};
+        if (method == "GET" && path == "/api/v1/packs")
+            return {200, R"({"packs":[{"name":"magicwb","title":"MagicWB"},{"name":"os4","title":"OS4"}],)"
+                         R"("default":"magicwb"})",
+                    ""};
+        if (method == "PUT" && path == "/api/v1/decks/A1B2C3/pack")
+        {
+            _d.pack = body.find("os4") != std::string::npos ? "os4" : "scenario";
+            return {200, R"({"serial":"A1B2C3","pack":"os4","setting":")" + _d.pack + R"(","scenario_pack":""})", ""};
+        }
         return {200, "{}", ""};
     }
 
@@ -122,6 +137,37 @@ TEST_F(StreamDeckDialog_Test, ShowsTheDaemonAndChangesTheSettingsEveryPlaneSees)
     dialog.modeBox()->setCurrentIndex(dialog.modeBox()->findData("always"));
     emit dialog.modeBox()->activated(dialog.modeBox()->currentIndex());
     EXPECT_EQ(Supervisor::Instance().GetSettings().mode, Mode::Always);
+}
+
+TEST_F(StreamDeckDialog_Test, ADecksIconPackIsChosenHereAndKept)
+{
+    Supervisor::Instance().Step(0);
+    Supervisor::Instance().Step(200);
+    StreamDeckDialog dialog(nullptr);
+    // the daemon's packs come on a worker thread: the row is built again with them
+    ASSERT_TRUE(TestWait::For([&] {
+        QApplication::processEvents();
+        return dialog.decksTable()->rowCount() == 1 && dialog.packBox(0) && dialog.packBox(0)->count() == 3;
+    })) << "its scenario's, then the daemon's two packs";
+    QComboBox* pack = dialog.packBox(0);
+    EXPECT_EQ(pack->currentData().toString(), "scenario");
+    EXPECT_EQ(pack->itemData(2).toString(), "os4");
+
+    pack->setCurrentIndex(2);
+    emit pack->activated(2);
+    ASSERT_TRUE(TestWait::For([&] {
+        QApplication::processEvents();
+        return Supervisor::Instance().GetSettings().pack.count("A1B2C3") == 1;
+    })) << "set at the daemon, kept for that deck (the same verb every plane calls)";
+    EXPECT_EQ(_daemon.pack, "os4");
+    EXPECT_EQ(Supervisor::Instance().GetSettings().pack.at("A1B2C3"), "os4");
+
+    // set elsewhere (the studio): the box follows the daemon's report
+    _daemon.pack = "scenario";
+    Supervisor::Instance().Step(2200);
+    dialog.refresh();
+    EXPECT_EQ(dialog.packBox(0)->currentData().toString(), "scenario");
+    EXPECT_TRUE(Supervisor::Instance().GetSettings().pack.empty()) << "the deck's setting cleared";
 }
 
 TEST_F(StreamDeckDialog_Test, TheDaemonsPairingIsApprovedHere)

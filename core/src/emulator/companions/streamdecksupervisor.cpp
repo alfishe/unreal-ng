@@ -204,6 +204,7 @@ void Supervisor::Attach(const Host& host, const Settings& settings, bool thread)
         _appliedPid = 0;
         _daemonPort = settings.apiPort;
         _appliedBrightness.clear();
+        _appliedPack.clear();
         _health = Health{};
         _error.clear();
         _lastExit = StateNode();
@@ -367,6 +368,20 @@ bool Supervisor::Update(const StateNode& changes, std::string& error)
             }
             next.brightness[serial] = static_cast<int>(percent);
         }
+    if (const StateNode* pack = changes.find("pack"); pack && pack->isObject())
+        for (const auto& [serial, value] : pack->members)
+        {
+            const std::string name = StrOf(&value);
+            if (name.empty() || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != std::string::npos)
+            {
+                error = "pack: an icon pack name per deck, or scenario";
+                return false;
+            }
+            if (name == "scenario")
+                next.pack.erase(serial);
+            else
+                next.pack[serial] = name;
+        }
     bool changed = false;
     {
         std::lock_guard l(_mutex);
@@ -388,6 +403,31 @@ bool Supervisor::Update(const StateNode& changes, std::string& error)
         Notify();
     }
     return true;
+}
+
+void Supervisor::KeepAppliedPack(const std::string& serial, const std::string& pack)
+{
+    std::function<void(const Settings&)> listener;
+    Settings next;
+    bool changed = false;
+    {
+        std::lock_guard l(_mutex);
+        _appliedPack[serial] = pack;
+        next = _settings;
+        if (pack == "scenario")
+            next.pack.erase(serial);
+        else
+            next.pack[serial] = pack;
+        changed = next != _settings;
+        _settings = next;
+        listener = _listener;
+    }
+    if (changed)
+    {
+        if (listener)
+            listener(next);
+        Notify();
+    }
 }
 
 std::string Supervisor::BinaryPathLocked() const
@@ -573,6 +613,7 @@ void Supervisor::Step(int64_t now)
     // to the next start)
     const int port = (_child || _state == State::Adopted || _state == State::Foreign || _stopping) ? _daemonPort
                                                                                                  : _settings.apiPort;
+    bool fresh = false;  // _health was read in this step (else it may predate a PUT this thread made)
 
     // the decks on USB (matched, never opened)
     if (now >= _nextDeckCheck)
@@ -701,6 +742,7 @@ void Supervisor::Step(int64_t now)
             if (_state == State::Running && now - _healthyAt >= kStableMs)
                 _failures = 0;
             _health = std::move(h);
+            fresh = true;
         }
         else
         {
@@ -760,6 +802,7 @@ void Supervisor::Step(int64_t now)
                 _healthFails = 0;
                 _nextHealth = now + kHealthEveryMs;
                 _health = std::move(h);
+                fresh = true;
             }
             else
                 Launch(now);
@@ -773,7 +816,10 @@ void Supervisor::Step(int64_t now)
         if (_appliedPid != _health.pid || _appliedActivity != _settings.activity)
         {
             if (_appliedPid != _health.pid)
+            {
                 _appliedBrightness.clear();
+                _appliedPack.clear();
+            }
             puts.emplace_back("/api/v1/activity", "{\"look\":\"" + _settings.activity + "\"}");
             _appliedActivity = _settings.activity;
             _appliedPid = _health.pid;
@@ -791,12 +837,60 @@ void Supervisor::Step(int64_t now)
             puts.emplace_back("/api/v1/decks/" + serial + "/brightness",
                               "{\"value\":" + std::to_string(want->second) + "}");
         }
+        // the icon pack per deck: the kept one set again on a (re)started daemon and after a change here (the
+        // settings page, the `pack` verb); a change made at the daemon (the studio, sdctl, an agent) is kept for that
+        // deck. Changes at the daemon are read from a fresh health only. A daemon without the setting (older)
+        // reports none: left alone
+        bool learned = false;
+        for (const StateNode& deck : _health.decks.items)
+        {
+            const std::string serial = StrOf(deck.find("serial"));
+            const std::string reported = StrOf(deck.find("pack_setting"));
+            if (serial.empty() || reported.empty())
+                continue;
+            const auto want = _settings.pack.find(serial);
+            const std::string wanted = want != _settings.pack.end() ? want->second : std::string("scenario");
+            const auto applied = _appliedPack.find(serial);
+            if (applied == _appliedPack.end())
+            {
+                if (want != _settings.pack.end() && wanted != reported)
+                    puts.emplace_back("/api/v1/decks/" + serial + "/pack", "{\"pack\":\"" + wanted + "\"}");
+                _appliedPack[serial] = want != _settings.pack.end() ? wanted : reported;
+                continue;
+            }
+            if (fresh && reported != applied->second)
+            {
+                applied->second = reported;  // changed at the daemon
+                if (reported == wanted)
+                    continue;
+                if (reported == "scenario")
+                    _settings.pack.erase(serial);
+                else
+                    _settings.pack[serial] = reported;
+                learned = true;
+                continue;
+            }
+            if (wanted != applied->second)
+            {
+                applied->second = wanted;  // changed here
+                puts.emplace_back("/api/v1/decks/" + serial + "/pack", "{\"pack\":\"" + wanted + "\"}");
+            }
+        }
         if (!puts.empty())
         {
             l.unlock();
             for (const auto& [path, body] : puts)
                 (void)http->Call(port, "PUT", path, body, 1000);
             l.lock();
+        }
+        if (learned)
+        {
+            const auto listener = _listener;
+            const Settings next = _settings;
+            l.unlock();
+            if (listener)
+                listener(next);  // kept (unreal-qt's settings)
+            Notify();
         }
     }
 }
@@ -851,6 +945,10 @@ StateNode Supervisor::Status() const
     for (const auto& [serial, value] : _settings.brightness)
         brightness[serial] = value;
     s["brightness"] = brightness;
+    StateNode pack = StateNode::Object();
+    for (const auto& [serial, value] : _settings.pack)
+        pack[serial] = value;
+    s["pack"] = pack;
     s["daemon"] = _health.ok ? _health.body : StateNode();
     s["decks"] = _health.ok ? _health.decks : StateNode::Array();
     return s;
@@ -875,6 +973,18 @@ StateNode Supervisor::Summary() const
             if (const StateNode* value = p->find(key))
                 pairing[key] = *value;
     s["pairing"] = pairing;
+    // the icon pack setting of each deck as the daemon reports it (a pack, or scenario): set here, in the studio, by
+    // an agent
+    StateNode pack = StateNode::Object();
+    if (const StateNode* decks = up ? status.find("decks") : nullptr)
+        for (const StateNode& deck : decks->items)
+        {
+            const StateNode* serial = deck.find("serial");
+            const StateNode* setting = deck.find("pack_setting");
+            if (serial && serial->kind == StateNode::Kind::String && setting)
+                pack[serial->s] = *setting;
+        }
+    s["pack"] = pack;
     return s;
 }
 

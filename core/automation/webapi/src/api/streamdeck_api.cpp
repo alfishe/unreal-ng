@@ -1,11 +1,11 @@
 // Stream Deck API: the daemon's supervision by unreal-qt (companion::streamdeck::Supervisor; Stream Deck integration
-// daemon.md §7), its settings, its pairing and the brightness of its decks over HTTP. Every route is one verb of
-// companion::streamdeck::Call, the code the CLI, MCP, Lua and Python run too: the args come from the query and the
-// JSON body, the reply is the verb's body with its status. The WebSocket `call` of a route runs this same handler;
+// daemon.md §7), its settings, its pairing, the brightness and icon pack of its decks over HTTP. Every route is one
+// verb of companion::streamdeck::Call, the code the CLI, MCP, Lua and Python run too: the args come from the query and
+// the JSON body, the reply is the verb's body with its status. The WebSocket `call` of a route runs this same handler;
 // the topic `streamdeck.status` pushes the changes.
 //
-// The verbs that call the daemon (pairing, pair, pair_cancel, brightness) block up to 1.5 s on its loopback port:
-// they run off the I/O thread.
+// The verbs that call the daemon (pairing, pair, pair_cancel, brightness, packs, pack) block up to 1.5 s (setting a
+// pack: 3 s, until the deck shows it) on its loopback port: they run off the I/O thread.
 
 #include "../emulator_api.h"
 
@@ -57,7 +57,8 @@ bool ArgsOf(const HttpRequestPtr& req, StateNode& args)
 
 bool Blocking(const std::string& verb)
 {
-    return verb == "pairing" || verb == "pair" || verb == "pair_cancel" || verb == "brightness";
+    return verb == "pairing" || verb == "pair" || verb == "pair_cancel" || verb == "brightness" || verb == "packs" ||
+           verb == "pack";
 }
 
 void Run(const HttpRequestPtr& req, Callback callback, std::string verb,
@@ -104,12 +105,12 @@ void EmulatorAPI::getStreamDeck(const HttpRequestPtr& req, SurfaceCallback&& cal
 void EmulatorAPI::getStreamDeckVerb(const HttpRequestPtr& req, SurfaceCallback&& callback,
                                     const std::string& verb) const
 {
-    if (verb == "status" || verb == "settings" || verb == "udev")
+    if (verb == "status" || verb == "settings" || verb == "udev" || verb == "packs")
         Run(req, std::move(callback), verb);
     else if (verb == "pair" || verb == "pairing")
         Run(req, std::move(callback), "pairing");
     else
-        WrongMethod(callback, "GET", verb, "GET takes status, settings, pair, udev");
+        WrongMethod(callback, "GET", verb, "GET takes status, settings, pair, packs, udev");
 }
 
 void EmulatorAPI::postStreamDeckVerb(const HttpRequestPtr& req, SurfaceCallback&& callback,
@@ -149,6 +150,28 @@ void EmulatorAPI::putStreamDeckBrightness(const HttpRequestPtr& req, SurfaceCall
                                           const std::string& deck) const
 {
     Run(req, std::move(callback), "brightness", {{"deck", deck}});
+}
+
+void EmulatorAPI::getStreamDeckPack(const HttpRequestPtr& req, SurfaceCallback&& callback,
+                                    const std::string& deck) const
+{
+    Run(req, std::move(callback), "pack", {{"deck", deck}});
+}
+
+void EmulatorAPI::putStreamDeckPack(const HttpRequestPtr& req, SurfaceCallback&& callback,
+                                    const std::string& deck) const
+{
+    StateNode args;
+    if (ArgsOf(req, args) && !args.find("pack"))
+    {
+        Json::Value body;
+        body["ok"] = false;
+        body["error"] = "Bad Request";
+        body["message"] = "give 'pack' (a pack of GET /api/v1/streamdeck/packs, or scenario)";
+        Respond(callback, 400, body);
+        return;
+    }
+    Run(req, std::move(callback), "pack", {{"deck", deck}});
 }
 
 } // namespace v1

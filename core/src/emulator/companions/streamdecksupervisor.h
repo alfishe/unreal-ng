@@ -60,11 +60,14 @@ struct Settings
     int viewersPort = 37050;         ///< the device wire (Stream Deck Studio windows)
     std::string binary;              ///< "" = the one beside the emulator; UNREAL_STREAMDECK_BIN wins over both
     std::map<std::string, int> brightness;  ///< per deck serial: set again when the daemon (re)starts
+    /// per deck serial: its icon pack (absent = its scenario's); set again when the daemon (re)starts, and taken
+    /// from the daemon when it changes there (Stream Deck Studio's toolbar, PUT /api/v1/decks/{serial}/pack)
+    std::map<std::string, std::string> pack;
 
     bool operator==(const Settings& o) const
     {
         return mode == o.mode && activity == o.activity && apiPort == o.apiPort && viewersPort == o.viewersPort &&
-               binary == o.binary && brightness == o.brightness;
+               binary == o.binary && brightness == o.brightness && pack == o.pack;
     }
     bool operator!=(const Settings& o) const { return !(*this == o); }
 };
@@ -164,18 +167,21 @@ public:
     void Restart();
     /// Changes the given fields; false with `error` for a bad value (nothing changed then)
     bool Update(const StateNode& changes, std::string& error);
+    /// A deck's icon pack the daemon has just taken (the `pack` verb set it there): kept for that deck (scenario:
+    /// none kept) and known as applied, so the next step neither sends it again nor takes it for a change there
+    void KeepAppliedPack(const std::string& serial, const std::string& pack);
     Settings GetSettings() const;
     /// Called after the settings changed (unreal-qt saves them), on the caller's thread, no lock held
     void SetSettingsListener(std::function<void(const Settings&)> listener);
     /// endregion </Commands>
 
     /// {attached, state, mode, activity, api_port, viewers_port, binary, own, pid, deck_attached, restarts, failures,
-    /// restart_in_ms, last_exit, error, log, daemon: the daemon's /health (version, decks, viewers, parents, pairing,
+    /// restart_in_ms, last_exit, error, log, brightness, pack, daemon: the daemon's /health (version, decks, viewers, parents, pairing,
     /// surface, host), decks: its /decks}
     StateNode Status() const;
     /// What the WebSocket topic `streamdeck.status` pushes: the fields of Status() that change with events, not with
     /// time (state, mode, own, pid, version, decks, viewers, deck_attached, pairing, surface, activity, error,
-    /// restarts)
+    /// restarts, pack: {serial: the deck's pack setting as the daemon reports it})
     StateNode Summary() const;
 
     /// A call to the running daemon's automation (forwarded verbs: pair, brightness); 503 when none answers. Blocks
@@ -241,6 +247,7 @@ private:
     int _daemonPort = 37053;              ///< the automation port of the daemon we talk to (ours or adopted)
     std::string _appliedActivity;
     std::map<std::string, int> _appliedBrightness;
+    std::map<std::string, std::string> _appliedPack;  ///< per deck: the pack setting the daemon has (applied or seen)
     Health _health;
     std::string _error;
     StateNode _lastExit;

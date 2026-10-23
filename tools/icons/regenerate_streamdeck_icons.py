@@ -19,7 +19,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
-ORDER = ['magicwb', 'newicons', 'glowicons', 'workbench13', 'line', 'duotone', 'banner', 'keycap', 'os4']
+ORDER = ['magicwb', 'newicons', 'glowicons', 'workbench13', 'duotone', 'banner', 'keycap', 'os4']
 
 
 def run(*args):

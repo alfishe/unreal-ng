@@ -90,11 +90,13 @@ What the studio does with each answer:
 
 ## 4. The window
 
-- **Toolbar**: Deck (role or model), Brightness, Bezel mask, Visible area (the part of each key visible head-on,
+- **Toolbar**: Deck (role or model), Brightness, Pack, Bezel mask, Visible area (the part of each key visible head-on,
   measured on the + XL), Firmware quirks, Rec, Scenario editor.
 - **Brightness**: the brightness of the deck the window shows (the real deck for a mirror, the own deck otherwise),
   set through the daemon (`PUT /api/v1/decks/{serial}/brightness` on 37053). Off while the window is not joined or
   the daemon has no automation port; it follows changes made elsewhere (a scenario's brightness action, an agent).
+- **Pack**: the icon pack the shown deck draws its glyph faces from (`PUT /api/v1/decks/{serial}/pack`; "the
+  scenario's" = its `settings.pack`, else magicwb); the keys change at once. Read when the window joins a deck.
 - **The deck**: click = press, wheel over a dial = turn, drag around a dial = turn, a short click on a dial = press
   and indicator reset, hold = long press, drag on the strip = swipe. Cyan glows are this window's input, blue-violet
   ones the real deck's.
@@ -118,7 +120,8 @@ Opened with the toolbar button or Cmd+E, in its own window or docked beside the 
 |:--|:--|
 | Tree | The whole scenario; included subtrees in italics, read-only |
 | Canvas | The shown menu on the model's panel, faces drawn by the runtime's renderer; drop palette items on keys, drag keys to move / swap / into a menu, double-click a menu to enter, the back key to go up, right-click for import / export / links |
-| Inspector | A form for the selected node or the scenario, and its JSON (Apply = one undo step) |
+| Inspector | A form for the selected node or the scenario, and its JSON (Apply = one undo step); a key's **Glyph** and **Glyph when on** (`face.glyph`, `face_on.glyph`: the ids of `glyphs.json`, typed or picked), a value face's **Value** (`face.value.readout`: the core's readouts, typed or picked; empty removes the value), **Format**, **Warn at**, **Alert at** ([scenarios.md §4.2](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#42-value-faces); the canvas shows the template with `--`), the scenario's **Icon pack** (`settings.pack`) |
+| Pack (toolbar) | The icon pack the canvas previews the glyph faces in (the preview only; "the scenario's" = `settings.pack`) |
 | Palette | Generic presets (menus, HTTP, multi, toggle, delay, shell, open, keys, navigation, brightness) and the user's own from `<config>/unreal-ng/streamdeck/presets/*.json` (`{"presets":[{category,name,description,node}]}`; `<config>` is `~/.config` on Linux, `~/Library/Preferences` on macOS, `%LOCALAPPDATA%` on Windows) |
 | Issues / Runtime | Validation (errors block Run) and the run's output |
 
@@ -149,6 +152,7 @@ WebAPI on `http://127.0.0.1:37052/api/v1/...`, MCP on `/mcp` (Automation > Copy 
 | `GET /api/v1/device`, `GET /api/v1/models`, `PUT /api/v1/device/model` | The deck; the models; switch the model (an own deck of it; with `--listen` the deck's model) |
 | `GET /api/v1/decks` | The daemon's logical decks (forwarded: serial, model, real, connected, scenario, brightness, viewers) |
 | `GET` / `PUT /api/v1/deck/brightness` | The shown deck's brightness through the daemon (`{"value": 0..100}`); the toolbar follows |
+| `GET` / `PUT /api/v1/deck/pack` | The shown deck's icon pack setting through the daemon (`{"pack": "os4"}`, `scenario`); the toolbar follows |
 | `GET` / `POST /api/v1/pair` | The daemon's pairing with unreal-ng (forwarded); `POST` asks for one, as Deck > Pair with UnrealNG |
 | `GET /api/v1/connection` | Daemon address, state (`connecting`, `joining`, `waiting`, `joined`, `failed`, `stopped`), role, deck serial, model, real or own, deck connected, target, error |
 | `PUT /api/v1/connection` | `{"role":"mirror","deck":"first"}` or `{"role":"own","model":"neo"}` |
@@ -211,7 +215,7 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
   `--listen` server (`Hello`, `SetModel`, `GetFeature`) and the daemon control against a stand-in automation
   (health, decks, brightness and scenario per deck, errors, the started process), and the scenario editor's widgets
   (`editor_test.cpp`: copy and paste of an included node, the inspector's action kind and model boxes against the
-  engine's tables, the run file without include marks, the automation examples).
+  engine's tables, the run file without include marks, the automation examples, the value face fields).
 
 ## 11. Source map
 
@@ -244,5 +248,5 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 | A single daemon per session (lock), adopting one started elsewhere, `--parent` instead of `--with-parent` | the daemon's supervision rules (daemon.md §7, §8; SD7) |
 | A deck list in the window (the Deck box offers "the first real deck" and own models) | several real decks (later) |
 | Palette from the host's catalogue, action forms, contexts, activity | done 2026-10-20: palette presets per catalogue action, the action picker (shipped or live catalogue), State / Context / target / activity fields, v2 save ([scenario-editor/02-ux-design.md](scenario-editor/02-ux-design.md)); forms per param: SD4 |
-| Open shipped example scenarios | `data/streamdeck/scenarios/`: after the icon set and the use-case document (owner, 2026-10-20) |
+| Open shipped example scenarios | `data/streamdeck/scenarios/`: the projects of the scenario pipeline ([pipeline.md](pipeline.md); the sample `sample.deck.yaml`); the product scenarios after the owner's review |
 | Windows and Linux builds checked | SD8 |

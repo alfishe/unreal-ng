@@ -13,9 +13,11 @@
 #include "sdb/actions.h"
 #include "sdb/catalogue.h"
 #include "sdb/datadir.h"
+#include "sdb/iconpacks.h"
 #include "sdb/runtime.h"
 #include "sdb/scenario.h"
 #include "sdb/scenarioio.h"
+#include "sdb/scenariorender.h"
 
 using namespace sdb;
 using namespace sdb::scn;
@@ -591,6 +593,145 @@ void TestScenarioV2()
         // the shipped catalogue is one too
         auto shipped = cat::Load(root / "streamdeck" / "catalogue.json", &err);
         CHECK(shipped && shipped->actions.size() > 40 && shipped->Find("run.pause_toggle"));
+
+        // the scenario pipeline's sample (tools/deckflow.py: data/streamdeck/scenarios/sample.deck.yaml with the
+        // shared menu it includes): resolves, v2 without issues, clean against the shipped catalogue, its faces
+        // there; a label over a picture is drawn (a slot number on a quick-save face)
+        auto sample = io::LoadResolved(root / "streamdeck" / "scenarios" / "sample.deck.yaml", &err);
+        CHECK(sample.has_value());
+        if (sample)
+        {
+            issues.clear();
+            auto s = ParseDoc(*sample, issues);
+            for (const auto& i : issues)
+                std::printf("    sample %s %s: %s\n", i.error ? "error" : "warning", i.node.c_str(),
+                            i.message.c_str());
+            CHECK(s && s->version == 2 && issues.empty());
+            if (s && shipped)
+            {
+                const auto w = cat::Check(*s, *shipped);
+                for (const auto& i : w)
+                    std::printf("    sample catalogue %s: %s\n", i.node.c_str(), i.message.c_str());
+                CHECK(w.empty());
+                CHECK(Find(s->root, "speed.x4") != nullptr);  // the include's ids carry its id
+            }
+            std::function<void(const json&)> faces = [&](const json& j) {
+                if (j.is_string() && j.get<std::string>().rfind("$data/", 0) == 0)
+                    CHECK(fs::exists(data::Resolve(j.get<std::string>())));
+                else if (j.is_object() || j.is_array())
+                    for (const auto& x : j)
+                        faces(x);
+            };
+            faces(*sample);
+            const Node* qsave = s ? Find(s->root, "qsave") : nullptr;
+            CHECK(qsave && !qsave->face.glyph.empty() && qsave->face.image.empty() && qsave->face.label == "S1");
+            if (qsave)
+            {
+                Face plain = qsave->face;
+                plain.label.clear();
+                const Rgb a = RenderFace(qsave->face, "", false, false, 8, 112), b = RenderFace(plain, "", false,
+                                                                                                false, 8, 112);
+                int differ = 0;
+                for (int y = 0; y < 112; ++y)
+                    for (int x = 0; x < 112; ++x)
+                        differ += a.At(x, y)[0] != b.At(x, y)[0] ? 1 : 0;
+                CHECK(differ > 200);
+                int text = 0;  // the label: light pixels in the low band, where the full-size picture has none
+                for (int y = 112 - 8 - 22; y < 112 - 8; ++y)
+                    for (int x = 8; x < 104; ++x)
+                        text += a.At(x, y)[0] > 200 && a.At(x, y)[1] > 200 ? 1 : 0;
+                CHECK(text > 20);
+            }
+        }
+
+        // Glyph faces (face.glyph) from the icon packs: the pack decides the look, the fallback chain ends in
+        // magicwb, a glyph no pack has leaves the label (or the title) alone; decoded once per (pack, glyph, size)
+        packs::ClearCache();
+        const auto list = packs::List();
+        CHECK(list.size() >= 8);
+        CHECK(std::any_of(list.begin(), list.end(), [](const packs::Pack& p) { return p.name == "duotone"; }));
+        const json lj = packs::ListJson();
+        CHECK(lj.value("default", "") == "magicwb" && lj["packs"].size() == list.size());
+        CHECK(packs::Serving("duotone", "run.pause") == "duotone");
+        CHECK(packs::Serving("nosuchpack", "run.pause") == "magicwb");  // an unknown pack: the last fallback
+        CHECK(packs::Serving("duotone", "no.such.glyph").empty() && packs::Serving("", "../x").empty());
+        const auto g1 = packs::Glyph("magicwb", "run.pause", 96), g2 = packs::Glyph("magicwb", "run.pause", 96);
+        CHECK(g1 && g1 == g2 && g1->w == 96 && g1->h == 96);  // cached: the same picture
+        {
+            // pixel art by whole factors: 32 x 32 at 96 px = 3 x 3 blocks of one colour
+            bool blocks = g1 != nullptr;
+            for (int y = 0; blocks && y < 96; ++y)
+                for (int x = 0; blocks && x < 96; ++x)
+                    blocks = std::equal(g1->At(x, y), g1->At(x, y) + 3, g1->At(x / 3 * 3, y / 3 * 3));
+            CHECK(blocks);
+        }
+        Face gf;
+        gf.glyph = "run.pause";
+        auto same = [](const Rgb& a, const Rgb& b) { return a.w == b.w && a.h == b.h && a.px == b.px; };
+        const Rgb wb = RenderFace(gf, "Pause", false, false, 8, 112, {}, "magicwb");
+        const Rgb duo = RenderFace(gf, "Pause", false, false, 8, 112, {}, "duotone");
+        CHECK(!same(wb, duo));                                                      // the pack is the look
+        CHECK(same(wb, RenderFace(gf, "Pause", false, false, 8, 112, {}, "")));  // default magicwb
+        CHECK(same(wb, RenderFace(gf, "Pause", false, false, 8, 112, {}, "nosuchpack")));
+        {
+            const auto bg = packs::Background("magicwb", "run.pause");
+            CHECK(wb.At(0, 0)[0] == bg.r && wb.At(0, 0)[1] == bg.g && wb.At(0, 0)[2] == bg.b);
+        }
+        Face unknown;
+        unknown.glyph = "no.such.glyph";
+        Face titleOnly;
+        CHECK(same(RenderFace(unknown, "Pause", false, false, 8, 112, {}, "duotone"),
+                   RenderFace(titleOnly, "Pause", false, false, 8, 112)));  // the title alone
+        {
+            json doc{{"name", "g"},
+                     {"model", "plusxl"},
+                     {"settings", {{"pack", "duotone"}}},
+                     {"root",
+                      {{"id", "home"},
+                       {"type", "menu"},
+                       {"items",
+                        {{{"id", "p"},
+                          {"type", "action"},
+                          {"at", {0, 0}},
+                          {"do", {{"kind", "action"}, {"id", "run.pause_toggle"}}},
+                          {"face", {{"glyph", "run.pause"}, {"label", "P"}}},
+                          {"face_on", {{"glyph", "run.play"}}},
+                          {"state", "run.state.paused"}},
+                         {{"id", "q"},
+                          {"type", "action"},
+                          {"at", {0, 1}},
+                          {"do", {{"kind", "action"}, {"id", "run.pause_toggle"}}},
+                          {"face", {{"glyph", "no.such.glyph"}}}}}}}}};
+            issues.clear();
+            auto gs = Parse(doc, issues);
+            CHECK(gs && gs->settings.pack == "duotone");
+            CHECK(gs && Find(gs->root, "p")->face.glyph == "run.pause" && Find(gs->root, "p")->faceOn &&
+                  Find(gs->root, "p")->faceOn->glyph == "run.play");
+            CHECK(std::any_of(issues.begin(), issues.end(), [](const Issue& i) {
+                return !i.error && i.node == "q" && i.message.find("in no icon pack") != std::string::npos;
+            }));
+            if (gs)
+            {
+                const json back = ToJson(*gs);  // written back as read
+                CHECK(back["settings"].value("pack", "") == "duotone");
+                CHECK(back["root"]["items"][0]["face"].value("glyph", "") == "run.pause" &&
+                      back["root"]["items"][0]["face_on"].value("glyph", "") == "run.play");
+            }
+            json badPack = doc;
+            badPack["settings"]["pack"] = "Not A Pack";
+            issues.clear();
+            CHECK(!Parse(badPack, issues));
+            json missingPack = doc;
+            missingPack["settings"]["pack"] = "nosuchpack";
+            issues.clear();
+            CHECK(Parse(missingPack, issues) && std::any_of(issues.begin(), issues.end(), [](const Issue& i) {
+                      return !i.error && i.message.find("settings.pack 'nosuchpack'") != std::string::npos;
+                  }));
+            json badGlyph = doc;
+            badGlyph["root"]["items"][1]["face"]["glyph"] = "../etc/passwd";
+            issues.clear();
+            CHECK(!Parse(badGlyph, issues));
+        }
         data::SetRoot({});
     }
 }

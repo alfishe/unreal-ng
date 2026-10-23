@@ -505,6 +505,8 @@ The Stream Deck daemon as unreal-qt supervises it
 | `streamdeck pairing`, `pair`, `pair_cancel` | The pairing's state; ask for one (approve it at the GUI); cancel it |
 | `streamdeck revoke [id]` | Revoke the daemon's companion |
 | `streamdeck brightness [deck] [value]` | A deck's brightness (`streamdeck brightness 40`: the first deck) |
+| `streamdeck packs` | The daemon's icon packs |
+| `streamdeck pack [deck] [name\|scenario]` | A deck's icon pack (`streamdeck pack os4`: the first deck; `scenario`: its scenario's again) |
 | `streamdeck udev` | The Linux udev rule |
 
 Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), read-only:
@@ -524,7 +526,9 @@ Stream Deck daemon: running (mode deck, activity flash)
   decks on USB 1, restarts 0
   version 1.0, decks 1, viewers 0, surface connected
   pairing paired, paired yes, companion c-5f2a91e0b7c4
-  deck A1B2C3 Stream Deck + XL brightness 70
+  deck A1B2C3 Stream Deck + XL brightness 70 pack magicwb (setting scenario)
+> streamdeck pack os4
+Deck A1B2C3: icon pack os4 (setting os4, its scenario's -)
 ```
 
 ### Analysis, Capture & Assembly Commands

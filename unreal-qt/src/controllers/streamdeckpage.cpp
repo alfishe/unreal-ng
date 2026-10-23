@@ -1,5 +1,6 @@
 #include "streamdeckpage.h"
 
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
@@ -144,6 +145,11 @@ StreamDeckSupervision::StreamDeckSupervision(QObject* parent, bool attach) : QOb
         store.beginGroup(QStringLiteral("brightness"));
         for (const QString& serial : store.childKeys())
             s.brightness[serial.toStdString()] = std::clamp(store.value(serial).toInt(), 0, 100);
+        store.endGroup();
+        store.beginGroup(QStringLiteral("pack"));  // the icon pack per deck (its scenario's when absent)
+        for (const QString& serial : store.childKeys())
+            if (const QString pack = store.value(serial).toString(); !pack.isEmpty())
+                s.pack[serial.toStdString()] = pack.toStdString();
     }
     // UNREAL_STREAMDECK_SUPERVISOR=off: this run starts no daemon whatever the setting (test harnesses, a second
     // unreal-qt); the setting itself is kept
@@ -172,6 +178,11 @@ StreamDeckSupervision::StreamDeckSupervision(QObject* parent, bool attach) : QOb
         store.beginGroup(QStringLiteral("brightness"));
         for (const auto& [serial, value] : next.brightness)
             store.setValue(QString::fromStdString(serial), value);
+        store.endGroup();
+        store.remove(QStringLiteral("pack"));
+        store.beginGroup(QStringLiteral("pack"));
+        for (const auto& [serial, value] : next.pack)
+            store.setValue(QString::fromStdString(serial), QString::fromStdString(value));
     });
     Supervisor::Instance().Attach(host, s);
     _attached = true;
@@ -254,8 +265,8 @@ StreamDeckDialog::StreamDeckDialog(CompanionController* companions, QWidget* par
     // Decks
     auto* decksBox = new QGroupBox(tr("Decks"), this);
     auto* decksLayout = new QVBoxLayout(decksBox);
-    _decks = new QTableWidget(0, 4, decksBox);
-    _decks->setHorizontalHeaderLabels({tr("Deck"), tr("Model"), tr("Kind"), tr("Brightness")});
+    _decks = new QTableWidget(0, 5, decksBox);
+    _decks->setHorizontalHeaderLabels({tr("Deck"), tr("Model"), tr("Kind"), tr("Icon pack"), tr("Brightness")});
     _decks->horizontalHeader()->setStretchLastSection(true);
     _decks->verticalHeader()->hide();
     _decks->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -348,6 +359,45 @@ void StreamDeckDialog::callAsync(const QString& verb, const QVariantMap& args)
     }).detach();
 }
 
+QComboBox* StreamDeckDialog::packBox(int row) const
+{
+    return qobject_cast<QComboBox*>(_decks->cellWidget(row, 3));
+}
+
+void StreamDeckDialog::loadPacks(const QString& pid)
+{
+    _packsOf = pid;
+    QPointer<StreamDeckDialog> self(this);
+    std::thread([self, pid] {
+        const companion::streamdeck::Reply reply = companion::streamdeck::Call("packs", StateNode::Object());
+        QList<QPair<QString, QString>> packs;
+        if (const StateNode* list = reply.Ok() ? reply.body.find("packs") : nullptr)
+            for (const StateNode& pack : list->items)
+                if (const QString name = Text(pack.find("name")); !name.isEmpty())
+                    packs.append({name, Text(pack.find("title"))});
+        QMetaObject::invokeMethod(qApp, [self, pid, packs] {
+            if (!self || self->_packsOf != pid)
+                return;
+            self->_packs = packs;
+            self->_decksShown.clear();  // the rows again, with the packs
+            self->refresh();
+        });
+    }).detach();
+}
+
+void StreamDeckDialog::fillPackBox(QComboBox* box, const QString& setting) const
+{
+    box->addItem(tr("Its scenario's"), QStringLiteral("scenario"));
+    bool listed = setting.isEmpty() || setting == QLatin1String("scenario");
+    for (const auto& [name, title] : _packs)
+    {
+        box->addItem(title.isEmpty() || title == name ? name : QStringLiteral("%1 (%2)").arg(title, name), name);
+        listed = listed || name == setting;
+    }
+    if (!listed)
+        box->addItem(setting, setting);  // set elsewhere, not among the packs the daemon listed
+}
+
 void StreamDeckDialog::approve()
 {
     if (_pendingPairing.isEmpty())
@@ -428,7 +478,14 @@ void StreamDeckDialog::refresh()
     _approve->setEnabled(!_pendingPairing.isEmpty());
     _revoke->setEnabled(known.has_value());
 
-    // decks: one row each, a brightness slider
+    // decks: one row each, an icon pack box, a brightness slider
+    if (up && Text(status.find("pid")) != _packsOf)
+        loadPacks(Text(status.find("pid")));
+    else if (!up && !_packsOf.isEmpty())
+    {
+        _packsOf.clear();
+        _packs.clear();
+    }
     const StateNode* decks = status.find("decks");
     QStringList serials;
     if (decks != nullptr)
@@ -448,6 +505,17 @@ void StreamDeckDialog::refresh()
                 _decks->setItem(row, 0, new QTableWidgetItem(serial));
                 _decks->setItem(row, 1, new QTableWidgetItem(Text(deck.find("model"))));
                 _decks->setItem(row, 2, new QTableWidgetItem(Flag(deck.find("real")) ? tr("USB") : tr("own (studio)")));
+                auto* pack = new QComboBox(_decks);
+                pack->setObjectName(serial);
+                pack->setToolTip(tr("The icon pack the deck draws its glyph keys from; kept for this deck and set "
+                                    "again when the daemon starts"));
+                fillPackBox(pack, Text(deck.find("pack_setting")));
+                pack->setEnabled(deck.find("pack_setting") != nullptr);  // an older daemon has no packs
+                connect(pack, &QComboBox::activated, this, [this, pack] {
+                    callAsync(QStringLiteral("pack"), {{QStringLiteral("deck"), pack->objectName()},
+                                                       {QStringLiteral("pack"), pack->currentData().toString()}});
+                });
+                _decks->setCellWidget(row, 3, pack);
                 auto* slider = new QSlider(Qt::Horizontal, _decks);
                 slider->setRange(0, 100);
                 slider->setObjectName(serial);
@@ -455,14 +523,30 @@ void StreamDeckDialog::refresh()
                     callAsync(QStringLiteral("brightness"), {{QStringLiteral("deck"), slider->objectName()},
                                                              {QStringLiteral("value"), slider->value()}});
                 });
-                _decks->setCellWidget(row, 3, slider);
+                _decks->setCellWidget(row, 4, slider);
             }
     }
     if (decks != nullptr)
         for (int row = 0; row < _decks->rowCount() && row < static_cast<int>(decks->items.size()); ++row)
-            if (auto* slider = qobject_cast<QSlider*>(_decks->cellWidget(row, 3)); slider && !slider->isSliderDown())
+        {
+            const StateNode& deck = decks->items[static_cast<size_t>(row)];
+            if (auto* slider = qobject_cast<QSlider*>(_decks->cellWidget(row, 4)); slider && !slider->isSliderDown())
             {
                 const QSignalBlocker block(slider);
-                slider->setValue(Text(decks->items[static_cast<size_t>(row)].find("brightness")).toInt());
+                slider->setValue(Text(deck.find("brightness")).toInt());
             }
+            // the deck's setting as the daemon reports it (changed here, in the studio, by an agent)
+            if (QComboBox* pack = packBox(row); pack && !pack->view()->isVisible())
+            {
+                const QString setting = Text(deck.find("pack_setting"));
+                const QSignalBlocker block(pack);
+                int at = pack->findData(setting.isEmpty() ? QStringLiteral("scenario") : setting);
+                if (at < 0)
+                {
+                    pack->addItem(setting, setting);
+                    at = pack->count() - 1;
+                }
+                pack->setCurrentIndex(at);
+            }
+        }
 }

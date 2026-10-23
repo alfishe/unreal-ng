@@ -3995,26 +3995,29 @@ but `status` and `udev`.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `streamdeck status` | | The supervisor and the daemon: `state` (`detached`, `off`, `waiting`, `starting`, `running`, `adopted`, `foreign`, `backoff`, `failed`, `stopped`), `mode`, `activity`, `api_port`, `viewers_port`, `binary`, `own`, `pid`, `deck_attached`, `restarts`, `failures`, `restart_in_ms` / `retry_in_ms`, `last_exit`, `error`, `log`, `brightness`; `daemon` (its `/api/v1/health`: `version`, `decks`, `viewers`, `parents`, `host`, `surface`, `pairing`), `decks` (its `/api/v1/decks`) | ✅ Implemented |
+| `streamdeck status` | | The supervisor and the daemon: `state` (`detached`, `off`, `waiting`, `starting`, `running`, `adopted`, `foreign`, `backoff`, `failed`, `stopped`), `mode`, `activity`, `api_port`, `viewers_port`, `binary`, `own`, `pid`, `deck_attached`, `restarts`, `failures`, `restart_in_ms` / `retry_in_ms`, `last_exit`, `error`, `log`, `brightness`, `pack`; `daemon` (its `/api/v1/health`: `version`, `decks`, `viewers`, `parents`, `host`, `surface`, `pairing`), `decks` (its `/api/v1/decks`) | ✅ Implemented |
 | `streamdeck start` / `stop` / `restart` | | Start it (or adopt the one running), also in mode `off`; stop it (`POST /api/v1/quit`, terminated after 2 s; not started again until `start`); both | ✅ Implemented |
 | `streamdeck settings` | `[mode=off\|deck\|always] [activity=off\|flash\|line] [api_port=] [viewers_port=] [binary=]` | Read, or change and read. Kept in unreal-qt's settings; new ports or a new binary restart a daemon of ours. `activity` is Q-3 (default `flash`) | ✅ Implemented |
 | `streamdeck pairing` | | The daemon's pairing: `state` (`idle`, `requesting`, `pending` with `code`, `paired`, `denied`, `expired`, `refused` with `error`, `unreachable`), `paired`, `companion_id` | ✅ Implemented |
 | `streamdeck pair` / `pair_cancel` | | The daemon asks unreal-ng for a pairing (one companion for every deck); the user approves it at the GUI (the prompt, or Tools > Stream Deck...), never a plane. `not_running` (409) without a daemon | ✅ Implemented |
 | `streamdeck revoke` | `[id]` | Revoke the daemon's companion (default its own, from its companion file): its token stops at once, the deck says `COMPANION REVOKED - TOUCH TO PAIR` | ✅ Implemented |
 | `streamdeck brightness` | `[deck] [value]` | A deck's brightness 0-100 (`deck` its serial, default `first`): read, or set and keep for that serial (set again when the daemon restarts) | ✅ Implemented |
+| `streamdeck packs` | | The daemon's icon packs (its `GET /api/v1/packs`): `packs` (`name`, `title`, `style`, `source`, `fallback`, `background`), `default` (drawn when neither the deck nor its scenario names one) | ✅ Implemented |
+| `streamdeck pack` | `[deck] [pack]` | A deck's icon pack (`deck` its serial, default `first`): read (`deck`: `serial`, `pack` drawn, `setting`, `scenario_pack`), or set to a pack of `packs` or `scenario` (its scenario's `settings.pack` again) and keep for that serial (unreal-qt's settings `StreamDeck/pack`; set again when the daemon restarts). A pack set at the daemon (Stream Deck Studio's toolbar, `sdctl pack`) is kept the same way | ✅ Implemented |
 | `streamdeck udev` | | The Linux udev rule (`70-unreal-streamdeck.rules`) and how to install it: an AppImage cannot | ✅ Implemented |
 
 | Surface | Status / settings | Start / stop | Pairing / decks |
 | :--- | :--- | :--- | :--- |
-| CLI | `streamdeck`, `streamdeck settings mode=always` | `streamdeck stop` | `streamdeck pair`, `streamdeck brightness 40` |
-| WebAPI | `GET /api/v1/streamdeck`, `GET` / `PUT /api/v1/streamdeck/settings` | `POST /api/v1/streamdeck/start` \| `stop` \| `restart` | `GET` / `POST` / `DELETE /api/v1/streamdeck/pair`, `POST /api/v1/streamdeck/revoke`, `GET` / `PUT /api/v1/streamdeck/decks/{deck}/brightness`, `GET /api/v1/streamdeck/udev` |
-| WebSocket | each route as a `call`; the topic `streamdeck.status` pushes the changes (state, pid, decks, viewers, pairing) | the same `call`s | the same `call`s |
-| MCP | `streamdeck` action `status`, `settings` (`mode`, `activity`, ...) | `streamdeck` action `start`, `stop`, `restart` | `streamdeck` action `pairing`, `pair`, `pair_cancel`, `revoke`, `brightness` (`deck`, `value`), `udev` |
-| Python | `emu.streamdeck("status")`, `emu.streamdeck("settings", mode="always")` | `emu.streamdeck("stop")` | `emu.streamdeck("pair")`, `emu.streamdeck("brightness", value=40)` |
-| Lua | `streamdeck("status")`, `streamdeck("settings", {mode = "always"})` | `streamdeck("stop")` | `streamdeck("pair")`, `streamdeck("brightness", {value = 40})` |
+| CLI | `streamdeck`, `streamdeck settings mode=always` | `streamdeck stop` | `streamdeck pair`, `streamdeck brightness 40`, `streamdeck packs`, `streamdeck pack A1B2C3 os4` |
+| WebAPI | `GET /api/v1/streamdeck`, `GET` / `PUT /api/v1/streamdeck/settings` | `POST /api/v1/streamdeck/start` \| `stop` \| `restart` | `GET` / `POST` / `DELETE /api/v1/streamdeck/pair`, `POST /api/v1/streamdeck/revoke`, `GET` / `PUT /api/v1/streamdeck/decks/{deck}/brightness`, `GET /api/v1/streamdeck/packs`, `GET` / `PUT /api/v1/streamdeck/decks/{deck}/pack`, `GET /api/v1/streamdeck/udev` |
+| WebSocket | each route as a `call`; the topic `streamdeck.status` pushes the changes (state, pid, decks, viewers, pairing, `pack` per deck) | the same `call`s | the same `call`s |
+| MCP | `streamdeck` action `status`, `settings` (`mode`, `activity`, ...) | `streamdeck` action `start`, `stop`, `restart` | `streamdeck` action `pairing`, `pair`, `pair_cancel`, `revoke`, `brightness` (`deck`, `value`), `packs`, `pack` (`deck`, `pack`), `udev` |
+| Python | `emu.streamdeck("status")`, `emu.streamdeck("settings", mode="always")` | `emu.streamdeck("stop")` | `emu.streamdeck("pair")`, `emu.streamdeck("brightness", value=40)`, `emu.streamdeck("pack", deck="A1B2C3", pack="os4")` |
+| Lua | `streamdeck("status")`, `streamdeck("settings", {mode = "always"})` | `streamdeck("stop")` | `streamdeck("pair")`, `streamdeck("brightness", {value = 40})`, `streamdeck("pack", {pack = "os4"})` |
 
 In the GUI: Tools > Stream Deck... (the same status, Start / Stop / Restart, when to start it, the activity look, the
-pairing with Pair / Approve / Revoke, each deck's brightness, "Surfaces..." to the surfaces table, the udev rule on
+pairing with Pair / Approve / Revoke, each deck's icon pack (the daemon's packs, or "Its scenario's") and brightness,
+"Surfaces..." to the surfaces table, the udev rule on
 Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
 [docs/companions/streamdeck/daemon.md](../../../companions/streamdeck/daemon.md#automation).
 

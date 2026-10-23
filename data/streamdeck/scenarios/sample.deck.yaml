@@ -1,0 +1,314 @@
+format: streamdeck-scenario
+model: plusxl
+name: sample
+root:
+  context: play
+  dials:
+    -
+      index: 0
+      label: TTD
+      press:
+        id: run.pause_toggle
+        kind: action
+      turn:
+        id: ttd.seek_by
+        kind: action
+        value:
+          d: $ticks
+          max: 50
+          min: 1
+          rate: $rate
+          unit: seconds
+  face:
+    glyph: nav.folder
+  id: home
+  items:
+    -
+      at:
+        - 0
+        - 0
+      do:
+        id: run.pause_toggle
+        kind: action
+      face:
+        glyph: run.pause
+      face_on:
+        glyph: run.play
+      id: pause
+      state: run.state.paused
+      tags:
+        - uc:C1.1
+      title: "Pause / continue"
+      type: action
+    -
+      at:
+        - 0
+        - 1
+      do:
+        hold: true
+        id: mach.reset
+        kind: action
+      face:
+        glyph: mach.reset
+      id: reset
+      tags:
+        - uc:C1.2
+      title: "Reset (hold 1 s)"
+      type: action
+    -
+      at:
+        - 0
+        - 2
+      do:
+        id: mach.nmi
+        kind: action
+      face:
+        glyph: mach.nmi
+      id: nmi
+      tags:
+        - uc:C1.3
+      title: NMI
+      type: action
+    -
+      at:
+        - 1
+        - 0
+      do:
+        id: mach.turbo_toggle
+        kind: action
+      face:
+        glyph: mach.turbo
+      face_on:
+        glyph: mach.turbo.on
+      id: turbo
+      state: toggle.mach.turbo_toggle
+      tags:
+        - uc:C2.2
+      title: Turbo
+      type: action
+    -
+      at:
+        - 1
+        - 1
+      do:
+        hold: true
+        id: run.turbo_hold
+        kind: action
+      face:
+        glyph: run.turbo_hold
+      id: hold
+      tags:
+        - uc:C2.2
+      title: "Turbo while held"
+      type: action
+    -
+      at:
+        - 1
+        - 2
+      do:
+        id: set.speed
+        kind: action
+        value: 1
+      face:
+        glyph: set.speed
+        label: X1
+      id: x1
+      tags:
+        - uc:C2.5
+      title: Speed
+      type: action
+    -
+      at:
+        - 1
+        - 3
+      file: shared/speed.deck.yaml
+      id: speed
+      tags:
+        - open:speed
+      type: include
+    -
+      at:
+        - 2
+        - 0
+      do:
+        id: snapshot.quick
+        kind: action
+        value:
+          op: save
+          slot: 1
+      face:
+        glyph: snapshot.quick_save
+        label: S1
+      id: qsave
+      tags:
+        - uc:C6.1
+      title: "Quick snapshot"
+      type: action
+    -
+      at:
+        - 2
+        - 1
+      do:
+        id: snapshot.quick
+        kind: action
+        value:
+          op: load
+          slot: 1
+      face:
+        glyph: snapshot.quick_load
+        label: L1
+      id: qload
+      tags:
+        - uc:C6.1
+      title: "Quick snapshot"
+      type: action
+    -
+      at:
+        - 2
+        - 2
+      face:
+        glyph: snapshot.save
+      id: save
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 2
+          face:
+            glyph: snapshot.quick_save
+            label: S2
+          id: save2
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 3
+          face:
+            glyph: snapshot.quick_save
+            label: S3
+          id: save3
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: snapshot.save
+            kind: action
+            value:
+              path: $user/snapshots/deck.szx
+          face:
+            glyph: snapshot.save
+          id: file
+          tags:
+            - uc:C6.2
+          title: "Save a snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 2
+          face:
+            glyph: snapshot.quick_load
+            label: L2
+          id: load2
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 3
+          face:
+            glyph: snapshot.quick_load
+            label: L3
+          id: load3
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.save
+            label: A
+          id: disk
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            kind: nav
+            to: home
+          face:
+            glyph: nav.home
+          id: gohome
+          title: Home
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C6
+      title: "Save state"
+      type: menu
+  nav:
+    dials: own
+  strip:
+    content: title
+    status: ttd
+    target: true
+  tags:
+    - dial.0.uc:U2.1
+  title: Home
+  type: menu
+settings:
+  activity:
+    ignore:
+      - ttd.seek_by
+  brightness: 60
+  pack: magicwb
+version: 2

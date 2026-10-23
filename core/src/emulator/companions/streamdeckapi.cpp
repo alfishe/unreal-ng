@@ -59,6 +59,10 @@ StateNode SettingsNode(const Settings& s)
     for (const auto& [serial, value] : s.brightness)
         brightness[serial] = value;
     n["brightness"] = brightness;
+    StateNode pack = StateNode::Object();
+    for (const auto& [serial, value] : s.pack)
+        pack[serial] = value;
+    n["pack"] = pack;
     return n;
 }
 
@@ -104,9 +108,9 @@ std::string Segment(const std::string& text)
 
 const std::vector<std::string>& Verbs()
 {
-    static const std::vector<std::string> verbs = {"status",      "start",  "stop",       "restart", "settings",
-                                                   "pairing",     "pair",   "pair_cancel", "revoke",  "brightness",
-                                                   "udev"};
+    static const std::vector<std::string> verbs = {"status",  "start",       "stop",   "restart",    "settings",
+                                                   "pairing", "pair",        "pair_cancel", "revoke", "brightness",
+                                                   "packs",   "pack",        "udev"};
     return verbs;
 }
 
@@ -137,7 +141,7 @@ Reply Call(std::string_view verbView, const StateNode& args)
         known = known || v == verb;
     if (!known)
         return Error(400, "Bad Request", "unknown verb '" + verb + "' (status, start, stop, restart, settings, "
-                                         "pairing, pair, pair_cancel, revoke, brightness, udev)");
+                                         "pairing, pair, pair_cancel, revoke, brightness, packs, pack, udev)");
     if (!sup.Attached())
         return Error(503, "supervisor_unavailable",
                      "the Stream Deck daemon is supervised by unreal-qt; this host has no supervisor (headless, the "
@@ -228,6 +232,43 @@ Reply Call(std::string_view verbView, const StateNode& args)
                 std::string error;
                 (void)sup.Update(changes, error);
             }
+        }
+        return r;
+    }
+    if (verb == "packs")
+    {
+        // the daemon's {packs: [...], default} as the reply's own fields
+        Reply r = Forwarded(sup.Daemon("GET", "/api/v1/packs"), "daemon");
+        if (!r.Ok())
+            return r;
+        StateNode answer = std::move(r.body["daemon"]);
+        StateNode body = StateNode::Object();
+        const StateNode* packs = answer.find("packs");
+        body["packs"] = packs && packs->isArray() ? *packs : StateNode::Array();
+        body["default"] = Str(answer.find("default"));
+        return Ok(body);
+    }
+    if (verb == "pack")
+    {
+        std::string deck = Str(args.find("deck"));
+        if (deck.empty())
+            deck = "first";
+        const StateNode* value = args.find("pack");
+        if (!value)
+            return Forwarded(sup.Daemon("GET", "/api/v1/decks/" + Segment(deck) + "/pack"), "deck");
+        const std::string name = Str(value);
+        if (name.empty() || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != std::string::npos)
+            return Error(400, "Bad Request", "pack: an icon pack name (packs lists them), or scenario");
+        Reply r = Forwarded(sup.Daemon("PUT", "/api/v1/decks/" + Segment(deck) + "/pack",
+                                       "{\"pack\":\"" + name + "\"}", 3000),
+                            "deck");
+        if (r.Ok())
+        {
+            // kept for that deck (scenario: none kept): set again when the daemon starts again
+            const StateNode* answer = r.body.find("deck");
+            const std::string serial = answer ? Str(answer->find("serial")) : std::string();
+            if (!serial.empty())
+                sup.KeepAppliedPack(serial, name);
         }
         return r;
     }

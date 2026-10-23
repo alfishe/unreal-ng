@@ -2047,8 +2047,9 @@ public:
             return StateNodeToLua(s, actions::surfaces::Call(verb.value_or("views"), args).body);
         });
         // streamdeck(verb, {args}) -> the reply table of a Stream Deck daemon verb (companion::streamdeck::Call:
-        // status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, brightness, udev), as WebAPI
-        // /api/v1/streamdeck/..., the CLI `streamdeck`, MCP `streamdeck` and Python streamdeck()
+        // status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, brightness, packs, pack, udev),
+        // as WebAPI /api/v1/streamdeck/..., the CLI `streamdeck`, MCP `streamdeck` and Python streamdeck():
+        // streamdeck("pack", {deck = "A1B2C3", pack = "os4"})
         lua.set_function("streamdeck", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
             StateNode args = StateNode::Object();
             if (opts)

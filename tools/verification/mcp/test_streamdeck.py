@@ -50,13 +50,16 @@ def test_settings_read_and_the_udev_rule(s):
 
 
 def test_the_daemons_verbs_say_it_does_not_run(s):
-    for args in ({'action': 'pair'}, {'action': 'pairing'}, {'action': 'brightness', 'value': 40}):
+    for args in ({'action': 'pair'}, {'action': 'pairing'}, {'action': 'brightness', 'value': 40},
+                 {'action': 'packs'}, {'action': 'pack'}, {'action': 'pack', 'deck': 'A1B2C3', 'pack': 'os4'}):
         r = s.call('streamdeck', args, ok=False)
         expect(r.is_error and '409' in r.text and 'not running' in r.text, f'{args}: not running, said so', r.text)
     r = s.call('streamdeck', {'action': 'revoke'}, ok=False)
     expect(r.is_error and '404' in r.text, 'revoke: no companion of the daemon', r.text)
     r = s.call('streamdeck', {'action': 'settings', 'mode': 'sometimes'}, ok=False)
     expect(r.is_error and '400' in r.text, 'a bad mode is refused (nothing saved)', r.text)
+    r = s.call('streamdeck', {'action': 'pack', 'pack': 'Not A Pack'}, ok=False)
+    expect(r.is_error and '400' in r.text, 'a bad pack name is refused before the daemon', r.text)
 
 
 def test_rest_the_socket_the_topic_and_the_cli_agree(s):
@@ -64,6 +67,10 @@ def test_rest_the_socket_the_topic_and_the_cli_agree(s):
     expect(status == 200 and rest['status']['state'] == 'off', 'REST status', rest)
     status, body = http(s, 'PUT', '/api/v1/streamdeck/udev')
     expect(status == 405, 'a verb on a method it does not take is 405', body)
+    status, body = http(s, 'GET', '/api/v1/streamdeck/packs')
+    expect(status == 409 and body.get('error') == 'not_running', 'REST packs: the daemon does not run', body)
+    status, body = http(s, 'PUT', '/api/v1/streamdeck/decks/first/pack', {})
+    expect(status == 400, 'REST pack: PUT without a pack is refused', body)
     ws = WebSocket(ports(s)[0], token=COMPANION_NARROW_TOKEN)  # test_companion.py revokes "verify"
     try:
         ws.send({'op': 'call', 'rid': 1, 'method': 'GET', 'path': '/api/v1/streamdeck'})

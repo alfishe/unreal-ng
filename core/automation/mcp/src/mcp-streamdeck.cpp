@@ -49,8 +49,13 @@ std::string Summary(const std::string& verb, const Json::Value& reply)
                     << Str(pairing["companion_id"]);
         }
         for (const Json::Value& deck : status["decks"])
+        {
             out << "\ndeck " << Str(deck["serial"]) << " " << Str(deck["model"]) << " brightness "
-                << Str(deck["brightness"]) << (deck["real"].asBool() ? " (USB)" : " (own)");
+                << Str(deck["brightness"]);
+            if (deck.isMember("pack"))
+                out << " pack " << Str(deck["pack"]) << " (setting " << Str(deck["pack_setting"]) << ")";
+            out << (deck["real"].asBool() ? " (USB)" : " (own)");
+        }
         if (status["error"].isString() && !status["error"].asString().empty())
             out << "\nerror: " << status["error"].asString();
         return out.str();
@@ -77,6 +82,20 @@ std::string Summary(const std::string& verb, const Json::Value& reply)
         return "companion " + Str(reply["id"]) + " revoked: the deck offers to pair again";
     if (verb == "brightness")
         return "deck " + Str(reply["deck"]["serial"]) + " brightness " + Str(reply["deck"]["brightness"]);
+    if (verb == "packs")
+    {
+        out << "icon packs (default " << Str(reply["default"]) << "):";
+        for (const Json::Value& pack : reply["packs"])
+            out << "\n" << Str(pack["name"]) << " - " << Str(pack["title"]) << " (" << Str(pack["style"]) << ")";
+        return out.str();
+    }
+    if (verb == "pack")
+    {
+        const Json::Value& d = reply["deck"];
+        out << "deck " << Str(d["serial"]) << " draws the icon pack " << Str(d["pack"]) << " (setting "
+            << Str(d["setting"]) << ", its scenario's " << Str(d["scenario_pack"]) << ")";
+        return out.str();
+    }
     if (verb == "udev")
         return Str(reply["rule"]);
     return Str(reply);
@@ -85,8 +104,9 @@ std::string Summary(const std::string& verb, const Json::Value& reply)
 
 const std::vector<std::string>& StreamDeckToolVerbs()
 {
-    static const std::vector<std::string> verbs = {"status",  "start", "stop",        "restart", "settings",  "pairing",
-                                                   "pair",    "pair_cancel", "revoke", "brightness", "udev"};
+    static const std::vector<std::string> verbs = {"status",      "start",  "stop",       "restart", "settings",
+                                                   "pairing",     "pair",   "pair_cancel", "revoke",  "brightness",
+                                                   "packs",       "pack",   "udev"};
     return verbs;
 }
 
@@ -100,7 +120,8 @@ void RegisterStreamDeck(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "status (default); start / stop / restart; settings (read, or change with mode / activity / api_port / "
         "viewers_port / binary); pairing (state), pair (ask), pair_cancel; revoke (the daemon's companion); "
-        "brightness (deck, value); udev (the Linux rule)";
+        "brightness (deck, value); packs (the icon packs); pack (deck, pack: a deck's icon pack); udev (the Linux "
+        "rule)";
     schema["properties"]["mode"]["type"] = "string";
     schema["properties"]["mode"]["enum"].append("off");
     schema["properties"]["mode"]["enum"].append("deck");
@@ -116,9 +137,12 @@ void RegisterStreamDeck(ToolRegistry& registry)
     schema["properties"]["binary"]["type"] = "string";
     schema["properties"]["binary"]["description"] = "settings: the unreal-streamdeck executable (\"\" = beside unreal-qt)";
     schema["properties"]["deck"]["type"] = "string";
-    schema["properties"]["deck"]["description"] = "brightness: the deck's serial (default first)";
+    schema["properties"]["deck"]["description"] = "brightness, pack: the deck's serial (default first)";
     schema["properties"]["value"]["type"] = "integer";
     schema["properties"]["value"]["description"] = "brightness: 0-100 (omit to read)";
+    schema["properties"]["pack"]["type"] = "string";
+    schema["properties"]["pack"]["description"] =
+        "pack: an icon pack name of action packs, or scenario (the deck's scenario's pack again); omit to read";
     schema["properties"]["id"]["type"] = "string";
     schema["properties"]["id"]["description"] = "revoke: a companion id (default the daemon's own)";
 
@@ -126,8 +150,8 @@ void RegisterStreamDeck(ToolRegistry& registry)
         "streamdeck",
         "The Stream Deck daemon (unreal-streamdeck), a companion that owns the attached Stream Deck: unreal-qt starts "
         "it when a deck is attached, restarts it after a crash and stops it on quit. Read its status (decks, viewers, "
-        "pairing), start / stop / restart it, change its settings, set a deck's brightness, ask it to pair (the user "
-        "approves at the GUI: an agent cannot), revoke its companion only when the user asks.",
+        "pairing), start / stop / restart it, change its settings, set a deck's brightness or icon pack, ask it to "
+        "pair (the user approves at the GUI: an agent cannot), revoke its companion only when the user asks.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string verb = args.isMember("action") ? args["action"].asString() : std::string("status");
@@ -152,6 +176,18 @@ void RegisterStreamDeck(ToolRegistry& registry)
                         body[key] = args[key];
                         method = "PUT";
                     }
+            if (verb == "packs")
+                path = "/api/v1/streamdeck/packs";
+            if (verb == "pack")
+            {
+                const std::string deck = args.isMember("deck") ? args["deck"].asString() : std::string("first");
+                path = "/api/v1/streamdeck/decks/" + UrlEncodeSegment(deck) + "/pack";
+                if (args.isMember("pack"))
+                {
+                    method = "PUT";
+                    body["pack"] = args["pack"];
+                }
+            }
             if (verb == "brightness")
             {
                 const std::string deck = args.isMember("deck") ? args["deck"].asString() : std::string("first");
@@ -167,8 +203,9 @@ void RegisterStreamDeck(ToolRegistry& registry)
                 known = known || v == verb;
             if (!known)
             {
-                done(ToolResult::Error("unknown action '" + verb + "' (status, start, stop, restart, settings, pairing, "
-                                       "pair, pair_cancel, revoke, brightness, udev)"));
+                done(ToolResult::Error("unknown action '" + verb +
+                                       "' (status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, "
+                                       "brightness, packs, pack, udev)"));
                 return;
             }
             const bool sendBody = method == "POST" || method == "PUT";

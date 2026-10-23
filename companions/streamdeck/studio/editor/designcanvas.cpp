@@ -41,6 +41,14 @@ DesignCanvas::DesignCanvas(EditorDocument* doc, QWidget* parent) : DeckWidget(ne
     Refresh();
 }
 
+void DesignCanvas::SetPack(const std::string& pack)
+{
+    if (pack == _pack)
+        return;
+    _pack = pack;
+    Refresh();
+}
+
 void DesignCanvas::Refresh()
 {
     VirtualDeck* vd = Deck();
@@ -63,6 +71,7 @@ void DesignCanvas::Refresh()
     Navigator nav(*s);
     nav.GoTo(_doc->CanvasMenu().toStdString());
     const Page page = Layout(*s, nav, m);
+    const std::string pack = !_pack.empty() ? _pack : s->settings.pack;  // the preview's, else the scenario's
     // drawn at the key's own size, as the runtime does: what the deck will show, pixel for pixel
     const int face = m.key.w > 0 && m.key.w == m.key.h ? m.key.w : kFaceSize;
     const int pad = m.keySafeInset > 0 && m.key.w > 0 ? (m.keySafeInset * face + m.key.w / 2) / m.key.w : 0;
@@ -77,7 +86,7 @@ void DesignCanvas::Refresh()
         else if (const Node* n = page.keys[static_cast<size_t>(k)])
         {
             vd->DrawKey(k, ToQImage(RenderFace(n->face, n->title, false, n->IsMenu(), pad, face,
-                                                 _doc->BaseDir().toStdString())));
+                                                 _doc->BaseDir().toStdString(), pack)));
             _keyIds[k] = n->id;
         }
     }

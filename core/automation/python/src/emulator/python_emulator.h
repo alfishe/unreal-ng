@@ -536,7 +536,7 @@ inline pybind11::object SurfacesPy(const std::string& verb, const pybind11::kwar
 }
 
 /// A Stream Deck daemon verb (companion::streamdeck::Call: status, start, stop, restart, settings, pairing, pair,
-/// pair_cancel, revoke, brightness, udev) with its args as keywords; the reply every plane returns
+/// pair_cancel, revoke, brightness, packs, pack, udev) with its args as keywords; the reply every plane returns
 inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kwargs& options)
 {
     StateNode args = StateNode::Object();
@@ -1978,7 +1978,8 @@ namespace PythonBindings
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
                  "A Stream Deck daemon verb (status, start, stop, restart, settings, pairing, pair, pair_cancel, "
-                 "revoke, brightness, udev) with its args as keywords: streamdeck('settings', mode='always'); "
+                 "revoke, brightness, packs, pack, udev) with its args as keywords: streamdeck('settings', "
+                 "mode='always'), streamdeck('pack', deck='A1B2C3', pack='os4'); "
                  "{ok, ...} as WebAPI /api/v1/streamdeck")
             .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
                      return MonitorPy(self, verb, options);

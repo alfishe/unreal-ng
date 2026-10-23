@@ -16,8 +16,8 @@ Never generate a whole pack straight away. The owner picks styles from samples:
 | The style is | Build it as | Example | Effort |
 |:--|:--|:--|:--|
 | A palette / shading variant of pixel art (any Amiga, Atari, PC-era icon look) | a `reskin.Skin` over the MagicWB drawings | `newicons.py`, `glowicons.py`, `workbench13.py` | ~50 lines |
-| A flat, line, plate or soft-gradient look | a render over `vector.HiResCanvas` | `banner.py`, `duotone.py`, `keycap.py`, `line.py`, `os4.py` | ~50-100 lines |
-| Something the shared drawings cannot carry (a different shape language, hand-drawn art) | hand-drawn sources: `src/<id>.svg` or `.png` for every glyph | none yet | 148 drawings |
+| A flat, line, plate or soft-gradient look | a render over `vector.HiResCanvas` | `banner.py`, `duotone.py`, `keycap.py`, `os4.py` | ~50-100 lines |
+| Something the shared drawings cannot carry (a different shape language, hand-drawn art) | hand-drawn sources: `src/<id>.svg` or `.png` for every glyph | none yet | 248 drawings |
 
 Prefer the first two: the pack then follows every redrawn glyph for free and keeps the same meanings.
 
