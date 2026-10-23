@@ -1,6 +1,6 @@
 """Phase 1: photorealistic. Real colours, lit materials, soft shadows, all within what QSvgRenderer draws."""
 
-from styles.common import Picture, glyph_shape, glyphs, legend_origin
+from styles.common import Picture, glyph_shape, glyphs, legends
 from styles.photocaps import amstrad, hard, next_cap, rubber, soviet
 from svgkit import rounded, shade, soft_shadow, text_path, text_width
 
@@ -408,15 +408,6 @@ CASE = {"print": case_print, "mesh": case_mesh, "ring": case_ring, "vents": case
         "hump": case_hump, "fins": case_fins}
 
 
-def luminance(color):
-    """0 for black, 1 for white"""
-    color = color.lstrip("#")
-    if len(color) == 3:
-        color = "".join(c * 2 for c in color)
-    r, g, b = (int(color[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
 def lit(pic, key):
     """The key's colour as the photo shows it: the light falls off from the top left across the board, and no two caps
     of an old keyboard have quite the same tint (a fixed spread per key, ±1.5 %)"""
@@ -455,25 +446,5 @@ def draw(keyboard, model):
     for key in model.keys:
         svg, face = cap(pic, key)
         pic.add("caps", svg)
-        for legend in key.legends:
-            lx, ly = legend_origin(legend, key, face)
-            if legend.glyph:
-                pic.add("legends", glyph_shape(legend.glyph, lx, ly, legend.size, legend.color))
-                continue
-            if legend.inverse:
-                text = text_width(legend.text, legend.size, legend.face) * legend.squeeze
-                pad = legend.size * 0.3
-                width = text + 2 * pad
-                left = {"start": lx - pad, "middle": lx - width / 2, "end": lx - text - pad}[legend.anchor]
-                pic.add("legends", f'<rect x="{left:.3f}" y="{ly - legend.size * 0.95:.3f}" '
-                                   f'width="{width:.3f}" height="{legend.size * 1.2:.3f}" fill="{legend.color}"/>')
-                paper = "#141517" if luminance(legend.color) > 0.5 else "#f2f2f2"  # the box's text: its opposite
-                pic.add("legends", glyphs(legend.text, lx, ly, legend.size, legend.face, paper, legend.anchor,
-                                          squeeze=legend.squeeze))
-                continue
-            if legend.swatch:
-                pic.add("legends", f'<rect x="{lx - legend.size:.3f}" y="{ly - legend.size * 0.8:.3f}" '
-                                   f'width="{legend.size * 2:.3f}" height="{legend.size:.3f}" fill="{legend.swatch}"/>')
-            pic.add("legends", glyphs(legend.text, lx, ly, legend.size, legend.face, legend.color, legend.anchor,
-                                      squeeze=legend.squeeze))
+        legends(pic, key, face)
     return pic.svg()

@@ -1,5 +1,10 @@
 {
  "schema": 1,
+ "styles": [
+  "photo",
+  "schematic",
+  "hybrid"
+ ],
  "models": {
   "48K": [
    "zx48k",
@@ -89,6 +94,11 @@
     144
    ],
    "picture": "zx48k.photo.svg",
+   "pictures": {
+    "photo": "zx48k.photo.svg",
+    "schematic": "zx48k.schematic.svg",
+    "hybrid": "zx48k.hybrid.svg"
+   },
    "keys": "zx48k.keys.json"
   },
   "zxplus": {
@@ -99,6 +109,11 @@
     149
    ],
    "picture": "zxplus.photo.svg",
+   "pictures": {
+    "photo": "zxplus.photo.svg",
+    "schematic": "zxplus.schematic.svg",
+    "hybrid": "zxplus.hybrid.svg"
+   },
    "keys": "zxplus.keys.json"
   },
   "forum": {
@@ -109,6 +124,11 @@
     196
    ],
    "picture": "forum.photo.svg",
+   "pictures": {
+    "photo": "forum.photo.svg",
+    "schematic": "forum.schematic.svg",
+    "hybrid": "forum.hybrid.svg"
+   },
    "keys": "forum.keys.json"
   },
   "zx128": {
@@ -119,6 +139,11 @@
     149
    ],
    "picture": "zx128.photo.svg",
+   "pictures": {
+    "photo": "zx128.photo.svg",
+    "schematic": "zx128.schematic.svg",
+    "hybrid": "zx128.hybrid.svg"
+   },
    "keys": "zx128.keys.json"
   },
   "zxplus2": {
@@ -129,6 +154,11 @@
     171
    ],
    "picture": "zxplus2.photo.svg",
+   "pictures": {
+    "photo": "zxplus2.photo.svg",
+    "schematic": "zxplus2.schematic.svg",
+    "hybrid": "zxplus2.hybrid.svg"
+   },
    "keys": "zxplus2.keys.json"
   },
   "zxplus2a": {
@@ -139,6 +169,11 @@
     171
    ],
    "picture": "zxplus2a.photo.svg",
+   "pictures": {
+    "photo": "zxplus2a.photo.svg",
+    "schematic": "zxplus2a.schematic.svg",
+    "hybrid": "zxplus2a.hybrid.svg"
+   },
    "keys": "zxplus2a.keys.json"
   },
   "zxplus3": {
@@ -149,6 +184,11 @@
     171
    ],
    "picture": "zxplus3.photo.svg",
+   "pictures": {
+    "photo": "zxplus3.photo.svg",
+    "schematic": "zxplus3.schematic.svg",
+    "hybrid": "zxplus3.hybrid.svg"
+   },
    "keys": "zxplus3.keys.json"
   },
   "pentagon": {
@@ -159,6 +199,11 @@
     106
    ],
    "picture": "pentagon.photo.svg",
+   "pictures": {
+    "photo": "pentagon.photo.svg",
+    "schematic": "pentagon.schematic.svg",
+    "hybrid": "pentagon.hybrid.svg"
+   },
    "keys": "pentagon.keys.json"
   },
   "pentagon2plus": {
@@ -169,6 +214,11 @@
     165
    ],
    "picture": "pentagon2plus.photo.svg",
+   "pictures": {
+    "photo": "pentagon2plus.photo.svg",
+    "schematic": "pentagon2plus.schematic.svg",
+    "hybrid": "pentagon2plus.hybrid.svg"
+   },
    "keys": "pentagon2plus.keys.json"
   },
   "scorpion": {
@@ -179,6 +229,11 @@
     155
    ],
    "picture": "scorpion.photo.svg",
+   "pictures": {
+    "photo": "scorpion.photo.svg",
+    "schematic": "scorpion.schematic.svg",
+    "hybrid": "scorpion.hybrid.svg"
+   },
    "keys": "scorpion.keys.json"
   },
   "quorum": {
@@ -189,6 +244,11 @@
     281
    ],
    "picture": "quorum.photo.svg",
+   "pictures": {
+    "photo": "quorum.photo.svg",
+    "schematic": "quorum.schematic.svg",
+    "hybrid": "quorum.hybrid.svg"
+   },
    "keys": "quorum.keys.json"
   },
   "orel": {
@@ -199,6 +259,11 @@
     176
    ],
    "picture": "orel.photo.svg",
+   "pictures": {
+    "photo": "orel.photo.svg",
+    "schematic": "orel.schematic.svg",
+    "hybrid": "orel.hybrid.svg"
+   },
    "keys": "orel.keys.json"
   },
   "profi": {
@@ -209,6 +274,11 @@
     202
    ],
    "picture": "profi.photo.svg",
+   "pictures": {
+    "photo": "profi.photo.svg",
+    "schematic": "profi.schematic.svg",
+    "hybrid": "profi.hybrid.svg"
+   },
    "keys": "profi.keys.json"
   },
   "profiplus": {
@@ -219,6 +289,11 @@
     138
    ],
    "picture": "profiplus.photo.svg",
+   "pictures": {
+    "photo": "profiplus.photo.svg",
+    "schematic": "profiplus.schematic.svg",
+    "hybrid": "profiplus.hybrid.svg"
+   },
    "keys": "profiplus.keys.json"
   },
   "profilatin": {
@@ -229,6 +304,11 @@
     187.0
    ],
    "picture": "profilatin.photo.svg",
+   "pictures": {
+    "photo": "profilatin.photo.svg",
+    "schematic": "profilatin.schematic.svg",
+    "hybrid": "profilatin.hybrid.svg"
+   },
    "keys": "profilatin.keys.json"
   },
   "pcat": {
@@ -239,6 +319,11 @@
     190
    ],
    "picture": "pcat.photo.svg",
+   "pictures": {
+    "photo": "pcat.photo.svg",
+    "schematic": "pcat.schematic.svg",
+    "hybrid": "pcat.hybrid.svg"
+   },
    "keys": "pcat.keys.json"
   },
   "pcxt": {
@@ -249,6 +334,11 @@
     180
    ],
    "picture": "pcxt.photo.svg",
+   "pictures": {
+    "photo": "pcxt.photo.svg",
+    "schematic": "pcxt.schematic.svg",
+    "hybrid": "pcxt.hybrid.svg"
+   },
    "keys": "pcxt.keys.json"
   },
   "pcps2": {
@@ -259,6 +349,11 @@
     162
    ],
    "picture": "pcps2.photo.svg",
+   "pictures": {
+    "photo": "pcps2.photo.svg",
+    "schematic": "pcps2.schematic.svg",
+    "hybrid": "pcps2.hybrid.svg"
+   },
    "keys": "pcps2.keys.json"
   },
   "zxmatrix": {
@@ -269,6 +364,11 @@
     132
    ],
    "picture": "zxmatrix.photo.svg",
+   "pictures": {
+    "photo": "zxmatrix.photo.svg",
+    "schematic": "zxmatrix.schematic.svg",
+    "hybrid": "zxmatrix.hybrid.svg"
+   },
    "keys": "zxmatrix.keys.json"
   },
   "zxnext": {
@@ -279,6 +379,11 @@
     146
    ],
    "picture": "zxnext.photo.svg",
+   "pictures": {
+    "photo": "zxnext.photo.svg",
+    "schematic": "zxnext.schematic.svg",
+    "hybrid": "zxnext.hybrid.svg"
+   },
    "keys": "zxnext.keys.json"
   },
   "zxnextwhite": {
@@ -289,6 +394,11 @@
     146
    ],
    "picture": "zxnextwhite.photo.svg",
+   "pictures": {
+    "photo": "zxnextwhite.photo.svg",
+    "schematic": "zxnextwhite.schematic.svg",
+    "hybrid": "zxnextwhite.hybrid.svg"
+   },
    "keys": "zxnextwhite.keys.json"
   }
  }

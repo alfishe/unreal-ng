@@ -175,11 +175,13 @@ std::string WindowDisplaySummary(const Json::Value& s)
                 s.get("hud_theme", "").asString() + ")";
         line += std::string(", keyboard ") + (s.get("osd_keyboard", false).asBool() ? "on" : "off");
         if (!s.get("osd_keyboard_picture", "").asString().empty())
-            line += " (" + s["osd_keyboard_picture"].asString() + ")";
+            line += " (" + s["osd_keyboard_picture"].asString() +
+                    (s.get("osd_keyboard_style", "").asString().empty() ? "" : ", " + s["osd_keyboard_style"].asString()) +
+                    ")";
         line += std::string(", next layers ") + (s.get("next_layers", false).asBool() ? "on" : "off");
     }
     // The words the setters take: an agent may see only this text
-    for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures"})
+    for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})
     {
         const Json::Value& offered = s[list];
         if (!offered.isArray() || offered.empty())
@@ -395,13 +397,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
         "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
-        "osd_keyboard_pictures), next_layers (bool), next_layers_mode (layers, composed, winner), next_layers_shown "
+        "osd_keyboard_pictures), osd_keyboard_style (photo, schematic, hybrid: the hybrid shows what a combination key "
+        "presses), next_layers (bool), next_layers_mode (layers, composed, winner), next_layers_shown "
         "({ula|layer2|tilemap|sprites: bool}); the rest stay. Applied the way the View menu does; screenshot "
         "source=window shows the effect. Headless: no window (error)";
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "hud_theme", "osd_keyboard_picture", "next_layers_mode"})
+    for (const char* word : {"crt_profile", "blending_weights", "hud_theme", "osd_keyboard_picture", "osd_keyboard_style",
+                             "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";

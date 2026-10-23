@@ -163,6 +163,14 @@ TEST_F(OsdKeyboardWindow_Test, EveryPictureLoadsWithKnownKeys)
             QString error;
             ASSERT_TRUE(pictures.picture(id, picture, error)) << error.toStdString();
             EXPECT_TRUE(QFile::exists(picture.svgPath)) << picture.svgPath.toStdString();
+            for (const std::string& style : pictures.styles())  // every style of every picture is there
+            {
+                KeyboardPicture drawn;
+                ASSERT_TRUE(pictures.picture(id, drawn, error, style)) << error.toStdString();
+                EXPECT_EQ(drawn.style, style);
+                EXPECT_TRUE(QFile::exists(drawn.svgPath)) << drawn.svgPath.toStdString();
+                EXPECT_EQ(drawn.keys.size(), picture.keys.size()) << id << " " << style << ": one key map for all";
+            }
             EXPECT_GE(picture.keys.size(), 40u) << id;
             for (const PictureKey& key : picture.keys)
             {
@@ -173,6 +181,7 @@ TEST_F(OsdKeyboardWindow_Test, EveryPictureLoadsWithKnownKeys)
         }
     }
     EXPECT_GE(total, 21u);
+    EXPECT_EQ(pictures.styles(), (std::vector<std::string>{"photo", "schematic", "hybrid"}));
     EXPECT_EQ(pictures.forModel("ATM710").front(), "pcat") << "the ATM controller's firmwares are all AT";
     EXPECT_EQ(pictures.forModel("ATM450"), std::vector<std::string>{"zxmatrix"}) << "no PC keyboard before 7.00";
     EXPECT_TRUE(pictures.forModel("NOSUCH").empty());
@@ -395,4 +404,36 @@ TEST_F(OsdKeyboardWindow_Test, FollowModelOffersThePicturesWhileHidden)
     EXPECT_EQ(changes, before + 1);
     window.choose("zx48k");
     EXPECT_EQ(window.picture().id, "pentagon2plus") << "not offered for this machine: nothing changes";
+}
+
+/// The style switch draws the picture shown anew, keeps it for every model and for the next window, and an unknown
+/// style changes nothing
+TEST_F(OsdKeyboardWindow_Test, AStyleDrawsThePictureShownAndIsKept)
+{
+    auto emulator = Create("PENTAGON");
+    ASSERT_NE(emulator, nullptr);
+    {
+        OsdKeyboardWindow window;
+        window.setRoot(Root());
+        window.setBinding(&_binding);
+        window.followModel();
+        EXPECT_EQ(window.style(), "photo") << "the default";
+        window.choose("pentagon2plus");
+        int changes = 0;
+        QObject::connect(&window, &OsdKeyboardWindow::pictureChanged, [&changes] { ++changes; });
+        window.chooseStyle("hybrid");
+        EXPECT_EQ(window.style(), "hybrid");
+        EXPECT_EQ(window.picture().id, "pentagon2plus") << "the same picture";
+        EXPECT_TRUE(window.picture().svgPath.endsWith("pentagon2plus.hybrid.svg")) << window.picture().svgPath.toStdString();
+        EXPECT_EQ(changes, 1);
+        window.chooseStyle("sketch");
+        EXPECT_EQ(window.style(), "hybrid") << "not a style";
+        EXPECT_EQ(changes, 1);
+    }
+    OsdKeyboardWindow again;
+    again.setRoot(Root());
+    again.setBinding(&_binding);
+    again.followModel();
+    EXPECT_EQ(again.style(), "hybrid") << "kept in the settings";
+    EXPECT_EQ(again.picture().style, "hybrid");
 }

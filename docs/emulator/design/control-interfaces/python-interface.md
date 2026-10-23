@@ -1728,6 +1728,7 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   window shows), 'fullscreen', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},
                                      #   'osd_keyboard', 'osd_keyboard_picture', 'osd_keyboard_pictures',
+                                     #   'osd_keyboard_style', 'osd_keyboard_styles',
                                      #   'next_layers', 'next_layers_mode', 'next_layers_shown'}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
 emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=, blending=, fullscreen=,
@@ -1736,7 +1737,8 @@ emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other
                                      #   than none switches CRT on), blending_frames=, blending_weights=,
                                      #   blending_decay= (0.3), scale= (1..4), hud_theme=, hud_notices=
-                                     #   {'ram-page': False}, osd_keyboard_picture=, next_layers_mode=,
+                                     #   {'ram-page': False}, osd_keyboard_picture=, osd_keyboard_style=
+                                     #   ('photo' / 'schematic' / 'hybrid'), next_layers_mode=,
                                      #   next_layers_shown={'sprites': False}; applied the way the View menu does.
                                      #   Returns the settings after the change, or
                                      #   {'ok': False, 'error', 'kind': 'bad-parameter' / 'no-window' / 'unavailable'}

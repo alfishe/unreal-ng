@@ -1684,7 +1684,7 @@ and its viewport do not: they are the machine's, off on every new Pentagon.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
@@ -1694,7 +1694,9 @@ screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
 Notifications: `ram-page`, `rom-page`, `screen-page`, `audio-beeper`, ..., `breakpoints`, `file-loading`),
 `osd_keyboard`, `osd_keyboard_picture`, `osd_keyboard_pictures` (the shown machine's: Pentagon `pentagon` /
-`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `next_layers`, `next_layers_mode`,
+`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `osd_keyboard_style`, `osd_keyboard_styles`
+(`photo`, `schematic`: flat and outlined, `hybrid`: the photo's keys on a flat case with a tag on each combination
+key, EDIT `CS+1`; one style for every model), `next_layers`, `next_layers_mode`,
 `next_layers_shown` ({ula, layer2, tilemap, sprites}). CRT parameters: `profile`, `kind` (`preset` / `profile` /
 `none`), `parameters` [{`name`, `description`, `value`, `initial`, `minimum`, `maximum`, `step`}]. Errors:
 `bad-parameter` (an unknown key or value; an unknown profile, theme, notice, picture or parameter lists the offered
@@ -1705,7 +1707,7 @@ without one, a parameter of a profile without parameters), `no-window`. The same
 `POST /video/window/crt_params/reset`, the WebSocket `call` of them, Lua and Python `window_display()` /
 `window_display_set(...)` / `window_crt_params()` / `window_crt_params_set(...)`, MCP `capture_media`
 `window_display` / `window_display_set` / `window_crt_params` / `window_crt_params_set`. The catalogue's
-`video.*`, `view.*`, `hud.*` and `osd.keyboard_picture` actions (§16) change the same settings; the readouts
+`video.*`, `view.*`, `hud.*`, `osd.keyboard_picture` and `osd.keyboard_style` actions (§16) change the same settings; the readouts
 `video.window` and `video.crt_params` show what the window published.
 
 #### GUI window recording
@@ -3933,6 +3935,7 @@ companion scope (their routes change nothing).
 | `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
 | `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
 | `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
+| `osd.keyboard_style` | press | `style?` (`photo`, `schematic`, `hybrid`, `next`, `prev`) | How the on-screen keyboard is drawn | |
 
 Readouts: `video.window` (the published WindowDisplay report, `available`), `video.crt_params` (`profile`, `kind`,
 `values` {name: value}), `video.viewport` (the VideoViewport report).

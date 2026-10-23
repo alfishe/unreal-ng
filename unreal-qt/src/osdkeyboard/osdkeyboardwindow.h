@@ -8,6 +8,7 @@
 /// Profi) get a switch, the choice kept per model. A ZX picture presses the matrix only, a PC picture the machine's
 /// PC keyboard controller only (MC_KEY_* / MC_PCKEY_*, as the host keyboard's two halves); the line under the
 /// picture says when the Host Keyboard route keeps them from the machine. Keys held on the host keyboard light too.
+/// A second switch draws every picture in another style (photo, schematic, hybrid with the hints), kept for all models.
 
 #include <QWidget>
 
@@ -82,6 +83,11 @@ public:
     /// The pictures of the model the switch offers
     const std::vector<std::string>& choices() const { return _choices; }
     void choose(const std::string& id);
+    /// The style the pictures are drawn in and the styles offered (the default first)
+    const std::string& style() const { return _style; }
+    const std::vector<std::string>& styles() const { return _pictures.styles(); }
+    /// Draw the picture shown, and every one after it, in @p style; an unknown style changes nothing
+    void chooseStyle(const std::string& style);
     /// Show a picture of another model whose keys drive the same matrix (the ZX Next's on a Pentagon), not kept in
     /// the settings and not offered by the switch; false (and @p error) for an unknown id or another matrix
     bool chooseOther(const std::string& id, std::string& error);
@@ -114,6 +120,7 @@ private:
     EmulatorContext* context() const;
     std::string modelName() const;
     void loadModel(const std::string& model);
+    void loadIndex();
     void onKeyPressed(const PictureKey* key);
     void post(const PictureKey& key, bool pressed);
     void releaseAll();
@@ -124,6 +131,7 @@ private:
     KeyboardPictures _pictures;
     bool _indexLoaded = false;
     std::string _model;
+    std::string _style;
     std::vector<std::string> _choices;
     KeyboardPicture _picture;
     const PictureKey* _down = nullptr;
@@ -134,6 +142,7 @@ private:
 
     OsdKeyboardView* _view = nullptr;
     QComboBox* _switch = nullptr;
+    QComboBox* _styleSwitch = nullptr;
     QLabel* _notice = nullptr;
     QTimer* _timer = nullptr;
 };

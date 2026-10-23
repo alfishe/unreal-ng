@@ -127,6 +127,8 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
         s.osdKeyboard = _osdKeyboardWindow->isVisible();
         s.osdKeyboardPicture = _osdKeyboardWindow->picture().id;
         s.osdKeyboardPictures = _osdKeyboardWindow->choices();
+        s.osdKeyboardStyle = _osdKeyboardWindow->style();
+        s.osdKeyboardStyles = _osdKeyboardWindow->styles();
     }
     if (_nextLayersWindow)
     {
@@ -220,6 +222,11 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
     {
         _osdKeyboardWindow->followModel();
         _osdKeyboardWindow->choose(*change.osdKeyboardPicture);
+    }
+    if (_osdKeyboardWindow && change.osdKeyboardStyle)
+    {
+        _osdKeyboardWindow->followModel();
+        _osdKeyboardWindow->chooseStyle(*change.osdKeyboardStyle);
     }
     if (_nextLayersWindow && change.nextLayers)
     {

@@ -18,7 +18,7 @@ what the machine reads, before the overlay is built into unreal-qt.
 |:--|:--|:--|
 | 1 | `photo` | photorealistic vector: real colours, lit materials, soft shadows |
 | 2 | `schematic` | the same keyboards as clean vector diagrams: flat, outlined, legible at a glance |
-| 3 | hybrid | a mix of the two plus a hints layer (what a combo key does, the mode legends that matter now); maybe |
+| 3 | `hybrid` | a mix of the two plus a hints layer (what a combo key does); the legends grouped by role for the mode legends that matter now |
 
 One model per keyboard feeds every style (`design.md`): the geometry, legends and mapping are data, a style only
 draws them. Every SVG has the same named layers (`case`, `caps`, `highlights`, `legends`, `hints`), so a hybrid takes each layer
@@ -96,33 +96,44 @@ fixed in `core/` after the POC, as its own task.
 The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the `osd.keyboard` action; owner
 2026-10-20: a window of its own, a switch between a model's keyboards): `unreal-qt/src/osdkeyboard/` reads
 `data/controllers/keyboards/` (this POC's output) and posts a click as the matrix keys or the PC key of the key
-(docs/features/keyboard.md "On-screen keyboard").
+(docs/features/keyboard.md "On-screen keyboard"). A second switch picks the style for every model (photo, schematic, hybrid;
+`osd_keyboard_style` on every automation plane, the `osd.keyboard_style` action).
+
+## Phases 2 and 3 (2026-10-23)
+
+- `styles/schematic.py`: every keyboard as a diagram from the same model; `styles/hybrid.py`: the photo's caps on
+  the schematic's case with the hints layer (design.md). All 63 SVGs (21 keyboards x 3 styles) pass the check:
+  every key mapped, Qt's QSvgRenderer and rsvg alike (the largest mean difference 1.67 of 255, the 128's schematic:
+  its many hairlines; no pixel far off).
+- The legends layer is grouped by role in every style. Dimming the roles that do not matter now (the symbols
+  only while Symbol Shift is held, the keywords in K mode) is the app's part and not built: which role a held shift
+  brings forward differs per keyboard (the 48K's red words below the key need Extend Mode, the 128's need none).
 
 ## Progress
 
 | Keyboard | Models | photo | schematic | hybrid |
 |---|---|---|---|---|
-| `zx48k` | 48K | drawn, shown to the owner | — | — |
-| `zxplus` | 48K (the second picture: the Spectrum+ is a 48K in the 58-key case, the emulator has no model of its own; the 128's keys and legends, the moulded black wordmark, "ZX Spectrum+", the rainbow alone, no heatsink; refs-sinclair §2, the owner's photo `plus-top-owner.jpg`) | drawn (2026-10-21) | — | — |
-| `forum` | 48K (the third picture, no name on the case (owner 2026-10-21): the Forum BK-09 Turbo, a Т34ВГ1 48K clone in a black wedge case; only the 40 ZX keys are mapped, the rest press nothing and say nothing (owner 2026-10-21); refs-clones §8, the owner's photo `forum-bk08-turbo-frolov-r86.jpg`, (C) Sergei Frolov 2008) | drawn (2026-10-21) | — | — |
-| `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
-| `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
-| `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | — | — |
-| `zxplus3` | PLUS3 | done, approved by the owner (2026-10-19) | — | — |
-| `pentagon` | PENTAGON (the 40-key sticker keyboard, refs-clones §1.2, in a plain black rectangular box with one opening, no badge; the owner 2026-10-20) | drawn, shown to the owner | — | — |
-| `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | done, approved by the owner (2026-10-20) | — | — |
-| `scorpion` | SCORPION, PROFSCORP, GMX (the Soviet 58-key keyboard, the Pentagon 2+'s caps, in its grey case with the moulded "ZX SPECTRUM / SINCLAIR" plaque, refs-clones §1.4, §2) | drawn, shown to the owner | — | — |
-| `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | — | — |
-| `orel` | LSY256 (the Orel BK-08's 67-key reed keyboard unit, refs-clones §5) | done, approved (2026-10-20) | — | — |
-| `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, white caps with the Spectrum print and Cyrillic, after the owner's top view of a real Profi keyboard (`references/photos/clones/profi-bk0010-case-top-owner.png`), the badge traced from it, refs-clones §6.1) | done, approved (2026-10-20) | — | — |
-| `profilatin` | PROFI, PROFI3 (the third picture: the Pentagon 2+'s 58-key keyboard and Latin print, ivory caps, in the black case of the owner's photo `profi-keyboard-top-owner.jpg` with the "Profi®" mark; refs-clones §6.1) | drawn (2026-10-21) | — | — |
-| `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; the real Profi's case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | — | — |
-| `pcxt` | ATM710 (XT firmware), KAY (the IBM PC/XT 83-key: F1-F10 at the left, no editing block, two-tone caps, red Cyrillic, refs-pc §7.1, refs-clones §3) | done, approved (2026-10-20) | — | — |
-| `pcat` | ATM710 (AT firmware), SPRINTER (the AT Enhanced 101-key in the Model M geometry, two-tone caps, red Cyrillic, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
-| `pcps2` | ATM3, TSL, PHOENIX (the PS/2 104-key Russian clone keyboard: one off-white colour, red Cyrillic, L Enter, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
-| `zxmatrix` | ATM450 (its only one), the switchable second of ATM710, KAY, SPRINTER, ATM3, TSL, PHOENIX (the homemade 40-key block: the 48K's stagger, MS 7004 caps, ЙЦУКЕН, owner 2026-10-20) | done, accepted (2026-10-20: "synthetic, but let it be") | — | — |
-| `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
-| `zxnextwhite` | NEXT (the second picture: the white edition, the same geometry and keys, white case and caps, black print, red name; refs-next §8, the owner's photo `next-white-top-owner.jpg`) | drawn (2026-10-21) | — | — |
+| `zx48k` | 48K | drawn, shown to the owner | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxplus` | 48K (the second picture: the Spectrum+ is a 48K in the 58-key case, the emulator has no model of its own; the 128's keys and legends, the moulded black wordmark, "ZX Spectrum+", the rainbow alone, no heatsink; refs-sinclair §2, the owner's photo `plus-top-owner.jpg`) | drawn (2026-10-21) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `forum` | 48K (the third picture, no name on the case (owner 2026-10-21): the Forum BK-09 Turbo, a Т34ВГ1 48K clone in a black wedge case; only the 40 ZX keys are mapped, the rest press nothing and say nothing (owner 2026-10-21); refs-clones §8, the owner's photo `forum-bk08-turbo-frolov-r86.jpg`, (C) Sergei Frolov 2008) | drawn (2026-10-21) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxplus3` | PLUS3 | done, approved by the owner (2026-10-19) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `pentagon` | PENTAGON (the 40-key sticker keyboard, refs-clones §1.2, in a plain black rectangular box with one opening, no badge; the owner 2026-10-20) | drawn, shown to the owner | drawn (2026-10-23) | drawn (2026-10-23) |
+| `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | done, approved by the owner (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `scorpion` | SCORPION, PROFSCORP, GMX (the Soviet 58-key keyboard, the Pentagon 2+'s caps, in its grey case with the moulded "ZX SPECTRUM / SINCLAIR" plaque, refs-clones §1.4, §2) | drawn, shown to the owner | drawn (2026-10-23) | drawn (2026-10-23) |
+| `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `orel` | LSY256 (the Orel BK-08's 67-key reed keyboard unit, refs-clones §5) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, white caps with the Spectrum print and Cyrillic, after the owner's top view of a real Profi keyboard (`references/photos/clones/profi-bk0010-case-top-owner.png`), the badge traced from it, refs-clones §6.1) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `profilatin` | PROFI, PROFI3 (the third picture: the Pentagon 2+'s 58-key keyboard and Latin print, ivory caps, in the black case of the owner's photo `profi-keyboard-top-owner.jpg` with the "Profi®" mark; refs-clones §6.1) | drawn (2026-10-21) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; the real Profi's case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `pcxt` | ATM710 (XT firmware), KAY (the IBM PC/XT 83-key: F1-F10 at the left, no editing block, two-tone caps, red Cyrillic, refs-pc §7.1, refs-clones §3) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `pcat` | ATM710 (AT firmware), SPRINTER (the AT Enhanced 101-key in the Model M geometry, two-tone caps, red Cyrillic, refs-pc §7.3) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `pcps2` | ATM3, TSL, PHOENIX (the PS/2 104-key Russian clone keyboard: one off-white colour, red Cyrillic, L Enter, refs-pc §7.3) | done, approved (2026-10-20) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxmatrix` | ATM450 (its only one), the switchable second of ATM710, KAY, SPRINTER, ATM3, TSL, PHOENIX (the homemade 40-key block: the 48K's stagger, MS 7004 caps, ЙЦУКЕН, owner 2026-10-20) | done, accepted (2026-10-20: "synthetic, but let it be") | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxnext` | NEXT | done, approved by the owner (2026-10-19) | drawn (2026-10-23) | drawn (2026-10-23) |
+| `zxnextwhite` | NEXT (the second picture: the white edition, the same geometry and keys, white case and caps, black print, red name; refs-next §8, the owner's photo `next-white-top-owner.jpg`) | drawn (2026-10-21) | drawn (2026-10-23) | drawn (2026-10-23) |
 
 ## Files
 
@@ -131,7 +142,7 @@ The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the 
 | `references/` | the keyboard of each model with its sources, and the photos they cite |
 | `design.md` | the data format, the generator, the materials |
 | `generate.py`, `model.py`, `svgkit.py` | the model → each style's SVG + the keys JSON |
-| `styles/` | `photo` (phase 1), `schematic` (phase 2), hybrids (phase 3) |
+| `styles/` | `photo` (phase 1), `schematic` (phase 2), `hybrid` (phase 3) |
 | `qtrender/` | renders an SVG with QSvgRenderer, as unreal-qt does, for the check |
 | `keyboards/` | the data per keyboard; the output goes to `data/controllers/keyboards/` (the app loads it): `<id>.<style>.svg` the pictures, `<id>.keys.json` their key maps, `index.json` the keyboards per model |
 | `atlas.py` | renders every SVG in every mode (Qt, rsvg, each layer alone, the key map, Qt vs rsvg) for review |
