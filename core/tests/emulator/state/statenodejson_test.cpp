@@ -40,11 +40,11 @@ TEST(StateNodeJson_Test, ParsesWhatItWritesAndTypesNumbers)
 {
     StateNode value;
     std::string error;
-    ASSERT_TRUE(StateNodeFromJsonText(
+    // Outside the macro: MSVC reads a \u of a raw string in a macro argument as a character name (C2017)
+    const char* text =
         R"( {"ok":true,"pid":4242,"half":0.5,"big":1e3,"neg":-7,"name":"deck \"A\"\n\u00e9\ud83d\ude00","none":null,
-             "decks":[{"serial":"A1"},[],{}]} )",
-        value, &error))
-        << error;
+             "decks":[{"serial":"A1"},[],{}]} )";
+    ASSERT_TRUE(StateNodeFromJsonText(text, value, &error)) << error;
     ASSERT_TRUE(value.isObject());
     EXPECT_EQ(value.find("ok")->kind, StateNode::Kind::Bool);
     EXPECT_TRUE(value.find("ok")->b);

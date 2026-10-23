@@ -215,7 +215,9 @@ void RegisterStreamDeck(ToolRegistry& registry)
                     done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(reply)));
                     return;
                 }
-                done(ToolResult::Ok(Summary(verb, reply), std::move(reply)));
+                // The text first: arguments have no evaluation order, gcc moves the reply out before Summary reads it
+                std::string text = Summary(verb, reply);
+                done(ToolResult::Ok(text, std::move(reply)));
             });
         });
 }

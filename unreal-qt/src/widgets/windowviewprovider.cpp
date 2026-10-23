@@ -14,12 +14,15 @@ namespace
 /// How long a surface thread waits for the GUI thread: a busy GUI (a modal dialog runs its own loop and still serves
 /// this) answers in a frame or two; switching the GPU backend re-creates the screen, still well inside
 constexpr std::chrono::milliseconds kGuiTimeout{3000};
+/// Stopping a window recording waits for ffmpeg to finish the file (WindowRecorder::stop: up to 2 minutes)
+constexpr std::chrono::milliseconds kRecordingStopTimeout{130000};
 
 /// Run `task` on the GUI thread (in place when already there) and wait for its answer. The task holds only copies and
 /// guarded pointers, and the state is shared: a task that finishes after the timeout writes into it, not into the
 /// caller's gone stack
 template <typename Out>
-bool OnGuiThread(std::function<bool(Out&, std::string&)> task, Out& out, std::string& error)
+bool OnGuiThread(std::function<bool(Out&, std::string&)> task, Out& out, std::string& error,
+                 std::chrono::milliseconds timeout = kGuiTimeout)
 {
     QCoreApplication* app = QCoreApplication::instance();
     if (!app)
@@ -50,9 +53,9 @@ bool OnGuiThread(std::function<bool(Out&, std::string&)> task, Out& out, std::st
         error = "The GUI thread does not take requests";
         return false;
     }
-    if (result.wait_for(kGuiTimeout) != std::future_status::ready)
+    if (result.wait_for(timeout) != std::future_status::ready)
     {
-        error = "The GUI thread did not answer within " + std::to_string(kGuiTimeout.count()) + " ms";
+        error = "The GUI thread did not answer within " + std::to_string(timeout.count()) + " ms";
         return false;
     }
     const bool ok = result.get();
@@ -63,11 +66,12 @@ bool OnGuiThread(std::function<bool(Out&, std::string&)> task, Out& out, std::st
 }  // namespace
 
 WindowViewProvider::WindowViewProvider(DeviceScreenWrapper* screen, ShownEmulatorId shownEmulatorId, Display display,
-                                       Parameters parameters)
+                                       Parameters parameters, Record record)
     : _screen(screen),
       _shownEmulatorId(std::move(shownEmulatorId)),
       _display(std::move(display)),
-      _parameters(std::move(parameters))
+      _parameters(std::move(parameters)),
+      _record(std::move(record))
 {
 }
 
@@ -125,6 +129,52 @@ bool WindowViewProvider::SetCrtParameters(const CrtParameterChange& change, CrtP
         return parameters(&change, p, why);
     };
     return OnGuiThread(std::move(task), out, error);
+}
+
+bool WindowViewProvider::StartWindowRecording(const std::string& emulatorId, const WindowRecordingRequest& request,
+                                              WindowRecordingStatus& out, std::string& error)
+{
+    std::function<bool(WindowRecordingStatus&, std::string&)> task =
+        [record = _record, shownEmulatorId = _shownEmulatorId, emulatorId, request](WindowRecordingStatus& status,
+                                                                                   std::string& why) {
+            if (!record)
+            {
+                why = "This window does not record";
+                return false;
+            }
+            const std::string shown = shownEmulatorId ? shownEmulatorId() : std::string();
+            if (shown != emulatorId)
+            {
+                why = shown.empty() ? "The window shows no emulator" : "The window shows another emulator (" + shown + ")";
+                return false;
+            }
+            return record(RecordAction::Start, &request, status, why);
+        };
+    return OnGuiThread(std::move(task), out, error);
+}
+
+bool WindowViewProvider::StopWindowRecording(WindowRecordingStatus& out, std::string& error)
+{
+    return RecordHere(RecordAction::Stop, out, error);
+}
+
+bool WindowViewProvider::GetWindowRecording(WindowRecordingStatus& out, std::string& error)
+{
+    return RecordHere(RecordAction::Status, out, error);
+}
+
+bool WindowViewProvider::RecordHere(RecordAction action, WindowRecordingStatus& out, std::string& error)
+{
+    std::function<bool(WindowRecordingStatus&, std::string&)> task = [record = _record, action](
+                                                                         WindowRecordingStatus& status, std::string& why) {
+        if (!record)
+        {
+            why = "This window does not record";
+            return false;
+        }
+        return record(action, nullptr, status, why);
+    };
+    return OnGuiThread(std::move(task), out, error, action == RecordAction::Stop ? kRecordingStopTimeout : kGuiTimeout);
 }
 
 bool WindowViewProvider::GrabHere(const QPointer<DeviceScreenWrapper>& screen, const ShownEmulatorId& shownEmulatorId,

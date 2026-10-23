@@ -1,11 +1,14 @@
 /// @file video_window_api.cpp
 /// @brief GUI window display settings endpoints: GPU acceleration, CRT effects and profile, temporal blending, full
 /// screen, scale, toolbar / status bar, HUD, on-screen keyboard, the Next layers window; the active CRT profile's
-/// parameters; the overscan frame's viewport. Thin: validation and the report are WindowDisplay / VideoViewport helpers
-/// shared with CLI, Lua and Python (MCP capture_media calls these routes). The window is the front end's: headless
-/// every window call answers 409 no-window (the viewport is the machine's and answers headless too).
+/// parameters; the overscan frame's viewport; the window recording. Thin: validation and the report are WindowDisplay /
+/// VideoViewport / WindowRecording helpers shared with CLI, Lua and Python (MCP capture_media calls these routes). The
+/// window is the front end's: headless every window call answers 409 no-window (the viewport is the machine's and
+/// answers headless too).
 
 #include "../../../windowdisplay.h"
+#include "../common/longcallpool.h"
+#include "../common/session_helper.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
 
@@ -13,8 +16,10 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/video/viewportcontrol.h>
+#include <emulator/video/windowrecording.h>
 #include <json/json.h>
 
+#include <memory>
 #include <string>
 
 using namespace drogon;
@@ -26,6 +31,7 @@ namespace v1
 {
 // CORS helper (defined in emulator_api.cpp)
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
 } // namespace v1
 } // namespace api
 
@@ -113,6 +119,27 @@ bool NumberMembers(const Json::Value& object, const char* field, std::vector<std
         out.emplace_back(name, number);
     }
     return true;
+}
+
+/// The recording's status, or the error with its status: 400 bad-parameter, 409 the rest (revoked: the session's body)
+void RespondRecording(std::function<void(const HttpResponsePtr&)>& callback, const WindowRecording::Result& r,
+                      bool withRan = false)
+{
+    if (r.status == WindowRecording::Status::Revoked)
+    {
+        Respond(callback, webapi_session::RevokedBody(), k409Conflict);
+        return;
+    }
+    if (!r.Ok())
+    {
+        RespondError(callback, r.status == WindowRecording::Status::BadParameter ? k400BadRequest : k409Conflict,
+                     WindowRecording::StatusName(r.status), r.error);
+        return;
+    }
+    Json::Value body = StateNodeToJson(WindowRecording::Report(r.recording));
+    if (withRan)
+        body["ran"] = r.ran;
+    Respond(callback, body, k200OK);
 }
 
 bool KnownEmulator(const std::string& id, std::function<void(const HttpResponsePtr&)>& callback)
@@ -303,6 +330,102 @@ void EmulatorAPI::setVideoViewport(const HttpRequestPtr& req, std::function<void
     Json::Value body = StateNodeToJson(VideoViewport::Report(*emulator));
     body["changed"] = r.changed;
     Respond(callback, body, k200OK);
+}
+
+/// @brief POST /api/v1/emulator/{id}/video/window/record
+void EmulatorAPI::startVideoWindowRecord(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    if (!KnownEmulator(id, callback))
+        return;
+    auto json = req->getJsonObject();
+    if (!json || !json->isObject() || !(*json)["path"].isString())
+    {
+        RespondError(callback, k400BadRequest, "bad-parameter",
+                     std::string("Body must be a JSON object: path, and any of ") + WindowRecording::kKeys);
+        return;
+    }
+    // Every field as its word (a JSON scalar as a command line renders it): the same checks as the CLI's
+    WindowRecordingRequest request;
+    std::string error;
+    for (const std::string& key : json->getMemberNames())
+    {
+        const Json::Value& value = (*json)[key];
+        std::string word;
+        if (value.isBool())
+            word = value.asBool() ? "on" : "off";
+        else if (value.isIntegral())
+            word = std::to_string(value.asInt64());
+        else if (value.isNumeric())
+            word = WindowDisplay::NumberWord(value.asDouble());
+        else if (value.isString())
+            word = value.asString();
+        else
+            error = "'" + key + "' takes a boolean, a number or a string";
+        if (!error.empty() || !WindowRecording::ApplyWord(request, key, word, error))
+        {
+            RespondError(callback, k400BadRequest, "bad-parameter", error);
+            return;
+        }
+    }
+    RespondRecording(callback, WindowRecording::Start(id, request));
+}
+
+/// @brief GET /api/v1/emulator/{id}/video/window/record
+void EmulatorAPI::getVideoWindowRecord(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    (void)req;
+    if (KnownEmulator(id, callback))
+        RespondRecording(callback, WindowRecording::Get());
+}
+
+/// @brief POST /api/v1/emulator/{id}/video/window/record/frames
+void EmulatorAPI::runVideoWindowRecordFrames(const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback,
+                                             const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        RespondError(callback, k404NotFound, "not-found", "Emulator with specified ID not found");
+        return;
+    }
+    auto json = req->getJsonObject();
+    const int frames = json && json->isObject() ? json->get("frames", 0).asInt() : 0;
+    if (frames < 1 || frames > WindowRecording::kMaxFrames)
+    {
+        RespondError(callback, k400BadRequest, "bad-parameter",
+                     "Body {frames}: 1.." + std::to_string(WindowRecording::kMaxFrames));
+        return;
+    }
+    // The one rule for every call that advances the CPU: the session holding run control steps, nobody else
+    EmulatorContext* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
+    {
+        RespondError(callback, k409Conflict, "run-control-held",
+                     "Run-control held by " + ctx->GetRunControlState().surfaceLabel + ". Use that surface to step.");
+        return;
+    }
+    // The frames wait for the window to draw each one: off the IO thread
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([emulator, frames, answer]() {
+        RespondRecording(*answer, WindowRecording::RunFrames(*emulator, frames), true);
+    });
+}
+
+/// @brief POST /api/v1/emulator/{id}/video/window/record/stop
+void EmulatorAPI::stopVideoWindowRecord(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    (void)req;
+    if (!KnownEmulator(id, callback))
+        return;
+    // Waits for ffmpeg to finish the file and the sound to be muxed in: off the IO thread
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([answer]() { RespondRecording(*answer, WindowRecording::Stop()); });
 }
 } // namespace v1
 } // namespace api

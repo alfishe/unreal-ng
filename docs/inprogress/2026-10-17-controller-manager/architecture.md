@@ -173,7 +173,12 @@ HostDeviceId = family-neutral, stable across replug and restart:
   generic pads ([device-database.md](device-database.md)).
 - **Merging endpoints on macOS**: GameController hides VID/PID. A `GCController` is matched to an IOHID device by
   arrival time and vendor name and confirmed by correlation (the same button edge within 20 ms on both). Until it is
-  confirmed both stay one device with input from IOHID only (D18).
+  confirmed both stay one device with input from IOHID only (D18). Built as `EndpointMerge` (pure, tested with fakes):
+  two presses of the face or shoulder buttons coincide, more often than on any other pad of the name and on most of
+  the companion's presses; a companion whose name no device has is matched by the presses alone.
+- **Two raw HID interfaces of one pad** (the same bus, VID, PID and serial or port, a pad the database knows) are one
+  device; input comes from the interface with the most controls. A generic device never merges: a two-player encoder
+  shows two pads on one USB port.
 - **Promotion**: a device first seen only through GameController (`gc:` id) that is later matched to its IOHID
   endpoint is promoted to the `usb:` / `bt:` id; the store records the old id as an alias, so its bindings, role and
   pin follow it, and the next connect is matched by the new id directly.

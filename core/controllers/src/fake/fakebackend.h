@@ -30,6 +30,10 @@ public:
     /// What the last SetRumble wrote to a device
     RumbleLevels Rumble(const HostDeviceId& device) const;
 
+    /// The notice of @p device (DeviceNotice); "" removes it
+    void SetNotice(const HostDeviceId& device, const std::string& notice);
+    std::string DeviceNotice(const HostDeviceId& device) const override;
+
     /// region <Surface outputs: a fake Surface Dial>
     /// Give @p device these OutputKind bits (before or after it connects)
     void SetOutputs(const HostDeviceId& device, uint8_t outputs);
@@ -60,6 +64,7 @@ private:
     IBackendSink* _sink = nullptr;
     std::set<HostDeviceId> _devices;
     std::map<HostDeviceId, RumbleLevels> _rumble;
+    std::map<HostDeviceId, std::string> _notices;
     /// Its own lock: a device's arrival reports from under _mutex, and the router asks for its outputs at once
     mutable std::mutex _outputMutex;
     std::map<HostDeviceId, uint8_t> _outputs;

@@ -76,6 +76,22 @@ RumbleLevels FakeBackend::Rumble(const HostDeviceId& device) const
     return it == _rumble.end() ? RumbleLevels{} : it->second;
 }
 
+void FakeBackend::SetNotice(const HostDeviceId& device, const std::string& notice)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (notice.empty())
+        _notices.erase(device);
+    else
+        _notices[device] = notice;
+}
+
+std::string FakeBackend::DeviceNotice(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _notices.find(device);
+    return it == _notices.end() ? std::string() : it->second;
+}
+
 void FakeBackend::SetOutputs(const HostDeviceId& device, uint8_t outputs)
 {
     std::lock_guard<std::mutex> lock(_outputMutex);

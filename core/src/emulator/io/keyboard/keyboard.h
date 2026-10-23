@@ -523,6 +523,9 @@ public:
     /// Replace the overlay (8 half-rows, active low); ControllerManager recomputes it from its connectors
     void SetOverlay(const uint8_t rows[8]);
     uint8_t OverlayRow(uint8_t row) const { return row < 8 ? _overlay[row] : 0xFF; }
+    /// The matrix as the keys hold it (8 half-rows, active low, without the overlay): every press, from the host,
+    /// automation or the on-screen keyboard
+    uint8_t MatrixRow(uint8_t row) const { return row < 8 ? _keyboardMatrixState[row] : 0xFF; }
     /// Where a plain matrix key sits: its half-row (0 = A8 ... 7 = A15) and its bit. False for ZXKEY_NONE and the
     /// extended keys (shift combinations, no position of their own)
     static bool MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit);

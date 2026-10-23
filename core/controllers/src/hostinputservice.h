@@ -42,6 +42,8 @@ public:
     /// The backend of that name, or nullptr
     IBackend* FindBackend(const std::string& name) const;
     std::vector<BackendProbe> Probe() const;
+    /// What the device cannot do here and how to fix it (IBackend::DeviceNotice); "" when nothing is missing
+    std::string DeviceNotice(const HostDeviceId& device) const;
     /// Stop every backend: their devices are removed
     void Stop();
 

@@ -33,6 +33,37 @@ QString SettingsKey(const std::string& model)
 {
     return QStringLiteral("OsdKeyboard/picture/") + QString::fromStdString(model);
 }
+
+/// The lit keys over a picture drawn at @p image: the window's own and the matrix's held keys with an edge, the
+/// host keyboard's only veiled
+void PaintLit(QPainter& painter, const KeyboardPicture& picture, const std::set<std::string>& lit, const QRectF& image)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.translate(image.topLeft());
+    const double scale = image.width() / picture.size.width();
+    painter.scale(scale, scale);
+    for (const PictureKey& key : picture.keys)
+    {
+        const bool own = lit.count(key.id) != 0 || lit.count("matrix:" + key.id) != 0;
+        const bool host = lit.count("host:" + key.id) != 0;
+        if (!own && !host)
+            continue;
+        QPainterPath path;
+        if (key.shape.isEmpty())
+            path.addRoundedRect(key.rect, 1.2, 1.2);
+        else
+            path.addPolygon(key.shape);
+        path.closeSubpath();
+        painter.fillPath(path, own ? kHeldFill : kHostFill);
+        if (own)
+        {
+            painter.setPen(QPen(kHeldEdge, 0.5));
+            painter.drawPath(path);
+        }
+    }
+    painter.restore();
+}
 }  // namespace
 
 // region <OsdKeyboardView>
@@ -51,6 +82,7 @@ void OsdKeyboardView::setPicture(const KeyboardPicture* picture)
     _picture = picture;
     _svg->load(picture ? picture->svgPath : QString());
     _cache = {};
+    _recordBase = {};
     _lit.clear();
     updateGeometry();
     update();
@@ -115,30 +147,25 @@ void OsdKeyboardView::paintEvent(QPaintEvent*)
         _cache.setDevicePixelRatio(ratio);
     }
     painter.drawPixmap(image.topLeft(), _cache);
+    PaintLit(painter, *_picture, _lit, image);
+}
 
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.translate(image.topLeft());
-    const double scale = image.width() / _picture->size.width();
-    painter.scale(scale, scale);
-    for (const PictureKey& key : _picture->keys)
+QImage OsdKeyboardView::renderImage(int width)
+{
+    if (!_picture || _picture->size.isEmpty() || !_svg->isValid() || width <= 0)
+        return {};
+    const QSize pixels(width, static_cast<int>(width * _picture->size.height() / _picture->size.width()));
+    if (_recordBase.size() != pixels)
     {
-        const bool own = _lit.count(key.id) != 0;
-        const bool host = _lit.count("host:" + key.id) != 0;
-        if (!own && !host)
-            continue;
-        QPainterPath path;
-        if (key.shape.isEmpty())
-            path.addRoundedRect(key.rect, 1.2, 1.2);
-        else
-            path.addPolygon(key.shape);
-        path.closeSubpath();
-        painter.fillPath(path, own ? kHeldFill : kHostFill);
-        if (own)
-        {
-            painter.setPen(QPen(kHeldEdge, 0.5));
-            painter.drawPath(path);
-        }
+        _recordBase = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
+        _recordBase.fill(Qt::transparent);
+        QPainter base(&_recordBase);
+        _svg->render(&base, QRectF(QPointF(), QSizeF(pixels)));
     }
+    QImage image = _recordBase.copy();
+    QPainter painter(&image);
+    PaintLit(painter, *_picture, _lit, QRectF(QPointF(), QSizeF(pixels)));
+    return image;
 }
 
 void OsdKeyboardView::mousePressEvent(QMouseEvent* event)
@@ -271,6 +298,32 @@ void OsdKeyboardWindow::refresh()
             if (key.zx.size() == 1 && std::find(parts.begin(), parts.end(), key.zx[0]) != parts.end())
                 lit.insert("host:" + key.id);
     }
+    // Every key the matrix holds, whoever pressed it (automation, the host, this window): a key printed with exactly
+    // the held combination lights instead of its parts (Caps Shift + 5 is the Pentagon's LEFT)
+    if (keyboard)
+    {
+        std::set<ZXKeysEnum> down;
+        for (const PictureKey& key : _picture.keys)
+        {
+            uint8_t row = 0;
+            uint8_t bit = 0;
+            if (key.zx.size() == 1 && Keyboard::MatrixPosition(key.zx[0], row, bit) &&
+                (keyboard->MatrixRow(row) & (1u << bit)) == 0)
+                down.insert(key.zx[0]);
+        }
+        bool combo = false;
+        for (const PictureKey& key : _picture.keys)
+            if (key.zx.size() > 1 && key.zx.size() == down.size() &&
+                std::all_of(key.zx.begin(), key.zx.end(), [&](ZXKeysEnum zx) { return down.count(zx) != 0; }))
+            {
+                lit.insert("matrix:" + key.id);
+                combo = true;
+            }
+        if (!combo)
+            for (const PictureKey& key : _picture.keys)
+                if (key.zx.size() == 1 && down.count(key.zx[0]) != 0)
+                    lit.insert("matrix:" + key.id);
+    }
     _lit = lit;
     _view->setLit(std::move(lit));
     updateNotice();
@@ -321,6 +374,38 @@ void OsdKeyboardWindow::choose(const std::string& id)
         QSettings().remove(SettingsKey(_model));
     updateNotice();
     emit pictureChanged();
+}
+
+bool OsdKeyboardWindow::chooseOther(const std::string& id, std::string& error)
+{
+    if (std::find(_choices.begin(), _choices.end(), id) != _choices.end())
+    {
+        choose(id);
+        return true;
+    }
+    const std::string matrix = _pictures.matrix(id);
+    const std::string own = _choices.empty() ? std::string() : _pictures.matrix(_choices.front());
+    if (matrix.empty() || matrix != own)
+    {
+        error = matrix.empty() ? "no keyboard picture '" + id + "'"
+                               : "keyboard '" + id + "' drives the " + matrix + " matrix, this machine the " +
+                                     (own.empty() ? std::string("none") : own) + " one";
+        return false;
+    }
+    releaseAll();
+    QString loadError;
+    KeyboardPicture picture;
+    if (!_pictures.picture(id, picture, loadError))
+    {
+        error = loadError.toStdString();
+        return false;
+    }
+    _picture = std::move(picture);
+    _keyNotice.clear();
+    _view->setPicture(&_picture);
+    updateNotice();
+    emit pictureChanged();
+    return true;
 }
 
 void OsdKeyboardWindow::press(const std::string& id)

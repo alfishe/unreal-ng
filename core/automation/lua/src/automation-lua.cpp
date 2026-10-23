@@ -110,11 +110,19 @@ bool AutomationLua::executeCode(const std::string& code, std::string& errorMessa
                 output += "\n"; // Lua's default print newline
             };
 
-            // Execute the code
-            lua.script(code);
+            // Protected call: an error the script raises (a nil index, error(), a syntax error) comes back as a
+            // result. lua.script() calls unprotected: the error reaches the panic handler, whose C++ throw cannot
+            // unwind through Lua's C frames and terminates the process
+            const sol::protected_function_result result = lua.safe_script(code, sol::script_pass_on_error);
 
-            // Restore original print function
+            // Restore original print function (the capture refers to this frame's output)
             lua["print"] = original_print;
+
+            if (!result.valid())
+            {
+                sol::error error = result;
+                throw error;
+            }
 
             return output;
         });

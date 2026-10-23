@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(controllers LANGUAGES CXX)
 
+# Objective-C++ on macOS: the GameController companion (platform/macos/gccompanion.mm)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 # The host game controllers library (docs/inprogress/2026-10-17-controller-manager/architecture.md §3): backends,
 # device identity, the canonical control vocabulary, the input router, profiles. No Qt. Built like core/recording:
 # core links it PUBLIC under ENABLE_CONTROLLERS; it uses only the core's controller headers (no core symbols).
@@ -68,6 +73,12 @@ configure_file(${SOURCE_DIR}/profiles/builtinprofiles.cpp.in ${CMAKE_CURRENT_BIN
                @ONLY)
 list(APPEND CPP_FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/builtinprofiles.cpp)
 
+if(APPLE)
+    file(GLOB_RECURSE MM_FILES ${SOURCE_DIR}/platform/macos/*.mm)
+    set_source_files_properties(${MM_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS "-fobjc-arc")
+    list(APPEND CPP_FILES ${MM_FILES})
+endif()
+
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -85,9 +96,12 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE rapidyaml)
 
 if(APPLE)
-    target_link_libraries(${PROJECT_NAME} PUBLIC "-framework IOKit" "-framework CoreFoundation")
+    target_link_libraries(${PROJECT_NAME} PUBLIC "-framework IOKit" "-framework CoreFoundation" "-framework Foundation"
+                          "-weak_framework GameController" "-weak_framework CoreHaptics")
 elseif(WIN32)
-    target_link_libraries(${PROJECT_NAME} PUBLIC setupapi)   # usbpresence.cpp: SetupDiGetClassDevs
+    # setupapi: SetupDiGetClassDevs (usbpresence.cpp, the Dial's HID interfaces); hid: HidD_* / HidP_* (Raw Input
+    # backend). GameInput and XInput are loaded at run time
+    target_link_libraries(${PROJECT_NAME} PUBLIC setupapi hid)
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)

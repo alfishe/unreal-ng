@@ -585,6 +585,10 @@ PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number
 POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
 GET  /api/v1/emulator/{id}/video/viewport                 the overscan frame and its crop: {overscan, overscan_available, viewport (full | symmetric | standard | screen_only | custom), viewports[], framebuffer, display, video_mode}; the machine's, answers headless too
 PUT  /api/v1/emulator/{id}/video/viewport                 {"viewport": "standard" | "next" | "prev" | ...} (POST too); a crop other than full needs overscan on (409 unavailable); answers the report + changed; changes the picture, not the machine: no control session
+POST /api/v1/emulator/{id}/video/window/record         GUI window recording (the picture as drawn, CRT and all, + the on-screen keyboard) through ffmpeg: {"path", "keyboard": "default"|<picture id>, "codec": "prores"|"h264", "audio": true (the machine's sound, frame for frame), "fps" (left out = the machine's rate; only with audio false), "scale": 1..4, "picture_height": 0..4320 (GPU), "width", "height", "layout": "below"|"side"}; answers {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples}; 409 no-window / unavailable, 400 bad-parameter
+GET  /api/v1/emulator/{id}/video/window/record         its status, the same fields
+POST /api/v1/emulator/{id}/video/window/record/frames  {"frames": N}: a paused machine runs N frames, each one recorded before the next (every frame whatever the load); adds "ran"; 409 not-paused / unavailable / run-control-held
+POST /api/v1/emulator/{id}/video/window/record/stop    closes the file (waits for ffmpeg, muxes the sound in). Recipe: .recipe/media/window-recording.md
 ```
 
 The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The

@@ -123,7 +123,9 @@ public:
     QRectF pictureSourceRect() const;
     /// @brief The picture as this screen draws it, for the automation's screenshot source "window" (WindowView):
     /// letterbox excluded, CRT shader and HUD included, in device pixels. GUI thread only
-    bool grabWindowView(WindowViewGrab& out, std::string& error);
+    /// @p hud false leaves the HUD out (the window recording; the GPU screen only)
+    /// @p pictureHeight > 0: the picture alone at that height in device pixels (the GPU screen only)
+    bool grabWindowView(WindowViewGrab& out, std::string& error, bool hud = true, int pictureHeight = 0);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }

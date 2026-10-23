@@ -175,6 +175,7 @@ clang -fobjc-arc gc.m -o "$OUT/gc" -framework GameController -framework AppKit -
 clang hiddump.c -o "$OUT/hiddump" -framework IOKit -framework CoreFoundation   # raw IOHID reports, 045E:0B00
 clang -fobjc-arc gcev.m -o "$OUT/gcev" -framework Foundation -framework AppKit -framework GameController  # GC button events
 clang sdlev.c   -o "$OUT/sdlev"   $(pkg-config --cflags --libs sdl3)           # SDL3 gamepad events
+clang dialsteps.c -o "$OUT/dialsteps" -framework IOKit -framework CoreFoundation # Surface Dial detents, read back
 SDL_JOYSTICK_MFI=0 "$OUT/sdlev" 120 & "$OUT/hiddump" 120
 ```
 

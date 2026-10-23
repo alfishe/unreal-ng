@@ -38,6 +38,9 @@ public:
     /// The picture's point (mm) under a widget point
     QPointF toPicture(const QPointF& point) const;
 
+    /// The picture with its lit keys, @p width pixels wide (the window recording)
+    QImage renderImage(int width);
+
     QSize sizeHint() const override;
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int width) const override;
@@ -57,6 +60,7 @@ private:
     const KeyboardPicture* _picture = nullptr;
     QSvgRenderer* _svg = nullptr;
     QPixmap _cache;  ///< the picture at the widget's size: the SVGs are large, a repaint draws only the lit keys
+    QImage _recordBase;  ///< the picture at the recording's width, without lit keys
     std::set<std::string> _lit;
 };
 
@@ -78,6 +82,11 @@ public:
     /// The pictures of the model the switch offers
     const std::vector<std::string>& choices() const { return _choices; }
     void choose(const std::string& id);
+    /// Show a picture of another model whose keys drive the same matrix (the ZX Next's on a Pentagon), not kept in
+    /// the settings and not offered by the switch; false (and @p error) for an unknown id or another matrix
+    bool chooseOther(const std::string& id, std::string& error);
+    /// The picture with its lit keys, @p width pixels wide; null without a picture (the window recording)
+    QImage renderImage(int width) { return _view->renderImage(width); }
     /// Press / let go of a key by its id, as a click does (tests)
     void press(const std::string& id);
     void release();

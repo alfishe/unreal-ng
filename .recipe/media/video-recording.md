@@ -151,6 +151,8 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 
 ## Pitfalls
 
+- **No CRT effects, no on-screen keyboard**: this records the emulated frame. The window as drawn (CRT shader, the
+  OSD keyboard next to it): [window-recording.md](window-recording.md).
 - **A GIF has 1/100 s frame delays**: 20.48 ms frames are written as 20 ms, so a GIF plays about
   2% fast. Use h264 when timing matters.
 - **The sound is what the machine plays**: a silent program records a silent track (RMS -inf).

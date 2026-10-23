@@ -127,6 +127,14 @@ public:
     virtual void Stop() = 0;
     virtual size_t DeviceCount() const = 0;
 
+    /// What the device cannot do here and how to fix it, for the dialog's device title (ui-ux.md, "Permission
+    /// missing"): no hidraw access on Linux, paddles hidden by an onboard profile (D15). "" when nothing is missing
+    virtual std::string DeviceNotice(const HostDeviceId& device) const
+    {
+        (void)device;
+        return {};
+    }
+
     /// region <Haptics (haptics.md §9)>
     /// The device has motors this backend can drive
     virtual bool HasRumble(const HostDeviceId& device) const

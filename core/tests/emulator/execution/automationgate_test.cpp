@@ -25,6 +25,8 @@ TEST(AutomationGate_Test, ReadsAndObserversDoNotChangeTheMachine)
     EXPECT_FALSE(ChangesMachine("POST", "/video/window"));
     EXPECT_FALSE(ChangesMachine("PUT", "/video/window/crt_params"));   // the window's CRT parameters
     EXPECT_FALSE(ChangesMachine("PUT", "/video/viewport"));            // a crop of the frame; overscan itself is the machine's
+    EXPECT_FALSE(ChangesMachine("POST", "/video/window/record"));     // recording the window
+    EXPECT_FALSE(ChangesMachine("POST", "/video/window/record/stop"));
     EXPECT_FALSE(ChangesMachine("POST", "/symbols/import"));
     EXPECT_FALSE(ChangesMachine("POST", "/labels"));
     EXPECT_FALSE(ChangesMachine("POST", "/snapshot/save"));
@@ -39,6 +41,7 @@ TEST(AutomationGate_Test, RunsWritesMediaInputAndBreakpointsChangeIt)
     EXPECT_TRUE(ChangesMachine("POST", "/resume"));
     EXPECT_TRUE(ChangesMachine("POST", "/steps"));
     EXPECT_TRUE(ChangesMachine("POST", "/run_frames"));
+    EXPECT_TRUE(ChangesMachine("POST", "/video/window/record/frames"));  // runs the frames it records
     EXPECT_TRUE(ChangesMachine("POST", "/memory/write"));
     EXPECT_TRUE(ChangesMachine("PUT", "/registers/pc"));
     EXPECT_TRUE(ChangesMachine("POST", "/snapshot/load"));

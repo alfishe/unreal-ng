@@ -131,6 +131,7 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     auto* header = new QHBoxLayout();
     _deviceTitle = new QLabel(centre);
     _deviceTitle->setWordWrap(true);
+    _deviceTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);  // a notice's udev command can be copied
     header->addWidget(_deviceTitle, 1);
     _hapticsEffect = new QComboBox(centre);
     _hapticsEffect->setEnabled(false);
@@ -334,6 +335,10 @@ void ControllersDialog::rebuildControls()
         title += "<br>" + tr("Paddles over USB on macOS arrive as the buttons the controller's profile assigns. "
                              "Connect by Bluetooth to use them separately.");
 #endif
+    // What the backend says is missing and how to fix it (Linux: no hidraw access, paddles on profile 0 only)
+    const std::string notice = device.empty() ? std::string() : _host->Service().DeviceNotice(device);
+    if (!notice.empty())
+        title += "<br>" + QString::fromStdString(notice).toHtmlEscaped();
     _deviceTitle->setText(title);
     const DeviceMatch match = DeviceDatabase::Builtin().ForFamily(family, selectedLayout());
     const QString set = device.empty() ? QString() : QString::fromStdString(match.images);
