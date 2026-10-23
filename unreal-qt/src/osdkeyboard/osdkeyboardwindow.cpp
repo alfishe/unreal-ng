@@ -1,6 +1,7 @@
 #include "osdkeyboardwindow.h"
 
 #include <QComboBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -32,6 +33,19 @@ const QColor kHostFill(255, 255, 255, 26);
 QString SettingsKey(const std::string& model)
 {
     return QStringLiteral("OsdKeyboard/picture/") + QString::fromStdString(model);
+}
+
+const QString kStyleKey = QStringLiteral("OsdKeyboard/style");
+
+QString StyleName(const std::string& style)
+{
+    if (style == "photo")
+        return QObject::tr("Photo");
+    if (style == "schematic")
+        return QObject::tr("Schematic");
+    if (style == "hybrid")
+        return QObject::tr("Hybrid (hints)");
+    return QString::fromStdString(style);
 }
 
 /// The lit keys over a picture drawn at @p image: the window's own and the matrix's held keys with an edge, the
@@ -198,10 +212,17 @@ OsdKeyboardWindow::OsdKeyboardWindow(QWidget* parent)
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
+    auto* switches = new QHBoxLayout();
     _switch = new QComboBox(this);
     _switch->setFocusPolicy(Qt::NoFocus);
     _switch->setToolTip(tr("This machine's keyboards"));
-    layout->addWidget(_switch, 0, Qt::AlignLeft);
+    switches->addWidget(_switch);
+    _styleSwitch = new QComboBox(this);
+    _styleSwitch->setFocusPolicy(Qt::NoFocus);
+    _styleSwitch->setToolTip(tr("How the keyboard is drawn; the hybrid shows what a combination key presses"));
+    switches->addWidget(_styleSwitch);
+    switches->addStretch(1);
+    layout->addLayout(switches);
     _view = new OsdKeyboardView(this);
     layout->addWidget(_view, 1);
     _notice = new QLabel(this);
@@ -211,6 +232,8 @@ OsdKeyboardWindow::OsdKeyboardWindow(QWidget* parent)
 
     connect(_switch, &QComboBox::activated, this,
             [this](int index) { choose(_switch->itemData(index).toString().toStdString()); });
+    connect(_styleSwitch, &QComboBox::activated, this,
+            [this](int index) { chooseStyle(_styleSwitch->itemData(index).toString().toStdString()); });
     connect(_view, &OsdKeyboardView::keyPressed, this, &OsdKeyboardWindow::onKeyPressed);
     connect(_view, &OsdKeyboardView::keyReleased, this, &OsdKeyboardWindow::release);
 
@@ -256,10 +279,23 @@ std::string OsdKeyboardWindow::modelName() const
     return {};
 }
 
+void OsdKeyboardWindow::loadIndex()
+{
+    _indexLoaded = _pictures.load(_root);
+    const std::vector<std::string>& styles = _pictures.styles();
+    const std::string kept = QSettings().value(kStyleKey).toString().toStdString();
+    _style = std::find(styles.begin(), styles.end(), kept) != styles.end() ? kept : styles.front();
+    _styleSwitch->clear();
+    for (const std::string& style : styles)
+        _styleSwitch->addItem(StyleName(style), QString::fromStdString(style));
+    _styleSwitch->setCurrentIndex(_styleSwitch->findData(QString::fromStdString(_style)));
+    _styleSwitch->setVisible(styles.size() > 1);
+}
+
 void OsdKeyboardWindow::followModel()
 {
     if (!_indexLoaded)
-        _indexLoaded = _pictures.load(_root);
+        loadIndex();
     const std::string model = modelName();
     if (model != _model)
         loadModel(model);
@@ -357,7 +393,7 @@ void OsdKeyboardWindow::choose(const std::string& id)
         return;
     releaseAll();
     QString error;
-    if (!_pictures.picture(id, _picture, error))
+    if (!_pictures.picture(id, _picture, error, _style))
     {
         _picture = {};
         _view->setPicture(nullptr);
@@ -372,6 +408,33 @@ void OsdKeyboardWindow::choose(const std::string& id)
         QSettings().setValue(SettingsKey(_model), QString::fromStdString(id));
     else if (!_model.empty())
         QSettings().remove(SettingsKey(_model));
+    updateNotice();
+    emit pictureChanged();
+}
+
+void OsdKeyboardWindow::chooseStyle(const std::string& style)
+{
+    if (!_indexLoaded)
+        loadIndex();
+    const std::vector<std::string>& styles = _pictures.styles();
+    if (std::find(styles.begin(), styles.end(), style) == styles.end())
+        return;
+    _style = style;
+    _styleSwitch->setCurrentIndex(_styleSwitch->findData(QString::fromStdString(style)));
+    if (style != styles.front())
+        QSettings().setValue(kStyleKey, QString::fromStdString(style));
+    else
+        QSettings().remove(kStyleKey);
+    if (_picture.id.empty() || _picture.style == style)
+        return;
+    // The same picture (a chosen one or another model's), only drawn anew: the key map stays, the held keys go up
+    releaseAll();
+    KeyboardPicture picture;
+    QString error;
+    if (!_pictures.picture(_picture.id, picture, error, style))
+        return;
+    _picture = std::move(picture);
+    _view->setPicture(&_picture);
     updateNotice();
     emit pictureChanged();
 }
@@ -395,7 +458,7 @@ bool OsdKeyboardWindow::chooseOther(const std::string& id, std::string& error)
     releaseAll();
     QString loadError;
     KeyboardPicture picture;
-    if (!_pictures.picture(id, picture, loadError))
+    if (!_pictures.picture(id, picture, loadError, _style))
     {
         error = loadError.toStdString();
         return false;

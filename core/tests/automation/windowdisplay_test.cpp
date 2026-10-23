@@ -179,7 +179,8 @@ TEST(WindowDisplay_Test, ReportAndSummary)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
                     "blending_decay emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
-                    "osd_keyboard osd_keyboard_picture osd_keyboard_pictures next_layers next_layers_mode "
+                    "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
+                    "next_layers_mode "
                     "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
@@ -207,6 +208,7 @@ TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "off", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "osd_keyboard", "1", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "osd_keyboard_picture", "pentagon2plus", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "osd_keyboard_style", "Hybrid", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layers", "on", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layers_mode", "Winner", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layer.sprites", "off", error));
@@ -220,6 +222,7 @@ TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
     EXPECT_EQ(change.hudNotices.at("ram-page"), false);
     EXPECT_EQ(change.osdKeyboard, true);
     EXPECT_EQ(change.osdKeyboardPicture, "pentagon2plus");
+    EXPECT_EQ(change.osdKeyboardStyle, "hybrid");
     EXPECT_EQ(change.nextLayers, true);
     EXPECT_EQ(change.nextLayersMode, "winner");
     EXPECT_EQ(change.nextLayersShown.at("sprites"), false);

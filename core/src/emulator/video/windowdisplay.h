@@ -28,7 +28,7 @@ namespace WindowDisplay
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
     "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, fullscreen, scale, toolbar, "
-    "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, next_layers, next_layers_mode, "
+    "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
 inline constexpr int kMinBlendingFrames = 2;
@@ -281,6 +281,11 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         change.osdKeyboardPicture = Lower(value);
         return true;
     }
+    if (k == "osd_keyboard_style")
+    {
+        change.osdKeyboardStyle = Lower(value);
+        return true;
+    }
     if (k == "next_layers")
         return flag(change.nextLayers);
     if (k == "next_layers_mode")
@@ -365,6 +370,13 @@ inline Result Set(const WindowDisplayChange& change)
         return Fail(Status::BadParameter, "Unknown keyboard picture '" + *change.osdKeyboardPicture +
                                               "' for this machine: use " + Joined(now.settings.osdKeyboardPictures));
     }
+    if (change.osdKeyboardStyle && !OneOf(now.settings.osdKeyboardStyles, *change.osdKeyboardStyle))
+    {
+        if (now.settings.osdKeyboardStyles.empty())
+            return Fail(Status::Unavailable, "The on-screen keyboard has no pictures to draw");
+        return Fail(Status::BadParameter, "Unknown keyboard style '" + *change.osdKeyboardStyle + "': use " +
+                                              Joined(now.settings.osdKeyboardStyles));
+    }
     if (change.gpu && *change.gpu && !now.settings.gpuAvailable)
         return Fail(Status::Unavailable, "GPU acceleration is not available on this host (no OpenGL)");
     // A libretro preset or a custom shader ("shader:<name>", offered when the host has a GPU) runs on the GPU only: on
@@ -420,6 +432,11 @@ inline StateNode Report(const WindowDisplaySettings& s)
     for (const std::string& name : s.osdKeyboardPictures)
         pictures.items.emplace_back(name);
     node["osd_keyboard_pictures"] = pictures;
+    node["osd_keyboard_style"] = s.osdKeyboardStyle;
+    StateNode styles = StateNode::Array();
+    for (const std::string& name : s.osdKeyboardStyles)
+        styles.items.emplace_back(name);
+    node["osd_keyboard_styles"] = styles;
     node["next_layers"] = s.nextLayers;
     node["next_layers_mode"] = s.nextLayersMode;
     StateNode layers = StateNode::Object();
@@ -450,7 +467,8 @@ inline std::string Summary(const WindowDisplaySettings& s)
     line += s.fullscreen ? ", full screen" : (s.scale > 0 ? ", scale " + std::to_string(s.scale) + "x" : ", scale free");
     line += std::string(", hud ") + (s.hud ? "on" : "off") + (s.hudTheme.empty() ? "" : " (" + s.hudTheme + ")");
     if (s.osdKeyboard)
-        line += ", keyboard " + (s.osdKeyboardPicture.empty() ? std::string("(no picture)") : s.osdKeyboardPicture);
+        line += ", keyboard " + (s.osdKeyboardPicture.empty() ? std::string("(no picture)") : s.osdKeyboardPicture) +
+                (s.osdKeyboardStyle.empty() ? std::string() : " " + s.osdKeyboardStyle);
     if (s.nextLayers)
         line += ", next layers " + s.nextLayersMode;
     return line;

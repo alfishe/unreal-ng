@@ -69,6 +69,8 @@ public:
         settings.hudNotices = {{"ram-page", true}, {"tape-events", false}};
         settings.osdKeyboardPictures = {"pentagon", "pentagon2plus"};
         settings.osdKeyboardPicture = "pentagon";
+        settings.osdKeyboardStyles = {"photo", "schematic", "hybrid"};
+        settings.osdKeyboardStyle = "photo";
         settings.nextLayersMode = "layers";
         settings.nextLayersShown = {{"ula", true}, {"layer2", true}, {"tilemap", true}, {"sprites", true}};
         parameters.profile = "basic";
@@ -120,6 +122,7 @@ public:
             settings.hudNotices[id] = on;
         set(settings.osdKeyboard, change.osdKeyboard);
         set(settings.osdKeyboardPicture, change.osdKeyboardPicture);
+        set(settings.osdKeyboardStyle, change.osdKeyboardStyle);
         set(settings.nextLayers, change.nextLayers);
         set(settings.nextLayersMode, change.nextLayersMode);
         for (const auto& [name, on] : change.nextLayersShown)
@@ -195,7 +198,7 @@ TEST_F(PictureActions_Test, HeadlessTheWindowActionsAreListedAndSayThereIsNoWind
                            "video.crt_params_reset", "video.blending", "video.blending_decay_by", "video.viewport",
                            "view.fullscreen", "view.scale", "view.toolbar", "view.status_bar", "view.next_layers",
                            "view.next_layers_mode", "view.next_layer", "hud.toggle", "hud.theme", "hud.notice",
-                           "osd.keyboard_picture"})
+                           "osd.keyboard_picture", "osd.keyboard_style"})
     {
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info) << id;
@@ -270,6 +273,11 @@ TEST_F(PictureActions_Test, CyclingActionsGoToANameOrTheNextAndRefuseWhatIsNotOf
     EXPECT_EQ(Run("view.scale", Press({{"scale", 7}})).error, "Bad Request");
     ASSERT_TRUE(Run("osd.keyboard_picture", Press()).ok);
     EXPECT_EQ(window->settings.osdKeyboardPicture, "pentagon2plus");
+    ASSERT_TRUE(Run("osd.keyboard_style", Press()).ok);
+    EXPECT_EQ(window->settings.osdKeyboardStyle, "schematic");
+    ASSERT_TRUE(Run("osd.keyboard_style", Press({{"style", "prev"}})).ok);
+    EXPECT_EQ(window->settings.osdKeyboardStyle, "photo");
+    EXPECT_FALSE(Run("osd.keyboard_style", Press({{"style", "sketch"}})).ok) << "not a style";
     ASSERT_TRUE(Run("view.next_layers_mode", Press({{"mode", "winner"}})).ok);
     EXPECT_EQ(window->settings.nextLayersMode, "winner");
 }

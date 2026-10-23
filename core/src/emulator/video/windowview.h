@@ -61,6 +61,8 @@ struct WindowDisplaySettings
     bool osdKeyboard = false;              ///< the on-screen keyboard window shown
     std::string osdKeyboardPicture;        ///< the keyboard picture it shows ("" = none for this machine)
     std::vector<std::string> osdKeyboardPictures;  ///< the pictures the shown machine offers
+    std::string osdKeyboardStyle;          ///< how the pictures are drawn: "photo", "schematic", "hybrid"
+    std::vector<std::string> osdKeyboardStyles;    ///< every style the pictures come in
 
     bool nextLayers = false;               ///< the ZX Next layers window shown
     std::string nextLayersMode;            ///< "layers" / "composed" / "winner"
@@ -86,6 +88,7 @@ struct WindowDisplayChange
     std::map<std::string, bool> hudNotices;
     std::optional<bool> osdKeyboard;
     std::optional<std::string> osdKeyboardPicture;
+    std::optional<std::string> osdKeyboardStyle;
     std::optional<bool> nextLayers;
     std::optional<std::string> nextLayersMode;
     std::map<std::string, bool> nextLayersShown;
@@ -94,7 +97,7 @@ struct WindowDisplayChange
     {
         return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
                !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
-               !osdKeyboard && !osdKeyboardPicture && !nextLayers && !nextLayersMode && nextLayersShown.empty();
+               !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
 };
 

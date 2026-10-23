@@ -5,6 +5,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
+
 #include "debugger/keyboard/debugkeyboardmanager.h"
 
 namespace
@@ -59,7 +61,12 @@ bool KeyboardPictures::load(const QString& root)
     _models.clear();
     _names.clear();
     _matrices.clear();
+    _styles.clear();
     const QJsonObject index = ReadJson(root + "/index.json");
+    for (const QJsonValue& style : index.value("styles").toArray())
+        _styles.push_back(style.toString().toStdString());
+    if (_styles.empty())  // an index of before the styles: the photo alone
+        _styles.push_back("photo");
     const QJsonObject models = index.value("models").toObject();
     for (auto it = models.begin(); it != models.end(); ++it)
     {
@@ -94,7 +101,8 @@ std::string KeyboardPictures::matrix(const std::string& id) const
     return it == _matrices.end() ? std::string() : it->second;
 }
 
-bool KeyboardPictures::picture(const std::string& id, KeyboardPicture& out, QString& error) const
+bool KeyboardPictures::picture(const std::string& id, KeyboardPicture& out, QString& error,
+                               const std::string& style) const
 {
     const QString base = _root + "/" + QString::fromStdString(id);
     const QJsonObject map = ReadJson(base + ".keys.json");
@@ -106,7 +114,9 @@ bool KeyboardPictures::picture(const std::string& id, KeyboardPicture& out, QStr
     out = {};
     out.id = id;
     out.name = name(id);
-    out.svgPath = base + ".photo.svg";
+    const bool known = std::find(_styles.begin(), _styles.end(), style) != _styles.end();
+    out.style = known ? style : (_styles.empty() ? std::string("photo") : _styles.front());
+    out.svgPath = base + "." + QString::fromStdString(out.style) + ".svg";
     const QJsonArray size = map.value("size").toArray();
     out.size = QSizeF(size.at(0).toDouble(), size.at(1).toDouble());
     for (const QJsonValue& value : map.value("keys").toArray())

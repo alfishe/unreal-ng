@@ -405,6 +405,7 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "                                   osd_keyboard, next_layers on|off; crt_profile <name>; blending_frames 2..5;\n"
         "                                   blending_weights equal|exponential; blending_decay 0.1..0.9; scale 1..4;\n"
         "                                   hud_theme <name>; hud_notice.<id> on|off; osd_keyboard_picture <id>;\n"
+        "                                   osd_keyboard_style photo|schematic|hybrid;\n"
         "                                   next_layers_mode layers|composed|winner; next_layer.<ula|layer2|tilemap|sprites>\n"
         "  video window crt_params [...]  - the active CRT profile's parameters; <name>=<v>, <name>+=<steps>,\n"
         "                                   <name>-=<steps>, reset, reset=<name>\n"

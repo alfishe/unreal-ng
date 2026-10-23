@@ -2613,14 +2613,18 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheNewSettingsAndTheir
     settings["osd_keyboard"] = true;
     settings["osd_keyboard_picture"] = "pentagon";
     settings["osd_keyboard_pictures"].append("pentagon");
+    settings["osd_keyboard_style"] = "hybrid";
+    for (const char* name : {"photo", "schematic", "hybrid"})
+        settings["osd_keyboard_styles"].append(name);
     _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
 
     Json::Value args;
     args["action"] = "window_display";
     mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
     ASSERT_FALSE(read.isError) << read.text;
-    for (const char* part : {"decay 0.3", "scale 3x", "hud on (theme retro_zx)", "keyboard on (pentagon)",
+    for (const char* part : {"decay 0.3", "scale 3x", "hud on (theme retro_zx)", "keyboard on (pentagon, hybrid)",
                              "hud_themes: dark_glass retro_zx", "osd_keyboard_pictures: pentagon",
+                             "osd_keyboard_styles: photo schematic hybrid",
                              "hud_notices (off): ram-page"})
         EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
 }

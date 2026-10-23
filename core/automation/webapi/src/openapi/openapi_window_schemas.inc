@@ -35,6 +35,10 @@
         s["properties"]["osd_keyboard_pictures"]["type"] = "array";
         s["properties"]["osd_keyboard_pictures"]["items"]["type"] = "string";
         s["properties"]["osd_keyboard_pictures"]["description"] = "The pictures the shown machine offers";
+        field("osd_keyboard_style", "string", "How the pictures are drawn: photo, schematic, hybrid (with the hints)");
+        s["properties"]["osd_keyboard_styles"]["type"] = "array";
+        s["properties"]["osd_keyboard_styles"]["items"]["type"] = "string";
+        s["properties"]["osd_keyboard_styles"]["description"] = "Every style the pictures come in";
         field("next_layers", "boolean", "The ZX Next layers window shown");
         field("next_layers_mode", "string", "layers, composed or winner");
         field("next_layers_shown", "object", "{ula, layer2, tilemap, sprites}: the layer ticks");
