@@ -290,7 +290,9 @@ TEST_F(ProfiBoot_Test, MenuEntriesStartWhatTheyName)
         }
         else
         {
-            _emulator->RunNFrames(300, true);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] {
+                return context->pMemory->GetROMPage() == e.romPage && (context->emulatorState.flags & CF_TRDOS) == 0;
+            }, 300);
             EXPECT_EQ(context->pMemory->GetROMPage(), e.romPage);
             EXPECT_EQ(context->emulatorState.flags & CF_TRDOS, 0) << "the SYS session is over";
         }
@@ -317,16 +319,20 @@ static uint32_t SpeedTestBarEnd(EmulatorContext* context)
 
 TEST_F(ProfiBoot_Test, BiosSpeedTestReadsWhatARealBoardReads)
 {
-    // Slower than the 50 ms guideline on purpose: the real BIOS boots, then runs its own timing loop
+    // The real BIOS boots, then runs its own timing loop: emulated time, so the frames before the bar is drawn need
+    // no picture (turbo: no rendering, no audio); the last two render it
     for (const bool turbo : {false, true})
     {
         SCOPED_TRACE(turbo ? "TURBO" : "normal");
         _emulator->Reset(true);
+        _emulator->EnableTurboMode();
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, turbo);
         _emulator->RunNFrames(600, true);                  // the BIOS menu
         TapKeys("C6,C6,C6,C6,C6,ENT");                     // the test menu
         TapKeys("C6,C6,C6,C6,C6,C6,ENT");                  // Тест быстродействия
-        _emulator->RunNFrames(400, true);
+        _emulator->RunNFrames(398, true);
+        _emulator->DisableTurboMode();
+        _emulator->RunNFrames(2, true);
         const uint32_t end = SpeedTestBarEnd(_emulator->GetContext());
         EXPECT_EQ(end, turbo ? 63u + 196u : 63u + 120u) << "bar end " << end << " = speed " << (end - 63) / 80.0;
     }
@@ -353,7 +359,7 @@ static uint32_t HiresLinesWithInk(EmulatorContext* context)
 ///        and every read ends in Lost Data (WD1793::SetBaseClockTimeBase, set by PortDecoder_Profi)
 TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    // An integration test: the BIOS and SP-DOS boot from a floppy, until the shell is in memory
     const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0");
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
@@ -361,13 +367,14 @@ TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
     std::string error;
     ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
     TapKeys("ENT");                      // the first entry: CP/M
-    _emulator->RunNFrames(1500, true);
-
-    std::string ram;
-    for (uint32_t a = 0; a < 0x10000; a++)
-        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
-    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
-        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    auto shellLoaded = [&] {
+        std::string ram;
+        for (uint32_t a = 0; a < 0x10000; a++)
+            ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+        return ram.find("SP-DOS Shell by Michael Markowsky") != std::string::npos;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), shellLoaded, 1500, 25);
+    EXPECT_TRUE(shellLoaded()) << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
     EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
 }
 
@@ -376,7 +383,7 @@ TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
 ///        runs its AUTOEXEC.BAT (KEYHELP, PRSCR, then PAUSE, which waits for Space)
 TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and CP/M boot from a floppy
+    // An integration test: the BIOS and CP/M boot from a floppy, until the screen fills
     const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/v5/kondor-system-copyk.fdi");
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
@@ -384,7 +391,9 @@ TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
     std::string error;
     ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
     TapKeys("ENT");                      // the first entry: CP/M
-    _emulator->RunNFrames(2500, true);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] {
+        return (context->emulatorState.pDFFD & 0xA0) == 0xA0 && HiresLinesWithInk(context) >= 80;
+    }, 2500, 25);
 
     EXPECT_NE(context->emulatorState.pDFFD & 0x20, 0) << "CP/M mode";
     EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";

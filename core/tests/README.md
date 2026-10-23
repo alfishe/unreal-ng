@@ -40,7 +40,7 @@ regression tests: [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.m
 9. **Mark incomplete tests**: Use `FAIL() << "Not Implemented yet"` for placeholder tests
 10. **Timing tests**: Use `TestTimingHelper` for cycle-accurate emulator tests
 11. **Never sleep to wait**: A fixed `sleep_for` is always wrong - use `TestWait::For` / `ForAtLeast` / `ForExactly`
-12. **Budget: under 50 ms per test**: Anything slower needs a reason in a comment (see [Test Speed](#test-speed--determinism))
+12. **Budget: about 10 ms per test, an integration test under 1 s**: the full scenario goes behind `TestTier::Long()` (`UNREAL_LONG_TESTS=1`, see [Test Speed](#test-speed--determinism))
 13. **Stop when the assertion is satisfied**: Do not keep looping once the test can no longer fail
 14. **Turn off audio work for boot-bound tests**: `EnableTurboMode()` - but never when asserting on rendered pixels
 15. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
@@ -1670,9 +1670,24 @@ of avoidable causes.
 
 ### The budget
 
-**Target: under 50 ms per test.** Slower than that needs a one-line comment
-saying why. Legitimate reasons are rare - essentially only "this boots a real
-ROM to a specific machine state". Everything else is a bug in the test.
+**Target: about 10 ms per test; an integration test (a real ROM boot, a load,
+a replay) under 1 s.** Slower than that is a bug in the test: cut what does not
+prove the claim, then shorten the scenario to the smallest one that can fail (a
+few frames, one replay, a sample of a corpus).
+
+Where the full scenario finds more than the short one (every file of a corpus,
+a whole boot, thousands of frames), keep it as the long tier:
+
+```cpp
+#include "_helpers/testtier.h"
+
+const size_t frames = TestTier::Pick<size_t>(50, 1500);   // 1500 with UNREAL_LONG_TESTS=1
+if (!TestTier::Long())
+    files.resize(std::min<size_t>(files.size(), 3));        // a sample; every file in the long tier
+```
+
+CI's full run (`build-gcc-latest`) sets `UNREAL_LONG_TESTS=1`. Use this one
+variable for every long variant, never a new per-suite switch.
 
 Measure before optimising:
 
@@ -1680,7 +1695,7 @@ Measure before optimising:
 ./cmake-build-release/bin/core-tests --gtest_filter="*YourArea*" 2>&1 \
   | grep -E "^\[       OK \]" \
   | sed -E 's/^\[       OK \] //; s/ \(([0-9]+) ms\)/ \1/' \
-  | awk '{t=$NF; $NF=""; if (t+0 > 50) printf "%6d ms  %s\n", t, $0}' | sort -rn
+  | awk '{t=$NF; $NF=""; if (t+0 > 10) printf "%6d ms  %s\n", t, $0}' | sort -rn
 ```
 
 ### 1. Never wait on the wall clock

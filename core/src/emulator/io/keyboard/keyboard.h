@@ -5,6 +5,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/platform.h"
 
+#include <mutex>
 #include <set>
 
 class EmulatorContext;
@@ -409,6 +410,10 @@ protected:
     EmulatorContext* _context;
 
     uint8_t _keyboardMatrixState[8];
+
+    /// The host key counters below: the MessageCenter thread counts presses while the machine's thread resets,
+    /// captures and restores them. Recursive: a press applied at once (no TTD) may come back in through a sink
+    mutable std::recursive_mutex _hostKeysMutex;
     std::map<ZXKeysEnum, uint8_t> _keyboardPressedKeys;
 
     /// Keyboard-joystick overlay (controller manager, retro-devices §5): the keys every Sinclair / Cursor / keys
