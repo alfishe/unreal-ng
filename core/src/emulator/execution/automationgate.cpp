@@ -50,6 +50,8 @@ bool ChangesMachine(const std::string& method, const std::string& subpath)
     std::string_view path(subpath);
     if (const size_t query = path.find('?'); query != std::string_view::npos)
         path = path.substr(0, query);
+    if (path == "/video/window/record/frames")  // under /video/window, but it runs the machine
+        return true;
     for (std::string_view prefix : kNoChange)
         if (StartsWith(path, prefix) && (path.size() == prefix.size() || path[prefix.size()] == '/'))
             return false;

@@ -501,6 +501,9 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     app.setClientMaxBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
     // Also set max memory body size so bodies are kept in memory, not temp files
     app.setClientMaxMemoryBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
+    // A long call answers when it is done (record/frames, the window recording's stop on a loaded host): drogon's
+    // default drops a connection silent for 60 s and the answer with it, so idle connections are never closed here
+    app.setIdleConnectionTimeout(0);
 
     // Custom 404 page that guides users to API documentation
     // Load from external HTML file for easy maintenance

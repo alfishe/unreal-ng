@@ -1379,6 +1379,16 @@ emu.window_crt_params()              -- the active CRT profile's parameters: { p
 emu.window_crt_params_set({CRTgamma = 2.4}, {steps = {curvature = 2}, reset = true})  -- set values (clamped),
                                      --   move by a dial's steps, reset all (true) or one ("name"); returns the
                                      --   parameters after it, or { ok = false, error, kind }
+emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- record the GUI window as drawn (CRT,
+                                     --   the on-screen keyboard, the machine's sound, one video frame per emulated
+                                     --   frame); options: keyboard ("default", a picture id, false), codec ("prores" /
+                                     --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
+                                     --   picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
+                                     --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
+                                     --   audio, sample_rate, audio_samples }, or { ok = false, error, kind }
+emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran
+emu.window_record_stop()             -- finish the file (waits for ffmpeg, muxes the sound in); its last status
+emu.window_record_status()           -- the recording's status; headless { ok = false, error, kind = "no-window" }
 emu.video_viewport()                 -- the overscan frame and its crop: { overscan, overscan_available, viewport,
                                      --   viewports, framebuffer, display, video_mode } (the machine's: headless too)
 emu.video_viewport_set("standard")   -- full / symmetric / standard / screen_only / next / prev; a crop other than

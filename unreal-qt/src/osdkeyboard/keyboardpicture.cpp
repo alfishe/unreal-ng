@@ -58,6 +58,7 @@ bool KeyboardPictures::load(const QString& root)
     _root = root;
     _models.clear();
     _names.clear();
+    _matrices.clear();
     const QJsonObject index = ReadJson(root + "/index.json");
     const QJsonObject models = index.value("models").toObject();
     for (auto it = models.begin(); it != models.end(); ++it)
@@ -68,7 +69,10 @@ bool KeyboardPictures::load(const QString& root)
     }
     const QJsonObject keyboards = index.value("keyboards").toObject();
     for (auto it = keyboards.begin(); it != keyboards.end(); ++it)
+    {
         _names[it.key().toStdString()] = it.value().toObject().value("name").toString(it.key());
+        _matrices[it.key().toStdString()] = it.value().toObject().value("matrix").toString().toStdString();
+    }
     return !_models.empty();
 }
 
@@ -82,6 +86,12 @@ QString KeyboardPictures::name(const std::string& id) const
 {
     const auto it = _names.find(id);
     return it == _names.end() ? QString::fromStdString(id) : it->second;
+}
+
+std::string KeyboardPictures::matrix(const std::string& id) const
+{
+    const auto it = _matrices.find(id);
+    return it == _matrices.end() ? std::string() : it->second;
 }
 
 bool KeyboardPictures::picture(const std::string& id, KeyboardPicture& out, QString& error) const

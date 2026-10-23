@@ -59,9 +59,12 @@ public:
     QString name(const std::string& id) const;
     /// Load one picture's key map; false (and @p error) when it is missing or a key names nothing the core knows
     bool picture(const std::string& id, KeyboardPicture& out, QString& error) const;
+    /// The matrix a picture's keys drive ("zx", "pc"); empty for an unknown id
+    std::string matrix(const std::string& id) const;
 
 private:
     QString _root;
     std::map<std::string, std::vector<std::string>> _models;
     std::map<std::string, QString> _names;
+    std::map<std::string, std::string> _matrices;
 };

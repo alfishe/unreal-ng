@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -70,6 +71,10 @@ protected:
     // requires a sound stack rebuild - applied only at frame boundaries via
     // requestCoreRate()/applyCoreRate().
     size_t _coreRate = CORE_SAMPLING_RATE;
+    std::mutex _frameAudioTapMutex;  ///< guards _frameAudioTaps; held while they run
+    std::vector<std::pair<uint64_t, std::function<void(const int16_t*, size_t, uint64_t)>>> _frameAudioTaps;
+    std::atomic<size_t> _frameAudioTapCount{0};
+    uint64_t _nextFrameAudioTapId = 1;
 
     // Runtime core-rate pin (automation 'audio_rate': CLI setting, WebAPI
     // settings, Lua/Python set_audio_rate). Explicit intent for THIS run
@@ -818,6 +823,16 @@ public:
     {
         _defaultDeviceSampleRate.store(rate, std::memory_order_release);
     }
+
+    /// A per-frame copy of the mixed sound, stereo int16 at getCoreRate(), taken where the recording takes it (before
+    /// mute): the GUI window recording's sound track. Called on the emulation thread at each frame end with the
+    /// frame's sample pairs and its frame_counter. While a tap is present the sound is synthesised in turbo and the
+    /// core rate stays, as while recording
+    using FrameAudioTap = std::function<void(const int16_t* samples, size_t sampleFrames, uint64_t frame)>;
+    uint64_t addFrameAudioTap(FrameAudioTap tap);
+    /// Returns once a call in progress has finished: the tap's state may go away after it
+    void removeFrameAudioTap(uint64_t id);
+    bool hasFrameAudioTaps() const { return _frameAudioTapCount.load(std::memory_order_acquire) > 0; }
 
     // DRC telemetry (tests / diagnostics)
     double getDrcRatio() const { return _drcResampler.getRatio(); }

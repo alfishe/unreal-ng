@@ -530,13 +530,15 @@ void DeviceScreenGLWindow::resizeGL(int w, int h)
     glViewport(0, 0, w, h);
 }
 
-QImage DeviceScreenGLWindow::renderWindowImage()
+QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
 {
     if (!isValid())
         return {};
     makeCurrent();
     const qreal ratio = devicePixelRatio();
-    const QSize pixels = (QSizeF(size()) * ratio).toSize();
+    if (pictureHeight > 0)
+        _renderPicture = QSize(static_cast<int>(pictureHeight * static_cast<double>(this->ratio)), pictureHeight);
+    const QSize pixels = _renderPicture.isEmpty() ? (QSizeF(size()) * ratio).toSize() : _renderPicture;
     QImage image;
     {
         QOpenGLFramebufferObject fbo(pixels);
@@ -549,9 +551,10 @@ QImage DeviceScreenGLWindow::renderWindowImage()
         fbo.release();
         image = fbo.toImage();
     }
+    _renderPicture = {};
     doneCurrent();
     image.setDevicePixelRatio(ratio);
-    if (_hudOverlay && _hudOverlay->isVisible())
+    if (hud && _hudOverlay && _hudOverlay->isVisible())
     {
         QPainter painter(&image);
         _hudOverlay->renderHUD(painter, width(), height(), ratio);
@@ -666,8 +669,8 @@ void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* 
 void DeviceScreenGLWindow::paintGL()
 {
     const qreal dpr = devicePixelRatio();
-    const int surfaceWidth = qRound(width() * dpr);
-    const int surfaceHeight = qRound(height() * dpr);
+    const int surfaceWidth = _renderPicture.isEmpty() ? qRound(width() * dpr) : _renderPicture.width();
+    const int surfaceHeight = _renderPicture.isEmpty() ? qRound(height() * dpr) : _renderPicture.height();
     glViewport(0, 0, surfaceWidth, surfaceHeight);
     glDisable(GL_DITHER);  // the composition writes exact values
     // The HUD's QPainter of the previous frame may leave its state behind
@@ -948,6 +951,8 @@ QSize DeviceScreenGLWindow::drawnPictureSize() const
 
 QRect DeviceScreenGLWindow::pictureDeviceRect() const
 {
+    if (!_renderPicture.isEmpty())
+        return QRect(QPoint(0, 0), _renderPicture);
     const QSize drawn = drawnPictureSize();
     if (drawn.isEmpty())
         return QRect();

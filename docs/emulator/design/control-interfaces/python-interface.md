@@ -661,7 +661,7 @@ and return the reply dict) - the same verbs, options and replies as the CLI `slo
 [docs/features/slots.md](../../../features/slots.md)):
 
 ```python
-import unreal
+import unreal_emulator as unreal
 unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
 unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
 unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
@@ -1733,6 +1733,16 @@ emu.window_crt_params()              # the active CRT profile's parameters: {'pr
                                      #   'minimum', 'maximum', 'step'}]}; headless {'ok': False, 'error', 'kind'}
 emu.window_crt_params_set(values={'CRTgamma': 2.4}, steps={'curvature': 2}, reset=True)  # set (clamped), move by
                                      #   a dial's steps, reset (True, a name or a list); returns the parameters
+emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record the GUI window as drawn (CRT, the
+                                     #   on-screen keyboard, the machine's sound, one video frame per emulated frame);
+                                     #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
+                                     #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
+                                     #   picture_height= (0..4320, GPU), width= / height= (the frame), layout=
+                                     #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
+                                     #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples'} or {'ok': False, ...}
+emu.window_record_frames(100)        # a paused machine runs 100 frames, every one recorded; the status with 'ran'
+emu.window_record_stop()             # finish the file (waits for ffmpeg, muxes the sound in); its last status
+emu.window_record_status()           # the recording's status; headless {'ok': False, 'error', 'kind': 'no-window'}
 emu.video_viewport()                 # the overscan frame and its crop: {'overscan', 'overscan_available',
                                      #   'viewport', 'viewports', 'framebuffer', 'display', 'video_mode'}
 emu.video_viewport_set('standard')   # full / symmetric / standard / screen_only / next / prev; a crop other than

@@ -906,6 +906,24 @@ void SoundManager::setBeeperVolume(double volume)
 /// endregion </Methods>
 
 /// region <Emulation events>
+uint64_t SoundManager::addFrameAudioTap(FrameAudioTap tap)
+{
+    std::lock_guard<std::mutex> lock(_frameAudioTapMutex);
+    const uint64_t id = _nextFrameAudioTapId++;
+    _frameAudioTaps.emplace_back(id, std::move(tap));
+    _frameAudioTapCount.store(_frameAudioTaps.size(), std::memory_order_release);
+    return id;
+}
+
+void SoundManager::removeFrameAudioTap(uint64_t id)
+{
+    std::lock_guard<std::mutex> lock(_frameAudioTapMutex);
+    _frameAudioTaps.erase(std::remove_if(_frameAudioTaps.begin(), _frameAudioTaps.end(),
+                                         [id](const auto& entry) { return entry.first == id; }),
+                          _frameAudioTaps.end());
+    _frameAudioTapCount.store(_frameAudioTaps.size(), std::memory_order_release);
+}
+
 void SoundManager::requestCoreRate(uint32_t rate)
 {
     if (!IsSupportedCoreRate(rate))
@@ -1018,9 +1036,10 @@ void SoundManager::handleFrameStart()
     if (pending != 0)
     {
 #ifdef ENABLE_RECORDING
-        const bool recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+        const bool recording = (_context->pRecordingManager && _context->pRecordingManager->IsRecording()) ||
+                               hasFrameAudioTaps();
 #else
-        const bool recording = false;
+        const bool recording = hasFrameAudioTaps();
 #endif  // ENABLE_RECORDING
         if (recording)
         {
@@ -1066,6 +1085,8 @@ void SoundManager::handleFrameStart()
         if (suppressed && _context->pRecordingManager && _context->pRecordingManager->IsRecording())
             suppressed = false;
 #endif
+        if (suppressed && hasFrameAudioTaps())
+            suppressed = false;
         _synthesisSuppressed = suppressed;
 
         // Sound feature off = GENERATION off for every generator, exactly like turbo without audio:
@@ -1223,9 +1244,10 @@ void SoundManager::handleFrameEnd()
     // or a turbo stretch would change the machine's trajectory and its TTD
     // checkpoints. Only the host-audio work below (sample accounting,
     // character chains, mixing, delivery) is skipped - the same condition
-    // MainLoop used to gate this whole call on
+    // MainLoop used to gate this whole call on. A frame audio tap takes every frame's sound and number: it runs the
+    // frame as turbo with audio does
     const CONFIG& frameConfig = _context->config;
-    if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio)
+    if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio && !hasFrameAudioTaps())
     {
         // A gap in the voiced stream: the pre-roll history no longer precedes the next frame
         // (and the character chains restart at the next frame with audio)
@@ -1737,6 +1759,15 @@ void SoundManager::handleFrameEnd()
         _context->pRecordingManager->CaptureAudio(_outBuffer, samplesThisFrame * AUDIO_CHANNELS);
     }
 #endif
+
+    // The frame audio taps (the GUI window recording): the same vantage as the recording above
+    if (hasFrameAudioTaps())
+    {
+        std::lock_guard<std::mutex> lock(_frameAudioTapMutex);
+        const uint64_t frame = _context->emulatorState.frame_counter;
+        for (const auto& entry : _frameAudioTaps)
+            entry.second(_outBuffer, samplesThisFrame, frame);
+    }
 
     /// region <Analyzer audio tap (MCP automation)>
     // Post-mix, pre-mute/DRC vantage — identical to the recording tap above.

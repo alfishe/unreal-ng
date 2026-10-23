@@ -2691,6 +2691,93 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplaySet_NeedsDisplayAndReportsNoWind
     EXPECT_NE(headless.text.find("only in the GUI"), std::string::npos) << headless.text;
 }
 
+TEST_F(McpTools_Test, CaptureMedia_WindowRecord_StartsRunsFramesAndStops)
+{
+    Json::Value status;
+    status["recording"] = true;
+    status["path"] = "/tmp/demo.mov";
+    status["keyboard"] = "pentagon2plus";
+    status["frames"] = 0;
+    status["width"] = 3840;
+    status["height"] = 2160;
+    status["fps"] = 48.828125;
+    status["audio"] = true;
+    status["sample_rate"] = 44100;
+    _caller->routes["POST /api/v1/emulator/emu-1/video/window/record"] = {200, status};
+    status["frames"] = 50;
+    status["ran"] = 50;
+    _caller->routes["POST /api/v1/emulator/emu-1/video/window/record/frames"] = {200, status};
+    status["recording"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/video/window/record/stop"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "window_record_start";
+    args["filename"] = "/tmp/demo.mov";
+    args["keyboard"] = "pentagon2plus";
+    args["picture_height"] = 1080;
+    args["scale"] = 2;
+    args["width"] = 3840;
+    args["height"] = 2160;
+    args["layout"] = "side";
+    args["audio"] = "aac";
+    mcp::ToolResult start = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(start.isError) << start.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/video/window/record");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "/tmp/demo.mov");
+    EXPECT_EQ(call->body["keyboard"].asString(), "pentagon2plus");
+    EXPECT_EQ(call->body["picture_height"].asInt(), 1080);
+    EXPECT_EQ(call->body["layout"].asString(), "side");
+    EXPECT_TRUE(call->body["audio"].asBool()) << "a codec word means a sound track";
+    // the text alone tells an agent the file, its size, the keyboard and what to do next
+    EXPECT_NE(start.text.find("window recording to /tmp/demo.mov: 3840x2160 at 48.828 fps, sound 44100 Hz, 0 frames, keyboard pentagon2plus"),
+              std::string::npos)
+        << start.text;
+    EXPECT_NE(start.text.find("window_record_frames"), std::string::npos) << start.text;
+
+    Json::Value frames;
+    frames["action"] = "window_record_frames";
+    mcp::ToolResult missing = RunTool(*_registry, "capture_media", frames, *_caller);
+    EXPECT_TRUE(missing.isError);
+    frames["frames"] = 50;
+    mcp::ToolResult ran = RunTool(*_registry, "capture_media", frames, *_caller);
+    ASSERT_FALSE(ran.isError) << ran.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/video/window/record/frames")->body["frames"].asInt(), 50);
+    EXPECT_NE(ran.text.find("ran 50 frames, window recording to /tmp/demo.mov: 3840x2160 at 48.828 fps, sound 44100 Hz, 50 frames"), std::string::npos)
+        << ran.text;
+
+    Json::Value stop;
+    stop["action"] = "window_record_stop";
+    mcp::ToolResult stopped = RunTool(*_registry, "capture_media", stop, *_caller);
+    ASSERT_FALSE(stopped.isError) << stopped.text;
+    EXPECT_NE(stopped.text.find("window recording off, last /tmp/demo.mov"), std::string::npos) << stopped.text;
+
+    args["audio"] = "none";
+    RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/video/window/record")->body["audio"].asBool());
+}
+
+TEST_F(McpTools_Test, CaptureMedia_WindowRecord_NeedsAFileAndReportsErrors)
+{
+    Json::Value args;
+    args["action"] = "window_record_start";
+    mcp::ToolResult missing = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/video/window/record"));
+
+    Json::Value error;
+    error["error"] = "Pause the machine first: it runs frame by frame here";
+    error["kind"] = "not-paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/video/window/record/frames"] = {409, error};
+    Json::Value frames;
+    frames["action"] = "window_record_frames";
+    frames["frames"] = 10;
+    mcp::ToolResult running = RunTool(*_registry, "capture_media", frames, *_caller);
+    EXPECT_TRUE(running.isError);
+    EXPECT_NE(running.text.find("HTTP 409"), std::string::npos) << running.text;
+    EXPECT_NE(running.text.find("Pause the machine first"), std::string::npos) << running.text;
+}
+
 // ===========================================================================
 // time_travel (TD-4 — agent bookmarks)
 // ===========================================================================

@@ -95,7 +95,9 @@ public:
     QImage grabFramebuffer();
     /// The window as it draws now (picture, letterbox, CRT shader, HUD), rendered afresh into an image in device
     /// pixels. QOpenGLWindow::grabFramebuffer only reads the back buffer, which after a swap may hold an older frame
-    QImage renderWindowImage();
+    /// @p pictureHeight > 0: the picture alone, drawn that many device pixels high (the window recording's own
+    /// resolution); else the window as it is
+    QImage renderWindowImage(bool hud = true, int pictureHeight = 0);
 
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
@@ -216,6 +218,7 @@ private:
     bool _hasViewport = false;
 
     class HudOverlay* _hudOverlay = nullptr;
+    QSize _renderPicture;  ///< renderWindowImage's picture size in device pixels, while it draws (empty: the window's)
     bool _renderingImage = false;  ///< paintGL draws for renderWindowImage(): no HUD into the window
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }

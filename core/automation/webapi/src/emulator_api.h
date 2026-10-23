@@ -337,6 +337,10 @@ public:
     // The overscan frame's viewport (api/video_window_api.cpp): full, symmetric, standard, screen_only
     ADD_METHOD_TO(EmulatorAPI::getVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::startVideoWindowRecord, "/api/v1/emulator/{id}/video/window/record", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getVideoWindowRecord, "/api/v1/emulator/{id}/video/window/record", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::stopVideoWindowRecord, "/api/v1/emulator/{id}/video/window/record/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::runVideoWindowRecordFrames, "/api/v1/emulator/{id}/video/window/record/frames", drogon::Post);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -1308,6 +1312,24 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// state/screen/overscan route)
     void setVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/video/window/record — body {path, keyboard ("" | "default" | a picture id),
+    /// codec (prores | h264), fps, scale, picture_height, width, height, layout (below | side)}: record the window as it draws, the on-screen keyboard under it (409 headless)
+    void startVideoWindowRecord(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/window/record — {recording, path, keyboard, frames, width, height}
+    void getVideoWindowRecord(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/video/window/record/frames — body {frames}: a paused machine runs that many
+    /// frames, each one recorded before the next runs (frame-exact whatever the host's load)
+    void runVideoWindowRecordFrames(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/video/window/record/stop — finish the file; {path, frames, width, height}
+    void stopVideoWindowRecord(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with

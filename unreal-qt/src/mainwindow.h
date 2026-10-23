@@ -455,6 +455,7 @@ private:
     std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
+    class WindowRecorder* _windowRecorder = nullptr;      // the window recording (WindowView), made on first use
     OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, the osd.keyboard action
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity

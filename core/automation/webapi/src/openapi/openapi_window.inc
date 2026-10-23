@@ -182,3 +182,92 @@
         describeSet(paths[kPath]["put"]);
         describeSet(paths[kPath]["post"]);
     }
+    // GUI window recording: the picture as the window draws it (CRT shader and all), optionally with the on-screen
+    // keyboard, to a full-colour file through ffmpeg; a paused machine stepped with record/frames records every frame.
+    // Shared by the MCP capture_media actions window_record_start / _frames / _stop / _status.
+    {
+        auto idParam = [](Json::Value& op) {
+            Json::Value p;
+            p["name"] = "id";
+            p["in"] = "path";
+            p["required"] = true;
+            p["schema"]["type"] = "string";
+            op["parameters"].append(p);
+        };
+        auto statusRef = [](Json::Value& op, const char* description) {
+            op["tags"].append("Capture");
+            op["responses"]["200"]["description"] = description;
+            Json::Value& schema = op["responses"]["200"]["content"]["application/json"]["schema"];
+            schema["type"] = "object";
+            schema["properties"]["recording"]["type"] = "boolean";
+            schema["properties"]["path"]["type"] = "string";
+            schema["properties"]["keyboard"]["type"] = "string";
+            schema["properties"]["keyboard"]["description"] = "The keyboard picture in the file; empty = the picture only";
+            schema["properties"]["frames"]["type"] = "integer";
+            schema["properties"]["width"]["type"] = "integer";
+            schema["properties"]["height"]["type"] = "integer";
+            schema["properties"]["fps"]["type"] = "number";
+            schema["properties"]["audio"]["type"] = "boolean";
+            schema["properties"]["sample_rate"]["type"] = "integer";
+            schema["properties"]["audio_samples"]["type"] = "integer";
+            schema["properties"]["audio_samples"]["description"] = "Sample pairs in the sound track so far";
+            op["responses"]["404"]["description"] = "Emulator not found";
+            op["responses"]["409"]["description"] =
+                "{error, kind}: no-window (headless) or unavailable (not recording, no ffmpeg, another instance shown)";
+        };
+
+        Json::Value& start = paths["/api/v1/emulator/{id}/video/window/record"]["post"];
+        start["summary"] = "Record the GUI window (CRT effects, on-screen keyboard)";
+        start["description"] =
+            "Starts writing the picture as the window draws it (no HUD), with the on-screen keyboard lighting the keys "
+            "the machine holds and the machine's sound: one video frame per emulated frame at the machine's rate, "
+            "each with its own samples (a frame the window did not draw repeats the picture). Pause the machine and step it with record/frames "
+            "for every frame whatever the host's load. Needs ffmpeg on the host.";
+        idParam(start);
+        Json::Value& body = start["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["required"].append("path");
+        auto field = [&body](const char* name, const char* type, const char* description) {
+            body["properties"][name]["type"] = type;
+            body["properties"][name]["description"] = description;
+        };
+        field("path", "string", "The file to write, server side (.mov for prores, .mp4 for h264)");
+        field("keyboard", "string",
+              "default (the keyboard the OSD shows), a picture id of the machine (pentagon2plus, ...) or of another "
+              "with the same matrix (zxnext on a Pentagon), or true; left out or false = the picture only");
+        field("codec", "string", "prores (ProRes 4444, the default) or h264 (H.264 4:4:4)");
+        field("audio", "boolean",
+              "The machine's sound, frame for frame with the picture (default true; PCM in .mov, AAC in .mp4)");
+        field("fps", "integer", "Left out or 0 = the machine's frame rate (needed with audio); 1..100 with audio false");
+        field("scale", "integer", "1..4: the picture doubled in blocks, default 1");
+        field("picture_height", "integer", "0..4320: the CRT drawn at that height (GPU only), 0 = the window's");
+        field("width", "integer", "The file's frame width (with height); left out = picture + keyboard");
+        field("height", "integer", "The file's frame height (with width)");
+        field("layout", "string", "below (default) or side: where the keyboard goes in a given frame");
+        statusRef(start, "Recording status");
+        start["responses"]["400"]["description"] = "{error, kind: bad-parameter}: a value out of range";
+
+        Json::Value& status = paths["/api/v1/emulator/{id}/video/window/record"]["get"];
+        status["summary"] = "GUI window recording status";
+        idParam(status);
+        statusRef(status, "Recording status");
+
+        Json::Value& frames = paths["/api/v1/emulator/{id}/video/window/record/frames"]["post"];
+        frames["summary"] = "Run frames into the GUI window recording";
+        frames["description"] =
+            "A paused machine runs {frames} frames (1..100000), each one drawn by the window and written before the "
+            "next runs. Run control held by another surface: 409 run-control-held.";
+        idParam(frames);
+        Json::Value& framesBody = frames["requestBody"]["content"]["application/json"]["schema"];
+        framesBody["type"] = "object";
+        framesBody["required"].append("frames");
+        framesBody["properties"]["frames"]["type"] = "integer";
+        statusRef(frames, "Recording status after the frames, plus ran");
+        frames["responses"]["400"]["description"] = "{error, kind: bad-parameter}: frames out of range";
+
+        Json::Value& stop = paths["/api/v1/emulator/{id}/video/window/record/stop"]["post"];
+        stop["summary"] = "Stop the GUI window recording";
+        stop["description"] = "Closes the file: waits for ffmpeg, then muxes the sound in (the picture copied).";
+        idParam(stop);
+        statusRef(stop, "The finished recording");
+    }
