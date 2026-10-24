@@ -2,6 +2,16 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <pthread.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include "platform/windows/winthread.h"
 #endif
 
 #include <chrono>
@@ -102,6 +112,8 @@ void PadPump::Run()
     pthread_setname_np("pad-pump");
 #elif defined(__linux__)
     pthread_setname_np(pthread_self(), "pad-pump");
+#elif defined(_WIN32)
+    NameThisThread(L"pad-pump");
 #endif
     std::unique_lock<std::mutex> lock(_mutex);
     while (!_stopping)

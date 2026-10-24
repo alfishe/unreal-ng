@@ -1914,8 +1914,8 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 for (const Statement& s : l.statements)
                     if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !s.args.empty())
                         names(s.args[0], uses[l.label]);
-        for (const auto& [name, used] : uses)
-            for (const std::string& other : used)
+        for (const auto& [name, usedNames] : uses)
+            for (const std::string& other : usedNames)
                 if (other < name && uses.count(other) && uses[other].count(name))
                 {
                     w.growing.insert(name);

@@ -97,6 +97,10 @@ std::vector<std::string> GameInputPadControls();
 /// left upper / lower P3 / P4 (Xbox Accessories, SDL)
 void DiffGameInputPad(const GameInputPadState& was, const GameInputPadState& now, bool first, const ControlSink& sink);
 
+/// GameInputSystemButtons (GameInput.h v3: Guide 1, Share 2), which IGameInput::RegisterSystemButtonCallback reports
+/// apart from the gamepad reading: each button that changed from @p was to @p now goes to @p sink as `guide` / `share`
+void GameInputSystemButtonsDiff(uint32_t was, uint32_t now, const ControlSink& sink);
+
 /// endregion </GameInput>
 
 }  // namespace controllers
