@@ -182,6 +182,16 @@ private:
     std::vector<std::vector<uint8_t>> _writes;
 };
 
+/// Declared after the fakes: the pads go (their pumps' final writes) before the fakes do, even when an ASSERT returns
+struct ClearOnExit
+{
+    ProtocolPads& pads;
+    ~ClearOnExit()
+    {
+        pads.Clear();
+    }
+};
+
 void PutCrc(std::vector<uint8_t>& report, size_t size, uint8_t seed)
 {
     const uint32_t crc = PlayStationCrc32(seed, report.data(), size - 4);
@@ -338,6 +348,7 @@ TEST(ProtocolPads_Test, JoyConsPairAndRumbleWithTheirSidesHdFrequencies)
     ProtocolPads pads(sink, Fast());
     FakeSwitch left(pads, "L");
     FakeSwitch right(pads, "R");
+    ClearOnExit clearOnExit{pads};
     ProtocolPads::Endpoint first = MakeEndpoint("L", "bt:057e:2006:l", 0x2006, true);
     left.Give(first);
     ASSERT_TRUE(pads.Add(std::move(first)));
@@ -356,7 +367,12 @@ TEST(ProtocolPads_Test, JoyConsPairAndRumbleWithTheirSidesHdFrequencies)
     EXPECT_EQ(pads.Player(pair), 1);
     ASSERT_TRUE(TestWait::For([&] { return right.setUp.load(); }));
 
-    // The left half's buttons go out under the pair's id, as the Pro layout's left side
+    // The left half's buttons go out under the pair's id, as the Pro layout's left side (its setup's replies, 0x21
+    // reports with the sticks, went out under its own id while it was alone)
+    {
+        std::lock_guard<std::mutex> lock(sink.mutex);
+        sink.controls.clear();
+    }
     std::vector<uint8_t> report = SwitchReport(0x30);
     report[5] = 0x02;  // up
     pads.Input("L", report.data(), report.size());
@@ -394,6 +410,7 @@ TEST(ProtocolPads_Test, ChargingGripHalvesBecomeAPairByTheirDeviceInfo)
     ProtocolPads pads(sink, Fast());
     FakeSwitch left(pads, "1", SwitchProtocol::kTypeJoyConLeft);
     FakeSwitch right(pads, "2", SwitchProtocol::kTypeJoyConRight);
+    ClearOnExit clearOnExit{pads};
     ProtocolPads::Endpoint first = MakeEndpoint("1", "usb:057e:200e:0100:g", 0x200E, false);
     left.Give(first);
     left.hold = true;

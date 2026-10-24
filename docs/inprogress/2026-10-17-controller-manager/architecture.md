@@ -136,7 +136,7 @@ and the universal raw HID fallback (D2, D6). Measurements: [research-host-apis.m
 | OS | Primary (identity, input) | Companion (outputs, extras) | Universal fallback | Later |
 |:--|:--|:--|:--|:--|
 | macOS | **IOKit HID** (`IOHIDManager`): real VID/PID/version/serial, every HID pad, Xbox pads through the `XboxGamepad.dext` vendor pipe (report 0x20, GIP; over USB truncated to 18 bytes, so Elite paddles only over Bluetooth, research §2.3a); over BLE the plain HID report carries paddles and the profile on every profile (§2.3b); GameController never reports Elite paddles, used for outputs only (§2.3c) | **GameController.framework** (outputs; never the Elite paddles or battery): haptics incl. impulse triggers, battery of pads that report it, light, SF Symbols names, MFi and Bluetooth pads with no HID endpoint | our raw HID drivers (part of the primary) | SDL3 |
-| Windows | **GameInput** (installer prerequisite, loaded dynamically, D17): VID/PID, paddles (3.3+), trigger rumble, DualSense | **Raw Input** for generic HID pads, joysticks and DB9 adapters; **XInput** only if GameInput is missing | our raw HID drivers over Raw Input | SDL3 |
+| Windows | **GameInput** (installer prerequisite, loaded dynamically, D17) for the Xbox families only: VID/PID, paddles (3.3+), trigger rumble, Guide and Share (system-button callback) | **Raw Input** for every other HID pad: generic pads, joysticks, DB9 adapters, the Surface Dial, and the DualSense / Edge, DualShock 4, Switch Pro controller and Joy-Cons with their protocols (`ProtocolPads`: full reports, rumble, light, player LEDs, battery, Joy-Con pairs, the charging grip); **XInput** only if GameInput is missing | our raw HID drivers over Raw Input | SDL3 |
 | Linux | **evdev** (`/dev/input/event*`, uaccess ACLs): xpad maps Elite paddles to `BTN_TRIGGER_HAPPY5-8` (kernel 6.1+) | **hidraw** where udev rules allow it: LEDs, paddles over Bluetooth, vendor features | our raw HID drivers over hidraw | SDL3 |
 
 Rules:
@@ -201,6 +201,16 @@ HostDeviceId = family-neutral, stable across replug and restart:
   `IBackendSink::OnDevicePromoted(gc, usb/bt)` moves the router settings chosen for it (role, instance mode, player
   connector: `InputRouter::Promote`, unless the new id has its own) and the IOHID id goes on with the companion's
   outputs.
+- **Windows ids** (`WinDeviceId`, `platform/windowsdevices`): the same forms from the HID interface path that Raw Input
+  and GameInput give (`HID#VID_..&PID_..` for USB, the Bluetooth HID service GUID for `bt:`; the serial from
+  `HidD_GetSerialNumberString`, else a hash of the path; a Bluetooth pad hashes its serial, its MAC as Windows prints
+  it, or the path). Windows has no companion and no `gc:` devices, so nothing is promoted there; aliases recorded on
+  macOS apply only where the ids agree (a USB serial does; whether Windows and macOS print a Bluetooth pad's serial
+  alike, and so hash it alike, is not checked). Every protocol pad on Windows is one top-level collection, so the
+  Raw Input backend does not merge endpoints; the one-device-once rule between GameInput and Raw Input is by family
+  (GameInput takes the Xbox families; Raw Input skips every XInput-compatible collection, the `&IG_` in its path,
+  whichever of GameInput or XInput serves them). Unique ids within the backend cover
+  ProtocolPads' devices and Joy-Con pairs (`ProtocolPads::IdTaken`).
 - **Aliases, built (2026-10-23)**: `HostInputService` keeps each promotion (`TakePromotions`); the Qt client's poll
   records it in the profile store (`ProfileStore::AddAlias(old, new)`; an alias of the old id moves to the new one) and
   writes `<user profiles>/aliases.yaml` (`schema: 1`, `aliases: [{from, to}]`), read again at start. A profile's
@@ -309,7 +319,8 @@ and exit. Outputs are never journaled. Defaults are off for players except the b
 
 The light colour and the battery are `IBackend` calls (`SetLight`, `Battery`; defaulted, built 2026-10-22): the
 pure parts (GameController's and XInput's values, the Linux power supply and LED classes, the DualSense light report)
-in `devicestatus.{h,cpp}` and `DualSenseOutput::UsbLightReport`, the sources per OS in
+in `devicestatus.{h,cpp}` and `DualSenseOutput::UsbLightReport`, the pads with a protocol of their own in
+`ProtocolPads` (Windows; the IOHID backend has the same rules inline), the sources per OS in
 [surfaces.md §2](surfaces.md#battery-light-and-notice-built). A battery read never waits for a device: each backend
 refreshes a copy on its own thread.
 

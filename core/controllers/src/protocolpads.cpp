@@ -28,6 +28,10 @@ size_t ProtocolPads::ReportSize(uint16_t vendor, uint16_t product, bool bluetoot
     return size;
 }
 
+ProtocolPads::ProtocolPads(IBackendSink& sink) : ProtocolPads(sink, Options{})
+{
+}
+
 ProtocolPads::ProtocolPads(IBackendSink& sink, Options options) : _sink(sink), _options(std::move(options))
 {
 }

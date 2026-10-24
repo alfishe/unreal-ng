@@ -223,7 +223,7 @@ asserts that frame hashes are identical with the feed active (§12).
 | OS | Handle motors | Impulse triggers | HD haptics |
 |:--|:--|:--|:--|
 | macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense (USB report 2, Bluetooth report 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller and Joy-Cons (0x10 / 0x01, HD rumble; a pair split per half), the Surface Dial's clicks (report 1); else CoreHaptics through `GCDeviceHaptics` of the matched `GCController` (or a `gc:` device's own); none for an Xbox pad over USB (below) | Xbox report 3; DualSense trigger resistance; GC localities `leftTrigger` / `rightTrigger` | Switch Pro HD rumble (`RumbleLevels::lowHz` / `highHz`); CoreHaptics sharpness from the same frequency; AHAP patterns not yet |
-| Windows | GameInput `SetRumbleState`; XInput `XInputSetState` as the last resort | GameInput (Xbox) | DualSense raw output reports over Raw Input / HID (no OS API) |
+| Windows | GameInput `SetRumbleState` (Xbox); XInput `XInputSetState` as the last resort; HID output reports over the Raw Input device's handle (overlapped `WriteFile`): DualSense / Edge (USB 2, Bluetooth 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller and Joy-Cons (0x10 / 0x01, HD rumble; a pair split per half), the Surface Dial's clicks | GameInput (Xbox); DualSense trigger resistance | Switch Pro and Joy-Con HD rumble (`RumbleLevels::lowHz` / `highHz`); no CoreHaptics equivalent: the frequency is dropped for every other pad |
 | Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path (below); none through evdev (`FF_RUMBLE` has no trigger motors) | hidraw output reports (hid-playstation for basic rumble) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
 
@@ -294,6 +294,31 @@ libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering 
   sharpness control) follows the same frequency laid on the Switch codes 41 Hz..1253 Hz (`GcPad::SharpnessFor`).
 - **Player LEDs**: each pump pad gets the lowest free player number at connect (DualSense LEDs `04 0A 15 1B 1F`, the
   DualShock 4 light colour, the Switch lights); the emulator's own player slots do not drive them yet.
+
+Windows PlayStation and Switch pads (2026-10-24, built and unit-tested with fake writers, not exercised on hardware: the
+Windows host has no pads):
+
+- **`ProtocolPads`** (`core/controllers/src/protocolpads.{h,cpp}`) is the OS-neutral part of a HID backend for the pads
+  above: it runs the same `SonyProtocol` / `SwitchProtocol` pumps, `SonyPad` / `SwitchProPad` decoders and
+  `JoyConPairing` as macOS (no copies), picks the lowest free player number, hides a charging-grip half until its
+  device info names the side, and answers rumble, light, player LEDs and battery for the devices it reports. The Raw
+  Input backend (`platform/windows/rawinputbackend`) gives it each pad's top-level collection (key: the Raw Input
+  handle), its input reports and two calls run on the pump's thread: an output report written with overlapped
+  `WriteFile` padded to `HIDP_CAPS::OutputReportByteLength` (hidapi's `hid_write`), and a feature read through
+  `IOCTL_HID_GET_FEATURE` with a buffer of `FeatureReportByteLength`, cut to the protocol's size (41 bytes for 0x05,
+  37 for 0x02, whose CRC and length checks are exact). Both give up after 1 s (`CancelIoEx`), so a pad that stops
+  answering never holds its pump. The handle is opened shared for reading and writing; when Windows refuses it (another
+  program holds the pad alone: Steam Input, DS4Windows, HidHide), the pad still reads its descriptor's reports and the
+  notice says why rumble and light are off. ProtocolPads can serve Linux hidraw and IOHID the same way later.
+- **Report sizes**: Raw Input pads every report to `InputReportByteLength`, the longest input report (547 bytes for a
+  PlayStation pad over Bluetooth). `ProtocolPads::ReportSize` cuts a Sony full report to 64 bytes (USB 0x01) or 78
+  (Bluetooth 0x31 / 0x11, CRC over those 78) before `SonyPad::Decode`; a Switch 0x21 / 0x30 is taken as it comes.
+- **No start delay difference**: SwitchProtocol keeps its 250 ms before the first command (macOS's handshake); Windows
+  does none, so it only delays the set-up.
+- **HD frequency on Windows**: only the Switch pads have a frequency per band; GameInput's `SetRumbleState`, XInput,
+  the DualSense's compatible vibration and the DualShock 4 take amplitudes only, and Windows has no sharpness API, so
+  `lowHz` / `highHz` are ignored there. The DualSense's voice-coil (audio haptics over the USB audio endpoint) stays out
+  of scope on every OS.
 
 Linux over Bluetooth (2026-10-22, built, not exercised on hardware): an Xbox One / Series pad (the Elite 2 included)
 bound to `hid-generic` through BlueZ's uhid has no `FF_RUMBLE` on its evdev node. The evdev backend then writes output
@@ -366,5 +391,8 @@ Open points:
 - Which games first: the owner's pick (a shooter with AY explosions, a racing game with an engine value, a platformer
   with a lives counter is a good first set).
 - macOS USB output reports through the dext (§9).
+- Windows: the PlayStation and Switch pads' outputs over Raw Input (§9) are built but have not met a pad; to check on
+  hardware: Bluetooth DualSense light and rumble, the DualShock 4's Bluetooth 0x11 switch, the Switch set-up over USB
+  and Bluetooth, the charging grip, and whether Steam Input running in the background blocks the writes.
 - Whether a homebrew "haptic port" (a virtual OUT port that games can write to) is wanted; it would be emulator-only
   and must not decode on real-machine ports.

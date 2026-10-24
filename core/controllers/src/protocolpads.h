@@ -74,7 +74,8 @@ public:
     /// SonyPad takes its reports by their exact size (64 over USB, 78 over Bluetooth). @p size for anything else
     static size_t ReportSize(uint16_t vendor, uint16_t product, bool bluetooth, const uint8_t* report, size_t size);
 
-    explicit ProtocolPads(IBackendSink& sink, Options options = {});
+    explicit ProtocolPads(IBackendSink& sink);
+    ProtocolPads(IBackendSink& sink, Options options);
     /// The pumps stop their motors; nothing is reported (Clear does that)
     ~ProtocolPads();
     ProtocolPads(const ProtocolPads&) = delete;
