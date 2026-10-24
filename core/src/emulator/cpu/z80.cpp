@@ -568,8 +568,8 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
     {
         // Memory::MemoryReadContended waits only in slow memory; MemoryReadM1Snow notes a refresh only with I there
         const UlaContention* ula = _context->pUlaContention;
-        if (!ula || ula->IsSlotContended(static_cast<uint8_t>(fetch >> 14)) ||
-            (!ula->IsGateArray() && ula->IsSlotContended(static_cast<uint8_t>(i >> 6))))
+        if (!ula || ula->IsContendedAt(fetch) ||
+            (!ula->IsGateArray() && ula->IsContendedAt(static_cast<uint16_t>(i << 8))))
             return false;
     }
     if (overlay)
@@ -1381,7 +1381,7 @@ void Z80::NotifyMachineM1Before(uint16_t address)
 void Z80::NoteAcknowledgeRefresh(uint32_t t3)
 {
     // As Memory::MemoryReadM1Snow: R before the increment; the Ferranti ULA machines only (ioContention)
-    if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(i >> 6)))
+    if (ioContention && ioContention->IsContendedAt(static_cast<uint16_t>(i << 8)))
         ioContention->NoteRefresh(t3, static_cast<uint8_t>(r_low - 1));
 }
 
@@ -1615,7 +1615,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     // port always has a driver on the bus, floating bus must not apply.
     bool fromFloatingBus = false;
     bool lateWaitsCounted = false;
-    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !cardDrove)
+    if (!portDecoder.WasLastPortDecoded() && portDecoder.FloatingBusDrives(port) && !cardDrove)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
@@ -1625,7 +1625,7 @@ uint8_t Z80::inFromBus(uint16_t port)
             uint8_t floatVal;
             if (ula->IsGateArray())
                 floatVal = ula->GetGateArrayFloatingBus(port);
-            else if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(port >> 14))) [[unlikely]]
+            else if (ioContention && ioContention->IsOddPortContended(port)) [[unlikely]]
             {
                 floatVal = FloatingBusAfterLateWaits(port, ioWait);
                 lateWaitsCounted = true;
@@ -1734,7 +1734,7 @@ uint8_t Z80::FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait)
 // CPU-LIBRARY-MIGRATION(idle-cycles): the engine's Internal access kind on the contention hook
 void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
 {
-    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    const bool contended = idleContention && idleContention->IsContendedAt(addr);
     for (uint8_t i = 0; i < cycles; i++)
     {
         if (busTraceHook)

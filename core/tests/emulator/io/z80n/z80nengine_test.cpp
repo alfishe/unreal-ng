@@ -119,6 +119,7 @@ TEST_F(Z80NEngine_Test, FuseVectorsThroughTheHostBus)
     FuseVectors::FusePortDecoder fuseDecoder(_context);
     PortDecoder* original = _context->pPortDecoder;
     _context->pPortDecoder = &fuseDecoder;
+    Z80nCpuSetT80Persona(_engine->Cpu(), 0);  // the vectors are a Zilog die's: the Next's T80 flags are tested in z80nopcodes_test
 
     std::vector<FuseVectors::BusEvent> trace;
     uint32_t t0 = 0;

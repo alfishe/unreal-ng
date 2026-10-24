@@ -1686,6 +1686,14 @@ const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
     {
         // the beam runs the frame family NR #03 chose (EmulatorState::ula_timing_class): 1 = 48K, 4 = Pentagon, else 128K
         const uint8_t family = _state ? _state->ula_timing_class : 2;
+        if (_state && _state->ula_sixty_hz && family != 4)
+        {
+            // 60 Hz (zxula_timing.vhd): 264 lines, 8 blank (vc 0-7) + the 256 of the Next's grid; the paper at line 40 is 32 lines into
+            // the grid. The frame starts at vc 0, so the grid's first line is the first after the blank ones
+            static const RasterDescriptor sixty48 = {352, 256, 256, 192, 48, 32, 448, 64, 32, 4, 4};
+            static const RasterDescriptor sixty128 = {352, 256, 256, 192, 48, 32, 456, 64, 32, 4, 4};
+            return family == 1 ? sixty48 : sixty128;
+        }
         return rasterDescriptors[family == 1 ? M_ZX48 : (family == 4 ? M_PENTAGON128K : M_ZX128)];
     }
 

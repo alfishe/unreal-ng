@@ -124,7 +124,10 @@ public:
     bool Layer2ReadsAt(uint16_t address) const;
     /// The ROM is what an opcode fetch at this address sees through the MMU (zxnext.vhd sram_pre_override(0)): the slot holds #FF and the
     /// board is not in config mode. RAM in the slot, or the config bank, is not (the DivMMC's ROM-3-only entries need this)
-    bool MmuShowsRomAt(uint16_t address) const { return !_configMode && _mmu[(address >> 13) & 7] == kMmuRom; }
+    bool MmuShowsRomAt(uint16_t address) const { return !_configMode && MmuIsRom((address >> 13) & 7, _mmu[(address >> 13) & 7]); }
+    /// zxnext.vhd mmu_A21_A13(8): an MMU value of #E0 and above (not only #FF) is outside the RAM. Slots 0-1 then show the ROM (the config
+    /// bank in config mode); slots 2-7 have nothing there (sram_pre_active = 0: the write is lost)
+    static bool MmuIsRom(unsigned slot, uint8_t value) { return slot < 2 && value >= kRamPages8K; }
     /// The Multiface: its 8K ROM and 8K RAM (system area page 5, SRAM #014000) stand in for slots 0 and 1, above the DivMMC
     void SetMultifaceActive(bool active);
     bool MultifaceActive() const { return _mfActive; }

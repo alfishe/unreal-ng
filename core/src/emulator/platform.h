@@ -1214,6 +1214,8 @@ struct EmulatorState
                                                 // ratio above). Read through ClockDen()
     uint8_t hw_contention_disabled;             // A board that switches the video memory contention off at run time (the Next
                                                 // above 3.5 MHz, NR #08 bit 6): 1 = off whatever the video mode says
+    uint8_t ula_sixty_hz;                       // The Next's 60 Hz frame (NR #05 bit 2 as latched at the frame sync, never with the
+                                                // Pentagon): the 264-line raster of the family in ula_timing_class
     uint8_t ula_timing_class;                   // A board that switches its frame timing at run time says which family
                                                 // the video logic follows: 0 = the model's own, 1 = 48K, 2 = 128K / +2,
                                                 // 3 = +2A / +3 (the frame of the 128K), 4 = Pentagon. Read by the

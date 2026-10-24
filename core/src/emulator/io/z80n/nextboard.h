@@ -179,6 +179,8 @@ public:
         _eff05 = _regs[0x05] & 0x05;
         _eff09 = _regs[0x09] & 0x03;
     }
+    /// NR #05 bit 2 as the video logic took it at the last frame sync (eff_nr_05_5060)
+    bool EffectiveSixtyHz() const { return (_eff05 & 0x04) != 0; }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
@@ -210,6 +212,9 @@ public:
     void SetCoreId(uint8_t id) { _regs[0x10] = id & 0x1F; }
     /// The CPU mapping of Layer 2 (port #123B, NR #12 / #13) into the memory's slot table
     void RefreshLayer2Mapping();
+    /// The CPU speed in force: the programmed NR #07 value, 3.5 MHz while the expansion bus is enabled (NR #80 bit 7)
+    uint8_t ActiveCpuSpeed() const;
+    void ApplyCpuSpeed();
     NextVideoRegs& Video() { return _video; }
     const NextVideoRegs& Video() const { return _video; }
     uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }

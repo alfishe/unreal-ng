@@ -679,6 +679,9 @@ public:
     /// Z80::in() uses this to decide whether to apply the floating bus override:
     /// only unmapped ports (no device responded) get the floating bus byte.
     bool WasLastPortDecoded() const { return _lastPortDecoded; }
+    /// A read of a port nothing decoded sees the ULA's floating bus on the Spectrums; a board whose bus decode says otherwise
+    /// (the Next: only #xxFF and the +3 port) overrides this to keep the idle #FF
+    virtual bool FloatingBusDrives(uint16_t port) const { return (port & 0x0001) != 0; }
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
