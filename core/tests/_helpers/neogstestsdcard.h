@@ -3,9 +3,9 @@
 /// @file neogstestsdcard.h
 /// @brief The NeoGS test SD cards, built at run time in the scratch folder
 /// (fatimagebuilder.h). Each holds, in its root directory:
-///   NEOGS.ROM    the main ROM v1.11 (utilities/neogs/parts/neogs.rom), for the
+///   NEOGS.ROM    the main ROM v1.11 (tools/neogs/parts/neogs.rom), for the
 ///                loader's SD boot;
-///   NGS_ROM.UPD  the NedoPC firmware update (utilities/neogs/parts/ngs_rom.upd),
+///   NGS_ROM.UPD  the NedoPC firmware update (tools/neogs/parts/ngs_rom.upd),
 ///                for the flasher;
 ///   EYEACHE.MP3  testdata/sound/neogs/mp3/eyeache1-44k-128k-cbr.mp3, for the
 ///                players;
@@ -44,8 +44,8 @@ inline FatImageSpec NeoGSTestSdSpec(NeoGSTestSd card)
     spec.mbr = card != NeoGSTestSd::Fat16NoMbr;
     spec.label = "NEOGS TEST";
     spec.files = {
-        {"NEOGS.ROM", NeoGSTestSdReadFile("utilities/neogs/parts/neogs.rom")},
-        {"NGS_ROM.UPD", NeoGSTestSdReadFile("utilities/neogs/parts/ngs_rom.upd")},
+        {"NEOGS.ROM", NeoGSTestSdReadFile("tools/neogs/parts/neogs.rom")},
+        {"NGS_ROM.UPD", NeoGSTestSdReadFile("tools/neogs/parts/ngs_rom.upd")},
         {"EYEACHE.MP3", NeoGSTestSdReadFile("testdata/sound/neogs/mp3/eyeache1-44k-128k-cbr.mp3")},
         {"EYE22K.MP3", NeoGSTestSdReadFile("testdata/sound/neogs/mp3/eyeache1-22k-mono-vbr-id3.mp3")},
     };

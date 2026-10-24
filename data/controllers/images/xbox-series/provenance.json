@@ -1,0 +1,30 @@
+{
+  "family": "xbox-series",
+  "images": [
+    {
+      "view": "front",
+      "title": "Xbox Wireless Controller (Series X|S), Carbon Black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "plan 153 x 102 mm, height 61 mm (6.02 x 4.01 x 2.40 in)",
+          "source": "retail listings of the Xbox Wireless Controller (pcrichard.com QAU-00090, nfm.com 64696412)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "control positions and sizes, colours",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_Series_Controller_Carbon_Black.jpg",
+          "author": "UKER",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23",
+          "note": "measured to about 1 mm on a near-orthographic photo"
+        }
+      ]
+    }
+  ]
+}

@@ -140,6 +140,10 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
+    // The promoted devices' old ids (architecture.md §5): profiles naming a `gc:` id follow its IOHID id
+    std::string aliasError;
+    if (!_profiles.LoadAliases(UserProfileDir().toStdString(), aliasError))
+        errors.push_back(aliasError);
     // The shipped game profiles: the index now, a profile when a loaded file or a manual choice names it
     _profiles.OpenGames(FileHelper::GetResourcesPath() + "/controllers/profiles/games", errors);
     for (const std::string& error : errors)
@@ -526,6 +530,15 @@ void HostControllers::poll()
         return;
     _revision = _service->Revision();
     _machineRevision = machine;
+    const auto promotions = _service->TakePromotions();
+    for (const auto& [from, to] : promotions)
+        _profiles.AddAlias(from, to);
+    if (!promotions.empty())
+    {
+        std::string error;
+        if (!_profiles.SaveAliases(UserProfileDir().toStdString(), error))
+            qWarning("controllers: %s", error.c_str());
+    }
 
     const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
     for (const HostDeviceInfo& device : devices)

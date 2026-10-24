@@ -64,6 +64,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
+| `aliases` | Built: the device aliases (`from`, `to`, `connected`, `name`): a `gc:` device promoted to its IOHID id keeps its profiles ([architecture.md §5](architecture.md)); `unalias` (`id` = the old id) forgets one, saved to `aliases.yaml` and applied at once (`unknown-alias` 404 when there is none). Lua reaches them through `controllers_host` only. |
 | `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
 
 ### Battery, light and notice (built)
@@ -84,7 +85,7 @@ Where they come from:
 
 | OS | Battery | Light |
 |:--|:--|:--|
-| macOS | GameController's `GCDeviceBattery` of the matched `GCController` (D18). An Xbox Elite 2 reports state unknown and level 0 on both transports, so it stays `unknown` (`system_profiler` knows it from the Bluetooth stack, [research-host-apis.md §2.3c](research-host-apis.md)) | a DualSense over USB through its output report (`DualSenseOutput::UsbLightReport`); otherwise `GCDeviceLight` of the matched `GCController` (a DualSense over Bluetooth, a DualShock 4), after a press confirms the match |
+| macOS | The pad's own report where its driver reads one: a DualSense / DualShock 4 full report (status byte, tens of percent, charging, full; hid-playstation's rules) and a Switch Pro controller's or a Joy-Con's 0x30 (coarse, 0-8 in steps of 2; a Joy-Con pair the lower of the two), [haptics.md §9](haptics.md#9-backends). Otherwise GameController's `GCDeviceBattery` of the matched `GCController` (D18) or of a `gc:` device. An Xbox Elite 2 reports state unknown and level 0 on both transports, so it stays `unknown` (`system_profiler` knows it from the Bluetooth stack, [research-host-apis.md §2.3c](research-host-apis.md)) | a DualSense (USB report 2, Bluetooth 0x31) and a DualShock 4 (USB 0x05, Bluetooth 0x11) through their output report, queued on the pad's pump thread; otherwise `GCDeviceLight` of the matched `GCController` (after a press confirms the match) or of a `gc:` device. The Switch Pro controller and the Joy-Cons have player lights only (set by connection order; a pair shows its left half's number on both) |
 | Windows | XInput: `XInputGetBatteryInformation` (wired, or four coarse levels). GameInput (v3) has no battery API, Raw Input reads none: `unknown` | a DualSense over USB (Raw Input) through the same output report; nothing else |
 | Linux | the HID device's power supply class (`<hid>/power_supply/<name>`: hid-playstation, hid-sony, hid-nintendo, xpadneo, hid-input): `status`, `capacity`, `capacity_level`. xpad (an Xbox pad over USB) registers none | the HID device's LED class: one multicolor LED (`multi_index` / `multi_intensity`, hid-playstation) or `:red` / `:green` / `:blue` LEDs (hid-sony). Writing needs the LED rules of `data/controllers/70-unreal-ng.rules` (sysfs takes no ACL, so they open the mode) |
 
@@ -114,7 +115,7 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 
 | Code | HTTP | When |
 |:--|:--|:--|
-| `unknown-connector`, `unknown-device`, `unknown-profile` | 404 | selector matched nothing |
+| `unknown-connector`, `unknown-device`, `unknown-profile`, `unknown-alias` | 404 | selector matched nothing |
 | `ambiguous-connector`, `ambiguous-device` | 409 | several matched; candidates listed |
 | `incompatible` | 409 | the retro device does not fit the connector (a Kempston mouse in a Sinclair socket) |
 | `owned-by-replay` | 409 | TTD replay or RZX playback owns input |
@@ -199,7 +200,8 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
   `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`.
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
-  that really answer (it names ATM3 / Scorpion / TS-Conf only today, but Pentagon, Profi, Sprinter and Next answer too).
+  that really answer: Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next (fixed 2026-10-23, E-4; it named
+  ATM3 / Scorpion / TS-Conf only).
 - The `content[]` text states the decision in one line ("Kempston on `kempston` (port-read evidence: #1F read in 50 of
   50 frames)"), because an agent may see only the text.
 - Debug actions stay in `control_execution` and `time_travel`; the controller tool does not duplicate them.

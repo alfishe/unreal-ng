@@ -8,113 +8,111 @@
   ],
   "controls": [
     {
-      "control": "up",
-      "label": "Up",
+      "control": "fire",
+      "label": "Fire",
       "shape": {
         "rect": [
-          974,
-          180,
-          100,
-          100
+          632,
+          484,
+          194,
+          108
         ]
       },
       "anchor": [
-        1024,
-        230
+        729,
+        538
       ],
       "callout": "left",
-      "group": "directions",
       "order": 0
     },
     {
-      "control": "down",
-      "label": "Down",
+      "control": "fire2",
+      "label": "Fire 2",
       "shape": {
         "rect": [
-          974,
-          860,
-          100,
-          100
+          1222,
+          484,
+          194,
+          108
+        ]
+      },
+      "anchor": [
+        1319,
+        538
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "up",
+      "label": "Up",
+      "shape": {
+        "circle": [
+          1024,
+          188,
+          47
         ]
       },
       "anchor": [
         1024,
-        910
-      ],
-      "callout": "left",
-      "group": "directions",
-      "order": 1
-    },
-    {
-      "control": "left",
-      "label": "Left",
-      "shape": {
-        "rect": [
-          760,
-          520,
-          100,
-          100
-        ]
-      },
-      "anchor": [
-        810,
-        570
+        188
       ],
       "callout": "left",
       "group": "directions",
       "order": 2
     },
     {
-      "control": "right",
-      "label": "Right",
+      "control": "down",
+      "label": "Down",
       "shape": {
-        "rect": [
-          1188,
-          520,
-          100,
-          100
+        "circle": [
+          1024,
+          577,
+          47
         ]
       },
       "anchor": [
-        1238,
-        570
+        1024,
+        577
       ],
-      "callout": "right",
+      "callout": "left",
       "group": "directions",
       "order": 3
     },
     {
-      "control": "fire",
-      "label": "Fire",
+      "control": "left",
+      "label": "Left",
       "shape": {
         "circle": [
-          760,
-          1000,
-          80
+          815,
+          383,
+          47
         ]
       },
       "anchor": [
-        760,
-        1000
+        815,
+        383
       ],
       "callout": "left",
+      "group": "directions",
       "order": 4
     },
     {
-      "control": "fire2",
-      "label": "Fire 2",
+      "control": "right",
+      "label": "Right",
       "shape": {
         "circle": [
-          1288,
-          1000,
-          80
+          1233,
+          383,
+          47
         ]
       },
       "anchor": [
-        1288,
-        1000
+        1233,
+        383
       ],
       "callout": "right",
+      "group": "directions",
       "order": 5
     }
   ]

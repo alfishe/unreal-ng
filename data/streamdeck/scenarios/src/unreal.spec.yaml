@@ -12,20 +12,20 @@ menu home:
   context: play
   strip: {content: title, status: ttd, target: true}
   dials:
-    0: {label: TIME, uc: [U2.1, D3.2], turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds, min: 1, max: 50}}, press: {action: run.pause_toggle}}
-    1: {label: VOLUME, uc: C8.2, turn: {action: audio.volume_by, value: {d: $ticks}}, press: {action: audio.mute_toggle}}
-    2: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
-    3: {label: STEP, uc: D2.2, turn: {action: run.step_by, value: {d: $ticks, unit: instructions}}, press: {action: run.step_in}}
-    4: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: ttd.bookmark_add}}
-    5: {label: OPS, uc: D3.3, turn: {action: ttd.jog_instructions, value: {d: $ticks}}, press: {action: ttd.resume_live}}
+    0: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: run.pause_toggle}}
+    1: {label: TIME, uc: [U2.1, D3.2], turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds, min: 1, max: 50}}, press: {action: run.pause_toggle}}
+    2: {label: OPS, uc: D3.3, turn: {action: ttd.jog_instructions, value: {d: $ticks}}, press: {action: ttd.resume_live}}
+    3: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
+    4: {label: STEP, uc: D2.2, turn: {action: run.step_by, value: {d: $ticks, unit: instructions}}, press: {action: run.step_in}}
+    5: {label: VOLUME, uc: C8.2, turn: {action: audio.volume_by, value: {d: $ticks}}, press: {action: audio.mute_toggle}}
   keys:
     # C1, C2: the machine and the speed
     pause:   {at: [0, 0], uc: C1.1, action: run.pause_toggle}
     reset:   {at: [0, 1], uc: C1.2, action: mach.reset}
-    nmi:     {at: [0, 2], uc: C1.3, action: mach.nmi}
-    turbo:   {at: [0, 3], uc: C2.2, action: mach.turbo_toggle}
-    hold:    {at: [0, 4], uc: C2.2, action: run.turbo_hold}
-    x1:      {at: [0, 5], uc: C2.5, action: set.speed, value: 1, label: SPEED, show: {readout: run.state.speed, format: 'X{}'}}
+    nmi:     {at: [0, 2], uc: C1.3, action: mach.nmi, label: NMI}
+    turbo:   {at: [0, 3], uc: C2.2, action: mach.turbo_toggle, label: TURBO}
+    hold:    {at: [0, 4], uc: C2.2, action: run.turbo_hold, label: HOLD}
+    x1:      {at: [0, 5], uc: C2.5, action: set.speed, value: {value: 1}, label: X1, show: {readout: run.state.speed, format: 'X{}'}}
     speed:   {at: [0, 6], open: speed}
     mute:    {at: [0, 7], uc: C8.1, action: audio.mute_toggle}
     shot:    {at: [0, 8], uc: C7.5, action: cap.screenshot}
@@ -41,39 +41,40 @@ menu home:
     monitor: {at: [1, 8], open: monitor}
     # U2, C7.1, U1: time and the game
     back5:   {at: [2, 0], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
-    live:    {at: [2, 1], uc: [U2.3, D3.6], action: ttd.resume_live}
-    ttdrec:  {at: [2, 2], uc: C7.1, action: ttd.record_toggle}
-    mark:    {at: [2, 3], uc: D3.7, action: ttd.bookmark_add}
+    live:    {at: [2, 1], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
+    ttdrec:  {at: [2, 2], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
+    mark:    {at: [2, 3], uc: D3.7, action: ttd.bookmark_add, label: MARK}
     game:    {at: [2, 4], open: game}
     basic:   {at: [2, 5], open: basic}
     tape:    {at: [2, 6], uc: C4.2, action: media.tape, value: {op: toggle}, label: TAPE, show: {readout: media.tape, format: '{block}/{blocks}'}}
-    recent:  {at: [2, 7], uc: C4.3, action: media.open_recent, value: {index: 0}, label: LAST}
+    recent:  {at: [2, 7], uc: C4.3, action: media.open_recent, value: {index: 0}, label: LAST FILE}
     full:    {at: [2, 8], uc: C9.1, action: view.fullscreen}
     # D2, D4, D6: the debugger's everyday keys
-    stepin:  {at: [3, 0], uc: D2.1, action: run.step_in}
-    stepovr: {at: [3, 1], uc: D2.1, action: run.step_over}
-    stepout: {at: [3, 2], uc: D2.1, action: run.step_out}
-    frame:   {at: [3, 3], uc: D2.3, action: run.frame_step}
-    bppc:    {at: [3, 4], uc: D4.1, action: dbg.breakpoint_toggle_pc}
-    dbgmode: {at: [3, 5], uc: D4.4, action: dbg.mode_toggle}
-    dbgopen: {at: [3, 6], uc: D6.1, action: dbg.open}
+    stepin:  {at: [3, 0], uc: D2.1, action: run.step_in, label: STEP IN}
+    stepovr: {at: [3, 1], uc: D2.1, action: run.step_over, label: STEP OVER}
+    stepout: {at: [3, 2], uc: D2.1, action: run.step_out, label: STEP OUT}
+    frame:   {at: [3, 3], uc: D2.3, action: run.frame_step, label: FRAME}
+    bppc:    {at: [3, 4], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
+    bpclr:   {at: [3, 5], uc: D4.3, action: dbg.breakpoints_clear, label: CLEAR BP}
+    dbgopen: {at: [3, 6], uc: D6.1, action: dbg.open, label: DEBUGGER}
     time:    {at: [3, 7], open: time}
     debug:   {at: [3, 8], open: debug}
 
 # C6: save state. Rows 1 and 2 are the nine quick slots, row 0 the files and the disks.
 menu state:
   title: Save state
+  label: STATE
   uc: C6
   glyph: snapshot.save
   keys:
-    file:    {at: [0, 1], uc: C6.2, action: snapshot.save, value: {path: $user/snapshots/deck.szx}}
-    diska:   {at: [0, 2], uc: C6.3, action: media.save, value: {drive: A}, label: A}
-    diskb:   {at: [0, 3], uc: C6.3, action: media.save, value: {drive: B}, label: B}
-    diskc:   {at: [0, 4], uc: C6.3, action: media.save, value: {drive: C}, label: C}
-    diskd:   {at: [0, 5], uc: C6.3, action: media.save, value: {drive: D}, label: D}
-    scl:     {at: [0, 6], uc: C6.4, action: media.export, value: {drive: A, format: scl}, label: A SCL}
-    tdump:   {at: [0, 7], uc: [C7.1, D12.1], action: ttd.dump, value: {path: $user/sessions/deck.ttd}}
-    tload:   {at: [0, 8], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}}
+    file:    {at: [0, 1], uc: C6.2, action: snapshot.save, value: {path: $user/snapshots/deck.szx}, label: SAVE SZX}
+    diska:   {at: [0, 2], uc: C6.3, action: media.save, value: {drive: A}, label: SAVE A}
+    diskb:   {at: [0, 3], uc: C6.3, action: media.save, value: {drive: B}, label: SAVE B}
+    diskc:   {at: [0, 4], uc: C6.3, action: media.save, value: {drive: C}, label: SAVE C}
+    diskd:   {at: [0, 5], uc: C6.3, action: media.save, value: {drive: D}, label: SAVE D}
+    scl:     {at: [0, 6], uc: C6.4, action: media.export, value: {drive: A, format: scl}, label: A > SCL}
+    tdump:   {at: [0, 7], uc: [C7.1, D12.1], action: ttd.dump, value: {path: $user/sessions/deck.ttd}, label: SAVE TTD}
+    tload:   {at: [0, 8], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}, label: LOAD TTD}
     s1:      {at: [1, 0], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 1}, label: S1}
     s2:      {at: [1, 1], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 2}, label: S2}
     s3:      {at: [1, 2], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 3}, label: S3}
@@ -96,6 +97,7 @@ menu state:
 # C4, C5: software and the drives. Row 0 recent files and RZX, row 1 the tape, rows 2-3 a column per drive A..D.
 menu media:
   title: Media
+  label: MEDIA
   uc: [C4, C5]
   glyph: media.open
   keys:
@@ -105,15 +107,15 @@ menu media:
     r4:      {at: [0, 4], uc: C4.3, action: media.open_recent, value: {index: 3}, label: '4'}
     r5:      {at: [0, 5], uc: C4.3, action: media.open_recent, value: {index: 4}, label: '5'}
     rzxlast: {at: [0, 7], uc: C4.4, action: media.open_recent, value: {index: 0, kind: rzx}, label: RZX}
-    rzxstop: {at: [0, 8], uc: C4.4, action: rzx.stop}
+    rzxstop: {at: [0, 8], uc: C4.4, action: rzx.stop, label: STOP RZX}
     tplay:   {at: [1, 0], uc: C4.2, action: media.tape, value: {op: play}, label: PLAY, show: {readout: media.tape, format: '{block}/{blocks}'}}
     tpause:  {at: [1, 1], uc: C4.2, action: media.tape, value: {op: pause}}
     tstop:   {at: [1, 2], uc: C4.2, action: media.tape, value: {op: stop}}
     trew:    {at: [1, 3], uc: C4.2, action: media.tape, value: {op: rewind}}
     teject:  {at: [1, 4], uc: C4.2, action: media.tape, value: {op: eject}}
     swapab:  {at: [1, 6], uc: C5.2, action: media.swap, value: {drive: A, with: B}, label: A-B}
-    blank:   {at: [1, 7], uc: C5.3, action: media.create, value: {drive: A, format: trdos}, label: A}
-    discard: {at: [1, 8], uc: C5.5, action: media.discard, value: {drive: A}, label: A}
+    blank:   {at: [1, 7], uc: C5.3, action: media.create, value: {drive: A, format: trdos}, label: NEW A}
+    discard: {at: [1, 8], uc: C5.5, action: media.discard, value: {drive: A}, label: DISCARD A}
     wpa:     {at: [2, 0], uc: C5.1, action: media.protect, value: {drive: A}, label: A, show: {readout: media.disk.drives.0.protect, format: '{?WP|RW}'}}
     wpb:     {at: [2, 1], uc: C5.1, action: media.protect, value: {drive: B}, label: B, show: {readout: media.disk.drives.1.protect, format: '{?WP|RW}'}}
     wpc:     {at: [2, 2], uc: C5.1, action: media.protect, value: {drive: C}, label: C, show: {readout: media.disk.drives.2.protect, format: '{?WP|RW}'}}
@@ -126,20 +128,21 @@ menu media:
     ejb:     {at: [3, 1], uc: C5.1, action: media.eject, value: {drive: B}, label: B, show: {readout: media.disk.drives.1.name, format: '{}'}}
     ejc:     {at: [3, 2], uc: C5.1, action: media.eject, value: {drive: C}, label: C, show: {readout: media.disk.drives.2.name, format: '{}'}}
     ejd:     {at: [3, 3], uc: C5.1, action: media.eject, value: {drive: D}, label: D, show: {readout: media.disk.drives.3.name, format: '{}'}}
-    trdos:   {at: [3, 5], uc: U4.4, action: set.toggle, value: {name: trdos_traps}, label: TRAPS}
-    ftape:   {at: [3, 6], uc: C2.4, action: set.toggle, value: {name: fast_tape}, label: TAPE}
-    ttape:   {at: [3, 7], uc: C2.4, action: set.toggle, value: {name: turbo_tape}, label: TURBO}
-    fdisk:   {at: [3, 8], uc: C2.4, action: set.toggle, value: {name: fast_disk}, label: DISK}
+    trdos:   {at: [3, 5], uc: U4.4, action: set.toggle, value: {name: trdos_traps}, label: TR-DOS}
+    ftape:   {at: [3, 6], uc: C2.4, action: set.toggle, value: {name: fast_tape}, label: FAST TAPE}
+    ttape:   {at: [3, 7], uc: C2.4, action: set.toggle, value: {name: turbo_tape}, label: TURBO TAPE}
+    fdisk:   {at: [3, 8], uc: C2.4, action: set.toggle, value: {name: fast_disk}, label: FAST DISK}
 
 # C3: the machine. A row per family; a press starts the model in place.
 menu machine:
   title: Machine
+  label: MODEL
   uc: C3
   glyph: mach.start
   keys:
     prev:    {at: [0, 1], uc: C3.3, action: mach.previous, label: PREVIOUS, show: {readout: machine.previous.model, format: '{}'}}
     now:     {at: [0, 3], uc: C3.1, label: NOW, show: {readout: machine.model, format: '{}'}}
-    cold:    {at: [0, 2], uc: C1.2, action: mach.cold_reset}
+    cold:    {at: [0, 2], uc: C1.2, action: mach.cold_reset, label: COLD RST}
     pturbo:  {at: [0, 7], uc: C1.5, action: mach.switch, value: {name: turbo}, label: TURBO}
     pcpm:    {at: [0, 8], uc: C1.5, action: mach.switch, value: {name: cpm}, label: CP/M}
     m48:     {at: [1, 0], uc: C3.1, action: mach.start, value: {model: 48K, replace: true}, label: 48K}
@@ -171,6 +174,7 @@ menu machine:
 # C7: record. Row 0 video presets, row 1 audio, the clip and the screenshot, row 2 the TTD history.
 menu record:
   title: Record
+  label: REC
   uc: C7
   glyph: cap.record
   keys:
@@ -188,16 +192,17 @@ menu record:
     clipgif: {at: [1, 5], uc: C7.3, action: cap.clip_last, value: {seconds: 10, format: gif}, label: GIF 10S}
     recshot: {at: [1, 7], uc: C7.5, action: cap.screenshot}
     shotpng: {at: [1, 8], uc: C7.5, action: cap.screenshot_save, value: {path: $user/screenshots/deck.png}, label: PNG}
-    tstart:  {at: [2, 0], uc: C7.1, action: ttd.start}
-    rectstop: {at: [2, 1], uc: C7.1, action: ttd.stop}
-    tdrop:   {at: [2, 2], uc: C7.1, action: ttd.invalidate}
-    tclip:   {at: [2, 4], uc: C7.3, action: ttd.export_clip, value: {path: $user/clips/history.mp4}}
-    rectdump: {at: [2, 6], uc: C7.1, action: ttd.dump, value: {path: $user/sessions/deck.ttd}}
-    rectload: {at: [2, 7], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}}
+    tstart:  {at: [2, 0], uc: C7.1, action: ttd.start, label: START}
+    rectstop: {at: [2, 1], uc: C7.1, action: ttd.stop, label: STOP}
+    tdrop:   {at: [2, 2], uc: C7.1, action: ttd.invalidate, label: DROP}
+    tclip:   {at: [2, 4], uc: C7.3, action: ttd.export_clip, value: {path: $user/clips/history.mp4}, label: EXPORT}
+    rectdump: {at: [2, 6], uc: C7.1, action: ttd.dump, value: {path: $user/sessions/deck.ttd}, label: SAVE TTD}
+    rectload: {at: [2, 7], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}, label: LOAD TTD}
 
 # C8: sound. A column per source: mute above, solo below; the dials set the volumes of the first six.
 menu sound:
   title: Sound
+  label: SOUND
   uc: C8
   glyph: audio.sound
   dials:
@@ -245,6 +250,7 @@ menu sound:
 # C8.3: the AY channels, a column per channel of the three chips (mute above, solo below); the dials set A, B, C of AY1.
 menu ay:
   title: AY channels
+  label: AY CHANS
   uc: C8.3
   glyph: audio.sound
   dials:
@@ -277,35 +283,38 @@ menu ay:
 # C9: the picture. Row 0 the window, row 1 the CRT, row 2 de-flicker and blending, row 3 HUD and the keyboard.
 menu picture:
   title: Picture
+  label: VIDEO
   uc: C9
+  glyph: video.menu
   dials:
     0: {label: DECAY, uc: C9.5, turn: {action: video.blending_decay_by, value: {d: $ticks}}, press: {action: video.blending}}
   keys:
     picfull: {at: [0, 1], uc: C9.1, action: view.fullscreen}
-    scale:   {at: [0, 2], uc: C9.1, action: view.scale, value: {scale: next}}
-    gpu:     {at: [0, 3], uc: C9.2, action: video.gpu_toggle}
-    over:    {at: [0, 4], uc: C9.3, action: video.overscan_toggle}
+    scale:   {at: [0, 2], uc: C9.1, action: view.scale, value: {scale: next}, label: SCALE}
+    gpu:     {at: [0, 3], uc: C9.2, action: video.gpu_toggle, label: GPU}
+    over:    {at: [0, 4], uc: C9.3, action: video.overscan_toggle, label: BORDER}
     vport:   {at: [0, 5], uc: C9.3, action: video.viewport, value: {viewport: next}, label: CROP, show: {readout: video.viewport.viewport, format: '{}'}}
-    toolbar: {at: [0, 7], uc: C9.8, action: view.toolbar}
-    status:  {at: [0, 8], uc: C9.8, action: view.status_bar}
-    crt:     {at: [1, 0], uc: C9.4, action: video.crt_toggle}
-    crtprev: {at: [1, 1], uc: C9.4, action: video.crt_profile, value: {profile: prev}}
+    toolbar: {at: [0, 7], uc: C9.8, action: view.toolbar, label: TOOLBAR}
+    status:  {at: [0, 8], uc: C9.8, action: view.status_bar, label: STATUS}
+    crt:     {at: [1, 0], uc: C9.4, action: video.crt_toggle, label: CRT}
+    crtprev: {at: [1, 1], uc: C9.4, action: video.crt_profile, value: {profile: prev}, label: CRT PREV}
     crtnext: {at: [1, 2], uc: C9.4, action: video.crt_profile, value: {profile: next}, label: CRT, show: {readout: video.window.crt_profile, format: '{}'}}
-    crtrst:  {at: [1, 3], uc: C9.4, action: video.crt_params_reset}
-    dlss:    {at: [2, 0], uc: C9.5, action: video.temporal}
-    blend:   {at: [2, 1], uc: C9.5, action: video.blending}
-    hud:     {at: [3, 0], uc: C9.6, action: hud.toggle}
-    hudth:   {at: [3, 1], uc: C9.6, action: hud.theme, value: {theme: next}}
-    osdkb:   {at: [3, 3], uc: C9.7, action: osd.keyboard}
-    osdpic:  {at: [3, 4], uc: C9.7, action: osd.keyboard_picture, value: {picture: next}}
+    crtrst:  {at: [1, 3], uc: C9.4, action: video.crt_params_reset, label: CRT RST}
+    dlss:    {at: [2, 0], uc: C9.5, action: video.temporal, label: TEMPORAL}
+    blend:   {at: [2, 1], uc: C9.5, action: video.blending, label: BLEND}
+    hud:     {at: [3, 0], uc: C9.6, action: hud.toggle, label: HUD}
+    hudth:   {at: [3, 1], uc: C9.6, action: hud.theme, value: {theme: next}, label: HUD LOOK}
+    osdkb:   {at: [3, 3], uc: C9.7, action: osd.keyboard, label: KEYBOARD}
+    osdpic:  {at: [3, 4], uc: C9.7, action: osd.keyboard_picture, value: {picture: next}, label: KB LOOK}
 
-# C10: monitoring, read-only: value keys show the readouts (row 0 the instances and the host, row 1 the emulation and
-# the peripherals, row 2 breakpoints, labels and time travel, row 3 the profilers and recording); the debugger's
-# clear keys stay on the left.
+# C10: monitoring, read-only (a press changes nothing): value keys show the readouts (row 0 the instances and the host,
+# row 1 the emulation and the peripherals, row 2 breakpoints, labels and time travel, row 3 the profilers and
+# recording).
 menu monitor:
   title: Monitoring
+  label: MONITOR
   uc: C10
-  glyph: nav.folder
+  glyph: analyzer.toggle.on
   strip: {content: title, status: ttd, target: true}
   keys:
     inst:    {at: [0, 1], uc: C10.1, label: COUNT, show: {readout: host.clients.instances}}
@@ -332,6 +341,7 @@ menu monitor:
     ttdlen:  {at: [2, 6], uc: C10.7, label: FRAMES, show: {readout: ttd.status.frames, format: "{:k}"}}
     ttdmem:  {at: [2, 7], uc: C10.7, label: TTD MEM, show: {readout: ttd.status.memory_bytes, format: "{:b}"}}
     marks:   {at: [2, 8], uc: C10.7, label: MARKS, show: {readout: ttd.status.bookmarks}}
+    buffers: {at: [3, 0], open: buffers}
     opcodes: {at: [3, 2], uc: C10.8, label: OPCODES, show: {readout: debug.analyzers.opcode}}
     calls:   {at: [3, 3], uc: C10.8, label: CALLS, show: {readout: debug.analyzers.calltrace}}
     covins:  {at: [3, 4], uc: C10.8, label: COVER, show: {readout: debug.analyzers.coverage.instructions, format: "{:k}"}}
@@ -339,14 +349,32 @@ menu monitor:
     rectime: {at: [3, 6], uc: C10.9, label: LENGTH, show: {readout: recording.state.duration_s, format: "{:.0f}S"}}
     recsize: {at: [3, 7], uc: C10.9, label: SIZE, show: {readout: recording.state.file_bytes, format: "{:b}"}}
     video:   {at: [3, 8], uc: C10.9, label: VIDEO, show: {readout: cap.record, format: "{recording?REC|IDLE}", warn: 1}}
-    bpclear: {at: [2, 0], uc: D4.3, action: dbg.breakpoints_clear}
-    bphits:  {at: [2, 1], uc: D4.3, action: dbg.breakpoint_hits_reset}
-    profall: {at: [3, 0], uc: D10.1, action: prof.toggle, value: {name: all}, label: ALL}
-    profclr: {at: [3, 1], uc: D10.1, action: prof.clear, value: {name: all}, label: ALL}
+
+# C10.8: how full each trace buffer is (read-only): slots used of the capacity, the bytes they take under it. Row 0 the
+# CPU's traces, row 1 the ports and the sound, row 2 time travel.
+menu buffers:
+  title: Trace buffers
+  label: BUFFERS
+  uc: C10.8
+  glyph: prof.toggle.on
+  keys:
+    bopcode: {at: [0, 1], uc: C10.8, label: OPCODES, show: {readout: debug.buffers.opcode, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bcalls:  {at: [0, 2], uc: C10.8, label: CALLS, show: {readout: debug.buffers.calltrace, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bhot:    {at: [0, 3], uc: C10.8, label: CALLS HOT, show: {readout: debug.buffers.calltrace_hot, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bpchist: {at: [0, 4], uc: C10.8, label: PC HIST, show: {readout: debug.buffers.pchist, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bcover:  {at: [0, 5], uc: C10.8, label: COVERAGE, show: {readout: debug.buffers.coverage, format: "{used:k}/{capacity:k}\n{percent:.0f}%"}}
+    bports:  {at: [1, 1], uc: C10.8, label: PORTS, show: {readout: debug.buffers.porttrace, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bgs:     {at: [1, 2], uc: C10.8, label: GS PORTS, show: {readout: debug.buffers.gsporttrace, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bay:     {at: [1, 3], uc: C10.8, label: AY LOG, show: {readout: debug.buffers.aylog, format: "{used:k}/{capacity:k}\n{used_bytes:b}"}}
+    bttdh:   {at: [2, 1], uc: C10.7, label: TTD HIST, show: {readout: debug.buffers.ttd.history_bytes, format: "{:b}"}}
+    bttdm:   {at: [2, 2], uc: C10.7, label: TTD MEM, show: {readout: debug.buffers.ttd.memory_bytes, format: "{:b}"}}
+    bttdj:   {at: [2, 3], uc: C10.7, label: JOURNAL, show: {readout: debug.buffers.ttd, format: "{write_journal_records:k}\n{write_journal_bytes:b}"}}
+    bttdc:   {at: [2, 4], uc: C10.7, label: CHECKPTS, show: {readout: debug.buffers.ttd.checkpoints, format: "{}"}}
 
 # U1: a game. The joystick on the right-hand block, the keys a game asks for on the left.
 menu game:
   title: Game
+  label: GAME
   uc: U1
   glyph: input.joystick
   context: play
@@ -357,7 +385,7 @@ menu game:
     cursor:  {at: [0, 4], uc: U1.3, action: input.joystick_type, value: {kind: cursor}, label: CURSOR}
     mouse:   {at: [0, 5], uc: U1.5, action: feature.toggle, value: {name: kempstonmouse}, label: MOUSE}
     joynow:  {at: [0, 6], uc: U1.3, label: JOYSTICK, show: {readout: input.connectors.connectors.0.kind, format: '{}'}}
-    release: {at: [0, 8], uc: U1.4, action: input.release_all}
+    release: {at: [0, 8], uc: U1.4, action: input.release_all, label: RELEASE}
     space:   {at: [1, 0], uc: U1.4, action: input.key, value: {key: space, hold: true}, hold: true, label: SPACE}
     enter:   {at: [1, 1], uc: U1.4, action: input.key, value: {key: enter, hold: true}, hold: true, label: ENTER}
     brk:     {at: [1, 2], uc: U1.4, action: input.key, value: {key: caps+space, hold: true}, hold: true, label: BREAK}
@@ -378,6 +406,7 @@ menu game:
 # U4: BASIC and the ROM.
 menu basic:
   title: BASIC
+  label: BASIC
   uc: U4
   glyph: basic.menu
   keys:
@@ -385,7 +414,7 @@ menu basic:
     b128:    {at: [0, 2], uc: U4.1, action: basic.mode, value: {mode: 128k}, label: 128K}
     run:     {at: [1, 0], uc: U4.2, action: basic.run, label: RUN}
     load:    {at: [1, 1], uc: U4.2, action: basic.run, value: {command: 'LOAD ""'}, label: LOAD}
-    new:     {at: [1, 2], uc: U4.2, action: basic.clear}
+    new:     {at: [1, 2], uc: U4.2, action: basic.clear, label: NEW}
     cat:     {at: [2, 0], uc: U4.3, action: input.macro, value: {name: cat}, label: CAT}
     format:  {at: [2, 1], uc: U4.3, action: input.macro, value: {name: format}, label: FORMAT}
     erase:   {at: [2, 2], uc: U4.3, action: input.macro, value: {name: erase}, label: ERASE}
@@ -398,14 +427,16 @@ menu basic:
 # D1, D3: time. Row 0 the pace, rows 1-2 the history in units, row 3 bookmarks and the search.
 menu time:
   title: Time
+  label: TIME
   uc: [D1, D3]
   glyph: ttd.menu
   strip: {content: title, status: ttd, target: true}
   dials:
-    0: {label: SCRUB, uc: D3.2, turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate}}, press: {action: ttd.resume_live}}
-    1: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
+    0: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: run.pause_toggle}}
+    1: {label: SCRUB, uc: D3.2, turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate}}, press: {action: run.pause_toggle}}
     2: {label: LINES, uc: D2.4, turn: {action: run.step_by, value: {d: $ticks, unit: scanlines}}, press: {action: run.to_pixel}}
     3: {label: T-STATES, uc: D2.5, turn: {action: run.step_by, value: {d: $ticks, unit: tstates}}, press: {action: run.wait_int}}
+    4: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
   keys:
     p25:     {at: [0, 1], uc: D1.1, action: run.pace_set, value: {preset: 25fps}, label: 25FPS}
     p5:      {at: [0, 2], uc: D1.1, action: run.pace_set, value: {preset: 5fps}, label: 5FPS}
@@ -413,34 +444,35 @@ menu time:
     pline:   {at: [0, 4], uc: D1.1, action: run.pace_set, value: {preset: 1line}, label: LINE}
     pop:     {at: [0, 5], uc: D1.1, action: run.pace_set, value: {preset: 1op}, label: OP}
     pstep:   {at: [0, 6], uc: D1.2, action: run.pace_step, label: PACE, show: {readout: run.state.pace.label, format: '{}'}}
-    pstop:   {at: [0, 7], uc: D1.2, action: run.pace_stop}
+    pstop:   {at: [0, 7], uc: D1.2, action: run.pace_stop, label: STOP}
     pfull:   {at: [0, 8], uc: D1.1, action: run.pace_set, value: {preset: full}, label: FULL}
     start:   {at: [1, 0], uc: D3.4, action: ttd.seek_start}
-    bframe:  {at: [1, 1], uc: D3.3, action: ttd.step_back_frame}
-    bline:   {at: [1, 2], uc: D3.3, action: ttd.step_back_scanline}
-    bop:     {at: [1, 3], uc: D3.3, action: ttd.step_back_instruction}
-    fop:     {at: [1, 5], uc: D3.3, action: ttd.step_forward_instruction}
-    fline:   {at: [1, 6], uc: D3.3, action: ttd.step_forward_scanline}
-    fframe:  {at: [1, 7], uc: D3.3, action: ttd.step_forward_frame}
+    bframe:  {at: [1, 1], uc: D3.3, action: ttd.step_back_frame, label: -FRAME}
+    bline:   {at: [1, 2], uc: D3.3, action: ttd.step_back_scanline, label: -LINE}
+    bop:     {at: [1, 3], uc: D3.3, action: ttd.step_back_instruction, label: -OP}
+    fop:     {at: [1, 5], uc: D3.3, action: ttd.step_forward_instruction, label: +OP}
+    fline:   {at: [1, 6], uc: D3.3, action: ttd.step_forward_scanline, label: +LINE}
+    fframe:  {at: [1, 7], uc: D3.3, action: ttd.step_forward_frame, label: +FRAME}
     end:     {at: [1, 8], uc: D3.4, action: ttd.seek_end}
-    rcont:   {at: [2, 0], uc: D3.5, action: ttd.reverse_continue}
-    rstep:   {at: [2, 1], uc: D3.5, action: ttd.reverse_step}
-    uback:   {at: [2, 3], uc: D3.3, action: ttd.unit_back}
+    rcont:   {at: [2, 0], uc: D3.5, action: ttd.reverse_continue, label: REV RUN}
+    rstep:   {at: [2, 1], uc: D3.5, action: ttd.reverse_step, label: REV STEP}
+    uback:   {at: [2, 3], uc: D3.3, action: ttd.unit_back, label: BACK}
     tframe:  {at: [2, 4], uc: D3.2, label: FRAME, show: {readout: ttd.position.current.frame, format: '{}'}}
-    ufwd:    {at: [2, 5], uc: D3.3, action: ttd.unit_forward}
-    timlive: {at: [2, 8], uc: D3.6, action: ttd.resume_live}
-    bmprev:  {at: [3, 0], uc: D3.7, action: ttd.bookmark_prev}
-    bmadd:   {at: [3, 1], uc: D3.7, action: ttd.bookmark_add}
-    bmnext:  {at: [3, 2], uc: D3.7, action: ttd.bookmark_next}
-    bmlist:  {at: [3, 3], uc: D3.7, action: ttd.bookmarks}
-    lastw:   {at: [3, 5], uc: D5.1, action: ttd.find_last_write}
+    ufwd:    {at: [2, 5], uc: D3.3, action: ttd.unit_forward, label: FORWARD}
+    timlive: {at: [2, 8], uc: D3.6, action: ttd.resume_live, label: LIVE}
+    bmprev:  {at: [3, 0], uc: D3.7, action: ttd.bookmark_prev, label: MARK <}
+    bmadd:   {at: [3, 1], uc: D3.7, action: ttd.bookmark_add, label: MARK}
+    bmnext:  {at: [3, 2], uc: D3.7, action: ttd.bookmark_next, label: MARK >}
+    bmlist:  {at: [3, 3], uc: D3.7, action: ttd.bookmarks, label: MARKS}
+    lastw:   {at: [3, 5], uc: D5.1, action: ttd.find_last_write, label: WRITE}
     lastr:   {at: [3, 6], uc: D5.1, action: ttd.find_last, value: {access: read}, label: READ}
     laste:   {at: [3, 7], uc: D5.1, action: ttd.find_last, value: {access: execute}, label: EXEC}
-    timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle}
+    timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
 
 # D2, D4, D6, D8, D10: the debugger. Row 0 steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
 menu debug:
   title: Debugger
+  label: DEBUG
   uc: [D2, D4, D6, D8, D10]
   glyph: dbg.mode
   context: debug
@@ -448,37 +480,37 @@ menu debug:
     0: {label: STEP, uc: D2.2, turn: {action: run.step_by, value: {d: $ticks, unit: instructions}}, press: {action: run.step_in}}
     1: {label: FRAMES, uc: D2.3, turn: {action: run.step_by, value: {d: $ticks, unit: frames}}, press: {action: run.frame_step}}
   keys:
-    debstepin: {at: [0, 1], uc: D2.1, action: run.step_in}
-    debstepovr: {at: [0, 2], uc: D2.1, action: run.step_over}
-    debstepout: {at: [0, 3], uc: D2.1, action: run.step_out}
-    debcursor: {at: [0, 4], uc: D2.6, action: run.to_cursor}
-    int:     {at: [0, 5], uc: D2.3, action: run.wait_int}
-    debframe: {at: [0, 6], uc: D2.3, action: run.frame_step}
-    line:    {at: [0, 7], uc: D2.7, action: run.step_line}
-    pixel:   {at: [0, 8], uc: D2.4, action: run.to_pixel}
-    debbppc: {at: [1, 0], uc: D4.1, action: dbg.breakpoint_toggle_pc}
-    bpcur:   {at: [1, 1], uc: D4.1, action: dbg.breakpoint_toggle_cursor}
+    debstepin: {at: [0, 1], uc: D2.1, action: run.step_in, label: STEP IN}
+    debstepovr: {at: [0, 2], uc: D2.1, action: run.step_over, label: STEP OVER}
+    debstepout: {at: [0, 3], uc: D2.1, action: run.step_out, label: STEP OUT}
+    debcursor: {at: [0, 4], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
+    int:     {at: [0, 5], uc: D2.3, action: run.wait_int, label: TO INT}
+    debframe: {at: [0, 6], uc: D2.3, action: run.frame_step, label: FRAME}
+    line:    {at: [0, 7], uc: D2.7, action: run.step_line, label: LINE}
+    pixel:   {at: [0, 8], uc: D2.4, action: run.to_pixel, label: TO PIXEL}
+    debbppc: {at: [1, 0], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
+    bpcur:   {at: [1, 1], uc: D4.1, action: dbg.breakpoint_toggle_cursor, label: BP CUR}
     bpfe:    {at: [1, 2], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: fe}, label: OUT FE}
     bp7ffd:  {at: [1, 3], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: 7ffd}, label: 7FFD}
-    bpall:   {at: [1, 4], uc: D4.3, action: dbg.bp_toggle}
-    debbpclear: {at: [1, 5], uc: D4.3, action: dbg.breakpoints_clear}
-    debbphits: {at: [1, 6], uc: D4.3, action: dbg.breakpoint_hits_reset}
-    debdbgmode: {at: [1, 8], uc: D4.4, action: dbg.mode_toggle}
-    open:    {at: [2, 0], uc: D6.1, action: dbg.open}
-    pprev:   {at: [2, 1], uc: D6.1, action: dbg.focus_prev_pane}
-    pnext:   {at: [2, 2], uc: D6.1, action: dbg.focus_next_pane}
+    bpall:   {at: [1, 4], uc: D4.3, action: dbg.bp_toggle, label: BPS ON}
+    debbpclear: {at: [1, 5], uc: D4.3, action: dbg.breakpoints_clear, label: CLEAR BP}
+    debbphits: {at: [1, 6], uc: D4.3, action: dbg.breakpoint_hits_reset, label: HITS 0}
+    debdbgmode: {at: [1, 8], uc: D4.4, action: dbg.mode_toggle, label: DEBUG MODE}
+    open:    {at: [2, 0], uc: D6.1, action: dbg.open, label: SHOW DEBUG}
+    pprev:   {at: [2, 1], uc: D6.1, action: dbg.focus_prev_pane, label: PANE <}
+    pnext:   {at: [2, 2], uc: D6.1, action: dbg.focus_next_pane, label: PANE >}
     pgup:    {at: [2, 3], uc: D6.2, action: dbg.page_up}
     cup:     {at: [2, 4], uc: D6.2, action: dbg.cursor_up}
     pgdn:    {at: [2, 5], uc: D6.2, action: dbg.page_down}
-    follow:  {at: [2, 6], uc: D6.4, action: dbg.follow_pc}
-    memf:    {at: [2, 7], uc: D6.3, action: dbg.memory_follow}
-    labels:  {at: [2, 8], uc: D6.4, action: dbg.labels_toggle}
-    symload: {at: [3, 0], uc: D8.2, action: sym.import, value: {path: $user/build/main.sym}}
-    symlive: {at: [3, 1], uc: D8.2, action: sym.import_live}
-    symsave: {at: [3, 2], uc: D8.2, action: sym.export, value: {path: $user/build/deck.sym}}
+    follow:  {at: [2, 6], uc: D6.4, action: dbg.follow_pc, label: FOLLOW}
+    memf:    {at: [2, 7], uc: D6.3, action: dbg.memory_follow, label: MEM PC}
+    labels:  {at: [2, 8], uc: D6.4, action: dbg.labels_toggle, label: LABELS}
+    symload: {at: [3, 0], uc: D8.2, action: sym.import, value: {path: $user/build/main.sym}, label: LOAD SYM}
+    symlive: {at: [3, 1], uc: D8.2, action: sym.import_live, label: LIVE SYM}
+    symsave: {at: [3, 2], uc: D8.2, action: sym.export, value: {path: $user/build/deck.sym}, label: SAVE SYM}
     cleft:   {at: [3, 3], uc: D6.2, action: dbg.cursor_left}
     cdown:   {at: [3, 4], uc: D6.2, action: dbg.cursor_down}
     cright:  {at: [3, 5], uc: D6.2, action: dbg.cursor_right}
-    prof:    {at: [3, 6], uc: D10.1, action: prof.toggle, value: {name: opcode}, label: OPS}
-    cover:   {at: [3, 7], uc: D10.1, action: prof.toggle, value: {name: coverage}, label: COVER}
+    prof:    {at: [3, 6], uc: D10.1, action: prof.toggle, value: {name: opcode}, label: PROF OPS}
+    cover:   {at: [3, 7], uc: D10.1, action: prof.toggle, value: {name: coverage}, label: COVERAGE}
     trace:   {at: [3, 8], uc: D10.1, action: prof.toggle, value: {name: calltrace}, label: CALLS}

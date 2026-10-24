@@ -5,12 +5,14 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <random>
 #include <set>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/testwaithelper.h"
 #include "_helpers/wd1793testcut.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
@@ -4899,6 +4901,8 @@ namespace
         uint8_t drive, track, side, sector;
         bool motorOn, busy, diskInserted, writeProtected;
     };
+    // Written by the MessageCenter worker, read by the test: every access holds the mutex
+    std::mutex g_fddStatesMutex;
     std::vector<CapturedFddState> g_fddStates;
     bool g_fddStateObserverRegistered = false;
 
@@ -4908,21 +4912,21 @@ namespace
         {
             auto* p = static_cast<FDDStatePayload*>(msg->obj);
             const FDDStateInfo& s = p->_state;
+            std::lock_guard lock(g_fddStatesMutex);
             g_fddStates.push_back({s.driveId, s.track, s.side, s.sector,
                                    s.motorOn, s.busy, s.diskInserted, s.writeProtected});
         }
     }
 
-    bool waitForFddStates(size_t count, int timeoutMs = 500)
+    std::vector<CapturedFddState> fddStates()
     {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (g_fddStates.size() >= count)
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return g_fddStates.size() >= count;
+        std::lock_guard lock(g_fddStatesMutex);
+        return g_fddStates;
+    }
+
+    bool waitForFddStates(size_t count)
+    {
+        return TestWait::For([count] { return fddStates().size() >= count; });
     }
 }
 
@@ -4934,7 +4938,10 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
         MessageCenter::DefaultMessageCenter().AddObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
         g_fddStateObserverRegistered = true;
     }
-    g_fddStates.clear();
+    {
+        std::lock_guard lock(g_fddStatesMutex);
+        g_fddStates.clear();
+    }
 
     WD1793TestCUT fdc(_context);
     fdc.resetTime();
@@ -4950,33 +4957,31 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
     // Beta128 system register: bits[1:0] drive, bit2 = 1 (no reset), bit4 = 0 -> top side
     fdc.processBeta128(0b0000'0101);
     ASSERT_TRUE(waitForFddStates(1)) << "Drive/side select must publish the FDD state";
-    EXPECT_EQ(g_fddStates.back().drive, 1) << "Drive B selected";
-    EXPECT_EQ(g_fddStates.back().side, 1);
-    EXPECT_FALSE(g_fddStates.back().motorOn);
-    EXPECT_FALSE(g_fddStates.back().diskInserted) << "the disk is in drive A; drive B is empty";
+    EXPECT_EQ(fddStates().back().drive, 1) << "Drive B selected";
+    EXPECT_EQ(fddStates().back().side, 1);
+    EXPECT_FALSE(fddStates().back().motorOn);
+    EXPECT_FALSE(fddStates().back().diskInserted) << "the disk is in drive A; drive B is empty";
 
-    // Same value again: nothing changed -> no new notification
+    // Same value again: nothing changed -> no new notification. The motor start after it is one, and the worker
+    // delivers in order: a re-published state would arrive between the two
     fdc.processBeta128(0b0000'0101);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    EXPECT_EQ(g_fddStates.size(), 1u) << "Unchanged state must not be re-published";
-
-    // Motor start is a state change
     fdc.startFDDMotor();
     ASSERT_TRUE(waitForFddStates(2));
-    EXPECT_TRUE(g_fddStates.back().motorOn);
+    EXPECT_EQ(fddStates().size(), 2u) << "Unchanged state must not be re-published";
+    EXPECT_TRUE(fddStates()[1].motorOn);
 
     // Sector register change (as done by the #5F port write and READ ADDRESS)
     fdc._sectorRegister = 7;
     fdc.notifyFDDStateChanged();
     ASSERT_TRUE(waitForFddStates(3));
-    EXPECT_EQ(g_fddStates.back().sector, 7);
-    EXPECT_EQ(g_fddStates.back().drive, 1);
-    EXPECT_TRUE(g_fddStates.back().motorOn);
+    EXPECT_EQ(fddStates().back().sector, 7);
+    EXPECT_EQ(fddStates().back().drive, 1);
+    EXPECT_TRUE(fddStates().back().motorOn);
 
     // Motor stop
     fdc.stopFDDMotor();
     ASSERT_TRUE(waitForFddStates(4));
-    EXPECT_FALSE(g_fddStates.back().motorOn);
+    EXPECT_FALSE(fddStates().back().motorOn);
 }
 
 // A time-travel restore brings back the drive, its motor and track, and posts them (NC_FDD_STATE_CHANGED): the status

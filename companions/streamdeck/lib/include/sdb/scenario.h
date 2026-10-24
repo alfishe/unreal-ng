@@ -123,6 +123,8 @@ struct Node
     Strip strip;
     Nav nav;
     std::string context;  // menu (v2): entering it sets this surface context (ctx.set); a ctx from the core comes here
+    bool readonly = false;  // menu (v2): its keys only show (monitoring): a press does nothing (no action, no press
+                            // look); the back key goes back, a page key opens its page
     // action
     Action action;
     std::string then = "stay";   // stay | back | home

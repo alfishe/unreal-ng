@@ -108,7 +108,7 @@ do the litmus before arming TTD.
 Run the host-side forensic scan before booting at all:
 
 ```bash
-python3 utilities/diskinfo/diskinfo.py scratch/game.trd --tracks
+python3 tools/diskinfo/diskinfo.py scratch/game.trd --tracks
 ```
 
 `id-mismatch` notes, sector numbers `R >= #C0`, duplicate IDs or deliberate

@@ -55,6 +55,8 @@ namespace
         "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
         "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
         "controllers light <device> <#RRGGBB|r,g,b|off> - A pad's light colour (a DualSense / DualShock 4 light bar)\n"
+        "controllers aliases                        - Device aliases: old id -> new (a gc: pad matched to its HID device)\n"
+        "controllers unalias <old id>               - Forget an alias: profiles naming the old id stop applying\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -94,7 +96,7 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
+    /// A host verb: positional id (profile, delete, apply, unalias), control (bind, unbind), file (save) or device (haptics,
     /// rumble, then its effect; output, then its pattern; light, then its colour); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
@@ -179,6 +181,17 @@ namespace
                 text += "    effects: " + effects + "\n";
             }
             return "Haptics (device, the effects rumble plays or why not):\n" + (text.empty() ? "  none\n" : text);
+        }
+        if (verb == "aliases")
+        {
+            for (const JsonValue& alias : reply.body.Find("aliases")->Items())
+            {
+                text += "  " + alias.Find("from")->AsString() + " -> " + alias.Find("to")->AsString();
+                if (alias.Find("connected")->AsBool())
+                    text += "  (" + alias.Find("name")->AsString() + ", connected)";
+                text += "\n";
+            }
+            return "Device aliases (old id -> new id):\n" + (text.empty() ? "  none\n" : text);
         }
         if (verb == "devices")
         {

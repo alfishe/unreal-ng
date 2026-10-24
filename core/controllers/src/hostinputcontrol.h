@@ -13,7 +13,9 @@
 /// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
-/// light colour: a DualSense / DualShock 4 light bar), match (the game profiles a program's signatures choose, D7).
+/// light colour: a DualSense / DualShock 4 light bar), aliases (the old ids of promoted devices: a `gc:` device later
+/// matched to its IOHID endpoint, architecture.md §5), unalias (forget one), match (the game profiles a program's
+/// signatures choose, D7).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -43,8 +45,8 @@ struct HostRequest
 
 struct HostReply
 {
-    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, bad-request, invalid-binding, read-only,
-                          ///< unavailable
+    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, unknown-device, unknown-alias,
+                          ///< bad-request, invalid-binding, read-only, unavailable
     std::string message;  ///< why, for a person (and an agent that reads only the text)
     JsonValue body = JsonValue::Object();  ///< verb-specific fields, merged into the envelope
 
@@ -133,6 +135,10 @@ private:
     HostReply Output(const HostRequest& request);
     /// A pad's light colour (architecture.md §10)
     HostReply Light(const HostRequest& request);
+    /// The device aliases: old id -> new id, whether the new one is connected
+    HostReply Aliases();
+    /// Forget an alias (id= the old id), saved to aliases.yaml and applied at once
+    HostReply Unalias(const HostRequest& request);
     /// The game profiles a program's signatures match (D7), the one chosen and the haptics reason (H-3): `path` (the
     /// owner computes its signatures), `signatures` / `file_sha256` / `file_set` (comma lists) or the loaded program
     HostReply Match(const HostRequest& request);

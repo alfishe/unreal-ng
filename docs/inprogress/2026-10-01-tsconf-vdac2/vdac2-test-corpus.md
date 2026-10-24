@@ -189,7 +189,7 @@ hashes of L-M scenarios.
 
 ### 5.3 Built by scripts, never stored by hand
 
-- SD card images for L-M: `utilities/neogs/make_sd_image.py`-style FAT32 image builder
+- SD card images for L-M: `tools/neogs/make_sd_image.py`-style FAT32 image builder
   (or the test helper `core/tests/_helpers/fatimagebuilder.h`) with the program and its
   files, built at test time.
 - `ftview` test images: a script generating them with Pillow (baseline / progressive /

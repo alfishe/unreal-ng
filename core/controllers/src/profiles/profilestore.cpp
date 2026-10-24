@@ -46,10 +46,15 @@ bool FamilyMatches(const std::vector<std::string>& families, const std::string& 
     });
 }
 
-bool DeviceMatches(const std::vector<std::string>& devices, const HostDeviceId& device)
+/// An item of a profile's `devices` (or a pin's device) is a substring of the id or of one of its old ids (aliases)
+bool DeviceMatches(const std::vector<std::string>& devices, const HostDeviceId& device,
+                   const std::vector<HostDeviceId>& aliases = {})
 {
-    return std::any_of(devices.begin(), devices.end(), [&device](const std::string& item) {
-        return !item.empty() && device.find(item) != std::string::npos;
+    return std::any_of(devices.begin(), devices.end(), [&device, &aliases](const std::string& item) {
+        return !item.empty() &&
+               (device.find(item) != std::string::npos ||
+                std::any_of(aliases.begin(), aliases.end(),
+                            [&item](const HostDeviceId& alias) { return alias.find(item) != std::string::npos; }));
     });
 }
 
@@ -59,13 +64,15 @@ struct ScopeTarget
     std::string family;
     HostDeviceId device;
     std::string layout;
+    std::vector<HostDeviceId> aliases;  ///< the device's old ids
 };
 
 bool AppliesTo(const Profile& profile, const ScopeTarget& target)
 {
     if (!profile.families.empty() && (target.family.empty() || !FamilyMatches(profile.families, target.family, target.layout)))
         return false;
-    if (!profile.devices.empty() && (target.device.empty() || !DeviceMatches(profile.devices, target.device)))
+    if (!profile.devices.empty() &&
+        (target.device.empty() || !DeviceMatches(profile.devices, target.device, target.aliases)))
         return false;
     return true;
 }
@@ -536,15 +543,16 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                    FamilyMatches(p->families, device.family, device.layout);
         });
         if (familyNamed && families.insert(device.family).second)
-            mergeFor({device.family, {}, device.layout}, "family:" + device.family, false);
+            mergeFor({device.family, {}, device.layout, {}}, "family:" + device.family, false);
     }
     for (const HostDeviceInfo& device : context.devices)
     {
-        const bool deviceNamed = std::any_of(selected.begin(), selected.end(), [&device](const Profile* p) {
-            return DeviceMatches(p->devices, device.id) && AppliesTo(*p, {device.family, device.id, device.layout});
+        const ScopeTarget target{device.family, device.id, device.layout, AliasesOf(device.id)};
+        const bool deviceNamed = std::any_of(selected.begin(), selected.end(), [&target](const Profile* p) {
+            return DeviceMatches(p->devices, target.device, target.aliases) && AppliesTo(*p, target);
         });
         if (deviceNamed)
-            mergeFor({device.family, device.id, device.layout}, device.id, false);
+            mergeFor(target, device.id, false);
     }
     return resolved;
 }
@@ -603,7 +611,7 @@ ResolvedProfiles ProfileStore::Apply(InputRouter& router, const ProfileContext& 
             continue;
         }
         for (const HostDeviceInfo& device : context.devices)
-            if (DeviceMatches({pin.device}, device.id))
+            if (DeviceMatches({pin.device}, device.id, AliasesOf(device.id)))
                 router.SetPlayerConnector(device.id, pin.connector);
     }
     return resolved;
@@ -693,6 +701,111 @@ std::string ProfileStore::SavePath(const Profile& profile, const std::string& ro
 {
     return (std::filesystem::path(root) / Directory(profile) / (FileName(profile) + ".yaml")).string();
 }
+
+/// region <Aliases>
+
+void ProfileStore::AddAlias(const HostDeviceId& from, const HostDeviceId& to)
+{
+    if (from.empty() || to.empty() || from == to)
+        return;
+    for (auto& [old, current] : _aliases)
+        if (current == from)
+            current = to;  // promoted twice: the oldest id follows to the newest
+    _aliases.erase(to);    // the new id is a device of its own again, not an alias
+    _aliases[from] = to;
+}
+
+bool ProfileStore::RemoveAlias(const HostDeviceId& from)
+{
+    return _aliases.erase(from) != 0;
+}
+
+std::vector<HostDeviceId> ProfileStore::AliasesOf(const HostDeviceId& device) const
+{
+    std::vector<HostDeviceId> out;
+    for (const auto& [old, current] : _aliases)
+        if (current == device)
+            out.push_back(old);
+    return out;
+}
+
+std::string ProfileStore::AliasesPath(const std::string& root)
+{
+    return (std::filesystem::path(root) / "aliases.yaml").string();
+}
+
+std::string ProfileStore::DumpAliases(const std::map<HostDeviceId, HostDeviceId>& aliases)
+{
+    std::vector<JsonValue> items;
+    for (const auto& [from, to] : aliases)
+        items.push_back(JsonValue::Object({{"from", JsonValue::String(from)}, {"to", JsonValue::String(to)}}));
+    JsonValue root = JsonValue::Object({{"schema", JsonValue::Number(1)}, {"aliases", JsonValue::Array(items)}});
+    return "# The ids of promoted controllers (old -> new): written by unreal-ng\n" + DumpYaml(root);
+}
+
+bool ProfileStore::ParseAliases(const std::string& text, std::map<HostDeviceId, HostDeviceId>& out,
+                                std::string& error)
+{
+    JsonValue root;
+    if (!ParseYaml(text, root, error))
+        return false;
+    const JsonValue* items = root.IsObject() ? root.Find("aliases") : nullptr;
+    if (items == nullptr || !items->IsArray())
+    {
+        error = "no 'aliases' list";
+        return false;
+    }
+    for (const JsonValue& item : items->Items())
+    {
+        const JsonValue* from = item.IsObject() ? item.Find("from") : nullptr;
+        const JsonValue* to = item.IsObject() ? item.Find("to") : nullptr;
+        if (from == nullptr || to == nullptr || !from->IsString() || !to->IsString() || from->AsString().empty() ||
+            to->AsString().empty())
+        {
+            error = "an alias needs 'from' and 'to' ids";
+            return false;
+        }
+        out[from->AsString()] = to->AsString();
+    }
+    return true;
+}
+
+bool ProfileStore::LoadAliases(const std::string& root, std::string& error)
+{
+    const std::string path = AliasesPath(root);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+        return true;
+    std::ifstream in(path, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::map<HostDeviceId, HostDeviceId> aliases;
+    if (!in || !ParseAliases(text.str(), aliases, error))
+    {
+        error = path + ": " + (error.empty() ? std::string("cannot be read") : error);
+        return false;
+    }
+    for (const auto& [from, to] : aliases)
+        AddAlias(from, to);
+    return true;
+}
+
+bool ProfileStore::SaveAliases(const std::string& root, std::string& error) const
+{
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    const std::string path = AliasesPath(root);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << DumpAliases(_aliases);
+    if (!out)
+    {
+        error = path + ": cannot be written";
+        return false;
+    }
+    return true;
+}
+
+/// endregion </Aliases>
 
 bool ProfileStore::Save(const Profile& profile, const std::string& root, std::string& error)
 {

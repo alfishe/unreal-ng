@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "devicestatus.h"
+#include "gcpad.h"
 
 #if !__has_feature(objc_arc)
 #error "gccompanion.mm is built with -fobjc-arc"
@@ -38,6 +39,23 @@ enum class Source : uint8_t
     RightTrigger,
 };
 
+/// The HD frequency a motor plays at (0: none asked)
+uint32_t HzFor(Source source, const RumbleLevels& levels)
+{
+    switch (source)
+    {
+        case Source::Low: return levels.lowHz;
+        case Source::High: return levels.highHz;
+        case Source::Handles: return levels.low > levels.high ? levels.lowHz : levels.highHz;
+        case Source::LeftTrigger:
+        case Source::RightTrigger: return 0;
+    }
+    return 0;
+}
+
+/// The continuous event's own sharpness: the sharpness control adds to it (-1..1)
+constexpr float kBaseSharpness = GcPad::kDefaultSharpness;
+
 float LevelFor(Source source, const RumbleLevels& levels)
 {
     switch (source)
@@ -61,6 +79,7 @@ struct Motor
     bool playing = false;
     bool failed = false;  ///< the engine did not start: not tried again for this connection
     float level = 0;
+    float sharpness = kBaseSharpness;
 };
 
 struct Entry
@@ -68,7 +87,49 @@ struct Entry
     GCController* controller = nil;
     std::string key;
     std::vector<Motor> motors;
+    bool input = false;  ///< SetInput: its controls are reported
+    GcPad pad;           ///< the last reported state
 };
+
+/// GCExtendedGamepad's elements, read on the handler queue
+GcPadSnapshot SnapshotOf(GCExtendedGamepad* gamepad)
+{
+    GcPadSnapshot snapshot;
+    auto button = [&snapshot](GcPadSnapshot::Element element, GCControllerButtonInput* input) {
+        if (input == nil)
+            return;
+        snapshot.present[element] = true;
+        snapshot.values[element] = input.value;
+    };
+    auto axis = [&snapshot](GcPadSnapshot::Element element, GCControllerAxisInput* input) {
+        if (input == nil)
+            return;
+        snapshot.present[element] = true;
+        snapshot.values[element] = input.value;
+    };
+    button(GcPadSnapshot::kButtonA, gamepad.buttonA);
+    button(GcPadSnapshot::kButtonB, gamepad.buttonB);
+    button(GcPadSnapshot::kButtonX, gamepad.buttonX);
+    button(GcPadSnapshot::kButtonY, gamepad.buttonY);
+    button(GcPadSnapshot::kDpadUp, gamepad.dpad.up);
+    button(GcPadSnapshot::kDpadDown, gamepad.dpad.down);
+    button(GcPadSnapshot::kDpadLeft, gamepad.dpad.left);
+    button(GcPadSnapshot::kDpadRight, gamepad.dpad.right);
+    button(GcPadSnapshot::kLeftShoulder, gamepad.leftShoulder);
+    button(GcPadSnapshot::kRightShoulder, gamepad.rightShoulder);
+    button(GcPadSnapshot::kButtonOptions, gamepad.buttonOptions);
+    button(GcPadSnapshot::kButtonMenu, gamepad.buttonMenu);
+    button(GcPadSnapshot::kLeftThumbstickButton, gamepad.leftThumbstickButton);
+    button(GcPadSnapshot::kRightThumbstickButton, gamepad.rightThumbstickButton);
+    button(GcPadSnapshot::kButtonHome, gamepad.buttonHome);
+    button(GcPadSnapshot::kLeftTrigger, gamepad.leftTrigger);
+    button(GcPadSnapshot::kRightTrigger, gamepad.rightTrigger);
+    axis(GcPadSnapshot::kLeftX, gamepad.leftThumbstick.xAxis);
+    axis(GcPadSnapshot::kLeftY, gamepad.leftThumbstick.yAxis);
+    axis(GcPadSnapshot::kRightX, gamepad.rightThumbstick.xAxis);
+    axis(GcPadSnapshot::kRightY, gamepad.rightThumbstick.yAxis);
+    return snapshot;
+}
 
 void Release(Motor& motor)
 {
@@ -99,8 +160,11 @@ bool Prepare(GCController* controller, Motor& motor)
     motor.engine.playsHapticsOnly = YES;
     CHHapticEventParameter* intensity =
         [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:1.0f];
+    CHHapticEventParameter* sharpness =
+        [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness
+                                                      value:kBaseSharpness];
     CHHapticEvent* event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
-                                                         parameters:@[ intensity ]
+                                                         parameters:@[ intensity, sharpness ]
                                                        relativeTime:0
                                                            duration:GCHapticDurationInfinite];
     CHHapticPattern* pattern = [[CHHapticPattern alloc] initWithEvents:@[ event ] parameters:@[] error:&error];
@@ -116,12 +180,13 @@ bool Prepare(GCController* controller, Motor& motor)
     return true;
 }
 
-void Apply(GCController* controller, Motor& motor, float level)
+void Apply(GCController* controller, Motor& motor, float level, float sharpness)
 {
     level = level < 0 ? 0 : level > 1 ? 1 : level;
-    if (level == motor.level && (motor.playing || level == 0))
+    if (level == motor.level && sharpness == motor.sharpness && (motor.playing || level == 0))
         return;
     motor.level = level;
+    motor.sharpness = sharpness;
     if (level == 0)
     {
         if (motor.playing)
@@ -136,9 +201,14 @@ void Apply(GCController* controller, Motor& motor, float level)
         [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl
                                                         value:level
                                                  relativeTime:0];
+    // The sharpness control adds to the event's own sharpness
+    CHHapticDynamicParameter* sharp =
+        [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticSharpnessControl
+                                                        value:sharpness - kBaseSharpness
+                                                 relativeTime:0];
     if (!motor.playing)
         motor.playing = [motor.player startAtTime:0 error:&error];
-    if (motor.playing && ![motor.player sendParameters:@[ parameter ] atTime:0 error:&error])
+    if (motor.playing && ![motor.player sendParameters:@[ parameter, sharp ] atTime:0 error:&error])
     {
         // The engine was reset under us: next time from scratch
         Release(motor);
@@ -271,6 +341,7 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
         pad.vendorName = StringOf(controller.vendorName);
         pad.actuators = ActuatorsOf(entry.motors);
         pad.light = controller.light != nil;
+        pad.productCategory = StringOf(controller.productCategory);
         // The presses reach the queue directly, not through the main thread: their times stay close to IOHID's
         controller.handlerQueue = s->queue;
         GCExtendedGamepad* gamepad = controller.extendedGamepad;
@@ -283,6 +354,19 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
         };
         for (GCControllerButtonInput* button in MatchButtons(gamepad))
             button.pressedChangedHandler = handler;
+        // The input of a pad IOHID does not see: on the queue, only while SetInput has it on
+        void* entryHandle = handle;
+        gamepad.valueChangedHandler = ^(GCExtendedGamepad* changed, GCControllerElement*) {
+          const std::shared_ptr<State> live = weak.lock();
+          if (!live || !live->running)
+              return;
+          const auto found = live->pads.find(entryHandle);
+          if (found == live->pads.end() || !found->second.input || !live->callbacks.control)
+              return;
+          found->second.pad.Update(SnapshotOf(changed), [&live, &key](const std::string& control, float value) {
+              live->callbacks.control(key, control, value);
+          });
+        };
         {
             std::lock_guard<std::mutex> lock(s->mutex);
             if (pad.actuators != 0)
@@ -381,6 +465,7 @@ void GcCompanion::Stop()
               Release(motor);
           for (GCControllerButtonInput* button in MatchButtons(entry.controller.extendedGamepad))
               button.pressedChangedHandler = nil;
+          entry.controller.extendedGamepad.valueChangedHandler = nil;
       }
       state->pads.clear();
       state->callbacks = {};
@@ -406,7 +491,8 @@ bool GcCompanion::SetRumble(const std::string& key, const RumbleLevels& levels)
       for (auto& [handle, entry] : state->pads)
           if (entry.key == key)
               for (Motor& motor : entry.motors)
-                  Apply(entry.controller, motor, LevelFor(motor.source, copy));
+                  Apply(entry.controller, motor, LevelFor(motor.source, copy),
+                        GcPad::SharpnessFor(HzFor(motor.source, copy)));
     });
     return true;
 }
@@ -440,6 +526,32 @@ bool GcCompanion::SetLight(const std::string& key, const LightColor& color)
                                                                      blue:copy.blue / 255.0f];
     });
     return true;
+}
+
+void GcCompanion::SetInput(const std::string& key, bool on)
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return;
+    const std::string copy = key;
+    dispatch_async(state->queue, ^{
+      for (auto& [handle, entry] : state->pads)
+      {
+          if (entry.key != copy || entry.input == on)
+              continue;
+          entry.input = on;
+          if (!on && state->running && state->callbacks.control)
+              entry.pad.Release([&state, &copy](const std::string& control, float value) {
+                  state->callbacks.control(copy, control, value);
+              });
+          entry.pad.Reset();
+          if (on && state->running && state->callbacks.control && entry.controller.extendedGamepad != nil)
+              entry.pad.Update(SnapshotOf(entry.controller.extendedGamepad),
+                               [&state, &copy](const std::string& control, float value) {
+                                   state->callbacks.control(copy, control, value);
+                               });
+      }
+    });
 }
 
 }  // namespace controllers

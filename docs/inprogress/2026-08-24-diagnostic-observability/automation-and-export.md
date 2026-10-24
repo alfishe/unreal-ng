@@ -458,14 +458,14 @@ Raw dump for maximum speed and minimum size:
   Raw PortTraceEvent structs, layout static_assert-pinned in portdiagrecorder.cpp:
     u64 timestamp, u32 frame, u16 rawPort, u16 decodedPort, u16 pc,
     u8 value, u8 decodeRuleIndex, u8 deviceId, u8 flags, 2 bytes padding
-  Python struct format: "<QIHHHBBBBxx" (see utilities/porttrace/porttrace_convert.py)
+  Python struct format: "<QIHHHBBBBxx" (see tools/porttrace/porttrace_convert.py)
 ```
 
 Binary is intended for large captures (millions of events) where JSON/CSV overhead is prohibitive. The Python converter tool reads this format.
 
 A compressed variant **PTR2 v2** (`.binz`, format `binz` on every save surface) applies a
 columnar delta/xor transform and one zstd frame — 50-100x smaller on real traces. Spec and
-Python decompression fallbacks: `utilities/porttrace/README.md` §5; core-side reader:
+Python decompression fallbacks: `tools/porttrace/README.md` §5; core-side reader:
 `PortDiagnosticRecorder::loadFromFile()` + WebAPI `POST /profiler/porttrace/readfile`
 (core decompresses for clients without zstd).
 
@@ -478,7 +478,7 @@ A standalone Python script (no emulator required) that reads saved trace files a
 ### 7.1 Location
 
 ```
-utilities/porttrace/porttrace_convert.py
+tools/porttrace/porttrace_convert.py
 ```
 
 ### 7.2 Usage
@@ -575,10 +575,10 @@ Decode Rule Distribution:
 ### 7.4 Implementation
 
 > [!NOTE]
-> **Implemented** as `utilities/porttrace/porttrace_convert.py` (standalone, stdlib-only, Python 3.8+).
+> **Implemented** as `tools/porttrace/porttrace_convert.py` (standalone, stdlib-only, Python 3.8+).
 > The doc previously carried a design sketch here; the real tool supersedes it.
 >
-> A companion driver, **`utilities/porttrace/porttrace_capture.py`**, performs the whole session in one
+> A companion driver, **`tools/porttrace/porttrace_capture.py`**, performs the whole session in one
 > command over the WebAPI: enable the `porttrace` feature → configure buffer + filter
 > (presets or repeatable `--include port=FFFD,direction=out` compound rules) → capture
 > for `--duration N` seconds (or `--wait-key`) → save the canonical JSON server-side →
@@ -650,17 +650,17 @@ emu.porttrace_save("results/turbosound-trace.json", "json")
 
 ```bash
 # Convert binary dump to markdown for pasting in issue tracker
-python utilities/porttrace/porttrace_convert.py results/turbosound-trace.bin --to markdown -o report.md
+python tools/porttrace/porttrace_convert.py results/turbosound-trace.bin --to markdown -o report.md
 
 # Show only unmapped ports (diagnostic for missing handlers)
-python utilities/porttrace/porttrace_convert.py results/trace.json --filter-unmapped --to text
+python tools/porttrace/porttrace_convert.py results/trace.json --filter-unmapped --to text
 
 # Get summary stats
-python utilities/porttrace/porttrace_convert.py results/trace.json --summary
+python tools/porttrace/porttrace_convert.py results/trace.json --summary
 
 # Compare FDC activity across two captures (diff the CSV)
-python utilities/porttrace/porttrace_convert.py trace-pentagon.json --filter-device WD1793_Data --to csv -o a.csv
-python utilities/porttrace/porttrace_convert.py trace-spectrum.json --filter-device WD1793_Data --to csv -o b.csv
+python tools/porttrace/porttrace_convert.py trace-pentagon.json --filter-device WD1793_Data --to csv -o a.csv
+python tools/porttrace/porttrace_convert.py trace-spectrum.json --filter-device WD1793_Data --to csv -o b.csv
 diff a.csv b.csv
 ```
 

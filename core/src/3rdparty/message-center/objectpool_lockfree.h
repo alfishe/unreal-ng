@@ -86,9 +86,10 @@ private:
     Node *oldHead = m_freeList.load(std::memory_order_acquire);
     while (oldHead) {
       Node *newHead = oldHead->next;
+      // A failed exchange reloads the head: acquire too, its next pointer is read on the next round
       if (m_freeList.compare_exchange_weak(oldHead, newHead,
                                            std::memory_order_acquire,
-                                           std::memory_order_relaxed)) {
+                                           std::memory_order_acquire)) {
         return oldHead;
       }
     }

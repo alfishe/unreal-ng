@@ -35,6 +35,7 @@ constexpr FunctionInfo kFunctions[] = {
     { "fdc.upd765", "+3 floppy controller", "`#2FFD`, `#3FFD`" },
     { "fuller-ay", "Fuller Box AY (register `#3F`, data `#5F`)", "`#3F`, `#5F`" },
     { "fuller-joystick", "Fuller joystick", "`#7F`" },
+    { "amx-mouse", "AMX mouse (Z80 PIO, IM 2 per mickey; buttons `#DF`)", "`#1F`, `#3F`, `#5F`, `#7F`, `#DF`" },
 };
 static_assert(sizeof(kFunctions) / sizeof(kFunctions[0]) == static_cast<std::size_t>(Function::Count));
 

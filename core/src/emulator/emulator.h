@@ -441,6 +441,8 @@ public:
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
+    /// Why the host speed may not change now ("" = it may): TTD keeps a history recorded at 1x
+    std::string SpeedLockReason() const;
 
     /// A group that runs this instance in lockstep with others (the ZX-Poly
     /// master) takes host speed changes itself: SetSpeedMultiplier hands the

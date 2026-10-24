@@ -46,6 +46,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
         {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
+        {"aliases", {}},
+        {"unalias", {"id"}},
     };
     return actions;
 }
@@ -171,6 +173,20 @@ namespace
             }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "aliases")
+        {
+            // Old id -> new id: the profiles naming the old id apply to the new one
+            for (const Json::Value& alias : reply["aliases"])
+            {
+                out << alias["from"].asString() << " -> " << alias["to"].asString();
+                if (alias["connected"].asBool())
+                    out << " (" << alias["name"].asString() << ", connected)";
+                out << "\n";
+            }
+            if (reply["aliases"].empty())
+                out << "no device aliases";
             return out.str();
         }
         if (action == "bindings")
@@ -342,7 +358,7 @@ void RegisterControllers(ToolRegistry& registry)
         "match: a TR-DOS file set (c:<16 hex> code, d:<16 hex> data tokens), comma-separated: the fuzzy rule";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
-        "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
+        "unalias: the old device id of an alias (aliases lists them); scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
     schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
     schema["properties"]["effect"]["description"] =
@@ -382,10 +398,11 @@ void RegisterControllers(ToolRegistry& registry)
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), match (the "
-        "game profiles a program's signatures choose: exact, file SHA-256, then the TR-DOS file set's fuzzy rule; "
-        "context shows them for the loaded program with where the haptics come from). Options per "
-        "action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), aliases (old device id -> new: a "
+        "controller first seen through GameController alone (gc:...) and later matched to its HID device keeps its "
+        "profiles under the new id), unalias (forget one, id = the old id), match (the game profiles a program's "
+        "signatures choose: exact, file SHA-256, then the TR-DOS file set's fuzzy rule; context shows them for the "
+        "loaded program with where the haptics come from). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -401,7 +418,7 @@ void RegisterControllers(ToolRegistry& registry)
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
                 static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics", "match"};
+                                                            "haptics", "aliases", "match"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

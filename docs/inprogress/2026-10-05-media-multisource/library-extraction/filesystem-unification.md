@@ -266,7 +266,7 @@ vendored, skipped when absent, installed in the CI image (test plan §4).
 
 | Driver | View | Dialects | Read | Write | Builder | LOC (est.) | Days | Oracle / reference |
 |---|---|---|---|---|---|---|---|---|
-| `trdos` | sector | TR-DOS 5.03 / 5.04T, 40 / 80 tracks, 1 / 2 sides; Scorpion / Pentagon variants | port | **new**: delete (mark `#01`), rename, `Compact` (MOVE), set type / start, label | port (`FolderDiskBuilder`) | 1 600 (−1 900 removed duplicates) | 10 | the real TR-DOS ROM through `trdostesthelper` (CAT, LOAD, MOVE); `utilities/diskconverter` TR-DOS module during the overlap |
+| `trdos` | sector | TR-DOS 5.03 / 5.04T, 40 / 80 tracks, 1 / 2 sides; Scorpion / Pentagon variants | port | **new**: delete (mark `#01`), rename, `Compact` (MOVE), set type / start, label | port (`FolderDiskBuilder`) | 1 600 (−1 900 removed duplicates) | 10 | the real TR-DOS ROM through `trdostesthelper` (CAT, LOAD, MOVE); `tools/diskconverter` TR-DOS module during the overlap |
 | `scl` (archive) | archive | SCL | port | port | ✓ | 300 | 2 | round trip with `trdos` |
 | `hobeta` (archive) | archive | `$B` `$C` `$D` `$#`, 17-byte header + checksum | port | port | — | 200 | 1 | existing tests |
 | `fat` | block | FAT12/16/32; dialects: MS-DOS, MSX-DOS 1 (media byte, no BPB), MSX-DOS 2, Atari ST (TOS boot checksum), Sprinter DSS (entry-0 rules), esxDOS / NextZXOS (no LFN on the firmware path) | port (`FatVolumeReader`) | **new**: in-place writer (cluster allocation, FAT copies, FSInfo, LFN, directory growth) — also lifts non-goal NG-8 of multi-source | port (synthesis, graft) | 2 400 | 15 | mtools, dosfstools `fsck.fat -n`, ChaN FatFs semantics; the guests (NedoOS, DSS) in acceptance |

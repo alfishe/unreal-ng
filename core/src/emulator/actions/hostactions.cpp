@@ -311,7 +311,10 @@ ActionResult SetSetting(Emulator& emulator, const std::string& name, const State
         if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
             return BadRequest("speed must be 1, 2, 4, 8 or 16");
         if (!emulator.SetSpeedMultiplier(static_cast<uint8_t>(multiplier)))
-            return Conflict("Cannot change the speed while TTD recording is active (only 1)");
+        {
+            const std::string why = emulator.SpeedLockReason();
+            return Conflict(why.empty() ? "Cannot change the speed while TTD recording is active (only 1)" : why);
+        }
         body["value"] = multiplier;
         return ActionResult::Success(std::move(body), "Speed multiplier set to " + std::to_string(multiplier) + "x");
     }
@@ -663,12 +666,14 @@ ActionResult ColdReset(const ActionCall& call)
             return BadRequest("ram_power_on: expected random or zero");
         request.ramPowerOn = mode;
     }
-    const bool wasRunning = call.emulator->IsRunning() && !call.emulator->IsPaused();
+    const ModelSwitch::RunStateBefore before = ModelSwitch::RunStateBefore::Of(*call.emulator);
     const ModelSwitchResult restarted = ModelSwitch::Run(request);
     if (!restarted.result.Ok() || !restarted.emulator)
         return Conflict("the machine was not restarted: " + restarted.result.message);
-    if (wasRunning)
-        EmulatorManager::GetInstance()->StartEmulatorAsync(restarted.emulator->GetId());
+    // The run state the user had: a paused machine comes back started and paused, not "initialized"
+    const std::string newId = restarted.emulator->GetId();
+    ModelSwitch::StartAsBefore(*restarted.emulator, before,
+                               [&newId]() { EmulatorManager::GetInstance()->StartEmulatorAsync(newId); });
     StateNode body = StateNode::Object();
     body["replaced"] = call.instanceId;
     body["emulator_id"] = restarted.emulator->GetId();
@@ -1031,6 +1036,10 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             return ActionResult::Success(std::move(body), "Feature '" + name + "' " + (on ? "enabled" : "disabled"));
         },
         NamedRouteRules("PUT", "/feature/", "name", ""));
+    // A history the user recorded with TTD keeps its 1x: the speed is refused (with the reason), not the history
+    ActionRules speedRules = RouteRules("PUT", "/settings/speed");
+    speedRules.unavailable = [](Emulator& emulator, const ActionValue&) { return emulator.SpeedLockReason(); };
+    speedRules.unavailableError = "Conflict";
     add(
         "set.speed", "Speed", settings, ValueKind::Press, "value? (1, 2, 4, 8, 16; else the next one)",
         [](const ActionCall& call) {
@@ -1045,7 +1054,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             }
             return SetSetting(*call.emulator, "speed", StateNode(*value));
         },
-        RouteRules("PUT", "/settings/speed"));
+        std::move(speedRules));
     add(
         "set.toggle", "Toggle a setting", settings, ValueKind::Press,
         "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch, "

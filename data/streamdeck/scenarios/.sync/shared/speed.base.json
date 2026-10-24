@@ -92,7 +92,7 @@
    ],
    "in": "speed",
    "kind": "key",
-   "label": "SOUND",
+   "label": "TURBO SND",
    "uc": [
     "C2.3"
    ],
@@ -108,7 +108,7 @@
    ],
    "in": "speed",
    "kind": "key",
-   "label": "DISK",
+   "label": "FAST DISK",
    "uc": [
     "C2.4"
    ],
@@ -133,6 +133,7 @@
   "speed": {
    "glyph": "set.speed",
    "kind": "menu",
+   "label": "SPEED",
    "title": "Speed",
    "uc": [
     "C2"
@@ -146,7 +147,7 @@
    ],
    "in": "speed",
    "kind": "key",
-   "label": "TAPE",
+   "label": "FAST TAPE",
    "uc": [
     "C2.4"
    ],
@@ -162,6 +163,7 @@
    ],
    "in": "speed",
    "kind": "key",
+   "label": "TURBO",
    "uc": [
     "C2.2"
    ]
@@ -178,7 +180,9 @@
    "uc": [
     "C2.5"
    ],
-   "value": 1
+   "value": {
+    "value": 1
+   }
   },
   "x16": {
    "action": "set.speed",
@@ -192,7 +196,9 @@
    "uc": [
     "C2.1"
    ],
-   "value": 16
+   "value": {
+    "value": 16
+   }
   },
   "x2": {
    "action": "set.speed",
@@ -206,7 +212,9 @@
    "uc": [
     "C2.1"
    ],
-   "value": 2
+   "value": {
+    "value": 2
+   }
   },
   "x4": {
    "action": "set.speed",
@@ -220,7 +228,9 @@
    "uc": [
     "C2.1"
    ],
-   "value": 4
+   "value": {
+    "value": 4
+   }
   },
   "x8": {
    "action": "set.speed",
@@ -234,7 +244,9 @@
    "uc": [
     "C2.1"
    ],
-   "value": 8
+   "value": {
+    "value": 8
+   }
   }
  }
 }

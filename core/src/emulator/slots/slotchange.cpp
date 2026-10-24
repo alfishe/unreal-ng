@@ -113,7 +113,9 @@ SlotChangeResult SlotChange::Run(const SlotChangeRequest& request)
         std::snprintf(config.atm.kbc_rom_path, sizeof(config.atm.kbc_rom_path), "%s", kbcRom.c_str());
     };
     out.previousEmulatorId = request.emulatorId;
-    out.wasRunning = old->IsRunning() && !old->IsPaused();
+    const ModelSwitch::RunStateBefore before = ModelSwitch::RunStateBefore::Of(*old);
+    out.wasRunning = before.running;
+    out.wasPaused = before.paused;
     context = nullptr;
     old.reset();
 
