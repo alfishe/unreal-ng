@@ -585,6 +585,8 @@ if (TESTS)
     target_link_libraries(hud-core-tests PRIVATE
         unrealng::core
         gtest_main
+        # MinGW has no gtest targets (core/tests compiles the sources in): -lgtest_main needs -lgtest after it
+        gtest
     )
 
     # unreal-qt-tests: front-end classes that need Qt (offscreen platform, real Qt events).
