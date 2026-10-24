@@ -376,7 +376,7 @@ mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
 mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
 mouse_release_all()                --> state | nil, err
 mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
-mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2")
+mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2" | "amx")
 mouse_click_pending()              --> true while a click is still holding its button
 mouse_button_names()               --> {"left","right","middle"}
 ```

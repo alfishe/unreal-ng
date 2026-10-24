@@ -266,10 +266,14 @@ void RunChange(const SlotControlRequest& request, const std::string& emulatorId,
     restart["previousEmulatorId"] = result.previousEmulatorId.empty() ? emulatorId : result.previousEmulatorId;
     restart["emulatorId"] = result.emulator ? result.emulator->GetId() : emulatorId;
     restart["wasRunning"] = result.wasRunning;
+    restart["wasPaused"] = result.wasPaused;
     bool started = false;
-    if (result.Applied() && result.emulator && result.wasRunning && request.startWhenRunning)
+    if (result.Applied() && result.emulator && request.startWhenRunning)
     {
-        started = EmulatorManager::GetInstance()->StartEmulatorAsync(result.emulator->GetId());
+        // The run state the user had: a paused machine comes back started and paused, not "initialized"
+        const std::string id = result.emulator->GetId();
+        started = ModelSwitch::StartAsBefore(*result.emulator, {result.wasRunning, result.wasPaused},
+                                             [&id]() { EmulatorManager::GetInstance()->StartEmulatorAsync(id); });
     }
     restart["started"] = started;
     if (result.Applied())

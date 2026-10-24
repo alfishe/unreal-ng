@@ -21,6 +21,13 @@ public:
     /// The device's held controls are released
     virtual void OnDeviceRemoved(const HostDeviceId& device) = 0;
     virtual void OnControl(const ControlEvent& event) = 0;
+    /// Device @p from was another endpoint of device @p to and gave way to it (architecture.md §5: a `gc:` device
+    /// whose IOHID endpoint appeared); @p from was removed before. The settings chosen for it may move
+    virtual void OnDevicePromoted(const HostDeviceId& from, const HostDeviceId& to)
+    {
+        (void)from;
+        (void)to;
+    }
 };
 
 /// Actuator levels 0..1 (haptics.md §2): the handle motors (low / high frequency) and the impulse triggers

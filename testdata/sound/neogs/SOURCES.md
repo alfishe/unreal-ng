@@ -23,9 +23,9 @@ The tests build their SD cards in `scratch/` when they run, and remove them afte
 `core/tests/_helpers/fatimagebuilder.h` (a deterministic FAT16/FAT32 builder, sparse files) and
 `core/tests/_helpers/neogstestsdcard.h` (the three NeoGS cards). Each card holds, in its root directory:
 
-- `NEOGS.ROM` — the NeoGS main ROM v1.11 (`utilities/neogs/parts/neogs.rom`, 32 KB, identical to `full_ngs.rom` at
+- `NEOGS.ROM` — the NeoGS main ROM v1.11 (`tools/neogs/parts/neogs.rom`, 32 KB, identical to `full_ngs.rom` at
   `#10000`), for the loader's SD boot path;
-- `NGS_ROM.UPD` — the NedoPC firmware update file (`utilities/neogs/parts/ngs_rom.upd`), for the flasher;
+- `NGS_ROM.UPD` — the NedoPC firmware update file (`tools/neogs/parts/ngs_rom.upd`), for the flasher;
 - `EYEACHE.MP3` — `mp3/eyeache1-44k-128k-cbr.mp3`, for Neo Player Light and the DMA player;
 - `EYE22K.MP3` — `mp3/eyeache1-22k-mono-vbr-id3.mp3`: a second MP3, because Neo Player Light v0.44 hangs on a
   card with exactly one (its FINDMP3 returns with the wrong memory page when it found fewer than two files; see
@@ -40,7 +40,7 @@ The tests build their SD cards in `scratch/` when they run, and remove them afte
 The images are smaller than 2 GB, so the card model presents them as SDSC by default. SDHC is tested with the same
 images through the `[NGS] SDType=sdhc` override (neogs-tdd.md §5.5).
 
-The C++ builder was checked byte for byte against `utilities/neogs/make_sd_image.py` (same layout), whose output was
+The C++ builder was checked byte for byte against `tools/neogs/make_sd_image.py` (same layout), whose output was
 checked with mtools (`mdir`, `mcopy`) and `fsck_msdos -n` (clean). `make_sd_image.py` stays for making cards by hand.
 
 ## `programs/` — NedoPC host programs (acceptance tests)

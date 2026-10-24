@@ -152,9 +152,12 @@ TEST_F(CompanionRegistry_Test, TheStoreKeepsDigestsAndSurvivesARestart)
     _registry.Authenticate(token);
     _registry.Flush();
 
-    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
     std::stringstream text;
-    text << in.rdbuf();
+    {
+        // Closed again: the stores below replace the file, which Windows refuses while it is open
+        std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+        text << in.rdbuf();
+    }
     EXPECT_EQ(text.str().find(token), std::string::npos) << "only the digest is stored";
     EXPECT_NE(text.str().find(CompanionRegistry::HashToken(token)), std::string::npos);
 

@@ -79,7 +79,9 @@ the address lines. Treating this as one global rule is wrong.
 
 ### 2.1 Known documented decodes (BC#4)
 
-**Standard Kempston mouse** — listed for models **(1, 7-9)**:
+**Standard Kempston mouse** — BC#4 gives the mouse rows no machine list; the "(*1)" after the heading is a
+source footnote (velesoft's port table). The "(1,7-9)" seen near it belongs to the `#FE` row
+(`zx-ports-full-table.txt:17`, mouse rows `:311-321`):
 
 ```
 #FADF/64223  1111101011011111 xxxxxx10xx0xxxxx Kmou_B
@@ -116,10 +118,10 @@ variant's 8192 (buttons) and 4096 (axes).
 5    - Didaktik Gama                 A - ATM Turbo-2+
 ```
 
-So the mouse is documented for ZX Spectrum (1), KAY-1024SL (7), Pentagon 128 (8) and
-Profi-1 (9). It is **not** listed for Scorpion (6), ATM Turbo-2+ (A), Quorum (C) or
-Pentagon-1024SL (D) — on those the mouse is an add-on card, and the decode follows the
-card, not the machine.
+BC#4 does not say which of these machines have the mouse: its mouse rows carry no model codes at all (only the
+source footnote `*1`, `zx-ports-full-table.txt:311, 356`). The Kempston mouse is an add-on card on every model of
+the legend; where a board has one built in (ZX-Evo, Next, Sprinter, Karabas-Pro), its own decode applies, and the
+decode of a card follows the card, not the machine.
 
 ### 2.3 ZX Evo / Pentevo decodes more strictly
 
@@ -209,31 +211,21 @@ sources agree on this.
 Bit 3 reads as a constant **1**, per the FPGA's `{muswhl, 1'b1, musbtn}`
 (`zkbdmus.v:107`).
 
-**Bit assignment (bootcamp, decisive):**
+**Bit assignment: per board.** There is no single standard; bootcamp's `MB MR ML` (D0 = Left) is one of two
+orders that real hardware uses:
 
-```
-Bit   7 6 5 4 3  2  1  0
-      ? ? ? ? ?  MB MR ML
-```
+| D0 = **Right**, D1 = Left, D2 = Middle | D0 = **Left**, D1 = Right, D2 = Middle |
+|:--|:--|
+| Kondratyev's 1994-95 "USSR Kempston mouse" schematic (`/Volumes/TB4-4Tb/Data/zx-spectrum/hardware/KEMPMOUS.LZH`, `kempmous.txt` ~:103-118) | ZX-Evo AVR firmware (`zx-evo/pentevo/avr/current/zx.h:187-196`, `ps2.c:599-632`) |
+| Next VHDL (`zxnext.vhd:3560`: `not BUTTON(2) & not BUTTON(0) & not BUTTON(1)`, PS/2 button 0 = left on D1) | Sprinter PLD (`SP2_ACEX.TDF:1205-1214`) |
+| Karabas-Pro (`karabas_pro.vhd:1795`, "D0=right, D1 = left, D2 = middle") | Unreal Speccy (`input.cpp:302-316`) |
+| ZEsarUX (`operaciones.c:7192-7195`), ZXMAK2 (`KempstonMouseDevice.cs:209-210`), zxsp's header (`KempstonMouse.cpp:13`) | Xpeccy's default (`hardware/common.c:257-258`), zxsp's embedded WoS table (`KempstonMouse.cpp:31`), the WoS peripherals FAQ (254 = left) |
+| Scorpion ProfROM Service Monitor (`docs/inprogress/2026-09-07-scorpion-zs256-clone/profrom-input-subsystem-and-driver-disassembly.md:201-230`) | |
 
-so **D0 = Left, D1 = Right, D2 = Middle**, active low.
-
-This settles a question the emulators do not agree on. The surviving disagreement is
-recorded because two widely-used emulators encode the opposite order, and anyone
-comparing behaviour against them will see the difference:
-
-- **D0 = right, D1 = left** — ZXMAK2 explicitly remaps to this
-  (`KempstonMouseDevice.cs:209-210`):
-  ```csharp
-  b = ((b&1)<<1) | ((b&2)>>1) | (b&0xFC);
-  value = b ^ 0xFF;  // D0 - right, D1 - left, D2 - middle
-  ```
-  zxsp's header comment says the same (`KempstonMouse.cpp:13`).
-- **D0 = left, D1 = right** (agrees with bootcamp) — Xpeccy's default (`hardware/common.c:257-258`), with an
-  explicit `swapButtons` flag to invert it (`src/libxpeccy/input/input.h:124`). zxsp's
-  own embedded WoS table also contradicts its header:
-  `[255 = None], [254 = Left], [253 = Right], [252 = Both]` (`KempstonMouse.cpp:31`),
-  where 254 means D0 clear means Left.
+Buttons are active low on both. The order is a property of the board (or of the card), not of the device; the
+controller manager's research has the full table
+([research-retro-hardware.md](../2026-10-17-controller-manager/research-retro-hardware.md) §0). Xpeccy has an
+explicit `swapButtons` flag (`src/libxpeccy/input/input.h:124`).
 
 Middle button is D2 where a third button exists. zxsp flags three-button support as
 uncertain ("existed such a version?", `:17`) and drives only D0/D1, masking with

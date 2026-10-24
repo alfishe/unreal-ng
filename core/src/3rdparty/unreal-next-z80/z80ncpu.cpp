@@ -311,7 +311,7 @@ int Z80nCpuInt(Z80nCPU* cpu)
     // Real-chip quirk of the NMOS Z80: LD A,I / LD A,R (ED 57 / ED 5F) copy IFF2 into P/V late in the
     // instruction, and an INT accepted at the very next boundary clears IFF2 before that copy settles - P/V then
     // reads 0. A CMOS part keeps it (Z80nCpuSetLdAirQuirk(cpu, 0)).
-    if (cpu->ldAirQuirk && (cpu->opword == 0xED57 || cpu->opword == 0xED5F))
+    if (cpu->ldAirQuirk && !cpu->t80Persona && (cpu->opword == 0xED57 || cpu->opword == 0xED5F))
         Z80nR(cpu).f &= ~PV;
 
     // The acknowledge cycle is an M1 cycle with refresh: R increases in
@@ -600,6 +600,11 @@ Z80nCpuRegisterFile* Z80nCpuRegisterFilePtr(Z80nCPU* cpu)
 void Z80nCpuSetLdAirQuirk(Z80nCPU* cpu, int enabled)
 {
     cpu->ldAirQuirk = enabled ? 1 : 0;
+}
+
+void Z80nCpuSetT80Persona(Z80nCPU* cpu, int enabled)
+{
+    cpu->t80Persona = enabled ? 1 : 0;
 }
 
 void Z80nCpuSetNextRegFn(Z80nCPU* cpu, Z80nCpuNextRegFn fn, void* userData)

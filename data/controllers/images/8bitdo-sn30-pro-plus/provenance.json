@@ -1,0 +1,37 @@
+{
+  "family": "8bitdo-sn30-pro-plus",
+  "images": [
+    {
+      "view": "front",
+      "title": "8BitDo SN30 Pro+, SN Edition",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size about 153 x 100 x 64 mm: the shell of the Pro 2 (its successor, the same body with back buttons added); the Pro 2's measured outline and layout",
+          "source": "https://www.8bitdo.com/pro2/",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the Pro 2 front view the outline is measured on",
+          "source": "https://www.8bitdo.com/images/2021/pro2/pro2_gray.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the SN Edition colours (grey body, lavender and purple buttons)",
+          "source": "https://commons.wikimedia.org/wiki/File:8BitDo_SN30_gamepad_HS_DSC_2704.jpg",
+          "author": "Hayden Schiff",
+          "licence": "CC BY 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

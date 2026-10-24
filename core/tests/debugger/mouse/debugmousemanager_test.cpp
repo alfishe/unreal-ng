@@ -501,10 +501,13 @@ TEST_F(DebugMouseManager_Test, HostKeystrokes_JournalledWhileRecordingAndSuppres
     const std::string id = std::string(_emulator->GetUUID());
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
 
+    // The MessageCenter worker applies the keystroke (the machine is not running): read the matrix once it is done
     mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_W, KEY_PRESSED, id));
-    ASSERT_TRUE(TestWait::For([&] { return KeyDown(0xFBFE, 1); }));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    ASSERT_TRUE(KeyDown(0xFBFE, 1));
     mc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_W, KEY_RELEASED, id));
-    ASSERT_TRUE(TestWait::For([&] { return !KeyDown(0xFBFE, 1); }));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    ASSERT_FALSE(KeyDown(0xFBFE, 1));
 
     auto keys = JournalOfKind(TTDInputKind::Key);
     ASSERT_EQ(keys.size(), 2u) << "desktop keystrokes are journalled like automation input";
@@ -513,11 +516,11 @@ TEST_F(DebugMouseManager_Test, HostKeystrokes_JournalledWhileRecordingAndSuppres
 
     _context->ttdReplayActive = true;
     mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_E, KEY_PRESSED, id));
-    // Marker: a mouse event on the same MessageCenter worker proves the key event was dispatched
-    _context->ttdReplayActive = true;
+    // A mouse event too; the drain barrier proves both were dispatched
     _mouse->SetCounters(0, 0);
     mc.Post(MC_MOUSE_MOVE, MouseEvent::Move(1, 0, id));
-    const bool markerApplied = TestWait::For([&] { return _mouse->GetX() == 1; }, std::chrono::milliseconds(300));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    const bool markerApplied = _mouse->GetX() == 1;
     _context->ttdReplayActive = false;
 
     EXPECT_FALSE(markerApplied) << "host mouse input is suppressed during replay too";

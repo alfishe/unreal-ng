@@ -166,7 +166,13 @@ private:
     void RunJob(Job& j);
     void ApplyNav(const json& r);
     void Render(bool force);
-    void SetBanner(const std::string& text, int ms);
+    void SetBanner(const std::string& text, int ms, bool info = false);
+    void FailureBanner(const Job& j, const std::string& message);
+    bool SeekOnTimeline(int x, int x2, bool swipe);
+    [[nodiscard]] std::string UnavailableLocked(const Action& a) const;
+    static void DimUnavailable(Rgb& img);
+    int _swipeStep = 1, _swipeDir = 0;  // the timeline's swipe: seconds of the last step, its way
+    std::int64_t _swipeAt = 0;
     void NoteMenu();
     [[nodiscard]] bool IsOn(const Node& n) const;
     [[nodiscard]] std::map<std::string, bool> OnStates() const;
@@ -217,6 +223,8 @@ private:
     [[nodiscard]] std::string PackLocked() const;
     std::string _activityLine;             // activity.strip "line": what another surface did
     std::int64_t _activityUntil = 0;
+    int _dialHint = -1;  // StripLive::dialHint until _dialHintUntil
+    std::int64_t _dialHintUntil = 0;
     std::thread _monitor;  // the REST fallback's poller (strip.status "ttd", faces' readouts); none while live
     bool _monitorRunning = false;  // under _mu
     bool _running = false;         // Run() drives the steps (tests call Step() alone: no threads)
@@ -224,6 +232,7 @@ private:
     [[nodiscard]] static std::string TtdReadout(const json& t, double fps);
     static constexpr size_t kStatusChars = 36;
     std::int64_t _bannerUntil = 0, _lastActivity = 0;
+    bool _bannerInfo = false;  // the banner is information (calm), not an error (red)
     int _brightness = 70;
     bool _brightnessDirty = true;
     json _last = json::array();  // recent action results

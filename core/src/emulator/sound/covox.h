@@ -204,6 +204,8 @@ public:
 
     // Frame lifecycle
     void reset();
+    /// Drop the deltas no frame end has read and restart the buffers at the level the DACs hold (see Beeper)
+    void discardPending();
     void handleFrameStart();
     /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart): the Covox reads
     /// the mixer's count from its blip stream, so a frame that rendered more (a host speed multiplier) left a backlog

@@ -1443,7 +1443,7 @@ own (unchanged JSON); `ports` are what the machine's ports return; the machine's
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 | `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
-| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`, `amx`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`, `amx-pio`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`), the AMX mouse `pio` (`a` / `b`: `mode`, `vector`, `data`, `interrupt_enabled`, `interrupt_pending`, `under_service`; `pending` {`dx`,`dy`} mickeys not yet strobed, `buttons_port` = `IN #DF`, `strobes`). |
 | `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
 | `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
@@ -1679,8 +1679,9 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | aliases
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | haptics-probe
+                                                         | light | haptics-probe | unalias
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1705,7 +1706,10 @@ when known also `level` (absent without one), `coarse`, `charging`, `wired`), `l
 `reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
 `POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
 query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
-reason where the OS does not let the emulator set it. On the WebSocket `/api/v1/ws` all of them are `call`s, as every
+reason where the OS does not let the emulator set it. `GET /api/v1/controllers/aliases` lists the device aliases
+(`{aliases: [{from, to, connected, name}]}`: a pad first seen through GameController alone, `gc:...`, and later
+matched to its HID device keeps its profiles under the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}`
+forgets one (`200` with `from`, `to`; `404` `unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every
 route.
 
 ### Host Actions

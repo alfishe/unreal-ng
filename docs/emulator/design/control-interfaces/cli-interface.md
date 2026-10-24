@@ -423,6 +423,7 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
 | `controllers haptics-probe <kind> <address> [page=N port_mask=M play=hit]` | A haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`) as a source of the loaded game's user profile, with a rule |
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
+| `controllers aliases`, `unalias <old id>` | The device aliases (old id -> new: a `gc:` pad matched to its HID device keeps its profiles) and forgetting one |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 

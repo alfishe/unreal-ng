@@ -387,6 +387,22 @@ void Covox::emitLevelsAtFrameStart()
     _lastR = newR;
 }
 
+void Covox::discardPending()
+{
+    if (!_blipL || !_blipR)
+        return;
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+    // The buffers' 0 is reset()'s level: the step to the one the DACs hold goes in at once
+    if (!_synthesisSuppressed)
+    {
+        if (_lastL != 0)
+            blip_add_delta(_blipL, 0, _lastL);
+        if (_lastR != 0)
+            blip_add_delta(_blipR, 0, _lastR);
+    }
+}
+
 void Covox::setSynthesisSuppressed(bool suppressed)
 {
     if (_synthesisSuppressed == suppressed)
@@ -394,8 +410,7 @@ void Covox::setSynthesisSuppressed(bool suppressed)
     _synthesisSuppressed = suppressed;
     if (!suppressed)
     {
-        if (_blipL) blip_clear(_blipL);
-        if (_blipR) blip_clear(_blipR);
+        discardPending();
         _phaseAlignPending = true;  // the mixer kept counting through the gap
     }
 }

@@ -20,7 +20,8 @@
     schemas["SlotChangeReply"]["properties"]["plan"]["$ref"] = "#/components/schemas/SlotPlan";
     schemas["SlotChangeReply"]["properties"]["restart"]["type"] = "object";
     schemas["SlotChangeReply"]["properties"]["restart"]["description"] =
-        "restarted, previousEmulatorId, emulatorId, wasRunning, started (the new machine runs when the old one ran)";
+        "restarted, previousEmulatorId, emulatorId, wasRunning, wasPaused, started (the new machine runs when the old one ran, "
+        "and is started and paused when the old one was paused)";
     schemas["SlotChangeReply"]["properties"]["media"]["type"] = "object";
     schemas["SlotChangeReply"]["properties"]["media"]["description"] =
         "Where the media went: attached (same slot on the new machine), detached, closed, lines";

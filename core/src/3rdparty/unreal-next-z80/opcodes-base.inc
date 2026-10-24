@@ -507,7 +507,7 @@ Z80NOPCODE op_37(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // scf - Zilog Z80 beh
     // Undocumented YF/XF flags: (A | (F & ~Q)) & 0x28
     // Q captures YF/XF from previous flag-modifying instruction (set in Z80::Z80Step)
     // When Q=F, only A contributes; when Q≠F, F also contributes
-    uint8_t undoc = (rf->a | (rf->f & ~rf->q)) & (F3 | F5);
+    uint8_t undoc = cpu->t80Persona ? (rf->a & (F3 | F5)) : ((rf->a | (rf->f & ~rf->q)) & (F3 | F5));  // T80N: from A alone
     rf->f = (rf->f & ~(HF | NF | F3 | F5)) | undoc | CF;
 
     // Update Q immediately - needed for back-to-back SCF/CCF sequences
@@ -601,7 +601,7 @@ Z80NOPCODE op_3E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld a,nn
 Z80NOPCODE op_3F(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ccf - Zilog Z80 behavior
     // Undocumented YF/XF flags: (A | (F & ~Q)) & 0x28
     // When Q=F, only A contributes; when Q≠F, F also contributes
-    uint8_t undoc = (rf->a | (rf->f & ~rf->q)) & (F3 | F5);
+    uint8_t undoc = cpu->t80Persona ? (rf->a & (F3 | F5)) : ((rf->a | (rf->f & ~rf->q)) & (F3 | F5));  // T80N: from A alone
     rf->f = ((rf->f & ~(NF | HF | F3 | F5)) | ((rf->f << 4) & HF) | undoc) ^ CF;
     // Update Q immediately - needed for back-to-back SCF/CCF sequences
     // where F value may not change but is still a flag-modifying instruction

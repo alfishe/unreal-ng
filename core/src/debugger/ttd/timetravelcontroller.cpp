@@ -750,9 +750,16 @@ void TimeTravelController::ReleaseRecordingLock()
 
     if (_context->pCore && _savedHostSpeedMultiplier != 1)
     {
-        _context->pCore->SetSpeedMultiplier(_savedHostSpeedMultiplier);
-        MLOGINFO("TimeTravelController — recording lock released: host speed back to %ux",
-                 static_cast<unsigned>(_savedHostSpeedMultiplier));
+        if (!HasHistory())
+        {
+            _context->pCore->SetSpeedMultiplier(_savedHostSpeedMultiplier);
+            MLOGINFO("TimeTravelController — recording lock released: host speed back to %ux",
+                     static_cast<unsigned>(_savedHostSpeedMultiplier));
+        }
+        else
+            MLOGINFO("TimeTravelController — recording lock released: host speed stays 1x while the history is kept "
+                     "(%ux before the recording)",
+                     static_cast<unsigned>(_savedHostSpeedMultiplier));
     }
     _savedHostSpeedMultiplier = 1;
 }
@@ -1439,6 +1446,17 @@ void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
     _blackBoxMinutes = minutes ? minutes : 5;
     _blackBoxSuspended = false;
     _restartPending = false;
+}
+
+std::string TimeTravelController::SpeedLock() const
+{
+    if (_backgroundSession)
+        return {};  // the black box stops before an acceleration and starts again after it (D29)
+    if (IsRecording() || _recordingPaused)
+        return "TTD records at 1x: the speed stays until the recording stops";
+    if (HasHistory())
+        return "TTD holds a history recorded at 1x: discard it to change the speed";
+    return {};
 }
 
 bool TimeTravelController::AccelerationActive() const
