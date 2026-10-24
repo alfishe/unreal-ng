@@ -424,10 +424,12 @@ public:
 
         /// Gives the hold back (no-op when nothing is held); any thread
         void Release();
-        bool IsHeld() const { return _sound != nullptr; }
+        bool IsHeld() const { return _sound.load(std::memory_order_acquire) != nullptr; }
 
     private:
-        SoundManager* _sound = nullptr;
+        // Atomic: two threads may give the same hold back (a step-over ends on the emulation thread while the
+        // stepping thread cancels it); the exchange lets exactly one of them release it
+        std::atomic<SoundManager*> _sound{nullptr};
         HostHoldReason _reason = HostHoldReason::DirectRun;
         uint32_t _epoch = 0;
     };

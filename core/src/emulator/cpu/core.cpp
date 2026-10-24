@@ -743,7 +743,8 @@ void Core::SelectMemoryInterface()
 
     std::lock_guard<std::mutex> lock(_memIfMutex);
     _memIfGeneration++;
-    const bool debug = _z80->isDebugMode;
+    // An atomic byte read: the debugger's switch may be written on another thread meanwhile (it re-selects after)
+    const bool debug = std::atomic_ref<bool>(_z80->isDebugMode).load(std::memory_order_relaxed);
     const bool contended = IsContentionEffective();
     if (_busOverlay)
     {
