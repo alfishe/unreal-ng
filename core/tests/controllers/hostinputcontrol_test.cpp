@@ -8,9 +8,12 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
+#include "devicedatabase.h"
 #include "fake/fakebackend.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
@@ -431,6 +434,8 @@ TEST(HostInputControl_Test, DatabaseImportAndLearn)
 {
     namespace fs = std::filesystem;
     const fs::path root = TestPathHelper::GetUniqueTestScratchPath("host-learn");
+    std::string error;
+    ASSERT_TRUE(DeviceDatabase::SetUser("", error)) << "no user layer from an earlier test";
     FakeOwner owner((root / "profiles").string());
     HostInputControl control(owner);
     const HostDeviceInfo pad{"usb:1234:5678:0100:s1", "USB Gamepad", "generic", "generic", "fake"};
@@ -443,7 +448,10 @@ TEST(HostInputControl_Test, DatabaseImportAndLearn)
     reply = control.Execute({"database", {{"guid", "030000005e040000000b000017050000"}}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
     EXPECT_EQ(reply.body.Find("match")->Find("family")->AsString(), "xbox-elite-2");
-    EXPECT_EQ(control.Execute({"database", {}}).error, "bad-request");
+    reply = control.Execute({"database", {}});
+    ASSERT_TRUE(reply.Ok()) << "no key: the summary";
+    EXPECT_GT(reply.body.Find("families")->AsNumber(), 0.0);
+    EXPECT_EQ(control.Execute({"database", {{"vidpid", "045e:0b00"}, {"family", "dualsense"}}}).error, "bad-request");
     EXPECT_EQ(control.Execute({"database", {{"vidpid", "nope"}}}).error, "bad-request");
 
     HostInputService service;
@@ -508,11 +516,17 @@ TEST(HostInputControl_Test, DatabaseImportAndLearn)
     ASSERT_TRUE(fake->Release(pad.id, "button.5"));
 
     // A new start of the process reads it back
+    std::ifstream file(root / "devices.user.json");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    DeviceDatabase::SetUser("", error);
     HostInputService again;
-    std::string error;
-    ASSERT_TRUE(again.LoadUserDevices((root / "devices.user.json").string(), error)) << error;
     again.OnDeviceAdded(pad);
-    EXPECT_EQ(again.ControlMap(pad.id).size(), 2u);
+    EXPECT_TRUE(again.ControlMap(pad.id).empty()) << "no user layer, no map";
+    ASSERT_TRUE(DeviceDatabase::SetUser(text, error)) << error;
+    HostInputService third;
+    third.OnDeviceAdded(pad);
+    EXPECT_EQ(third.ControlMap(pad.id).size(), 2u);
+    DeviceDatabase::SetUser("", error);
     service.Stop();
 }
 

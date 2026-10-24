@@ -631,13 +631,13 @@ private:
         identity.version = version;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         if (match.ignore)
             return;
 
         auto pad = std::make_unique<Pad>();
         pad->path = path;
-        pad->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match.layout));
+        pad->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match.layout, match.buttons));
         if (pad->hid->Empty())
             return;
         pad->dualSenseUsb = where.bus == "usb" && DualSenseOutput::Handles(vendor, product);
@@ -847,7 +847,7 @@ private:
         identity.version = attributes.VersionNumber;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         const std::string id = WinDeviceId(where.bus, attributes.VendorID, attributes.ProductID,
                                            attributes.VersionNumber, serial, Utf8(path));
         HostDeviceInfo host;

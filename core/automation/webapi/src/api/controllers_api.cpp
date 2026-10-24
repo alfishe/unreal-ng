@@ -102,8 +102,8 @@ namespace
                      const std::string& verb, bool post, const std::string& device = {})
     {
 #ifdef ENABLE_CONTROLLERS
-        static const std::vector<std::string> reads = {"devices",  "context", "profiles", "profile", "bindings",
-                                                       "haptics",  "probe",   "database", "aliases"};
+        static const std::vector<std::string> reads = {"devices", "context",  "profiles", "profile", "bindings",
+                                                       "haptics", "database", "probe",    "reports", "aliases"};
         const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
         const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
                            HostInputControl::Verbs().end();
@@ -137,7 +137,8 @@ namespace
 }  // namespace
 
 /// @brief GET /api/v1/controllers/{verb}: devices, context, profiles (?set=&machine=), profile (?id=), bindings
-/// (?device=&layer=), haptics (?device=), probe, database (?vidpid= | guid= | device=, name=, version=), aliases
+/// (?device=&layer=), haptics (?device=), database (?vidpid=&bus=&name=&version= | guid= | device= | family=), probe
+/// (?device=), reports (?device=), aliases
 void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& verb) const
 {
@@ -152,8 +153,8 @@ void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<vo
 /// @brief POST /api/v1/controllers/{verb}: save {text}, delete {id}, apply {id}, bind {control, spec, layer, family,
 /// device, profile}, unbind {control, layer, family, device, profile}, scheme {id, family, device, profile}, rumble
 /// {device, effect}, output {device, pattern | steps, clicks | marks}, light {device, color}, role {device, role}, pin
-/// {device, pin}, identify {device}, database_import {text, save}, learn {device, step, controls, control, value, name,
-/// save}, unalias {id}
+/// {device, pin}, identify {device}, player {device, connector}, database_save {text}, database_delete {id},
+/// database_import {text, save}, learn {device, step, controls, control, value, name, save}, unalias {id}
 void EmulatorAPI::postHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& verb) const
 {

@@ -5,11 +5,13 @@
 /// pad for headless runs (TODO.md C2).
 
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "hid/reporttap.h"
 #include "hostbackend.h"
 
 namespace controllers
@@ -59,6 +61,11 @@ public:
     /// endregion </Surface outputs>
 
     /// A device arrives (id, name, family); false when the id is already connected or the backend is stopped
+    /// A raw input report of a device, through its ReportTap as a real backend's (kept only while RawReports is read)
+    void Report(const HostDeviceId& device, const std::vector<uint8_t>& bytes);
+    bool HasRawReports(const HostDeviceId& device) const override;
+    std::vector<RawReport> RawReports(const HostDeviceId& device) override;
+
     bool Connect(const HostDeviceInfo& device);
     bool Disconnect(const HostDeviceId& device);
     /// A control changes: a button 0 / 1, an axis -1..1, a trigger 0..1. False for an unknown device
@@ -81,6 +88,7 @@ private:
     std::map<HostDeviceId, BatteryState> _batteries;
     std::set<HostDeviceId> _lightable;
     std::map<HostDeviceId, std::vector<LightColor>> _lights;
+    std::map<HostDeviceId, std::unique_ptr<ReportTap>> _taps;
     /// Its own lock: a device's arrival reports from under _mutex, and the router asks for its outputs at once
     mutable std::mutex _outputMutex;
     std::map<HostDeviceId, uint8_t> _outputs;

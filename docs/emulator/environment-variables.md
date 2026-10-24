@@ -194,6 +194,7 @@ These only add output (pictures, dumps, traces) or drive manual probes; results 
 | `PROFI3_PROBE_ROM`, `PROFI3_PROBE_KEYS` | ROM path, key list | Disabled Profi v3 probes: another BIOS ROM, keys to tap in the menu. | `core/tests/emulator/profi3_boot_test.cpp:255` |
 | `PROFI_PROBE_DISK`, `PROFI_PROBE_KEYS` | disk path, key list | Disabled Profi v5 probes: boot with a disk; keys to tap in the BIOS menu. | `core/tests/emulator/profi_boot_test.cpp:244`, `:419` |
 | `FT812_CHART_PNG`, `FT812_CHART_SCALED_PNG` | PNG path | Saves the FT812 line-budget chart pictures. | `unreal-qt/tests/qt/ft812linebudgetview_test.cpp:111` (`unreal-qt-tests`) |
+| `UNREAL_CONTROLLERS_UI_PNG` | a folder (scratch) | Saves the controllers dialog pieces' grabs (patch cords, test panel, toast, hotspot editor, a user photo picture) as PNG there. | `unreal-qt/tests/qt/controllersui_test.cpp:39` (`unreal-qt-tests`) |
 
 **Profi program runner** (`ProfiBoot_Test.DISABLED_RunProgram`, `core/tests/emulator/profi_boot_test.cpp:440`;
 run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user would:

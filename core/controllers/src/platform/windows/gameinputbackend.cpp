@@ -437,7 +437,7 @@ private:
         identity.version = info->revisionNumber;
         identity.name = info->displayName != nullptr ? info->displayName : "";
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         if (match.ignore)
         {
             change.device->Release();

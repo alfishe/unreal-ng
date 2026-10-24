@@ -14,11 +14,14 @@
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
 /// light colour: a DualSense / DualShock 4 light bar), role (player, debugger-remote, disabled), pin (follow-focus,
-/// pinned:<instance>, all), identify (rumble and blink), probe (the backends), database (look up a VID / PID or an SDL
-/// GUID), database_import (a gamecontrollerdb line or a RetroArch autoconfig file into devices.user.json), learn (the
-/// learn wizard for an unknown device as data: start, status, sample, skip, back, finish, cancel), aliases (the old
-/// ids of promoted devices: a `gc:` device later matched to its IOHID endpoint, architecture.md §5), unalias (forget
-/// one).
+/// pinned:<instance>, all), identify (rumble and blink), player (the connector a player device's `auto:` targets
+/// drive: the dialog's drag and drop), probe (the backends and the devices each found; with a device its endpoints and
+/// what each can do), reports (a device's newest raw input reports in hex: the test panel's raw view), database (look
+/// a device up by VID:PID, SDL GUID, a connected device, a name or a family; the user entries), database_save /
+/// database_delete (entries of devices.user.json: a user device, a renamed one, a photo), database_import (a
+/// gamecontrollerdb line or a RetroArch autoconfig file as a user family with its control map), learn (the learn
+/// wizard for an unknown device as data: start, status, sample, skip, back, finish, cancel), aliases (the old ids of
+/// promoted devices: a `gc:` device later matched to its IOHID endpoint, architecture.md §5), unalias (forget one).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -49,8 +52,8 @@ struct HostRequest
 
 struct HostReply
 {
-    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, unknown-device, unknown-alias,
-                          ///< bad-request, invalid-binding, read-only, unavailable
+    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, unknown-device, unknown-family,
+                          ///< unknown-alias, bad-request, invalid-binding, read-only, unavailable
     std::string message;  ///< why, for a person (and an agent that reads only the text)
     JsonValue body = JsonValue::Object();  ///< verb-specific fields, merged into the envelope
 
@@ -84,6 +87,29 @@ public:
     virtual HostInputService* Input()
     {
         return nullptr;
+    }
+    /// `<user config>/unreal-ng/controllers`: devices.user.json and the user's photos (device-database.md §4, §9);
+    /// empty: the database verbs that write answer `unavailable`
+    virtual std::string UserControllersDir() const
+    {
+        return {};
+    }
+    /// The connector a player device's `auto:` targets drive, chosen by the user (empty @p connector: back to the
+    /// automatic choice). Empty when done, else the error code (surfaces.md §4: bad-request, unavailable) with
+    /// @p message
+    virtual std::string ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                              std::string& message)
+    {
+        (void)device;
+        (void)connector;
+        message = "this process does not assign player connectors";
+        return "unavailable";
+    }
+    /// The user's choice for @p device; empty: automatic
+    virtual std::string PlayerChoice(const std::string& device) const
+    {
+        (void)device;
+        return {};
     }
 };
 
@@ -134,20 +160,31 @@ private:
     HostReply Pin(const HostRequest& request);
     /// Rumble 300 ms and blink the light where the device has them (ui-ux.md §3.7)
     HostReply Identify(const HostRequest& request);
-    /// The backends: running or why not, the devices each found with their database step and notice
-    HostReply Probe();
-    /// The device database (device-database.md §3): a lookup by VID / PID, SDL GUID or a connected device; an
-    /// import of a gamecontrollerdb line or a RetroArch autoconfig file into devices.user.json
+    /// The connector a player device drives (its `auto:` targets): read, choose, or back to automatic
+    HostReply Player(const HostRequest& request);
+    /// The backends: running or why not, the devices each found with their database step and notice; with device=
+    /// its endpoints (EndpointInfo)
+    HostReply Probe(const HostRequest& request);
+    /// A device's newest raw input reports (IBackend::RawReports)
+    HostReply Reports(const HostRequest& request);
+    /// The device database (device-database.md §3-§4): a lookup by VID / PID (bus, name, version), SDL GUID, a
+    /// connected device, a name or a family; the user entries
     HostReply Database(const HostRequest& request);
+    /// database_save (one entry or a file's families into devices.user.json) / database_delete (an entry by id)
+    HostReply EditDatabase(const HostRequest& request, bool remove);
+    /// A gamecontrollerdb line or a RetroArch autoconfig file as a user family with its control map
+    /// (devicemapping.h); saved unless save=false
     HostReply DatabaseImport(const HostRequest& request);
     /// The learn wizard as data (ui-ux.md §3.5): start, status, sample, skip, back, finish (saves), cancel
     HostReply Learn(const HostRequest& request);
-    /// `<user config>/unreal-ng/controllers/devices.user.json` (the service's, else next to the profiles)
+    /// `<user config>/unreal-ng/controllers/devices.user.json` (the owner's UserControllersDir, else next to the
+    /// profiles)
     std::string UserDevicesPath() const;
-    /// Merge a user family with @p map into devices.user.json and reload it; @p reply gains family and path
+    /// Put a user family with @p map into devices.user.json (database_save); @p reply gains family and path
     HostReply SaveUserFamily(const DeviceIdentity& identity, const std::string& name,
                              const std::map<std::string, std::string>& map, const std::string& source,
-                             HostReply& reply);    /// The device aliases: old id -> new id, whether the new one is connected
+                             HostReply& reply);
+    /// The device aliases: old id -> new id, whether the new one is connected
     HostReply Aliases();
     /// Forget an alias (id= the old id), saved to aliases.yaml and applied at once
     HostReply Unalias(const HostRequest& request);

@@ -70,6 +70,10 @@ public:
     {
         return HostControllers::UserProfileDir().toStdString();
     }
+    std::string UserControllersDir() const override
+    {
+        return HostControllers::UserControllersDir().toStdString();
+    }
     std::string ManualProfile() const override
     {
         return _host.ManualProfile();
@@ -86,6 +90,15 @@ public:
     {
         return &_host.Service();
     }
+    std::string ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                      std::string& message) override
+    {
+        return _host.ChoosePlayerConnector(device, connector, message);
+    }
+    std::string PlayerChoice(const std::string& device) const override
+    {
+        return _host.PlayerChoice(device);
+    }
 
 private:
     HostControllers& _host;
@@ -98,7 +111,16 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
+    _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
+    // The user's device entries over the compiled-in database (device-database.md §7), before a device is matched
+    {
+        QFile user(QDir(UserControllersDir()).filePath("devices.user.json"));
+        std::string error;
+        if (user.exists() && user.open(QIODevice::ReadOnly) &&
+            !DeviceDatabase::SetUser(user.readAll().toStdString(), error))
+            qWarning("controllers: %s: %s", qPrintable(user.fileName()), error.c_str());
+    }
     _service = std::make_unique<HostInputService>();
     // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
     _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
@@ -125,10 +147,6 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             out.params = QString::fromStdString(event.params.Dump());
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
-    // The user's device families (the learn wizard's and the imported maps) before the devices arrive
-    std::string devicesError;
-    if (!_service->LoadUserDevices(QDir::cleanPath(UserProfileDir() + "/../devices.user.json").toStdString(), devicesError))
-        qWarning("controllers: %s", devicesError.c_str());
     _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);
@@ -196,6 +214,12 @@ void HostControllers::SetSoundHaptics(bool on)
     if (_attached)
         attachHaptics();
 #endif
+}
+
+void HostControllers::SetPauseOnDisconnect(bool on)
+{
+    _pauseOnDisconnect = on;
+    QSettings().setValue("Controllers/PauseOnDisconnect", on);
 }
 
 void HostControllers::SetGlobalShortcuts(bool on)
@@ -510,16 +534,121 @@ void HostControllers::poll()
     }
 
     const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    std::vector<HostDeviceInfo> arrived;
     for (const HostDeviceInfo& device : devices)
         if (device.id != kKeyboard && std::find(_known.begin(), _known.end(), device.id) == _known.end())
-            emit notice(tr("%1 connected").arg(QString::fromStdString(device.name)));
+            arrived.push_back(device);
+    std::vector<std::pair<std::string, bool>> gone;  // name, a player
+    for (const HostDeviceId& id : _known)
+        if (std::none_of(devices.begin(), devices.end(), [&id](const HostDeviceInfo& device) { return device.id == id; }))
+        {
+            const auto it = _knownNames.find(id);
+            if (it != _knownNames.end())
+                gone.push_back(it->second);
+        }
     _known.clear();
+    _knownNames.clear();
+    const auto player = [](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               DeviceDatabase::Active()->ForFamily(device.family, device.layout).player;
+    };
     for (const HostDeviceInfo& device : devices)
+    {
         _known.push_back(device.id);
-    _wheelConnected = WheelClaim::AnyWheel(devices, DeviceDatabase::Builtin());
+        _knownNames[device.id] = {device.name, player(device)};
+    }
+    _wheelConnected = WheelClaim::AnyWheel(devices, *DeviceDatabase::Active());
     updateWheelMenu();
-    Reapply();
+    Reapply();  // the arrived pads have their player connectors now
+
+    // ui-ux.md §8: the first connection of a pad on this computer gets the toast, a known one the status line
+    QStringList seen = QSettings().value("Controllers/SeenDevices").toStringList();
+    for (const HostDeviceInfo& device : arrived)
+    {
+        const QString name = QString::fromStdString(device.name);
+        if (!player(device))
+        {
+            emit notice(tr("%1 connected").arg(name));
+            continue;
+        }
+        // Seen by family and name, not by id: a Bluetooth pad gets a new id on another adapter
+        const QString key = QString::fromStdString(device.family + "|" + device.name);
+        const bool first = !seen.contains(key);
+        if (first)
+            seen << key;
+        QString connector;
+        const std::string plugged = _service->Router().PlayerConnector(device.id);
+        if (EmulatorContext* context = _binding->context(); context != nullptr && !plugged.empty() &&
+                                                           context->pControllerManager != nullptr)
+        {
+            const int index = context->pControllerManager->Find(plugged);
+            if (index >= 0)
+                connector = connectorview::DisplayName(context->pControllerManager->At(static_cast<size_t>(index)));
+        }
+        emit deviceConnected(name, connector, first);
+        emit notice(connector.isEmpty() ? tr("%1 connected").arg(name) : tr("%1 connected → %2").arg(name, connector));
+    }
+    if (!arrived.empty())
+        QSettings().setValue("Controllers/SeenDevices", seen);
+
+    // A pad gone while the machine runs: said at once, and the machine paused when the option asks for it
+    Emulator* emulator = _binding->emulator();
+    for (const auto& [name, isPlayer] : gone)
+    {
+        if (!isPlayer)
+            continue;
+        const bool running = emulator != nullptr && !emulator->IsPaused();
+        bool paused = false;
+        if (running && _pauseOnDisconnect)
+        {
+            // Applied, or queued behind a running command (it applies when that ends)
+            const execution::Outcome outcome =
+                emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "controller disconnected").outcome;
+            paused = outcome == execution::Outcome::Applied || outcome == execution::Outcome::Pending;
+        }
+        if (running)
+            emit deviceDisconnected(QString::fromStdString(name), paused);
+        emit notice(tr("%1 disconnected").arg(QString::fromStdString(name)));
+    }
 #endif
+}
+
+connectorview::Led HostControllers::ConnectorLed() const
+{
+#ifdef ENABLE_CONTROLLERS
+    EmulatorContext* context = _binding->context();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+        return {};
+    const std::vector<Connector> connectors = manager->Connectors();
+    std::vector<uint16_t> states;
+    for (size_t i = 0; i < connectors.size(); ++i)
+        states.push_back(manager->State(i));
+    std::map<std::string, QStringList> drivers;
+    for (const HostDeviceInfo& device : _service->Router().Devices())
+        for (const std::string& connector : _service->Router().Connectors(device.id))
+            drivers[connector] << QString::fromStdString(device.name);
+    return connectorview::DescribeLed(connectors, states, drivers);
+#else
+    return {};
+#endif
+}
+
+bool HostControllers::DebugLayerHeld() const
+{
+#ifdef ENABLE_CONTROLLERS
+    if (_debugFocus)
+        return false;  // the debugger window has the pads: no key is held for it
+    for (const HostDeviceInfo& device : _service->Router().Devices())
+    {
+        if (device.id == kKeyboard || _service->Router().Role(device.id) != DeviceRole::Player)
+            continue;
+        const std::vector<std::string> layers = _service->Router().Layers(device.id);
+        if (std::find(layers.begin(), layers.end(), "debug") != layers.end())
+            return true;
+    }
+#endif
+    return false;
 }
 
 void HostControllers::Reapply()
@@ -539,6 +668,10 @@ void HostControllers::Reapply()
     context.debugLayer = _debugLayer || _debugFocus;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
+    for (const HostDeviceInfo& device : context.devices)
+        if (const auto choice = _playerChoice.find(device.id); choice != _playerChoice.end())
+            _service->Router().SetPlayerConnector(device.id, choice->second);
     _context = context;
     applyConnectorPlans();
     attachHaptics();
@@ -633,6 +766,12 @@ QString HostControllers::HapticsStatus(const std::string& device) const
     return text;
 }
 
+QString HostControllers::UserControllersDir()
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
+        .filePath("unreal-ng/controllers");
+}
+
 QString HostControllers::UserProfileDir()
 {
     return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
@@ -665,7 +804,7 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     // no player connector
     const auto player = [](const HostDeviceInfo& device) {
         return device.family != "keyboard" && device.family != "mouse" &&
-               DeviceDatabase::Builtin().ForFamily(device.family, device.layout).player;
+               DeviceDatabase::Active()->ForFamily(device.family, device.layout).player;
     };
     const size_t pads = static_cast<size_t>(std::count_if(devices.begin(), devices.end(), player));
     if (order.empty() && pads > 0)
@@ -686,6 +825,74 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});
         ++n;
     }
+}
+
+std::string HostControllers::ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                                   std::string& message)
+{
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const auto info = std::find_if(devices.begin(), devices.end(),
+                                   [&device](const HostDeviceInfo& known) { return known.id == device; });
+    if (info == devices.end())
+    {
+        message = "no connected host device '" + device + "' (devices lists them)";
+        return "unknown-device";
+    }
+    if (info->family == "keyboard" || info->family == "mouse" ||
+        !DeviceDatabase::Active()->ForFamily(info->family, info->layout).player)
+    {
+        message = info->name + " takes no player connector: its bindings name their targets";
+        return "bad-request";
+    }
+    if (connector.empty())
+    {
+        _playerChoice.erase(device);
+        Reapply();
+        return {};
+    }
+    if (connector == "none")
+    {
+        // Unplugged by hand (a cord dragged off its connector): the device drives no player connector
+        _playerChoice[device].clear();
+        Reapply();
+        return {};
+    }
+    EmulatorContext* context = _binding->context();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+    {
+        message = "no machine is bound: start one first";
+        return "unavailable";
+    }
+    const int index = manager->Find(connector);
+    if (index < 0)
+    {
+        message = "no connector '" + connector + "' on this machine (list names them)";
+        return "bad-request";
+    }
+    const Connector found = manager->At(static_cast<size_t>(index));
+    if (found.device == RetroDeviceKind::None)
+    {
+        message = found.id + " holds no device: plug one first (plug " + found.id + " kempston-joystick)";
+        return "bad-request";
+    }
+    _playerChoice[device] = found.id;
+    Reapply();
+    return {};
+}
+
+void HostControllers::ResetPlayerChoices()
+{
+    _playerChoice.clear();
+    Reapply();
+}
+
+std::string HostControllers::PlayerChoice(const std::string& device) const
+{
+    const auto it = _playerChoice.find(device);
+    if (it == _playerChoice.end())
+        return {};
+    return it->second.empty() ? std::string("none") : it->second;
 }
 
 HostReply HostControllers::Host(const HostRequest& request)

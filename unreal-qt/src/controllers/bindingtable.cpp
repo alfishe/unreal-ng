@@ -451,7 +451,8 @@ QString BindingTable::ControlName(const std::string& control, const std::string&
         }
         return parts.join(" + ");
     }
-    const DeviceDatabase& database = DeviceDatabase::Builtin();
+    const std::shared_ptr<const DeviceDatabase> active = DeviceDatabase::Active();
+    const DeviceDatabase& database = *active;
     const auto glyph = [&](const std::string& name) {
         if (glyphs.empty())
             return QString();
@@ -528,7 +529,7 @@ void BindingTable::setDebugTab(bool on)
     // travel remote: there without the debug layer
     const bool keyboard = _device.family == "keyboard";
     const bool surface = !keyboard && !_device.family.empty() && _device.family != "mouse" &&
-                         !DeviceDatabase::Builtin().ForFamily(_device.family).player;
+                         !DeviceDatabase::Active()->ForFamily(_device.family).player;
     const bool shown = on || keyboard || surface;
     _layers->setTabVisible(1, shown);
     _layers->setTabToolTip(1, keyboard  ? tr("The debugger's shortcuts: in the debugger window, and in the main window "

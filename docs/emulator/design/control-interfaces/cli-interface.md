@@ -423,8 +423,13 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
 | `controllers role <device> <player\|debugger-remote\|disabled>`, `pin <device> <follow-focus\|all\|pinned:<id>>`, `identify <device>` | What a host device is for, which instance it drives; rumble and blink it to tell two pads apart |
-| `controllers probe`, `database <vid:pid\|SDL GUID\|device>`, `database_import <file> [save=false]` | The backends and the devices they found; what the device database says; import a `gamecontrollerdb.txt` line or a RetroArch `.cfg` |
-| `controllers learn <device> [start\|status\|skip\|back\|finish\|cancel] [controls=..]`, `learn <device> sample <control> [value]` | The learn wizard of an unknown device: press the prompted control on it after each step; `finish` saves the map || `controllers aliases`, `unalias <old id>` | The device aliases (old id -> new: a `gc:` pad matched to its HID device keeps its profiles) and forgetting one |
+| `controllers player <device> [connector\|auto\|none]` | The connector a pad's `auto:` targets drive: read, choose, back to automatic, none |
+| `controllers probe [device]`, `reports <device>` | The backends and the devices they found, a device's endpoints; its newest raw input reports in hex |
+| `controllers database [<vid:pid>\|<SDL GUID>\|<device>\|<family>] [bus=usb\|bt] [name=..] [version=..]` | The device database: what a device of those ids matches (family, layout, images, map, match step and score), and the ids of devices.user.json |
+| `controllers database_save <file>`, `database_delete <id>` | Add or replace an entry of devices.user.json (one family as JSON), remove one |
+| `controllers database_import <file> [save=false]` | A `gamecontrollerdb.txt` line or a RetroArch autoconfig `.cfg` as the user family `user-<vid><pid>` with its control map |
+| `controllers learn <device> [start\|status\|skip\|back\|finish\|cancel] [controls=..]`, `learn <device> sample <control> [value]` | The learn wizard of an unknown device: press the prompted control on it after each step; `finish` saves the map |
+| `controllers aliases`, `unalias <old id>` | The device aliases (old id -> new: a `gc:` pad matched to its HID device keeps its profiles) and forgetting one |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 

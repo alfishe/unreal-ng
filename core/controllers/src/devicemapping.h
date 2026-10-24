@@ -4,7 +4,8 @@
 /// @brief A device the database does not know (device-database.md §3 step 6, ui-ux.md §3.5): which of its raw
 /// controls (`button.<n>`, `axis.<n>`, a half of an axis) is which canonical control. The learn wizard finds it one
 /// prompt at a time (LearnSession), a `gamecontrollerdb.txt` line or a RetroArch autoconfig file brings it
-/// (ImportMapping), and the result is a user family in `devices.user.json` with a `map` (UserFamilyJson).
+/// (ImportMapping), and the result is a user family in `devices.user.json` with a `map` (UserFamilyJson, put there by
+/// DeviceDatabase::PutUserFamily).
 /// HostInputService applies a device's map: each raw control also reports as its canonical control, so the play and
 /// debug profiles of a pad work on it.
 ///
@@ -75,9 +76,6 @@ JsonValue UserFamilyJson(const DeviceIdentity& identity, const std::string& name
                          const std::map<std::string, std::string>& map, const std::string& source);
 /// `user-045e0b00`
 std::string UserFamilyId(const DeviceIdentity& identity);
-/// Put @p family into the devices.user.json text @p text (an empty text starts a new one), replacing the family of
-/// the same id: the new text; false with the reason when @p text is not a schema 1 database
-bool MergeUserFamily(const std::string& text, const JsonValue& family, std::string& out, std::string& error);
 
 /// The learn wizard (ui-ux.md §3.5): it walks the canonical controls, "Press Up..", and takes the first raw edge
 /// against the baseline for each (a button pressed, an axis moved more than 0.4 from where it rested), then waits

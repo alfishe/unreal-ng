@@ -5,7 +5,9 @@
 /// backend tests drive. A backend reports devices and control events to its sink, from any thread.
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "hostdevice.h"
 
@@ -252,6 +254,29 @@ struct BackendProbe
     size_t devices = 0;
 };
 
+/// One endpoint of a host device (architecture.md §5): an IOHID interface, a GameController companion, the device
+/// itself for a backend that sees one endpoint. The dialog's per-endpoint capability table (ui-ux.md §3.4)
+struct EndpointInfo
+{
+    std::string backend;  ///< "iohid", "gamecontroller", "xinput"
+    std::string name;     ///< what the OS calls it ("Xbox Wireless Controller"; a GCController's vendor name)
+    std::string role;     ///< "input" (gives the device's input), "outputs" (adds outputs only), "none"
+    size_t controls = 0;  ///< controls its driver decodes
+    std::string driver;   ///< "hid descriptor", "gip", "surface dial", "gamecontroller", ...
+    bool rumble = false;
+    bool light = false;
+    bool battery = false;  ///< reports a battery level
+    std::string detail;    ///< anything else ("usage page 01 usage 05", "tentative match")
+};
+
+/// One input report as it reached the backend, for the test panel's raw view (ui-ux.md §3.4)
+struct RawReport
+{
+    uint64_t timeMs = 0;  ///< steady clock
+    std::vector<uint8_t> bytes;  ///< the report id first when the device has report ids; at most ReportTap::kBytes
+    size_t size = 0;             ///< the report's whole length
+};
+
 class IBackend
 {
 public:
@@ -356,6 +381,33 @@ public:
         return false;
     }
     /// endregion </Battery and light>
+
+    /// region <Diagnostics (ui-ux.md §3.4)>
+    /// The device's endpoints as this backend sees them, the input one first; empty: the service describes the device
+    /// as one endpoint from what the backend answers
+    virtual std::vector<EndpointInfo> Endpoints(const HostDeviceId& device) const
+    {
+        (void)device;
+        return {};
+    }
+    /// The device gives raw reports (RawReports answers them); false: why in RawReportsUnavailable
+    virtual bool HasRawReports(const HostDeviceId& device) const
+    {
+        (void)device;
+        return false;
+    }
+    virtual std::string RawReportsUnavailable(const HostDeviceId& device) const
+    {
+        return HasRawReports(device) ? std::string() : "The " + Name() + " backend keeps no raw reports";
+    }
+    /// The newest input reports of the device, oldest first. Reading starts the tap: the backend copies reports only
+    /// while someone reads them (ReportTap: a few seconds after the last read it stops)
+    virtual std::vector<RawReport> RawReports(const HostDeviceId& device)
+    {
+        (void)device;
+        return {};
+    }
+    /// endregion </Diagnostics>
 };
 
 }  // namespace controllers

@@ -59,6 +59,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
 #include "controllers/controllersdialog.h"
+#include "controllers/controllersmenu.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
@@ -412,6 +413,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         _controllersDialog->raise();
         _controllersDialog->activateWindow();
     });
+    // ui-ux.md §8: a pad's first connection on this computer, and a pad gone while the machine runs
+    connect(_hostControllers, &HostControllers::deviceConnected, this,
+            [this](const QString& name, const QString& connector, bool first) {
+                if (!first)
+                    return;
+                _controllerToast->showText(connector.isEmpty() ? tr("%1 connected").arg(name)
+                                                               : tr("%1 connected → %2").arg(name, connector),
+                                           QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Connected);
+            });
+    connect(_hostControllers, &HostControllers::deviceDisconnected, this, [this](const QString& name, bool paused) {
+        _controllerToast->showText(paused ? tr("%1 disconnected: paused").arg(name) : tr("%1 disconnected").arg(name),
+                                   QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Disconnected);
+    });
 
     // Network window (network TDD §8): hidden by default, Tools → Network
     networkWindow = new NetworkWindow();
@@ -755,6 +769,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    _statusBarManager->setControllers(_hostControllers);
+    if (QMenu* controllers = _menuManager->machineControllersMenu())
+        connect(controllers, &QMenu::aboutToShow, this,
+                [this, controllers] { controllersmenu::Fill(controllers, _hostControllers); });
+    // ui-ux.md §8: the DEBUG tag in the HUD as well, while the HUD is on
+    connect(_statusBarManager, &StatusBarManager::controllerDebugLayerChanged, this, [this](bool held) {
+        if (!_hudModel)
+            return;
+        if (held)
+            _hudModel->setIndicator("controllers-debug", HudState::Alert, tr("DEBUG").toStdString(),
+                                    tr("pad").toStdString());
+        else
+            _hudModel->clearIndicator("controllers-debug");
+    });
+    connect(_statusBarManager, &StatusBarManager::controllersRequested, this, [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    });
     // The surfaces driving this window, with Pin here / Unpin (targeting.md T-2); hidden while none is connected
     statusBar()->insertPermanentWidget(0, new SurfaceStatusIcon(_surfaceTargets, statusBar()));
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);

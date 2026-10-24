@@ -545,7 +545,7 @@ private:
         }
         const std::string name = StringIoctl(fd, EVIOCGNAME(255));
         const bool bluetooth = ident.bustype == BUS_BLUETOOTH;
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(
             {bluetooth ? "bt" : "usb", ident.vendor, ident.product, ident.version, name, Name()});
         if (match.ignore)
         {

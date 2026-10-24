@@ -494,46 +494,6 @@ JsonValue UserFamilyJson(const DeviceIdentity& identity, const std::string& name
     return family;
 }
 
-bool MergeUserFamily(const std::string& text, const JsonValue& family, std::string& out, std::string& error)
-{
-    JsonValue root = JsonValue::Object({{"schema", JsonValue::Number(1)}, {"families", JsonValue::Array()}});
-    if (!Trim(text).empty())
-    {
-        if (!ParseJson(text, root, error))
-            return false;
-        const JsonValue* schema = root.Find("schema");
-        if (!root.IsObject() || schema == nullptr || !schema->IsNumber() || schema->AsNumber() != 1)
-        {
-            error = "devices.user.json is not a device database ('schema': 1)";
-            return false;
-        }
-    }
-    const JsonValue* id = family.Find("id");
-    std::vector<JsonValue> families;
-    bool replaced = false;
-    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
-        for (const JsonValue& entry : list->Items())
-        {
-            const JsonValue* other = entry.Find("id");
-            if (other != nullptr && id != nullptr && other->IsString() && other->AsString() == id->AsString())
-            {
-                families.push_back(family);
-                replaced = true;
-            }
-            else
-                families.push_back(entry);
-        }
-    if (!replaced)
-        families.push_back(family);
-    root.Set("families", JsonValue::Array(std::move(families)));
-    // The merged text must load: the database reads it at the next start
-    DeviceDatabase check;
-    if (!check.Load(root.Dump(2), error))
-        return false;
-    out = root.Dump(2) + "\n";
-    return true;
-}
-
 /// region <LearnSession>
 
 const std::vector<std::string>& LearnSession::DefaultControls()

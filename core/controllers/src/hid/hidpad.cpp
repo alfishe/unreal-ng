@@ -69,6 +69,17 @@ HidLayout HidLayoutFor(const std::string& layout)
     return {"generic", {}, false};
 }
 
+HidLayout HidLayoutFor(const std::string& layout, const std::vector<std::string>& buttons)
+{
+    HidLayout result = HidLayoutFor(layout);
+    if (result.buttons.size() < buttons.size())
+        result.buttons.resize(buttons.size());
+    for (size_t i = 0; i < buttons.size(); i++)
+        if (!buttons[i].empty())
+            result.buttons[i] = buttons[i];
+    return result;
+}
+
 HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasReportIds(descriptor.hasReportIds)
 {
     unsigned axes = 0;

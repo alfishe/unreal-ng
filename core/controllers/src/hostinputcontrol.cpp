@@ -5,11 +5,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
+#include <iterator>
 #include <mutex>
+#include <sstream>
 
 #include "devicedatabase.h"
 #include "devicemapping.h"
+#include "hid/reporttap.h"
 #include "haptics/testeffects.h"
 #include "hostcontrols.h"
 #include "hostinputservice.h"
@@ -46,6 +48,35 @@ HostReply Fail(const std::string& error, const std::string& message)
     return reply;
 }
 
+std::string ReadText(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return file ? std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()) : std::string{};
+}
+
+/// Write through a temporary file and a rename: a crash leaves the old file or the new one
+bool WriteText(const std::filesystem::path& path, const std::string& text, std::string& error)
+{
+    std::error_code code;
+    std::filesystem::create_directories(path.parent_path(), code);
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file || !(file << text) || !file.flush())
+        {
+            error = "cannot write " + temporary.string();
+            return false;
+        }
+    }
+    std::filesystem::rename(temporary, path, code);
+    if (code)
+    {
+        error = "cannot replace " + path.string() + ": " + code.message();
+        return false;
+    }
+    return true;
+}
+
 std::string Option(const HostRequest& request, const std::string& name, const std::string& fallback = {})
 {
     const auto it = request.options.find(name);
@@ -61,6 +92,13 @@ JsonValue Strings(const std::vector<std::string>& values)
 }
 
 /// The connected device @p id, or nullptr
+std::string Lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
 const HostDeviceInfo* FindDevice(const std::vector<HostDeviceInfo>& devices, const std::string& id)
 {
     for (const HostDeviceInfo& device : devices)
@@ -212,22 +250,30 @@ JsonValue MapValue(const std::map<std::string, std::string>& map)
     return value;
 }
 
-JsonValue MatchValue(const DeviceMatch& match)
+/// What the device database answers for a device (device-database.md §1); user: whether the family is one of
+/// devices.user.json's
+JsonValue MatchValue(const DeviceMatch& match, const std::vector<std::string>& userFamilies = {})
 {
     JsonValue value = JsonValue::Object({{"family", JsonValue::String(match.family)},
                                          {"name", JsonValue::String(match.name)},
                                          {"vendor", JsonValue::String(match.vendor)},
                                          {"layout", JsonValue::String(match.layout)},
+                                         {"images", JsonValue::String(match.images)},
+                                         {"glyphs", JsonValue::String(match.glyphs)},
+                                         {"player", JsonValue::Bool(match.player)},
                                          {"role", JsonValue::String(DeviceRoleName(match.role))},
+                                         {"ignore", JsonValue::Bool(match.ignore)},
                                          {"step", JsonValue::String(match.step)},
                                          {"score", JsonValue::Number(match.score)}});
     if (!match.mode.empty())
         value.Set("mode", JsonValue::String(match.mode));
-    if (match.ignore)
-        value.Set("ignore", JsonValue::Bool(true));
     value.Set("controls", Strings(match.controls));
+    if (!match.buttons.empty())
+        value.Set("buttons", Strings(match.buttons));
     if (!match.map.empty())
         value.Set("map", MapValue(match.map));
+    value.Set("user", JsonValue::Bool(std::find(userFamilies.begin(), userFamilies.end(), match.family) !=
+                                      userFamilies.end()));
     return value;
 }
 
@@ -286,7 +332,8 @@ int HostReply::HttpStatus() const
 {
     if (error.empty())
         return 200;
-    if (error == "unknown-profile" || error == "unknown-device" || error == "unknown-alias")
+    if (error == "unknown-profile" || error == "unknown-device" || error == "unknown-family" ||
+        error == "unknown-alias")
         return 404;
     if (error == "read-only")
         return 409;
@@ -298,9 +345,11 @@ int HostReply::HttpStatus() const
 const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {
-        "devices", "context",  "profiles", "profile", "save",     "delete", "apply",    "bindings",        "bind",
-        "unbind",  "scheme",   "haptics",  "rumble",  "output",   "light",  "role",     "pin",             "identify",
-        "probe",   "database", "database_import",     "learn",    "aliases", "unalias"};
+        "devices",  "context",  "profiles", "profile",       "save",          "delete",          "apply",
+        "bindings", "bind",     "unbind",   "scheme",        "haptics",       "rumble",          "output",
+        "light",    "role",     "pin",      "identify",      "player",        "probe",           "reports",
+        "database", "database_save",        "database_delete", "database_import", "learn",       "aliases",
+        "unalias"};
     return verbs;
 }
 
@@ -325,10 +374,15 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"role", {"device", "role"}},
         {"pin", {"device", "pin"}},
         {"identify", {"device"}},
-        {"probe", {}},
-        {"database", {"vidpid", "guid", "device", "name", "version"}},
+        {"player", {"device", "connector"}},
+        {"probe", {"device"}},
+        {"reports", {"device"}},
+        {"database", {"vidpid", "guid", "device", "bus", "name", "version", "family"}},
+        {"database_save", {"text"}},
+        {"database_delete", {"id"}},
         {"database_import", {"text", "save"}},
-        {"learn", {"device", "step", "controls", "control", "value", "name", "save"}},        {"aliases", {}},
+        {"learn", {"device", "step", "controls", "control", "value", "name", "save"}},
+        {"aliases", {}},
         {"unalias", {"id"}},
     };
     static const std::vector<std::string> none;
@@ -420,14 +474,21 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Pin(request);
     if (verb == "identify")
         return Identify(request);
+    if (verb == "player")
+        return Player(request);
     if (verb == "probe")
-        return Probe();
+        return Probe(request);
+    if (verb == "reports")
+        return Reports(request);
     if (verb == "database")
         return Database(request);
+    if (verb == "database_save" || verb == "database_delete")
+        return EditDatabase(request, verb == "database_delete");
     if (verb == "database_import")
         return DatabaseImport(request);
     if (verb == "learn")
-        return Learn(request);    if (verb == "aliases")
+        return Learn(request);
+    if (verb == "aliases")
         return Aliases();
     if (verb == "unalias")
         return Unalias(request);
@@ -450,7 +511,7 @@ HostReply HostInputControl::Devices()
                                             {"layout", JsonValue::String(device.layout)},
                                             {"backend", JsonValue::String(device.backend)}});
         // The family's controls when the device database names them (a Surface Dial: knob, push, touch)
-        const DeviceMatch family = DeviceDatabase::Builtin().ForFamily(device.family, device.layout);
+        const DeviceMatch family = DeviceDatabase::Active()->ForFamily(device.family, device.layout);
         if (!family.controls.empty())
             item.Set("controls", Strings(family.controls));
         if (input != nullptr)
@@ -783,20 +844,25 @@ HostReply HostInputControl::Identify(const HostRequest& request)
     return reply;
 }
 
-HostReply HostInputControl::Probe()
+HostReply HostInputControl::Probe(const HostRequest& request)
 {
     HostInputService* input = _owner.Input();
     if (input == nullptr)
         return Fail("unavailable", "No host input backends in this process");
+    const std::string id = Option(request, "device");
+    if (!id.empty() && FindDevice(_owner.Context().devices, id) == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
     const std::vector<HostDeviceInfo> devices = input->Router().Devices();
     std::vector<JsonValue> backends;
+    std::string line;
     for (const BackendProbe& probe : input->Probe())
     {
         JsonValue item = JsonValue::Object({{"name", JsonValue::String(probe.name)},
                                             {"running", JsonValue::Bool(probe.running)},
-                                            {"devices", JsonValue::Number(static_cast<double>(probe.devices))}});
-        if (!probe.reason.empty())
-            item.Set("reason", JsonValue::String(probe.reason));
+                                            {"devices", JsonValue::Number(static_cast<double>(probe.devices))},
+                                            {"reason", JsonValue::String(probe.reason)}});
+        line += (line.empty() ? "" : " · ") + probe.name +
+                (probe.running ? " ok (" + std::to_string(probe.devices) + ")" : ": " + probe.reason);
         // The devices it reported, with what each cannot do here (a permission, a udev rule)
         std::vector<JsonValue> found;
         for (const HostDeviceInfo& device : devices)
@@ -818,40 +884,74 @@ HostReply HostInputControl::Probe()
         backends.push_back(std::move(item));
     }
     HostReply reply;
+    reply.message = line.empty() ? std::string("no backend") : line;
     reply.body.Set("backends", JsonValue::Array(std::move(backends)));
     reply.body.Set("user_devices", JsonValue::String(UserDevicesPath()));
+    if (id.empty())
+        return reply;
+    // One device: its endpoints and what each can do (the dialog's capability table, ui-ux.md §3.4)
+    std::vector<JsonValue> endpoints;
+    for (const EndpointInfo& endpoint : input->Endpoints(id))
+        endpoints.push_back(JsonValue::Object({{"backend", JsonValue::String(endpoint.backend)},
+                                               {"name", JsonValue::String(endpoint.name)},
+                                               {"role", JsonValue::String(endpoint.role)},
+                                               {"controls", JsonValue::Number(static_cast<double>(endpoint.controls))},
+                                               {"driver", JsonValue::String(endpoint.driver)},
+                                               {"rumble", JsonValue::Bool(endpoint.rumble)},
+                                               {"light", JsonValue::Bool(endpoint.light)},
+                                               {"battery", JsonValue::Bool(endpoint.battery)},
+                                               {"detail", JsonValue::String(endpoint.detail)}}));
+    reply.body.Set("device", JsonValue::String(id));
+    reply.body.Set("endpoints", JsonValue::Array(std::move(endpoints)));
     return reply;
 }
 
 std::string HostInputControl::UserDevicesPath() const
 {
-    HostInputService* input = _owner.Input();
-    const std::string loaded = input != nullptr ? input->UserDevicesPath() : std::string();
-    if (!loaded.empty())
-        return loaded;
+    const std::string dir = _owner.UserControllersDir();
+    if (!dir.empty())
+        return (std::filesystem::path(dir) / "devices.user.json").string();
     return (std::filesystem::path(_owner.UserProfileDir()).parent_path() / "devices.user.json").string();
 }
 
 HostReply HostInputControl::Database(const HostRequest& request)
 {
+    const std::shared_ptr<const DeviceDatabase> database = DeviceDatabase::Active();
+    const std::vector<std::string> user = DeviceDatabase::UserFamilies(DeviceDatabase::UserText());
+    HostReply reply;
+    reply.body.Set("user_file", JsonValue::String(UserDevicesPath()));
+    reply.body.Set("families", JsonValue::Number(static_cast<double>(database->FamilyCount())));
+    reply.body.Set("user", Strings(user));
     const std::string vidpid = Option(request, "vidpid");
     const std::string guid = Option(request, "guid");
     const std::string id = Option(request, "device");
-    if ((vidpid.empty() ? 0 : 1) + (guid.empty() ? 0 : 1) + (id.empty() ? 0 : 1) != 1)
-        return Fail("bad-request", "database takes one of vidpid= (045e:0b00), guid= (an SDL GUID) or device= (a "
-                                   "connected device), with name= and version= to narrow it");
-    HostInputService* input = _owner.Input();
-    const DeviceDatabase database = input != nullptr ? input->Database() : DeviceDatabase::Builtin();
+    const std::string family = Option(request, "family");
+    const std::string name = Option(request, "name");
+    if ((vidpid.empty() ? 0 : 1) + (guid.empty() ? 0 : 1) + (id.empty() ? 0 : 1) + (family.empty() ? 0 : 1) > 1)
+        return Fail("bad-request", "database takes one of vidpid= (045e:0b00), guid= (an SDL GUID), device= (a "
+                                   "connected device) or family=, with bus=, name= and version= to narrow it");
+    if (!family.empty())
+    {
+        const std::vector<std::string> ids = database->FamilyIds();
+        if (std::find(ids.begin(), ids.end(), family) == ids.end())
+            return Fail("unknown-family", "no family '" + family + "' in the device database");
+        const DeviceMatch match = database->ForFamily(family);
+        reply.message = family + " is " + match.name;
+        reply.body.Set("match", MatchValue(match, user));
+        return reply;
+    }
+    if (vidpid.empty() && guid.empty() && id.empty() && name.empty())
+    {
+        // No key: what the database holds
+        reply.message = std::to_string(database->FamilyCount()) + " families, " + std::to_string(user.size()) +
+                        " from devices.user.json";
+        return reply;
+    }
     DeviceIdentity identity;
     if (!vidpid.empty() && !ParseVidPid(vidpid, identity.vendor, identity.product))
         return Fail("bad-request", "vidpid is <vid>:<pid> in hex (045e:0b00), not '" + vidpid + "'");
-    if (!guid.empty())
-    {
-        std::string lower = guid;
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
-        if (!IdentityFromSdlGuid(lower, identity))
-            return Fail("bad-request", "guid is the 32 hex digits of an SDL GUID with a VID and a PID, not '" + guid + "'");
-    }
+    if (!guid.empty() && !IdentityFromSdlGuid(Lower(guid), identity))
+        return Fail("bad-request", "guid is the 32 hex digits of an SDL GUID with a VID and a PID, not '" + guid + "'");
     if (!id.empty())
     {
         const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
@@ -862,7 +962,9 @@ HostReply HostInputControl::Database(const HostRequest& request)
         identity.name = device->name;
         identity.backend = device->backend;
     }
-    if (const std::string name = Option(request, "name"); !name.empty())
+    if (const std::string bus = Option(request, "bus"); !bus.empty())
+        identity.bus = bus;
+    if (!name.empty())
         identity.name = name;
     if (const std::string version = Option(request, "version"); !version.empty())
     {
@@ -872,15 +974,15 @@ HostReply HostInputControl::Database(const HostRequest& request)
             return Fail("bad-request", "version is 4 hex digits (0517), not '" + version + "'");
         identity.version = parsed;
     }
-    const DeviceMatch match = database.Lookup(identity);
-    HostReply reply;
-    reply.message = match.step == "unknown" ? "no family for " + Hex4(identity.vendor) + ":" + Hex4(identity.product) +
-                                                  ": raw controls; learn maps them"
-                                            : Hex4(identity.vendor) + ":" + Hex4(identity.product) + " is " +
-                                                  match.name + " (" + match.family + ", " + match.step + ", score " +
-                                                  std::to_string(match.score) + ")";
+    const DeviceMatch match = database->Lookup(identity);
+    const std::string key = identity.vendor != 0 || identity.product != 0
+                                ? Hex4(identity.vendor) + ":" + Hex4(identity.product)
+                                : "'" + identity.name + "'";
+    reply.message = match.step == "unknown" ? "no family for " + key + ": raw controls; learn maps them"
+                                            : key + " is " + match.name + " (" + match.family + ", " + match.step +
+                                                  ", score " + std::to_string(match.score) + ")";
     reply.body.Set("query", IdentityValue(identity));
-    reply.body.Set("match", MatchValue(match));
+    reply.body.Set("match", MatchValue(match, user));
     return reply;
 }
 
@@ -888,30 +990,26 @@ HostReply HostInputControl::SaveUserFamily(const DeviceIdentity& identity, const
                                            const std::map<std::string, std::string>& map, const std::string& source,
                                            HostReply& reply)
 {
-    const std::string path = UserDevicesPath();
-    std::string text;
-    if (std::ifstream in(path, std::ios::binary); in)
-    {
-        std::ostringstream content;
-        content << in.rdbuf();
-        text = content.str();
-    }
-    std::string merged;
+    // An entry the user already has for the device (a photo, a name) keeps the fields this one does not name
+    JsonValue family = UserFamilyJson(identity, name, map, source);
+    const std::string id = UserFamilyId(identity);
+    JsonValue user;
     std::string error;
-    if (!MergeUserFamily(text, UserFamilyJson(identity, name, map, source), merged, error))
-        return Fail("bad-request", path + ": " + error);
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-    {
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        out << merged;
-        if (!out)
-            return Fail("unavailable", "cannot write " + path);
-    }
-    if (HostInputService* input = _owner.Input(); input != nullptr && !input->LoadUserDevices(path, error))
-        return Fail("bad-request", error);
-    reply.body.Set("family", JsonValue::String(UserFamilyId(identity)));
-    reply.body.Set("path", JsonValue::String(path));
+    if (ParseJson(DeviceDatabase::UserText(), user, error) && user.IsObject())
+        if (const JsonValue* families = user.Find("families"); families != nullptr && families->IsArray())
+            for (const JsonValue& entry : families->Items())
+                if (const JsonValue* entryId = entry.Find("id");
+                    entryId != nullptr && entryId->IsString() && entryId->AsString() == id)
+                    for (const auto& [key, value] : entry.GetMembers())
+                        if (family.Find(key) == nullptr)
+                            family.Set(key, value);
+    const HostReply saved = EditDatabase(HostRequest{"database_save", {{"text", family.Dump()}}}, false);
+    if (!saved.Ok())
+        return saved;
+    reply.body.Set("entry", family);
+    reply.body.Set("family", JsonValue::String(id));
+    reply.body.Set("path", JsonValue::String(UserDevicesPath()));
+    reply.body.Set("user", *saved.body.Find("user"));
     return reply;
 }
 
@@ -941,7 +1039,11 @@ HostReply HostInputControl::DatabaseImport(const HostRequest& request)
                                               : ", " + std::to_string(imported.skipped.size()) + " skipped") +
                     (save ? ", saved as " + UserFamilyId(imported.identity) : std::string(", not saved (save=false)"));
     if (!save)
+    {
+        // What it would write (the dialog shows it before the user saves)
+        reply.body.Set("entry", UserFamilyJson(imported.identity, imported.name, imported.map, imported.source));
         return reply;
+    }
     return SaveUserFamily(imported.identity, imported.name, imported.map, imported.source, reply);
 }
 
@@ -1466,6 +1568,123 @@ HostReply HostInputControl::Scheme(const HostRequest& request)
         return Fail("bad-request", "'" + id + "' is a scheme: a scheme does not extend another one");
     profile.extends = scheme.empty() ? std::vector<std::string>{} : std::vector<std::string>{scheme};
     return Store(profile, scheme.empty() ? id + " uses no scheme" : id + " works as " + scheme);
+}
+
+HostReply HostInputControl::EditDatabase(const HostRequest& request, bool remove)
+{
+    const std::filesystem::path path = UserDevicesPath();
+    const std::string current = ReadText(path);
+    std::string text;
+    std::string error;
+    std::string id;
+    if (remove)
+    {
+        id = Option(request, "id");
+        if (id.empty())
+            return Fail("bad-request", "database_delete needs id= of a devices.user.json entry");
+        if (!DeviceDatabase::RemoveUserFamily(current, id, text, error))
+            return Fail("unknown-family", error);
+    }
+    else
+    {
+        // One entry ({"id": "xbox-elite-2", "images": "my-elite"}) or a whole file's families
+        JsonValue entry;
+        if (!ParseJson(Option(request, "text"), entry, error))
+            return Fail("bad-request", "text: " + error);
+        std::vector<JsonValue> entries;
+        if (const JsonValue* families = entry.IsObject() ? entry.Find("families") : nullptr;
+            families != nullptr && families->IsArray())
+            entries = families->Items();
+        else
+            entries.push_back(entry);
+        if (entries.empty())
+            return Fail("bad-request", "text holds no device entry");
+        text = current;
+        for (const JsonValue& family : entries)
+        {
+            std::string next;
+            if (!DeviceDatabase::PutUserFamily(text, family, next, error))
+                return Fail("bad-request", error);
+            text = std::move(next);
+            const JsonValue* familyId = family.Find("id");
+            id += (id.empty() ? "" : ", ") + familyId->AsString();
+        }
+    }
+    if (!DeviceDatabase::SetUser(text, error))
+        return Fail("bad-request", error);
+    if (!WriteText(path, text, error))
+    {
+        DeviceDatabase::SetUser(current, error);  // the file stays as it was: so does the database
+        return Fail("unavailable", error);
+    }
+    // A connected device takes its family's new control map at once
+    if (HostInputService* input = _owner.Input(); input != nullptr)
+        input->RefreshUserMaps();
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = (remove ? "removed " : "saved ") + id + " in " + path.string() +
+                    (remove ? "" : "; a device already connected takes a new name or match when it reconnects");
+    reply.body.Set("user", Strings(DeviceDatabase::UserFamilies(text)));
+    reply.body.Set("user_file", JsonValue::String(path.string()));
+    return reply;
+}
+
+HostReply HostInputControl::Player(const HostRequest& request)
+{
+    const std::string id = Option(request, "device");
+    if (id.empty())
+        return Fail("bad-request", "player needs device= (devices lists them)");
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    if (FindDevice(devices, id) == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
+    HostInputService* input = _owner.Input();
+    const auto found = request.options.find("connector");
+    if (found != request.options.end())
+    {
+        // "auto" or empty: back to the automatic choice
+        const std::string connector = found->second == "auto" ? std::string{} : found->second;
+        std::string message;
+        const std::string error = _owner.ChoosePlayerConnector(id, connector, message);
+        if (!error.empty())
+            return Fail(error, message);
+    }
+    HostReply reply;
+    const std::string choice = _owner.PlayerChoice(id);
+    const std::string connector = input != nullptr ? input->Router().PlayerConnector(id) : std::string{};
+    reply.body.Set("device", JsonValue::String(id));
+    reply.body.Set("connector", JsonValue::String(connector));
+    reply.body.Set("chosen", JsonValue::Bool(!choice.empty()));
+    std::vector<std::string> drives = input != nullptr ? input->Router().Connectors(id) : std::vector<std::string>{};
+    reply.body.Set("drives", Strings(drives));
+    reply.message = id + (connector.empty() ? std::string(" drives no player connector")
+                                            : " drives " + connector + (choice.empty() ? " (automatic)" : " (chosen)"));
+    return reply;
+}
+
+HostReply HostInputControl::Reports(const HostRequest& request)
+{
+    HostInputService* input = _owner.Input();
+    if (input == nullptr)
+        return Fail("unavailable", "no host input in this process");
+    const std::string id = Option(request, "device");
+    if (id.empty())
+        return Fail("bad-request", "reports needs device= (devices lists them)");
+    if (FindDevice(_owner.Context().devices, id) == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
+    const std::string why = input->RawReportsUnavailable(id);
+    if (!why.empty())
+        return Fail("unavailable", why);
+    std::vector<JsonValue> list;
+    for (const RawReport& report : input->RawReports(id))
+        list.push_back(JsonValue::Object({{"ms", JsonValue::Number(static_cast<double>(report.timeMs))},
+                                          {"size", JsonValue::Number(static_cast<double>(report.size))},
+                                          {"hex", JsonValue::String(RawReportHex(report))}}));
+    HostReply reply;
+    reply.message = std::to_string(list.size()) + " reports (the tap runs while they are read, " +
+                    std::to_string(ReportTap::kIdleMs / 1000) + " s after the last read)";
+    reply.body.Set("device", JsonValue::String(id));
+    reply.body.Set("reports", JsonValue::Array(std::move(list)));
+    return reply;
 }
 
 }  // namespace controllers

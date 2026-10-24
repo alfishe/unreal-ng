@@ -58,13 +58,22 @@ namespace
         "controllers role <device> <player|debugger-remote|disabled> - What the device is for\n"
         "controllers pin <device> <follow-focus|all|pinned:<emulator id>> - Which instance it drives\n"
         "controllers identify <device>              - Rumble 300 ms and blink its light, to tell two pads apart\n"
-        "controllers probe                          - The backends: running or why not, the devices each found\n"
-        "controllers database <vid:pid|SDL GUID|device> [name=..] [version=..] - What the device database says\n"
-        "controllers database_import <file> [save=false] - A gamecontrollerdb.txt line or a RetroArch .cfg into\n"
-        "                                             devices.user.json (the device gets the map at once)\n"
+        "controllers player <device> [connector|auto|none] - The connector the pad's auto: targets drive\n"
+        "                                             (auto: the automatic choice again, none: no connector)\n"
+        "controllers probe [device]                 - The backends and the devices each found; with a device its\n"
+        "                                             endpoints and what each can do\n"
+        "controllers reports <device>               - The newest raw input reports in hex (macOS IOHID)\n"
+        "controllers database [vid:pid|SDL GUID|device|family] [bus=usb|bt] [name=..] [version=..] - The device\n"
+        "                                             database: a device's family, layout, image set, map and match\n"
+        "                                             step; with no key the devices.user.json entries\n"
+        "controllers database_save <file>           - Put the entry (or the file's families) into devices.user.json\n"
+        "controllers database_delete <id>           - Remove an entry of devices.user.json\n"
+        "controllers database_import <file> [save=false] - A gamecontrollerdb.txt line or a RetroArch .cfg as a user\n"
+        "                                             family with its control map (a connected pad takes it at once)\n"
         "controllers learn <device> [start|status|skip|back|finish|cancel] [controls=dpad.up,south,..] - The learn\n"
         "                                             wizard: press the prompted control on the device after each step\n"
-        "controllers learn <device> sample <control> [value] - Feed a raw control (button.3, axis.1) as if pressed\n"        "controllers aliases                        - Device aliases: old id -> new (a gc: pad matched to its HID device)\n"
+        "controllers learn <device> sample <control> [value] - Feed a raw control (button.3, axis.1) as if pressed\n"
+        "controllers aliases                        - Device aliases: old id -> new (a gc: pad matched to its HID device)\n"
         "controllers unalias <old id>               - Forget an alias: profiles naming the old id stop applying\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
@@ -105,10 +114,11 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply, unalias), control (bind, unbind), file (save,
-    /// database_import), a key (database: vid:pid, an SDL GUID or a device) or device (haptics, rumble, then its
-    /// effect; output, then its pattern; light, then its colour; role / pin, then the role / pin; identify; learn, then
-    /// the step, control, value); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// A host verb: positional id (profile, delete, apply, database_delete, unalias), control (bind, unbind), file
+    /// (save, database_save, database_import), a key (database: vid:pid, an SDL GUID, a device or a family) or device
+    /// (haptics, rumble, then its effect; output, then its pattern; light, then its colour; role / pin, then the role /
+    /// pin; identify; player, then the connector; probe; reports; learn, then the step, control, value); for bind, the
+    /// options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
@@ -141,26 +151,11 @@ namespace
                 if (verb == "learn" && words.size() > 4)
                     request.options["value"] = words[4];
             }
-            else if (verb == "database")
+            else if (verb == "player" || verb == "probe" || verb == "reports")
             {
-                // 32 hex digits: an SDL GUID; vid:pid; else a connected device's id
-                const std::string& key = words[1];
-                const bool hex = std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isxdigit(c); });
-                if (key.size() == 32 && hex)
-                    request.options["guid"] = key;
-                else if (key.size() == 9 && key[4] == ':')
-                    request.options["vidpid"] = key;
-                else
-                    request.options["device"] = key;
-            }
-            else if (verb == "database_import")
-            {
-                std::ifstream file(words[1], std::ios::binary);
-                if (!file)
-                    return "Error: cannot read '" + words[1] + "'\n";
-                std::ostringstream text;
-                text << file.rdbuf();
-                request.options["text"] = text.str();
+                request.options["device"] = words[1];
+                if (verb == "player" && words.size() > 2)
+                    request.options["connector"] = words[2];
             }
             else if (verb == "haptics" || verb == "rumble" || verb == "output" || verb == "light")
             {
@@ -172,7 +167,19 @@ namespace
                 if (verb == "light" && words.size() > 2)
                     request.options["color"] = words[2];
             }
-            else if (verb == "save")
+            else if (verb == "database")
+            {
+                // 32 hex digits: an SDL GUID; vid:pid; another id with a colon: a connected device; else a family
+                const std::string& key = words[1];
+                const bool hex = std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isxdigit(c); });
+                if (key.size() == 32 && hex)
+                    request.options["guid"] = key;
+                else if (key.size() == 9 && key[4] == ':')
+                    request.options["vidpid"] = key;
+                else
+                    request.options[key.find(':') != std::string::npos ? "device" : "family"] = key;
+            }
+            else if (verb == "save" || verb == "database_save" || verb == "database_import")
             {
                 std::ifstream file(words[1], std::ios::binary);
                 if (!file)
@@ -243,6 +250,23 @@ namespace
                         text += "      notice: " + notice->AsString() + "\n";
                 }
             }
+            if (const JsonValue* endpoints = reply.body.Find("endpoints"))
+            {
+                text += "Endpoints of " + reply.body.Find("device")->AsString() + ":\n";
+                for (const JsonValue& endpoint : endpoints->Items())
+                {
+                    std::string caps;
+                    for (const char* cap : {"rumble", "light", "battery"})
+                        if (endpoint.Find(cap)->AsBool())
+                            caps += std::string(caps.empty() ? "" : ", ") + cap;
+                    text += "  " + endpoint.Find("backend")->AsString() + "  " + endpoint.Find("role")->AsString() +
+                            "  " + endpoint.Find("name")->AsString() + "  " +
+                            std::to_string(static_cast<int>(endpoint.Find("controls")->AsNumber())) + " controls (" +
+                            endpoint.Find("driver")->AsString() + ")" + (caps.empty() ? "" : "; " + caps) +
+                            (endpoint.Find("detail")->AsString().empty() ? "" : "; " + endpoint.Find("detail")->AsString()) +
+                            "\n";
+                }
+            }
             return "Backends:\n" + (text.empty() ? "  none\n" : text) + "User devices: " +
                    reply.body.Find("user_devices")->AsString() + "\n";
         }
@@ -290,6 +314,33 @@ namespace
                     text += "    notice: " + notice->AsString() + "\n";
             }
             return "Host devices:\n" + (text.empty() ? "  none\n" : text);
+        }
+        if (verb == "database")
+        {
+            if (const JsonValue* match = reply.body.Find("match"))
+            {
+                text += "  " + reply.message + "\n  " + match->Find("family")->AsString() + ": " + match->Find("name")->AsString() +
+                        "\n    layout " + match->Find("layout")->AsString() + ", images " +
+                        match->Find("images")->AsString();
+                if (const JsonValue* step = match->Find("step"))
+                    text += ", " + step->AsString() + " match, score " +
+                            std::to_string(static_cast<int>(match->Find("score")->AsNumber()));
+                text += match->Find("user")->AsBool() ? ", from devices.user.json\n" : "\n";
+                if (const JsonValue* map = match->Find("map"))
+                    text += "    map " + map->Dump() + "\n";
+            }
+            std::string user;
+            for (const JsonValue& id : reply.body.Find("user")->Items())
+                user += (user.empty() ? "" : ", ") + id.AsString();
+            return "Device database (" + std::to_string(static_cast<int>(reply.body.Find("families")->AsNumber())) +
+                   " families):\n" + text + "  devices.user.json: " + (user.empty() ? "no entries" : user) + "\n";
+        }
+        if (verb == "reports")
+        {
+            for (const JsonValue& report : reply.body.Find("reports")->Items())
+                text += "  " + report.Find("hex")->AsString() + "  (" +
+                        std::to_string(static_cast<int>(report.Find("size")->AsNumber())) + " B)\n";
+            return reply.message + ":\n" + (text.empty() ? "  none yet: read again while pressing a control\n" : text);
         }
         if (const JsonValue* profiles = reply.body.Find("profiles"))
         {

@@ -138,6 +138,47 @@ BatteryState HostInputService::Battery(const HostDeviceId& device) const
     return backend != nullptr ? backend->Battery(device) : BatteryState{};
 }
 
+std::vector<EndpointInfo> HostInputService::Endpoints(const HostDeviceId& device) const
+{
+    const size_t seen = Live(device).size();  // before _mutex: the two locks are never held together
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return {};
+    std::vector<EndpointInfo> endpoints = backend->Endpoints(device);
+    for (EndpointInfo& endpoint : endpoints)
+        if (endpoint.role == "input")
+            endpoint.battery = backend->Battery(device).known;
+    if (!endpoints.empty())
+        return endpoints;
+    // One endpoint: what the backend answers for the device
+    EndpointInfo endpoint;
+    endpoint.backend = backend->Name();
+    endpoint.role = "input";
+    endpoint.rumble = backend->HasRumble(device);
+    endpoint.light = backend->HasLight(device);
+    endpoint.battery = backend->Battery(device).known;
+    endpoint.controls = seen;
+    endpoint.detail = "controls seen so far";
+    return {endpoint};
+}
+
+std::string HostInputService::RawReportsUnavailable(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return "The device is not connected";
+    return backend->RawReportsUnavailable(device);
+}
+
+std::vector<RawReport> HostInputService::RawReports(const HostDeviceId& device)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr ? backend->RawReports(device) : std::vector<RawReport>{};
+}
+
 bool HostInputService::HasLight(const HostDeviceId& device) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -208,7 +249,7 @@ void HostInputService::ApplyUserMapLocked(const HostDeviceInfo& device)
     const DeviceIdentity identity = IdentityOf(device);
     if (identity.vendor == 0 && identity.product == 0)
         return;
-    const DeviceMatch match = _database.Lookup(identity);
+    const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
     std::vector<MappedControl> map;
     std::string error;
     if (match.score >= 80 && !match.map.empty() && ParseControlMap(match.map, map, error))
@@ -217,54 +258,26 @@ void HostInputService::ApplyUserMapLocked(const HostDeviceInfo& device)
         _maps.erase(device.id);  // the user family went, or never had a map
 }
 
-bool HostInputService::LoadUserDevices(const std::string& path, std::string& error)
+void HostInputService::RefreshUserMaps()
 {
-    std::string text;
-    if (std::ifstream in(path, std::ios::binary); in)
-    {
-        std::ostringstream content;
-        content << in.rdbuf();
-        text = content.str();
-    }
-    DeviceDatabase database = DeviceDatabase::Builtin();
-    if (!text.empty() && !database.Merge(text, error))
-    {
-        error = path + ": " + error;
-        return false;
-    }
     std::lock_guard<std::mutex> lock(_mapMutex);
-    _database = std::move(database);
-    _userDevicesPath = path;
     for (const auto& [id, device] : _connected)
         ApplyUserMapLocked(device);
-    return true;
-}
-
-std::string HostInputService::UserDevicesPath() const
-{
-    std::lock_guard<std::mutex> lock(_mapMutex);
-    return _userDevicesPath;
-}
-
-DeviceDatabase HostInputService::Database() const
-{
-    std::lock_guard<std::mutex> lock(_mapMutex);
-    return _database;
 }
 
 DeviceMatch HostInputService::LookupDevice(const HostDeviceInfo& device) const
 {
     const DeviceIdentity identity = IdentityOf(device);
-    std::lock_guard<std::mutex> lock(_mapMutex);
+    const std::shared_ptr<const DeviceDatabase> database = DeviceDatabase::Active();
     if (identity.vendor == 0 && identity.product == 0)
     {
         // No VID / PID in its id (a GameController pad, the keyboard): the family its backend gave it
-        DeviceMatch match = _database.ForFamily(device.family, device.layout);
+        DeviceMatch match = database->ForFamily(device.family, device.layout);
         match.name = device.name;
         match.step = "backend";
         return match;
     }
-    return _database.Lookup(identity);
+    return database->Lookup(identity);
 }
 
 void HostInputService::SetControlMap(const HostDeviceId& device, std::vector<MappedControl> map)
@@ -617,7 +630,7 @@ void HostInputService::OnDeviceAdded(const HostDeviceInfo& device)
     }
     // The family's role until somebody sets one (control surfaces Q-8: a Surface Dial is a debugger remote)
     if (!device.family.empty())
-        _router->SetDefaultRole(device.id, DeviceDatabase::Builtin().ForFamily(device.family, device.layout).role);
+        _router->SetDefaultRole(device.id, DeviceDatabase::Active()->ForFamily(device.family, device.layout).role);
     _router->OnDeviceAdded(device);
     ++_revision;
 }

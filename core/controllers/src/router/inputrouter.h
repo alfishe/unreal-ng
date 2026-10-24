@@ -108,6 +108,15 @@ public:
     InstanceMode GetInstanceMode(const HostDeviceId& device, std::string* pinned = nullptr) const;
     /// The connector a device's `auto:` targets drive (the player's connector); empty = none
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
+    std::string PlayerConnector(const HostDeviceId& device) const;
+    /// The connectors a player device's bindings drive outside the debug layer (an `auto:` target as its player
+    /// connector), each once in binding order: the patch cords of the dialog (ui-ux.md §2.3). Empty for a debugger
+    /// remote or a disabled device
+    std::vector<std::string> Connectors(const HostDeviceId& device) const;
+    /// The analog options (dead zone, saturation, on / off, trigger click / release) the device's current layers read
+    /// @p control with ("lstick", "rt"): the first binding up that reads it, else the defaults with false. The test
+    /// panel draws these thresholds (ui-ux.md §3.4)
+    bool Analog(const HostDeviceId& device, const std::string& control, AnalogOptions& out) const;
     /// The device's default role (its family's: the device database's `role`), what Role answers until SetRole sets
     /// one (control surfaces Q-8: a Surface Dial starts as a debugger remote, a pad as a player)
     void SetDefaultRole(const HostDeviceId& device, DeviceRole role);

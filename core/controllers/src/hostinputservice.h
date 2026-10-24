@@ -56,6 +56,13 @@ public:
     std::string LightUnavailable(const HostDeviceId& device) const;
     /// Set the light's colour; never blocks. False when it has no light here
     bool SetLight(const HostDeviceId& device, const LightColor& color);
+    /// The device's endpoints, the input one first (IBackend::Endpoints); a backend that lists none: the device as one
+    /// endpoint with what the backend answers for it
+    std::vector<EndpointInfo> Endpoints(const HostDeviceId& device) const;
+    /// Why the device's raw reports cannot be shown; "" when RawReports answers them
+    std::string RawReportsUnavailable(const HostDeviceId& device) const;
+    /// The newest raw input reports (starts the backend's tap, ReportTap)
+    std::vector<RawReport> RawReports(const HostDeviceId& device);
     /// Stop every backend: their devices are removed
     void Stop();
 
@@ -80,13 +87,10 @@ public:
     std::map<std::string, float> Live(const HostDeviceId& device) const;
 
     /// region <Unknown devices: control maps and the learn wizard (device-database.md §3-§4, ui-ux.md §3.5)>
-    /// Read `devices.user.json` (@p path; a missing file is an empty one) on top of the built-in database and give
-    /// each connected device the `map` of its user family; false with the reason (the old one stays)
-    bool LoadUserDevices(const std::string& path, std::string& error);
-    /// The path LoadUserDevices last read ("" when none)
-    std::string UserDevicesPath() const;
-    /// The built-in database with the user's families on top
-    DeviceDatabase Database() const;
+    /// Give each connected device the `map` of its family in the active database (DeviceDatabase::Active: the built-in
+    /// one with devices.user.json on top), after DeviceDatabase::SetUser changed it; a device that connects later gets
+    /// it as it is added
+    void RefreshUserMaps();
     /// What the database says about a connected device (its id's VID / PID, its name); step "unknown" without them
     DeviceMatch LookupDevice(const HostDeviceInfo& device) const;
     /// A device's control map: each raw control it names also reports as its canonical control. Empty: none
@@ -211,8 +215,6 @@ private:
     std::map<HostDeviceId, std::vector<MappedControl>> _maps;          ///< under _mapMutex
     std::map<HostDeviceId, LearnSession> _learn;                       ///< under _mapMutex
     std::map<HostDeviceId, HostDeviceInfo> _connected;                 ///< under _mapMutex: for the user maps
-    DeviceDatabase _database = DeviceDatabase::Builtin();              ///< under _mapMutex
-    std::string _userDevicesPath;                                      ///< under _mapMutex
     std::map<HostDeviceId, LightColor> _lights;                        ///< under _mutex: the colour each light has
     /// under _tickMutex: the lights Identify blinked, back to their colour at the steady time (ns)
     std::map<HostDeviceId, std::pair<uint64_t, LightColor>> _blinks;

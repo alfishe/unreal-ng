@@ -60,8 +60,10 @@ connector verbs keep working (keyboard joystick, automation input).
 | `bind` / `unbind` | Change one binding in the user layer of a profile. |
 | `scheme` | The scheme a user profile extends (how the pad works: Kempston, Sinclair 1, QAOP + Space), or none. |
 | `profiles` | List profiles (play and debug sets, scopes, match rules); `apply`, `save`, `delete`, `export`, `import`. |
-| `probe` | Built: the backends (`running`, else `reason`, `devices`) and the devices each found (`match {step, score}`, `notice`), `user_devices` (the `devices.user.json` path). |
-| `database` | Built: look up `vidpid=`, `guid=` (SDL) or `device=` (with `name=`, `version=`) in the built-in database with the user's families on top: `query` and `match`. `database_import` (`text`, `save`): a `gamecontrollerdb` line or a RetroArch autoconfig file becomes a map and, unless `save=false`, a user family `user-<vid><pid>` in `devices.user.json` (`devicemapping.h`). |
+| `probe` | The backend report: loaded, why not, endpoints found, permissions. Built: `probe` (GET) answers `backends` (`name`, `running`, `devices`, `reason`, and the devices each `found`: `match {step, score}`, `notice`), `user_devices` (the `devices.user.json` path); with `device` also its `endpoints` (`backend`, `name`, `role`: `input` / `outputs` / `none`, `controls`, `driver`, `rumble`, `light`, `battery`, `detail`), the IOHID interface and the GameController companion as two on macOS. |
+| `reports` | Built: a device's newest raw HID input reports (`ms`, `size`, `hex`, oldest first, at most 16 of up to 64 bytes). The read arms the backend's tap, which disarms itself 3 s after the last read; a backend without one answers `unavailable` with the reason. The test panel's raw line. |
+| `player` | Built: the connector a player pad's `auto:` targets drive (`device`, `connector`: an id, `auto` back to the automatic choice, `none` no connector); the answer `connector`, `chosen`, `drives`. The dialog's drag and drop, Swap joystick ports and Reset bindings to default go through it; a choice lasts the session. |
+| `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. Built: `database` (GET) answers the families count, the user file's path and the ids it holds, and with `vidpid` (+ `bus`, `name`, `version`) the match a device of those ids gets, or with `family` that family (`family`, `name`, `layout`, `images`, `glyphs`, `controls`, `map`, `player`, `role`, `ignore`, `step`, `score`, `user`: the entry comes from devices.user.json); `database_save` (POST `text`: one family as JSON) adds or replaces an entry of devices.user.json, field by field over a built-in family of the same id, validated against the compiled-in database and written atomically; `database_delete` (POST `id`) removes one. The active database is swapped at once (holders of the old one keep their snapshot); a name or match change applies when the device connects again. The hotspot editor saves through `database_save`. `database_import` (POST `text`, `save`: false only answers) takes a gamecontrollerdb.txt line or a RetroArch autoconfig .cfg and saves it as the user entry `user-<vid><pid>` (`source`, `entry`, `skipped`; [device-database.md §3](device-database.md#3-lookup-order)). `database` also takes `guid=` (SDL) or `device=` (a connected device; with `name=`, `version=`) and answers `query` too; a family with a `map` gives a connected device of its VID / PID that control map at once (`devicemapping.h`). |
 | `learn` | Built: the learn wizard as data (`LearnSession`, `HostInputService::StartLearn`): `step` = `start` (`controls`), `status`, `sample` (`control`, `value`: a scripted press), `skip`, `back`, `finish` (`name`, `save`: the map, its `gamecontrollerdb` line, the user family), `cancel`. While it runs the device's events answer the prompts and reach nothing else. Not on MCP. |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
@@ -139,9 +141,10 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 | host devices, roles, pins, identify | yes (built) | `controllers` (built) | yes (built) | `controllers_host` | yes (built) | left pane |
 | bindings / bind / unbind | yes | yes | yes | yes | yes | picture callouts |
 | profiles | yes | yes | yes | yes | yes | profile bar |
-| probe report | yes (built) | yes (built) | yes (built) | `controllers_host` | yes (built) | Advanced |
-| device database lookup / import | yes (built) | yes (built) | yes (built) | `controllers_host` | yes (built) | wizard, Export |
-| learn wizard | yes (built) | no (needs a human) | yes (built) | `controllers_host` | yes (built) | wizard (the Qt dialog: the UI stream) |
+| probe report, endpoints, raw reports | `probe`, `reports` | `controllers` | `controllers probe [device]`, `reports <device>` | no (P3) | `controllers_probe`, `controllers_reports` | test panel |
+| a pad's player connector | `player` | `controllers` | `controllers player <device> [connector\|auto\|none]` | no (P3) | `controllers_player` | drag and drop, Machine > Controllers |
+| device database lookup / user entries | `database`, `database_save`, `database_delete`, `database_import` | `controllers` | `controllers database [vid:pid\|guid\|device\|family]`, `database_save <file>`, `database_delete <id>`, `database_import <file>` | no (P3) | `controllers_database`, `controllers_database_save`, `controllers_database_delete`, `controllers_database_import` | hotspot editor (Picture…), Import mapping… |
+| learn wizard | `learn` | no (needs a human) | `controllers learn <device> [step]` | no (P3) | `controllers_learn` | wizard |
 | haptics mode / strength / play / stop | yes | `controllers` (`haptics_state`, `haptics_play`, `haptics_stop`) | yes | yes | yes | device card, Haptics tab |
 | debug actions | `POST /controllers/actions/{id}` | `control_execution`, `time_travel` (existing) | existing | existing | existing | debug layer |
 
@@ -166,11 +169,14 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | rumble {device, effect?}
                                              | output {device, pattern | steps, clicks | marks}
                                              | light {device, color}
-       (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
+                                             | database_save {text} | database_delete {id}
+                                             | database_import {text, save?} | player {device, connector?}
                                              | role {device, role} | pin {device, pin} | identify {device}
-                                             | database_import {text, save?} | learn {device, step, ...}
+                                             | learn {device, step, ...} | unalias {id}
+GET    /api/v1/controllers/{verb}            probe?device=.. | reports?device=.. | aliases
+       (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (built)
-GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=... | device=...   (built)
+GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=... | device=... | family=...   (built)
 POST   /api/v1/controllers/database/import                   gamecontrollerdb line or RetroArch .cfg (built)
 GET    /api/v1/controllers/probe                             (built)
 
@@ -191,7 +197,10 @@ MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
 `controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`, `controllers_haptics`,
-`controllers_rumble`, `controllers_output`, `controllers_light`) and Lua `controllers_host(verb, opts)` (with
+`controllers_rumble`, `controllers_output`, `controllers_light`, `controllers_database`, `controllers_database_save`,
+`controllers_database_delete`, `controllers_database_import`, `controllers_role`, `controllers_pin`,
+`controllers_identify`, `controllers_learn`, `controllers_aliases`, `controllers_unalias`, `controllers_player`, `controllers_probe`,
+`controllers_reports`) and Lua `controllers_host(verb, opts)` (with
 `controllers_haptics`, `controllers_rumble`, `controllers_output`, `controllers_light`) all
 build a `HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and
 `controllers_host`. Lua reaches the connectors through `controllers(verb, connector, device, opts)`.
@@ -203,10 +212,13 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
   `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`. Built: every host verb but
-  `learn` (`role`, `pin`, `identify`, `probe`, `database`, `database_import` included; `McpControllers_Test` keeps the
-  table equal to `HostInputControl::Verbs()` without `learn`); `learn` answers an error that names the REST, CLI and
-  Python spellings. The text of `probe` lists each backend and the devices it found, `database` the match and its
-  map, `devices` a non-default pin and a learned map.
+  `learn` (`McpControllers_Test` keeps the table equal to `HostInputControl::Verbs()` without `learn`); `learn`
+  answers an error that names the REST, CLI and Python spellings. The text of `database` names the match in one
+  line: "xbox-elite-2: Xbox Elite Wireless Controller Series 2 (layout xbox, images my-elite, exact match, score 100,
+  from devices.user.json)", with its map; `player` keeps its `connector` (the host pad's) in the body; `probe` gives
+  one line per backend, per device it found and per endpoint ("endpoint iohid (input): Xbox Wireless Controller, 18
+  controls via xbox gip, rumble, battery"); `reports` one line per report ("01 00 80 (3 B)"); `devices` a non-default
+  pin and a learned map.
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
   that really answer: Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next (fixed 2026-10-23, E-4; it named
   ATM3 / Scorpion / TS-Conf only).

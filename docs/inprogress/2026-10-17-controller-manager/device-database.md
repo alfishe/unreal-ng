@@ -139,6 +139,24 @@ Rules:
   as an interface of its own: the side of each comes from the device info (below the USB handshake, subcommand 0x02),
   then it is a Joy-Con as any and pairs the same way; an empty slot (no answer) stays hidden.
 
+**As built (2026-10-23): steps 3 and 4 as an import.** No gamecontrollerdb.txt is bundled and no RetroArch profile is
+read at match time; the user imports a mapping for one pad instead (`database_import`, `ImportDevice` in
+`core/controllers/src/deviceimport.*`), and it becomes a devices.user.json entry that steps 1-2 then match:
+- a gamecontrollerdb.txt line: the GUID's little-endian words give bus (word 0: 3 = `usb`, 5 = `bt`), VID (word 2) and
+  PID (word 4); a GUID whose words 3 and 5 are not 0 carries no USB ids and is refused. SDL names map to the
+  vocabulary (`a` south, `b` east, `x` west, `y` north, `back` view, `start` menu, `guide`, shoulders `lb` / `rb`,
+  triggers `lt` / `rt`, stick clicks, `dp*` the D-pad, `misc1` share, `paddle1-4`, `touchpad`), axes add `lstick.*` /
+  `rstick.*`;
+- a RetroArch autoconfig .cfg: `input_vendor_id` / `input_product_id` in decimal, the RetroPad names (`b` south, `a`
+  east, `y` west, `x` north, `l` / `r` / `l2` / `r2` / `l3` / `r3`, `select` view, `start` menu, `menu_toggle` guide,
+  the D-pad).
+The entry is `{"id": "user-<vid><pid>", "name", "layout": "generic", "match": [{vid, pid, bus}], "buttons", "controls",
+"source"}`; `buttons` names each HID button index (`b3` → index 3), and the HID pad decoder (`HidLayoutFor(layout,
+buttons)`) uses those names over the layout's own, on IOHID and Raw Input alike. An existing user entry of the same id
+keeps the members the import does not set (a photo's `images`). What the import cannot take over is listed
+(`skipped`: `platform`, an axis bound to a button). The Qt dialog's **Import mapping…** picks the line of a whole
+gamecontrollerdb.txt by the selected device's VID:PID.
+
 ## 4. User overrides
 
 `<user config>/unreal-ng/controllers/devices.user.json` has the same schema:
@@ -150,15 +168,24 @@ Rules:
 
 `gamecontrollerdb.user.txt` in the same folder is read after the bundled database.
 
-Built (C10): `HostInputService::LoadUserDevices` reads `devices.user.json` on top of the built-in database at the Qt
-client's start and after each write. A user family may carry a `map` (canonical control -> raw control: `button.2`,
-`lstick.y-` for one half of an axis, `hat.1.up`), and a connected device that matches it by VID + PID takes the map
-(`devicemapping.h`): each raw control also reports as its canonical one. The learn wizard (`learn finish`) and an
-import (`database_import`: a `gamecontrollerdb.txt` line or a RetroArch autoconfig file, RetroPad B = `south`) write
-such a family, `user-<vid><pid>`, with `source` and its `gamecontrollerdb` line (bN, ±aN, hN.M; SDL's a0..a3 are the
-HID X Y Z Rz, our sticks), ready to export. Not built: the bundled `gamecontrollerdb.txt` and
-`gamecontrollerdb.user.txt` as lookup steps 3 and 4 (an import turns a line into a user family instead), renames and
-user images through this file.
+**As built (2026-10-23).** `DeviceDatabase::Active()` is the database every reader uses (the backends, the router's
+service, the profile store, the Qt dialog): the compiled-in families with devices.user.json merged over them
+(`DeviceDatabase::SetUser`), an immutable snapshot swapped under a mutex, so a reader holding the old one keeps it.
+The Qt client reads the file at start, before the backends match a device. An entry whose `id` names a built-in
+family is merged field by field (only the fields it names change; `controls` and `match` replace the list; `match`
+may be left out); an entry with a new id is a family of its own and needs `match`. A file that does not parse or
+does not validate leaves the active database as it was and is reported. The host verbs `database`, `database_save`
+and `database_delete` ([surfaces.md §2](surfaces.md#2-verbs)) read and edit the file on every plane; the hotspot
+editor writes through them; `database_import` adds an entry from a gamecontrollerdb line or a RetroArch autoconfig
+(§3). Not built: `gamecontrollerdb.user.txt` read as a file (an import of its line instead).
+
+A user family may carry a `map` (canonical control -> raw control: `button.2`, `lstick.y-` for one half of an axis,
+`hat.1.up`), and a connected device that matches it by VID + PID takes the map at once (`devicemapping.h`,
+`HostInputService::RefreshUserMaps`): each raw control also reports as its canonical one. The learn wizard (`learn
+finish`) and an import (`database_import`: a `gamecontrollerdb.txt` line or a RetroArch autoconfig file, RetroPad B =
+`south`) write such a family, `user-<vid><pid>`, with `source` and its `gamecontrollerdb` line (bN, ±aN, hN.M; SDL's
+a0..a3 are the HID X Y Z Rz, our sticks), ready to export. `database` also looks a device up by its SDL GUID
+(`guid=`) or a connected device (`device=`).
 
 ## 5. Licences of the sources
 
@@ -292,6 +319,19 @@ For a device with no image, or when the user prefers a photo of their own pad:
 6. **Share.** "Share…" exports a folder (image, map, a provenance stub to fill in) ready for a pull request.
 
 The editor is the same widget the project uses to make built-in maps, so built-in and user maps cannot drift.
+
+**As built (2026-10-23).** `HotspotEditor` (unreal-qt `controllers/hotspoteditor.*`; ui-ux.md §3.6): per view (front,
+back, top) a file (EXIF rotation applied) or a paste, turned by quarter turns, straightened by up to ±15° and cropped
+(applied to the photo as picked, not stacked); the result is kept as it is (scaled down only past 4096 × 3072) and
+letterboxed into the design canvas, by the editor and by `ControllerPicture` alike. Every shape of §8: circle,
+ellipse, rectangle, polygon (drawn corner by corner; drag-to-size is a Size and a Height box instead). The set is
+saved as `images/<device id>/<view>.png` + `<view>.hotspots.json` for each view with a photo and a spot (the front
+is required), where the device id is the database entry's (`xbox-elite-2`, `user-2dc8abcd`), the entry as
+`{"id": <family>, "images": <device id>}`; a device the database does not know gets a family `user-<vid><pid>`
+with its name, its USB ids as `match` and its controls. `ControllerPicture` looks in the user's `images/` before the
+shipped ones, draws `<view>.png` / `.jpg` as well as `<view>.svg`, and lists a set's views (`Views`). Share… writes
+the same set into a chosen folder with `provenance.json` (§7: view, `"source": "own photograph"`, today's date, the
+author, licence and retouch fields empty) and `entry.json`.
 
 ## 10. Retro side images
 

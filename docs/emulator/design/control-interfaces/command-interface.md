@@ -3810,11 +3810,37 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers role` | `<device> <player\|debugger-remote\|disabled>` | What a host device is for: a player (the play layer, a connector), a debugger remote (its debug bindings only, never a connector) or nothing. Kept by device id across a replug | ✅ Implemented |
 | `controllers pin` | `<device> <follow-focus\|all\|pinned:<emulator id>>` | Which instance a host device drives: the one whose window has the focus (default), every instance (a demo on the video wall), or one. `devices` shows it as `pin` | ✅ Implemented |
 | `controllers identify` | `<device>` | Rumble the device for 300 ms and blink its light white (then back to its colour) where it has them, to tell two identical pads apart (`rumble`, `light`, `ms`; `unavailable` with both reasons when it has neither) | ✅ Implemented |
-| `controllers probe` | | The input backends: `running`, else the `reason`; the devices each found with their database `match` (`step`, `score`) and `notice`; `user_devices` (the `devices.user.json` path) | ✅ Implemented |
-| `controllers database` | `<vid:pid\|SDL GUID\|device> [name=..] [version=..]` | What the device database says (built-in plus the user's families): `query` (`vid`, `pid`, `bus`, `version`, `name`, `sdl_guid`) and `match` (`family`, `name`, `layout`, `role`, `step`: `exact`, `vid-pid`, `name`, `unknown`, `score`, `controls`, `map`) | ✅ Implemented |
-| `controllers database_import` | `<file> [save=false]` | Import a `gamecontrollerdb.txt` line or a RetroArch autoconfig file: the map (canonical -> raw control), the entries with no control here (`skipped`), the `gamecontrollerdb` line; unless `save=false` a user family `user-<vid><pid>` in `devices.user.json`, which a connected device of that VID / PID takes at once | ✅ Implemented |
-| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented || `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
+| `controllers player` | `<device> [connector\|auto\|none]` | The connector a player pad's `auto:` targets drive: read it, choose one (it wins over the machine's order and a profile's pin for the session), `auto` back to the automatic choice, `none` no connector. The dialog's drag and drop, Swap joystick ports and Reset bindings to default | ✅ Implemented |
+| `controllers probe` | `[device]` | The input backends: `running`, else the `reason`; the devices each found with their database `match` (`step`, `score`) and `notice`; `user_devices` (the `devices.user.json` path); with a device its endpoints: backend, name, role (`input`, `outputs`), the controls its driver decodes, rumble, light, battery | ✅ Implemented |
+| `controllers reports` | `<device>` | The device's newest raw HID input reports in hex (up to 16, oldest first). The read arms the backend's tap; it disarms itself 3 s after the last read. macOS IOHID (and the fake backend); elsewhere `unavailable` with the reason | ✅ Implemented |
+| `controllers database` | `[<vid:pid>\|<SDL GUID>\|<device>\|<family>] [bus=usb\|bt] [name=..] [version=..]` | The device database (built-in plus devices.user.json): the families count, the ids devices.user.json holds (`user`, `user_file`), and with a key the `query` (`vid`, `pid`, `bus`, `version`, `name`, `sdl_guid`) and the `match`: `family`, `name`, `layout`, `images`, `glyphs`, `controls`, `map`, `player`, `role`, the `step` (`exact`, `vid-pid`, `name`, `unknown`) and `score`, and whether the entry is the user's | ✅ Implemented |
+| `controllers database_save` / `database_delete` | `<file>` / `<id>` | Add or replace an entry of devices.user.json (one family as JSON; a built-in id changes only the fields it names, such as `images`), validated and written at once; remove one. The picture changes at once, a name or match when the device connects again. The dialog's Picture… saves through it | ✅ Implemented |
+| `controllers database_import` | `<file> [save=false]` | Import a `gamecontrollerdb.txt` line or a RetroArch autoconfig file: the map (canonical -> raw control), the entries with no control here (`skipped`), the `gamecontrollerdb` line; unless `save=false` the user family `user-<vid><pid>` (`entry`) in `devices.user.json`, merged over a user entry of that id, which a connected device of that VID / PID takes at once. The dialog's Import mapping… | ✅ Implemented |
+| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented |
+| `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
 | `controllers unalias` | `<old id>` | Forget an alias: the profiles naming the old id stop applying to the new one; saved and applied at once. `unknown-alias` (404) when there is none | ✅ Implemented |
+
+**Device database.** `<user config>/unreal-ng/controllers/devices.user.json` is read at start over the compiled-in
+database; the three verbs read and edit it on every plane (WebAPI `GET /api/v1/controllers/database`,
+`POST .../database_save {text}`, `POST .../database_delete {id}`; MCP `controllers` with the same actions; Python
+`controllers_database(vidpid=, guid=, device=, bus=, name=, version=, family=)`,
+`controllers_database_save(text)`, `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`). `database_import` is
+`POST .../database_import {text, save}` (also `POST .../database/import`); `player`, `probe` and `reports` are `POST .../player {device, connector}`,
+`GET .../probe?device=..` and `GET .../reports?device=..`, Python `controllers_player(device, connector=None)`,
+`controllers_probe(device=..)`, `controllers_reports(device)`. Design:
+[device-database.md §4](../../../inprogress/2026-10-17-controller-manager/device-database.md#4-user-overrides).
+
+```
+controllers database 045e:0b22 bus=bt
+# Device database (27 families):
+#   xbox-elite-2: Xbox Elite Wireless Controller Series 2
+#     layout xbox, images xbox-elite-2, exact match, score 100
+#   devices.user.json: no entries
+controllers database_save my-elite.json      # {"id": "xbox-elite-2", "images": "xbox-elite-2"}
+controllers database_import sn30.txt         # one gamecontrollerdb.txt line: user-2dc86101
+controllers player usb:2dc8:6101:1 sinclair-1
+controllers reports usb:2dc8:6101:1
+```
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the

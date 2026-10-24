@@ -261,6 +261,44 @@ TEST_F(InputRouter_Test, Roles_InstancesAndTheAutoConnector)
     EXPECT_EQ(Kempston("emu-3"), kFire);
 }
 
+TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
+{
+    // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,
+    // each once; the debug layer and the non-retro targets draw none
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "auto:fire"), Bind({"dpad.*"}, "auto:dpad"), Bind({"east"}, "sinclair-1:fire"),
+                 To({"north"}, Keys("SPACE")), To({"west"}, Retro("keyjoy.1:fire"), kDebugLayer)});
+    EXPECT_EQ(_router.Connectors("fake:1"), std::vector<std::string>{"sinclair-1"}) << "no player connector yet";
+    _router.SetPlayerConnector("fake:1", "kempston");
+    EXPECT_EQ(_router.PlayerConnector("fake:1"), "kempston");
+    EXPECT_EQ(_router.Connectors("fake:1"), (std::vector<std::string>{"kempston", "sinclair-1"}));
+    _router.SetRole("fake:1", DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.Connectors("fake:1").empty()) << "a debugger remote reaches no connector";
+    EXPECT_TRUE(_router.Connectors("fake:9").empty()) << "an unknown device";
+}
+
+TEST_F(InputRouter_Test, Analog_TheOptionsTheBindingUpReadsAControlWith)
+{
+    // The test panel's thresholds (ui-ux.md §3.4): the profile's analog overrides of the binding that reads the stick
+    // or the trigger now, the defaults where none does
+    _router.OnDeviceAdded(kPad);
+    BindingOptions wide;
+    wide.analog.deadzone = 0.3f;
+    wide.analog.on = 0.6f;
+    BindingOptions hair;
+    hair.analog.triggerClick = 0.2f;
+    SetBindings({Bind({"lstick"}, "kempston:dpad", wide), Bind({"rt"}, "kempston:fire", hair)});
+    AnalogOptions options;
+    ASSERT_TRUE(_router.Analog("fake:1", "lstick", options));
+    EXPECT_FLOAT_EQ(options.deadzone, 0.3f);
+    EXPECT_FLOAT_EQ(options.on, 0.6f);
+    ASSERT_TRUE(_router.Analog("fake:1", "rt", options));
+    EXPECT_FLOAT_EQ(options.triggerClick, 0.2f);
+    EXPECT_FALSE(_router.Analog("fake:1", "rstick", options)) << "nothing reads it";
+    EXPECT_FLOAT_EQ(options.deadzone, AnalogOptions{}.deadzone) << "the defaults";
+    EXPECT_FALSE(_router.Analog("fake:9", "lstick", options));
+}
+
 TEST_F(InputRouter_Test, Scopes_DeviceBeatsFamilyBeatsGlobal)
 {
     _router.OnDeviceAdded(kPad);

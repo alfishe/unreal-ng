@@ -188,8 +188,9 @@ TEST(DeviceMapping_Test, UserFamilyMergesAndLoads)
     EXPECT_EQ(UserFamilyId(identity), "user-12345678");
     std::string text;
     std::string error;
-    ASSERT_TRUE(MergeUserFamily("", family, text, error)) << error;
-    ASSERT_TRUE(MergeUserFamily(text, UserFamilyJson(identity, "USB Pad", {{"east", "button.1"}}, "learn"), text, error))
+    ASSERT_TRUE(DeviceDatabase::PutUserFamily("", family, text, error)) << error;
+    ASSERT_TRUE(DeviceDatabase::PutUserFamily(text, UserFamilyJson(identity, "USB Pad", {{"east", "button.1"}}, "learn"),
+                                              text, error))
         << error;
     DeviceDatabase database = DeviceDatabase::Builtin();
     ASSERT_TRUE(database.Merge(text, error)) << error;
@@ -198,5 +199,5 @@ TEST(DeviceMapping_Test, UserFamilyMergesAndLoads)
     EXPECT_EQ(match.name, "USB Pad");
     EXPECT_EQ(match.step, "vid-pid");
     EXPECT_EQ(match.map, (std::map<std::string, std::string>{{"east", "button.1"}})) << "the family was replaced";
-    EXPECT_FALSE(MergeUserFamily("{\"schema\": 2}", family, text, error));
+    EXPECT_FALSE(DeviceDatabase::PutUserFamily("{\"schema\": 2}", family, text, error));
 }
