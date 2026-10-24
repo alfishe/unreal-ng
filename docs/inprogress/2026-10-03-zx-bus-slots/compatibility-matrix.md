@@ -64,6 +64,7 @@ One row per `Function` value of the vocabulary (`slotvocabulary.cpp`); the built
 | `fdc.upd765` | +3 floppy controller | `#2FFD`, `#3FFD` |
 | `fuller-ay` | Fuller Box AY (register `#3F`, data `#5F`) | `#3F`, `#5F` |
 | `fuller-joystick` | Fuller joystick | `#7F` |
+| `amx-mouse` | AMX mouse (Z80 PIO, IM 2 per mickey; buttons `#DF`) | `#1F`, `#3F`, `#5F`, `#7F`, `#DF` |
 <!-- slots:generated:functions:end -->
 
 ## 2. Cards: first catalog
@@ -83,6 +84,7 @@ The first migration set (cards the emulator has today, plus the ZX-MultiSound). 
 | `covox-fb` | Covox `#FB` | zxbus | - | Iorq | `covox-fb` | `#FF/#FB` (full decode, write), `#04/#00` (A2-only decode, write) | no | `decode` = `full` / `a2` (default `full`) |
 | `soundrive` | SounDrive 1.05 | zxbus | - | Iorq | `soundrive`, `covox-fb` if mode 2 or modes 1 + 2 (emulator decode) | `#AF/#0F` (mode 1 or modes 1 + 2 (emulator decode), write), `#F5/#F1` (mode 2 or modes 1 + 2 (emulator decode), write) | no | `mode` = `1` / `2` / `both` (default `1`) |
 | `fuller-box` | Fuller Box (AY + joystick) | sinclair-edge | - | Iorq | `fuller-ay`, `fuller-joystick` | `#FF/#3F` (full low byte (FUSE)), `#FF/#5F` (full low byte (FUSE), write), `#FF/#7F` (full low byte (FUSE), read), `#E0/#20` (A7-A5 only (zxsp)), `#E0/#40` (A7-A5 only (zxsp), write), `#E0/#60` (A7-A5 only (zxsp), read) | no | `decode` = `full-low` / `a7a6a5` (default `full-low`) |
+| `amx-mouse` | AMX mouse (Z80 PIO interface) | sinclair-edge | /M1, /INT | Iorq | `amx-mouse` | `#E0/#00` (A7-A5 (schematic)), `#E0/#20` (A7-A5 (schematic)), `#E0/#40` (A7-A5 (schematic), write), `#E0/#60` (A7-A5 (schematic), write), `#E0/#C0` (A7-A5 (schematic), read), `#FF/#1F` (full low byte), `#FF/#3F` (full low byte), `#FF/#5F` (full low byte, write), `#FF/#7F` (full low byte, write), `#FF/#DF` (full low byte, read) | no | `decode` = `a7` / `full-low` (default `a7`) |
 | `multisound` | ZX-MultiSound rev.A2 | zxbus | IORQGE, +12V | RdWr | `ay-socket` (takeover) if `ym`, `midi` if `ym`, `saa` if `saa`, `gs` if `gs`, `soundrive` if `sd` | `#E00F/#E00D` (`ym`), `#E00F/#C00D` (`ym`), `#C00F/#800D` (`ym`), `#FF/#FF` (`saa`, write, ROM lock), `#FF/#B3` (`gs`), `#FF/#BB` (`gs`), `#AF/#0F` (`sd`, write, ROM lock) | `#FFFD`, `#BFFD`, `#B3`, `#BB` | `dip` = any of `ym`, `saa`, `gs`, `sd` (default all); `gsRam` = `1m` / `2m` (default `1m`); `ctrlMask` = `pro` / `classic` (default `pro`) |
 | `zxnetusb` | ZXNETUSB | zxbus | IORQGE, /CSROM | Iorq | `net.zxnetusb` | `#FF/#AB` | yes | - |
 | `zx-wifi` | ZX-WiFi (izzx) | zxbus | IORQGE | Iorq | `serial.ef` if `#EF` build, `serial.ee` if `#EE` build | `#FF/#EF` (`#EF` build), `#FF/#EE` (`#EE` build) | yes | `port` = `ef` / `ee` (default `ef`) |
@@ -109,20 +111,21 @@ names the option value of the row's or the column's card that produces the outco
 computed at its defaults.
 
 <!-- slots:generated:card-x-card:begin -->
-| new \ installed | `ts` | `tsfm` | `gs` | `gs-lw` | `neogs` | `moonsound` | `covox-fb` | `soundrive` | `fuller-box` | `multisound` | `zxnetusb` | `zx-wifi` |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **ts** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
-| **tsfm** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
-| **gs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
-| **gs-lw** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
-| **neogs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
-| **moonsound** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 or modes 1 + 2 (emulator decode) | ✓ | ✓ | ✓ | ✓ |
-| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 or modes 1 + 2 (emulator decode) | **D** | ✓ | **D** if `sd` | ✓ | ✓ |
-| **fuller-box** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **P** if A7-A5 only (zxsp) + `ym` | ✓ | ✓ |
-| **multisound** | **⊘** if `ym` | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **P** if `ym` + A7-A5 only (zxsp) | **D** | ✓ | ✓ |
-| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ |
-| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** |
+| new \ installed | `ts` | `tsfm` | `gs` | `gs-lw` | `neogs` | `moonsound` | `covox-fb` | `soundrive` | `fuller-box` | `amx-mouse` | `multisound` | `zxnetusb` | `zx-wifi` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **ts** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
+| **tsfm** | replaces | replaces | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `ym` | ✓ | ✓ |
+| **gs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **gs-lw** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **neogs** | ✓ | ✓ | **D** | **D** | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if `gs` | ✓ | ✓ |
+| **moonsound** | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **covox-fb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **D** if mode 2 or modes 1 + 2 (emulator decode) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **soundrive** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** if mode 2 or modes 1 + 2 (emulator decode) | **D** | ✓ | ✓ | **D** if `sd` | ✓ | ✓ |
+| **fuller-box** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | **P** | **P** if A7-A5 only (zxsp) + `ym` | ✓ | ✓ |
+| **amx-mouse** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **P** | **D** | **P** if A7-A5 (schematic) + `ym` | ✓ | ✓ |
+| **multisound** | **⊘** if `ym` | **⊘** if `ym` | **D** if `gs` | **D** if `gs` | **D** if `gs` | ✓ | ✓ | **D** if `sd` | **P** if `ym` + A7-A5 only (zxsp) | **P** if `ym` + A7-A5 (schematic) | **D** | ✓ | ✓ |
+| **zxnetusb** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** | ✓ |
+| **zx-wifi** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | **D** |
 <!-- slots:generated:card-x-card:end -->
 
 ## 4. Card × machine
@@ -168,6 +171,7 @@ with identical columns are merged.
 | **soundrive** mode 2 | A | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A | A | A |
 | **soundrive** modes 1 + 2 (emulator decode) | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F`, `#FB` are board ports) | A | A | A | A |
 | **fuller-box** | ✓ | A | A | A | A | A | A | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | ✓ | A |
+| **amx-mouse** | ✓ | A | A | A | A | A | A | A | A | ✓ | A |
 | **multisound** | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A | A | A |
 | **zxnetusb** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
 | **zx-wifi** `#EF` build | A | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A | A | A |

@@ -596,6 +596,8 @@ protected:
     // Frame-scoped rolling counters (debugger status panel); updated only while
     // the porttrace feature is on
     PortActivitySummary _activitySummary;
+    // Set by a switch-on (any thread), consumed by the emulator thread: only it writes the counters
+    std::atomic<bool> _activitySummaryResetPending{false};
 
     /// endregion </Port trace>
 

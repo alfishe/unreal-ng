@@ -11,8 +11,17 @@
 ///   one control event). An empty `physical` never merges (a two-player encoder shows two pads on one USB port).
 /// - A companion endpoint (a `GCController`) hides VID / PID: it is matched to a raw HID device by its vendor name and
 ///   arrival (a tentative match) and confirmed by button-edge correlation: the same press on both within
-///   kEdgeWindowMs, kConfirmEdges times, more often than on any other candidate and more often than not. Input never
-///   comes from a companion; once confirmed it adds the outputs the raw endpoint lacks.
+///   kEdgeWindowMs, kConfirmEdges times, more often than on any other candidate and more often than not. Once
+///   confirmed it adds the outputs the raw endpoint lacks.
+/// - A companion with no raw device to match (GameController sees a pad IOHID does not: no unclaimed device of its
+///   name) is standalone after kArrivalWindowMs (StandaloneDue): the backend reports it as a device of
+///   its own (`gc:<vendor>#<n>`, architecture.md §5) with GameController's input. When its raw device appears later
+///   and the presses confirm the match, the confirmation says `promoted`: the backend drops the `gc:` device and the
+///   raw one goes on (its settings move, HostInputService::OnDevicePromoted).
+/// - Until then the two must not both give input (D18: one device, input from IOHID only): a raw device of a standalone
+///   companion's name holds the companion back (IsShadowed: the backend stops its `gc:` input and the raw device gives
+///   it) until the presses confirm the match or the device goes. kShadowPresses presses of the companion with no
+///   coincident press on it mean another pad of that name: the companion gives its input again.
 ///
 /// Not thread-safe: the backend calls it under its own lock.
 
@@ -57,6 +66,8 @@ public:
     /// A companion arriving this close to a raw device is its tentative match (both arrive at a connect, or both at
     /// the start)
     static constexpr uint64_t kArrivalWindowMs = 3000;
+    /// A shadowed companion's presses with none coincident on the raw devices that shadow it: they are not its own
+    static constexpr int kShadowPresses = 4;
 
     enum class MatchState : uint8_t
     {
@@ -80,11 +91,13 @@ public:
     {
         std::string companion;
         HostDeviceId device;
+        bool promoted = false;  ///< the companion was standalone: its `gc:` device gives way to @p device
     };
 
     /// region <Raw HID endpoints>
     HidAdded AddHid(const HidEndpointInfo& endpoint);
-    HidRemoved RemoveHid(const std::string& key);
+    /// @p nowMs: a companion the device had waits from then for a raw device again before it is standalone
+    HidRemoved RemoveHid(const std::string& key, uint64_t nowMs = 0);
     /// The endpoint gives its device's input (the one with the most controls; the first on a tie)
     bool IsInput(const std::string& key) const;
     /// The endpoints of a device, the input one first
@@ -98,6 +111,14 @@ public:
     std::optional<Confirmed> HidEdge(const HostDeviceId& device, uint64_t timeMs);
     /// A press on a companion
     std::optional<Confirmed> CompanionEdge(const std::string& companion, uint64_t timeMs);
+
+    /// The companions that became standalone by @p nowMs: unconfirmed, kArrivalWindowMs past their arrival, and no
+    /// unclaimed raw device of their name (or a nameless one that arrived with them). Each is returned once; it stays standalone until confirmed
+    std::vector<std::string> StandaloneDue(uint64_t nowMs);
+    bool IsStandalone(const std::string& companion) const;
+    /// A standalone companion a raw device of its name holds back until the match is confirmed (D18: input from the
+    /// raw device only); AddHid, RemoveHid and CompanionEdge change it
+    bool IsShadowed(const std::string& companion) const;
 
     MatchState StateOf(const HostDeviceId& device) const;
     /// The confirmed companion of a device; "" while there is none
@@ -133,6 +154,9 @@ private:
         std::vector<CompanionEdgeRecord> edges;  ///< the recent presses (kKeptEdges), for a raw press that comes later
         int presses = 0;                         ///< every press since it arrived, unconfirmed
         std::map<HostDeviceId, int> hits;  ///< per candidate: its presses within the window of this companion's
+        bool standalone = false;           ///< StandaloneDue declared it
+        std::vector<HostDeviceId> shadowedBy;  ///< the raw devices of its name that came while it was standalone
+        int shadowPresses = 0;                 ///< its presses since the first of them came
     };
     static constexpr size_t kKeptEdges = 16;
 

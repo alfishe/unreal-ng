@@ -3480,6 +3480,7 @@ to the **machine's own mouse**, whatever it is (design:
 | ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
 | ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
 | Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+| 48K, 128K, +2, +2A, +3 with the slot card `amx-mouse` | AMX mouse (`amx`, kind `amx-pio`) | one IM 2 interrupt per mickey from a Z80 PIO (`#1F` X, `#3F` Y, bit 0 the direction), buttons `#DF` (D7 left, D6 middle, D5 right, active low); status `pio` |
 
 **How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
@@ -3633,8 +3634,10 @@ a held button is a 1 bit. The program running on the machine reads it with `IN #
 tests the bits. Worked example: up and fire held reads `0x18` (up = bit 3 = 8, fire = bit 4 =
 16). Unlike the mouse it is not relative: the byte is the state, so `joystick set 0x18`
 means "exactly up and fire are held now". Machines that decode the port: ZX-Evo (ATM3, `IN #1F`
-outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`).
-Other machines accept the input with a warning, because the program cannot see it.
+outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`), Pentagon (`#1F`
+outside a TR-DOS session), Profi (`#1F` in the normal port set), Sprinter (`#1F` outside TR-DOS, `#FF` in it) and the
+Next (its left DB9 connector). The 48K, 128K, +2, +2A, +3 and the ATM Turbo 2+ (no Kempston on the board) accept
+the input with a warning, because the program cannot see it ([.recipe/input/joystick.md](../../../../.recipe/input/joystick.md)).
 
 **Buttons and limits** (same in every interface):
 
@@ -3804,6 +3807,8 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
+| `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
+| `controllers unalias` | `<old id>` | Forget an alias: the profiles naming the old id stop applying to the new one; saved and applied at once. `unknown-alias` (404) when there is none | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3864,14 +3869,14 @@ Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
 | :--- | :--- | :--- | :--- |
-| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...`, `controllers light <device> <color>` |
-| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}`, `POST /api/v1/controllers/light {device, color}` |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` (`aliases`, `unalias <old id>` too) | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...`, `controllers light <device> <color>` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405; `GET .../aliases`, `POST .../unalias {id}`) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}`, `POST /api/v1/controllers/light {device, color}` |
 | WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}`, the same for `/light` |
-| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
-| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
-| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme`, `aliases`, `unalias` (`id`) (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ..., `controllers_aliases()`, `controllers_unalias(id)` | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` (`aliases`, `unalias` through it, no helpers of their own) | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
 
-Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
+Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`, `unknown-alias`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
 the Qt client (it owns the game controllers): a headless process answers `unavailable`.
 

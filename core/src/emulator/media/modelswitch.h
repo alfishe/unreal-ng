@@ -86,4 +86,20 @@ public:
     /// "refuse" | "save" | "discard" | "keep"
     static bool ParseStranded(const std::string& text, StrandedMedia& value);
     static const char* StrandedName(StrandedMedia value);
+
+    /// The run state of the machine a restart (slot change, the restart action) replaces
+    struct RunStateBefore
+    {
+        bool running = false;  ///< started and running
+        bool paused = false;   ///< started and paused
+
+        static RunStateBefore Of(Emulator& emulator);
+    };
+
+    /// Puts the restarted machine into the run state the old one had: a running one runs, a paused one is started and
+    /// paused at once (it parks before its first frame, so it is a started machine resume / typing / the GUI work with,
+    /// not one left "initialized"); a machine never started stays as created. `start` starts it (the manager's
+    /// StartEmulatorAsync on the automation surfaces, the window's own start in the GUI).
+    /// @return whether it was started
+    static bool StartAsBefore(Emulator& fresh, const RunStateBefore& before, const std::function<void()>& start);
 };

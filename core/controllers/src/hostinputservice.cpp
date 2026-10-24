@@ -396,6 +396,22 @@ void HostInputService::OnDeviceRemoved(const HostDeviceId& device)
     ++_revision;
 }
 
+void HostInputService::OnDevicePromoted(const HostDeviceId& from, const HostDeviceId& to)
+{
+    _router->Promote(from, to);
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promotions.emplace_back(from, to);
+    }
+    ++_revision;
+}
+
+std::vector<std::pair<HostDeviceId, HostDeviceId>> HostInputService::TakePromotions()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return std::exchange(_promotions, {});
+}
+
 void HostInputService::OnControl(const ControlEvent& event)
 {
     _router->OnControl(event);

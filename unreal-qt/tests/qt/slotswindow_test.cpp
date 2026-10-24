@@ -69,7 +69,7 @@ protected:
     {
         SlotChangeController::Hooks hooks;
         hooks.beforeRelease = [this](Emulator&) { _binding.unbind(); };
-        hooks.adopt = [this](std::shared_ptr<Emulator> emulator, bool) {
+        hooks.adopt = [this](std::shared_ptr<Emulator> emulator, const ModelSwitch::RunStateBefore&) {
             _current = emulator;
             _binding.bind(emulator);
         };

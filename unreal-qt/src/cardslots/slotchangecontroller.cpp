@@ -78,7 +78,7 @@ SlotChangeResult SlotChangeController::Run(SlotChangeRequest request)
     if (_hooks.restarting)
         _hooks.restarting(false);
     if (result.Applied() && _hooks.adopt)
-        _hooks.adopt(result.emulator, result.wasRunning);
+        _hooks.adopt(result.emulator, ModelSwitch::RunStateBefore{result.wasRunning, result.wasPaused});
     return result;
 }
 

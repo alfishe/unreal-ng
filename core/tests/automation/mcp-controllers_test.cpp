@@ -247,3 +247,51 @@ TEST(McpControllers_Test, DevicesTextCarriesBatteryLightAndNotice)
     EXPECT_EQ(caller->calls.back().body["color"].asString(), "#ff0000");
     EXPECT_EQ(caller->calls.back().body["device"].asString(), "bt:054c:0ce6:1");
 }
+
+/// aliases is a read (a GET) whose text names each old id -> new id; unalias a POST with the old id; the WebAPI
+/// verbs and the MCP actions stay the same set (ActionsAndOptionsMatchControllerControl)
+TEST(McpControllers_Test, AliasesTextAndUnaliasRoute)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value listed;
+    listed["ok"] = true;
+    Json::Value alias;
+    alias["from"] = "gc:dualsense:1";
+    alias["to"] = "bt:054c:0ce6:1";
+    alias["connected"] = true;
+    alias["name"] = "DualSense";
+    listed["aliases"].append(alias);
+    caller->routes["GET /api/v1/controllers/aliases"] = {200, listed};
+    Json::Value args;
+    args["action"] = "aliases";
+    const mcp::ToolResult result = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.back().method, "GET");
+    EXPECT_NE(result.text.find("gc:dualsense:1 -> bt:054c:0ce6:1 (DualSense, connected)"), std::string::npos)
+        << result.text;
+
+    Json::Value done;
+    done["ok"] = true;
+    done["message"] = "removed the alias gc:dualsense:1 -> bt:054c:0ce6:1";
+    caller->routes["POST /api/v1/controllers/unalias"] = {200, done};
+    Json::Value unalias;
+    unalias["action"] = "unalias";
+    unalias["id"] = "gc:dualsense:1";
+    const mcp::ToolResult removed = RunControllersTool(*registry, unalias, *caller);
+    ASSERT_FALSE(removed.isError) << removed.text;
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_EQ(caller->calls.back().body["id"].asString(), "gc:dualsense:1");
+    EXPECT_NE(removed.text.find("removed the alias"), std::string::npos);
+
+    Json::Value missing;
+    missing["ok"] = false;
+    missing["error"] = "unknown-alias";
+    missing["message"] = "no device alias 'gc:none'";
+    caller->routes["POST /api/v1/controllers/unalias"] = {404, missing};
+    unalias["id"] = "gc:none";
+    const mcp::ToolResult failed = RunControllersTool(*registry, unalias, *caller);
+    EXPECT_TRUE(failed.isError);
+    EXPECT_NE(failed.text.find("[unknown-alias]"), std::string::npos) << failed.text;
+}

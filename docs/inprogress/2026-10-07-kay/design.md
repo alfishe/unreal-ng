@@ -50,8 +50,9 @@ All decodes need IORQ with no card claiming IORQGE (DD46 enable E0 = IORQG). Eve
 - Reset clears both latches (DD40 and DD45 clear input). With #1FFD D2 = 0 the machine is in turbo after reset if the
   front-panel switch is on (S3: TURBO needs the switch, D2 = 0, the bus line not grounded, DOS = 1, IORQ = 1).
 - Not decoded on the board: no #DFFD, no #EFF7, no #FF floating-bus port. `IN #FF` is a Kempston read (A0 = 1).
-- Mouse: BC #4 lists the Kempston mouse for model 7 ("standard" decode; the 1xxxxxxx variant answers on odd addresses).
-  Use the standard decode of the existing mouse support (Q15).
+- Mouse: BC #4 gives the Kempston mouse no machine list (its "standard" and "USSR" rows carry no model codes; the
+  "(1,7-9)" is the `#FE` row's): the mouse is an add-on card on the Kay too. Use the standard decode of the existing
+  mouse support (Q15).
 - Centronics: a printer is wired to AY port A (data) and B (status); the strobe / init / select lines come from the
   #1FFD / #7FFD bits. No printer is emulated first: AY port A writes go nowhere, port B reads `#FF`, BUSY reads 1.
 

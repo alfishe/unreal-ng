@@ -480,7 +480,7 @@ void PortDecoder::UpdateFeatureCache()
     }
     if (enabled && !_portTraceFeatureCache.load(std::memory_order_relaxed))
     {
-        _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
+        _activitySummaryResetPending.store(true, std::memory_order_relaxed);
     }
     else if (!enabled && _portTrace && _portTraceFeatureCache.load(std::memory_order_relaxed))
     {
@@ -501,6 +501,9 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     uint32_t frame = static_cast<uint32_t>(_state->frame_counter);
 
     // Frame-scoped counters update even without an active capture session
+    if (_activitySummaryResetPending.load(std::memory_order_relaxed) &&
+        _activitySummaryResetPending.exchange(false, std::memory_order_relaxed))
+        _activitySummary.reset(frame);
     _activitySummary.onEvent(frame, isOut, disp);
 
     if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())

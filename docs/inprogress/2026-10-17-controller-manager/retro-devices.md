@@ -104,7 +104,7 @@ An item without `=` continues the option before it, so `keys=` keeps its commas;
 | `timex-joystick` | up down left right fire | AY R14 through `#F6` with A8 (left) / A9 (right); active low b0 U, b1 D, b2 L, b3 R, fire b7 or b4 **[unc]** | `stick` (left / right) | new (no Timex machine yet) |
 | `kempston-mouse` | dx dy left right middle wheel | `#FADF` buttons (active low, b3 = 1, b7:4 wheel counter), `#FBDF` X, `#FFDF` Y | `button-order` (`right-first` / `left-first`, default per board), `wheel` | exists: `io/mouse/mouse.{h,cpp}`, `MouseManager`; button order per board new |
 | `evo-mouse`, `sprinter-serial-mouse` | dx dy left right middle wheel | Evo AVR registers; Sprinter SIO B Microsoft 3-byte | — | exist (`evoavrmouse.h:41`, `MsSerialMouse`) |
-| `amx-mouse` | dx dy left right middle | Z80 PIO `#1F/#3F/#5F/#7F`, IM2 interrupt per mickey, buttons `#DF` | — | new; needs a daisy-chained IM2 model |
+| `amx-mouse` | dx dy left right middle | Z80 PIO on A7 = 0 (`#1F` X, `#3F` Y data, `#5F` / `#7F` control), one IM2 interrupt per mickey (direction in bit 0: X 1 = left, Y 0 = up), buttons `IN #DF` D7 left, D6 middle, D5 right, active low | the card's `decode` (`a7` schematic, `full-low`) | built in C11: the slot card `amx-mouse` (`core/src/emulator/slots/cards/amx/amxmousecard.{h,cpp}`) on the Sinclair edge, a Z80 PIO model (`io/z80pio/z80pio.{h,cpp}`) on the CPU's IM2 daisy chain (`cpu/im2daisychain.{h,cpp}`, RETI = ED 4D ends the service); a mouse of the machine (`MouseManager`, device `amx`, kind `amx-pio`), input journaled as the mouse kinds; fixed connector `amx`; TTD type AmxMouse (68) |
 | `ay-mouse` | dx dy buttons | AY R14, axis by R14 b6 | — | new, low priority |
 | `light-gun` | trigger pointer.x pointer.y | per model: Gunstick (Kempston or Sinclair rows), Defender, Magnum (AY R14 or EAR), Stack (`#DF`), Trojan pen (`#FE` b6) | `model` | new; needs a beam-position query from the video timing |
 | `keyboard` | every ZX key; PC keys on PS/2 machines | the matrix, or the board's controller (EvoAvr, Atm2Kbc, ProfiXtKbc, NextExtendedInput) | `route` (existing `HostKeyboardRoute`) | exists: `io/keyboard/keyboard.{h,cpp}`, `pckey.h` |
@@ -273,6 +273,6 @@ The watch starts at the end of loading (media `NC_MEDIA_*` and tape stop) and ru
 9. `PortReadWatch` ([§6](#6-port-read-evidence)).
 10. `[CONTROLLERS]` INI section; legacy `[INPUT] Joystick=` / `JoystickKeys=` and Unreal Speccy `KJoystick=`,
     `FJoystick=`, `Fire=`, `FireRate=` read as defaults for unset connectors.
-11. Later: `amx-mouse` (with a daisy-chained IM2 model), `light-gun` (with a beam-position query), `ay-mouse`.
+11. Later: `amx-mouse` (built in C11 with the daisy-chained IM2 model), `light-gun` (with a beam-position query), `ay-mouse`.
 12. Automation surfaces over `ControllerControl` ([surfaces.md](surfaces.md)); fix the `joystick_input` description
     (E-4).

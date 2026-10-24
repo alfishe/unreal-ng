@@ -92,7 +92,9 @@ lists them all.
 instance with a new id (the selection and the Qt window follow it), the machine state is lost, the media follow into
 the slots with the same id on the new machine with their unsaved writes. A removed card's medium with unsaved writes
 (the NeoGS SD card `sd.ngs`) refuses the change until the request says what to do with them: `--media save` or
-`--media discard`. The reply names the new id (`restart.emulatorId`) and where the media went.
+`--media discard`. The reply names the new id (`restart.emulatorId`) and where the media went. The new machine
+has the run state of the old one: it runs when the old one ran, it is started and paused when the old one was paused
+(`restart.wasRunning`, `restart.wasPaused`, `restart.started`), so resume, typing and `run_frames` work on it at once.
 
 **Refused** without changing anything: when the machine cannot take the card (a fixed built-in uses its ports, the
 bus lacks a signal and no adapter connects it); when the new set would not create a machine (two cards in conflict).

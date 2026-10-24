@@ -96,8 +96,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getController, "/api/v1/emulator/{id}/controllers/{connector}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postControllerVerb, "/api/v1/emulator/{id}/controllers/{connector}/{verb}",
                   drogon::Post);
-    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics (GET);
-    // save, delete, apply, bind, unbind, scheme, rumble, output, light (POST)
+    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics,
+    // aliases (GET); save, delete, apply, bind, unbind, scheme, rumble, output, light, unalias (POST)
     ADD_METHOD_TO(EmulatorAPI::getHostControllers, "/api/v1/controllers/{verb}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postHostControllers, "/api/v1/controllers/{verb}", drogon::Post);
     // Host actions (core ActionRegistry; implementation: api/actions_api.cpp; control surfaces actions.md §6). GET

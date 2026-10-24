@@ -82,10 +82,19 @@ Answered 2026-10-17 (D13-D18 in [README.md](README.md#decisions-2026-10-17)); Q-
 Details and sources in [research-retro-hardware.md](research-retro-hardware.md).
 
 - Kempston mouse "D0 = left on every board": `2026-09-12-kempston-mouse/hardware-reference.md` §4,
-  `2026-10-03-zx-bus-slots/research-cards.md:781`.
+  `2026-10-03-zx-bus-slots/research-cards.md:781`. **Fixed 2026-10-23**: a per-board table (D0 = right on Kondratyev's
+  interface, the Next, Karabas-Pro, ZEsarUX, ZXMAK2, zxsp, ProfROM; D0 = left on the Evo AVR, Sprinter, Unreal Speccy,
+  Xpeccy, the WoS FAQ), also the kempston-mouse README row 5a.
 - BC#4 machine list misread for the Kempston mouse: `2026-09-12-kempston-mouse/hardware-reference.md` §2.1-2.2,
-  `2026-10-07-kay/design.md:53`.
-- Timex AY ports: `docs/ports/ports.md:252-258` (#F5 select, #F6 data; #F4 is not an AY port).
-- MCP `joystick_input` description lists ATM3 / Scorpion / TS-Conf only.
+  `2026-10-07-kay/design.md:53`. **Fixed 2026-10-23**: the mouse rows of `zx-ports-full-table.txt` carry no machine
+  list (`(*1)` is a source footnote); the mouse is an add-on card on every model.
+- Timex AY ports: `docs/ports/ports.md:252-258` (#F5 select, #F6 data; #F4 is not an AY port). **Fixed 2026-10-23**
+  (MAME `timex.cpp:529-531`).
+- MCP `joystick_input` description lists ATM3 / Scorpion / TS-Conf only. **Fixed 2026-10-23**: MCP, CLI help,
+  `ttd.ksy` (type 23), `command-interface.md` and `surfaces.md` list Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf,
+  Sprinter, Next.
 - ATM Turbo 2+ has no Kempston joystick or mouse on the board (manual feature table); check what our ATM2 decoder
-  answers.
+  answers. **Checked 2026-10-23, no fix needed**: `portdecoder_atm710.cpp` / `atm450` decode no `#1F` joystick
+  (`HasKempstonJoystick` false, no `kempston` connector; test `PortDecoder_ATM2Mouse_Test.NoKempstonJoystickOnTheBoard`);
+  the mouse answers only as the external ZX-bus Kempston card of `[INPUT] Mouse=KEMPSTON` (the shipped configs fit it,
+  `Mouse=NONE` removes it; test `ExternalKempstonCardOnBothBoards`).

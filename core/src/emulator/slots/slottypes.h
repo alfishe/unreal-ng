@@ -100,6 +100,11 @@ enum class Src : uint16_t
     FuseFuller,
     MameFuller,
     ZxspFullerBox,
+    VelesoftAmxSchematic,
+    SinclairWikiAmx,
+    LunterAmxNotes,
+    ZilogUm0081,
+    MameZ80Pio,
     // The SL-0 research of this design (facts collected from sources without a direct URL, e.g. SVN-only)
     RepoSlotsResearchMachines,
     RepoSlotsResearchCards,
