@@ -7,7 +7,7 @@
 | `generate.py --check` passes, hotspots inside the canvas and over their controls | Met. |
 | Qt vs rsvg mean below 2/255 | Met: 0.016-0.085. |
 | Galleries: dark / light, every control highlighted, hotspot map, overview | Met (scratch, see the measurements). |
-| Owner judges authenticity | Round 1: generic PlayStation rejected, redrawn; DS4 and 8BitDo added on request. Round 2 pending. |
+| Owner judges authenticity | Round 1: generic PlayStation rejected, redrawn; DS4 and 8BitDo added on request. Coordinator review: guessed DualShock / 8BitDo silhouettes replaced by outlines measured with `trace.py` on orthographic views, checked by 50 % overlays. Owner round 2 pending. |
 | Owner's taste: matte, ±5 % shading, sheen 0.05, no dirt, no logos | Met by construction (`style.py`); the dim highlight is the widget's colour, see the proposal. |
 
 Q-1 is answered for the bundled set: vector pictures drawn from per-device data work in the dialog as it is, render

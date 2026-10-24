@@ -17,18 +17,26 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "the pad from above",
-          "source": "https://www.8bitdo.com/images/2020/sn30-2.4g/01-l.jpg",
+          "what": "front view (SN30 2.4G): the outline, the control positions and sizes",
+          "source": "https://www.8bitdo.com/images/2020/sn30-2.4g/sn30-2.4g-black.png",
           "author": "8BitDo",
           "terms": "product photo",
-          "use": "reference only, not traced, not shipped",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
           "retrieved": "2026-10-23"
         },
         {
-          "what": "the SN body and colours (the SN30 Pro, same plate)",
-          "source": "https://commons.wikimedia.org/wiki/File:8BitDo_SN30_gamepad_HS_DSC_2704.jpg",
-          "author": "Hayden Schiff",
-          "licence": "CC BY 4.0",
+          "what": "the SNES pad the SN30 copies: the face buttons' dish",
+          "source": "https://commons.wikimedia.org/wiki/File:SNES-Controller-Flat.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the SF30 (the same body)",
+          "source": "https://commons.wikimedia.org/wiki/File:8BitDo_SF30_Bluetooth_Gamepad.jpg",
+          "author": "StroggPicker",
+          "licence": "CC BY-SA 4.0",
           "use": "reference only, not traced",
           "retrieved": "2026-10-23"
         }

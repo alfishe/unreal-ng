@@ -1,11 +1,14 @@
 """The DualShock 4 (PlayStation 4) and the generic PlayStation-like pad drawn on its shape.
 
-Sony's sizes: DualShock 4 about 162 x 98 x 52 mm, DualShock 3 about 157 x 95 x 55 mm. The plan is measured on a
-near-orthographic top-view photo of a DS4 scaled to 162 mm (4.81 px per mm; reference only, nothing traced): the two
-long grips going down from the wings, the D-pad as four separate keys in a cross on a round dish, the face buttons on a
-second dish, both sticks side by side low in the centre, the PS button between them, the touchpad between Share and
-Options, the light bar along the top edge. The generic pad keeps that silhouette (the look DS3 and DS4 share) with a
-plain centre and two small keys (the DS3 Select / Start) instead of the touchpad.
+Sony's sizes: DualShock 4 about 162 x 98 x 52 mm, DualShock 3 about 157 x 95 x 55 mm. The outline is measured with
+trace.py on an orthographic layout drawing of the DS4 (Tokyoship, CC BY 3.0; 162 x 100.6 mm when scaled to the width,
+the depth within 3 % of Sony's), the control positions and sizes read on the same drawing on a 5 mm grid and checked
+against a top-view photo: the wings curving down into the grips, which lean outwards and end in round tips narrower
+than their roots, the deep U between them starting under the sticks, the stick housings standing out of its top, the
+D-pad as four separate keys on a round dish, the face buttons on a second dish, the PS button between the sticks, the
+touchpad between Share and Options, the light bar along the top edge. The generic pad is the same outline at the
+DualShock 3's size (157 mm; the DS3 layout drawing on Commons is a three-quarter view, not a plan) with the DS3's
+plain centre and its two small keys instead of the touchpad.
 """
 
 import math
@@ -16,21 +19,33 @@ from model import Picture
 from svgkit import circle_d, mirrored_d, num, polygon_d, rounded_d, shade
 
 COMMONS = "https://commons.wikimedia.org/wiki/File:"
-TOP = -48.3
-SHELL = [("M", (0, TOP)),
-         ("C", (14, TOP), (26, TOP - 0.1), (32, TOP - 0.5)),
-         ("C", (40, TOP - 1.3), (46, TOP - 1.7), (52, TOP - 1.7)),
-         ("C", (62, TOP - 1.7), (71, -44), (72.4, -32)),
-         ("C", (73.6, -20), (77, 0), (78.6, 16)),
-         ("C", (79.6, 28), (80, 42), (76.4, 50)),
-         ("C", (73, 57), (62, 58.6), (54, 56)),
-         ("C", (46, 53.4), (42, 48), (40.4, 40)),
-         ("C", (39, 32), (36, 22), (32, 16)),
-         ("C", (29, 12.4), (25, 11.5), (20, 11.5)),
-         ("C", (12, 11.5), (6, 11.5), (0, 11.5))]
-DPAD, FACE = (-51.8, -27.4), (51.8, -27.4)
-DISH = 19.4
-STICKS = ((-26.6, -5.8), (26.6, -5.8))
+LAYOUT = COMMONS + "Dualshock_4_Layout.svg"
+# The right half of the outline, measured with trace.py on the orthographic layout drawing (scaled to 162 mm, the
+# left half mirrored, cubic Beziers within 0.3 mm; the shoulder buttons above the case top cut off at 4 mm)
+SHELL = [("M", (0, -45.5)),
+         ("C", (7.9, -45.5), (15.9, -45.7), (23.8, -45.5)),
+         ("C", (27.5, -45.4), (31.1, -44.9), (34.7, -45.1)),
+         ("C", (36.0, -45.1), (37.1, -45.9), (38.3, -46.0)),
+         ("C", (41.2, -46.3), (57.9, -46.5), (59.8, -45.6)),
+         ("C", (61.5, -44.8), (62.3, -42.9), (63.3, -41.4)),
+         ("C", (65.5, -38.1), (67.7, -34.7), (69.1, -31.0)),
+         ("C", (74.7, -16.5), (78.4, 6.6), (80.1, 22.3)),
+         ("C", (80.5, 26.0), (81.2, 30.0), (81.0, 33.8)),
+         ("C", (80.8, 36.0), (80.3, 38.2), (79.3, 40.2)),
+         ("C", (77.5, 43.9), (74.5, 47.1), (70.7, 48.8)),
+         ("C", (67.1, 50.5), (63.0, 51.0), (59.0, 50.2)),
+         ("C", (49.3, 48.2), (46.9, 40.6), (44.0, 32.3)),
+         ("C", (42.6, 28.4), (41.2, 24.5), (39.9, 20.6)),
+         ("C", (39.3, 18.8), (38.9, 16.4), (37.2, 15.4)),
+         ("C", (35.6, 14.5), (34.1, 16.2), (32.7, 16.9)),
+         ("C", (28.1, 19.0), (22.2, 19.0), (17.7, 16.5)),
+         ("C", (16.5, 15.9), (15.4, 14.6), (14.1, 14.3)),
+         ("C", (11.5, 13.5), (5.7, 14.2), (2.7, 14.2)),
+         ("C", (2.1, 14.2), (0.6, 14.2), (0, 14.2))]
+DPAD, FACE = (-50.2, -21.5), (50.2, -21.5)
+DISH = 18.75
+STICKS = ((-25.6, 0.5), (25.6, 0.5))
+GUIDE = (0, 1.3)
 SYMBOLS = (("north", "Triangle", "triangle"), ("east", "Circle", "circle"), ("south", "Cross", "cross"),
            ("west", "Square", "square"))
 # The DS4's printed symbol colours, muted (the owner's taste: restrained)
@@ -38,19 +53,20 @@ SYMBOL_INK = {"triangle": "#6aa596", "circle": "#c27474", "cross": "#8199c4", "s
 
 
 def shoulders(view, colors, names):
+    """L1 / R1 over the case top between x 39 and 59 mm (as the layout drawing), L2 / R2 just showing behind them"""
     l1, r1, l2, r2 = names
     for sx, trig, bump, side, tname, bname in ((-1, "lt", "lb", "left", l2, l1), (1, "rt", "rb", "right", r2, r1)):
         f = lambda x, y: f"{num(x * sx)},{num(y)}"  # noqa: E731
-        trigger = (f"M{f(40, TOP - 2.6)}C{f(44, TOP - 9)} {f(53, TOP - 10.6)} {f(58, TOP - 10.4)}"
-                   f"C{f(63, TOP - 10.2)} {f(67, TOP - 7.8)} {f(68.4, TOP - 3.2)}Z")
-        bumper = (f"M{f(35, TOP - 0.4)}C{f(41, TOP - 4.8)} {f(53, TOP - 5.8)} {f(60, TOP - 5.4)}"
-                  f"C{f(66, TOP - 5)} {f(70.4, TOP - 2.8)} {f(71.8, TOP + 1.8)}L{f(64, TOP + 3)}Z")
+        trigger = (f"M{f(41, -47.6)}C{f(42.6, -52.4)} {f(46.4, -53.6)} {f(49.8, -53.6)}"
+                   f"C{f(53.2, -53.6)} {f(56.8, -52.6)} {f(58.4, -47.6)}Z")
+        bumper = (f"M{f(37.6, -44.6)}C{f(39.4, -48.8)} {f(44.6, -49.9)} {f(49.6, -49.9)}"
+                  f"C{f(54.6, -49.9)} {f(59.4, -49)} {f(60.8, -45.8)}L{f(60.4, -43.6)}Z")
         style.shaped(view, trigger, colors["shoulder2"], trig, layer="shoulders")
         style.shaped(view, bumper, colors["shoulder"], bump, layer="shoulders")
-        x0, x1 = sorted((43 * sx, 67 * sx))
-        view.spot(trig, tname, ("rect", x0, TOP - 10.6, x1 - x0, 5.4), side, analog={"kind": "trigger", "fill": "down"})
-        x0, x1 = sorted((37 * sx, 71 * sx))
-        view.spot(bump, bname, ("rect", x0, TOP - 5.8, x1 - x0, 4.6), side)
+        x0, x1 = sorted((41.4 * sx, 58 * sx))
+        view.spot(trig, tname, ("rect", x0, -53.8, x1 - x0, 3.8), side, analog={"kind": "trigger", "fill": "down"})
+        x0, x1 = sorted((38.6 * sx, 60.6 * sx))
+        view.spot(bump, bname, ("rect", x0, -50.1, x1 - x0, 4.4), side)
 
 
 def dish(view, cx, cy, colors, ticks):
@@ -61,7 +77,7 @@ def dish(view, cx, cy, colors, ticks):
                      f'stroke-width="0.25"/>')
     if ticks:
         for direction, dx, dy in (("up", 0, -1), ("down", 0, 1), ("left", -1, 0), ("right", 1, 0)):
-            view.add("legends", f'<path d="{style.arrow_d(cx + dx * 16.4, cy + dy * 16.4, 1.3, direction)}" '
+            view.add("legends", f'<path d="{style.arrow_d(cx + dx * 15.9, cy + dy * 15.9, 1.3, direction)}" '
                                 f'fill="{colors["mark"]}" fill-opacity="0.7"/>')
 
 
@@ -95,9 +111,10 @@ def symbol(name, color):
     return draw
 
 
-def pad(pic, colors, inks, names, centre):
-    """The shared DS4-shaped pad; @p centre draws the part between the wings (touchpad or panel)"""
-    view = pic.view("front", oy=768 + 1.5 * 8.6)
+def pad(pic, colors, inks, names, centre, scale=8.6):
+    """The shared DS4-shaped pad; @p centre draws the part between the wings (touchpad or panel); @p scale in px
+    per mm of the drawing (a smaller one draws the same outline at a smaller pad's size)"""
+    view = pic.view("front", oy=768 + 1.25 * scale, scale=scale)
     shoulders(view, colors, names["shoulders"])
     body = mirrored_d(SHELL)
     style.body(view, body, colors["body"])
@@ -108,21 +125,21 @@ def pad(pic, colors, inks, names, centre):
     for direction in ("up", "right", "down", "left"):
         dpad_key(view, *DPAD, direction, colors)
     labels = {c: {"cap": colors["button"], "name": n, "draw": symbol(s, inks[s])} for c, n, s in SYMBOLS}
-    common.face_diamond(view, *FACE, 11.6, 5.1, labels)
+    common.face_diamond(view, *FACE, 11.9, 5.0, labels)
     for name, label, (cx, cy), side in (("lstick", "L3", STICKS[0], "left"), ("rstick", "R3", STICKS[1], "right")):
-        style.recess(view, cx, cy, 13.4, colors["body"], depth=0.62)
-        style.stick(view, cx, cy, 9.4, colors["stick"], f"{name}.x", skirt=11.6)
-        common.stick_spots(view, name, label, cx, cy, 9.8, 6.0, side)
+        style.recess(view, cx, cy, 14.4, colors["body"], depth=0.62)
+        style.stick(view, cx, cy, 9.6, colors["stick"], f"{name}.x", skirt=11.6)
+        common.stick_spots(view, name, label, cx, cy, 10.0, 6.0, side)
     # the PS button without its logo (D5)
-    common.neutral_guide(view, 0, -3.8, 3.4, colors["button"], colors["mark"], "guide")
-    view.spot("guide", names["guide"], ("circle", 0, -3.8, 3.8), "right")
+    common.neutral_guide(view, *GUIDE, 3.7, colors["button"], colors["mark"], "guide")
+    view.spot("guide", names["guide"], ("circle", *GUIDE, 4.1), "right")
     return view
 
 
 def system_pills(view, colors, names, y, x):
     for control, label, px in (("view", names["view"], -x), ("menu", names["menu"], x)):
-        style.pill(view, px, y, 3.4, 6.2, colors["small"], control)
-        view.spot(control, label, ("rect", px - 2.4, y - 3.8, 4.8, 7.6), "left" if px < 0 else "right")
+        style.pill(view, px, y, 4.6, 8.4, colors["small"], control)
+        view.spot(control, label, ("rect", px - 2.7, y - 4.6, 5.4, 9.2), "left" if px < 0 else "right")
 
 
 def dualshock4():
@@ -130,7 +147,11 @@ def dualshock4():
     pic.sources = [
         {"what": "size about 162 x 98 x 52 mm (W x D x H)", "source": "Sony DualShock 4 specifications as quoted by "
          "retail listings and dimensions.com (dualshock-4)", "retrieved": "2026-10-23"},
-        {"what": "top view: outline, control positions and sizes (measured at 4.81 px per mm, about 1 mm)",
+        {"what": "outline (trace.py: silhouette, left half mirrored, Beziers within 0.3 mm, scaled to 162 mm) and the "
+                 "control positions and sizes (read on a 5 mm grid)", "source": LAYOUT, "author": "Tokyoship",
+         "licence": "CC BY 3.0", "use": "measured geometry only; no pixels or paths of the drawing are shipped",
+         "retrieved": "2026-10-23"},
+        {"what": "top view: the check of the proportions and of the control positions",
          "source": COMMONS + "Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg",
          "author": "ITEagle Europe - Sebastiaan Broekhoven", "licence": "CC BY-SA 4.0",
          "use": "reference only, not traced", "retrieved": "2026-10-23"},
@@ -146,33 +167,33 @@ def dualshock4():
     names = {"shoulders": ("L1", "R1", "L2", "R2"), "guide": "PS", "view": "Share", "menu": "Options"}
 
     def centre(view):
-        pad_d = rounded_d(-28, TOP + 0.8, 56, 25.4, 3.2)
+        pad_d = rounded_d(-26.2, -44.9, 52.4, 28.8, 3.2)
         view.add("controls", f'<path d="{pad_d}" fill="{style.GAP}" fill-opacity="0.4" '
                              f'transform="translate(0 0.35)"/>', "touchpad.click")
         style.shaped(view, pad_d, colors["pad"], "touchpad.click", stroke=0.25)
-        view.spot("touchpad.click", "Touchpad", ("rect", -28, TOP + 0.8, 56, 25.4), "right")
+        view.spot("touchpad.click", "Touchpad", ("rect", -26.2, -44.9, 52.4, 28.8), "right")
         # the light bar along the top edge, seen just over the touchpad
-        style.line(view, f"M-21,{num(TOP + 0.35)}H21", "#7f93b8", 0.7, opacity=0.6, layer="highlights")
-        for row, y in enumerate((-16.6, -15.0, -13.4)):  # the speaker grille
+        style.line(view, "M-20,-45.15H20", "#7f93b8", 0.6, opacity=0.6, layer="highlights")
+        for row, y in enumerate((-10.2, -8.1, -6.0)):  # the speaker grille
             for i in range(5 - row):
-                x = (i - (4 - row) / 2) * 1.6
-                view.add("case", f'<path d="{circle_d(x, y, 0.42)}" fill="{shade(colors["body"], 0.5)}"/>')
-        system_pills(view, colors, names, TOP + 6.2, 33.4)
+                x = (i - (4 - row) / 2) * 2.85
+                view.add("case", f'<path d="{circle_d(x, y, 0.62)}" fill="{shade(colors["body"], 0.5)}"/>')
+        system_pills(view, colors, names, -37.4, 33.0)
 
-    view = pad(pic, colors, SYMBOL_INK, names, centre)
-    view.add("case", f'<path d="{rounded_d(-6.5, 5.0, 6.2, 1.4, 0.7)}" fill="{shade(colors["body"], 0.55)}"/>')
-    view.add("case", f'<path d="{circle_d(4.2, 5.7, 0.9)}" fill="{shade(colors["body"], 0.55)}"/>')
+    pad(pic, colors, SYMBOL_INK, names, centre)
     return pic
 
 
 def generic_like():
     pic = Picture("generic-playstation-like", "Generic pad (PlayStation-like layout)")
     pic.sources = [
-        {"what": "the silhouette and layout the DualShock 3 and 4 share: long grips, D-pad keys in a cross, the "
-                 "sticks side by side low in the centre; DS3 about 157 x 95 x 55 mm, DS4 about 162 x 98 x 52 mm",
-         "source": "the dualshock-4 set of this POC, measured on " + COMMONS
-         + "Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg (CC BY-SA 4.0)",
+        {"what": "the silhouette and layout the DualShock 3 and 4 share: the DS4's measured outline and positions "
+                 "drawn at the DS3's width (157 of 162 mm; DS3 about 157 x 95 x 55 mm)",
+         "source": "the dualshock-4 set of this POC, measured on " + LAYOUT + " (Tokyoship, CC BY 3.0)",
          "retrieved": "2026-10-23"},
+        {"what": "the DS3 front (three-quarter) layout: Select / Start between the dishes, the PS button between the "
+                 "sticks", "source": COMMONS + "Dualshock3_Layout.svg", "author": "Tokyoship", "licence": "CC BY 3.0",
+         "use": "reference only", "retrieved": "2026-10-23"},
         {"what": "the DualShock 3 layout (Select / Start between the dishes, no touchpad)", "source": COMMONS + "DualShock_3.jpg",
          "author": "Evan-Amos", "licence": "public domain", "use": "reference only, not traced",
          "retrieved": "2026-10-23"}]
@@ -183,9 +204,9 @@ def generic_like():
 
     def centre(view):
         # the DS3 arrangement: a plain centre, two small keys between the dishes (no touchpad, no wordmark)
-        for control, label, x in (("view", names["view"], -11), ("menu", names["menu"], 11)):
-            style.pill(view, x, -30, 6.6, 3.0, colors["small"], control)
-            view.spot(control, label, ("rect", x - 3.8, -31.8, 7.6, 3.6), "left" if x < 0 else "right")
+        for control, label, x in (("view", names["view"], -12.6), ("menu", names["menu"], 12.6)):
+            style.pill(view, x, -24, 6.8, 3.2, colors["small"], control)
+            view.spot(control, label, ("rect", x - 3.8, -26, 7.6, 4.0), "left" if x < 0 else "right")
 
-    pad(pic, colors, {s: ink for _, _, s in SYMBOLS}, names, centre)
+    pad(pic, colors, {s: ink for _, _, s in SYMBOLS}, names, centre, scale=8.6 * 157 / 162)
     return pic

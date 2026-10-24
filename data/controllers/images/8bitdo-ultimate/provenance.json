@@ -17,32 +17,26 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "layout and letters (mapping view), the back buttons",
+          "what": "front view in the dock: the control positions and sizes, the upper outline",
+          "source": "https://www.8bitdo.com/images/2022/ultimate-bluetooth-controller/ultimate-bluetooth-black.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "front view of the Ultimate 2C (the same shell): the outline",
+          "source": "https://www.8bitdo.com/images/2025/ultimate-2-bluetooth/ultimate-2c-bluetooth.jpg",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the letters and the back buttons (mapping view)",
           "source": "https://www.8bitdo.com/images/2022/ultimate-bluetooth-controller/mapping.png",
           "author": "8BitDo",
-          "terms": "product photo",
-          "use": "reference only, not traced, not shipped",
-          "retrieved": "2026-10-23"
-        },
-        {
-          "what": "the pad from above",
-          "source": "https://www.8bitdo.com/images/2022/ultimate-bluetooth-controller/01-l.jpg",
-          "author": "8BitDo",
-          "terms": "product photo",
-          "use": "reference only, not traced, not shipped",
-          "retrieved": "2026-10-23"
-        },
-        {
-          "what": "the shell of the family (Ultimate 2C, same body)",
-          "source": "https://commons.wikimedia.org/wiki/File:8BitDo_Ultimate_2C_gamepad_HS_DSC_2699.jpg",
-          "author": "Hayden Schiff",
-          "licence": "CC BY 4.0",
-          "use": "reference only, not traced",
-          "retrieved": "2026-10-23"
-        },
-        {
-          "what": "outline: the Xbox Series shell of this POC scaled to 147 x 104 mm (the Ultimate follows that shape); an estimate",
-          "source": "devices/xbox.py",
+          "use": "reference only",
           "retrieved": "2026-10-23"
         }
       ]

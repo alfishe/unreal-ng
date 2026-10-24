@@ -17,11 +17,11 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "layout and colourways (yellow, blue, pink)",
-          "source": "https://www.8bitdo.com/images/2019/zero2/01-l.jpg",
+          "what": "front view: the outline, the control positions and sizes, the colours",
+          "source": "https://www.8bitdo.com/images/2019/zero2/zero2-blue.png",
           "author": "8BitDo",
           "terms": "product photo",
-          "use": "reference only, not traced, not shipped",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
           "retrieved": "2026-10-23"
         },
         {

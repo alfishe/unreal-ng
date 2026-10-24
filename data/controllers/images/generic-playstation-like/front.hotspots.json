@@ -12,15 +12,15 @@
       "label": "L2",
       "shape": {
         "rect": [
-          448,
-          274,
-          206,
-          46
+          541,
+          330,
+          138,
+          32
         ]
       },
       "anchor": [
-        551,
-        298
+        610,
+        346
       ],
       "callout": "left",
       "analog": {
@@ -34,15 +34,15 @@
       "label": "L1",
       "shape": {
         "rect": [
-          413,
-          316,
-          292,
-          40
+          519,
+          361,
+          183,
+          37
         ]
       },
       "anchor": [
-        560,
-        335
+        611,
+        379
       ],
       "callout": "left",
       "order": 1
@@ -52,15 +52,15 @@
       "label": "R2",
       "shape": {
         "rect": [
-          1394,
-          274,
-          206,
-          46
+          1369,
+          330,
+          138,
+          32
         ]
       },
       "anchor": [
-        1497,
-        298
+        1438,
+        346
       ],
       "callout": "right",
       "analog": {
@@ -74,15 +74,15 @@
       "label": "R1",
       "shape": {
         "rect": [
-          1342,
-          316,
-          292,
-          40
+          1346,
+          361,
+          183,
+          37
         ]
       },
       "anchor": [
-        1488,
-        335
+        1437,
+        379
       ],
       "callout": "right",
       "order": 3
@@ -92,15 +92,15 @@
       "label": "Create",
       "shape": {
         "rect": [
-          897,
-          507,
-          65,
-          31
+          887,
+          562,
+          63,
+          33
         ]
       },
       "anchor": [
-        929,
-        523
+        919,
+        578
       ],
       "callout": "left",
       "order": 4
@@ -110,15 +110,15 @@
       "label": "Options",
       "shape": {
         "rect": [
-          1086,
-          507,
-          65,
-          31
+          1097,
+          562,
+          63,
+          33
         ]
       },
       "anchor": [
-        1119,
-        523
+        1129,
+        578
       ],
       "callout": "right",
       "order": 5
@@ -128,15 +128,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          539,
-          432,
-          79,
-          86
+          567,
+          489,
+          77,
+          83
         ]
       },
       "anchor": [
-        579,
-        475
+        606,
+        531
       ],
       "callout": "left",
       "group": "dpad",
@@ -147,15 +147,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          606,
-          506,
-          86,
-          79
+          632,
+          561,
+          83,
+          77
         ]
       },
       "anchor": [
-        649,
-        545
+        674,
+        599
       ],
       "callout": "left",
       "group": "dpad",
@@ -166,15 +166,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          539,
-          573,
-          79,
-          86
+          567,
+          626,
+          77,
+          83
         ]
       },
       "anchor": [
-        579,
-        616
+        606,
+        668
       ],
       "callout": "left",
       "group": "dpad",
@@ -185,15 +185,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          465,
-          506,
-          86,
-          79
+          496,
+          561,
+          83,
+          77
         ]
       },
       "anchor": [
-        508,
-        545
+        537,
+        599
       ],
       "callout": "left",
       "group": "dpad",
@@ -204,14 +204,14 @@
       "label": "Triangle",
       "shape": {
         "circle": [
-          1469,
-          446,
-          47
+          1442,
+          500,
+          45
         ]
       },
       "anchor": [
-        1469,
-        446
+        1442,
+        500
       ],
       "callout": "right",
       "order": 10
@@ -221,14 +221,14 @@
       "label": "Square",
       "shape": {
         "circle": [
-          1370,
-          545,
-          47
+          1343,
+          599,
+          45
         ]
       },
       "anchor": [
-        1370,
-        545
+        1343,
+        599
       ],
       "callout": "right",
       "order": 11
@@ -238,14 +238,14 @@
       "label": "Circle",
       "shape": {
         "circle": [
-          1569,
-          545,
-          47
+          1542,
+          599,
+          45
         ]
       },
       "anchor": [
-        1569,
-        545
+        1542,
+        599
       ],
       "callout": "right",
       "order": 12
@@ -255,14 +255,14 @@
       "label": "Cross",
       "shape": {
         "circle": [
-          1469,
-          645,
-          47
+          1442,
+          698,
+          45
         ]
       },
       "anchor": [
-        1469,
-        645
+        1442,
+        698
       ],
       "callout": "right",
       "order": 13
@@ -272,20 +272,20 @@
       "label": "L3",
       "shape": {
         "circle": [
-          795,
-          731,
-          84
+          811,
+          783,
+          83
         ]
       },
       "anchor": [
-        795,
-        731
+        811,
+        783
       ],
       "callout": "left",
       "analog": {
         "kind": "stick",
         "pair": "lstick.y",
-        "radius": 52
+        "radius": 50
       },
       "group": "lstick",
       "order": 14
@@ -295,14 +295,14 @@
       "label": "L3",
       "shape": {
         "circle": [
-          795,
-          731,
-          51
+          811,
+          783,
+          50
         ]
       },
       "anchor": [
-        795,
-        731
+        811,
+        783
       ],
       "callout": "left",
       "group": "lstick",
@@ -313,20 +313,20 @@
       "label": "R3",
       "shape": {
         "circle": [
-          1253,
-          731,
-          84
+          1237,
+          783,
+          83
         ]
       },
       "anchor": [
-        1253,
-        731
+        1237,
+        783
       ],
       "callout": "right",
       "analog": {
         "kind": "stick",
         "pair": "rstick.y",
-        "radius": 52
+        "radius": 50
       },
       "group": "rstick",
       "order": 16
@@ -336,14 +336,14 @@
       "label": "R3",
       "shape": {
         "circle": [
-          1253,
-          731,
-          51
+          1237,
+          783,
+          50
         ]
       },
       "anchor": [
-        1253,
-        731
+        1237,
+        783
       ],
       "callout": "right",
       "group": "rstick",
@@ -355,13 +355,13 @@
       "shape": {
         "circle": [
           1024,
-          748,
-          33
+          789,
+          34
         ]
       },
       "anchor": [
         1024,
-        748
+        789
       ],
       "callout": "right",
       "order": 18

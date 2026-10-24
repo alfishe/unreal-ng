@@ -45,7 +45,8 @@ first set.
   (the app loads them). `unreal-qt` code is not changed beyond what the pictures need; `ControllerPicture` and the
   hotspot format stay as they are.
 - Renders, galleries and diffs go to `scratch/2026-10-23-poc-033/` (git-ignored), not into the repository.
-- Photos and press images are references for proportions only; nothing is traced from or embedded.
+- Photos and press images are references; no pixels are embedded. Outlines are measured from orthographic drawings
+  and maker's front views with `trace.py` (the contour as Bezier numbers in the device module, nothing else kept).
 
 ## Acceptance criteria
 
@@ -69,6 +70,7 @@ first set.
 | `style.py` | the house style: body, wells, sticks, buttons, D-pads, bumpers, triggers, paddles |
 | `model.py` | the canvas, the scale (8.6 px per mm), views, layers, hotspots in mm converted to canvas px |
 | `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`) |
+| `trace.py` | measures an outline on a top view: silhouette, symmetry axis, left half mirrored, scaled to the measured width, cubic Beziers within a tolerance; `--shell` prints the right half for `mirrored_d`, `--grid` a 5 mm grid for reading the control positions, `--overlay` the fit |
 | `render.py` | Qt (PySide6 `QSvgRenderer`) and rsvg renders, the Qt-vs-rsvg numbers, the per-device sheets with every control highlighted as `ControllerPicture` paints it, the overview |
 | [`measurements-2026-10-23-render-check.md`](measurements-2026-10-23-render-check.md) | Qt vs rsvg, sizes, render cost |
 | [`analysis.md`](analysis.md) | what the numbers and the galleries show |
@@ -81,6 +83,9 @@ first set.
 Owner review 1 (2026-10-23): the generic PlayStation pad did not look like one; it is redrawn on the DualShock shape
 (measured on a DS4 top view), a dualshock-4 set is added, and the most popular 8BitDo pads got their own sets
 (Ultimate, Pro 2, SN30 Pro+, SN30 Pro / SF30 Pro, SN30 / SF30, M30, Zero 2). Each was checked side by side with its
-reference photo (`scratch/2026-10-23-poc-033/compare-<set>.png`). Details in [conclusions.md](conclusions.md).
+reference photo (`scratch/2026-10-23-poc-033/compare-<set>.png`). Coordinator review 2: the PlayStation and 8BitDo
+silhouettes were guessed and did not read; they are now measured with `trace.py` (DS4 on the Tokyoship DS4 layout
+drawing, the 8BitDo pads on 8BitDo's front views), and each compare sheet lays our render over the reference at 50 %.
+Details in [conclusions.md](conclusions.md).
 
 Run: `python3 generate.py [--check] [--only <set>]`, then `python3 render.py [<set> ...]` (PySide6, rsvg-convert).

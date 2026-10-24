@@ -32,14 +32,29 @@ usable reference of the Sinclair SJS-1 was found. The Kempston set shows Fire 2 
 real stick both buttons are wired in parallel.
 
 **Second round (owner review 1).** The generic PlayStation pad was a generic outline with PlayStation legends and did
-not read as a PlayStation pad. It now uses the DualShock silhouette measured on a DS4 top view (the wings narrow at
-the dishes, about ±72 mm, the grips widening to ±79 mm and ending round near (±60, 56) mm, the dishes r 19.5 mm), with
-the D-pad as four separate keys and both sticks low in the centre, and a plain centre with DS3-style Select / Start
-instead of the touchpad. The DS4 set adds the touchpad, Share / Options, the light bar and muted symbol colours.
+not read as a PlayStation pad. It now uses the DualShock shape with the D-pad as four separate keys and both sticks
+low in the centre, and a plain centre with DS3-style Select / Start instead of the touchpad. The DS4 set adds the
+touchpad, Share / Options, the light bar and muted symbol colours.
 
-The 8BitDo sets follow 8BitDo's own sizes. Their estimates: the Ultimate's outline is the Xbox shell of this POC
-scaled to 147 x 104 mm; the SN30 Pro+ has no 8BitDo page left and is drawn as the Pro 2 without its back buttons;
-SF30 Pro and SF30 are colourways of the SN30 Pro and SN30; the Zero 2 is drawn at twice the scale (73 mm wide, it
-would be a thumbnail at the pads' scale). The M30's six buttons sit on the canonical names as SDL_GameControllerDB maps
-them (Z and C on the bumpers, L / R on the triggers) and the 8BitDo back buttons on paddle.p3 (left) / paddle.p1
+**Third round (coordinator review).** Drawn by eye, the DualShock and 8BitDo bodies were slabs with near-vertical sides
+and square grips, and the SN30 an oval with bumps. All their outlines are now measured with `trace.py`: the silhouette
+of an orthographic view, the left half mirrored about the best symmetry axis (mirror overlap 0.999-1.000), scaled to the
+maker's width, fitted with cubic Beziers within 0.25-0.3 mm. The DS4 comes from the Tokyoship DS4 layout drawing (CC BY
+3.0, 162 mm wide gives 100.6 mm deep): the grips taper outward to round tips at (±70, 49) mm, the U between them starts
+just under the sticks (y 14 mm), the top dips between the shoulders and the dishes sit on bulges of the outline. The
+DS3 drawing of the same author is a 3/4 view and unusable, so the generic PlayStation pad uses the DS4 outline at DS3
+width (157 mm). The 8BitDo outlines come from 8BitDo's colourway front views (cut out on a transparent ground); scaled
+to the maker's width, every traced depth lands within 1 % of the maker's figure (Pro 2 100.6, SN30 Pro 63.4, M30
+74.8, SN30 64.2, Zero 2 36.4 mm), which shows the views are true plans. The SN30 / SF30 is now the SNES dog-bone with a
+flat top and round ends; the Ultimate is no longer the Xbox shell but the Ultimate 2C's front view (its own view stands
+in the dock; where both show, the two outlines agree within 0.5 mm). The control positions are read on the same views
+on a 5 mm grid; read so, the Ultimate's Star key is the middle one of the -, Star, + row (now on `share`) and the
+pill under it the profile key, where the guessed drawing had a single Star on `profile`. The overlays (`compare-<set>.png`, ours at 50 % with our edge red over the reference silhouette in
+blue) match within a line width round the whole case.
+
+The 8BitDo estimates left: the SN30 Pro+ has no 8BitDo page left and is drawn on the Pro 2's shell without its back
+buttons; the Pro 2's lighter face plate is the SN30 Pro outline scaled to the plate's size; SF30 Pro and SF30 are
+colourways of the SN30 Pro and SN30; the Zero 2 is drawn at twice the scale (73 mm wide, it would be a thumbnail at
+the pads' scale). The M30's six buttons sit on the canonical names as SDL_GameControllerDB maps them (Z and C on the
+bumpers, L / R on the triggers) and the 8BitDo back buttons on paddle.p3 (left) / paddle.p1
 (right); core has no 8BitDo-specific mapping yet, so both are assumptions to check on a real pad.

@@ -12,15 +12,15 @@
       "label": "LT",
       "shape": {
         "rect": [
-          474,
-          220,
-          264,
-          48
+          568,
+          227,
+          188,
+          31
         ]
       },
       "anchor": [
-        606,
-        244
+        662,
+        243
       ],
       "callout": "left",
       "analog": {
@@ -34,15 +34,15 @@
       "label": "LB",
       "shape": {
         "rect": [
-          452,
-          254,
-          357,
-          41
+          560,
+          247,
+          245,
+          28
         ]
       },
       "anchor": [
-        631,
-        275
+        682,
+        261
       ],
       "callout": "left",
       "order": 1
@@ -52,15 +52,15 @@
       "label": "RT",
       "shape": {
         "rect": [
-          1310,
-          220,
-          264,
-          48
+          1291,
+          227,
+          188,
+          31
         ]
       },
       "anchor": [
-        1442,
-        244
+        1386,
+        243
       ],
       "callout": "right",
       "analog": {
@@ -74,15 +74,15 @@
       "label": "RB",
       "shape": {
         "rect": [
-          1239,
-          254,
-          357,
-          41
+          1243,
+          247,
+          245,
+          28
         ]
       },
       "anchor": [
-        1417,
-        275
+        1366,
+        261
       ],
       "callout": "right",
       "order": 3
@@ -92,14 +92,14 @@
       "label": "LS",
       "shape": {
         "circle": [
-          680,
-          515,
-          79
+          621,
+          470,
+          77
         ]
       },
       "anchor": [
-        680,
-        515
+        621,
+        470
       ],
       "callout": "left",
       "analog": {
@@ -115,14 +115,14 @@
       "label": "LS",
       "shape": {
         "circle": [
-          680,
-          515,
-          47
+          621,
+          470,
+          46
         ]
       },
       "anchor": [
-        680,
-        515
+        621,
+        470
       ],
       "callout": "left",
       "group": "lstick",
@@ -133,14 +133,14 @@
       "label": "RS",
       "shape": {
         "circle": [
-          1201,
-          730,
-          79
+          1191,
+          667,
+          77
         ]
       },
       "anchor": [
-        1201,
-        730
+        1191,
+        667
       ],
       "callout": "right",
       "analog": {
@@ -156,14 +156,14 @@
       "label": "RS",
       "shape": {
         "circle": [
-          1201,
-          730,
-          47
+          1191,
+          667,
+          46
         ]
       },
       "anchor": [
-        1201,
-        730
+        1191,
+        667
       ],
       "callout": "right",
       "group": "rstick",
@@ -174,15 +174,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          813,
-          631,
-          67,
-          65
+          794,
+          577,
+          69,
+          64
         ]
       },
       "anchor": [
-        847,
-        664
+        829,
+        609
       ],
       "callout": "left",
       "group": "dpad",
@@ -193,15 +193,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          813,
-          764,
-          67,
-          65
+          794,
+          710,
+          69,
+          64
         ]
       },
       "anchor": [
-        847,
-        796
+        829,
+        743
       ],
       "callout": "left",
       "group": "dpad",
@@ -212,15 +212,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          748,
-          697,
-          65,
-          67
+          730,
+          642,
+          64,
+          69
         ]
       },
       "anchor": [
-        781,
-        730
+        762,
+        676
       ],
       "callout": "left",
       "group": "dpad",
@@ -231,15 +231,15 @@
       "label": "D-pad",
       "shape": {
         "rect": [
-          880,
-          697,
-          65,
-          67
+          863,
+          642,
+          64,
+          69
         ]
       },
       "anchor": [
-        913,
-        730
+        895,
+        676
       ],
       "callout": "left",
       "group": "dpad",
@@ -250,14 +250,14 @@
       "label": "X",
       "shape": {
         "circle": [
-          1365,
-          431,
+          1397,
+          393,
           46
         ]
       },
       "anchor": [
-        1365,
-        431
+        1397,
+        393
       ],
       "callout": "right",
       "order": 12
@@ -267,14 +267,14 @@
       "label": "Y",
       "shape": {
         "circle": [
-          1282,
-          513,
+          1311,
+          479,
           46
         ]
       },
       "anchor": [
-        1282,
-        513
+        1311,
+        479
       ],
       "callout": "right",
       "order": 13
@@ -284,14 +284,14 @@
       "label": "A",
       "shape": {
         "circle": [
-          1447,
-          513,
+          1483,
+          479,
           46
         ]
       },
       "anchor": [
-        1447,
-        513
+        1483,
+        479
       ],
       "callout": "right",
       "order": 14
@@ -301,14 +301,14 @@
       "label": "B",
       "shape": {
         "circle": [
-          1365,
-          596,
+          1397,
+          565,
           46
         ]
       },
       "anchor": [
-        1365,
-        596
+        1397,
+        565
       ],
       "callout": "right",
       "order": 15
@@ -319,13 +319,13 @@
       "shape": {
         "circle": [
           1024,
-          386,
-          41
+          377,
+          40
         ]
       },
       "anchor": [
         1024,
-        386
+        377
       ],
       "callout": "right",
       "order": 16
@@ -334,54 +334,70 @@
       "control": "view",
       "label": "-",
       "shape": {
-        "rect": [
-          908,
-          470,
-          36,
-          36
+        "circle": [
+          925,
+          479,
+          29
         ]
       },
       "anchor": [
-        926,
-        488
+        925,
+        479
       ],
       "callout": "left",
       "order": 17
     },
     {
-      "control": "menu",
-      "label": "+",
+      "control": "share",
+      "label": "Star",
       "shape": {
-        "rect": [
-          1104,
-          470,
-          36,
-          36
+        "circle": [
+          1024,
+          479,
+          31
         ]
       },
       "anchor": [
-        1122,
-        488
+        1024,
+        479
       ],
       "callout": "right",
       "order": 18
     },
     {
-      "control": "profile",
-      "label": "Star",
+      "control": "menu",
+      "label": "+",
       "shape": {
         "circle": [
-          1024,
-          584,
-          26
+          1123,
+          479,
+          29
+        ]
+      },
+      "anchor": [
+        1123,
+        479
+      ],
+      "callout": "right",
+      "order": 19
+    },
+    {
+      "control": "profile",
+      "label": "Profile",
+      "shape": {
+        "rect": [
+          995,
+          567,
+          58,
+          33
         ]
       },
       "anchor": [
         1024,
-        584
+        583
       ],
       "callout": "right",
-      "order": 19
+      "order": 20
     },
     {
       "control": "paddle.p3",
@@ -399,7 +415,7 @@
         1267
       ],
       "callout": "left",
-      "order": 20
+      "order": 21
     },
     {
       "control": "paddle.p1",
@@ -417,7 +433,7 @@
         1267
       ],
       "callout": "right",
-      "order": 21
+      "order": 22
     }
   ]
 }

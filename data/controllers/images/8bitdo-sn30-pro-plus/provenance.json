@@ -11,8 +11,16 @@
       "retouch": "none; platform logos left out (D5)",
       "references": [
         {
-          "what": "size about 152 x 100 x 63 mm: the shape of the Pro 2 (its successor), without the back buttons; an estimate (no 8BitDo page left)",
+          "what": "size about 153 x 100 x 64 mm: the shell of the Pro 2 (its successor, the same body with back buttons added); the Pro 2's measured outline and layout",
           "source": "https://www.8bitdo.com/pro2/",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the Pro 2 front view the outline is measured on",
+          "source": "https://www.8bitdo.com/images/2021/pro2/pro2_gray.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
           "retrieved": "2026-10-23"
         },
         {

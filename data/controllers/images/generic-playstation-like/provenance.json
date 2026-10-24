@@ -11,8 +11,16 @@
       "retouch": "none; platform logos left out (D5)",
       "references": [
         {
-          "what": "the silhouette and layout the DualShock 3 and 4 share: long grips, D-pad keys in a cross, the sticks side by side low in the centre; DS3 about 157 x 95 x 55 mm, DS4 about 162 x 98 x 52 mm",
-          "source": "the dualshock-4 set of this POC, measured on https://commons.wikimedia.org/wiki/File:Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg (CC BY-SA 4.0)",
+          "what": "the silhouette and layout the DualShock 3 and 4 share: the DS4's measured outline and positions drawn at the DS3's width (157 of 162 mm; DS3 about 157 x 95 x 55 mm)",
+          "source": "the dualshock-4 set of this POC, measured on https://commons.wikimedia.org/wiki/File:Dualshock_4_Layout.svg (Tokyoship, CC BY 3.0)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the DS3 front (three-quarter) layout: Select / Start between the dishes, the PS button between the sticks",
+          "source": "https://commons.wikimedia.org/wiki/File:Dualshock3_Layout.svg",
+          "author": "Tokyoship",
+          "licence": "CC BY 3.0",
+          "use": "reference only",
           "retrieved": "2026-10-23"
         },
         {

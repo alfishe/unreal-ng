@@ -5,9 +5,11 @@ from svgkit import circle_d, num, rounded_d
 
 
 def face_diamond(view, cx, cy, offset, r, labels, sides="right"):
-    """Four face buttons: @p labels maps north/south/west/east to (legend, colour, glyph drawer or None)"""
+    """Four face buttons: @p labels maps north/south/west/east to (legend, colour, glyph drawer or None); @p offset
+    the distance from the centre, or (across, up-down) where the diamond is wider than tall"""
+    ox, oy = offset if isinstance(offset, tuple) else (offset, offset)
     for control, dx, dy in (("north", 0, -1), ("west", -1, 0), ("east", 1, 0), ("south", 0, 1)):
-        x, y = cx + dx * offset, cy + dy * offset
+        x, y = cx + dx * ox, cy + dy * oy
         spec = labels[control]
         style.button(view, x, y, r, spec["cap"], control)
         if spec.get("draw"):

@@ -16,7 +16,15 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "top view: outline, control positions and sizes (measured at 4.81 px per mm, about 1 mm)",
+          "what": "outline (trace.py: silhouette, left half mirrored, Beziers within 0.3 mm, scaled to 162 mm) and the control positions and sizes (read on a 5 mm grid)",
+          "source": "https://commons.wikimedia.org/wiki/File:Dualshock_4_Layout.svg",
+          "author": "Tokyoship",
+          "licence": "CC BY 3.0",
+          "use": "measured geometry only; no pixels or paths of the drawing are shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "top view: the check of the proportions and of the control positions",
           "source": "https://commons.wikimedia.org/wiki/File:Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg",
           "author": "ITEagle Europe - Sebastiaan Broekhoven",
           "licence": "CC BY-SA 4.0",
