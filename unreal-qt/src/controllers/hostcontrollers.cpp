@@ -121,6 +121,10 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             out.params = QString::fromStdString(event.params.Dump());
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
+    // The user's device families (the learn wizard's and the imported maps) before the devices arrive
+    std::string devicesError;
+    if (!_service->LoadUserDevices(QDir::cleanPath(UserProfileDir() + "/../devices.user.json").toStdString(), devicesError))
+        qWarning("controllers: %s", devicesError.c_str());
     _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);

@@ -104,6 +104,8 @@ public:
     void SetRole(const HostDeviceId& device, DeviceRole role);
     DeviceRole Role(const HostDeviceId& device) const;
     void SetInstanceMode(const HostDeviceId& device, InstanceMode mode, const std::string& pinned = {});
+    /// The device's instance mode, and in @p pinned the instance a pinned one drives
+    InstanceMode GetInstanceMode(const HostDeviceId& device, std::string* pinned = nullptr) const;
     /// The connector a device's `auto:` targets drive (the player's connector); empty = none
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
     /// The device's default role (its family's: the device database's `role`), what Role answers until SetRole sets
@@ -156,8 +158,18 @@ public:
     void SetActionSink(ActionSink sink);
     /// The host clock (tests set their own); an event with hostTimeNs 0 takes its time
     void SetClock(Clock clock);
-    /// Close the chord windows that ran out: Sample does it each frame, a paused machine needs a host timer
+    /// Close the chord windows that ran out and run the held actions' repeats that are due: Sample does it each
+    /// frame; a paused machine needs a host timer (HostInputService runs one on the wake sink and NextDeadline)
     void Poll();
+    /// The host time (ns, the router's clock) Poll has something to do at: a chord window's end, a repeat;
+    /// UINT64_MAX when nothing waits
+    uint64_t NextDeadline() const;
+    /// The router's clock (ns)
+    uint64_t NowNs() const;
+    /// Called (outside the lock, on the event's thread) when an event left something for Poll to do later
+    void SetWakeSink(std::function<void()> wake);
+    /// A frame of host time: an action's `repeat` counts in these
+    static constexpr uint64_t kRepeatFrameNs = 20'000'000;
 
     /// endregion </Actions and time>
 
@@ -221,6 +233,8 @@ private:
         bool chordOn = false;
         bool layerOn = false;    ///< a layer key's last state
         float level = 0;         ///< a `curve: scrub` action's last level
+        bool repeating = false;  ///< a held action with `repeat`: it runs again at repeatAt
+        uint64_t repeatAt = 0;   ///< host ns
     };
     /// What the router does to one value of a device besides reading it
     struct Gate
@@ -308,6 +322,7 @@ private:
                     std::vector<ActionEvent>& actions);
     bool UpdateLayersLocked(Device& device, const CompiledSet& set, const ValueOf& raw);
     void ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions);
+    uint64_t NextDeadlineLocked() const;
     void ResetLocked();
     bool DrivesLocked(const HostDeviceId& device, const std::string& instance) const;
     static uint16_t Output(const CompiledBinding& compiled, const BindingState& state, Phase& phase, uint64_t frame);
@@ -327,6 +342,7 @@ private:
     bool _debugFocus = false;
     Clock _clock;
     ActionSink _actions;
+    std::function<void()> _wake;
 };
 
 }  // namespace controllers

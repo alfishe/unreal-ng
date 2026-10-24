@@ -15,7 +15,7 @@ namespace
 constexpr int kSchema = 1;
 
 const char* const kTargetFields[] = {"retro", "key", "keys", "macro", "mouse", "scale", "action", "layer", "mode", "none"};
-/// Known and kept, not acted on yet (TODO.md C2c): `invert`, `repeat`
+/// Known and kept, not acted on yet (TODO.md C2c): `invert`
 const char* const kOptionFields[] = {"turbo",        "on",           "off",   "count",    "press",
                                      "frames",       "label",        "consume", "ways",   "deadzone",
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
@@ -215,7 +215,27 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         options.level = true;
         return true;
     }
-    return true;  // invert, repeat: known, not acted on yet
+    if (field == "repeat")
+    {
+        // {delay, rate} in frames (mapping-and-profiles.md §1.3); `repeat: none` / false: no repeat
+        if ((value.IsString() && value.AsString() == "none") || (value.IsBool() && !value.AsBool()))
+        {
+            options.repeatDelay = options.repeatRate = 0;
+            return true;
+        }
+        const JsonValue* delay = value.IsObject() ? value.Find("delay") : nullptr;
+        const JsonValue* rate = value.IsObject() ? value.Find("rate") : nullptr;
+        if (delay == nullptr || rate == nullptr || value.GetMembers().size() != 2 ||
+            !Unsigned(*delay, options.repeatDelay, "repeat.delay", error) ||
+            !Unsigned(*rate, options.repeatRate, "repeat.rate", error) || options.repeatDelay < 1 ||
+            options.repeatDelay > 500 || options.repeatRate < 1 || options.repeatRate > 500)
+        {
+            error = "'repeat' is {delay, rate}: frames (1..500) before the first repeat and between repeats";
+            return false;
+        }
+        return true;
+    }
+    return true;  // invert: known, not acted on yet
 }
 
 bool StringField(const JsonValue& spec, const char* field, std::string& out, std::string& error)

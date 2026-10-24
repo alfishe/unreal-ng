@@ -398,6 +398,20 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
         classes[PortReadClassName(static_cast<PortReadClass>(index))] = entry;
     }
     watch["classes"] = classes;
+    // row-bits.<half-row>: the bits the code tested after its reads (the sampled AND n / BIT b / shift into carry)
+    StateNode rowBits = StateNode::Object();
+    for (unsigned row = 0; row < evidence.rowBits.size(); ++row)
+    {
+        const auto cls = static_cast<PortReadClass>(static_cast<unsigned>(PortReadClass::Row0) + row);
+        if (evidence.RowBits(cls) == 0)
+            continue;
+        StateNode bits = StateNode::Array();
+        for (unsigned bit = 0; bit < 8; ++bit)
+            if ((evidence.RowBits(cls) >> bit) & 1u)
+                bits.push(static_cast<uint64_t>(bit));
+        rowBits[PortReadClassName(cls)] = bits;
+    }
+    watch["row_bits"] = rowBits;
     reply.body["evidence"] = watch;
 #ifdef ENABLE_CONTROLLERS
     // The library's heuristic (mapping-and-profiles.md §6.1 step 2): what the Qt host would plug
@@ -409,6 +423,8 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
     value["connector"] = decision.connector.empty() ? StateNode() : StateNode(decision.connector);
     value["label"] = decision.label;
     value["reason"] = decision.reason;
+    if (!decision.hint.empty())
+        value["hint"] = decision.hint;
     reply.body["decision"] = value;
 #endif
     return reply;

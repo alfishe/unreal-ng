@@ -294,6 +294,28 @@ bool ValidateBinding(const Binding& binding, std::string& error)
         return false;
     }
     const BindingOptions& options = binding.options;
+    if (options.repeatDelay != 0 || options.repeatRate != 0)
+    {
+        // A repeat is a held target pressed again: a key, a retro control, a button's action
+        const bool sampled = target.kind == TargetKind::Keys || target.kind == TargetKind::Retro;
+        if (!sampled && (target.kind != TargetKind::Action || options.level || encoders != 0))
+        {
+            error = "'repeat' takes a key, retro or action target held by a button";
+            return false;
+        }
+        if (options.turbo != Turbo::Off || options.press != PressMode::Hold)
+        {
+            error = "'repeat' is for a held target: not with turbo or press: tap";
+            return false;
+        }
+        if (options.repeatDelay < 1 || options.repeatRate < (sampled ? 2u : 1u))
+        {
+            error = sampled ? "'repeat' of a key or retro control: delay of 1 frame or more, rate of 2 or more (one "
+                              "frame released, the rest pressed)"
+                            : "'repeat' of an action: delay and rate of 1 frame or more";
+            return false;
+        }
+    }
     const bool pulses = options.turbo != Turbo::Off && options.turbo != Turbo::Hold;
     if (pulses && (options.on < 1 || options.off < 1 || options.on > kMaxFrames || options.off > kMaxFrames))
     {

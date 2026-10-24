@@ -11,6 +11,7 @@
 
 #include <json/json.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -33,7 +34,9 @@ TEST(McpControllers_Test, ActionsAndOptionsMatchControllerControl)
         verbs.push_back(verb);
         EXPECT_EQ(options, controllers::HostInputControl::OptionsFor(verb)) << "options of " << verb;
     }
-    EXPECT_EQ(verbs, controllers::HostInputControl::Verbs()) << "the host verbs, in the same order";
+    std::vector<std::string> host = controllers::HostInputControl::Verbs();
+    host.erase(std::remove(host.begin(), host.end(), "learn"), host.end());  // a person presses the controls
+    EXPECT_EQ(verbs, host) << "the host verbs but learn, in the same order";
 #endif
 }
 
@@ -246,4 +249,100 @@ TEST(McpControllers_Test, DevicesTextCarriesBatteryLightAndNotice)
     EXPECT_EQ(caller->calls.back().method, "POST");
     EXPECT_EQ(caller->calls.back().body["color"].asString(), "#ff0000");
     EXPECT_EQ(caller->calls.back().body["device"].asString(), "bt:054c:0ce6:1");
+}
+
+/// C10: role, pin, identify, database_import are POSTs with a body; probe and database GETs with the query; the text
+/// carries what the reply says (an agent may see only the text)
+TEST(McpControllers_Test, HostDeviceVerbsProbeAndDatabase)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value done;
+    done["ok"] = true;
+    done["message"] = "Pad 1 is a debugger-remote (its debug bindings only, no connector)";
+    caller->routes["POST /api/v1/controllers/role"] = {200, done};
+    Json::Value role;
+    role["action"] = "role";
+    role["device"] = "fake:1";
+    role["role"] = "debugger-remote";
+    mcp::ToolResult result = RunControllersTool(*registry, role, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, done["message"].asString());
+    EXPECT_EQ(caller->calls.back().body["role"].asString(), "debugger-remote");
+
+    Json::Value pin;
+    pin["action"] = "pin";
+    pin["device"] = "fake:1";
+    pin["pin"] = "pinned:emu-2";
+    RunControllersTool(*registry, pin, *caller);
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_EQ(caller->calls.back().path, "/api/v1/controllers/pin");
+    EXPECT_EQ(caller->calls.back().body["pin"].asString(), "pinned:emu-2");
+
+    Json::Value probed;
+    probed["ok"] = true;
+    Json::Value backend;
+    backend["name"] = "iohid";
+    backend["running"] = true;
+    backend["devices"] = 1;
+    Json::Value found;
+    found["id"] = "usb:2dc8:6001:0100:x";
+    found["name"] = "SN30 Pro";
+    found["family"] = "8bitdo-sn30-pro";
+    found["match"]["step"] = "vid-pid";
+    found["match"]["score"] = 80;
+    backend["found"].append(found);
+    probed["backends"].append(backend);
+    Json::Value missing;
+    missing["name"] = "gameinput";
+    missing["running"] = false;
+    missing["reason"] = "no GameInput runtime";
+    missing["devices"] = 0;
+    probed["backends"].append(missing);
+    probed["user_devices"] = "/u/devices.user.json";
+    caller->routes["GET /api/v1/controllers/probe"] = {200, probed};
+    Json::Value probe;
+    probe["action"] = "probe";
+    result = RunControllersTool(*registry, probe, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("iohid: running, 1 device(s)\n  usb:2dc8:6001:0100:x: SN30 Pro (8bitdo-sn30-pro, "
+                               "database vid-pid 80)"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("gameinput: not running: no GameInput runtime"), std::string::npos) << result.text;
+
+    Json::Value looked;
+    looked["ok"] = true;
+    looked["message"] = "045e:0b00 is Xbox Elite Wireless Controller Series 2 (xbox-elite-2, vid-pid, score 80)";
+    looked["match"]["layout"] = "xbox";
+    looked["match"]["role"] = "player";
+    caller->routes["GET /api/v1/controllers/database?vidpid=045e%3A0b00"] = {200, looked};
+    Json::Value database;
+    database["action"] = "database";
+    database["vidpid"] = "045e:0b00";
+    result = RunControllersTool(*registry, database, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.back().method, "GET");
+    EXPECT_NE(result.text.find("is Xbox Elite"), std::string::npos) << result.text;
+
+    Json::Value imported;
+    imported["ok"] = true;
+    imported["message"] = "gamecontrollerdb: 2 controls of Pad, saved as user-12345678";
+    imported["map"]["south"] = "button.0";
+    imported["gamecontrollerdb"] = "03000000341200007856000000010000,Pad,a:b0,";
+    caller->routes["POST /api/v1/controllers/database_import"] = {200, imported};
+    Json::Value import;
+    import["action"] = "database_import";
+    import["text"] = "03000000341200007856000000010000,Pad,a:b0,b:b1,platform:Mac OS X,";
+    result = RunControllersTool(*registry, import, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("saved as user-12345678\nmap {\"south\":\"button.0\"}"), std::string::npos)
+        << result.text;
+    EXPECT_EQ(caller->calls.back().body["text"].asString(), import["text"].asString());
+
+    Json::Value learn;
+    learn["action"] = "learn";
+    learn["device"] = "fake:1";
+    EXPECT_TRUE(RunControllersTool(*registry, learn, *caller).isError) << "no learn on MCP";
 }

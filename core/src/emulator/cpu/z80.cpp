@@ -1631,7 +1631,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     if (_inResultHooks) [[unlikely]]
     {
         if (portReadWatch)
-            portReadWatch->OnRead(port);
+            portReadWatch->OnRead(port, pc);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)

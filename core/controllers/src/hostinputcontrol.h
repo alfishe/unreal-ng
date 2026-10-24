@@ -13,7 +13,10 @@
 /// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
-/// light colour: a DualSense / DualShock 4 light bar).
+/// light colour: a DualSense / DualShock 4 light bar), role (player, debugger-remote, disabled), pin (follow-focus,
+/// pinned:<instance>, all), identify (rumble and blink), probe (the backends), database (look up a VID / PID or an SDL
+/// GUID), database_import (a gamecontrollerdb line or a RetroArch autoconfig file into devices.user.json), learn (the
+/// learn wizard for an unknown device as data: start, status, sample, skip, back, finish, cancel).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -26,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "devicedatabase.h"
 #include "profiles/json.h"
 #include "profiles/profilestore.h"
 
@@ -123,6 +127,25 @@ private:
     HostReply Output(const HostRequest& request);
     /// A pad's light colour (architecture.md §10)
     HostReply Light(const HostRequest& request);
+    /// The device's role (player, debugger-remote, disabled) and instance pin (follow-focus, pinned:<id>, all)
+    HostReply Role(const HostRequest& request);
+    HostReply Pin(const HostRequest& request);
+    /// Rumble 300 ms and blink the light where the device has them (ui-ux.md §3.7)
+    HostReply Identify(const HostRequest& request);
+    /// The backends: running or why not, the devices each found with their database step and notice
+    HostReply Probe();
+    /// The device database (device-database.md §3): a lookup by VID / PID, SDL GUID or a connected device; an
+    /// import of a gamecontrollerdb line or a RetroArch autoconfig file into devices.user.json
+    HostReply Database(const HostRequest& request);
+    HostReply DatabaseImport(const HostRequest& request);
+    /// The learn wizard as data (ui-ux.md §3.5): start, status, sample, skip, back, finish (saves), cancel
+    HostReply Learn(const HostRequest& request);
+    /// `<user config>/unreal-ng/controllers/devices.user.json` (the service's, else next to the profiles)
+    std::string UserDevicesPath() const;
+    /// Merge a user family with @p map into devices.user.json and reload it; @p reply gains family and path
+    HostReply SaveUserFamily(const DeviceIdentity& identity, const std::string& name,
+                             const std::map<std::string, std::string>& map, const std::string& source,
+                             HostReply& reply);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

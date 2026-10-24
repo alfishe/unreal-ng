@@ -268,6 +268,13 @@ detection against a baseline (axis moved more than 0.4, or a button edge), as ZX
 `data/controllers/devices.json`). The wizard opens itself, once, as a toast suggestion, when an unknown device is
 first plugged in.
 
+Built, the core and the automation planes (C10): `LearnSession` (`core/controllers/src/devicemapping.h`) and the
+`learn` verb (`start`, `status`, `sample`, `skip`, `back`, `finish`, `cancel`) on CLI, REST, WebSocket and Python. While
+it runs the device's controls answer the prompts and drive nothing else; an answer waits for its control to come back
+before the next prompt; a raw control answers once. `finish` saves the map as a user family in `devices.user.json`
+with its `gamecontrollerdb` line (the Export text) and the device takes it at once. Not built: the Qt dialog and the
+toast (the UI stream).
+
 ### 3.6 Hotspot editor (user photos)
 
 **Photo…** loads a user image for the selected device (or a view of it: front, back, top), then shows the controls
@@ -280,6 +287,11 @@ the same JSON hotspot map as built-in images ([device-database.md](device-databa
 **Identify** rumbles the device for 300 ms and blinks its LED (Elite: the guide button light, DualSense: the light
 bar, player LEDs) where the capabilities allow, and pulses its row and cord in the dialog. Tells two identical pads
 apart.
+
+Built in the core (C10): the `identify` verb (`HostInputService::Identify`) plays the 300 ms rumble where the device
+has drivable motors and blinks its light white where the emulator can set one, then puts the light back to the
+colour it had (a timer, kept across repeated identifies); `rumble`, `light` and `ms` say what it did, and a device with
+neither answers `unavailable` with both reasons. The pulse of its row and cord is the dialog's (the UI stream).
 
 It is the first effect of **Test haptics** in the selected device's header (owner 2026-10-18/19): an effect list and
 the Test haptics button that plays the chosen one, both always there. The list holds Identify and one test effect per

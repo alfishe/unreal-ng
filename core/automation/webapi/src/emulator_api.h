@@ -96,10 +96,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getController, "/api/v1/emulator/{id}/controllers/{connector}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postControllerVerb, "/api/v1/emulator/{id}/controllers/{connector}/{verb}",
                   drogon::Post);
-    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics (GET);
-    // save, delete, apply, bind, unbind, scheme, rumble, output, light (POST)
+    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics, probe,
+    // database (GET); save, delete, apply, bind, unbind, scheme, rumble, output, light, role, pin, identify,
+    // database_import, learn (POST)
     ADD_METHOD_TO(EmulatorAPI::getHostControllers, "/api/v1/controllers/{verb}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postHostControllers, "/api/v1/controllers/{verb}", drogon::Post);
+    // The same verbs in the spec's paths: database/import, and a device's role / pin / identify / learn
+    ADD_METHOD_TO(EmulatorAPI::postHostDatabaseImport, "/api/v1/controllers/database/import", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHostDeviceVerb, "/api/v1/controllers/host/{device}/{verb}", drogon::Post);
     // Host actions (core ActionRegistry; implementation: api/actions_api.cpp; control surfaces actions.md §6). GET
     // /api/v1/controllers/actions is the {verb} route above ("actions"), handled there before the host input verbs
     ADD_METHOD_TO(EmulatorAPI::postAction, "/api/v1/controllers/actions/{action}", drogon::Post);
@@ -914,6 +918,13 @@ public:
     void postHostControllers(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& verb) const;
+    /// POST /api/v1/controllers/database/import {text, save?}: the database_import verb
+    void postHostDatabaseImport(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// POST /api/v1/controllers/host/{device}/{verb}: role, pin, identify, learn with device= from the path
+    void postHostDeviceVerb(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& device,
+                            const std::string& verb) const;
     // endregion Controllers
 
     // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)

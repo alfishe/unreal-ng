@@ -1,5 +1,6 @@
 #include "mcp-controllers.h"
 
+#include <algorithm>
 #include <cctype>
 #include <memory>
 #include <set>
@@ -45,6 +46,13 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"role", {"device", "role"}},
+        {"pin", {"device", "pin"}},
+        {"identify", {"device"}},
+        {"probe", {}},
+        {"database", {"vidpid", "guid", "device", "name", "version"}},
+        {"database_import", {"text", "save"}},
+        // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)
     };
     return actions;
 }
@@ -78,8 +86,10 @@ namespace
                 // A control surface's role, the layers up and its context, the feel of its top layer
                 if (device.isMember("role"))
                 {
-                    out << " - role " << device["role"].asString() << (device["role_set"].asBool() ? "" : " (default)")
-                        << ", layers";
+                    out << " - role " << device["role"].asString() << (device["role_set"].asBool() ? "" : " (default)");
+                    if (device.isMember("pin") && device["pin"].asString() != "follow-focus")
+                        out << ", pin " << device["pin"].asString();
+                    out << ", layers";
                     for (const Json::Value& layer : device["layers"])
                         out << " " << layer.asString();
                     if (!device["context"].asString().empty())
@@ -91,6 +101,8 @@ namespace
                 if (device.isMember("battery"))
                     out << ", battery " << device["battery"]["text"].asString() << ", light "
                         << (device["light"]["available"].asBool() ? "settable" : "none");
+                if (device.isMember("map"))
+                    out << ", mapped " << Compact(device["map"]);
                 if (device.isMember("notice"))
                     out << "\n  notice: " << device["notice"].asString();
                 out << "\n";
@@ -141,6 +153,47 @@ namespace
             }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "probe")
+        {
+            for (const Json::Value& backend : reply["backends"])
+            {
+                out << backend["name"].asString() << ": "
+                    << (backend["running"].asBool() ? "running" : "not running: " + backend["reason"].asString()) << ", "
+                    << backend["devices"].asUInt() << " device(s)\n";
+                for (const Json::Value& device : backend["found"])
+                {
+                    out << "  " << device["id"].asString() << ": " << device["name"].asString() << " ("
+                        << device["family"].asString() << ", database " << device["match"]["step"].asString() << " "
+                        << device["match"]["score"].asInt() << ")";
+                    if (device.isMember("notice"))
+                        out << " - notice: " << device["notice"].asString();
+                    out << "\n";
+                }
+            }
+            if (reply["backends"].empty())
+                out << "no backends\n";
+            out << "user devices: " << reply["user_devices"].asString();
+            return out.str();
+        }
+        if (action == "database")
+        {
+            const Json::Value& match = reply["match"];
+            out << reply.get("message", "").asString() << "\nquery " << Compact(reply["query"]) << "\nlayout "
+                << match["layout"].asString() << ", role " << match["role"].asString();
+            if (match["controls"].size() > 0)
+                out << ", controls " << Compact(match["controls"]);
+            if (match.isMember("map"))
+                out << ", map " << Compact(match["map"]);
+            return out.str();
+        }
+        if (action == "database_import")
+        {
+            out << reply.get("message", "").asString() << "\nmap " << Compact(reply["map"]);
+            if (reply["skipped"].size() > 0)
+                out << "\nskipped " << Compact(reply["skipped"]);
+            out << "\ngamecontrollerdb: " << reply["gamecontrollerdb"].asString();
             return out.str();
         }
         if (action == "bindings")
@@ -227,6 +280,8 @@ namespace
                 out << "the program reads the whole keyboard (" << decision["reason"].asString() << ")";
             else
                 out << "no decision yet";
+            if (decision["hint"].isString())
+                out << " (" << decision["hint"].asString() << ")";
             out << "; watch " << (evidence["active"].asBool() ? "running" : "stopped") << ", "
                 << evidence["frames_observed"].asUInt64() << " frames observed";
             return out.str();
@@ -265,8 +320,8 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light: a host device id (devices "
-        "lists them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light / role / pin / identify "
+        "/ database: a host device id (devices lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -305,7 +360,9 @@ void RegisterControllers(ToolRegistry& registry)
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
         "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
-    schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
+    schema["properties"]["text"]["description"] =
+        "save: the whole profile, YAML or JSON (schema 1); database_import: a gamecontrollerdb.txt line or a RetroArch "
+        "autoconfig file";
     schema["properties"]["effect"]["description"] =
         "rumble: the test effect (identify by default; low, high, clicks, left-trigger, right-trigger, swell: haptics "
         "lists a device's)";
@@ -317,6 +374,16 @@ void RegisterControllers(ToolRegistry& registry)
         "output: a seek's marks, strongest first (second, ten_seconds, bookmark, edge, barrier): the pattern the "
         "device's top layer plays for them";
     schema["properties"]["color"]["description"] = "light: #RRGGBB, r,g,b (0..255 each) or off";
+    schema["properties"]["role"]["description"] =
+        "role: player, debugger-remote (its debug bindings only, never a connector) or disabled";
+    schema["properties"]["pin"]["description"] =
+        "pin: follow-focus (the focused emulator window), all (every instance) or pinned:<emulator id>";
+    schema["properties"]["vidpid"]["description"] = "database: <vid>:<pid> in hex (045e:0b00)";
+    schema["properties"]["guid"]["description"] = "database: an SDL GUID (32 hex digits, as gamecontrollerdb.txt)";
+    schema["properties"]["name"]["description"] = "database: the device name (the name heuristics)";
+    schema["properties"]["version"]["description"] = "database: the version (4 hex digits, a firmware range)";
+    schema["properties"]["save"]["description"] =
+        "database_import: false = parse and show only; default: write a user family into devices.user.json";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -343,8 +410,12 @@ void RegisterControllers(ToolRegistry& registry)
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar). Options per "
-        "action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), role "
+        "(player, debugger-remote, disabled), pin (follow-focus, all, pinned:<emulator id>), identify (a 300 ms rumble "
+        "and a light blink, to tell two pads apart), probe (the backends, running or why not, and the devices each "
+        "found), database (look up a VID:PID, an SDL GUID or a connected device), database_import (a gamecontrollerdb "
+        "line or a RetroArch autoconfig file into the user's device database; the learn wizard is on REST, CLI and "
+        "Python: it needs a person). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -359,8 +430,8 @@ void RegisterControllers(ToolRegistry& registry)
             {
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
-                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics"};
+                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile",
+                                                            "bindings", "haptics", "probe",   "database"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)
@@ -390,6 +461,19 @@ void RegisterControllers(ToolRegistry& registry)
                                 const std::string text = HostSummary(action, reply);
                                 done(ToolResult::Ok(text, std::move(reply)));
                             });
+                return;
+            }
+
+            const auto& machineActions = ControllerToolActions();
+            if (std::none_of(machineActions.begin(), machineActions.end(),
+                             [&action](const auto& entry) { return entry.first == action; }))
+            {
+                done(ToolResult::Error(
+                    "controllers: unknown action '" + action + "'" +
+                    (action == "learn" ? std::string(" (the learn wizard needs a person pressing the controls: REST "
+                                                     "POST /api/v1/controllers/learn, CLI controllers learn, Python "
+                                                     "controllers_learn)")
+                                       : std::string())));
                 return;
             }
 

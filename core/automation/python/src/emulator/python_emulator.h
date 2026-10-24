@@ -1974,7 +1974,8 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output) with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, role, pin, identify, probe, database, "
+                 "database_import, learn) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2034,6 +2035,49 @@ namespace PythonBindings
                  "A pad's light colour (a DualSense / DualShock 4 light bar): color='#RRGGBB', 'r,g,b' or 'off'; "
                  "unavailable with the reason where the OS does not let the emulator set it (controllers_host('devices') "
                  "names each device's battery, light and notice)")
+            .def("controllers_role", [](Emulator&, const std::string& device, const std::string& role) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["role"] = role;
+                     return HostControllerCallPy("role", options);
+                 }, py::arg("device"), py::arg("role"),
+                 "A host device's role: 'player', 'debugger-remote' (its debug bindings only) or 'disabled'")
+            .def("controllers_pin", [](Emulator&, const std::string& device, const std::string& pin) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["pin"] = pin;
+                     return HostControllerCallPy("pin", options);
+                 }, py::arg("device"), py::arg("pin"),
+                 "Which instance a host device drives: 'follow-focus', 'all' or 'pinned:<emulator id>'")
+            .def("controllers_identify", [](Emulator&, const std::string& device) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     return HostControllerCallPy("identify", options);
+                 }, py::arg("device"), "Rumble a host device for 300 ms and blink its light where it has them")
+            .def("controllers_probe", [](Emulator&) {
+                     return HostControllerCallPy("probe", py::kwargs());
+                 }, "The input backends: running or why not, the devices each found with their database step")
+            .def("controllers_database", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("database", options);
+                 }, "Look a device up in the device database: vidpid='045e:0b00', guid='<SDL GUID>' or device='<id>', "
+                 "with name= and version=")
+            .def("controllers_database_import", [](Emulator&, const std::string& text, bool save) {
+                     py::kwargs options;
+                     options["text"] = text;
+                     options["save"] = save ? "true" : "false";
+                     return HostControllerCallPy("database_import", options);
+                 }, py::arg("text"), py::arg("save") = true,
+                 "Import a gamecontrollerdb.txt line or a RetroArch autoconfig file into devices.user.json (save=False: "
+                 "parse and show only)")
+            .def("controllers_learn", [](Emulator&, const std::string& device, const std::string& step,
+                                         const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["device"] = device;
+                     all["step"] = step;
+                     return HostControllerCallPy("learn", all);
+                 }, py::arg("device"), py::arg("step") = "status",
+                 "The learn wizard of an unknown device: step='start' (controls='dpad.up,south,..'), 'status', "
+                 "'sample' (control='button.3', value=1), 'skip', 'back', 'finish' (name=, save=), 'cancel'")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

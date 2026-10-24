@@ -256,6 +256,7 @@ void InputRouter::OnDeviceRemoved(const HostDeviceId& id)
 void InputRouter::OnControl(const ControlEvent& event)
 {
     std::vector<ActionEvent> actions;
+    std::function<void()> wake;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto it = _devices.find(event.device);
@@ -272,8 +273,12 @@ void InputRouter::OnControl(const ControlEvent& event)
             it->second.values[info.name] = event.value;
             EvaluateLocked(it->second, now, actions);
         }
+        if (_wake && NextDeadlineLocked() != UINT64_MAX)
+            wake = _wake;
     }
     Dispatch(actions);
+    if (wake)
+        wake();  // a chord window or a repeat waits: the host timer polls at its deadline
 }
 
 std::vector<HostDeviceInfo> InputRouter::Devices() const
@@ -355,6 +360,15 @@ void InputRouter::SetInstanceMode(const HostDeviceId& device, InstanceMode mode,
     Settings& settings = _settings[device];
     settings.mode = mode;
     settings.pinned = mode == InstanceMode::Pinned ? pinned : std::string{};
+}
+
+InstanceMode InputRouter::GetInstanceMode(const HostDeviceId& device, std::string* pinned) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _settings.find(device);
+    if (pinned != nullptr)
+        *pinned = it != _settings.end() ? it->second.pinned : std::string{};
+    return it != _settings.end() ? it->second.mode : InstanceMode::FollowFocus;
 }
 
 void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::string& connector)
@@ -838,9 +852,16 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         {
             const bool pressed = state.presses != presses;
             if (pressed)
+            {
                 actions.push_back({device.info.id, binding.target.name, true, 1});
+                // `repeat`: held, it runs again after the delay (ExpireLocked)
+                state.repeating = binding.options.repeatDelay != 0;
+                state.repeatAt = now + binding.options.repeatDelay * kRepeatFrameNs;
+            }
             if ((was != 0 || pressed) && state.bits == 0)
                 actions.push_back({device.info.id, binding.target.name, false, 0});
+            if (state.bits == 0)
+                state.repeating = false;
         }
         // A oneshot layer is used once one of its controls was pressed
         if (state.bits != 0)
@@ -959,7 +980,61 @@ void InputRouter::ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions)
         });
         if (due)
             EvaluateLocked(device, now, actions);
+        // The held actions' repeats: one run per deadline, a late poll does not catch up in a burst
+        const CompiledSet* set = BindingsForLocked(device);
+        if (set == nullptr || device.states.size() != set->bindings.size())
+            continue;
+        for (size_t i = 0; i < device.states.size(); i++)
+        {
+            BindingState& state = device.states[i];
+            if (!state.repeating || now < state.repeatAt)
+                continue;
+            const Binding& binding = set->bindings[i].binding;
+            if (!state.active || state.bits == 0 || binding.options.repeatRate == 0)
+            {
+                state.repeating = false;
+                continue;
+            }
+            actions.push_back({device.info.id, binding.target.name, true, 1});
+            const uint64_t rate = binding.options.repeatRate * kRepeatFrameNs;
+            state.repeatAt += rate;
+            if (state.repeatAt <= now)
+                state.repeatAt = now + rate;
+        }
     }
+}
+
+uint64_t InputRouter::NextDeadlineLocked() const
+{
+    uint64_t next = UINT64_MAX;
+    for (const auto& [id, device] : _devices)
+    {
+        for (const auto& [name, gate] : device.gates)
+            if (gate.pending)
+                next = std::min(next, gate.until);
+        for (const BindingState& state : device.states)
+            if (state.repeating)
+                next = std::min(next, state.repeatAt);
+    }
+    return next;
+}
+
+uint64_t InputRouter::NextDeadline() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return NextDeadlineLocked();
+}
+
+uint64_t InputRouter::NowNs() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return Now();
+}
+
+void InputRouter::SetWakeSink(std::function<void()> wake)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _wake = std::move(wake);
 }
 
 bool InputRouter::DrivesLocked(const HostDeviceId& device, const std::string& instance) const
@@ -1153,7 +1228,14 @@ uint16_t InputRouter::Output(const CompiledBinding& compiled, const BindingState
     switch (options.turbo)
     {
         case Turbo::Off:
-            return bits;
+            if (options.repeatDelay == 0)
+                return bits;
+            // `repeat`: held, released for a frame after the delay and then every `rate` frames
+            if (edge)
+                phase.since = frame;
+            if (state.bits == 0 || frame - phase.since < options.repeatDelay)
+                return bits;
+            return (frame - phase.since - options.repeatDelay) % options.repeatRate == 0 ? uint16_t{0} : bits;
         case Turbo::Classic:
             if (edge)
                 phase.since = frame;

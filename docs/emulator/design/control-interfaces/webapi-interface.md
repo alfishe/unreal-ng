@@ -1679,8 +1679,11 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | probe | database
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light
+                                                         | light | role | pin | identify | database_import | learn
+POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
+POST /api/v1/controllers/host/{device}/{verb}            role | pin | identify | learn, the device from the path
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1700,8 +1703,22 @@ when known also `level` (absent without one), `coarse`, `charging`, `wired`), `l
 `reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
 `POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
 query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
-reason where the OS does not let the emulator set it. On the WebSocket `/api/v1/ws` all of them are `call`s, as every
-route.
+reason where the OS does not let the emulator set it.
+
+`POST /api/v1/controllers/role {"device", "role": "player|debugger-remote|disabled"}` and `POST
+/api/v1/controllers/pin {"device", "pin": "follow-focus|all|pinned:<emulator id>"}` set what a host device is for and
+which instance it drives (`devices` shows both: `role`, `pin`). `POST /api/v1/controllers/identify {"device"}` rumbles
+it for 300 ms and blinks its light where it has them (`rumble`, `light`, `ms`; `503` when it has neither).
+`GET /api/v1/controllers/probe` lists the backends (`running`, else `reason`) with the devices each found (`match`
+`{step, score}`, `notice`) and `user_devices`. `GET /api/v1/controllers/database?vidpid=045e:0b00` (or `guid=<SDL
+GUID>`, `device=<id>`; `name=`, `version=`) answers what the device database says (`query`, `match`).
+`POST /api/v1/controllers/database/import {"text": "<gamecontrollerdb line or RetroArch .cfg>", "save": true}` imports
+a mapping (`source`, `name`, `device`, `map`, `skipped`, `gamecontrollerdb`; saved as the user family `family` in
+`path`, and a connected device of that VID / PID takes it at once). `POST /api/v1/controllers/learn {"device", "step":
+"start|status|sample|skip|back|finish|cancel", ...}` runs the learn wizard of an unknown device: `start` (`controls`: a
+comma list) takes the device, whose presses then answer the prompts (`control`, `prompt`, `index`, `count`,
+`waiting_for_release`, `map`); `sample {control, value}` feeds a raw control from a script; `finish` (`name`, `save`)
+saves the map. On the WebSocket `/api/v1/ws` all of them are `call`s, as every route.
 
 ### Host Actions
 

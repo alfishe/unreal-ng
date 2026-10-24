@@ -9,10 +9,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "_helpers/testwaithelper.h"
 #include "fake/fakebackend.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
@@ -662,3 +664,124 @@ TEST_F(InputRouter_Test, InvalidTargetsAreRefusedWithTheReason)
 }
 
 /// endregion </C2b>
+
+/// region <C7: repeat>
+
+/// mapping-and-profiles.md §1.3 `repeat: {delay, rate}`: a held action runs again on the host clock, after the delay
+/// and then every `rate` frames of 20 ms; a late poll runs it once, the release stops it
+TEST_F(InputRouter_Test, Repeat_AHeldActionRunsAgainOnTheHostClock)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding step = To({"dpad.right"}, ActionTarget("run.step_over"));
+    step.options.repeatDelay = 15;  // 300 ms
+    step.options.repeatRate = 4;    // 80 ms
+    SetBindings({step});
+    auto presses = [this] {
+        return std::count_if(_actions.begin(), _actions.end(), [](const ActionEvent& a) { return a.pressed; });
+    };
+
+    Set("fake:1", "dpad.right", 1);
+    EXPECT_EQ(presses(), 1);
+    EXPECT_EQ(_router.NextDeadline(), _now + 300'000'000) << "the timer's deadline: the first repeat";
+    AdvanceMs(299);
+    _router.Poll();
+    EXPECT_EQ(presses(), 1) << "not before the delay";
+    AdvanceMs(1);
+    _router.Poll();
+    EXPECT_EQ(presses(), 2) << "at the delay";
+    AdvanceMs(80);
+    _router.Poll();
+    EXPECT_EQ(presses(), 3) << "then every rate";
+    AdvanceMs(400);
+    _router.Poll();
+    EXPECT_EQ(presses(), 4) << "a late poll runs it once, no burst";
+    Sample();  // a running machine's frame boundary runs the repeats too
+    AdvanceMs(80);
+    Sample();
+    EXPECT_EQ(presses(), 5);
+
+    Set("fake:1", "dpad.right", 0);
+    EXPECT_FALSE(_actions.back().pressed) << "the release";
+    EXPECT_EQ(_router.NextDeadline(), UINT64_MAX) << "nothing waits";
+    AdvanceMs(1000);
+    _router.Poll();
+    EXPECT_EQ(presses(), 5) << "released: no more repeats";
+}
+
+/// A held retro control is released for one emulated frame after the delay and then every `rate` frames
+TEST_F(InputRouter_Test, Repeat_AHeldRetroControlReleasesAFrame)
+{
+    _router.OnDeviceAdded(kPad);
+    BindingOptions options;
+    options.repeatDelay = 3;
+    options.repeatRate = 4;
+    SetBindings({Bind({"south"}, "kempston:fire", options)});
+
+    Set("fake:1", "south", 1);
+    std::string seen;
+    for (int i = 0; i < 12; i++)
+        seen += Kempston() == kFire ? '1' : '0';
+    EXPECT_EQ(seen, "111011101110");
+    EXPECT_EQ(Kempston(), kFire) << "held again after the released frame";
+    Set("fake:1", "south", 0);
+    EXPECT_EQ(Kempston(), 0);
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire) << "a new press counts from its own frame";
+    EXPECT_EQ(Kempston(), kFire);
+}
+
+TEST_F(InputRouter_Test, Repeat_RefusedWhereItMeansNothing)
+{
+    std::string error;
+    BindingOptions options;
+    options.repeatDelay = 10;
+    options.repeatRate = 1;
+    EXPECT_FALSE(_router.SetBindings({}, {Bind({"south"}, "kempston:fire", options)}, error));
+    EXPECT_NE(error.find("rate of 2 or more"), std::string::npos) << error;
+    options.repeatRate = 4;
+    options.turbo = Turbo::Classic;
+    options.on = options.off = 2;
+    EXPECT_FALSE(_router.SetBindings({}, {Bind({"south"}, "kempston:fire", options)}, error));
+    EXPECT_NE(error.find("not with turbo"), std::string::npos) << error;
+    Binding mouse = To({"lstick.x"}, Mouse("dx"));
+    mouse.options.repeatDelay = 10;
+    mouse.options.repeatRate = 4;
+    EXPECT_FALSE(_router.SetBindings({}, {mouse}, error));
+    EXPECT_NE(error.find("key, retro or action"), std::string::npos) << error;
+    Binding scrub = To({"lt"}, ActionTarget("ttd.scrub_back"));
+    scrub.options.level = true;
+    scrub.options.repeatDelay = 10;
+    scrub.options.repeatRate = 4;
+    EXPECT_FALSE(_router.SetBindings({}, {scrub}, error)) << "a level action is not pressed again";
+}
+
+/// A paused machine samples nothing: the service's timer runs the repeat (and closes chord windows) by itself
+TEST(HostInputService_Test, Repeat_TheTimerRunsItWhilePaused)
+{
+    HostInputService service;
+    auto fake = std::make_unique<FakeBackend>();
+    FakeBackend* pads = fake.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(fake), reason)) << reason;
+    ASSERT_TRUE(pads->Connect(kPad));
+    std::atomic<int> presses{0};
+    service.Router().SetActionSink([&](const ActionEvent& action) {
+        if (action.pressed)
+            presses++;
+    });
+    Binding step = To({"dpad.right"}, ActionTarget("run.step_over"));
+    step.options.repeatDelay = 1;  // 20 ms
+    step.options.repeatRate = 1;
+    ASSERT_TRUE(service.Router().SetBindings({}, {step}, reason)) << reason;
+
+    ASSERT_TRUE(pads->Press("fake:1", "dpad.right"));
+    // Two repeats: 40 ms of host time, the timer's own (no frame samples the router here)
+    ASSERT_TRUE(TestWait::For([&] { return presses.load() >= 3; })) << presses.load();
+    ASSERT_TRUE(pads->Release("fake:1", "dpad.right"));
+    const int after = presses.load();
+    EXPECT_EQ(service.Router().NextDeadline(), UINT64_MAX);
+    EXPECT_EQ(presses.load(), after);
+    service.Stop();
+}
+
+/// endregion </C7: repeat>

@@ -155,7 +155,17 @@ around it; the cursor actions are the keys the pane already takes (the disassemb
 arrows and pages) sent to it, so a held stick and the keyboard move the same cursor, after 300 ms every 60 ms. The
 registers and the stack are value cells: there the arrows move a cursor of their own to the nearest cell that way,
 Enter is a double click on it (the memory view goes to the value), the keyboard drives it too. Breakpoints live in a
-dialog, not a pane, so they are not in the ring. Not yet: `dbg.breakpoint_toggle_pc`, `dbg.labels_toggle`.
+dialog, not a pane, so they are not in the ring. `dbg.breakpoint_toggle_pc` is a core action
+(`core/src/emulator/actions/hostactions_debugtools.cpp`: an execution breakpoint at PC, removed when one is there;
+`hostactions_debugtools_test.cpp`), `dbg.labels_toggle` a GUI action of the Qt client (`guiactions.cpp`: the
+disassembly's labels on / off), and `pad-default.yaml` binds `rstick.click` to the first.
+
+The step keys repeat: an action binding's `repeat: {delay, rate}` runs the action again `delay` frames of host time
+(20 ms each) after the press and then every `rate` frames while it is held (`InputRouter`, `BindingOptions::repeatDelay`
+/ `repeatRate`). The machine is usually paused there, so no frame samples the router: `HostInputService` runs a timer
+thread that sleeps until `InputRouter::NextDeadline()` (a repeat, or a chord window's end) and polls then; it starts on
+the first event that leaves a deadline and costs nothing while nothing waits. A late poll runs a repeat once, never a
+burst; the release stops it.
 
 ### 3.4 Capture and machine
 

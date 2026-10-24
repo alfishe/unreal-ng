@@ -48,6 +48,13 @@ struct BindingOptions
     /// with each of its events as written (control surfaces actions.md §2); null when the binding has none
     JsonValue params{};
     std::string label;  ///< the game's meaning ("Fire"), shown in the picture
+    /// `repeat: {delay, rate}` in frames (mapping-and-profiles.md §1.3), 0 = none. A held key or retro control is
+    /// released for one frame `delay` frames after the press and then every `rate` frames, so a menu that waits for
+    /// a new press sees one (emulated frames: a recording replays it). A held action runs again `delay` frames of
+    /// host time (20 ms each) after the press and then every `rate`: actions run on the host's clock, a paused
+    /// machine included (the debug layer's step keys)
+    unsigned repeatDelay = 0;
+    unsigned repeatRate = 0;
 };
 
 /// `<connector>:<control>`: `kempston:fire`, `next.left:c`, `auto:dpad` (the connector this device drives)

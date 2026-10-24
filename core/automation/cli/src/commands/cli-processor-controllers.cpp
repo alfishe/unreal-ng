@@ -7,6 +7,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -54,6 +55,16 @@ namespace
         "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
         "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
         "controllers light <device> <#RRGGBB|r,g,b|off> - A pad's light colour (a DualSense / DualShock 4 light bar)\n"
+        "controllers role <device> <player|debugger-remote|disabled> - What the device is for\n"
+        "controllers pin <device> <follow-focus|all|pinned:<emulator id>> - Which instance it drives\n"
+        "controllers identify <device>              - Rumble 300 ms and blink its light, to tell two pads apart\n"
+        "controllers probe                          - The backends: running or why not, the devices each found\n"
+        "controllers database <vid:pid|SDL GUID|device> [name=..] [version=..] - What the device database says\n"
+        "controllers database_import <file> [save=false] - A gamecontrollerdb.txt line or a RetroArch .cfg into\n"
+        "                                             devices.user.json (the device gets the map at once)\n"
+        "controllers learn <device> [start|status|skip|back|finish|cancel] [controls=dpad.up,south,..] - The learn\n"
+        "                                             wizard: press the prompted control on the device after each step\n"
+        "controllers learn <device> sample <control> [value] - Feed a raw control (button.3, axis.1) as if pressed\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -93,8 +104,9 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
-    /// rumble, then its effect; output, then its pattern; light, then its colour); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save, database_import), a
+    /// key (database: vid:pid, an SDL GUID or a device) or device (haptics, rumble, then its effect; output, then its
+    /// pattern; light, then its colour; role / pin, then the role / pin; identify; learn, then the step, control, value); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
@@ -115,6 +127,39 @@ namespace
         {
             if (verb == "bind" || verb == "unbind")
                 request.options["control"] = words[1];
+            else if (verb == "role" || verb == "pin" || verb == "identify" || verb == "learn")
+            {
+                request.options["device"] = words[1];
+                if ((verb == "role" || verb == "pin") && words.size() > 2)
+                    request.options[verb] = words[2];
+                if (verb == "learn" && words.size() > 2)
+                    request.options["step"] = words[2];
+                if (verb == "learn" && words.size() > 3)
+                    request.options["control"] = words[3];
+                if (verb == "learn" && words.size() > 4)
+                    request.options["value"] = words[4];
+            }
+            else if (verb == "database")
+            {
+                // 32 hex digits: an SDL GUID; vid:pid; else a connected device's id
+                const std::string& key = words[1];
+                const bool hex = std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isxdigit(c); });
+                if (key.size() == 32 && hex)
+                    request.options["guid"] = key;
+                else if (key.size() == 9 && key[4] == ':')
+                    request.options["vidpid"] = key;
+                else
+                    request.options["device"] = key;
+            }
+            else if (verb == "database_import")
+            {
+                std::ifstream file(words[1], std::ios::binary);
+                if (!file)
+                    return "Error: cannot read '" + words[1] + "'\n";
+                std::ostringstream text;
+                text << file.rdbuf();
+                request.options["text"] = text.str();
+            }
             else if (verb == "haptics" || verb == "rumble" || verb == "output" || verb == "light")
             {
                 request.options["device"] = words[1];
@@ -177,6 +222,28 @@ namespace
             }
             return "Haptics (device, the effects rumble plays or why not):\n" + (text.empty() ? "  none\n" : text);
         }
+        if (verb == "probe")
+        {
+            for (const JsonValue& backend : reply.body.Find("backends")->Items())
+            {
+                const JsonValue* reason = backend.Find("reason");
+                text += "  " + backend.Find("name")->AsString() + ": " +
+                        (backend.Find("running")->AsBool() ? std::string("running")
+                                                           : "not running: " + (reason ? reason->AsString() : "")) +
+                        "\n";
+                for (const JsonValue& device : backend.Find("found")->Items())
+                {
+                    const JsonValue* match = device.Find("match");
+                    text += "    " + device.Find("id")->AsString() + "  " + device.Find("name")->AsString() + " (" +
+                            device.Find("family")->AsString() + ", database " + match->Find("step")->AsString() + " " +
+                            std::to_string(static_cast<int>(match->Find("score")->AsNumber())) + ")\n";
+                    if (const JsonValue* notice = device.Find("notice"))
+                        text += "      notice: " + notice->AsString() + "\n";
+                }
+            }
+            return "Backends:\n" + (text.empty() ? "  none\n" : text) + "User devices: " +
+                   reply.body.Find("user_devices")->AsString() + "\n";
+        }
         if (verb == "devices")
         {
             for (const JsonValue& device : reply.body.Find("devices")->Items())
@@ -190,6 +257,8 @@ namespace
                         layers += (layers.empty() ? "" : ", ") + layer.AsString();
                     text += "    role " + role->AsString() + (device.Find("role_set")->AsBool() ? "" : " (default)") +
                             "; layers " + (layers.empty() ? "none" : layers);
+                    if (const JsonValue* pin = device.Find("pin"); pin != nullptr && pin->AsString() != "follow-focus")
+                        text += "; pin " + pin->AsString();
                     if (!device.Find("context")->AsString().empty())
                         text += "; context " + device.Find("context")->AsString();
                     text += "\n";
@@ -202,6 +271,8 @@ namespace
                     text += "    battery " + battery->Find("text")->AsString() + "; light " +
                             (light != nullptr && light->Find("available")->AsBool() ? "settable" : "none") + "\n";
                 }
+                if (const JsonValue* map = device.Find("map"))
+                    text += "    map " + map->Dump() + "\n";
                 if (const JsonValue* notice = device.Find("notice"))
                     text += "    notice: " + notice->AsString() + "\n";
             }

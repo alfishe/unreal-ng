@@ -721,9 +721,27 @@ for device in emu.controllers_host("devices")["devices"]:
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
 **options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
-`context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
+`context`, `outputs`, `feel`, `battery`, `light`, `notice`, `pin` and (an unknown device's) `map`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
+
+Roles, pins, the device database and the learn wizard of an unknown device:
+
+```python
+emu.controllers_role(pad, "debugger-remote")          # player, debugger-remote, disabled
+emu.controllers_pin(pad, "pinned:" + emu_id)          # follow-focus, all, pinned:<emulator id>
+emu.controllers_identify(pad)                         # 300 ms rumble and a light blink
+emu.controllers_probe()["backends"]                   # running or why not, the devices each found
+emu.controllers_database(vidpid="045e:0b00")["match"] # family, step, score, controls, map
+emu.controllers_database_import(open("pad.cfg").read())   # a gamecontrollerdb line or a RetroArch .cfg
+
+emu.controllers_learn(pad, "start", controls="dpad.up,dpad.down,south,east")
+emu.controllers_learn(pad, "sample", control="lstick.y", value=-1)   # or press it on the pad
+emu.controllers_learn(pad, "sample", control="lstick.y", value=0)
+emu.controllers_learn(pad, "skip")
+r = emu.controllers_learn(pad, "finish")              # saved in devices.user.json
+print(r["map"], r["gamecontrollerdb"])
+```
 
 ### Host Actions
 

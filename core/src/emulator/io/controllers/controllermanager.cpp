@@ -671,6 +671,13 @@ void ControllerManager::ApplyWatchRequest()
     if (request == 1)
     {
         _watch.Reset();
+        // The row bits read the code after a half-row IN as the CPU sees it, without side effects
+        if (_context->pMemory != nullptr)
+            _watch.SetCodeReader(
+                [](const void* memory, uint16_t address) {
+                    return static_cast<Memory*>(const_cast<void*>(memory))->DirectReadFromZ80Memory(address);
+                },
+                _context->pMemory);
         _watching.store(true, std::memory_order_release);
         if (cpu != nullptr)
             cpu->SetPortReadWatch(&_watch);
@@ -690,6 +697,7 @@ void ControllerManager::ApplyWatchRequest()
         _watching.store(false, std::memory_order_release);
         if (cpu != nullptr)
             cpu->SetPortReadWatch(nullptr);
+        _watch.SetCodeReader(nullptr, nullptr);
     }
 }
 

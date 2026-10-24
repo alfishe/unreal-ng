@@ -93,7 +93,7 @@
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, probe, database";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -109,15 +109,21 @@
             "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
             "(?device=): per device whether the emulator can drive its motors (available, else the reason: no "
             "motors, an Xbox pad over USB on macOS, no write access on Linux), its actuators (low, high, "
-            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms)";
+            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms). devices also carries pin "
+            "(follow-focus, pinned:<instance>, all) and map (an unknown device's learned or imported control map, "
+            "canonical -> raw). probe: the backends (name, running, else reason, devices) and the devices each found "
+            "(id, name, family, match {step, score}, notice), and user_devices (the devices.user.json path). database "
+            "(?vidpid=045e:0b00 | guid=<SDL GUID> | device=<id>, name=, version=): what the device database says "
+            "(query {vid, pid, bus, version, name, sdl_guid}, match {family, name, vendor, layout, role, step: exact | "
+            "vid-pid | name | unknown, score, controls, map})";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "probe", "database"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
             "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
-            "output; light";
+            "output; light; role, pin, identify a device; import a mapping; learn an unknown device";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -135,10 +141,51 @@
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
             "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
             "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
-            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color";
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. role {device, "
+            "role}: player, debugger-remote (its debug bindings only) or disabled. pin {device, pin}: follow-focus, "
+            "all or pinned:<emulator id>. identify {device}: a 300 ms rumble and a blink of the light where the device "
+            "has them (rumble, light, ms; unavailable when it has neither). database_import {text, save?}: a "
+            "gamecontrollerdb.txt line or a RetroArch autoconfig file; answers source, name, device, map, skipped and "
+            "the gamecontrollerdb line, and unless save=false writes a user family (user-<vid><pid>) into "
+            "devices.user.json whose map the device gets at once. learn {device, step, ...}: the learn wizard for an "
+            "unknown device. step=start (controls=: a comma list, default the D-pad, face buttons, shoulders, "
+            "triggers, View, Menu) takes the device: its controls answer the prompts and reach nothing else; status; "
+            "sample {control, value} feeds a raw control as the device would; skip; back; finish {name?, save?} "
+            "maps and saves (map, gamecontrollerdb, saved, family, path); cancel. Each answers learning, index, count, "
+            "control, prompt, waiting_for_release, map";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "role",
+                             "pin", "identify", "database_import", "learn"});
         replies(post);
+
+        Json::Value& import = paths["/api/v1/controllers/database/import"]["post"];
+        import["summary"] = "Import a gamecontrollerdb line or a RetroArch autoconfig file into the user's device database";
+        import["description"] = "Body {text, save?}: the database_import verb of POST /api/v1/controllers/{verb}";
+        import["tags"].append("Controllers");
+        replies(import);
+
+        Json::Value& device = paths["/api/v1/controllers/host/{device}/{verb}"]["post"];
+        device["summary"] = "One host device: role, pin, identify, learn";
+        device["description"] =
+            "The verbs of POST /api/v1/controllers/{verb} with device= from the path: role {role}, pin {pin}, "
+            "identify, learn {step, controls, control, value, name, save}";
+        device["tags"].append("Controllers");
+        Json::Value deviceParameter;
+        deviceParameter["name"] = "device";
+        deviceParameter["in"] = "path";
+        deviceParameter["required"] = true;
+        deviceParameter["description"] = "The host device id (GET /api/v1/controllers/devices lists them)";
+        deviceParameter["schema"]["type"] = "string";
+        device["parameters"].append(deviceParameter);
+        Json::Value verb;
+        verb["name"] = "verb";
+        verb["in"] = "path";
+        verb["required"] = true;
+        verb["schema"]["type"] = "string";
+        for (const char* name : {"role", "pin", "identify", "learn"})
+            verb["schema"]["enum"].append(name);
+        device["parameters"].append(verb);
+        replies(device);
     }
 
     // The host actions (core ActionRegistry, control surfaces actions.md §1, §6): the same ids a pad, the Surface Dial,

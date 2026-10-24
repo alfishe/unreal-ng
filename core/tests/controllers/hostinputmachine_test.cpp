@@ -2,7 +2,8 @@
 /// @brief The controllers library on a real machine: a fake pad through HostInputService reaches the Pentagon's
 /// Kempston port at the frame boundary, and a release releases it (C2a, architecture.md §7); a key target reaches
 /// the matrix through the host key overlay, and the library's ZX key names agree with the core's (C2b); the port-read
-/// watch counts the guest's INs from the next frame boundary and stops when told (C6).
+/// watch counts the guest's INs from the next frame boundary and stops when told, with the row bits of the code
+/// after a half-row IN, the AY's R14 reads and the Next's NR #B2 reads (C6).
 
 #include <gtest/gtest.h>
 
@@ -11,6 +12,7 @@
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -140,5 +142,63 @@ TEST(HostInputMachine_Test, PortReadWatchCountsTheGuestsReads)
     manager->WatchPortReads(false);
     emulator->RunNFrames(1);
     EXPECT_FALSE(manager->PortReads().active);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// The program at 0x8000, DI first, and the PC there
+void RunAt8000(EmulatorContext* context, const std::vector<uint8_t>& program)
+{
+    for (size_t i = 0; i < program.size(); ++i)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    context->pCore->GetZ80()->pc = 0x8000;
+}
+}  // namespace
+
+// Boot-bound (~20 ms): one Pentagon, three frames
+TEST(HostInputMachine_Test, PortReadWatchRowBitsAndAyR14)
+{
+    SoundCardScope sound(TestSound::TurboSound);  // the AY on #FFFD: the runner's policy leaves the slot empty
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: LD BC,#EFFE; IN A,(C); RRA; JR NC,+0; RRA; JR NC,+0;
+    //           LD BC,#FFFD; LD A,14; OUT (C),A; IN A,(C); JR loop
+    RunAt8000(context, {0xF3, 0x01, 0xFE, 0xEF, 0xED, 0x78, 0x1F, 0x30, 0x00, 0x1F, 0x30, 0x00,
+                        0x01, 0xFD, 0xFF, 0x3E, 0x0E, 0xED, 0x79, 0xED, 0x78, 0x18, 0xEA});
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);
+    const PortReadEvidence evidence = manager->PortReads();
+    EXPECT_EQ(evidence.Frames(PortReadClass::Row4), evidence.window);
+    EXPECT_EQ(evidence.RowBits(PortReadClass::Row4), 0x03) << "two shifts into a carry test: bits 0 and 1";
+    EXPECT_EQ(evidence.Frames(PortReadClass::AyR14), evidence.window) << "IN #FFFD with R14 selected";
+    EXPECT_GT(evidence.window, 0u);
+
+    manager->WatchPortReads(false);
+    emulator->RunNFrames(1);
+    EXPECT_FALSE(manager->PortReads().active);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~30 ms): one Next, three frames
+TEST(HostInputMachine_Test, PortReadWatchNextB2)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: LD BC,#243B; LD A,#B2; OUT (C),A; INC B; IN A,(C); LD A,#B1; DEC B; OUT (C),A; INC B; IN A,(C);
+    //           JR loop (NR #B1 is no evidence)
+    RunAt8000(context, {0xF3, 0x01, 0x3B, 0x24, 0x3E, 0xB2, 0xED, 0x79, 0x04, 0xED, 0x78, 0x3E, 0xB1, 0x05,
+                        0xED, 0x79, 0x04, 0xED, 0x78, 0x18, 0xEC});
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);
+    const PortReadEvidence evidence = manager->PortReads();
+    EXPECT_GT(evidence.window, 0u);
+    EXPECT_EQ(evidence.Frames(PortReadClass::NextB2), evidence.window);
+    EXPECT_GT(evidence.Reads(PortReadClass::NextB2), 100.0f);
+    EXPECT_EQ(evidence.Frames(PortReadClass::AyR14), 0u);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

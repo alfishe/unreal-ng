@@ -3805,6 +3805,13 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
+| `controllers role` | `<device> <player\|debugger-remote\|disabled>` | What a host device is for: a player (the play layer, a connector), a debugger remote (its debug bindings only, never a connector) or nothing. Kept by device id across a replug | ✅ Implemented |
+| `controllers pin` | `<device> <follow-focus\|all\|pinned:<emulator id>>` | Which instance a host device drives: the one whose window has the focus (default), every instance (a demo on the video wall), or one. `devices` shows it as `pin` | ✅ Implemented |
+| `controllers identify` | `<device>` | Rumble the device for 300 ms and blink its light white (then back to its colour) where it has them, to tell two identical pads apart (`rumble`, `light`, `ms`; `unavailable` with both reasons when it has neither) | ✅ Implemented |
+| `controllers probe` | | The input backends: `running`, else the `reason`; the devices each found with their database `match` (`step`, `score`) and `notice`; `user_devices` (the `devices.user.json` path) | ✅ Implemented |
+| `controllers database` | `<vid:pid\|SDL GUID\|device> [name=..] [version=..]` | What the device database says (built-in plus the user's families): `query` (`vid`, `pid`, `bus`, `version`, `name`, `sdl_guid`) and `match` (`family`, `name`, `layout`, `role`, `step`: `exact`, `vid-pid`, `name`, `unknown`, `score`, `controls`, `map`) | ✅ Implemented |
+| `controllers database_import` | `<file> [save=false]` | Import a `gamecontrollerdb.txt` line or a RetroArch autoconfig file: the map (canonical -> raw control), the entries with no control here (`skipped`), the `gamecontrollerdb` line; unless `save=false` a user family `user-<vid><pid>` in `devices.user.json`, which a connected device of that VID / PID takes at once | ✅ Implemented |
+| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3861,6 +3868,28 @@ controllers output bt:045e:091b:3c1e2f4a marks=ten_seconds,second
 # OK: ten_seconds -> double on Surface Dial
 ```
 
+**Roles, pins and unknown devices.** `role` and `pin` are the device card's choices (ui-ux.md §3), kept by device
+id while the process runs. A device the database does not know reports raw controls (`button.<n>`, the sticks and
+hat the HID descriptor names, `axis.<n>` for the rest); `learn` or `database_import` gives it a control map, saved
+in `<user config>/unreal-ng/controllers/devices.user.json` and read at the next start, and from then on each raw
+control also reports as its canonical control (`button.2` as `south`), so the play and debug profiles of a pad work
+on it. Design: [device-database.md §3-§4](../../../inprogress/2026-10-17-controller-manager/device-database.md#4-user-overrides),
+[ui-ux.md §3.5](../../../inprogress/2026-10-17-controller-manager/ui-ux.md#35-learn-wizard-unknown-devices).
+
+```
+controllers learn usb:1234:5678:0100:a1 start controls=dpad.up,dpad.down,south,east
+# OK: USB Gamepad: learning; its controls reach nothing else until finish or cancel. Press Up
+#   (press Up on the pad, then)
+controllers learn usb:1234:5678:0100:a1
+# OK: 2/4: Press Down
+controllers learn usb:1234:5678:0100:a1 skip
+controllers learn usb:1234:5678:0100:a1 sample button.2
+controllers learn usb:1234:5678:0100:a1 finish
+# OK: USB Gamepad: 2 controls mapped, saved as user-12345678 (the reply's gamecontrollerdb holds its SDL line)
+controllers database 1234:5678
+# OK: 1234:5678 is USB Gamepad (user-12345678, vid-pid, score 80)
+```
+
 Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
@@ -3871,6 +3900,17 @@ Every surface offers the same verbs:
 | MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
 | Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
 | Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
+
+Devices, the database and the learn wizard:
+
+| Surface | Role, pin, identify | Probe, database, import | Learn |
+| :--- | :--- | :--- | :--- |
+| CLI | `controllers role <device> <role>`, `pin <device> <pin>`, `identify <device>` | `controllers probe`, `database <key>`, `database_import <file>` | `controllers learn <device> <step> ...` |
+| WebAPI | `POST /api/v1/controllers/role {device, role}` (`pin`, `identify` alike), or `POST /api/v1/controllers/host/{device}/{role\|pin\|identify\|learn}` | `GET /api/v1/controllers/probe`, `GET /api/v1/controllers/database?vidpid=\|guid=\|device=`, `POST /api/v1/controllers/database/import {text, save}` | `POST /api/v1/controllers/learn {device, step, ...}` |
+| WebSocket | `{"op":"call","method":"POST","path":"/api/v1/controllers/role","body":{...}}` | `{"op":"call","method":"GET","path":"/api/v1/controllers/probe"}` | the same `call` of `/api/v1/controllers/learn` |
+| MCP | `controllers` actions `role` (`device`, `role`), `pin` (`device`, `pin`), `identify` (`device`) | `probe`, `database` (`vidpid`, `guid`, `device`, `name`, `version`), `database_import` (`text`, `save`) | none: the wizard needs a person pressing the controls |
+| Python | `controllers_role(device, role)`, `controllers_pin(device, pin)`, `controllers_identify(device)` | `controllers_probe()`, `controllers_database(vidpid=, guid=, device=)`, `controllers_database_import(text, save=True)` | `controllers_learn(device, step="status", **options)` |
+| Lua | `controllers_host("role", {device=, role=})` (no named wrappers: Lua is P3) | `controllers_host("probe")`, ... | `controllers_host("learn", {...})` |
 
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs

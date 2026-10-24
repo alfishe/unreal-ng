@@ -140,6 +140,16 @@ Rules:
 
 `gamecontrollerdb.user.txt` in the same folder is read after the bundled database.
 
+Built (C10): `HostInputService::LoadUserDevices` reads `devices.user.json` on top of the built-in database at the Qt
+client's start and after each write. A user family may carry a `map` (canonical control -> raw control: `button.2`,
+`lstick.y-` for one half of an axis, `hat.1.up`), and a connected device that matches it by VID + PID takes the map
+(`devicemapping.h`): each raw control also reports as its canonical one. The learn wizard (`learn finish`) and an
+import (`database_import`: a `gamecontrollerdb.txt` line or a RetroArch autoconfig file, RetroPad B = `south`) write
+such a family, `user-<vid><pid>`, with `source` and its `gamecontrollerdb` line (bN, ±aN, hN.M; SDL's a0..a3 are the
+HID X Y Z Rz, our sticks), ready to export. Not built: the bundled `gamecontrollerdb.txt` and
+`gamecontrollerdb.user.txt` as lookup steps 3 and 4 (an import turns a line into a user family instead), renames and
+user images through this file.
+
 ## 5. Licences of the sources
 
 | Source | Licence | Use |

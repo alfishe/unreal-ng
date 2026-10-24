@@ -42,6 +42,8 @@ struct DeviceMatch
     /// The role a device of the family starts in (`"role"`, control surfaces Q-8): `debugger-remote` for a debug
     /// device such as the Surface Dial (its debug profile acts without the debug layer switch); a user's choice wins
     DeviceRole role = DeviceRole::Player;
+    /// A user family's control map (devicemapping.h): canonical -> raw control, from the learn wizard or an import
+    std::map<std::string, std::string> map;
     int score = 0;        ///< device-database.md §3: 100 exact, 80 VID + PID, 20 name, 0 unknown
     std::string step;     ///< "exact", "vid-pid", "name", "unknown"
 };

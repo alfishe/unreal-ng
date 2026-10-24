@@ -56,6 +56,10 @@ void Info(const JsonValue& entry, DeviceMatch& info)
         for (const JsonValue& control : controls->Items())
             if (control.IsString())
                 info.controls.push_back(control.AsString());
+    if (const JsonValue* map = entry.Find("map"); map != nullptr && map->IsObject())
+        for (const auto& [canonical, raw] : map->GetMembers())
+            if (raw.IsString())
+                info.map[canonical] = raw.AsString();
 }
 }  // namespace
 

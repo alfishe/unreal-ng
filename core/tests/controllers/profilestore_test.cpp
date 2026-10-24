@@ -343,6 +343,40 @@ TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
     EXPECT_EQ(actions, (std::vector<std::string>{"run.frame_step", "run.step_out"}));
 }
 
+/// C7: `repeat: {delay, rate}` is acted on (the shipped debug pad's step keys), and a malformed one says why
+TEST(ProfileStore_Test, Repeat_ParsedAndChecked)
+{
+    ProfileStore store;
+    ProfileContext context;
+    context.machine = "pentagon";
+    context.debugLayer = true;
+    context.devices = {{"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"}};
+    const ResolvedProfiles resolved = store.Resolve(context);
+    const Binding* step = nullptr;
+    for (const auto& [scope, bindings] : resolved.scopes)
+        for (const Binding& binding : bindings)
+            if (binding.layer == "debug" && binding.sources == std::vector<std::string>{"dpad.right"})
+                step = &binding;
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->options.repeatDelay, 15u);
+    EXPECT_EQ(step->options.repeatRate, 4u);
+
+    Profile profile;
+    std::string error;
+    ASSERT_TRUE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 20, "rate": 3}})"),
+                             profile, error))
+        << error;
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 20}})"), profile, error));
+    EXPECT_NE(error.find("{delay, rate}"), std::string::npos) << error;
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 0, "rate": 3}})"),
+                              profile, error));
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"retro": "kempston:fire", "turbo": "classic", "repeat": {"delay": 5, "rate": 3}})"),
+                              profile, error));
+    EXPECT_NE(error.find("not with turbo"), std::string::npos) << error;
+    ASSERT_TRUE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": "none"})"), profile, error))
+        << error;
+}
+
 TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
 {
     namespace fs = std::filesystem;
