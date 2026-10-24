@@ -515,11 +515,11 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_FromAnotherThreadIsAppliedByTheL
     ASSERT_TRUE(TestWait::For([this, writesBefore] {
         return Card()->getActivityCounters().hostDataWritten == writesBefore + 1;
     })) << "the loop thread applied the queued stimulus";
-    EXPECT_EQ(Card()->getDataFromHost(), 0x6B);
 
     // Paused and parked: applied before SubmitLiveInput returns, nothing left for the loop
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+    EXPECT_EQ(Card()->getDataFromHost(), 0x6B) << "the latch the loop wrote (read parked: the loop owns the card)";
     ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x5A)));
     EXPECT_FALSE(_context->HasStepWork(EmulatorContext::kStepWorkTtdInput)) << "nothing queued";
     EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore + 2) << "applied while parked";

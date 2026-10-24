@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include <atomic>
 #include <fstream>
 #include <iostream>
 #include <ostream>
@@ -32,7 +33,7 @@ class Logger
 {
     /// region <Fields>
 protected:
-    static volatile bool g_mute;
+    static std::atomic<bool> g_mute;  // any thread: Warning and Error unmute it
     static int _stdout;
     static int _stderr;
     static int _outFile;

@@ -24,6 +24,8 @@
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
 
+#include <atomic>
+
 namespace
 {
     // ZX Profi's own Covox DAC lives on ports #5F (Left), #3F (Right) - distinct
@@ -234,11 +236,23 @@ void PortDecoder_Profi::reset()
     SyncWaits();
 }
 
+// The switches are read by automation threads (the front panel action, the WebAPI) while the emulation thread sets
+// them (a TTD live input): atomic byte access on both sides, without parking the CPU for a read
+static uint8_t LoadSwitch(uint8_t& field)
+{
+    return std::atomic_ref<uint8_t>(field).load(std::memory_order_relaxed);
+}
+
+static void StoreSwitch(uint8_t& field, bool on)
+{
+    std::atomic_ref<uint8_t>(field).store(on ? 1 : 0, std::memory_order_relaxed);
+}
+
 bool PortDecoder_Profi::GetFrontPanelSwitch(FrontPanelSwitch sw) const
 {
     if (sw == FrontPanelSwitch::Cpm)
-        return _board.palette && _state->profi.cpmSwitch != 0;
-    return sw == FrontPanelSwitch::Turbo && _state->profi.turboSwitch != 0;
+        return _board.palette && LoadSwitch(_state->profi.cpmSwitch) != 0;
+    return sw == FrontPanelSwitch::Turbo && LoadSwitch(_state->profi.turboSwitch) != 0;
 }
 
 bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
@@ -246,14 +260,14 @@ bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
     if (sw == FrontPanelSwitch::Cpm && _board.palette)
     {
         // research-profi-v5-open-items.md Q6: the switch drives the clear input of the #DFFD latches (/ONOFF)
-        _state->profi.cpmSwitch = on ? 1 : 0;
+        StoreSwitch(_state->profi.cpmSwitch, on);
         if (on && _state->pDFFD != 0)
             ApplyDffd(0);
         return true;
     }
     if (sw != FrontPanelSwitch::Turbo)
         return false;
-    _state->profi.turboSwitch = on ? 1 : 0;
+    StoreSwitch(_state->profi.turboSwitch, on);
     SyncTurbo();
     SyncWaits();
     return true;

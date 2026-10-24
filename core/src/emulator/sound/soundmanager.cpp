@@ -394,14 +394,14 @@ SoundManager::HostOutputHold::HostOutputHold(SoundManager* sound, HostHoldReason
     if (sound)
     {
         _epoch = sound->acquireHostHold(reason);
-        _sound = sound;
+        _sound.store(sound, std::memory_order_release);
     }
 }
 
 SoundManager::HostOutputHold::HostOutputHold(HostOutputHold&& other) noexcept
-    : _sound(other._sound), _reason(other._reason), _epoch(other._epoch)
+    : _reason(other._reason), _epoch(other._epoch)
 {
-    other._sound = nullptr;
+    _sound.store(other._sound.exchange(nullptr, std::memory_order_acq_rel), std::memory_order_release);
 }
 
 SoundManager::HostOutputHold& SoundManager::HostOutputHold::operator=(HostOutputHold&& other) noexcept
@@ -409,22 +409,17 @@ SoundManager::HostOutputHold& SoundManager::HostOutputHold::operator=(HostOutput
     if (this != &other)
     {
         Release();
-        _sound = other._sound;
         _reason = other._reason;
         _epoch = other._epoch;
-        other._sound = nullptr;
+        _sound.store(other._sound.exchange(nullptr, std::memory_order_acq_rel), std::memory_order_release);
     }
     return *this;
 }
 
 void SoundManager::HostOutputHold::Release()
 {
-    if (_sound)
-    {
-        SoundManager* sound = _sound;
-        _sound = nullptr;
+    if (SoundManager* sound = _sound.exchange(nullptr, std::memory_order_acq_rel))
         sound->releaseHostHold(_reason, _epoch);
-    }
 }
 
 uint32_t SoundManager::acquireHostHold(HostHoldReason reason)
