@@ -11,6 +11,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/processstats.h"
 #include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -32,7 +33,13 @@
 #include "emulator/mainloop.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/calltrace.h"
 #include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/ports/portdecoder.h"
+#include "emulator/ports/portdiagrecorder.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/monitoring/clientstats.h"
 #include "emulator/platform.h"
 #ifdef ENABLE_RECORDING
@@ -506,6 +513,72 @@ StateNode Analyzers(Emulator& emulator)
     return node;
 }
 
+// One trace buffer: {used, capacity} in slots and the same in bytes (slot size x count)
+StateNode BufferFill(size_t used, size_t capacity, size_t slotBytes)
+{
+    StateNode b = StateNode::Object();
+    b["used"] = static_cast<int64_t>(std::min(used, capacity));
+    b["capacity"] = static_cast<int64_t>(capacity);
+    b["slot_bytes"] = static_cast<int64_t>(slotBytes);
+    b["used_bytes"] = static_cast<int64_t>(std::min(used, capacity) * slotBytes);
+    b["capacity_bytes"] = static_cast<int64_t>(capacity * slotBytes);
+    b["percent"] = capacity ? static_cast<double>(std::min(used, capacity)) * 100.0 / static_cast<double>(capacity) : 0.0;
+    return b;
+}
+
+// How full each trace buffer is: the counters the recorders keep (atomics, a shared lock, the call trace's own lock),
+// read at most once a second (the call trace's lock is the one its writer takes per event: never at a monitor's 10 Hz)
+StateNode Buffers(Emulator& emulator)
+{
+    return CachedValue("debug.buffers", emulator.GetId(), 0, 1.0, [&emulator] {
+        EmulatorContext* context = emulator.GetContext();
+        StateNode node = StateNode::Object();
+        Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+        if (OpcodeProfiler* opcode = z80 ? z80->GetOpcodeProfiler() : nullptr)
+        {
+            const ProfilerStatus status = opcode->GetStatus();
+            node["opcode"] = BufferFill(status.traceSize, status.traceCapacity, sizeof(OpcodeTraceEntry));
+        }
+        if (context->pMemory != nullptr)
+        {
+            MemoryAccessTracker& tracker = context->pMemory->GetAccessTracker();
+            if (CallTraceBuffer* calls = tracker.GetCallTraceBuffer())
+            {
+                node["calltrace"] = BufferFill(calls->ColdSize(), calls->ColdCapacity(), sizeof(Z80ControlFlowEvent));
+                node["calltrace_hot"] = BufferFill(calls->HotSize(), calls->HotCapacity(), sizeof(HotEvent));
+            }
+        }
+        if (PortDiagnosticRecorder* ports = context->pPortDecoder ? context->pPortDecoder->getPortTraceRecorder()
+                                                                  : nullptr)
+            node["porttrace"] = BufferFill(ports->eventCount(), ports->capacity(), sizeof(PortTraceEvent));
+        if (GeneralSoundCard* gs = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr)
+            node["gsporttrace"] = BufferFill(gs->getPortTraceEventCount(), GSPortTraceRecorder::kDefaultCapacity,
+                                             sizeof(GSTraceEvent));
+        if (PcHistory* history = context->pDebugManager ? context->pDebugManager->GetPcHistory() : nullptr)
+            node["pchist"] = BufferFill(static_cast<size_t>(history->Total()), PcHistory::kCapacity,
+                                        sizeof(PcHistory::Entry));
+        AnalyzerManager* analyzers = context->pDebugManager ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+        if (AYLogAnalyzer* ay = analyzers ? analyzers->getAnalyzer<AYLogAnalyzer>("aylog") : nullptr)
+            node["aylog"] = BufferFill(ay->getEntryCount(), ay->getCapacity(), sizeof(AYLogRecord));
+        if (CoverageAnalyzer* coverage = analyzers ? analyzers->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr)
+            node["coverage"] = BufferFill(coverage->getExecutedCount(), 65536, 1);  // addresses run (a bitmap)
+        if (const ttd::ITimeTravelHooks* hooks = context->pTimeTravelHooks)
+        {
+            const ttd::TTDSessionInfo info = hooks->GetPublishedSessionInfo();
+            StateNode t = StateNode::Object();
+            t["limit_frames"] = static_cast<int64_t>(info.historyLimitFrames);
+            t["history_bytes"] = static_cast<int64_t>(info.historyBytes);
+            t["limit_bytes"] = static_cast<int64_t>(info.historyLimitBytes);
+            t["memory_bytes"] = static_cast<int64_t>(info.sessionHeapBytes);
+            t["checkpoints"] = static_cast<int64_t>(info.checkpointCount);
+            t["write_journal_records"] = static_cast<int64_t>(info.writeJournalRecords);
+            t["write_journal_bytes"] = static_cast<int64_t>(info.writeJournalBytes);
+            node["ttd"] = t;
+        }
+        return node;
+    });
+}
+
 StateNode Controllers(Emulator& emulator)
 {
     controllers::ControllerManager* manager = emulator.GetContext()->pControllerManager;
@@ -612,7 +685,7 @@ const std::vector<std::string>& InstanceNames()
 {
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
-                                                   "debug.analyzers", "controllers.state"};
+                                                   "debug.analyzers", "controllers.state", "debug.buffers"};
     return names;
 }
 
@@ -656,6 +729,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return TtdStatus(emulator);
     if (name == "debug.analyzers")
         return Analyzers(emulator);
+    if (name == "debug.buffers")
+        return Buffers(emulator);
     if (name == "controllers.state")
         return Controllers(emulator);
     return {};

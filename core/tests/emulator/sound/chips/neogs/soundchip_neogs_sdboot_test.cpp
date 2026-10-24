@@ -100,7 +100,7 @@ TEST(SoundChip_NeoGS_SdBoot, NoCardFallsBackToFlash)
 /// that, on FAT16 and on FAT32
 TEST(SoundChip_NeoGS_SdBoot, LoaderBootsNeogsRomFromAHostFolder)
 {
-    const std::vector<uint8_t> rom = NeoGSTestSdReadFile("utilities/neogs/parts/neogs.rom");
+    const std::vector<uint8_t> rom = NeoGSTestSdReadFile("tools/neogs/parts/neogs.rom");
     ASSERT_GE(rom.size(), 32768u);
     ScratchFolder folder("neogs-sd-folder");
     folder.File("NEOGS.ROM", std::string(rom.begin(), rom.end()));

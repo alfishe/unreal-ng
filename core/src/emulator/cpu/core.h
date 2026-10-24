@@ -237,6 +237,8 @@ public:
     /// @return false when refused: while TTD is recording only 1x is accepted
     bool SetSpeedMultiplier(uint8_t multiplier);
     bool CanSetSpeedMultiplier(uint8_t multiplier) const;
+    /// Why the host speed may not change now ("" = it may): TTD's speed lock (a history recorded at 1x)
+    std::string SpeedLockReason() const;
     uint8_t GetSpeedMultiplier() const;
     /// Host speed control setting (1x..16x) without the emulated hardware turbo
     uint8_t GetHostSpeedMultiplier() const;

@@ -60,8 +60,17 @@ struct StripLive
     const json* target = nullptr;
     std::string notice, activity;
     bool showTarget = true;
+    // the dial labels over a timeline: -1 none, a dial index (the one turning), or kAllDials (the page just opened)
+    static constexpr int kAllDials = 1000;
+    int dialHint = -1;
+    bool bannerInfo = false;  // the banner is information: the calm look instead of the error's red
     [[nodiscard]] std::string Key() const;  // what the picture depends on (the runtime hashes it)
 };
+// A page whose strip shows the TTD timeline (strip.status "ttd", or a dial that scrubs time: ttd.seek_by)
+[[nodiscard]] bool PageScrubsTime(const Page& page);
+// The timeline's track across the strip, [x0, x1) in logical pixels (after the page's chips); a tap or a swipe there
+// seeks the history
+[[nodiscard]] std::pair<int, int> TimelineSpan(const Page& page, int w);
 // The target as one line: "PENTAGON 128K (1)"; "NO MACHINE" for null
 [[nodiscard]] std::string TargetLine(const json& target);
 

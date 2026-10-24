@@ -74,7 +74,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 4
+        value:
+          value: 4
       face:
         glyph: set.speed
         label: X4

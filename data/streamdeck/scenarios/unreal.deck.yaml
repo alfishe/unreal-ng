@@ -6,6 +6,17 @@ root:
   dials:
     -
       index: 0
+      label: FRAMES
+      press:
+        id: run.pause_toggle
+        kind: action
+      turn:
+        id: ttd.jog_frames
+        kind: action
+        value:
+          d: $ticks
+    -
+      index: 1
       label: TIME
       press:
         id: run.pause_toggle
@@ -20,18 +31,18 @@ root:
           rate: $rate
           unit: seconds
     -
-      index: 1
-      label: VOLUME
+      index: 2
+      label: OPS
       press:
-        id: audio.mute_toggle
+        id: ttd.resume_live
         kind: action
       turn:
-        id: audio.volume_by
+        id: ttd.jog_instructions
         kind: action
         value:
           d: $ticks
     -
-      index: 2
+      index: 3
       label: PACE
       press:
         id: run.pace_toggle
@@ -42,7 +53,7 @@ root:
         value:
           d: $ticks
     -
-      index: 3
+      index: 4
       label: STEP
       press:
         id: run.step_in
@@ -54,24 +65,13 @@ root:
           d: $ticks
           unit: instructions
     -
-      index: 4
-      label: FRAMES
-      press:
-        id: ttd.bookmark_add
-        kind: action
-      turn:
-        id: ttd.jog_frames
-        kind: action
-        value:
-          d: $ticks
-    -
       index: 5
-      label: OPS
+      label: VOLUME
       press:
-        id: ttd.resume_live
+        id: audio.mute_toggle
         kind: action
       turn:
-        id: ttd.jog_instructions
+        id: audio.volume_by
         kind: action
         value:
           d: $ticks
@@ -120,6 +120,7 @@ root:
         kind: action
       face:
         glyph: mach.nmi
+        label: NMI
       id: nmi
       tags:
         - uc:C1.3
@@ -134,6 +135,7 @@ root:
         kind: action
       face:
         glyph: mach.turbo
+        label: TURBO
       face_on:
         glyph: mach.turbo.on
       id: turbo
@@ -152,6 +154,7 @@ root:
         kind: action
       face:
         glyph: run.turbo_hold
+        label: HOLD
       id: hold
       tags:
         - uc:C2.2
@@ -164,10 +167,11 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 1
+        value:
+          value: 1
       face:
         glyph: set.speed
-        label: SPEED
+        label: X1
         value:
           format: "X{}"
           readout: run.state.speed
@@ -258,6 +262,7 @@ root:
         - 2
       face:
         glyph: snapshot.save
+        label: STATE
       id: state
       items:
         -
@@ -271,6 +276,7 @@ root:
               path: $user/snapshots/deck.szx
           face:
             glyph: snapshot.save
+            label: "SAVE SZX"
           id: file
           tags:
             - uc:C6.2
@@ -287,7 +293,7 @@ root:
               drive: A
           face:
             glyph: media.save
-            label: A
+            label: "SAVE A"
           id: diska
           tags:
             - uc:C6.3
@@ -304,7 +310,7 @@ root:
               drive: B
           face:
             glyph: media.save
-            label: B
+            label: "SAVE B"
           id: diskb
           tags:
             - uc:C6.3
@@ -321,7 +327,7 @@ root:
               drive: C
           face:
             glyph: media.save
-            label: C
+            label: "SAVE C"
           id: diskc
           tags:
             - uc:C6.3
@@ -338,7 +344,7 @@ root:
               drive: D
           face:
             glyph: media.save
-            label: D
+            label: "SAVE D"
           id: diskd
           tags:
             - uc:C6.3
@@ -356,7 +362,7 @@ root:
               format: scl
           face:
             glyph: media.export
-            label: "A SCL"
+            label: "A > SCL"
           id: scl
           tags:
             - uc:C6.4
@@ -373,6 +379,7 @@ root:
               path: $user/sessions/deck.ttd
           face:
             glyph: ttd.dump
+            label: "SAVE TTD"
           id: tdump
           tags:
             - uc:C7.1
@@ -390,6 +397,7 @@ root:
               path: $user/sessions/deck.ttd
           face:
             glyph: ttd.load
+            label: "LOAD TTD"
           id: tload
           tags:
             - uc:C7.1
@@ -733,6 +741,7 @@ root:
         - 3
       face:
         glyph: media.open
+        label: MEDIA
       id: media
       items:
         -
@@ -847,6 +856,7 @@ root:
             kind: action
           face:
             glyph: rzx.stop
+            label: "STOP RZX"
           id: rzxstop
           tags:
             - uc:C4.4
@@ -966,7 +976,7 @@ root:
               format: trdos
           face:
             glyph: media.create
-            label: A
+            label: "NEW A"
           id: blank
           tags:
             - uc:C5.3
@@ -983,7 +993,7 @@ root:
               drive: A
           face:
             glyph: media.discard
-            label: A
+            label: "DISCARD A"
           id: discard
           tags:
             - uc:C5.5
@@ -1240,7 +1250,7 @@ root:
               name: trdos_traps
           face:
             glyph: settings.toggle
-            label: TRAPS
+            label: TR-DOS
           face_on:
             glyph: settings.toggle.on
           id: trdos
@@ -1260,7 +1270,7 @@ root:
               name: fast_tape
           face:
             glyph: settings.toggle
-            label: TAPE
+            label: "FAST TAPE"
           face_on:
             glyph: settings.toggle.on
           id: ftape
@@ -1280,7 +1290,7 @@ root:
               name: turbo_tape
           face:
             glyph: settings.toggle
-            label: TURBO
+            label: "TURBO TAPE"
           face_on:
             glyph: settings.toggle.on
           id: ttape
@@ -1300,7 +1310,7 @@ root:
               name: fast_disk
           face:
             glyph: settings.toggle
-            label: DISK
+            label: "FAST DISK"
           face_on:
             glyph: settings.toggle.on
           id: fdisk
@@ -1324,6 +1334,7 @@ root:
         - 4
       face:
         glyph: mach.start
+        label: MODEL
       id: machine
       items:
         -
@@ -1353,6 +1364,7 @@ root:
             kind: action
           face:
             glyph: mach.cold_reset
+            label: "COLD RST"
           id: cold
           tags:
             - uc:C1.2
@@ -1883,6 +1895,7 @@ root:
         - 5
       face:
         glyph: cap.record
+        label: REC
       id: record
       items:
         -
@@ -2141,6 +2154,7 @@ root:
             kind: action
           face:
             glyph: ttd.record.on
+            label: START
           id: tstart
           tags:
             - uc:C7.1
@@ -2155,6 +2169,7 @@ root:
             kind: action
           face:
             glyph: ttd.stop
+            label: STOP
           id: rectstop
           tags:
             - uc:C7.1
@@ -2169,6 +2184,7 @@ root:
             kind: action
           face:
             glyph: ttd.invalidate
+            label: DROP
           id: tdrop
           tags:
             - uc:C7.1
@@ -2185,6 +2201,7 @@ root:
               path: $user/clips/history.mp4
           face:
             glyph: ttd.export_clip
+            label: EXPORT
           id: tclip
           tags:
             - uc:C7.3
@@ -2201,6 +2218,7 @@ root:
               path: $user/sessions/deck.ttd
           face:
             glyph: ttd.dump
+            label: "SAVE TTD"
           id: rectdump
           tags:
             - uc:C7.1
@@ -2217,6 +2235,7 @@ root:
               path: $user/sessions/deck.ttd
           face:
             glyph: ttd.load
+            label: "LOAD TTD"
           id: rectload
           tags:
             - uc:C7.1
@@ -2318,6 +2337,7 @@ root:
               d: $ticks
       face:
         glyph: audio.sound
+        label: SOUND
       id: sound
       items:
         -
@@ -2428,6 +2448,7 @@ root:
                   source: ay2.c
           face:
             glyph: audio.sound
+            label: "AY CHANS"
           id: ay
           items:
             -
@@ -3320,7 +3341,8 @@ root:
             value:
               d: $ticks
       face:
-        glyph: nav.folder
+        glyph: video.menu
+        label: VIDEO
       id: picture
       items:
         -
@@ -3351,6 +3373,7 @@ root:
               scale: next
           face:
             glyph: view.scale
+            label: SCALE
           id: scale
           tags:
             - uc:C9.1
@@ -3365,6 +3388,7 @@ root:
             kind: action
           face:
             glyph: video.gpu
+            label: GPU
           face_on:
             glyph: video.gpu.on
           id: gpu
@@ -3382,6 +3406,7 @@ root:
             kind: action
           face:
             glyph: video.overscan
+            label: BORDER
           face_on:
             glyph: video.overscan.on
           id: over
@@ -3419,6 +3444,7 @@ root:
             kind: action
           face:
             glyph: view.toolbar
+            label: TOOLBAR
           face_on:
             glyph: view.toolbar.on
           id: toolbar
@@ -3436,6 +3462,7 @@ root:
             kind: action
           face:
             glyph: view.status_bar
+            label: STATUS
           face_on:
             glyph: view.status_bar.on
           id: status
@@ -3453,6 +3480,7 @@ root:
             kind: action
           face:
             glyph: video.crt
+            label: CRT
           face_on:
             glyph: video.crt.on
           id: crt
@@ -3472,6 +3500,7 @@ root:
               profile: prev
           face:
             glyph: video.crt_profile
+            label: "CRT PREV"
           id: crtprev
           tags:
             - uc:C9.4
@@ -3506,6 +3535,7 @@ root:
             kind: action
           face:
             glyph: video.crt_reset
+            label: "CRT RST"
           id: crtrst
           tags:
             - uc:C9.4
@@ -3520,6 +3550,7 @@ root:
             kind: action
           face:
             glyph: video.temporal
+            label: TEMPORAL
           face_on:
             glyph: video.temporal.on
           id: dlss
@@ -3537,6 +3568,7 @@ root:
             kind: action
           face:
             glyph: video.blending
+            label: BLEND
           face_on:
             glyph: video.blending.on
           id: blend
@@ -3554,6 +3586,7 @@ root:
             kind: action
           face:
             glyph: hud
+            label: HUD
           face_on:
             glyph: hud.on
           id: hud
@@ -3573,6 +3606,7 @@ root:
               theme: next
           face:
             glyph: hud.theme
+            label: "HUD LOOK"
           id: hudth
           tags:
             - uc:C9.6
@@ -3587,6 +3621,7 @@ root:
             kind: action
           face:
             glyph: osd.keyboard
+            label: KEYBOARD
           id: osdkb
           tags:
             - uc:C9.7
@@ -3603,6 +3638,7 @@ root:
               picture: next
           face:
             glyph: osd.keyboard_picture
+            label: "KB LOOK"
           id: osdpic
           tags:
             - uc:C9.7
@@ -3623,7 +3659,8 @@ root:
         - 1
         - 8
       face:
-        glyph: nav.folder
+        glyph: analyzer.toggle.on
+        label: MONITOR
       id: monitor
       items:
         -
@@ -3867,34 +3904,6 @@ root:
         -
           at:
             - 2
-            - 0
-          do:
-            id: dbg.breakpoints_clear
-            kind: action
-          face:
-            glyph: dbg.breakpoints_clear
-          id: bpclear
-          tags:
-            - uc:D4.3
-          title: "Clear breakpoints"
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            id: dbg.breakpoint_hits_reset
-            kind: action
-          face:
-            glyph: dbg.breakpoint_hits_reset
-          id: bphits
-          tags:
-            - uc:D4.3
-          title: "Reset hit counts"
-          type: action
-        -
-          at:
-            - 2
             - 2
           face:
             label: BPS
@@ -3994,39 +4003,187 @@ root:
           at:
             - 3
             - 0
-          do:
-            id: prof.toggle
-            kind: action
-            value:
-              name: all
           face:
-            glyph: prof.toggle
-            label: ALL
-          face_on:
             glyph: prof.toggle.on
-          id: profall
-          state: toggle.profiler.all
+            label: BUFFERS
+          id: buffers
+          items:
+            -
+              at:
+                - 0
+                - 1
+              face:
+                label: OPCODES
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.opcode
+              id: bopcode
+              tags:
+                - uc:C10.8
+              title: bopcode
+              type: action
+            -
+              at:
+                - 0
+                - 2
+              face:
+                label: CALLS
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.calltrace
+              id: bcalls
+              tags:
+                - uc:C10.8
+              title: bcalls
+              type: action
+            -
+              at:
+                - 0
+                - 3
+              face:
+                label: "CALLS HOT"
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.calltrace_hot
+              id: bhot
+              tags:
+                - uc:C10.8
+              title: bhot
+              type: action
+            -
+              at:
+                - 0
+                - 4
+              face:
+                label: "PC HIST"
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.pchist
+              id: bpchist
+              tags:
+                - uc:C10.8
+              title: bpchist
+              type: action
+            -
+              at:
+                - 0
+                - 5
+              face:
+                label: COVERAGE
+                value:
+                  format: "{used:k}/{capacity:k}\n{percent:.0f}%"
+                  readout: debug.buffers.coverage
+              id: bcover
+              tags:
+                - uc:C10.8
+              title: bcover
+              type: action
+            -
+              at:
+                - 1
+                - 1
+              face:
+                label: PORTS
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.porttrace
+              id: bports
+              tags:
+                - uc:C10.8
+              title: bports
+              type: action
+            -
+              at:
+                - 1
+                - 2
+              face:
+                label: "GS PORTS"
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.gsporttrace
+              id: bgs
+              tags:
+                - uc:C10.8
+              title: bgs
+              type: action
+            -
+              at:
+                - 1
+                - 3
+              face:
+                label: "AY LOG"
+                value:
+                  format: "{used:k}/{capacity:k}\n{used_bytes:b}"
+                  readout: debug.buffers.aylog
+              id: bay
+              tags:
+                - uc:C10.8
+              title: bay
+              type: action
+            -
+              at:
+                - 2
+                - 1
+              face:
+                label: "TTD HIST"
+                value:
+                  format: "{:b}"
+                  readout: debug.buffers.ttd.history_bytes
+              id: bttdh
+              tags:
+                - uc:C10.7
+              title: bttdh
+              type: action
+            -
+              at:
+                - 2
+                - 2
+              face:
+                label: "TTD MEM"
+                value:
+                  format: "{:b}"
+                  readout: debug.buffers.ttd.memory_bytes
+              id: bttdm
+              tags:
+                - uc:C10.7
+              title: bttdm
+              type: action
+            -
+              at:
+                - 2
+                - 3
+              face:
+                label: JOURNAL
+                value:
+                  format: "{write_journal_records:k}\n{write_journal_bytes:b}"
+                  readout: debug.buffers.ttd
+              id: bttdj
+              tags:
+                - uc:C10.7
+              title: bttdj
+              type: action
+            -
+              at:
+                - 2
+                - 4
+              face:
+                label: CHECKPTS
+                value:
+                  format: "{}"
+                  readout: debug.buffers.ttd.checkpoints
+              id: bttdc
+              tags:
+                - uc:C10.7
+              title: bttdc
+              type: action
+          nav:
+            back:
+              - 0
+              - 0
           tags:
-            - uc:D10.1
-          title: "Profiler / trace on / off"
-          type: action
-        -
-          at:
-            - 3
-            - 1
-          do:
-            id: prof.clear
-            kind: action
-            value:
-              name: all
-          face:
-            glyph: prof.clear
-            label: ALL
-          id: profclr
-          tags:
-            - uc:D10.1
-          title: "Profiler / trace clear"
-          type: action
+            - uc:C10.8
+          title: "Trace buffers"
+          type: menu
         -
           at:
             - 3
@@ -4164,6 +4321,7 @@ root:
         kind: action
       face:
         glyph: ttd.resume_live
+        label: LIVE
       id: live
       tags:
         - uc:U2.3
@@ -4179,6 +4337,7 @@ root:
         kind: action
       face:
         glyph: ttd.record
+        label: "TTD REC"
       face_on:
         glyph: ttd.record.on
       id: ttdrec
@@ -4196,6 +4355,7 @@ root:
         kind: action
       face:
         glyph: ttd.bookmark_add
+        label: MARK
       id: mark
       tags:
         - uc:D3.7
@@ -4208,6 +4368,7 @@ root:
       context: play
       face:
         glyph: input.joystick
+        label: GAME
       id: game
       items:
         -
@@ -4321,6 +4482,7 @@ root:
             kind: action
           face:
             glyph: input.release_all
+            label: RELEASE
           id: release
           tags:
             - uc:U1.4
@@ -4642,6 +4804,7 @@ root:
         - 5
       face:
         glyph: basic.menu
+        label: BASIC
       id: basic
       items:
         -
@@ -4719,6 +4882,7 @@ root:
             kind: action
           face:
             glyph: basic.clear
+            label: NEW
           id: new
           tags:
             - uc:U4.2
@@ -4902,7 +5066,7 @@ root:
           index: 0
       face:
         glyph: media.open_recent
-        label: LAST
+        label: "LAST FILE"
       id: recent
       tags:
         - uc:C4.3
@@ -4934,6 +5098,7 @@ root:
         kind: action
       face:
         glyph: run.step_in
+        label: "STEP IN"
       id: stepin
       tags:
         - uc:D2.1
@@ -4948,6 +5113,7 @@ root:
         kind: action
       face:
         glyph: run.step_over
+        label: "STEP OVER"
       id: stepovr
       tags:
         - uc:D2.1
@@ -4962,6 +5128,7 @@ root:
         kind: action
       face:
         glyph: run.step_out
+        label: "STEP OUT"
       id: stepout
       tags:
         - uc:D2.1
@@ -4976,6 +5143,7 @@ root:
         kind: action
       face:
         glyph: run.frame_step
+        label: FRAME
       id: frame
       tags:
         - uc:D2.3
@@ -4990,6 +5158,7 @@ root:
         kind: action
       face:
         glyph: dbg.breakpoint_toggle_pc
+        label: "BP PC"
       id: bppc
       tags:
         - uc:D4.1
@@ -5000,17 +5169,15 @@ root:
         - 3
         - 5
       do:
-        id: dbg.mode_toggle
+        id: dbg.breakpoints_clear
         kind: action
       face:
-        glyph: dbg.mode
-      face_on:
-        glyph: dbg.mode.on
-      id: dbgmode
-      state: debug.mode.enabled
+        glyph: dbg.breakpoints_clear
+        label: "CLEAR BP"
+      id: bpclr
       tags:
-        - uc:D4.4
-      title: "Debug mode"
+        - uc:D4.3
+      title: "Clear breakpoints"
       type: action
     -
       at:
@@ -5021,6 +5188,7 @@ root:
         kind: action
       face:
         glyph: debug.menu
+        label: DEBUGGER
       id: dbgopen
       tags:
         - uc:D6.1
@@ -5033,9 +5201,20 @@ root:
       dials:
         -
           index: 0
+          label: FRAMES
+          press:
+            id: run.pause_toggle
+            kind: action
+          turn:
+            id: ttd.jog_frames
+            kind: action
+            value:
+              d: $ticks
+        -
+          index: 1
           label: SCRUB
           press:
-            id: ttd.resume_live
+            id: run.pause_toggle
             kind: action
           turn:
             id: ttd.seek_by
@@ -5043,17 +5222,6 @@ root:
             value:
               d: $ticks
               rate: $rate
-        -
-          index: 1
-          label: PACE
-          press:
-            id: run.pace_toggle
-            kind: action
-          turn:
-            id: run.pace_by
-            kind: action
-            value:
-              d: $ticks
         -
           index: 2
           label: LINES
@@ -5078,8 +5246,20 @@ root:
             value:
               d: $ticks
               unit: tstates
+        -
+          index: 4
+          label: PACE
+          press:
+            id: run.pace_toggle
+            kind: action
+          turn:
+            id: run.pace_by
+            kind: action
+            value:
+              d: $ticks
       face:
         glyph: ttd.menu
+        label: TIME
       id: time
       items:
         -
@@ -5194,6 +5374,7 @@ root:
             kind: action
           face:
             glyph: run.pace_stop
+            label: STOP
           id: pstop
           tags:
             - uc:D1.2
@@ -5239,6 +5420,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_back_frame
+            label: -FRAME
           id: bframe
           tags:
             - uc:D3.3
@@ -5253,6 +5435,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_back_scanline
+            label: -LINE
           id: bline
           tags:
             - uc:D3.3
@@ -5267,6 +5450,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_back_instruction
+            label: -OP
           id: bop
           tags:
             - uc:D3.3
@@ -5281,6 +5465,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_forward_instruction
+            label: +OP
           id: fop
           tags:
             - uc:D3.3
@@ -5295,6 +5480,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_forward_scanline
+            label: +LINE
           id: fline
           tags:
             - uc:D3.3
@@ -5309,6 +5495,7 @@ root:
             kind: action
           face:
             glyph: ttd.step_forward_frame
+            label: +FRAME
           id: fframe
           tags:
             - uc:D3.3
@@ -5337,6 +5524,7 @@ root:
             kind: action
           face:
             glyph: ttd.reverse_continue
+            label: "REV RUN"
           id: rcont
           tags:
             - uc:D3.5
@@ -5351,6 +5539,7 @@ root:
             kind: action
           face:
             glyph: ttd.reverse_step
+            label: "REV STEP"
           id: rstep
           tags:
             - uc:D3.5
@@ -5365,6 +5554,7 @@ root:
             kind: action
           face:
             glyph: ttd.unit_back
+            label: BACK
           id: uback
           tags:
             - uc:D3.3
@@ -5393,6 +5583,7 @@ root:
             kind: action
           face:
             glyph: ttd.unit_forward
+            label: FORWARD
           id: ufwd
           tags:
             - uc:D3.3
@@ -5407,6 +5598,7 @@ root:
             kind: action
           face:
             glyph: ttd.resume_live
+            label: LIVE
           id: timlive
           tags:
             - uc:D3.6
@@ -5421,6 +5613,7 @@ root:
             kind: action
           face:
             glyph: ttd.bookmark_prev
+            label: "MARK <"
           id: bmprev
           tags:
             - uc:D3.7
@@ -5435,6 +5628,7 @@ root:
             kind: action
           face:
             glyph: ttd.bookmark_add
+            label: MARK
           id: bmadd
           tags:
             - uc:D3.7
@@ -5449,6 +5643,7 @@ root:
             kind: action
           face:
             glyph: ttd.bookmark_next
+            label: "MARK >"
           id: bmnext
           tags:
             - uc:D3.7
@@ -5463,6 +5658,7 @@ root:
             kind: action
           face:
             glyph: ttd.bookmark
+            label: MARKS
           id: bmlist
           tags:
             - uc:D3.7
@@ -5477,6 +5673,7 @@ root:
             kind: action
           face:
             glyph: ttd.find_last_write
+            label: WRITE
           id: lastw
           tags:
             - uc:D5.1
@@ -5525,6 +5722,7 @@ root:
             kind: action
           face:
             glyph: ttd.record
+            label: "TTD REC"
           face_on:
             glyph: ttd.record.on
           id: timttdrec
@@ -5545,10 +5743,11 @@ root:
       tags:
         - uc:D1
         - uc:D3
-        - dial.0.uc:D3.2
-        - dial.1.uc:D1.1
+        - dial.0.uc:D3.3
+        - dial.1.uc:D3.2
         - dial.2.uc:D2.4
         - dial.3.uc:D2.5
+        - dial.4.uc:D1.1
       title: Time
       type: menu
     -
@@ -5583,6 +5782,7 @@ root:
               unit: frames
       face:
         glyph: dbg.mode
+        label: DEBUG
       id: debug
       items:
         -
@@ -5594,6 +5794,7 @@ root:
             kind: action
           face:
             glyph: run.step_in
+            label: "STEP IN"
           id: debstepin
           tags:
             - uc:D2.1
@@ -5608,6 +5809,7 @@ root:
             kind: action
           face:
             glyph: run.step_over
+            label: "STEP OVER"
           id: debstepovr
           tags:
             - uc:D2.1
@@ -5622,6 +5824,7 @@ root:
             kind: action
           face:
             glyph: run.step_out
+            label: "STEP OUT"
           id: debstepout
           tags:
             - uc:D2.1
@@ -5636,6 +5839,7 @@ root:
             kind: action
           face:
             glyph: run.to_cursor
+            label: "TO CURSOR"
           id: debcursor
           tags:
             - uc:D2.6
@@ -5650,6 +5854,7 @@ root:
             kind: action
           face:
             glyph: run.wait_int
+            label: "TO INT"
           id: int
           tags:
             - uc:D2.3
@@ -5664,6 +5869,7 @@ root:
             kind: action
           face:
             glyph: run.frame_step
+            label: FRAME
           id: debframe
           tags:
             - uc:D2.3
@@ -5678,6 +5884,7 @@ root:
             kind: action
           face:
             glyph: run.step_line
+            label: LINE
           id: line
           tags:
             - uc:D2.7
@@ -5692,6 +5899,7 @@ root:
             kind: action
           face:
             glyph: run.to_pixel
+            label: "TO PIXEL"
           id: pixel
           tags:
             - uc:D2.4
@@ -5706,6 +5914,7 @@ root:
             kind: action
           face:
             glyph: dbg.breakpoint_toggle_pc
+            label: "BP PC"
           id: debbppc
           tags:
             - uc:D4.1
@@ -5720,6 +5929,7 @@ root:
             kind: action
           face:
             glyph: dbg.breakpoint_toggle_cursor
+            label: "BP CUR"
           id: bpcur
           tags:
             - uc:D4.1
@@ -5770,6 +5980,7 @@ root:
             kind: action
           face:
             glyph: dbg.bp_toggle
+            label: "BPS ON"
           id: bpall
           tags:
             - uc:D4.3
@@ -5784,6 +5995,7 @@ root:
             kind: action
           face:
             glyph: dbg.breakpoints_clear
+            label: "CLEAR BP"
           id: debbpclear
           tags:
             - uc:D4.3
@@ -5798,6 +6010,7 @@ root:
             kind: action
           face:
             glyph: dbg.breakpoint_hits_reset
+            label: "HITS 0"
           id: debbphits
           tags:
             - uc:D4.3
@@ -5812,6 +6025,7 @@ root:
             kind: action
           face:
             glyph: dbg.mode
+            label: "DEBUG MODE"
           face_on:
             glyph: dbg.mode.on
           id: debdbgmode
@@ -5829,6 +6043,7 @@ root:
             kind: action
           face:
             glyph: debug.menu
+            label: "SHOW DEBUG"
           id: open
           tags:
             - uc:D6.1
@@ -5843,6 +6058,7 @@ root:
             kind: action
           face:
             glyph: dbg.focus_prev_pane
+            label: "PANE <"
           id: pprev
           tags:
             - uc:D6.1
@@ -5857,6 +6073,7 @@ root:
             kind: action
           face:
             glyph: dbg.focus_next_pane
+            label: "PANE >"
           id: pnext
           tags:
             - uc:D6.1
@@ -5916,6 +6133,7 @@ root:
             kind: action
           face:
             glyph: dbg.follow_pc
+            label: FOLLOW
           id: follow
           tags:
             - uc:D6.4
@@ -5931,6 +6149,7 @@ root:
             kind: action
           face:
             glyph: dbg.memory_follow
+            label: "MEM PC"
           id: memf
           tags:
             - uc:D6.3
@@ -5945,6 +6164,7 @@ root:
             kind: action
           face:
             glyph: dbg.labels_toggle
+            label: LABELS
           id: labels
           tags:
             - uc:D6.4
@@ -5961,6 +6181,7 @@ root:
               path: $user/build/main.sym
           face:
             glyph: sym.import
+            label: "LOAD SYM"
           id: symload
           tags:
             - uc:D8.2
@@ -5975,6 +6196,7 @@ root:
             kind: action
           face:
             glyph: sym.import_live
+            label: "LIVE SYM"
           id: symlive
           tags:
             - uc:D8.2
@@ -5991,6 +6213,7 @@ root:
               path: $user/build/deck.sym
           face:
             glyph: sym.export
+            label: "SAVE SYM"
           id: symsave
           tags:
             - uc:D8.2
@@ -6052,7 +6275,7 @@ root:
               name: opcode
           face:
             glyph: prof.toggle
-            label: OPS
+            label: "PROF OPS"
           face_on:
             glyph: prof.toggle.on
           id: prof
@@ -6072,7 +6295,7 @@ root:
               name: coverage
           face:
             glyph: prof.toggle
-            label: COVER
+            label: COVERAGE
           face_on:
             glyph: prof.toggle.on
           id: cover
@@ -6123,13 +6346,13 @@ root:
     status: ttd
     target: true
   tags:
-    - dial.0.uc:U2.1
-    - dial.0.uc:D3.2
-    - dial.1.uc:C8.2
-    - dial.2.uc:D1.1
-    - dial.3.uc:D2.2
-    - dial.4.uc:D3.3
-    - dial.5.uc:D3.3
+    - dial.0.uc:D3.3
+    - dial.1.uc:U2.1
+    - dial.1.uc:D3.2
+    - dial.2.uc:D3.3
+    - dial.3.uc:D1.1
+    - dial.4.uc:D2.2
+    - dial.5.uc:C8.2
   title: Home
   type: menu
 settings:

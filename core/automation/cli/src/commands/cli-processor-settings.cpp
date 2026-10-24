@@ -309,7 +309,11 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
                     if (emulator->SetSpeedMultiplier(static_cast<uint8_t>(m)))
                         ss << "Setting changed: speed = " << m << "x" << NEWLINE;
                     else
-                        ss << "Error: Cannot set speed " << m << "x while TTD recording is active (only 1x)" << NEWLINE;
+                    {
+                        const std::string why = emulator->SpeedLockReason();
+                        ss << "Error: Cannot set speed " << m << "x: "
+                           << (why.empty() ? std::string("TTD recording is active (only 1x)") : why) << NEWLINE;
+                    }
                 }
                 else
                 {

@@ -3,11 +3,19 @@
   "images": [
     {
       "view": "front",
-      "source": "tools/controllers/make_fallback_images.py",
+      "title": "Generic pad (Nintendo-like layout)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
       "author": "unreal-ng",
       "licence": "same as the repository",
-      "terms": "generated line drawing, no photo",
-      "retouch": "none"
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "a neutral pad of the 150 x 100 mm class: no maker's shape, the layout of the family template",
+          "source": "own design after the common layout of the C5 pads (xbox-series, dualsense, switch-pro in this set)",
+          "retrieved": "2026-10-23"
+        }
+      ]
     }
   ]
 }

@@ -7,6 +7,6 @@ menu fxspeed:
   uc: C2
   glyph: set.speed
   keys:
-    x1:     {at: [0, 1], uc: C2.5, action: set.speed, value: 1, label: X1}
-    x2:     {at: [0, 2], uc: C2.1, action: set.speed, value: 2, label: X2}
+    x1:     {at: [0, 1], uc: C2.5, action: set.speed, value: {value: 1}, label: X1}
+    x2:     {at: [0, 2], uc: C2.1, action: set.speed, value: {value: 2}, label: X2}
     tape:   {at: [1, 1], uc: C2.4, action: set.toggle, value: {name: fast_tape}, label: TAPE}

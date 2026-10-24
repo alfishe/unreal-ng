@@ -65,7 +65,7 @@ Filters: `adapter=isa2.eth` (or `zxnetusb`, `com.esp`, `isa1.esp`, `isa1.modem`,
 **Live in Wireshark** (macOS, Linux, Windows): `POST .../network/traffic {"action":"stream","port":0}` (or `[NETWORK]
 TrafficStream=auto`, CLI `network traffic stream`) serves the traffic as a pcapng stream on a TCP port; the reply's
 `stream.wireshark` is the command: `wireshark -k -i TCP@127.0.0.1:<port>`. A reader gets the ring first, then every
-packet as it passes. The extcap script [plugins/wireshark/](../../plugins/wireshark/README.md) lists running emulators in
+packet as it passes. The extcap script [tools/wireshark/](../../tools/wireshark/README.md) lists running emulators in
 Wireshark's interface list instead. `{"action":"stream-stop"}` ends it.
 
 **In the Qt UI**: Tools > Network traffic. The newest records (up to 20000) with their frame and the time

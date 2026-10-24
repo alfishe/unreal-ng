@@ -44,7 +44,7 @@ eggs/
 /lib/
 /lib64/
 parts/
-!utilities/neogs/parts/
+!tools/neogs/parts/
 sdist/
 var/
 wheels/

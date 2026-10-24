@@ -283,8 +283,8 @@ throwaway prototype. The risky parts were handled in other ways:
   user (5a), measured before the model was added (5b).
 
 Two small tools were written that are close to a POC in spirit, but they are
-kept as tooling: `utilities/neogs/pack_flash.py` (checks the flash image layout)
-and `utilities/neogs/make_sd_image.py` (builds FAT test cards).
+kept as tooling: `tools/neogs/pack_flash.py` (checks the flash image layout)
+and `tools/neogs/make_sd_image.py` (builds FAT test cards).
 
 ### 4.5 Implementation: phases 0-4 and 6
 

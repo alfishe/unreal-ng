@@ -18,7 +18,7 @@
 | `core/automation/mcp/` (or a WebAPI endpoint an MCP tool forwards to) | the above + `tools/verification/mcp/run_all.py --launch <unreal-qt>` ([MCP testing](docs/guidelines/mcp-testing-guidelines.md)) |
 | Only Qt apps (`unreal-qt/`, `unreal-*-viewer/`, `unreal-videowall/`) | `tools/build/build.sh` (zero warnings). No `core-tests` needed. |
 | Documentation only (`docs/`, `.recipe/`, `*.md`) | `python3 tools/fix-absolute-paths.py --path <files>` (no build) |
-| Only `tools/`, `plugins/` or `utilities/` scripts | Run the script itself (its tests or a dry run) |
+| Only `tools/` scripts | Run the script itself (its tests or a dry run) |
 | Mixed or other | Proportional checks; state what you ran |
 
 Report results. Wait for explicit "commit" instruction.
@@ -37,9 +37,7 @@ Report results. Wait for explicit "commit" instruction.
 | `scratch/` | Git-ignored. ALL test artifacts go here. |
 | `docs/` | Documentation. `docs/inprogress/` for active design work. |
 | `.recipe/` | AI agent recipes (MCP/WebAPI automation). |
-| `tools/` | Internal: build scripts, verification tools. `tools/poc/` for numbered POCs (index in `tools/poc/README.md`). |
-| `plugins/` | Extensions loaded by other programs (Wireshark extcap, ImHex patterns, IDA script). |
-| `utilities/` | Stand-alone user programs and scripts (disk image tools, port trace, monitors, NeoGS media). |
+| `tools/` | Build scripts, verification tools. `tools/poc/` for numbered POCs (index in `tools/poc/README.md`). |
 | `testdata/` | Test fixtures, disk images, ROMs. |
 | `lib/` | Third-party dependencies (GTest, Google Benchmark). |
 

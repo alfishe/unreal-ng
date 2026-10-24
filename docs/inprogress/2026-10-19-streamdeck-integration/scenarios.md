@@ -283,6 +283,10 @@ the current path innermost first, below the current menu, then the whole tree; i
 the Stream Deck + XL: `play` on start, `ttd` and `debug` on entering, `play` on home, and again on a new instance
 after a machine start in place.
 
+
+**Read-only menus.** `"readonly": true` on a menu (spec `readonly: true`): its keys only show - a press does
+nothing (no action, no press look), so the values of a monitoring page never flicker under a finger; the back key still
+goes back. The product scenario's monitoring page is one.
 ## 8. Example
 
 ```json
