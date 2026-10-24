@@ -719,6 +719,15 @@ for device in emu.controllers_host("devices")["devices"]:
         emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
 ```
 
+Media signatures and the game profile they choose ([command-interface.md §18](./command-interface.md#18-media-signatures)):
+
+```python
+sig = emu.signature("/games/elite.tzx", details=True)["signature"]   # kind, format, sha256, content, keys, file_set
+emu.signature_media()["media"]                           # the loaded tapes and disks: slot, source, dirty, signature
+emu.signature_compare("elite.tap", "elite.tzx")["match"]["level"]    # exact | content | fuzzy | memory | none
+emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}], profile, next, haptics_reason}
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
 **options)`, `controllers_light(device, color)`, `controllers_aliases()` (`{aliases: [{from, to, connected, name}]}`:
 a pad first seen as `gc:...` and later matched to its HID device keeps its profiles) and `controllers_unalias(id)`;

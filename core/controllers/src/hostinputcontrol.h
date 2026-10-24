@@ -14,7 +14,8 @@
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
 /// light colour: a DualSense / DualShock 4 light bar), aliases (the old ids of promoted devices: a `gc:` device later
-/// matched to its IOHID endpoint, architecture.md §5), unalias (forget one).
+/// matched to its IOHID endpoint, architecture.md §5), unalias (forget one), match (the game profiles a program's
+/// signatures choose, D7).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -75,6 +76,16 @@ public:
     virtual void SetManualProfile(const std::string& id) = 0;
     /// Resolve and apply the profiles again (after a change in the store)
     virtual void Reapply() = 0;
+    /// The signatures of the file at @p path into @p context (signatures, fileSha256, fileSet): the owner links the
+    /// signature library (core/swsignature), this library does not. False with the reason; the default says there is
+    /// no signature library in this process
+    virtual bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error)
+    {
+        (void)path;
+        (void)context;
+        error = "no signature library in this process";
+        return false;
+    }
     /// The service whose motors haptics / rumble drive; nullptr: no host output in this process
     virtual HostInputService* Input()
     {
@@ -128,6 +139,9 @@ private:
     HostReply Aliases();
     /// Forget an alias (id= the old id), saved to aliases.yaml and applied at once
     HostReply Unalias(const HostRequest& request);
+    /// The game profiles a program's signatures match (D7), the one chosen and the haptics reason (H-3): `path` (the
+    /// owner computes its signatures), `signatures` / `file_sha256` / `file_set` (comma lists) or the loaded program
+    HostReply Match(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

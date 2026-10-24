@@ -73,8 +73,9 @@ public:
     /// A host verb (surfaces.md §2: profiles, bindings, bind / unbind, save, delete, apply) run here as the automation
     /// surfaces run it: the dialog's editors take the same path as WebAPI, MCP, CLI and Python
     controllers::HostReply Host(const controllers::HostRequest& request);
-    /// "Keep" on the auto toast: a user game profile keyed by the loaded file's SHA-256 (mapping-and-profiles.md
-    /// §6.1) holding the connector and the first pad's pin; false with the reason
+    /// "Keep" on the auto toast: a user game profile keyed by the loaded program's signatures (content, TR-DOS file set,
+    /// the file's SHA-256; mapping-and-profiles.md §6.1) holding the connector and the first pad's pin; false with the
+    /// reason
     bool KeepAutoDecision(QString& error);
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
@@ -189,7 +190,9 @@ private:
     uint64_t _fileObserver = 0;
     uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
-    std::string _fileSha256;  ///< of the program loaded last into the bound emulator
+    /// The signatures, file hash and TR-DOS file set of the program loaded last into the bound emulator (only those
+    /// fields are used)
+    controllers::ProfileContext _program;
     QString _fileName;
     bool _autoDone = false;      ///< decided (or a kept game profile holds the connectors) for this program
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it

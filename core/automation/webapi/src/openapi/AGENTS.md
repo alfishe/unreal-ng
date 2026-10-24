@@ -29,6 +29,7 @@ openapi/
 ├── openapi_labels.inc     # Labels/symbols management
 ├── openapi_symbols.inc    # Symbol files in every format, symbol sets (SymbolControl)
 ├── openapi_asm.inc        # Assembler sources: decode, encode, convert, disk files (AsmControl)
+├── openapi_signature.inc  # Media signatures: a file, the loaded media, compare (SignatureControl)
 ├── openapi_lifecycle.inc  # Emulator create/start/stop
 ├── openapi_machine.inc    # Recent files, recording presets and the video record / export-clip options of the machine area
 ├── openapi_operations.inc # Operation log (machine state coordinator) + openapi_operations_schemas.inc

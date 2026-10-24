@@ -45,6 +45,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
         {"aliases", {}},
         {"unalias", {"id"}},
     };
@@ -112,6 +113,35 @@ namespace
                 out << " " << id.asString();
             for (const Json::Value& warning : reply["warnings"])
                 out << "\nwarning: " << warning.asString();
+            // The signature hook (D7, H-3): an agent may see only the text
+            if (reply.isMember("signatures"))
+            {
+                out << "\nsignatures:";
+                for (const Json::Value& signature : reply["signatures"])
+                    out << " " << signature.asString();
+                if (reply["signatures"].empty())
+                    out << " none (no program loaded from a file)";
+                out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files";
+                out << "\ngame matches:";
+                for (const Json::Value& match : reply["game_matches"])
+                    out << " " << match["id"].asString() << " (" << match["how"].asString() << ")";
+                if (reply["game_matches"].empty())
+                    out << " none";
+                out << "\nhaptics: " << reply["haptics_reason"].asString();
+            }
+            return out.str();
+        }
+        if (action == "match")
+        {
+            out << reply["message"].asString() << "\nsignatures:";
+            for (const Json::Value& signature : reply["signatures"])
+                out << " " << signature.asString();
+            out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files\nmatches:";
+            for (const Json::Value& match : reply["matches"])
+                out << "\n  " << match["id"].asString() << " (" << match["how"].asString() << ")";
+            if (reply["matches"].empty())
+                out << " none";
+            out << "\nnext: " << reply["next"].asString() << "\nhaptics: " << reply["haptics_reason"].asString();
             return out.str();
         }
         if (action == "profiles")
@@ -316,7 +346,16 @@ void RegisterControllers(ToolRegistry& registry)
         schema["properties"][option]["description"] =
             "input: the controls ('up+fire'; right, left, down, up, fire, fire2, fire3, fire4; set 'none' = nothing held)";
     schema["properties"]["set"]["description"] = "profiles: all (default), play, debug, scheme, game";
-    schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
+    schema["properties"]["machine"]["description"] =
+        "profiles: only those of a machine model (next, pentagon); match: the machine to match for (default the bound one)";
+    schema["properties"]["path"]["description"] =
+        "match: a host file whose signatures to match (tape, disk, snapshot); without path / signatures: the loaded program";
+    schema["properties"]["signatures"]["description"] =
+        "match: signatures, comma-separated (file:sha256:.., tape:sha256:.., trdset:sha256:.., mem:sha256:..: "
+        "signature_info gives them)";
+    schema["properties"]["file_sha256"]["description"] = "match: file SHA-256 hashes, comma-separated";
+    schema["properties"]["file_set"]["description"] =
+        "match: a TR-DOS file set (c:<16 hex> code, d:<16 hex> data tokens), comma-separated: the fuzzy rule";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
         "unalias: the old device id of an alias (aliases lists them); scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
@@ -361,7 +400,9 @@ void RegisterControllers(ToolRegistry& registry)
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
         "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), aliases (old device id -> new: a "
         "controller first seen through GameController alone (gc:...) and later matched to its HID device keeps its "
-        "profiles under the new id), unalias (forget one, id = the old id). Options per action:" +
+        "profiles under the new id), unalias (forget one, id = the old id), match (the game profiles a program's "
+        "signatures choose: exact, file SHA-256, then the TR-DOS file set's fuzzy rule; context shows them for the "
+        "loaded program with where the haptics come from). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -377,7 +418,7 @@ void RegisterControllers(ToolRegistry& registry)
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
                 static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics", "aliases"};
+                                                            "haptics", "aliases", "match"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

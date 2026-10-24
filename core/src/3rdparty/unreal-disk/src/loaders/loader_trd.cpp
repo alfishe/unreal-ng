@@ -46,7 +46,7 @@ DiskImage* LoaderTRD::parse(const uint8_t* data, size_t len, std::vector<std::st
     uint8_t cylinders = 0;
     uint8_t sides = 0;
     geometryForFile(data, len, cylinders, sides);
-    if (cylinders >= MAX_CYLINDERS)
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS)
     {
         warnings.push_back(StringHelper::Format("TRD image of %zu bytes needs %d cylinders, more than the supported %d", len, cylinders, MAX_CYLINDERS));
         return nullptr;
@@ -184,30 +184,15 @@ bool LoaderTRD::writeImage(const std::string& path)
     uint8_t cylinders = diskImage->getCylinders();
     uint8_t sides = diskImage->getSides();
 
-    // Validate disk type based on cylinders and sides
-    TRDDiskType diskType;
-    if (cylinders == TRD_80_TRACKS)
+    // Any geometry the drive reaches: 1..MAX_CYLINDERS cylinders (TR-DOS formatters write 80-86 tracks on 80-track
+    // drives), one or two sides. TR-DOS knows only the 40 / 80-track step in its disk type byte; a disk of at most
+    // 42 cylinders is a 40-track (48 tpi) medium, as FloppyFormats marks it
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS || (sides != 1 && sides != 2))
     {
-        if (sides == 2)
-            diskType = DS_80;
-        else if (sides == 1)
-            diskType = SS_80;
-        else
-            return false;  // Invalid number of sides
+        return false;
     }
-    else if (cylinders == TRD_40_TRACKS)
-    {
-        if (sides == 2)
-            diskType = DS_40;
-        else if (sides == 1)
-            diskType = SS_40;
-        else
-            return false;  // Invalid number of sides
-    }
-    else
-    {
-        return false;  // Invalid number of tracks
-    }
+    const bool fortyTrack = cylinders <= 42;
+    const TRDDiskType diskType = sides == 2 ? (fortyTrack ? DS_40 : DS_80) : (fortyTrack ? SS_40 : SS_80);
 
     /// endregion </Sanity checks>
 
@@ -688,7 +673,9 @@ void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskTy
     }
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
 
-    uint16_t freeSectorCount = getFreeSectorCountForDiskType(diskType);
+    // Every track but track 0 (the catalogue) is free: the standard 40 / 80-track counts, and more on 81-86
+    const uint16_t freeSectorCount = static_cast<uint16_t>(
+        (static_cast<unsigned>(diskImage->getCylinders()) * diskImage->getSides() - 1) * TRD_SECTORS_PER_TRACK);
 
     volumeInfo->trDOSSignature = TRD_SIGNATURE;
     volumeInfo->diskType = diskType;

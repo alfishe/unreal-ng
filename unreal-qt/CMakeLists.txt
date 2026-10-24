@@ -372,6 +372,11 @@ else ()
     )
 endif ()
 
+# The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
+endif ()
+
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 set(CONFIGS_DIR "${DATA_PATH}/configs")

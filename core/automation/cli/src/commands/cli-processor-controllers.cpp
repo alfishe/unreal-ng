@@ -36,7 +36,8 @@ namespace
         "Host (profiles and bindings of the host's pads, keyboard and mouse):\n"
         "controllers devices                        - The connected host devices: role, layers up, context, outputs, feel,\n"
         "                                             battery, light, what is missing (notice)\n"
-        "controllers context                        - Machine, file hashes, manual game profile, devices\n"
+        "controllers context                        - Machine, signatures, game matches, haptics reason, manual profile\n"
+        "controllers match [path] [signatures=..] [file_set=..] - The game profiles a program's signatures choose\n"
         "controllers profiles [set=game|play|debug|scheme] [machine=next] - Every profile\n"
         "controllers profile <id>                   - One profile as YAML\n"
         "controllers save <file>                    - Save a profile file (YAML or JSON) into the user's profiles\n"
@@ -127,6 +128,8 @@ namespace
                 if (verb == "light" && words.size() > 2)
                     request.options["color"] = words[2];
             }
+            else if (verb == "match")
+                request.options["path"] = words[1];
             else if (verb == "save")
             {
                 std::ifstream file(words[1], std::ios::binary);

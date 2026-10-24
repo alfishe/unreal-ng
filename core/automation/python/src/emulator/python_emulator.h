@@ -29,6 +29,9 @@
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
 #endif
+#ifdef ENABLE_SWSIGNATURE
+#include "signaturecontrol.h"
+#endif
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/sound/midi/midicontrol.h>
@@ -372,6 +375,34 @@ inline pybind11::object AsmPy(Emulator& emulator, const std::string& verb, std::
         value["error"] = reply.message;
     }
     return StateNodeToPy(value);
+}
+
+/// One signature verb through SignatureControl (core/swsignature: file, media, compare): keyword arguments as options;
+/// the reply as a dict ({ok, ...} as WebAPI /api/v1/signature)
+inline pybind11::object SignaturePy(Emulator* emulator, const std::string& verb, std::map<std::string, std::string> options,
+                                    const pybind11::kwargs& kwargs)
+{
+#ifdef ENABLE_SWSIGNATURE
+    for (const auto& [key, value] : kwargs)
+        options[pybind11::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+    unrealng::swsignature::SignatureReply reply;
+    {
+        pybind11::gil_scoped_release release;  // hashing a disk image takes a while; the media verb reads slots only
+        reply = unrealng::swsignature::SignatureControl(emulator != nullptr ? emulator->GetContext() : nullptr)
+                    .Execute({verb, std::move(options)});
+    }
+    return StateNodeToPy(reply.ToValue());
+#else
+    (void)emulator;
+    (void)verb;
+    (void)options;
+    (void)kwargs;
+    pybind11::dict reply;
+    reply["ok"] = false;
+    reply["error"] = "unavailable";
+    reply["message"] = "built without the signature library (ENABLE_SWSIGNATURE)";
+    return reply;
+#endif
 }
 
 /// A coverage query's answer; a bad argument raises ValueError
@@ -1998,8 +2029,8 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, aliases, unalias) with its options as "
-                 "keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, aliases, unalias, match) with its options "
+                 "as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2027,6 +2058,24 @@ namespace PythonBindings
                  }, py::arg("id"), py::arg("value") = py::none(),
                  "Run a host action and wait for it: value None (a press), True / False, steps (delta), 0..1 "
                  "(level) or text; keyword params (line=, count=). {ok, action, error, message, result}")
+            .def("controllers_match", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("match", options);
+                 },
+                 "The game profiles a program's signatures choose (path='game.trd', or signatures= / file_sha256= / "
+                 "file_set= comma lists; none: the loaded program): {matches: [{id, how}], profile, next, "
+                 "haptics_reason}")
+            .def("signature", [](Emulator&, const std::string& path, const py::kwargs& options) {
+                     return SignaturePy(nullptr, "file", {{"path", path}}, options);
+                 }, py::arg("path"),
+                 "The signatures of a file (details=True: blocks / files; external=True: SHA-1, MD5): {signature: "
+                 "{kind, format, sha256, content, keys, file_set, ...}}")
+            .def("signature_media", [](Emulator& self, const py::kwargs& options) {
+                     return SignaturePy(&self, "media", {}, options);
+                 }, "The signatures of the tapes and disks loaded in this machine: {media: [{slot, source, dirty, signature}]}")
+            .def("signature_compare", [](Emulator&, const std::string& path, const std::string& candidate) {
+                     return SignaturePy(nullptr, "compare", {{"path", path}, {"with", candidate}}, py::kwargs());
+                 }, py::arg("path"), py::arg("candidate"),
+                 "A known title against a candidate: {match: {level: exact|content|fuzzy|memory|none, score, reason}}")
             .def("controllers_haptics", [](Emulator&, const std::string& device) {
                      py::kwargs options;
                      if (!device.empty())
