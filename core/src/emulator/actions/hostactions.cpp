@@ -663,12 +663,14 @@ ActionResult ColdReset(const ActionCall& call)
             return BadRequest("ram_power_on: expected random or zero");
         request.ramPowerOn = mode;
     }
-    const bool wasRunning = call.emulator->IsRunning() && !call.emulator->IsPaused();
+    const ModelSwitch::RunStateBefore before = ModelSwitch::RunStateBefore::Of(*call.emulator);
     const ModelSwitchResult restarted = ModelSwitch::Run(request);
     if (!restarted.result.Ok() || !restarted.emulator)
         return Conflict("the machine was not restarted: " + restarted.result.message);
-    if (wasRunning)
-        EmulatorManager::GetInstance()->StartEmulatorAsync(restarted.emulator->GetId());
+    // The run state the user had: a paused machine comes back started and paused, not "initialized"
+    const std::string newId = restarted.emulator->GetId();
+    ModelSwitch::StartAsBefore(*restarted.emulator, before,
+                               [&newId]() { EmulatorManager::GetInstance()->StartEmulatorAsync(newId); });
     StateNode body = StateNode::Object();
     body["replaced"] = call.instanceId;
     body["emulator_id"] = restarted.emulator->GetId();
