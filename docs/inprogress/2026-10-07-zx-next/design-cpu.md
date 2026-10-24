@@ -23,6 +23,27 @@ Why not extend `core/src/emulator/cpu/z80.cpp`: a Z80N opcode in the native inte
 a flag rule and a hook in code every machine runs at 100+ million steps per second; the engine seam makes the
 Next pay and nobody else.
 
+## 1a. Undocumented flags and behaviour: the official core did not fix them
+
+The reference is the official FPGA source (GitLab ZX_Spectrum_Next_FPGA, CORE 3.02.03, `cores/zxnext/src/cpu/t80n*.vhd`).
+Its CPU is **T80 v0247** (`t80n.vhd`, header `Version : 0247`) with the Z80N additions bolted on. The Next team did
+not correct the undocumented flags and the other quirks of that T80: where T80 v0247 differs from a Zilog die, the
+Next differs too. The MiSTer port (ZXNext_MiSTer) carries a T80 where those places were repaired by hand (T80 v350,
+MEMPTR/WZ, X/Y fixes); that is **not** what the board does, and the two must not be mixed when comparing.
+
+Consequences for the library (`Z80nCpu` "T80N persona", on for the Next machine, off for the Zilog machines):
+
+- SCF/CCF: F5/F3 come from A only (no Q), as in `t80n.vhd` (`F(Flag_Y) <= ACC(5)`).
+- Repeating LDIR/LDDR/CPIR/CPDR/INIR/INDR/OTIR/OTDR: no repeat-specific flag logic (no F5/F3 from PC, no special P/H).
+- INI/IND/OUTI/OUTD flags, `BIT n,(HL)`, `IN r,(C)`, `LD A,I/R`, `CPI/CPD` F5/F3: as T80 v0247, not as the Zilog die.
+- Z80N instructions follow the VHDL, not the wiki: PIXELDN wraps the 8-bit row counter (0x5FFF -> 0x401F), LDWS sets
+  C as ADD D,1, LDPIRX takes F5/F3 from `B | byte`, OUTINB leaves the flags alone (it skips the SUB of B).
+- The MiSTer-only formulas (OUTINB flags from the INI path, INIR/OTIR flags with `k > 255`) are v350 behaviour and
+  are deliberately not used.
+
+The hardware tests (`!Z80N.snx`, `!Z80Nc2.snx`) cannot tell these apart; the VHDL is the only source of truth, checked
+with a GHDL differential run of the official `t80n*.vhd` (see the session notes in `scratch/z80n-official/`).
+
 ## 2. The adapter `Z80NEngine`
 
 `core/src/emulator/io/z80n/z80nengine.{h,cpp}`: the same job table as `Z84C15Engine` (registers attached zero-copy

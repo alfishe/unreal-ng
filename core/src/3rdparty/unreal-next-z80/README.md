@@ -26,6 +26,7 @@ core without a clashing symbol.
 | Change | Files | Why |
 |:--|:--|:--|
 | The chip is gone: no `Z80nC15` class, no CTC / SIO / PIO, no wait generator (`z80nwaits.cpp`, `Z80nWaitGen`), no daisy-chain RETI watcher | `z80ncpu.cpp`, `z80ncpu-internal.h`, `opcodes-callback.cpp`, `opcodes-ed.inc` | the Next has none of it; waits (contention, the 28 MHz SRAM wait) come from the host through `Z80nCpuAddWaitStates` and the contention hook |
+| T80N persona (`Z80nCpuSetT80Persona`, off by default, on in the Next machine): SCF/CCF F5/F3 from A alone, BIT n,(HL) / (IX+d) F5/F3 = 0, IN r,(C) and LD A,I / LD A,R keep F5/F3, CPI/CPD F5/F3 of the byte, no PC-derived F5/F3 on repeats, INI/IND/OUTI/OUTD(+R) flag as SUB B,1, no INT quirk after LD A,I/R | `opcodes-base.inc`, `opcodes-ed.inc`, `opcodes-cb.inc`, `opcodes-xxcb.inc`, `z80ncpu.cpp` | the official FPGA core (3.02.03) runs a T80 (v0247) that never copied the Zilog die's undocumented flag research; verified bit for bit by a GHDL differential run of every opcode against `cores/zxnext/src/cpu` |
 | NMOS baseline instead of CMOS: `OUT (C),0` writes 0, the `LD A,I` / `LD A,R` + INT quirk is on; `Z80nCpuSetLdAirQuirk(cpu, 0)` and `Z80nCpuSetOutC0Value` switch them | `z80ncpu.cpp`, `z80ncpu.h`, `z80ncpu-internal.h` | the Next's core is a T80, not a Zilog die; which behaviors it shows is found with the Next's test programs (design `requirements.md` Q12) |
 | The Z80N instructions: `opcodes-z80n.inc` (new) and 30 entries in the ED table | `opcodes-z80n.inc`, `opcodes-ed.inc`, `opcodes-callback.cpp` | see the table below |
 | `NEXTREG` through `Z80nCpuSetNextRegFn` (no port cycle) | `z80ncpu.h`, `z80ncpu.cpp`, `opcodes-callback.cpp` | the host owns the NextREG file |
@@ -47,14 +48,14 @@ FPGA core's T80 microcode (`t80n_mcode.vhd`, `t80n.vhd`). Where the two disagree
 | `ED 31-33` | `ADD HL/DE/BC,A` | 8 | **carry cleared** (the table: "carry is not preserved"); VHDL: the carry is assigned from a bit that is never set |
 | `ED 34-36 nn` | `ADD HL/DE/BC,nn` | 16 | each operand cycle carries an idle T; no flags |
 | `ED 8A hh ll` | `PUSH nn` | 23 | operand big-endian; 3 idle T at SP, then the writes |
-| `ED 90` | `OUTINB` | 16 | OUT (C),(HL); HL++; B and flags unchanged. The VHDL sets a repeat bit that depends on Z; the real-board test treats it as a single step, so does the library |
+| `ED 90` | `OUTINB` | 16 | OUT (C),(HL); HL++; B and flags unchanged (the official core runs no SUB for it). The VHDL sets a repeat bit that depends on Z; the real-board test treats it as a single step, so does the library |
 | `ED 91 n v` / `ED 92 n` | `NEXTREG n,v` / `NEXTREG n,A` | 20 / 17 | no port cycle; the host's callback at the cycle where the core writes |
-| `ED 93` / `ED 94` / `ED 95` | `PIXELDN` / `PIXELAD` / `SETAE` | 8 | |
+| `ED 93` / `ED 94` / `ED 95` | `PIXELDN` / `PIXELAD` / `SETAE` | 8 | PIXELDN increments the 8-bit row `{H4,H3,L7,L6,L5,H2,H1,H0}` with wrap-around (`5FFF` -> `401F`) |
 | `ED 98` | `JP (C)` | 13 | PC = (PC & #C000) + (IN (C) << 6), PC already past the instruction |
 | `ED A4` / `ED AC` | `LDIX` / `LDDX` | 16 | copy unless the byte equals A; flags as LDI (the table lists none; the VHDL sets them) |
 | `ED B4` / `ED BC` | `LDIRX` / `LDDRX` | 21 repeat, 16 last | PC rewinds, interrupts can come between elements; X / Y from the sum, not from PC |
-| `ED B7` | `LDPIRX` | 21 / 16 | source = (HL & #FFF8) + (DE & 7); HL does not move |
-| `ED A5` | `LDWS` | 14 | (DE) = (HL); L++; D++; flags as INC D |
+| `ED B7` | `LDPIRX` | 21 / 16 | source = (HL & #FFF8) + (DE & 7); HL does not move; F5/F3 from `B \| byte` (the VHDL's flag ALU sees B, not A) |
+| `ED A5` | `LDWS` | 14 | (DE) = (HL); L++; D++; flags as INC D, except C: the VHDL's ADD D,1 sets it when D wraps (C = D was #FF) |
 | `ED B6` | `LDIRSCALE` | = LDIRX | decoded by the FPGA, the scaling commented out in the VHDL |
 
 ## Tests
