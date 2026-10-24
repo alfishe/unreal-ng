@@ -1,0 +1,231 @@
+{
+  "schema": 1,
+  "family": "joy-con-r",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "paddle.p2",
+      "label": "ZR",
+      "shape": {
+        "rect": [
+          1010,
+          89,
+          235,
+          77
+        ]
+      },
+      "anchor": [
+        1127,
+        128
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 0
+    },
+    {
+      "control": "paddle.p1",
+      "label": "R",
+      "shape": {
+        "rect": [
+          829,
+          84,
+          178,
+          54
+        ]
+      },
+      "anchor": [
+        918,
+        111
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "rb",
+      "label": "SR",
+      "shape": {
+        "rect": [
+          788,
+          408,
+          43,
+          128
+        ]
+      },
+      "anchor": [
+        809,
+        472
+      ],
+      "callout": "left",
+      "order": 2
+    },
+    {
+      "control": "lb",
+      "label": "SL",
+      "shape": {
+        "rect": [
+          788,
+          924,
+          43,
+          141
+        ]
+      },
+      "anchor": [
+        809,
+        994
+      ],
+      "callout": "left",
+      "order": 3
+    },
+    {
+      "control": "menu",
+      "label": "+",
+      "shape": {
+        "rect": [
+          856,
+          198,
+          83,
+          83
+        ]
+      },
+      "anchor": [
+        898,
+        239
+      ],
+      "callout": "right",
+      "order": 4
+    },
+    {
+      "control": "east",
+      "label": "X",
+      "shape": {
+        "circle": [
+          1028,
+          343,
+          53
+        ]
+      },
+      "anchor": [
+        1028,
+        343
+      ],
+      "callout": "right",
+      "order": 5
+    },
+    {
+      "control": "north",
+      "label": "Y",
+      "shape": {
+        "circle": [
+          925,
+          439,
+          53
+        ]
+      },
+      "anchor": [
+        925,
+        439
+      ],
+      "callout": "right",
+      "order": 6
+    },
+    {
+      "control": "south",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1131,
+          439,
+          53
+        ]
+      },
+      "anchor": [
+        1131,
+        439
+      ],
+      "callout": "right",
+      "order": 7
+    },
+    {
+      "control": "west",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1028,
+          535,
+          53
+        ]
+      },
+      "anchor": [
+        1028,
+        535
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "lstick.x",
+      "label": "RS",
+      "shape": {
+        "circle": [
+          1028,
+          802,
+          108
+        ]
+      },
+      "anchor": [
+        1028,
+        802
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "stick",
+        "pair": "lstick.y",
+        "radius": 64
+      },
+      "group": "lstick",
+      "order": 9
+    },
+    {
+      "control": "lstick.click",
+      "label": "RS",
+      "shape": {
+        "circle": [
+          1028,
+          802,
+          65
+        ]
+      },
+      "anchor": [
+        1028,
+        802
+      ],
+      "callout": "right",
+      "group": "lstick",
+      "order": 10
+    },
+    {
+      "control": "guide",
+      "label": "Home",
+      "shape": {
+        "circle": [
+          957,
+          1052,
+          45
+        ]
+      },
+      "anchor": [
+        957,
+        1052
+      ],
+      "callout": "right",
+      "order": 11
+    }
+  ]
+}

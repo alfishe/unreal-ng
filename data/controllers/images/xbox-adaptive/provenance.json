@@ -1,0 +1,45 @@
+{
+  "family": "xbox-adaptive",
+  "images": [
+    {
+      "view": "front",
+      "title": "Xbox Adaptive Controller, top and the back edge's jacks",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 292 x 130 x 23 mm, 552 g",
+          "source": "https://www.xbox.com/en-US/accessories/controllers/xbox-adaptive-controller (and its Microsoft Store page)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view (orthographic within 1 %: 2.22 : 1 against the maker's 2.25 : 1): the slab, the two 100 mm pads, the D-pad, Xbox, View, Menu, the profile button and its lights, the labels along the top edge, the A / B marks; positions and sizes on a 5 mm grid and with blob fits",
+          "source": "https://commons.wikimedia.org/wiki/File:InclusiveGameLab_Xbox-Adaptive-Controller_4_CC-BY-SA_01.jpg",
+          "author": "InclusiveGameLab",
+          "licence": "CC BY-SA 4.0",
+          "use": "measured geometry only (positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24",
+          "note": "the lab's triangle sticker between the pads is left out"
+        },
+        {
+          "what": "the back edge: 19 jacks of 3.5 mm with their grooves and labels, the connect button, USB-C, the 5 V DC barrel",
+          "source": "https://commons.wikimedia.org/wiki/File:InclusiveGameLab_Xbox-Adaptive-Controller_4_CC-BY-SA_02.jpg",
+          "author": "InclusiveGameLab",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "drawn in the order of the top's labels (the edge seen through the device); spacing measured on the top's labels, the jacks' height on the edge estimated"
+        },
+        {
+          "what": "the USB-A ports on the two short sides (a joystick there drives the left / right stick): drawn as slots at the ends of the strip, their place along the side estimated",
+          "source": "https://learn.adafruit.com/diy-adaptive-game-controllers/adaptive-joysticks (the two USB ports for joysticks that stand in for the thumbsticks)",
+          "note": "an estimate: one port at each end",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

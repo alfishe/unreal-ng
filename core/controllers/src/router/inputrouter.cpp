@@ -481,7 +481,17 @@ bool InputRouter::Consumes(const HostDeviceId& id, const std::string& control) c
 float InputRouter::Value(const Device& device, const std::string& control)
 {
     const auto it = device.values.find(control);
-    return it == device.values.end() ? 0.0f : it->second;
+    if (it != device.values.end())
+        return it->second;
+    // A device whose trigger is only a switch may send `lt.click` alone (older layouts, a driver's digital L2):
+    // `lt` and the `lt.click` derived from it read that switch at full travel
+    if (control == "lt" || control == "rt")
+    {
+        const auto click = device.values.find(control + ".click");
+        if (click != device.values.end())
+            return click->second;
+    }
+    return 0.0f;
 }
 
 std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) const

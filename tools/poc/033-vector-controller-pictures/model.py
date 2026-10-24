@@ -19,16 +19,27 @@ class View:
         self.ox, self.oy, self.scale = ox, oy, scale
         self.parts = {layer: [] for layer in LAYERS}
         self.defs = picture.defs
+        # Control names as the device's driver reports them, when they differ from what a shared drawing names
+        # (a Joy-Con held sideways: its arrows are the face buttons); "rstick" renames rstick.x / .y / .click
+        self.rename = {}
+
+    def named(self, control):
+        if control is None or control in self.rename:
+            return self.rename.get(control, control)
+        head, dot, tail = control.partition(".")
+        return self.rename[head] + dot + tail if dot and head in self.rename else control
 
     def canvas(self, x, y):
         return self.ox + x * self.scale, self.oy + y * self.scale
 
     def add(self, layer, svg, control=None):
         """@p svg into @p layer; with @p control inside that control's group (`control-<name>` or `legend-<name>`)"""
-        self.parts[layer].append((control, svg))
+        self.parts[layer].append((self.named(control), svg))
 
     def spot(self, control, label, shape, side, anchor=None, analog=None, group=None, quiet=False):
         """A hotspot: @p shape ("circle", cx, cy, r) or ("rect", x, y, w, h) in mm of this view"""
+        control = self.named(control)
+        group = self.named(group)
         if shape[0] == "circle":
             _, cx, cy, r = shape
             x, y = self.canvas(cx, cy)
@@ -45,6 +56,8 @@ class View:
                  "anchor": [round(centre[0]), round(centre[1])], "callout": side}
         if analog:
             analog = dict(analog)
+            if "pair" in analog:
+                analog["pair"] = self.named(analog["pair"])
             if "radius" in analog:
                 analog["radius"] = round(analog["radius"] * self.scale)
             entry["analog"] = analog

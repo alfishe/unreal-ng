@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "family": "saturn-pad",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "lt",
+      "label": "L",
+      "shape": {
+        "rect": [
+          530,
+          391,
+          297,
+          38
+        ]
+      },
+      "anchor": [
+        678,
+        410
+      ],
+      "callout": "left",
+      "order": 0
+    },
+    {
+      "control": "rt",
+      "label": "R",
+      "shape": {
+        "rect": [
+          1222,
+          391,
+          297,
+          38
+        ]
+      },
+      "anchor": [
+        1370,
+        410
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "dpad.up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          631,
+          635,
+          74,
+          71
+        ]
+      },
+      "anchor": [
+        668,
+        670
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 2
+    },
+    {
+      "control": "dpad.down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          631,
+          779,
+          74,
+          71
+        ]
+      },
+      "anchor": [
+        668,
+        814
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 3
+    },
+    {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          560,
+          705,
+          71,
+          74
+        ]
+      },
+      "anchor": [
+        596,
+        742
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 4
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          705,
+          705,
+          71,
+          74
+        ]
+      },
+      "anchor": [
+        740,
+        742
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 5
+    },
+    {
+      "control": "menu",
+      "label": "Start",
+      "shape": {
+        "rect": [
+          969,
+          820,
+          110,
+          60
+        ]
+      },
+      "anchor": [
+        1024,
+        850
+      ],
+      "callout": "right",
+      "order": 6
+    },
+    {
+      "control": "west",
+      "label": "X",
+      "shape": {
+        "circle": [
+          1230,
+          700,
+          52
+        ]
+      },
+      "anchor": [
+        1230,
+        700
+      ],
+      "callout": "right",
+      "order": 7
+    },
+    {
+      "control": "north",
+      "label": "Y",
+      "shape": {
+        "circle": [
+          1328,
+          632,
+          52
+        ]
+      },
+      "anchor": [
+        1328,
+        632
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "lb",
+      "label": "Z",
+      "shape": {
+        "circle": [
+          1439,
+          584,
+          52
+        ]
+      },
+      "anchor": [
+        1439,
+        584
+      ],
+      "callout": "right",
+      "order": 9
+    },
+    {
+      "control": "south",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1283,
+          856,
+          66
+        ]
+      },
+      "anchor": [
+        1283,
+        856
+      ],
+      "callout": "right",
+      "order": 10
+    },
+    {
+      "control": "east",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1402,
+          770,
+          66
+        ]
+      },
+      "anchor": [
+        1402,
+        770
+      ],
+      "callout": "right",
+      "order": 11
+    },
+    {
+      "control": "rb",
+      "label": "C",
+      "shape": {
+        "circle": [
+          1540,
+          712,
+          66
+        ]
+      },
+      "anchor": [
+        1540,
+        712
+      ],
+      "callout": "right",
+      "order": 12
+    }
+  ]
+}

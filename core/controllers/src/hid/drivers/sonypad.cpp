@@ -40,8 +40,8 @@ enum Slot : size_t
     kTouchpadX,
     kTouchpadY,
     kMic,      ///< DualSense: the mute button
-    kPaddleLeft,   ///< Edge
-    kPaddleRight,  ///< Edge
+    kPaddleLeft,   ///< Edge: paddle.p3, the Elite's upper left (hostcontrols.cpp: P1 / P2 right, P3 / P4 left)
+    kPaddleRight,  ///< Edge: paddle.p1, the Elite's upper right; an Elite profile works on the Edge
     kFn1,          ///< Edge
     kFn2,          ///< Edge
     kSlotCount,
@@ -51,8 +51,8 @@ const char* const kSlotNames[kSlotCount] = {
     "south",        "east",         "west",     "north",          "dpad.up",   "dpad.down", "dpad.left",
     "dpad.right",   "lb",           "rb",       "lt.click",       "rt.click",  "view",      "menu",
     "lstick.click", "rstick.click", "guide",    "touchpad.click", "lstick.x",  "lstick.y",  "rstick.x",
-    "rstick.y",     "lt",           "rt",       "touchpad.x",     "touchpad.y", "misc.1",   "paddle.p1",
-    "paddle.p2",    "misc.2",       "misc.3",
+    "rstick.y",     "lt",           "rt",       "touchpad.x",     "touchpad.y", "misc.1",   "paddle.p3",
+    "paddle.p1",    "misc.2",       "misc.3",
 };
 
 size_t SlotCount(SonyModel model)

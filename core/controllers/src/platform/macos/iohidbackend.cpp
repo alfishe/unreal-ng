@@ -8,6 +8,7 @@
 #include <pthread.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -26,8 +27,10 @@
 #include "endpointmerge.h"
 #include "gcpad.h"
 #include "hid/drivers/dualsenseoutput.h"
+#include "hid/drivers/gamecubeadapter.h"
 #include "hid/drivers/padprotocol.h"
 #include "hid/drivers/sonypad.h"
+#include "hid/drivers/steampad.h"
 #include "hid/drivers/surfacedial.h"
 #include "hid/drivers/switchpro.h"
 #include "hid/drivers/xboxbluetoothoutput.h"
@@ -156,6 +159,15 @@ std::unique_ptr<PadPump> MakePump(IOHIDDeviceRef ref, std::unique_ptr<IPadProtoc
                 return false;
             data.resize(static_cast<size_t>(length));
             return true;
+        },
+        PadPump::Clock{},
+        [device](const std::vector<uint8_t>& report) {
+            // hidapi's rule: a report id of 0 is no id, the data after it goes alone
+            const bool noId = report[0] == 0;
+            const uint8_t* data = report.data() + (noId ? 1 : 0);
+            const CFIndex size = static_cast<CFIndex>(report.size() - (noId ? 1 : 0));
+            return IOHIDDeviceSetReport(device->ref, kIOHIDReportTypeFeature, report[0], data, size) ==
+                   kIOReturnSuccess;
         });
 }
 
@@ -187,6 +199,46 @@ bool IsMatchButton(const std::string& control)
 {
     return control == "south" || control == "east" || control == "west" || control == "north" || control == "lb" ||
            control == "rb";
+}
+
+/// Every HID interface of one vendor (Valve's Steam Controllers: their pad is a vendor-page interface)
+CFDictionaryRef VendorMatching(int vendor)
+{
+    CFNumberRef vendorRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &vendor);
+    const void* keys[] = {CFSTR(kIOHIDVendorIDKey)};
+    const void* values[] = {vendorRef};
+    CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                                              &kCFTypeDictionaryValueCallBacks);
+    CFRelease(vendorRef);
+    return dict;
+}
+
+/// One product (the GameCube adapter, whatever usage its descriptor gives)
+CFDictionaryRef ProductMatching(int vendor, int product)
+{
+    CFNumberRef vendorRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &vendor);
+    CFNumberRef productRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &product);
+    const void* keys[] = {CFSTR(kIOHIDVendorIDKey), CFSTR(kIOHIDProductIDKey)};
+    const void* values[] = {vendorRef, productRef};
+    CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+                                              &kCFTypeDictionaryValueCallBacks);
+    CFRelease(vendorRef);
+    CFRelease(productRef);
+    return dict;
+}
+
+/// A GameCube adapter's port as a device of its own: `<adapter id>:p1` .. `:p4`
+HostDeviceId PortId(const HostDeviceId& adapter, int port)
+{
+    return adapter + ":p" + std::to_string(port + 1);
+}
+
+/// The adapter's id and the port (0-3) of a port's id; port -1 for any other id
+std::pair<HostDeviceId, int> SplitPortId(const HostDeviceId& id)
+{
+    if (id.size() > 3 && id[id.size() - 3] == ':' && id[id.size() - 2] == 'p' && id.back() >= '1' && id.back() <= '4')
+        return {id.substr(0, id.size() - 3), id.back() - '1'};
+    return {id, -1};
 }
 
 CFDictionaryRef Matching(int usage)
@@ -438,7 +490,10 @@ public:
         std::lock_guard lock(_mutex);
         size_t count = _gcKeys.size();
         for (const auto& [ref, device] : _devices)
-            count += _merge.IsInput(device->key) && !device->gripPending ? 1 : 0;
+        {
+            count += _merge.IsInput(device->key) && !device->gripPending && !device->slotPending ? 1 : 0;
+            count += static_cast<size_t>(std::count(device->portShown.begin(), device->portShown.end(), true));
+        }
         return count - _joyCons.PairCount();  // two Joy-Cons, one pad
     }
 
@@ -467,6 +522,14 @@ private:
         /// A charging grip's half waiting for its device info: not reported, its input dropped (io thread; atomic for
         /// DeviceCount)
         std::atomic<bool> gripPending{false};
+        /// A Steam Controller's state report and lizard-mode set-up (SteamPad, SteamProtocol)
+        std::unique_ptr<SteamPad> steam;
+        /// A slot of a wireless dongle (Steam) with no pad on it: not reported, until a pad's connect event or state
+        /// (io thread; atomic for DeviceCount)
+        std::atomic<bool> slotPending{false};
+        /// A GameCube adapter: never reported itself, each port with a controller in it a device (PortId)
+        std::unique_ptr<GameCubeAdapter> gameCube;
+        std::array<bool, GameCubeAdapter::kPorts> portShown{};  ///< under _mutex: the ports reported
         /// The device info's type (SwitchProtocol::TypeSink, from the pump or the io thread); -1 not yet. Shared: the
         /// pump's thread may still write it while the device goes
         std::shared_ptr<std::atomic<int>> gripType = std::make_shared<std::atomic<int>>(-1);
@@ -497,7 +560,15 @@ private:
         }
         // Joystick, game pad, multi-axis controller; System Multi-Axis Controller for the Surface Dial and devices of
         // its pattern. Opened without seizing (kIOHIDOptionsTypeNone): the system keeps its own use of them
-        CFDictionaryRef matches[] = {Matching(0x04), Matching(0x05), Matching(0x08), Matching(0x0E)};
+        // Valve's devices all: the Steam Controllers' pad is a vendor-page interface (SteamPad), their keyboard and
+        // mouse ("lizard mode") are dropped in OnAdded
+        CFDictionaryRef matches[] = {
+            Matching(0x04),
+            Matching(0x05),
+            Matching(0x08),
+            Matching(0x0E),
+            VendorMatching(SteamPad::kValve),
+            ProductMatching(GameCubeAdapter::kNintendo, GameCubeAdapter::kAdapter)};
         CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches),
                                             static_cast<CFIndex>(std::size(matches)), &kCFTypeArrayCallBacks);
         for (CFDictionaryRef match : matches)
@@ -543,9 +614,14 @@ private:
         {
             std::lock_guard lock(_mutex);
             for (auto& [ref, device] : _devices)
-                if (_merge.IsInput(device->key) && !device->gripPending &&
+            {
+                if (_merge.IsInput(device->key) && !device->gripPending && !device->slotPending &&
                     std::find(gone.begin(), gone.end(), device->reported) == gone.end())
                     gone.push_back(device->reported);  // a Joy-Con pair once
+                for (int port = 0; port < GameCubeAdapter::kPorts; port++)
+                    if (device->portShown[static_cast<size_t>(port)])
+                        gone.push_back(PortId(device->reported, port));
+            }
             for (const auto& [id, key] : _gcKeys)
                 gone.push_back(id);
             _gcKeys.clear();
@@ -582,6 +658,16 @@ private:
     std::vector<Device*> EndpointsLocked(const HostDeviceId& device) const
     {
         std::vector<Device*> endpoints;
+        // A GameCube adapter's port: the adapter's endpoint, while a controller is in that port
+        if (const auto [adapter, port] = SplitPortId(device); port >= 0)
+        {
+            for (const std::string& key : _merge.EndpointsOf(adapter))
+                for (const auto& [ref, known] : _devices)
+                    if (known->key == key && known->gameCube && known->portShown[static_cast<size_t>(port)])
+                        endpoints.push_back(known.get());
+            if (!endpoints.empty())
+                return endpoints;
+        }
         for (const std::string& key : _merge.EndpointsOf(device))
             for (const auto& [ref, known] : _devices)
                 if (known->key == key)
@@ -593,7 +679,7 @@ private:
     Device* NativeRumbleLocked(const HostDeviceId& device) const
     {
         for (Device* known : EndpointsLocked(device))
-            if (known->xboxBluetooth || known->pump)
+            if (known->xboxBluetooth || (known->pump && known->nativeActuators != 0))
                 return known;
         return nullptr;
     }
@@ -909,6 +995,58 @@ private:
         ReportPairEvents(events);
     }
 
+    /// A GameCube adapter's report: a controller put in a port is a device, one taken out is gone
+    void OnGameCubeReport(Device& device, const uint8_t* report, size_t size, uint64_t timeNs)
+    {
+        std::vector<GameCubeAdapter::PortChange> changes;
+        std::vector<std::pair<int, std::pair<std::string, float>>> controls;
+        if (!device.gameCube->Decode(
+                report, size,
+                [&controls](int port, const std::string& control, float value) {
+                    controls.push_back({port, {control, value}});
+                },
+                changes))
+            return;
+        for (const GameCubeAdapter::PortChange& change : changes)
+        {
+            HostDeviceInfo info;
+            {
+                std::lock_guard lock(_mutex);
+                device.portShown[static_cast<size_t>(change.port)] = change.connected;
+                info = device.single;
+            }
+            info.id = PortId(info.id, change.port);
+            info.name += " (port " + std::to_string(change.port + 1) + ")";
+            if (change.connected)
+                _sink->OnDeviceAdded(info);
+            else
+                _sink->OnDeviceRemoved(info.id);
+        }
+        for (const auto& [port, control] : controls)
+            _sink->OnControl({PortId(device.reported, port), control.first, control.second, timeNs});
+    }
+
+    /// A Steam dongle's slot: reported when a pad comes to it, removed when it goes (the dongle stays)
+    void SteamSlot(Device& device, SteamPad::Event event)
+    {
+        if (!SteamPad::IsDongle(device.steam->Model()))
+            return;
+        const bool there = event == SteamPad::Event::Connected || event == SteamPad::Event::State;
+        const bool gone = event == SteamPad::Event::Disconnected;
+        if ((there && !device.slotPending) || (gone && device.slotPending) || (!there && !gone))
+            return;
+        HostDeviceInfo info;
+        {
+            std::lock_guard lock(_mutex);
+            device.slotPending = gone;
+            info = device.single;
+        }
+        if (gone)
+            _sink->OnDeviceRemoved(info.id);
+        else
+            _sink->OnDeviceAdded(info);
+    }
+
     void ReportPairEvents(const PairEvents& events)
     {
         for (const HostDeviceId& id : events.removed)
@@ -936,6 +1074,19 @@ private:
         // Apple's synthetic legacy pad mirrors a GIP pad we read directly (research-host-apis.md §2.1)
         if (match.ignore)
             return;
+        // A Valve device: a Steam Controller's pad is its vendor-page interface; a game pad interface (the Steam Deck,
+        // the virtual pads) as any; the lizard-mode keyboard and mouse, and the rest, are not pads
+        const std::optional<SteamModel> steamModel = SteamPad::ModelOf(vendor, product);
+        bool steamVendorPage = false;
+        if (vendor == SteamPad::kValve)
+        {
+            const int page = IntProperty(ref, CFSTR(kIOHIDPrimaryUsagePageKey));
+            const int usage = IntProperty(ref, CFSTR(kIOHIDPrimaryUsageKey));
+            steamVendorPage = steamModel.has_value() && page >= 0xFF00;
+            const bool gamePad = page == 0x01 && (usage == 0x04 || usage == 0x05 || usage == 0x08);
+            if (!steamVendorPage && !gamePad)
+                return;
+        }
 
         auto device = std::make_unique<Device>();
         device->owner = this;
@@ -949,10 +1100,16 @@ private:
             device->nativeActuators = kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
         // A PlayStation pad and the Switch Pro controller: their own full reports and protocols (haptics.md §9)
         const std::optional<SonyModel> sony = SonyPad::ModelOf(vendor, product);
-        const std::optional<SwitchLayout> switchLayout = SwitchProPad::LayoutFor(vendor, product);
+        const std::optional<SwitchLayout> switchLayout = SwitchProPad::LayoutFor(vendor, product, identity.name);
         const bool grip = SwitchProPad::IsChargingGrip(vendor, product);
         const bool switchPro = switchLayout.has_value() || grip;
         auto rumbleUnavailable = [&]() -> std::string {
+            if (steamVendorPage)
+                return "The emulator drives no Steam Controller haptics yet";
+            if (GameCubeAdapter::Handles(vendor, product))
+                return "The emulator drives no GameCube adapter rumble yet";
+            if (switchLayout && !SwitchProPad::HasRumble(*switchLayout))
+                return "This Nintendo Switch Online pad has no motors";
             if (device->xboxBluetooth || sony || switchPro)
                 return {};
             if (vendor == kMicrosoft && match.family == "xbox-360")
@@ -964,7 +1121,7 @@ private:
         };
         device->rumbleUnavailable = rumbleUnavailable();
         const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
-        const HidLayout layout = HidLayoutFor(match.layout);
+        const HidLayout layout = HidLayoutFor(match);
         size_t controls = 0;
         if (XboxGipPad::Handles(vendor, product) && maxInput == 18)
         {
@@ -973,6 +1130,22 @@ private:
         }
         else if (SurfaceDial::Handles(vendor, product))
             device->dial = std::make_unique<SurfaceDial>();
+        else if (GameCubeAdapter::Handles(vendor, product))
+        {
+            // Four controllers on one device: their own ids once one is in a port (OnGameCubeReport)
+            device->gameCube = std::make_unique<GameCubeAdapter>();
+            controls = GameCubeAdapter::Controls().size();
+            device->pump = MakePump(ref, std::make_unique<GameCubeProtocol>());
+            device->slotPending = true;
+        }
+        else if (steamVendorPage)
+        {
+            // Its own reports (no usable descriptor): out of lizard mode first (SteamProtocol)
+            device->steam = std::make_unique<SteamPad>(*steamModel);
+            controls = SteamPad::Controls(*steamModel).size();
+            device->pump = MakePump(ref, std::make_unique<SteamProtocol>(*steamModel));
+            device->slotPending = SteamPad::IsDongle(*steamModel);
+        }
         else
         {
             CFTypeRef data = IOHIDDeviceGetProperty(ref, CFSTR(kIOHIDReportDescriptorKey));
@@ -996,6 +1169,15 @@ private:
                     device->hid.reset();
                 else
                     controls = device->hid->Controls().size();
+                // A DualShock 3 on the cable sends no input report until feature report 0xF4 enables them (what a
+                // PS3 sends; SDL's PS3 driver does the same on macOS). Over Bluetooth it reports at once
+                constexpr uint16_t kSony = 0x054C;
+                constexpr uint16_t kDualShock3 = 0x0268;
+                if (vendor == kSony && product == kDualShock3 && !bluetooth)
+                {
+                    const uint8_t enable[] = {0xF4, 0x42, 0x0C, 0x00, 0x00};
+                    IOHIDDeviceSetReport(ref, kIOHIDReportTypeFeature, enable[0], enable, sizeof(enable));
+                }
             }
         }
         if (device->dial)
@@ -1036,7 +1218,8 @@ private:
                          bluetooth,
                          [decoder](const SwitchStickCalibration& calibration) { decoder->SetCalibration(calibration); },
                          SwitchProtocol::kStartDelayMs, std::move(onType)));
-            device->nativeActuators = kRumbleLow | kRumbleHigh;
+            if (SwitchProPad::HasRumble(layout))
+                device->nativeActuators = kRumbleLow | kRumbleHigh;
         }
 
         // architecture.md §5: usb:<vid>:<pid>:<version>:<serial>, usb:...@<path hash>, bt:<vid>:<pid>:<hash>
@@ -1045,7 +1228,9 @@ private:
         // Two interfaces of one known pad are one device (EndpointMerge). A generic device never merges: a two-player
         // encoder shows two pads on one USB port. The Dial has one endpoint
         // The grip's halves share its serial: never one device
-        const bool mergeable = match.family != "generic" && match.player && !device->dial && !grip;
+        // A dongle's pads share its serial too
+        const bool mergeable =
+            match.family != "generic" && match.player && !device->dial && !grip && !device->slotPending;
         const std::string physical = !mergeable ? std::string()
                                                 : identity.bus + ":" + Hex4(vendor) + ":" + Hex4(product) + ":" +
                                                       (serial.empty() ? "@" + location : serial);
@@ -1098,8 +1283,8 @@ private:
             const bool joyCon = device->joyCon != 0;
             device->single = info;
             device->shown = joyCon && newDevice;
-            if (device->gripPending)
-                newDevice = false;  // shown once its side is known (ResolveGrip)
+            if (device->gripPending || device->slotPending)
+                newDevice = false;  // shown once its side is known (ResolveGrip), once a pad is there (SteamSlot)
             _devices[ref] = std::move(device);
             UpdateInputsLocked(info.id);
             SyncHeldLocked(switches);
@@ -1130,6 +1315,7 @@ private:
     {
         std::unique_ptr<Device> device;
         EndpointMerge::HidRemoved removed;
+        std::vector<HostDeviceId> portsGone;  ///< a GameCube adapter's ports with a controller
         std::vector<InputSwitch> switches;
         PairEvents pairEvents;
         {
@@ -1143,8 +1329,11 @@ private:
             if (!removed.deviceGone)
                 UpdateInputsLocked(removed.device);  // another endpoint of the pad gives its input now
             SyncHeldLocked(switches);
-            if (device->gripPending)
+            if (device->gripPending || device->slotPending)
                 removed.deviceGone = false;  // never reported
+            for (int port = 0; port < GameCubeAdapter::kPorts; port++)
+                if (device->portShown[static_cast<size_t>(port)])
+                    portsGone.push_back(PortId(device->reported, port));
             if (device->joyCon != 0 && removed.deviceGone)
             {
                 const JoyConPairing::Change change = _joyCons.Remove(device->id);
@@ -1159,6 +1348,8 @@ private:
                                                             nullptr);
         if (removed.deviceGone)
             _sink->OnDeviceRemoved(device->id);
+        for (const HostDeviceId& port : portsGone)
+            _sink->OnDeviceRemoved(port);
         ReportPairEvents(pairEvents);
         // The writer ends with the device: a write in flight finishes first (a gone device refuses it at once)
     }
@@ -1199,6 +1390,19 @@ private:
         // The protocol sees every report first (subcommand replies, acknowledgements)
         if (device.pump)
             device.pump->Input(report, size);
+        if (device.gameCube)
+        {
+            OnGameCubeReport(device, report, size, timeNs);
+            return;
+        }
+        if (device.steam)
+        {
+            const SteamPad::Event event = device.steam->Decode(report, size, device.slotPending ? ControlSink{} : sink);
+            if (event == SteamPad::Event::Disconnected)
+                device.steam->Release(device.slotPending ? ControlSink{} : sink);
+            SteamSlot(device, event);
+            return;
+        }
         if (device.gripPending)
         {
             ResolveGrip(device);
