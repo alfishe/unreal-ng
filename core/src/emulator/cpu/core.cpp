@@ -1017,7 +1017,15 @@ bool Core::CanSetSpeedMultiplier(uint8_t multiplier) const
 {
     // A TTD recording captures the machine at real speed: only 1x while it is
     // active (TimeTravelManager forces 1x on entry and restores the setting on exit)
-    return multiplier == 1 || !_context->pFeatureManager || !_context->pFeatureManager->isTtdRecordingActive();
+    if (multiplier != 1 && _context->pFeatureManager && _context->pFeatureManager->isTtdRecordingActive())
+        return false;
+    // A history the user recorded keeps the speed it was recorded at: a change would drop it (Timing)
+    return multiplier == GetHostSpeedMultiplier() || SpeedLockReason().empty();
+}
+
+std::string Core::SpeedLockReason() const
+{
+    return _context && _context->pTimeTravelHooks ? _context->pTimeTravelHooks->SpeedLock() : std::string();
 }
 
 bool Core::SetSpeedMultiplier(uint8_t multiplier)

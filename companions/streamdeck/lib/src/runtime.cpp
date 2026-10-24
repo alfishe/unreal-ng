@@ -347,9 +347,15 @@ void Runtime::Render(bool force)
                     shown = ShownLocked(*f.value);
                     h = Mix(Mix(h, HashStr(shown->text) + 13), static_cast<std::size_t>(shown->level) + 17);
                 }
+                const bool unavailable = !UnavailableLocked(n->action).empty();
+                h = Mix(h, unavailable ? 29 : 31);
                 if (force || h != _sentKey[static_cast<size_t>(k)])
+                {
                     img = RenderFace(f, n->title, pressed, n->IsMenu(), _safePad, _faceSize, _s.dir, pack,
                                      shown ? &*shown : nullptr);
+                    if (unavailable)
+                        DimUnavailable(img);
+                }
             }
             if (h == 1 && (force || _sentKey[static_cast<size_t>(k)] != 1))
                 img = RenderEmptyKey(_faceSize);
@@ -378,6 +384,9 @@ void Runtime::Render(bool force)
             if (NowMs() < _activityUntil)
                 live.activity = _activityLine;
             live.showTarget = _page.strip ? _page.strip->target.value_or(true) : true;
+            if (NowMs() < _dialHintUntil)
+                live.dialHint = _dialHint;
+            live.bannerInfo = _bannerInfo;
             h = Mix(h, HashStr(live.Key()) + 5);
             double left = -1;  // auto exit countdown: redrawn at 30 fps so the bar glides
             if (_page.autoExit > 0 && _nav.Depth() > 0)
@@ -461,6 +470,10 @@ void Runtime::Handle(const Event& e, std::int64_t now)
         case EventType::KeyDown:
             if (e.index < 0 || e.index >= _m.keys)
                 return;
+            if (_nav.Current().readonly && e.index != _page.backKey)
+                if (const Node* n = _page.keys[static_cast<size_t>(e.index)]; !n || !n->IsMenu())
+                    return;  // a read-only menu (monitoring): its keys only show, a press changes nothing (its
+                             // pages still open)
             _pressed[static_cast<size_t>(e.index)] = true;
             _downAt[e.index] = now;
             if (e.index != _page.backKey)
@@ -499,6 +512,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                         lastMs > 0 ? std::abs(e.delta) * 1000.0 / std::max<std::int64_t>(1, now - lastMs) : 0.0;
                     rate = now - lastMs > 400 ? inst * 0.3 : rate * 0.5 + inst * 0.5;
                     lastMs = now;
+                    _dialHint = e.index, _dialHintUntil = now + 1500;  // its label over the timeline while it turns
                     Enqueue({*d->turn, sdb::Format("dial {}", e.index), {{"ticks", e.delta}, {"rate", rate}}, "stay"});
                 }
             break;
@@ -531,6 +545,8 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 onNoticeTap();  // NOT PAIRED / REVOKED: the tap pairs
                 break;
             }
+            if (SeekOnTimeline(e.x, e.x, false))
+                break;
             if (_page.crumbs == Crumbs::Strip)
             {
                 const int depth = CrumbHit(_page.path, _m.lcdLogicalW, e.x);
@@ -543,6 +559,8 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             }
             break;
         case EventType::LcdSwipe:
+            if (SeekOnTimeline(e.x, e.x2, true))
+                break;
             if (e.x2 > e.x + 40 && _nav.Back())
             {
                 _page = Layout(_s, _nav, _m);
@@ -562,11 +580,41 @@ void Runtime::Handle(const Event& e, std::int64_t now)
     }
 }
 
+// The host's reason an action cannot run now ("" = it can, or nobody said): the actions.unavailable readout
+std::string Runtime::UnavailableLocked(const Action& a) const
+{
+    if (a.kind != "action")
+        return {};
+    const auto it = _readouts.find("actions.unavailable");
+    if (it == _readouts.end() || !it->second.is_object())
+        return {};
+    const auto r = it->second.find(a.spec.value("id", ""));
+    return r != it->second.end() && r->is_string() ? r->get<std::string>() : std::string();
+}
+
+// An unavailable action's key: the face at a third of its light, so it reads as off but stays recognisable
+void Runtime::DimUnavailable(Rgb& img)
+{
+    for (int y = 0; y < img.h; ++y)
+        for (int x = 0; x < img.w; ++x)
+        {
+            std::uint8_t* p = img.At(x, y);
+            const int grey = (p[0] * 3 + p[1] * 6 + p[2]) / 10;  // half the colour goes
+            for (int c = 0; c < 3; ++c)
+                p[c] = static_cast<std::uint8_t>((p[c] + grey) / 2 * 35 / 100);
+        }
+}
+
 void Runtime::Activate(int key)
 {
     const Node* n = _page.keys[static_cast<size_t>(key)];
     if (!n)
         return;
+    if (const std::string why = UnavailableLocked(n->action); !why.empty())
+    {
+        SetBanner(why, 2500, true);  // greyed out: say why instead of sending what the host would refuse
+        return;
+    }
     if (n->IsMenu())
     {
         _nav.Enter(*n);
@@ -670,7 +718,7 @@ void Runtime::RunJob(Job& j)
         if (_last.size() > 20)
             _last.erase(_last.begin());
         if (!r.ok)
-            SetBanner(j.node + " FAILED", 2000);
+            FailureBanner(j, r.message);
         if (r.ok && !r.status.empty() && !(_page.strip && _page.strip->status == "ttd"))
             _status = r.status;
         _monitorKick = true;  // the readout follows at once
@@ -733,15 +781,100 @@ void Runtime::ApplyNav(const json& r)
     }
 }
 
-void Runtime::SetBanner(const std::string& text, int ms)
+// A tap or a swipe on the TTD timeline (a page that shows it, live): a tap seeks to the frame under the finger; a
+// swipe steps the position its way. The strip reports a swipe once, about 50 px after it starts (never where the
+// finger stops), so its length says nothing: a swipe is a step of a second, doubled by each quick swipe the same way
+// (within 1 s: 1, 2, 4, 8 s), at most a quarter of the history. False: not on a timeline.
+bool Runtime::SeekOnTimeline(int x, int x2, bool swipe)
+{
+    if (!_live || !PageScrubsTime(_page))
+        return false;
+    const auto p = _strip.find("ttd.position");
+    if (p == _strip.end() || !p->second.is_object())
+        return false;
+    const auto [x0, x1] = TimelineSpan(_page, _m.lcdLogicalW);
+    if (!swipe && (x < x0 - 6 || x > x1 + 6))
+        return false;  // the chips: the crumbs' own tap
+    const json& t = p->second;
+    const long long first = t.value("first", 0LL), end = std::max(first, t.value("end", 0LL));
+    if (!t.value("history", end > first) || end <= first)
+    {
+        SetBanner("NO TTD HISTORY - PRESS TTD REC TO RECORD", 2500, true);
+        return true;
+    }
+    const double span = std::max(1, x1 - x0 - 1);
+    long long frame;
+    if (swipe)
+    {
+        const int dir = x2 < x ? -1 : 1;
+        const std::int64_t now = NowMs();
+        _swipeStep = dir == _swipeDir && now - _swipeAt < 1000 ? std::min(_swipeStep * 2, 8) : 1;
+        _swipeDir = dir, _swipeAt = now;
+        const double fps = t.contains("fps") && t["fps"].is_number() ? t["fps"].get<double>() : 50.0;
+        const long long step = std::min(std::llround(_swipeStep * fps), std::max(1LL, (end - first) / 4));
+        frame = t.value("frame", end) + dir * step;
+    }
+    else
+        frame = first + std::llround(static_cast<double>(std::clamp(x, x0, x1 - 1) - x0) / span * static_cast<double>(end - first));
+    frame = std::clamp(frame, first, end);
+    Action seek;
+    seek.kind = "action";
+    seek.spec = {{"kind", "action"}, {"id", "ttd.seek"}, {"value", {{"frame", frame}}}};
+    Enqueue({seek, swipe ? "strip swipe" : "strip tap", json::object(), "stay"});
+    _lastActivity = NowMs();
+    return true;
+}
+
+void Runtime::SetBanner(const std::string& text, int ms, bool info)
 {
     _banner = text;
     _bannerUntil = NowMs() + ms;
+    _bannerInfo = info;
+}
+
+// A failed step on the strip. What the host refused for the state it is in (409: the start of the history, nothing
+// recorded, not now) is information in the calm look, in the host's words; a real error is red with its reason.
+void Runtime::FailureBanner(const Job& j, const std::string& message)
+{
+    // the message: "action <id> -> <error> (<ms>, <path>): <text>"
+    std::string error, text;
+    if (const auto arrow = message.find(" -> "); arrow != std::string::npos)
+    {
+        const auto paren = message.find(" (", arrow);
+        error = message.substr(arrow + 4, paren == std::string::npos ? std::string::npos : paren - arrow - 4);
+        if (const auto colon = message.find("): ", arrow); colon != std::string::npos)
+            text = message.substr(colon + 3);
+    }
+    const std::string id = j.action.kind == "action" ? j.action.spec.value("id", "") : j.action.kind;
+    const bool ttd = id.rfind("ttd.", 0) == 0 || id == "ttd_seek";
+    // nothing recorded (no history, or one emptied: its start is its end): say how to get one
+    if (ttd && id != "ttd.record_toggle" && id != "ttd.start" && id != "ttd.load")
+        if (const auto p = _strip.find("ttd.position"); p != _strip.end() && p->second.is_object())
+        {
+            const json& t = p->second;
+            auto frameOf = [](const json& v) {
+                return v.is_object() ? v.value("frame", 0LL) : v.is_number() ? v.get<long long>() : 0LL;
+            };
+            const long long first = t.contains("first") ? frameOf(t["first"]) : frameOf(t.value("first_frame", json()));
+            const long long end = t.contains("end") ? frameOf(t["end"]) : frameOf(t.value("session_end", json()));
+            if (!t.value("history", end > first) || end <= first)
+            {
+                SetBanner("NO TTD HISTORY - PRESS TTD REC TO RECORD", 2500, true);
+                return;
+            }
+        }
+    if (error == "Conflict" || error == "not_now" || error == "held_by_session" || error == "Unavailable")
+    {
+        SetBanner(text.empty() ? "NOT NOW" : text, 2000, true);
+        return;
+    }
+    SetBanner(j.node + " FAILED" + (text.empty() ? std::string() : ": " + text), 2500, false);
 }
 
 void Runtime::NoteMenu()
 {
     _status.clear();  // a readout belongs to the menu that showed it
+    _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // a page's dial labels for a moment
     _dev.Note("menu: " + JoinPath(_page.path));
     // contexts on menus (scenarios.md §7): the innermost menu of the path that declares one sets it; leaving every
     // such menu returns to the default ("")

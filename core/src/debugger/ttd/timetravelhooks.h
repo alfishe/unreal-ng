@@ -230,5 +230,9 @@ public:
     /// effect) or has ended (after it). A black box stops before it, its
     /// history kept, and starts a new session once nothing accelerates
     virtual void OnAccelerationChanging(bool accelerating) = 0;
+    /// Why the host speed may not change now ("" = it may): a history the user recorded (recording, paused or
+    /// stopped) runs at the 1x it was recorded at - another multiplier would drop it (frame timing is part of the
+    /// determinism contract), so the speed control is refused, not the history. A black box refuses nothing
+    virtual std::string SpeedLock() const { return {}; }
 };
 }  // namespace ttd

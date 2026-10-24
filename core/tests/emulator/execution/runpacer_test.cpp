@@ -97,11 +97,12 @@ protected:
         }));
     }
 
-    /// NOPs at $8000, the machine there with interrupts off
+    /// NOPs at $8000-$8FFF (more than ten lines run: the RAM past them is not zero everywhere), the machine there with
+    /// interrupts off
     void Nops()
     {
         Memory* memory = _emulator->GetMemory();
-        for (uint16_t a = 0x8000; a < 0x8100; a++)
+        for (uint16_t a = 0x8000; a < 0x9000; a++)
             memory->DirectWriteToZ80Memory(a, 0x00);
         Z80State* z80 = _emulator->GetZ80State();
         z80->pc = 0x8000;

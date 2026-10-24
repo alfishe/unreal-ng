@@ -20,6 +20,7 @@
 /// | `recording.state` | an instance | available, enabled, recording, paused, mode, file, frames, duration_s, emulated_s, file_bytes, fps |
 /// | `debug.labels` | an instance | available, total, sets [{id, title, enabled, symbols}] |
 /// | `ttd.status` | an instance | available, state, recording, history, frame, first, end, frames; checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints (those refreshed every 2 s) |
+/// | `debug.buffers` | an instance | How full each trace buffer is, at most once a second: `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent} (a buffer not allocated is absent); `ttd` {history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, write_journal_bytes} |
 /// | `debug.analyzers` | an instance | opcode, memory, calltrace (stopped / capturing / paused), coverage {available, recording, instructions}, pchist (armed / off) |
 /// | `controllers.state` | an instance | available, connectors [{id, kind, device, plugged, fixed}], plugged |
 ///

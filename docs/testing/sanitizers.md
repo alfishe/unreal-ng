@@ -78,18 +78,15 @@ ASAN_OPTIONS=halt_on_error=1:detect_leaks=0 ./unreal-asm-tests        # the asse
   else passes on a clean tree (2026-10-10: ~8600 tests, 0 ASan errors).
 - UBSan prints `runtime error:` lines and lets the test continue: collect them with
   `grep -h "runtime error" ... | sort | uniq -c`. `UBSAN_OPTIONS=print_stacktrace=1` adds the stack;
-  `halt_on_error=1` makes the first one fatal. The tree is not UB-clean yet - the 2026-10-10 baseline of a full run:
+  `halt_on_error=1` makes the first one fatal. Outside `core/tests/` the tree is UB-clean (2026-10-23, a full
+  run on 16 shards; the 2026-10-10 sites - TurboSound sample clamps, `Core` without an `Emulator`, `loader_scl.cpp`,
+  `modulelogger.cpp`, `bithelper.h` - are fixed). What is left:
 
   | Count | Site | What |
   |--:|:--|:--|
-  | 50 | `soundchip_turbosound.cpp`, `soundchip_turbosoundfm.cpp` | float sample converted to `short` out of range (needs a clamp) |
-  | 16 | `z80.cpp:192`, `z80.cpp:429` | a reference bound to a null `Emulator` (bare `Core` in tests) |
-  | 8 | `loader_scl.cpp` | misaligned `uint32_t` load from the image buffer |
-  | 8 | `modulelogger.cpp:434` | `submodules[module]` read with `module == 12` on a 12-element array |
-  | 3 | `bithelper.h:18` | `1 << 255`: `GetFirstSetBitPosition(0)` returns 255 and `IsBitSet` shifts by it |
-  | ~40 | `core/tests/...` | test-only: `*_CUT` downcasts of objects that are not CUTs, misaligned loads from test data |
+  | ~45 | `core/tests/...` | test-only: `*_CUT` downcasts of objects that are not CUTs, misaligned loads from test data |
 
-  New `runtime error` lines outside this table are yours.
+  New `runtime error` lines outside `core/tests/` are yours.
 - A sanitizer report aborts with SIGABRT: macOS writes a crash report for it to `~/Library/Logs/DiagnosticReports`.
   It is the sanitizer stopping the process on purpose, not a second bug; delete your own when done (§12).
 
@@ -226,6 +223,15 @@ thread against API threads (`core.cpp:1093` frame cycle, `timetravelcontroller.c
 and after, and compare the `SUMMARY:` lines (`grep "^SUMMARY: ThreadSanitizer" | sort | uniq -c`). It exits non-zero
 whenever it reported anything (`ThreadSanitizer: reported N warnings`); `MessageCenterVariants_Test.FastCenter_ThroughputSanity`
 misses its time budget under TSan (expected).
+
+A full run on 16 shards (as in §3, `TSAN_OPTIONS` instead of `ASAN_OPTIONS`) needs `UNREAL_TEST_TIME_SCALE=5`: the
+Dezog and ZEsarUX tests wait at most 5 s for their free runs, and under TSan with 16 shards at once they miss it
+(they pass alone and with the scale). On 2026-10-23 such a run gave 25 warnings, all in production code the
+suppressions do not cover: `Core::SelectMemoryInterface` swapping the memory interface under a running CPU,
+`ScreenZX::UpdateScreen` / `Screen::GetCurrentTstate` against API reads, `MessageCenterFast::post`,
+`MemoryAccessTracker::TrackPortWrite`, `DezogDebugAdapter::getRegisters` / `pause`, `Keyboard::PressKey`,
+`SoundManager::HostOutputHold::Release`, `PortDecoder_Profi::SetFrontPanelSwitch`, `Emulator::IsOverscanMode`,
+`Logger`. New `SUMMARY:` sites are yours.
 
 On Linux, `docker/linux/build.sh --tsan [--test]` builds with gcc 14 in the CI image (`scratch/linux-amd64-<type>-san-thread`).
 gcc's TSan keeps a fixed shadow layout that a kernel with high `mmap_rnd_bits` (Ubuntu 24.04 on 6.6+) breaks

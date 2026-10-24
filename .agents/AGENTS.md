@@ -93,7 +93,7 @@ Several sessions and their agents work on the same machines at once; nothing out
 Full guide: [`core/tests/README.md`](core/tests/README.md). Non-negotiables:
 
 - **Never `sleep_for`** - use `TestWait::For` / `ForAtLeast` / `ForExactly`
-- **Under 50 ms per test** (boot-bound tests need a justifying comment)
+- **About 10 ms per test, integration under 1 s**: full variants behind `TestTier::Long()` (`UNREAL_LONG_TESTS=1`, CI runs it)
 - **Stop looping once assertion passes** - keep diagnostics on failure path
 - **`EnableTurboMode()`** on boot-bound tests (not when asserting on pixels)
 - **Scratch files**: `TestPathHelper::GetUniqueTestScratchPath()`

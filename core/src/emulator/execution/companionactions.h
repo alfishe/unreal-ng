@@ -41,6 +41,7 @@ struct MachineView
     std::string holder;         ///< who, for the reason
     bool history = false;       ///< time travel has recorded history
     bool cooldowns = false;     ///< clients wait in a re-take cooldown
+    std::string speedLock;      ///< why the host speed may not change ("" = it may): TTD keeps a 1x history
 };
 
 MachineView ViewOf(Emulator& emulator);

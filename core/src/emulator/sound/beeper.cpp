@@ -72,6 +72,22 @@ void Beeper::reset()
     if (_blipR) blip_clear(_blipR);
 }
 
+void Beeper::discardPending()
+{
+    if (!_blipL || !_blipR)
+        return;
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+    // The buffers' 0 is reset()'s baseline (EAR = MIC = 0, no tape): left behind, the integrator drifted by the
+    // level held at the clear, up to twice the range, and overflowed
+    const int32_t level = _lastPortFEAmplitude - DAC_LEVEL_00 + _lastTapeAmplitude;
+    if (level != 0 && !_synthesisSuppressed)
+    {
+        blip_add_delta(_blipL, 0, level);
+        blip_add_delta(_blipR, 0, level);
+    }
+}
+
 void Beeper::handleFrameStart()
 {
     _frameHadSound = false;
@@ -140,10 +156,8 @@ void Beeper::setSynthesisSuppressed(bool suppressed)
     _synthesisSuppressed = suppressed;
     if (!suppressed)
     {
-        // Resume from silence at the current level: discard deltas accumulated before
-        // suppression that were never consumed by a frame end
-        if (_blipL) blip_clear(_blipL);
-        if (_blipR) blip_clear(_blipR);
+        // Discard deltas accumulated before suppression that were never consumed by a frame end
+        discardPending();
         // The mixer kept counting through the gap: back on its grid at the next frame start
         _phaseAlignPending = true;
     }

@@ -64,7 +64,7 @@ in the UnrealNG colours, fine lines. The TTD timeline is a strip readout only, n
 
 | `strip.status` | Drawn |
 |:--|:--|
-| `ttd` (also any page whose dial scrubs time: `ttd.seek_by`) | The TTD timeline from `ttd.position`: `TTD` and its state (`REC`, `REPLAY`, `PAUSED`, `AT END`, `NO HISTORY`), the frame counter and the time code at the right; under it the recorded span as a 1 px track with a ruler of seconds and its two end times, the part up to the position in the theme's blue (2 px), the position as a light 2 px line, and the marks of the last seek (`ttd.seek_by`'s `marks`: bookmarks, edges, barriers in amber, seconds in grey) |
+| `ttd` (also any page whose dial scrubs time: `ttd.seek_by`) | The TTD timeline from `ttd.position`, the strip's whole height (no dial labels under it). The header: `TTD` and its state (`REC` with a red dot, `REPLAY`, `PAUSED`, `AT END`, `NO HISTORY`), the frame counter (cyan) and the time code (amber) at the right, the page's chips beside it. Under it the recorded span as a capsule: a dark track with a notch per ruler step, the part up to the position in a blue-to-cyan gradient lit from the top, the position as a light pill (red while recording), the ruler's main steps (at least 110 px apart) with their times in cyan under it, the two end times in grey, and the marks of the last seek (`ttd.seek_by`'s `marks`: bookmarks amber, barriers violet, edges cyan with a diamond over the capsule, seconds grey). The dials' labels come up over the bottom as chips at their dials: all of them for 2 s when the page opens, and while a dial turns (1.5 s after the last detent), that dial's chip lit. Touch: a tap on the track seeks to the frame under the finger (`ttd.seek`); a swipe steps a second its way, each quick swipe the same way (within 1 s) doubling it up to 8 s, at most a quarter of the history (the strip reports a swipe once, about 50 px after it starts, never where the finger stops: its length says nothing); a tap on the chips stays theirs; with nothing recorded the strip says `NO TTD HISTORY - PRESS TTD REC TO RECORD` |
 | `run` | `RUNNING`, `RUNNING X4`, `RUNNING TURBO`, `PAUSED`, `STOPPED` (`run.state`) |
 | `tape` | `TAPE name 3/12 PLAYING` and a thin progress line (`media.tape`); `NO TAPE` |
 | `target` | The target: `PENTAGON 128K (0)` (the WebAPI index), `PINNED` when pinned, `NO MACHINE` |
@@ -72,6 +72,15 @@ in the UnrealNG colours, fine lines. The TTD timeline is a strip readout only, n
 `strip.target` (on by default on decks with a strip): the target line, small, at the top right; amber
 `RECONNECTING` while the link is down. Without a surface client (`--no-surface`, not paired) the strip shows what it
 did before: the polled TTD line.
+
+A key whose action the host cannot run now (the `actions.unavailable` readout, subscribed to whenever the scenario
+has action keys: `set.speed` while TTD keeps a 1x history, a step while the machine runs) is drawn at a third of its
+light, half its colour gone; a press sends nothing and shows the host's reason on the strip in the calm look.
+
+A step the host refuses shows on the strip for 2 s. What the machine's state refuses (`409 Conflict`, `not_now`,
+`held_by_session`) is information, on a calm dark blue with an amber line, in the host's words (`THE START OF THE
+HISTORY`); a time-travel step with nothing recorded (no history, or one emptied: its start is its end) says
+`NO TTD HISTORY - PRESS TTD REC TO RECORD`. Any other error is red: `<node> FAILED: <reason>`.
 
 ## Pairing
 

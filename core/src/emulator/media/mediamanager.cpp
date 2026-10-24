@@ -21,6 +21,8 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <map>
+#include <mutex>
 #include <system_error>
 
 #include "common/logger.h"
@@ -1140,7 +1142,9 @@ void MediaManager::ApplyPending()
 }
 
 /// What a medium is by content (F12): its source file's bytes hashed (FNV-1a), for files up to 64 MB; 0 for anything
-/// else (Medium::Identity then falls back to the volume id)
+/// else (Medium::Identity then falls back to the volume id). Sessions store it, so the hash stays FNV-1a. A file
+/// hashes once per size and modification time: the configured media of a machine are opened by every new instance
+/// (TS-Conf's SD card took ~50 ms of each instance's creation)
 static uint64_t ContentIdentity(const MediaSource& source)
 {
     constexpr uint64_t kLimit = uint64_t(64) << 20;
@@ -1151,6 +1155,25 @@ static uint64_t ContentIdentity(const MediaSource& source)
     const uint64_t size = std::filesystem::file_size(path, ec);
     if (ec || size > kLimit)
         return 0;
+    const std::filesystem::file_time_type modified = std::filesystem::last_write_time(path, ec);
+    if (ec)
+        return 0;
+
+    struct Known
+    {
+        uint64_t size;
+        std::filesystem::file_time_type modified;
+        uint64_t hash;
+    };
+    static std::mutex knownMutex;
+    static std::map<std::filesystem::path, Known> known;
+    {
+        std::lock_guard lock(knownMutex);
+        const auto it = known.find(path);
+        if (it != known.end() && it->second.size == size && it->second.modified == modified)
+            return it->second.hash;
+    }
+
     std::ifstream in(path, std::ios::binary);
     if (!in)
         return 0;
@@ -1166,7 +1189,16 @@ static uint64_t ContentIdentity(const MediaSource& source)
             hash *= 0x100000001b3ULL;
         }
     }
-    return hash ? hash : 1;
+    hash = hash ? hash : 1;
+    // Read while the file did not change (its size and time again): a file written meanwhile hashes next time
+    const bool unchanged = std::filesystem::file_size(path, ec) == size && !ec &&
+                           std::filesystem::last_write_time(path, ec) == modified && !ec;
+    if (unchanged)
+    {
+        std::lock_guard lock(knownMutex);
+        known[path] = {size, modified, hash};
+    }
+    return hash;
 }
 
 /// The medium of one slot, unit by unit, for its undo log: block sectors under the read tap (a seek's change is not

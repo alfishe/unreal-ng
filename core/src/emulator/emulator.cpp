@@ -926,6 +926,11 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     return changed;
 }
 
+std::string Emulator::SpeedLockReason() const
+{
+    return _core ? _core->SpeedLockReason() : std::string();
+}
+
 void Emulator::SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor)
 {
     std::lock_guard<std::mutex> lock(_speedInterceptorMutex);

@@ -32,6 +32,7 @@
 #include "_helpers/ttdslotcards.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "_helpers/ttdsyntheticsession.h"
 #include "base/featuremanager.h"
@@ -74,6 +75,13 @@ std::vector<fs::path> CorpusFiles()
     for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
         files.push_back(recorded);
     return files;
+}
+
+/// One session of each kind (a 128K recording, a port journal of a tape load, a slot card); the whole corpus in the
+/// long tier (about 0.5 s a session)
+std::vector<fs::path> CorpusSample()
+{
+    return TestTier::Sample(CorpusFiles(), {"idle_session.ttd", "greenberet-load.ttd", "multisound-zxevo-v1.ttd"});
 }
 
 TTDSessionSaveParams Params(uint32_t perPart = 50)
@@ -135,6 +143,25 @@ void ExpectSameSession(const TimeTravelEngine& a, const TimeTravelEngine& b, siz
         ASSERT_EQ(y->unclaimedDevices, x->unclaimedDevices);
         for (uint32_t r = 0; r < a.Regions().size(); ++r)
         {
+            // Whole regions at the ends, the long tier at every checkpoint; between them the pieces with a new
+            // version, which build every restore from the first (a whole region is megabytes, sessions have hundreds)
+            if (!TestTier::Long() && i > 0 && i + 1 < count)
+            {
+                const auto changesA = a.ChangesAt(i, r);
+                const auto changesB = b.ChangesAt(i, r);
+                ASSERT_EQ(changesB.size(), changesA.size()) << "changes, region " << r << " at " << i;
+                uint8_t pieceA[kTTDPieceSize];
+                uint8_t pieceB[kTTDPieceSize];
+                for (size_t k = 0; k < changesA.size(); ++k)
+                {
+                    ASSERT_EQ(changesB[k].first, changesA[k].first) << "changed piece, region " << r << " at " << i;
+                    ASSERT_TRUE(a.PieceStore().Decode(changesA[k].second, pieceA));
+                    ASSERT_TRUE(b.PieceStore().Decode(changesB[k].second, pieceB)) << "region " << r << " at " << i;
+                    ASSERT_EQ(std::memcmp(pieceB, pieceA, kTTDPieceSize), 0)
+                        << "region " << a.Regions()[r].name << " piece " << changesA[k].first << " at checkpoint " << i;
+                }
+                continue;
+            }
             const size_t size = size_t(a.Regions()[r].pieces) * kTTDPieceSize;
             wa.assign(size, 0xA5);
             wb.assign(size, 0xA5);
@@ -200,8 +227,8 @@ protected:
 
 TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
 {
-    const auto files = CorpusFiles();
-    ASSERT_GE(files.size(), 5u);
+    const auto files = CorpusSample();
+    ASSERT_GE(files.size(), 3u);
     for (const fs::path& file : files)
     {
         SCOPED_TRACE(file.filename().string());
@@ -265,7 +292,9 @@ TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
 /// converted, which loads as the session fed straight into the engine
 TEST_F(TTDSessionFile_Test, EveryV1SessionConverts)
 {
-    for (const fs::path& file : CorpusFiles())
+    const auto files = CorpusSample();
+    ASSERT_GE(files.size(), 3u);
+    for (const fs::path& file : files)
     {
         SCOPED_TRACE(file.filename().string());
         TimeTravelEngine fed;

@@ -184,6 +184,9 @@ jobs:
           cmake --build build --target core-tests --parallel
 
       - name: Run core-tests (all, sharded)
+        # The long tier too (core/tests/_helpers/testtier.h): the full variants of the shortened tests
+        env:
+          UNREAL_LONG_TESTS: 1
         run: cmake --build build --target test-parallel
 
       # The companion's Qt-free targets with the newest gcc, in the same build directory (one more configure, the

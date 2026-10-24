@@ -318,6 +318,20 @@ def module(c, y0=6):
     c.hline(19, 23, y0 + 3, 'd')
 
 
+def drive(c, y0=18, y1=28):
+    # a 3.5" drive's front: the slot, the activity light on the left, the eject button on the right
+    bar(c, 2, y0, 29, y1, 'l', r=1)
+    bar(c, 5, y0 + 3, 26, y0 + 4, 'k')
+    bar(c, 5, y1 - 3, 8, y1 - 2, 'e')
+    bar(c, 21, y1 - 3, 26, y1 - 2, 'd')
+
+
+def floppy_in_drive(c, x0=8, x1=23):
+    # a floppy half into the drive's slot: its shutter end out, the rest behind the front
+    floppy(c, x0, 1, x1, 24)
+    drive(c)
+
+
 def tray(c):
     c.solid(c.m.rect(3, 19, 28, 27) & ~c.m.rect(7, 19, 24, 23), 'l')
 
@@ -923,8 +937,7 @@ DRAW = {
                               c.line(8, 8, 11, 6, 'w'), c.line(20, 24, 23, 21, 'd')),
     'media.hdd': lambda c: (bar(c, 3, 7, 28, 25, 'd', r=1), ring(c, 13, 15, 6.5, 1.5, 'l'), c.line(13, 15, 20, 21, 'k'),
                             bar(c, 21, 21, 25, 22, 'e')),
-    'media.insert': lambda c: (floppy(c, 7, 2, 24, 20), bar(c, 3, 17, 28, 19, 'd'),
-                               c.solid(c.m.poly([(9, 22), (23, 22), (16, 29)]), 'e')),
+    'media.insert': floppy_in_drive,
     'media.swap': lambda c: (floppy_small(c, 2, 2, 13, 14, 'b'), floppy_small(c, 18, 2, 29, 14, 'd'),
                              arrow(c, 4, 19, 27, 19, shaft=3, head=7, head_len=5, col='e'),
                              arrow(c, 27, 26, 4, 26, shaft=3, head=7, head_len=5, col='e')),
@@ -936,11 +949,12 @@ DRAW = {
     'rzx.stop': lambda c: (reel(c, 12, 12, 10), bar(c, 18, 17, 28, 27)),
     'rzx.seek': lambda c: (reel(c, 12, 12, 10), arrow(c, 13, 24, 24, 24, shaft=3.4, head=9, head_len=5),
                            bar(c, 26, 18, 28, 29, 'e')),
-    'snapshot.quick_save': lambda c: (module(c, 2), arrow(c, 15.5, 18, 15.5, 29, shaft=4, head=11, head_len=6,
-                                                          col='e')),
-    'snapshot.quick_load': lambda c: (module(c, 14), arrow(c, 15.5, 12, 15.5, 1, shaft=4, head=11, head_len=6,
-                                                           col='e')),
-    'snapshot.save': lambda c: (floppy(c, 10, 10, 28, 29, 'd'), module(c, 2)),
+    'snapshot.quick_save': lambda c: (floppy(c, 3, 1, 18, 24), drive(c),
+                                      arrow(c, 24.5, 1, 24.5, 15, shaft=3, head=9, head_len=5, col='e')),
+    'snapshot.quick_load': lambda c: (floppy(c, 3, 1, 18, 24), drive(c),
+                                      arrow(c, 24.5, 15, 24.5, 1, shaft=3, head=9, head_len=5, col='e')),
+    'snapshot.save': lambda c: (floppy(c, 3, 1, 18, 24), drive(c),
+                                arrow(c, 24.5, 1, 24.5, 15, shaft=3, head=9, head_len=5, col='b')),
     # audio
     'audio.sound': lambda c: (speaker(c), waves(c, 18)),
     'audio.muted': lambda c: (speaker(c), cross_mark(c, 23, 16, 'k', 4)),

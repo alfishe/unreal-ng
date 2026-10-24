@@ -215,9 +215,12 @@ void Keyboard::Reset()
     memset(_keyboardMatrixState, 0xFF, sizeof(_keyboardMatrixState));
 
     // Clear list with pressed keys
-    _keyboardPressedKeys.clear();
-    _hostExtendedKeys.clear();
-    _capsShiftHeldBack.clear();
+    {
+        std::lock_guard lock(_hostKeysMutex);
+        _keyboardPressedKeys.clear();
+        _hostExtendedKeys.clear();
+        _capsShiftHeldBack.clear();
+    }
     if (_extendedSink)
         _extendedSink->ReleaseExtendedKeys();
 }
@@ -226,6 +229,7 @@ Keyboard::InputState Keyboard::CaptureInputState() const
 {
     InputState state;
     memcpy(state.matrix, _keyboardMatrixState, sizeof(state.matrix));
+    std::lock_guard lock(_hostKeysMutex);
     state.pressedKeys = _keyboardPressedKeys;
     return state;
 }
@@ -233,6 +237,7 @@ Keyboard::InputState Keyboard::CaptureInputState() const
 void Keyboard::RestoreInputState(const InputState& state)
 {
     memcpy(_keyboardMatrixState, state.matrix, sizeof(_keyboardMatrixState));
+    std::lock_guard lock(_hostKeysMutex);
     _keyboardPressedKeys = state.pressedKeys;
     _capsShiftHeldBack.clear();
 }
@@ -763,6 +768,7 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
+        std::lock_guard lock(_hostKeysMutex);
         HoldBackCapsShift(zxKey, /*pressed=*/true);
 
         // The machine's own extended key: one event (journaled as the key itself), the machine presses the matrix
@@ -833,6 +839,7 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
+        std::lock_guard lock(_hostKeysMutex);
 
         if (_extendedSink && _extendedSink->OwnsExtendedKey(zxKey))
         {
