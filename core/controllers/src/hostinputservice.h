@@ -6,13 +6,17 @@
 /// IHostInputSource its ControllerManager samples at every frame boundary.
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "devicedatabase.h"
+#include "devicemapping.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "emulator/io/controllers/ihostinputsource.h"
 #include "haptics/hapticmixer.h"
@@ -52,6 +56,13 @@ public:
     std::string LightUnavailable(const HostDeviceId& device) const;
     /// Set the light's colour; never blocks. False when it has no light here
     bool SetLight(const HostDeviceId& device, const LightColor& color);
+    /// The device's endpoints, the input one first (IBackend::Endpoints); a backend that lists none: the device as one
+    /// endpoint with what the backend answers for it
+    std::vector<EndpointInfo> Endpoints(const HostDeviceId& device) const;
+    /// Why the device's raw reports cannot be shown; "" when RawReports answers them
+    std::string RawReportsUnavailable(const HostDeviceId& device) const;
+    /// The newest raw input reports (starts the backend's tap, ReportTap)
+    std::vector<RawReport> RawReports(const HostDeviceId& device);
     /// Stop every backend: their devices are removed
     void Stop();
 
@@ -75,6 +86,26 @@ public:
     /// the dialog's live view and press-to-bind
     std::map<std::string, float> Live(const HostDeviceId& device) const;
 
+    /// region <Unknown devices: control maps and the learn wizard (device-database.md §3-§4, ui-ux.md §3.5)>
+    /// Give each connected device the `map` of its family in the active database (DeviceDatabase::Active: the built-in
+    /// one with devices.user.json on top), after DeviceDatabase::SetUser changed it; a device that connects later gets
+    /// it as it is added
+    void RefreshUserMaps();
+    /// What the database says about a connected device (its id's VID / PID, its name); step "unknown" without them
+    DeviceMatch LookupDevice(const HostDeviceInfo& device) const;
+    /// A device's control map: each raw control it names also reports as its canonical control. Empty: none
+    void SetControlMap(const HostDeviceId& device, std::vector<MappedControl> map);
+    std::vector<MappedControl> ControlMap(const HostDeviceId& device) const;
+
+    /// The learn wizard on a device: its events answer the session's prompts and reach nothing else until EndLearn
+    /// (the baseline is its Live values now). Replaces a session the device had
+    void StartLearn(const HostDeviceId& device, LearnSession session);
+    /// Run @p step on the device's session (Skip, Back, a read); false when it has none
+    bool Learn(const HostDeviceId& device, const std::function<void(LearnSession&)>& step);
+    /// The session ends; false when there was none
+    bool EndLearn(const HostDeviceId& device);
+    /// endregion </Unknown devices>
+
     /// region <Haptics (haptics.md §3; host output only, H-4)>
     /// The device has motors its backend can drive
     bool HasRumble(const HostDeviceId& device) const;
@@ -84,8 +115,21 @@ public:
     void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
     /// Play a test effect (haptics.md §10): a clicker's clicks straight to its backend, an envelope as PlayEffect
     void PlayTest(const HostDeviceId& device, const TestEffect& test);
-    /// Identify: a short pulse on both motors (two clicks on a clicker), so the user sees which pad is which (ui-ux.md)
-    void Identify(const HostDeviceId& device);
+    /// What Identify did
+    struct Identified
+    {
+        bool rumble = false;  ///< the identify test effect played (300 ms on both motors, two clicks on a clicker)
+        bool light = false;   ///< the light blinked (white for 300 ms, then back to the colour it had)
+    };
+    /// Identify (ui-ux.md §3.7): a 300 ms pulse on both motors (two clicks on a clicker) and a blink of the light where
+    /// the device has them, so the user sees which pad is which
+    Identified Identify(const HostDeviceId& device);
+    static constexpr int kIdentifyMs = 300;
+    /// How long Identify's light stays white (kIdentifyMs; a test shortens it to see the light go back at once)
+    void SetIdentifyBlinkMs(int ms)
+    {
+        _identifyBlinkMs.store(ms > 0 ? ms : kIdentifyMs);
+    }
     /// H-5: the host closes it on pause, seek, replay, turbo and focus loss; closing stops every motor
     void SetHapticsGate(bool open);
     void SetHapticsStrength(float strength);
@@ -155,6 +199,13 @@ private:
     };
 
     IBackend* BackendOfLocked(const HostDeviceId& device) const;
+    /// The router's host timer: started by the first wake, it polls at each NextDeadline (a chord window's end, a
+    /// held action's repeat) while no frame samples the router (a paused machine) and sleeps when nothing waits
+    void WakeTicker();
+    /// The user family's map for @p device when it has one (under _mapMutex)
+    void ApplyUserMapLocked(const HostDeviceInfo& device);
+    void TickerLoop();
+    void StopTicker();
     /// The devices that drive @p instance and have motors, asked at every haptic frame
     std::function<std::vector<HostDeviceId>()> TargetsFor(const std::string& instance);
 
@@ -170,6 +221,19 @@ private:
     std::vector<std::pair<HostDeviceId, HostDeviceId>> _promotions;  ///< under _mutex: for TakePromotions
     std::mutex _marksMutex;
     MarkLimiter _marks;  ///< under _marksMutex
+    mutable std::mutex _mapMutex;
+    std::map<HostDeviceId, std::vector<MappedControl>> _maps;          ///< under _mapMutex
+    std::map<HostDeviceId, LearnSession> _learn;                       ///< under _mapMutex
+    std::map<HostDeviceId, HostDeviceInfo> _connected;                 ///< under _mapMutex: for the user maps
+    std::map<HostDeviceId, LightColor> _lights;                        ///< under _mutex: the colour each light has
+    /// under _tickMutex: the lights Identify blinked, back to their colour at the steady time (ns)
+    std::map<HostDeviceId, std::pair<uint64_t, LightColor>> _blinks;
+    std::atomic<int> _identifyBlinkMs{kIdentifyMs};
+    std::mutex _tickMutex;
+    std::condition_variable _tickCv;
+    std::thread _ticker;  ///< under _tickMutex until it is joined
+    bool _tickStop = false;
+    bool _tickWake = false;
     /// Last member: destroyed first, while the backends it writes to still exist
     std::unique_ptr<HapticMixer> _haptics;
     std::atomic<bool> _hapticsDsp{false};

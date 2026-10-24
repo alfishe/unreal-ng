@@ -23,6 +23,7 @@
 #include "profiles/profilestore.h"
 #include "wheelclaim.h"
 #endif
+#include "controllers/connectorview.h"
 
 class Emulator;
 class EmulatorContext;
@@ -71,6 +72,14 @@ public:
     }
     /// The user profiles' directory (`<user config>/unreal-ng/controllers/profiles`, architecture.md §12)
     static QString UserProfileDir();
+    /// The user's controllers folder (`<user config>/unreal-ng/controllers`): devices.user.json over the compiled-in
+    /// device database and the hotspot editor's image sets in images/<set> (device-database.md §7)
+    static QString UserControllersDir();
+    /// The status-bar connector LED (ui-ux.md §8): shown while a connector holds a device, lit while one is held,
+    /// the tooltip per connector what is held and which host devices drive it
+    connectorview::Led ConnectorLed() const;
+    /// A player device holds its debug layer key now (not the debugger window's focus): the status bar's DEBUG tag
+    bool DebugLayerHeld() const;
     /// A host verb (surfaces.md §2: profiles, bindings, bind / unbind, save, delete, apply) run here as the automation
     /// surfaces run it: the dialog's editors take the same path as WebAPI, MCP, CLI and Python
     controllers::HostReply Host(const controllers::HostRequest& request);
@@ -78,8 +87,17 @@ public:
     /// the file's SHA-256; mapping-and-profiles.md §6.1) holding the connector and the first pad's pin; false with the
     /// reason
     bool KeepAutoDecision(QString& error);
+    /// The connector a player device drives, chosen by the user (the dialog's drag and drop, the `player` verb); an
+    /// empty @p connector: back to the automatic choice; "none": no connector (a cord dragged off). Kept for the
+    /// session by device id (a replug keeps it). Empty when done, else the error code with @p message
+    std::string ChoosePlayerConnector(const std::string& device, const std::string& connector, std::string& message);
+    /// "" automatic, "none", or the chosen connector's id
+    std::string PlayerChoice(const std::string& device) const;
+    /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
+    /// machine's order decide again
+    void ResetPlayerChoices();
     /// "Add probe from debugger" (haptics.md §7): @p probe (a debugger breakpoint) as a source of the user game profile
-    /// of the loaded file (the haptics-probe verb: user/game-<sha>, made from the profile whose haptics play now), with
+    /// of the loaded file (the haptics_probe verb: user/game-<sha>, made from the profile whose haptics play now), with
     /// a `hit` rule; the source's name in @p name; false with the reason
     bool AddHapticProbe(const controllers::HapticProbe& probe, QString& name, QString& error);
 #endif
@@ -120,6 +138,12 @@ public:
         return _globalShortcuts;
     }
     void SetGlobalShortcuts(bool on);
+    /// A player device that goes while the machine runs pauses it (ui-ux.md §8; kept in the settings, off by default)
+    bool PauseOnDisconnect() const
+    {
+        return _pauseOnDisconnect;
+    }
+    void SetPauseOnDisconnect(bool on);
     /// The keyboard control of a key event (`key.ctrl.f10`); empty for a modifier alone or an unknown key
     static std::string KeyControlOf(const QKeyEvent* event);
 
@@ -156,6 +180,14 @@ signals:
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
     void autoDecided(const QString& text);
+    /// A player device arrived; @p first: never seen on this computer before (the toast with Open controllers),
+    /// @p connector: the one it drives ("" none)
+    void deviceConnected(const QString& name, const QString& connector, bool first);
+    /// A player device the database does not know (no family, no learned or imported map) connected for the first
+    /// time: the learn toast (ui-ux.md §3.5) instead of the first-connect one
+    void unknownDeviceConnected(const QString& name, const QString& device);
+    /// A player device left while the bound machine ran; @p paused: the pause-on-disconnect option paused it
+    void deviceDisconnected(const QString& name, bool paused);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -216,7 +248,10 @@ private:
     /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
     std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
     std::vector<controllers::HostDeviceId> _known;
+    std::map<controllers::HostDeviceId, std::pair<std::string, bool>> _knownNames;  ///< name, a player, by id
+    std::map<controllers::HostDeviceId, std::string> _playerChoice;  ///< the user's connector per device
 #endif
+    bool _pauseOnDisconnect = false;
     EmulatorBinding* _binding = nullptr;
     std::shared_ptr<Emulator> _attached;  ///< the emulator whose ControllerManager samples the service
     QTimer _timer;

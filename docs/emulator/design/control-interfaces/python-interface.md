@@ -719,6 +719,28 @@ for device in emu.controllers_host("devices")["devices"]:
         emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
 ```
 
+The device database and the user's entries over it (devices.user.json):
+
+```python
+match = emu.controllers_database(vidpid="045e:0b22", bus="bt")["match"]
+print(match["family"], match["images"], match["step"], match["score"], match["user"])
+emu.controllers_database_save('{"id": "xbox-elite-2", "images": "user-xbox-elite-2"}')
+emu.controllers_database_delete("xbox-elite-2")   # back to the built-in entry
+```
+
+A pad the database does not know, from a gamecontrollerdb.txt line or a RetroArch autoconfig; the connector a pad
+drives; what its endpoints give and the raw reports it sends:
+
+```python
+line = "03000000c82d00000161000000000000,8BitDo SN30 Pro,a:b1,b:b0,x:b4,y:b3,platform:Mac OS X,"
+print(emu.controllers_database_import(line)["entry"]["id"])        # user-2dc86101, saved into devices.user.json
+emu.controllers_player("usb:2dc8:6101:1", "sinclair-1")         # "auto" back to the automatic choice, "none" none
+for endpoint in emu.controllers_probe(device="usb:2dc8:6101:1")["endpoints"]:
+    print(endpoint["backend"], endpoint["role"], endpoint["driver"], endpoint["rumble"])
+for report in emu.controllers_reports("usb:2dc8:6101:1")["reports"]:
+    print(report["ms"], report["hex"])
+```
+
 Media signatures and the game profile they choose ([command-interface.md §18](./command-interface.md#18-media-signatures)):
 
 ```python
@@ -730,12 +752,34 @@ emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}]
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
 **options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
-play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_aliases()` (`{aliases: [{from,
-to, connected, name}]}`: a pad first seen as `gc:...` and later matched to its HID device keeps its profiles) and
-`controllers_unalias(id)`; `controllers_host("devices")` lists each device's `role`, `layers`,
-`context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
+play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+`controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
+`controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
+`controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,
+step="status", **options)`, `controllers_aliases()` (`{aliases: [{from, to, connected, name}]}`: a pad first seen as
+`gc:...` and later matched to its HID device keeps its profiles) and `controllers_unalias(id)`;
+`controllers_host("devices")` lists each device's `role`, `layers`, `context`, `outputs`, `feel`, `battery`, `light`,
+`notice`, `pin` and (an unknown device's) `map`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
+
+Roles, pins, the device database and the learn wizard of an unknown device:
+
+```python
+emu.controllers_role(pad, "debugger-remote")          # player, debugger-remote, disabled
+emu.controllers_pin(pad, "pinned:" + emu_id)          # follow-focus, all, pinned:<emulator id>
+emu.controllers_identify(pad)                         # 300 ms rumble and a light blink
+emu.controllers_probe()["backends"]                   # running or why not, the devices each found
+emu.controllers_database(vidpid="045e:0b00")["match"] # family, step, score, controls, map
+emu.controllers_database_import(open("pad.cfg").read())   # a gamecontrollerdb line or a RetroArch .cfg
+
+emu.controllers_learn(pad, "start", controls="dpad.up,dpad.down,south,east")
+emu.controllers_learn(pad, "sample", control="lstick.y", value=-1)   # or press it on the pad
+emu.controllers_learn(pad, "sample", control="lstick.y", value=0)
+emu.controllers_learn(pad, "skip")
+r = emu.controllers_learn(pad, "finish")              # saved in devices.user.json
+print(r["map"], r["gamecontrollerdb"])
+```
 
 ### Host Actions
 

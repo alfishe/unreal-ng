@@ -1,5 +1,7 @@
 #include "fakebackend.h"
 
+#include <chrono>
+
 namespace controllers
 {
 
@@ -103,6 +105,45 @@ BatteryState FakeBackend::Battery(const HostDeviceId& device) const
     std::lock_guard<std::mutex> lock(_mutex);
     const auto it = _batteries.find(device);
     return it == _batteries.end() || _devices.count(device) == 0 ? BatteryState{} : it->second;
+}
+
+namespace
+{
+uint64_t FakeNowMs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
+}
+}  // namespace
+
+void FakeBackend::Report(const HostDeviceId& device, const std::vector<uint8_t>& bytes)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_devices.count(device) == 0)
+        return;
+    std::unique_ptr<ReportTap>& tap = _taps[device];
+    if (!tap)
+        tap = std::make_unique<ReportTap>();
+    if (tap->Armed())
+        tap->Record(bytes.data(), bytes.size(), FakeNowMs());
+}
+
+bool FakeBackend::HasRawReports(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _devices.count(device) != 0;
+}
+
+std::vector<RawReport> FakeBackend::RawReports(const HostDeviceId& device)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_devices.count(device) == 0)
+        return {};
+    std::unique_ptr<ReportTap>& tap = _taps[device];
+    if (!tap)
+        tap = std::make_unique<ReportTap>();
+    return tap->Read(FakeNowMs());
 }
 
 void FakeBackend::SetHasLight(const HostDeviceId& device, bool light)

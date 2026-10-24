@@ -38,6 +38,7 @@
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
 #include "joyconpairing.h"
+#include "hid/reporttap.h"
 #include "platform/macos/gccompanion.h"
 
 namespace controllers
@@ -484,6 +485,62 @@ public:
     }
     /// endregion </Battery and light>
 
+    std::vector<EndpointInfo> Endpoints(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        std::vector<EndpointInfo> endpoints;
+        for (const Device* known : EndpointsLocked(device))
+        {
+            EndpointInfo endpoint;
+            endpoint.backend = Name();
+            endpoint.name = known->name;
+            endpoint.role = known->input ? "input" : "none";
+            endpoint.controls = known->controls;
+            endpoint.driver = known->gip         ? "xbox gip"
+                              : known->dial      ? "surface dial"
+                              : known->sony      ? "sony"
+                              : known->switchPro ? "switch pro"
+                                                 : "hid descriptor";
+            endpoint.rumble = known->xboxBluetooth || (known->pump != nullptr) || (known->dial != nullptr);
+            endpoint.light = known->pump != nullptr && known->pumpLight;
+            endpoint.detail = known->hasReportIds ? "report ids" : "";
+            endpoints.push_back(std::move(endpoint));
+        }
+        const std::string companion = _merge.CompanionOf(device);
+        if (!companion.empty())
+        {
+            EndpointInfo endpoint;
+            endpoint.backend = "gamecontroller";
+            endpoint.role = "outputs";
+            endpoint.driver = "gamecontroller";
+            if (const auto found = _companionPads.find(companion); found != _companionPads.end())
+            {
+                endpoint.name = found->second.vendorName;
+                endpoint.rumble = found->second.actuators != 0;
+                endpoint.light = found->second.light;
+            }
+            endpoint.detail = _merge.StateOf(device) == EndpointMerge::MatchState::Tentative ? "tentative match"
+                                                                                               : "confirmed match";
+            endpoints.push_back(std::move(endpoint));
+        }
+        return endpoints;
+    }
+
+    bool HasRawReports(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        return !EndpointsLocked(device).empty();
+    }
+
+    std::vector<RawReport> RawReports(const HostDeviceId& device) override
+    {
+        std::lock_guard lock(_mutex);
+        for (Device* known : EndpointsLocked(device))
+            if (known->input)
+                return known->tap.Read(SteadyNowMs());
+        return {};
+    }
+
     /// Logical devices: the endpoints of one physical device count once
     size_t DeviceCount() const override
     {
@@ -547,6 +604,10 @@ private:
         /// does not take its rumble either
         bool xboxUsb = false;
         std::string rumbleUnavailable;  ///< why neither: the Test haptics button's tooltip
+        std::string name;               ///< kIOHIDProductKey, for the endpoint table
+        size_t controls = 0;
+        bool hasReportIds = false;
+        ReportTap tap;  ///< the test panel's raw reports (host-only, while it reads them)
     };
 
     void Run(std::promise<std::string>& started)
@@ -1070,7 +1131,7 @@ private:
         identity.version = version;
         identity.name = StringProperty(ref, CFSTR(kIOHIDProductKey));
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         // Apple's synthetic legacy pad mirrors a GIP pad we read directly (research-host-apis.md §2.1)
         if (match.ignore)
             return;
@@ -1120,6 +1181,7 @@ private:
                    "Pro controller and the Joy-Cons; this device has no motors the emulator can drive";
         };
         device->rumbleUnavailable = rumbleUnavailable();
+        device->name = identity.name;
         const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
         const HidLayout layout = HidLayoutFor(match);
         size_t controls = 0;
@@ -1165,6 +1227,7 @@ private:
                 // A pad with its own driver reads its full report even when the descriptor declares it vendor data
                 if (device->hid->Empty() && !sony && !switchPro)
                     return;
+                device->hasReportIds = descriptor.hasReportIds;
                 if (device->hid->Empty())
                     device->hid.reset();
                 else
@@ -1180,6 +1243,7 @@ private:
                 }
             }
         }
+        device->controls = controls;
         if (device->dial)
         {
             device->rumbleUnavailable.clear();  // no motors, but its clicks play (PlayClicks)
@@ -1374,6 +1438,8 @@ private:
     {
         if (!device.input)
             return;  // another endpoint of the same pad gives its input: one press, one event
+        if (device.tap.Armed())  // one atomic load while the test panel does not read
+            device.tap.Record(report, size, SteadyNowMs());
         const auto sink = [this, &device, timeNs](const std::string& control, float value) {
             // A press for the GameController match, in the time it reached us (as the companion's presses)
             if (value > 0.5f && IsMatchButton(control))

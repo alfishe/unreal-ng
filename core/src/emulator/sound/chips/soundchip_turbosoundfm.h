@@ -428,6 +428,12 @@ public:
     }
 
     int getSelectedChip() const override { return _board.chip; }
+    int getBusReadRegister() const override
+    {
+        // As portDeviceInMethod: the status byte in status mode, #FF while an FM address is latched
+        const Ym2203Chip* c = _pair.chip(_board.chip);
+        return !_board.statusRead && c != nullptr && c->address < 0x10 ? c->address : -1;
+    }
 
     SoundChip_AY8910* getChip(int index) const override
     {

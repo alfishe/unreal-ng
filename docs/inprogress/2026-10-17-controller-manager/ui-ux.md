@@ -142,6 +142,37 @@ take several devices (two pads ORed into one Kempston, as the Next ORs two stick
 - A cord cannot attach where the connector refuses the device: the card shows the refusal text while hovering
   (the core's `refusal`, like the media drop-target tiles).
 
+**As built (2026-10-23).** `PatchCordOverlay` is a transparent child over the whole dialog (mouse events pass
+through). The splitter's two handles are 26 px gutters and the cords live there: a cord leaves its device row's right
+edge, runs to the picture's left edge, passes behind the picture (it is not drawn over the photo or the binding table)
+and comes out of its right edge at the same height towards the connector row's left edge. Cords that pass the picture
+are spread 7 px apart so two plugs stay distinguishable. The cords of a device come from
+`InputRouter::Connectors(device)`: the connectors its bindings drive outside the debug layer, an `auto:` target as
+its player connector, none for a debugger remote. The selected device's cords are solid (2 px), the others quiet
+(60 %); a cord breathes (1.2 Hz, 55-100 %) and thickens while its device sends (a control at least 0.3 from rest).
+Colours and tags (`connectorview.h`): Kempston and MD 1 blue `K` / `MD1`, Sinclair 1 orange `S1`, Sinclair 2 and
+MD 2 teal `S2` / `MD2`, Cursor green `CUR`, Keys grey `KEY`, Fuller red `F`. Each cord ends in its connector's
+tag, a small pill in the connector colour just left of the card (§6: colour is never the only signal).
+
+The connectors are cards (`ConnectorCard`, in a scroll area, one per connector in the machine's order): a colour
+band on the cords' side, the header (colour dot, tag, display name, port: "S1 Sinclair 1 keys 6-0"), the retro device
+combo (only what the connector accepts; off for a connector that is part of the board), the retro device's picture
+(§4), the host devices plugged into it as chips ("drop a device" when none), and the held controls in words.
+- A host device row (`DeviceDragList`, mime `application/x-unreal-host-device`) dropped on a card plugs it: an empty
+  connector first gets the first retro device it accepts (the ControllerControl `plug` verb), then the device's
+  player connector is chosen there (`HostControllers::ChoosePlayerConnector`, the `player` host verb every plane
+  has). The choice wins over the machine's order and a profile's pin and lasts the session.
+- While a device hovers, a card that cannot take it shows why in red and refuses the drop (the forbidden cursor):
+  the keyboard, the mouse and devices that are not players ("… does not plug: its bindings name their targets"), a
+  board connector without a device ("<id> is part of the board").
+- A plugged device's chip dragged off its card onto nothing unplugs it (choice `none`: it drives no connector);
+  dragged onto another card it moves there. Every drop and unplug goes on an undo stack: **Undo** under the cards and
+  Ctrl+Z restore the former choice (and unplug a retro device the drop plugged).
+- The device list's context menu has **Plug into ▸** (every card; the refused ones off, with the reason) and
+  **Unplug**; P opens the same menu on the selected row, U unplugs.
+
+One connector fed by several pads is drawn as several cords and several chips.
+
 ## 3. Interactions
 
 ### 3.1 Binding editor
@@ -259,6 +290,28 @@ Docked under the picture (Advanced) or opened by **Test…** (Simple, a smaller 
 - Advanced: the last raw report in hex with its report id and size, copyable; the endpoint list and which backend
   supplies which capability; the backend probe report (the same as `GET /controllers/host`).
 
+**As built (2026-10-23).** `DeviceTestPanel`, opened by the checkable **Test** button in the device header and docked
+between the picture and the binding table. Per stick the database lists (`lstick.*`, `rstick.*`) a plot: the filled
+dead zone (0.15), the direction thresholds as rings (on 0.45 dotted, off 0.35 dashed, in the stick's travel between
+the dead zone and the saturation 0.95), the raw position as a hollow dot and the processed position
+(`RadialDeflection`) as a filled one, with the raw x, y below. Per trigger a bar with the click (0.5, solid) and
+release (0.4, dashed) marks and the highest value this session; past the click and below 0.97 the caption says "full 0.61" (the
+hair-trigger stop). The buttons the database lists as lamps in the vocabulary's order. The footer line: backend,
+family, device id and the probe summary. The thresholds are the ones the binding up reads
+(`InputRouter::Analog(device, control)`: the first binding of the active layers, top first, whose source is the
+stick or the trigger, with its profile's `analog` options), the defaults otherwise; under each stick "dz 0.30 ·
+profile" says which. Below the plots:
+- the endpoint table (`HostInputService::Endpoints`, `IBackend::Endpoints`): per endpoint the backend and name, its
+  role (`input`: it gives the device's input; `outputs`: a companion that adds outputs only), the controls its driver
+  decodes, the driver (`xbox gip`, `surface dial`, `hid descriptor`, `gamecontroller`), rumble, light, battery and a
+  detail ("tentative match", "confirmed match"). On macOS the IOHID endpoint and the GameController companion are two
+  rows; a backend that lists none shows the device as one endpoint. Refreshed once a second while the panel is open.
+- the newest raw input reports in hex (four lines, "00123  01 00 80 7f"), Copy puts all sixteen on the clipboard.
+  The IOHID backend keeps them in a per-device `ReportTap` (16 reports of up to 64 bytes): the tap is armed by a read
+  and disarms itself 3 s after the last one, so the input callback only tests an atomic while nobody looks. The
+  fake backend has the same tap for the tests. Other backends say why ("The xinput backend keeps no raw reports").
+  The `probe` and `reports` host verbs answer the same on every plane.
+
 ### 3.5 Learn wizard (unknown devices)
 
 For a device the database does not know (raw `button.<n>` / `axis.<n>` controls), **Learn…** walks the canonical
@@ -268,6 +321,22 @@ detection against a baseline (axis moved more than 0.4, or a button edge), as ZX
 `data/controllers/devices.json`). The wizard opens itself, once, as a toast suggestion, when an unknown device is
 first plugged in.
 
+Built, the core and the automation planes (C10): `LearnSession` (`core/controllers/src/devicemapping.h`) and the
+`learn` verb (`start`, `status`, `sample`, `skip`, `back`, `finish`, `cancel`) on CLI, REST, WebSocket and Python. While
+it runs the device's controls answer the prompts and drive nothing else; an answer waits for its control to come back
+before the next prompt; a raw control answers once. `finish` saves the map as a user family in `devices.user.json`
+with its `gamecontrollerdb` line (the Export text) and the device takes it at once.
+
+**As built (2026-10-24), the Qt side.** `LearnWizard` (`unreal-qt/src/controllers/learnwizard.*`) is a view over the
+`learn` verb: **Learn…** in the device row of the dialog (and the `ctl.learn` GUI action, `params.device`) starts the
+session, or follows one a script started; a 30 Hz `status` read shows the prompt ("Control 3 of 14", "Press Left"),
+"Release it first" while the last answer is still held, and the map learned so far. **Back**, **Skip**, **Finish**
+(the name, **Save as my device**: off maps the pad for this connection only) and **Cancel** are the verb's steps;
+Finish shows the `gamecontrollerdb.txt` line to copy. A session another plane ends closes the wizard ("ended
+elsewhere"); a wizard closed while learning cancels it. The learn toast: a player pad of family `generic` with no
+map, connected for the first time, gets "<name> connected: the emulator does not know this pad" with **Learn…**
+(`ControllerToast::Kind::Learn`) instead of the first-connect toast.
+
 ### 3.6 Hotspot editor (user photos)
 
 **Photo…** loads a user image for the selected device (or a view of it: front, back, top), then shows the controls
@@ -275,11 +344,43 @@ in a list; the user clicks the spot for each, adjusts a circle or a rounded rect
 Pressing the control on the real device selects its row (so the user does not need to know the names). Saved as
 the same JSON hotspot map as built-in images ([device-database.md](device-database.md)), in the user directory.
 
+**As built (2026-10-23).** **Picture…** in the device header opens `HotspotEditor`: Choose photo… (EXIF rotation
+applied) or Paste; the photo is letterboxed into the 2048 × 1536 design canvas. The list holds the database's controls
+(the wildcards expanded; a stick is placed by its x axis) or a pad's set for a device it does not know; the map of the
+picture shown now is the starting point. Click places the selected control and moves on to the next unplaced one;
+the callout side is proposed from x and can be changed; Size sets a circle's radius or a bar's half width; pressing a
+control on the pad selects its row. Save writes `front.png` and `front.hotspots.json` into
+`<user config>/unreal-ng/controllers/images/user-<family>/` and records `{"id": <family>, "images": "user-<family>"}`
+in devices.user.json through the `database_save` host verb. A device the database does not know gets an entry of its
+own (`user-<vid><pid>`, matched by its USB ids, name and controls), used from its next connection.
+
+Since the second pass: a **View** combo (Front, Back, Top), each view with its own photo and spots; ⟲ / ⟳ turn the
+photo a quarter, the angle box straightens it by up to ±15°, **Crop** takes a rectangle dragged on the photo,
+**Uncrop** goes back (the photo itself is kept as picked: the turn, the angle and the crop are applied to it, not
+stacked); a turn, an angle or a crop drops the placed spots of that view. **Shape**: circle, ellipse, rectangle (the
+Height box is an ellipse's or a rectangle's height as a share of its width) or polygon (click its corners; Finish, or
+a click near the first corner, closes it). Save writes `<view>.png` + `<view>.hotspots.json` for every view with a
+photo and a spot (the front is required) into `images/<device id>/`: the database entry's id, so a known family's
+user set is named after the family and is read before the shipped set of the same name. Share… exports the same
+set into a chosen folder with `provenance.json` (device-database.md §7, the user's fields left empty) and
+`entry.json`. `ControllerPicture` reads ellipses and polygons (hit test and highlight by the shape) and any view:
+**Front | Back** under the picture when the set has a back map. The device list's **Import mapping…** takes a
+gamecontrollerdb.txt (the line with the selected device's VID:PID, else the first) or a RetroArch autoconfig .cfg
+through the `database_import` host verb (device-database.md §3).
+
 ### 3.7 Identify
 
 **Identify** rumbles the device for 300 ms and blinks its LED (Elite: the guide button light, DualSense: the light
 bar, player LEDs) where the capabilities allow, and pulses its row and cord in the dialog. Tells two identical pads
 apart.
+
+Built in the core (C10): the `identify` verb (`HostInputService::Identify`) plays the 300 ms rumble where the device
+has drivable motors and blinks its light white where the emulator can set one, then puts the light back to the
+colour it had (a timer, kept across repeated identifies); `rumble`, `light` and `ms` say what it did, and a device with
+neither answers `unavailable` with both reasons. In the dialog, **Identify** in the device row runs the verb and its
+row pulses for 600 ms; beside it the **Role** (Player, Debugger remote, Disabled) and **Drives** (Follow focus, All
+instances, one instance: this window's named so) combos run `role` and `pin` and follow a change from any plane
+within a third of a second.
 
 It is the first effect of **Test haptics** in the selected device's header (owner 2026-10-18/19): an effect list and
 the Test haptics button that plays the chosen one, both always there. The list holds Identify and one test effect per
@@ -306,6 +407,9 @@ signature match the user already kept:
   selected. Never shown during replay or an automation session.
 - Like `DropTargetOverlay`, a frameless translucent window of its own over the screen area: the GPU screen is a
   native OpenGL window that a child widget would not draw over.
+
+**As built (2026-10-23).** `ControllerToast` has three kinds: the auto profile (Keep, Change…, ×), a first connection
+(Open controllers, ×) and a disconnect (× alone). One shows at a time; a new one replaces it.
 
 ## 4. Retro-side pictures
 
@@ -397,3 +501,27 @@ Toast (main window): ControllerToast (frameless top-level, like DropTargetOverla
   pause-on-disconnect option is on, off by default).
 - **Menu**: Tools > Controllers (checkable). Machine > Controllers submenu: quick plug per connector (the same
   `ControllerControl` verbs), "Swap joystick ports", "Reset bindings to default".
+
+**As built (2026-10-23).**
+- The joystick LED is the connector LED when the host controllers run (`StatusBarManager::setControllers`,
+  `HostControllers::ConnectorLed`, `connectorview::DescribeLed`): shown while any connector holds a retro device,
+  lit while one is held (the 200 ms status-bar poll), the tooltip one line per plugged connector,
+  "Kempston #1F: up, fire ← Xbox Elite 2", ending in "Click: Tools > Controllers"; a click opens the dialog. Without
+  ENABLE_CONTROLLERS it stays the Kempston LED.
+- The amber DEBUG tag sits left of the LED while a player pad has its `debug` layer up by its layer key
+  (`HostControllers::DebugLayerHeld`), not while the debugger window's focus makes every pad a debugger remote.
+  Not in the HUD yet.
+- Toasts: a player pad's first connection on this computer (remembered by family and name in
+  `Controllers/SeenDevices`; a Bluetooth pad gets a new id on another adapter) shows "Xbox Elite 2 connected →
+  Kempston" with Open controllers; later connections only say so in the status line. A player pad gone while the
+  bound machine runs shows "… disconnected", or "… disconnected: paused" when **Pause on disconnect** (the dialog's
+  top row, `Controllers/PauseOnDisconnect`, off by default) paused it through `Emulator::Pause` with the GUI origin.
+- The DEBUG tag shows in the HUD too, as the `controllers-debug` indicator while the HUD is on
+  (`StatusBarManager::controllerDebugLayerChanged`).
+- The connector LED stays on the 200 ms status-bar poll: the held bits change on the emulation and backend threads
+  with no notification, and adding one to the input path would cost more than a 200 ms read of a few words.
+- Machine > Controllers (`controllersmenu::Fill`, filled when it opens): per connector a submenu of the retro devices
+  it accepts and "(empty)" (the `plug` / `unplug` verbs; a board connector is shown, off), **Swap Joystick Ports**
+  (two player pads trade connectors, one pad moves on to the next connector with a device:
+  `connectorview::SwapPorts`, then the `player` choice) and **Reset Bindings to Default** (every choice made by hand
+  goes: `HostControllers::ResetPlayerChoices`).

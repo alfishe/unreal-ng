@@ -48,7 +48,7 @@ const std::vector<uint8_t> kSnesStyle = {0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x0
                                          0x02, 0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0xC0};
 }  // namespace
 
-TEST(DeviceDatabase_Test, AllPads_UsbAndBluetoothIdsFindTheirFamily)
+TEST(DeviceDatabaseAllPads_Test, UsbAndBluetoothIdsFindTheirFamily)
 {
     const DeviceDatabase& db = DeviceDatabase::Builtin();
     const struct
@@ -93,7 +93,7 @@ TEST(DeviceDatabase_Test, AllPads_UsbAndBluetoothIdsFindTheirFamily)
     EXPECT_EQ(db.Lookup({"usb", 0x1234, 0x5678, -1, "Super Fight Stick", ""}).images, "arcade-stick");
 }
 
-TEST(DeviceDatabase_Test, AllPads_HidMapsPerMatchAndVersion)
+TEST(DeviceDatabaseAllPads_Test, HidMapsPerMatchAndVersion)
 {
     const DeviceDatabase& db = DeviceDatabase::Builtin();
     // The Luna's USB and Bluetooth reports differ: each match carries its own map
@@ -128,7 +128,7 @@ TEST(DeviceDatabase_Test, AllPads_HidMapsPerMatchAndVersion)
     EXPECT_EQ(joyCon.buttons[8], "menu") << "a Joy-Con alone: minus is its menu key, as SwitchProPad names it";
 }
 
-TEST(DeviceDatabase_Test, AllPads_MalformedHidMapsAreRefused)
+TEST(DeviceDatabaseAllPads_Test, MalformedHidMapsAreRefused)
 {
     DeviceDatabase db;
     std::string error;

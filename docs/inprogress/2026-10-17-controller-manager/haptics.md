@@ -287,7 +287,7 @@ The addresses above are an illustration of the format, not verified values for t
   - A write probe sees every write (`each_write`, `when: changed`).
   - The first probe copies the haptics that play now into the user profile, so the probe adds to the game's profile
     and does not replace it.
-  - The menu entry runs the `haptics-probe` host verb (§11): the surfaces and the menu write the same file.
+  - The menu entry runs the `haptics_probe` host verb (§11): the surfaces and the menu write the same file.
 - **Sharing**: profiles in `data/controllers/profiles/` (built-in, reviewed) and the user folder; the same format for
   both.
 - **Device independence**: profiles name abstract targets; a device without trigger motors plays the fallback.
@@ -468,13 +468,13 @@ haptics` / `controllers rumble`, WebAPI `GET /api/v1/controllers/haptics`, `POST
 `controllers_haptics()` / `controllers_rumble()`. The effects are one table (`haptics/testeffects.h`) that the
 dialog's Test haptics also plays. Mode, strength, gate and stop are still to come.
 
-Built (2026-10-23): the host verb `haptics-probe` (`kind` exec / read / write / port-in / port-out, `address`, `page`,
+Built (2026-10-23): the host verb `haptics_probe` (`kind` exec / read / write / port-in / port-out, `address`, `page`,
 `port_mask`, `play`). It adds a probe with its rule to the loaded game's user profile and answers `id`, `source` and
 `path`; without a program loaded from a file it is `unavailable`. It is on every plane:
 
-- CLI `controllers haptics-probe <kind> <address> [page= port_mask= play=]`;
-- WebAPI `POST /api/v1/controllers/haptics-probe`, in OpenAPI, and a socket `call` like every route;
-- MCP `controllers` action `haptics-probe`;
+- CLI `controllers haptics_probe <kind> <address> [page= port_mask= play=]`;
+- WebAPI `POST /api/v1/controllers/haptics_probe`, in OpenAPI, and a socket `call` like every route;
+- MCP `controllers` action `haptics_probe`;
 - Python `controllers_haptics_probe(kind, address, ...)`.
 
 Lua is excluded, as decided.

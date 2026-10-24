@@ -2029,8 +2029,9 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics-probe, aliases, unalias, match) "
-                 "with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics_probe, role, pin, identify, "
+                 "player, probe, reports, database, database_save, database_delete, database_import, learn, aliases, "
+                 "unalias, match) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2096,7 +2097,7 @@ namespace PythonBindings
                      py::kwargs all = options;
                      all["kind"] = kind;
                      all["address"] = address;
-                     return HostControllerCallPy("haptics-probe", all);
+                     return HostControllerCallPy("haptics_probe", all);
                  }, py::arg("kind"), py::arg("address"),
                  "A haptic probe (exec, read, write, port-in, port-out: a breakpoint that never stops) at an address "
                  "or port ('0x5C3A') as a source of the loaded game's user profile, with a rule: page=, port_mask=, "
@@ -2118,6 +2119,83 @@ namespace PythonBindings
                  "A pad's light colour (a DualSense / DualShock 4 light bar): color='#RRGGBB', 'r,g,b' or 'off'; "
                  "unavailable with the reason where the OS does not let the emulator set it (controllers_host('devices') "
                  "names each device's battery, light and notice)")
+            .def("controllers_role", [](Emulator&, const std::string& device, const std::string& role) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["role"] = role;
+                     return HostControllerCallPy("role", options);
+                 }, py::arg("device"), py::arg("role"),
+                 "A host device's role: 'player', 'debugger-remote' (its debug bindings only) or 'disabled'")
+            .def("controllers_pin", [](Emulator&, const std::string& device, const std::string& pin) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["pin"] = pin;
+                     return HostControllerCallPy("pin", options);
+                 }, py::arg("device"), py::arg("pin"),
+                 "Which instance a host device drives: 'follow-focus', 'all' or 'pinned:<emulator id>'")
+            .def("controllers_identify", [](Emulator&, const std::string& device) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     return HostControllerCallPy("identify", options);
+                 }, py::arg("device"), "Rumble a host device for 300 ms and blink its light where it has them")
+            .def("controllers_player", [](Emulator&, const std::string& device, const py::object& connector) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     if (!connector.is_none())
+                         options["connector"] = connector;
+                     return HostControllerCallPy("player", options);
+                 }, py::arg("device"), py::arg("connector") = py::none(),
+                 "The connector a host pad's auto: targets drive (connector='kempston'; 'auto' = the automatic "
+                 "choice again, 'none' = no connector; None = only read it)")
+            .def("controllers_probe", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("probe", options);
+                 },
+                 "The host input backends (running, devices, reason) and the devices each found with their database "
+                 "step; device='usb:...' adds its endpoints and what each gives (role, controls, driver, rumble, "
+                 "light, battery)")
+            .def("controllers_reports", [](Emulator&, const std::string& device) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     return HostControllerCallPy("reports", options);
+                 }, py::arg("device"),
+                 "A host device's newest raw HID input reports in hex (macOS IOHID); reading starts the tap, which "
+                 "stops 3 s after the last read")
+            .def("controllers_database", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("database", options);
+                 },
+                 "The device database with the user's devices.user.json on top: vidpid='045e:0b00' (bus='usb'|'bt', "
+                 "name=, version=), guid='<SDL GUID>', device='<id>' or family='dualsense' answers the match (family, "
+                 "layout, images, map, step, score, user); always the ids of the user entries ('user') and the file "
+                 "('user_file')")
+            .def("controllers_database_save", [](Emulator&, const std::string& text) {
+                     py::kwargs options;
+                     options["text"] = text;
+                     return HostControllerCallPy("database_save", options);
+                 }, py::arg("text"),
+                 "Put an entry into devices.user.json (JSON: {\"id\": \"xbox-elite-2\", \"images\": \"my-elite\"} "
+                 "changes the fields it names of a known family; a new family needs its match list)")
+            .def("controllers_database_delete", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("database_delete", options);
+                 }, py::arg("id"), "Remove an entry of devices.user.json (the built-in family comes back)")
+            .def("controllers_database_import", [](Emulator&, const std::string& text, bool save) {
+                     py::kwargs options;
+                     options["text"] = text;
+                     options["save"] = save ? "true" : "false";
+                     return HostControllerCallPy("database_import", options);
+                 }, py::arg("text"), py::arg("save") = true,
+                 "Import a gamecontrollerdb.txt line or a RetroArch autoconfig file as the user family "
+                 "user-<vid><pid> with its control map (save=False: parse and show only)")
+            .def("controllers_learn", [](Emulator&, const std::string& device, const std::string& step,
+                                         const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["device"] = device;
+                     all["step"] = step;
+                     return HostControllerCallPy("learn", all);
+                 }, py::arg("device"), py::arg("step") = "status",
+                 "The learn wizard of an unknown device: step='start' (controls='dpad.up,south,..'), 'status', "
+                 "'sample' (control='button.3', value=1), 'skip', 'back', 'finish' (name=, save=), 'cancel'")
             .def("controllers_aliases", [](Emulator&) { return HostControllerCallPy("aliases", py::kwargs()); },
                  "The device aliases: {aliases: [{from, to, connected, name}]}; a pad first seen through "
                  "GameController alone (gc:...) and later matched to its HID device keeps its profiles under the new id")

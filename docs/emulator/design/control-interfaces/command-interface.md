@@ -3807,10 +3807,42 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
-| `controllers haptics-probe` | `<exec\|read\|write\|port-in\|port-out> <address> [page=N] [port_mask=M] [play=hit]` | A haptic probe (a breakpoint that never stops) at an address or port as a source of the loaded game's user profile (`user/game-<sha16>`, started from the haptics that play now), with a rule that plays the effect; answers `id`, `source`, `path`; `unavailable` without a program loaded from a file. The debugger's **Add as Haptic Probe** runs it ([haptics.md §5, §7](../../../inprogress/2026-10-17-controller-manager/haptics.md#5-sources-game-events)) | ✅ Implemented |
+| `controllers haptics_probe` | `<exec\|read\|write\|port-in\|port-out> <address> [page=N] [port_mask=M] [play=hit]` | A haptic probe (a breakpoint that never stops) at an address or port as a source of the loaded game's user profile (`user/game-<sha16>`, started from the haptics that play now), with a rule that plays the effect; answers `id`, `source`, `path`; `unavailable` without a program loaded from a file. The debugger's **Add as Haptic Probe** runs it ([haptics.md §5, §7](../../../inprogress/2026-10-17-controller-manager/haptics.md#5-sources-game-events)) | ✅ Implemented |
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
+| `controllers role` | `<device> <player\|debugger-remote\|disabled>` | What a host device is for: a player (the play layer, a connector), a debugger remote (its debug bindings only, never a connector) or nothing. Kept by device id across a replug | ✅ Implemented |
+| `controllers pin` | `<device> <follow-focus\|all\|pinned:<emulator id>>` | Which instance a host device drives: the one whose window has the focus (default), every instance (a demo on the video wall), or one. `devices` shows it as `pin` | ✅ Implemented |
+| `controllers identify` | `<device>` | Rumble the device for 300 ms and blink its light white (then back to its colour) where it has them, to tell two identical pads apart (`rumble`, `light`, `ms`; `unavailable` with both reasons when it has neither) | ✅ Implemented |
+| `controllers player` | `<device> [connector\|auto\|none]` | The connector a player pad's `auto:` targets drive: read it, choose one (it wins over the machine's order and a profile's pin for the session), `auto` back to the automatic choice, `none` no connector. The dialog's drag and drop, Swap joystick ports and Reset bindings to default | ✅ Implemented |
+| `controllers probe` | `[device]` | The input backends: `running`, else the `reason`; the devices each found with their database `match` (`step`, `score`) and `notice`; `user_devices` (the `devices.user.json` path); with a device its endpoints: backend, name, role (`input`, `outputs`), the controls its driver decodes, rumble, light, battery | ✅ Implemented |
+| `controllers reports` | `<device>` | The device's newest raw HID input reports in hex (up to 16, oldest first). The read arms the backend's tap; it disarms itself 3 s after the last read. macOS IOHID (and the fake backend); elsewhere `unavailable` with the reason | ✅ Implemented |
+| `controllers database` | `[<vid:pid>\|<SDL GUID>\|<device>\|<family>] [bus=usb\|bt] [name=..] [version=..]` | The device database (built-in plus devices.user.json): the families count, the ids devices.user.json holds (`user`, `user_file`), and with a key the `query` (`vid`, `pid`, `bus`, `version`, `name`, `sdl_guid`) and the `match`: `family`, `name`, `layout`, `images`, `glyphs`, `controls`, `map`, `player`, `role`, the `step` (`exact`, `vid-pid`, `name`, `unknown`) and `score`, and whether the entry is the user's | ✅ Implemented |
+| `controllers database_save` / `database_delete` | `<file>` / `<id>` | Add or replace an entry of devices.user.json (one family as JSON; a built-in id changes only the fields it names, such as `images`), validated and written at once; remove one. The picture changes at once, a name or match when the device connects again. The dialog's Picture… saves through it | ✅ Implemented |
+| `controllers database_import` | `<file> [save=false]` | Import a `gamecontrollerdb.txt` line or a RetroArch autoconfig file: the map (canonical -> raw control), the entries with no control here (`skipped`), the `gamecontrollerdb` line; unless `save=false` the user family `user-<vid><pid>` (`entry`) in `devices.user.json`, merged over a user entry of that id, which a connected device of that VID / PID takes at once. The dialog's Import mapping… | ✅ Implemented |
+| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented |
 | `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
 | `controllers unalias` | `<old id>` | Forget an alias: the profiles naming the old id stop applying to the new one; saved and applied at once. `unknown-alias` (404) when there is none | ✅ Implemented |
+
+**Device database.** `<user config>/unreal-ng/controllers/devices.user.json` is read at start over the compiled-in
+database; the three verbs read and edit it on every plane (WebAPI `GET /api/v1/controllers/database`,
+`POST .../database_save {text}`, `POST .../database_delete {id}`; MCP `controllers` with the same actions; Python
+`controllers_database(vidpid=, guid=, device=, bus=, name=, version=, family=)`,
+`controllers_database_save(text)`, `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`). `database_import` is
+`POST .../database_import {text, save}` (also `POST .../database/import`); `player`, `probe` and `reports` are `POST .../player {device, connector}`,
+`GET .../probe?device=..` and `GET .../reports?device=..`, Python `controllers_player(device, connector=None)`,
+`controllers_probe(device=..)`, `controllers_reports(device)`. Design:
+[device-database.md §4](../../../inprogress/2026-10-17-controller-manager/device-database.md#4-user-overrides).
+
+```
+controllers database 045e:0b22 bus=bt
+# Device database (27 families):
+#   xbox-elite-2: Xbox Elite Wireless Controller Series 2
+#     layout xbox, images xbox-elite-2, exact match, score 100
+#   devices.user.json: no entries
+controllers database_save my-elite.json      # {"id": "xbox-elite-2", "images": "xbox-elite-2"}
+controllers database_import sn30.txt         # one gamecontrollerdb.txt line: user-2dc86101
+controllers player usb:2dc8:6101:1 sinclair-1
+controllers reports usb:2dc8:6101:1
+```
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3867,6 +3899,28 @@ controllers output bt:045e:091b:3c1e2f4a marks=ten_seconds,second
 # OK: ten_seconds -> double on Surface Dial
 ```
 
+**Roles, pins and unknown devices.** `role` and `pin` are the device card's choices (ui-ux.md §3), kept by device
+id while the process runs. A device the database does not know reports raw controls (`button.<n>`, the sticks and
+hat the HID descriptor names, `axis.<n>` for the rest); `learn` or `database_import` gives it a control map, saved
+in `<user config>/unreal-ng/controllers/devices.user.json` and read at the next start, and from then on each raw
+control also reports as its canonical control (`button.2` as `south`), so the play and debug profiles of a pad work
+on it. Design: [device-database.md §3-§4](../../../inprogress/2026-10-17-controller-manager/device-database.md#4-user-overrides),
+[ui-ux.md §3.5](../../../inprogress/2026-10-17-controller-manager/ui-ux.md#35-learn-wizard-unknown-devices).
+
+```
+controllers learn usb:1234:5678:0100:a1 start controls=dpad.up,dpad.down,south,east
+# OK: USB Gamepad: learning; its controls reach nothing else until finish or cancel. Press Up
+#   (press Up on the pad, then)
+controllers learn usb:1234:5678:0100:a1
+# OK: 2/4: Press Down
+controllers learn usb:1234:5678:0100:a1 skip
+controllers learn usb:1234:5678:0100:a1 sample button.2
+controllers learn usb:1234:5678:0100:a1 finish
+# OK: USB Gamepad: 2 controls mapped, saved as user-12345678 (the reply's gamecontrollerdb holds its SDL line)
+controllers database 1234:5678
+# OK: 1234:5678 is USB Gamepad (user-12345678, vid-pid, score 80)
+```
+
 Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
@@ -3877,6 +3931,17 @@ Every surface offers the same verbs:
 | MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme`, `aliases`, `unalias` (`id`) (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
 | Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ..., `controllers_aliases()`, `controllers_unalias(id)` | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
 | Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` (`aliases`, `unalias` through it, no helpers of their own) | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
+
+Devices, the database and the learn wizard:
+
+| Surface | Role, pin, identify | Probe, database, import | Learn |
+| :--- | :--- | :--- | :--- |
+| CLI | `controllers role <device> <role>`, `pin <device> <pin>`, `identify <device>` | `controllers probe`, `database <key>`, `database_import <file>` | `controllers learn <device> <step> ...` |
+| WebAPI | `POST /api/v1/controllers/role {device, role}` (`pin`, `identify` alike), or `POST /api/v1/controllers/host/{device}/{role\|pin\|identify\|learn}` | `GET /api/v1/controllers/probe`, `GET /api/v1/controllers/database?vidpid=\|guid=\|device=`, `POST /api/v1/controllers/database/import {text, save}` | `POST /api/v1/controllers/learn {device, step, ...}` |
+| WebSocket | `{"op":"call","method":"POST","path":"/api/v1/controllers/role","body":{...}}` | `{"op":"call","method":"GET","path":"/api/v1/controllers/probe"}` | the same `call` of `/api/v1/controllers/learn` |
+| MCP | `controllers` actions `role` (`device`, `role`), `pin` (`device`, `pin`), `identify` (`device`) | `probe`, `database` (`vidpid`, `guid`, `device`, `name`, `version`), `database_import` (`text`, `save`) | none: the wizard needs a person pressing the controls |
+| Python | `controllers_role(device, role)`, `controllers_pin(device, pin)`, `controllers_identify(device)` | `controllers_probe()`, `controllers_database(vidpid=, guid=, device=)`, `controllers_database_import(text, save=True)` | `controllers_learn(device, step="status", **options)` |
+| Lua | `controllers_host("role", {device=, role=})` (no named wrappers: Lua is P3) | `controllers_host("probe")`, ... | `controllers_host("learn", {...})` |
 
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`, `unknown-alias`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
@@ -3940,6 +4005,8 @@ companion scope (their routes change nothing).
 | `hud.theme` | press | `theme?` (a name, `next`, `prev`) | The HUD's theme | |
 | `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
 | `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
+| `ctl.open` | press | | The Controllers window (the Qt client's GUI action) | |
+| `ctl.learn` | press | `device` (a host device id) | The Controllers window with the learn wizard for the device: it starts the `learn` session (or follows a running one) and shows its prompts | |
 | `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
 | `osd.keyboard_style` | press | `style?` (`photo`, `schematic`, `hybrid`, `next`, `prev`) | How the on-screen keyboard is drawn | |
 
@@ -4126,7 +4193,7 @@ by its manager's revision.
 | :--- | :--- | :--- | :--- |
 | `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
 | `monitor host.stats` | | The process (never per instance): `cpu_percent` (over the last 0.5 s, 100 = one core busy), `cpu_percent_host` (of all `cores`), `rss_bytes`, `peak_rss_bytes`, `virtual_bytes`, `threads`, `cpu_time_s`, `uptime_s`, `interval_s`. macOS task_info / proc_pidinfo, Linux /proc/self/status, Windows GetProcessTimes / GetProcessMemoryInfo; sampled at most twice a second | ✅ Implemented |
-| `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`; `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
+| `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`, `dropped` (closed by the server for reading too slowly: a `ws` slow consumer); `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
 | `monitor emulator.stats` | `[instance=]` | The measured pace (MainLoop, a 0.5 s window, no lock on the emulation thread): `state`, `measuring` (false while paused or stopped), `fps`, `nominal_fps`, `speed_percent` (emulated time over wall time: fps / nominal × the host multiplier; 2x shows 200, turbo its rate), `frame_time_us` {`avg`, `max`} (the host time a frame's emulation took), `frame_budget_percent` (avg over the frame period), `halted_percent` (T-states in HALT), `interrupts_per_frame` (INTs the CPU accepted), `frame`, `t_states` (cumulative; while it runs taken at the window's end, so the value changes twice a second), `turbo`, `cpu` {`mhz`, `base_mhz`, `multiplier` (host × the machine's own turbo), `host_multiplier`, `hw_turbo_ratio`} | ✅ Implemented |
 | `monitor debug.breakpoints` | `[instance=]` | The user breakpoints: `total`, `active`, `inactive`, `owned` (analyzers', DeZog's, hidden traps: not counted), `by_kind` {`memory`, `exec`, `read`, `write`, `port`, `port_in`, `port_out`, `keyboard`, `nextreg`, `beam`, `copper`, `magic`}, `groups` [{`name`, `total`, `active`}], `last_hit` {`id`, `type`, `address`, `access`, `group`, `note`} or null | ✅ Implemented |
 | `monitor breakpoint_groups` | `[instance=]` | `groups` [{`name`, `total`, `active`, `ids`}] (also `GET /api/v1/emulator/{id}/breakpoints/groups`, `bp_groups()`; the CLI's `bpgroup list` names them too). Not a topic: `debug.breakpoints` pushes the groups' counts | ✅ Implemented |

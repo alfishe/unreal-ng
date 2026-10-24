@@ -158,6 +158,7 @@ StateNode HostClients()
         entry["connections"] = std::max<int64_t>(counts.connections, 0);
         entry["opened"] = static_cast<int64_t>(counts.opened);
         entry["requests"] = static_cast<int64_t>(counts.requests);
+        entry["dropped"] = static_cast<int64_t>(counts.dropped);
     }
     node["companions"] = static_cast<int64_t>(companion::CompanionRegistry::Instance().List().size());
     node["instances"] = static_cast<int64_t>(EmulatorManager::GetInstance()->GetEmulatorIds().size());
