@@ -2,7 +2,8 @@
 /// @brief One logical device per physical pad (architecture.md §5, D18) with fake endpoints: two raw HID interfaces
 /// of one pad merge and only the one with the most controls gives input; a generic device never merges; a
 /// GameController companion is matched by its vendor name and arrival, confirmed only by coincident presses, picks the
-/// right pad of two identical ones, and is never a device of its own.
+/// right pad of two identical ones; a companion no raw device claims becomes standalone (a `gc:` device) and is
+/// promoted when its raw device appears and the presses confirm it.
 
 #include <gtest/gtest.h>
 
@@ -229,3 +230,62 @@ TEST(EndpointMerge_Test, Companion_TheDeviceGoesAndComesBack)
 }
 
 /// endregion </The GameController companion>
+
+/// region <Standalone companions (gc: devices)>
+
+TEST(EndpointMerge_Test, Standalone_AfterTheWindowWithNoDeviceOfItsName)
+{
+    EndpointMerge merge;
+    // A device of another name arrived with it: it does not hold the companion back
+    merge.AddHid(Hid("dial", "bt:045e:091b:x", "", "Surface Dial System Multi Axis", 0, 1000));
+    merge.AddCompanion({"gc#1", "Pro Controller", 1000});
+    EXPECT_TRUE(merge.StandaloneDue(1000 + EndpointMerge::kArrivalWindowMs - 1).empty()) << "within the window";
+    EXPECT_EQ(merge.StandaloneDue(1000 + EndpointMerge::kArrivalWindowMs), (std::vector<std::string>{"gc#1"}));
+    EXPECT_TRUE(merge.IsStandalone("gc#1"));
+    EXPECT_TRUE(merge.StandaloneDue(10000).empty()) << "reported once";
+
+    // A device of its name holds the next companion back
+    merge.AddHid(Hid("pad", "bt:054c:0ce6:y", "bt:054c:0ce6:y", "DualSense Wireless Controller", 30, 2000));
+    merge.AddCompanion({"gc#2", "DualSense Wireless Controller", 2000});
+    EXPECT_TRUE(merge.StandaloneDue(20000).empty());
+    EXPECT_FALSE(merge.IsStandalone("gc#2"));
+}
+
+TEST(EndpointMerge_Test, Standalone_PromotedWhenItsDeviceAppearsAndPressesConfirm)
+{
+    EndpointMerge merge;
+    merge.AddCompanion({"gc#1", "Wireless Gamepad", 1000});
+    ASSERT_EQ(merge.StandaloneDue(5000).size(), 1u);
+    // The pad's IOHID endpoint appears later under another name
+    merge.AddHid(Hid("a", "bt:2dc8:6001:z", "bt:2dc8:6001:z", "8BitDo SN30 Pro", 20, 9000));
+    EXPECT_FALSE(merge.CompanionEdge("gc#1", 10000).has_value());
+    EXPECT_FALSE(merge.HidEdge("bt:2dc8:6001:z", 10005).has_value());
+    EXPECT_FALSE(merge.CompanionEdge("gc#1", 11000).has_value());
+    const auto confirmed = merge.HidEdge("bt:2dc8:6001:z", 11010);
+    ASSERT_TRUE(confirmed.has_value());
+    EXPECT_TRUE(confirmed->promoted);
+    EXPECT_EQ(confirmed->device, "bt:2dc8:6001:z");
+    EXPECT_FALSE(merge.IsStandalone("gc#1"));
+    EXPECT_EQ(merge.CompanionOf("bt:2dc8:6001:z"), "gc#1");
+
+    // The raw endpoint goes, the companion stays: standalone again a window later
+    merge.RemoveHid("a", 20000);
+    EXPECT_TRUE(merge.StandaloneDue(20000 + EndpointMerge::kArrivalWindowMs - 1).empty());
+    EXPECT_EQ(merge.StandaloneDue(20000 + EndpointMerge::kArrivalWindowMs).size(), 1u);
+}
+
+TEST(EndpointMerge_Test, Standalone_AMatchedCompanionIsNotPromoted)
+{
+    EndpointMerge merge;
+    merge.AddHid(Hid("a", "usb:054c:0ce6:1", "usb:054c:0ce6:1", "DualSense Wireless Controller", 30));
+    merge.AddCompanion({"gc#1", "DualSense Wireless Controller", 1000});
+    merge.HidEdge("usb:054c:0ce6:1", 2000);
+    merge.CompanionEdge("gc#1", 2003);
+    merge.HidEdge("usb:054c:0ce6:1", 3000);
+    const auto confirmed = merge.CompanionEdge("gc#1", 3004);
+    ASSERT_TRUE(confirmed.has_value());
+    EXPECT_FALSE(confirmed->promoted);
+    EXPECT_TRUE(merge.StandaloneDue(100000).empty());
+}
+
+/// endregion </Standalone companions>

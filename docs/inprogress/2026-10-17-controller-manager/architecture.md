@@ -182,6 +182,18 @@ HostDeviceId = family-neutral, stable across replug and restart:
 - **Promotion**: a device first seen only through GameController (`gc:` id) that is later matched to its IOHID
   endpoint is promoted to the `usb:` / `bt:` id; the store records the old id as an alias, so its bindings, role and
   pin follow it, and the next connect is matched by the new id directly.
+- **`gc:` devices, built (2026-10-23, not exercised with a pad)**: `EndpointMerge::StandaloneDue` declares a companion
+  standalone when it is still unconfirmed `kArrivalWindowMs` (3 s) after it arrived and no unclaimed IOHID device has
+  its name (a nameless device that arrived with it counts as a candidate; a device of another name does not, since
+  at the start everything arrives together). The macOS backend checks every 0.1 s and reports it as
+  `gc:<vendor name slug>#<n>` (the name in lower case, other characters as `-`, the lowest free n; family and layout
+  from the database's name rules) with GameController's input (`GcPad`: the extended gamepad's elements, positional
+  faces, y negated; `GcCompanion::SetInput`), its haptics, light and battery. When its IOHID endpoint appears later
+  both give input until two coincident presses confirm the match (the same rule as above); the confirmation is
+  `promoted`: the `gc:` device is removed, `IBackendSink::OnDevicePromoted(gc, usb/bt)` moves the router settings
+  chosen for it (role, instance mode, player connector: `InputRouter::Promote`, unless the new id has its own) and the
+  IOHID id goes on with the companion's outputs. Not built: the profile store's alias (bindings naming the `gc:` id
+  do not follow; the store lives in the Qt client) and keeping the alias across restarts.
 
 ## 6. The canonical control vocabulary
 

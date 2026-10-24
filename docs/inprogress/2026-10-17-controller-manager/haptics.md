@@ -222,7 +222,7 @@ asserts that frame hashes are identical with the feed active (§12).
 
 | OS | Handle motors | Impulse triggers | HD haptics |
 |:--|:--|:--|:--|
-| macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense over USB (report 2), the Surface Dial's clicks (report 1); none for an Xbox pad over USB (below) | GC localities `leftTrigger` / `rightTrigger` | DualSense through CoreHaptics; AHAP patterns |
+| macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense (USB report 2, Bluetooth report 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller (0x10 / 0x01, HD rumble), the Surface Dial's clicks (report 1); else CoreHaptics through `GCDeviceHaptics` of the matched `GCController` (or a `gc:` device's own); none for an Xbox pad over USB (below) | Xbox report 3; DualSense trigger resistance; GC localities `leftTrigger` / `rightTrigger` | Switch Pro HD rumble (`RumbleLevels::lowHz` / `highHz`); CoreHaptics sharpness from the same frequency; AHAP patterns not yet |
 | Windows | GameInput `SetRumbleState`; XInput `XInputSetState` as the last resort | GameInput (Xbox) | DualSense raw output reports over Raw Input / HID (no OS API) |
 | Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path (below); none through evdev (`FF_RUMBLE` has no trigger motors) | hidraw output reports (hid-playstation for basic rumble) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
@@ -233,6 +233,48 @@ drive nothing. GameController lists the pad (vendor name "Controller", all local
 and play without an error, yet no motor turns (a probe on an Elite Series 2, firmware 5.22; SDL reports the same,
 libsdl-org/SDL#14800, and dropped output reports to wired Xbox pads on macOS in 7da728a). The backend says so: the Test
 haptics button is off with "connect the pad over Bluetooth"; over Bluetooth output report 3 drives all four actuators.
+
+macOS PlayStation and Switch pads (2026-10-23, built, not exercised on hardware; byte fixtures from Linux's
+hid-playstation.c / hid-nintendo.c at torvalds/linux 4169c9c90532, SDL3's SDL_hidapi_ps4.c / ps5.c / switch.c at
+libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering at b354f21ae81f):
+
+- **Protocol pump** (`hid/drivers/padprotocol`): a pad that talks a protocol gets a pure `IPadProtocol` (told the time,
+  the input reports and what the router wants; answers the next output report or feature read and when to ask again)
+  run by a `PadPump` thread per device. `SetRumble` / `SetLight` only queue; the writes, the feature reads (a Bluetooth
+  round trip each) and the final stop (zero motors when the device goes or the backend stops) happen there.
+- **DualSense / DualShock 4** (`hid/drivers/sonypad`, `SonyProtocol`): over Bluetooth the pad starts with its short
+  report 0x01 (the descriptor's, `HidPad`); the pump first reads the calibration feature report 0x05 (41 bytes, CRC-32
+  seed 0xA3, three tries 100 ms apart), which switches it to the full report (hid-playstation reads it at probe for the
+  same reason; SDL reads 0x09 / 0x20). `SonyPad` then decodes the full reports (USB 0x01 64 bytes; Bluetooth 0x31 /
+  0x11 78 bytes, CRC-32 seed 0xA1 checked, a bad one dropped and counted): buttons, sticks, triggers, the first touch
+  point (`touchpad.x` / `.y`, centred on lift), the mute button (`misc.1`), the Edge's paddles and Fn buttons, and the
+  battery. Output: a DualSense report 2 (USB) or 0x31 (Bluetooth: sequence nibble, tag 0x10, CRC-32 seed 0xA2) with
+  only the changed parts (motors with the trigger resistance, light bar, player LEDs), at most every 8 ms; the first
+  colour releases the firmware's light bar. A DualShock 4 report (USB 0x05, Bluetooth 0x11 with hardware control 0xC0
+  and the CRC) carries motors and light together, the light starting at the PlayStation player colour.
+- **Switch Pro controller** (`hid/drivers/switchpro`): `SwitchProtocol` runs SDL's set-up order: 250 ms for macOS's
+  own handshake; over USB the proprietary 80 02, 80 03, 80 02, 80 04; the SPI reads of the user (0x8010, 22 bytes,
+  magic B2 A1 per stick) and factory (0x603D, 18 bytes) stick calibration; vibration on (0x48 01); over USB 80 04
+  again; the full report (0x03 30); the player lights (0x30, SDL's patterns). Each step waits 100 ms for its reply (the
+  ack bit and the same subcommand, an SPI reply of the same address), at most five writes, then goes on. `SwitchProPad`
+  decodes 0x30 / 0x21 (positional faces: B south, A east; ZL / ZR as `lt` / `rt` 0 or 1; the 12-bit sticks scaled by
+  SDL's extents, 0.7 of the calibrated range, widened by what the stick reaches; the battery); the simple 0x3F stays
+  `HidPad`'s. Rumble: report 0x10 when the levels change, at least 30 ms apart, refreshed every 50 ms while it runs
+  (SDL: the motors stop otherwise), the neutral `00 01 40 40` once at zero.
+- **HD rumble encoding** (`SwitchRumble`): per actuator the high band's frequency `hf` (9 bits) and amplitude `ha`,
+  the low band's `lf` (7 bits) and `la` (9 bits) in 4 bytes. The handle motor levels play on the bands: `low` on the
+  low band at `RumbleLevels::lowHz` (default 160 Hz), `high` on the high band at `highHz` (default 320 Hz), the
+  actuators' resonances of the neutral value (SDL plays both at about 150 Hz instead; untested which feels closer to an
+  ERM). A frequency is the code round(32 log2(f / 10)) (hf = (code - 0x60) * 4 for codes 0x61..0xDF, lf = code - 0x40
+  for 0x41..0xBF), looked up in a table of the rounding boundaries in millihertz (generated once, no libm at run time:
+  the same bytes on every compiler); an amplitude is the first of dekuNukem's 101 steps (SDL's table, amplitude *
+  65535) not below the level, step 100 = 1.0 the most the table calls safe.
+- **HD frequency** (`RumbleLevels::lowHz` / `highHz`, 0 = the device's default): what a profile's `hd.frequency_hz`
+  becomes once the mixer passes it (the mixer and the profile parser are the haptics core's; until they set it every
+  effect plays at the defaults). CoreHaptics has no frequency: the continuous event's sharpness (base 0.5, moved by the
+  sharpness control) follows the same frequency laid on the Switch codes 41 Hz..1253 Hz (`GcPad::SharpnessFor`).
+- **Player LEDs**: each pump pad gets the lowest free player number at connect (DualSense LEDs `04 0A 15 1B 1F`, the
+  DualShock 4 light colour, the Switch lights); the emulator's own player slots do not drive them yet.
 
 Linux over Bluetooth (2026-10-22, built, not exercised on hardware): an Xbox One / Series pad (the Elite 2 included)
 bound to `hid-generic` through BlueZ's uhid has no `FF_RUMBLE` on its evdev node. The evdev backend then writes output

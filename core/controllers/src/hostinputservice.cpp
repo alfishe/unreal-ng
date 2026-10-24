@@ -396,6 +396,12 @@ void HostInputService::OnDeviceRemoved(const HostDeviceId& device)
     ++_revision;
 }
 
+void HostInputService::OnDevicePromoted(const HostDeviceId& from, const HostDeviceId& to)
+{
+    _router->Promote(from, to);
+    ++_revision;
+}
+
 void HostInputService::OnControl(const ControlEvent& event)
 {
     _router->OnControl(event);

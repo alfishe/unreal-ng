@@ -190,6 +190,13 @@ SDL_JOYSTICK_MFI=0 "$OUT/sdlev" 120 & "$OUT/hiddump" 120
 
 SDL merges MFi, HIDAPI and IOKit internally.
 
+What the emulator builds on them (2026-10-23, [haptics.md §9](haptics.md#9-backends)): IOHID is the primary; the
+PlayStation pads and the Switch Pro controller get their own drivers on it (`hid/drivers/sonypad`, `switchpro`: the
+full reports after the Bluetooth handshake, the native rumble, light bar, player LEDs and battery, SDL's and
+hid-playstation's byte layouts); GameController is the companion that adds CoreHaptics and `GCDeviceLight` where no
+output report exists, and gives the input only of a pad IOHID does not see (a `gc:` device, promoted to its IOHID id
+once both endpoints are matched, [architecture.md §5](architecture.md#5-device-identity-and-merging)).
+
 ### 3.2 Windows
 
 | API | Gives | Missing |

@@ -662,3 +662,21 @@ TEST_F(InputRouter_Test, InvalidTargetsAreRefusedWithTheReason)
 }
 
 /// endregion </C2b>
+
+TEST_F(InputRouter_Test, PromoteMovesTheChosenSettings)
+{
+    // A gc: device had a role and a pin; its IOHID id takes over (architecture.md §5)
+    _router.SetRole("gc:pro-controller#1", DeviceRole::DebuggerRemote);
+    _router.SetInstanceMode("gc:pro-controller#1", InstanceMode::Pinned, "emu-2");
+    _router.Promote("gc:pro-controller#1", "fake:1");
+    EXPECT_EQ(_router.Role("fake:1"), DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.RoleSet("fake:1"));
+
+    // A device with settings of its own keeps them
+    _router.SetRole("fake:2", DeviceRole::Disabled);
+    _router.Promote("gc:pro-controller#1", "fake:2");
+    EXPECT_EQ(_router.Role("fake:2"), DeviceRole::Disabled);
+    // Nothing chosen for the old id: nothing moves
+    _router.Promote("gc:unknown#1", "fake:3");
+    EXPECT_FALSE(_router.RoleSet("fake:3"));
+}

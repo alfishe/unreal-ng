@@ -75,7 +75,7 @@ EndpointMerge::HidAdded EndpointMerge::AddHid(const HidEndpointInfo& endpoint)
     return {endpoint.id, true};
 }
 
-EndpointMerge::HidRemoved EndpointMerge::RemoveHid(const std::string& key)
+EndpointMerge::HidRemoved EndpointMerge::RemoveHid(const std::string& key, uint64_t nowMs)
 {
     const auto found = _endpoints.find(key);
     if (found == _endpoints.end())
@@ -91,7 +91,11 @@ EndpointMerge::HidRemoved EndpointMerge::RemoveHid(const std::string& key)
     // The companion stays: it may match the device when it comes back
     if (!device.companion.empty())
         if (const auto companion = _companions.find(device.companion); companion != _companions.end())
+        {
             companion->second.device.clear();
+            if (nowMs != 0)
+                companion->second.arrivalMs = nowMs;
+        }
     for (auto& [companionKey, companion] : _companions)
     {
         companion.hits.erase(id);
@@ -183,13 +187,15 @@ std::optional<EndpointMerge::Confirmed> EndpointMerge::ConfirmLocked(const std::
     // Enough coincidences, more than any other candidate, and with most of the companion's presses
     if (best.empty() || bestHits < kConfirmEdges || bestHits <= secondHits || bestHits * 2 <= companion.presses)
         return std::nullopt;
+    const bool promoted = companion.standalone;
+    companion.standalone = false;
     companion.device = best;
     companion.edges.clear();
     companion.presses = 0;
     companion.hits.clear();
     _devices[best].companion = key;
     _devices[best].edges.clear();
-    return Confirmed{key, best};
+    return Confirmed{key, best, promoted};
 }
 
 std::optional<EndpointMerge::Confirmed> EndpointMerge::HidEdge(const HostDeviceId& device, uint64_t timeMs)
@@ -248,6 +254,35 @@ std::optional<EndpointMerge::Confirmed> EndpointMerge::CompanionEdge(const std::
     // The hits stay counted when an old record goes; only the late presses look back this far
     KeepLast(companion.edges, kKeptEdges);
     return ConfirmLocked(key, companion);
+}
+
+std::vector<std::string> EndpointMerge::StandaloneDue(uint64_t nowMs)
+{
+    std::vector<std::string> due;
+    for (auto& [key, companion] : _companions)
+    {
+        if (companion.standalone || !companion.device.empty() || nowMs < companion.arrivalMs + kArrivalWindowMs)
+            continue;
+        // A raw device of its name, or a nameless one that arrived with it. A device of another name does not hold
+        // it back (at the start everything arrives together); if it is the pad after all, the presses promote
+        const bool candidate = std::any_of(_devices.begin(), _devices.end(), [&companion](const auto& entry) {
+            const Device& device = entry.second;
+            return device.companion.empty() &&
+                   (NamesMatch(companion.vendorName, device.name) ||
+                    (device.name.empty() && Distance(companion.arrivalMs, device.arrivalMs) <= kArrivalWindowMs));
+        });
+        if (candidate)
+            continue;
+        companion.standalone = true;
+        due.push_back(key);
+    }
+    return due;
+}
+
+bool EndpointMerge::IsStandalone(const std::string& companion) const
+{
+    const auto found = _companions.find(companion);
+    return found != _companions.end() && found->second.standalone;
 }
 
 EndpointMerge::MatchState EndpointMerge::StateOf(const HostDeviceId& device) const

@@ -11,8 +11,13 @@
 ///   one control event). An empty `physical` never merges (a two-player encoder shows two pads on one USB port).
 /// - A companion endpoint (a `GCController`) hides VID / PID: it is matched to a raw HID device by its vendor name and
 ///   arrival (a tentative match) and confirmed by button-edge correlation: the same press on both within
-///   kEdgeWindowMs, kConfirmEdges times, more often than on any other candidate and more often than not. Input never
-///   comes from a companion; once confirmed it adds the outputs the raw endpoint lacks.
+///   kEdgeWindowMs, kConfirmEdges times, more often than on any other candidate and more often than not. Once
+///   confirmed it adds the outputs the raw endpoint lacks.
+/// - A companion with no raw device to match (GameController sees a pad IOHID does not: no unclaimed device of its
+///   name) is standalone after kArrivalWindowMs (StandaloneDue): the backend reports it as a device of
+///   its own (`gc:<vendor>#<n>`, architecture.md §5) with GameController's input. When its raw device appears later
+///   and the presses confirm the match, the confirmation says `promoted`: the backend drops the `gc:` device and the
+///   raw one goes on (its settings move, HostInputService::OnDevicePromoted).
 ///
 /// Not thread-safe: the backend calls it under its own lock.
 
@@ -80,11 +85,13 @@ public:
     {
         std::string companion;
         HostDeviceId device;
+        bool promoted = false;  ///< the companion was standalone: its `gc:` device gives way to @p device
     };
 
     /// region <Raw HID endpoints>
     HidAdded AddHid(const HidEndpointInfo& endpoint);
-    HidRemoved RemoveHid(const std::string& key);
+    /// @p nowMs: a companion the device had waits from then for a raw device again before it is standalone
+    HidRemoved RemoveHid(const std::string& key, uint64_t nowMs = 0);
     /// The endpoint gives its device's input (the one with the most controls; the first on a tie)
     bool IsInput(const std::string& key) const;
     /// The endpoints of a device, the input one first
@@ -98,6 +105,11 @@ public:
     std::optional<Confirmed> HidEdge(const HostDeviceId& device, uint64_t timeMs);
     /// A press on a companion
     std::optional<Confirmed> CompanionEdge(const std::string& companion, uint64_t timeMs);
+
+    /// The companions that became standalone by @p nowMs: unconfirmed, kArrivalWindowMs past their arrival, and no
+    /// unclaimed raw device of their name (or a nameless one that arrived with them). Each is returned once; it stays standalone until confirmed
+    std::vector<std::string> StandaloneDue(uint64_t nowMs);
+    bool IsStandalone(const std::string& companion) const;
 
     MatchState StateOf(const HostDeviceId& device) const;
     /// The confirmed companion of a device; "" while there is none
@@ -133,6 +145,7 @@ private:
         std::vector<CompanionEdgeRecord> edges;  ///< the recent presses (kKeptEdges), for a raw press that comes later
         int presses = 0;                         ///< every press since it arrived, unconfirmed
         std::map<HostDeviceId, int> hits;  ///< per candidate: its presses within the window of this companion's
+        bool standalone = false;           ///< StandaloneDue declared it
     };
     static constexpr size_t kKeptEdges = 16;
 

@@ -111,6 +111,9 @@ public:
     void SetDefaultRole(const HostDeviceId& device, DeviceRole role);
     /// SetRole chose the device's role (else it has its default)
     bool RoleSet(const HostDeviceId& device) const;
+    /// A device's other id took over (architecture.md §5: a `gc:` device whose IOHID endpoint appeared): the settings
+    /// chosen for @p from (role, instance mode, player connector) go to @p to unless @p to has its own
+    void Promote(const HostDeviceId& from, const HostDeviceId& to);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
     /// The debugger window has the focus: every player device acts as a debugger remote (its `debug` layer alone,

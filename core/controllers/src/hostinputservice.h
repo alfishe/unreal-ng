@@ -128,6 +128,7 @@ public:
     /// region <IBackendSink>
     void OnDeviceAdded(const HostDeviceInfo& device) override;
     void OnDeviceRemoved(const HostDeviceId& device) override;
+    void OnDevicePromoted(const HostDeviceId& from, const HostDeviceId& to) override;
     void OnControl(const ControlEvent& event) override;
     /// endregion </IBackendSink>
 
