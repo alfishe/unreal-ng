@@ -1,6 +1,8 @@
 #include "controllerpicture.h"
 
+#include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,7 +26,38 @@ bool Pressed(float value)
 {
     return value >= kPressed || value <= -kPressed;
 }
+
+QString& UserDir()
+{
+    static QString dir;
+    return dir;
+}
 }  // namespace
+
+void ControllerPicture::SetUserDir(const QString& dir)
+{
+    UserDir() = dir;
+}
+
+QString ControllerPicture::UserDirectory()
+{
+    return UserDir();
+}
+
+QString ControllerPicture::ImageSetDir(const QString& imageSet)
+{
+    if (imageSet.isEmpty() || imageSet.contains("..") || imageSet.contains('/') || imageSet.contains('\\'))
+        return {};
+    // The user's own sets (the hotspot editor's photos) first: a set of the same name replaces the shipped one
+    QStringList roots;
+    if (!UserDir().isEmpty())
+        roots << UserDir() + "/images/";
+    roots << QString::fromStdString(FileHelper::GetResourcesPath()) + "/controllers/images/";
+    for (const QString& root : roots)
+        if (QFile::exists(root + imageSet + "/front.hotspots.json"))
+            return root + imageSet + "/";
+    return {};
+}
 
 ControllerPicture::ControllerPicture(QWidget* parent) : QWidget(parent), _svg(new QSvgRenderer(this))
 {
@@ -35,10 +68,19 @@ bool ControllerPicture::load(const QString& imageSet)
 {
     _hotspots.clear();
     _size = {};
-    const QString root =
-        QString::fromStdString(FileHelper::GetResourcesPath()) + "/controllers/images/" + imageSet + "/";
+    _raster = QImage();
+    _svg->load(QByteArray());
+    const QString root = ImageSetDir(imageSet);
     QFile json(root + "front.hotspots.json");
-    if (!_svg->load(root + "front.svg") || !json.open(QIODevice::ReadOnly))
+    // A drawn set is front.svg; a photo (the hotspot editor's) front.png or front.jpg
+    bool picture = !root.isEmpty() && QFile::exists(root + "front.svg") && _svg->load(root + "front.svg");
+    for (const char* name : {"front.png", "front.jpg"})
+        if (!picture && !root.isEmpty() && QFile::exists(root + name))
+        {
+            _raster = QImage(root + name);
+            picture = !_raster.isNull();
+        }
+    if (!picture || !json.open(QIODevice::ReadOnly))
     {
         update();
         return false;
@@ -77,7 +119,7 @@ bool ControllerPicture::load(const QString& imageSet)
         _hotspots.push_back(spot);
     }
     if (_size.isEmpty())
-        _size = _svg->defaultSize();
+        _size = _raster.isNull() ? QSizeF(_svg->defaultSize()) : QSizeF(_raster.size());
     update();
     return !_hotspots.empty();
 }
@@ -138,7 +180,18 @@ void ControllerPicture::paintEvent(QPaintEvent*)
         painter.drawText(rect(), Qt::AlignCenter, tr("No picture for this device"));
         return;
     }
-    _svg->render(&painter, image);
+    if (_raster.isNull())
+        _svg->render(&painter, image);
+    else
+    {
+        // A photo is letterboxed into the design canvas (device-database.md §9), as the hotspot editor placed it
+        const double fit = std::min(image.width() / _raster.width(), image.height() / _raster.height());
+        const QSizeF drawn(_raster.width() * fit, _raster.height() * fit);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawImage(QRectF(image.center().x() - drawn.width() / 2, image.center().y() - drawn.height() / 2,
+                                 drawn.width(), drawn.height()),
+                          _raster);
+    }
     const double scale = image.width() / _size.width();
     const QColor lit(255, 170, 0, 150);
     const QColor selected(0, 140, 255, 120);

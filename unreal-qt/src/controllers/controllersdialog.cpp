@@ -7,17 +7,24 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
 #include "controllers/bindingtable.h"
+#include "controllers/connectorview.h"
 #include "controllers/controllerpicture.h"
+#include "controllers/devicetestpanel.h"
+#include "controllers/hotspoteditor.h"
+#include "controllers/patchcordoverlay.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/profilesdialog.h"
 #include "controllers/surfacestable.h"
@@ -35,14 +42,26 @@ using namespace controllers;
 
 namespace
 {
-QString MaskText(uint16_t mask)
+/// A control away from rest: a button or trigger pressed, a stick pushed (the cord pulses)
+bool Sends(const std::map<std::string, float>& live)
 {
-    static const char* const names[] = {"R", "L", "D", "U", "F", "F2", "F3", "F4", "A", "X", "Y", "Z", "M"};
-    QStringList held;
-    for (int bit = 0; bit < 13; ++bit)
-        if (mask & (1u << bit))
-            held << names[bit];
-    return held.isEmpty() ? QString("·") : held.join(' ');
+    for (const auto& [control, value] : live)
+        if (control.rfind("mouse.", 0) != 0 && control.rfind("pointer.", 0) != 0 && std::abs(value) >= 0.3f)
+            return true;
+    return false;
+}
+
+/// The connector's colour as a small dot for its table row
+QIcon Swatch(const QColor& colour)
+{
+    QPixmap pixmap(12, 12);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(colour);
+    painter.drawEllipse(QRectF(1.5, 1.5, 9, 9));
+    return QIcon(pixmap);
 }
 }  // namespace
 #endif
@@ -106,12 +125,19 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
            "bursts, until a game profile brings its own haptics"));
     _soundHaptics->setChecked(_host->SoundHaptics());
     top->addWidget(_soundHaptics);
+    _pauseOnDisconnect = new QCheckBox(tr("Pause on disconnect"), this);
+    _pauseOnDisconnect->setToolTip(tr("A game pad that disconnects while the machine runs pauses it"));
+    _pauseOnDisconnect->setChecked(_host->PauseOnDisconnect());
+    top->addWidget(_pauseOnDisconnect);
     _profilesButton = new QPushButton(tr("Profiles…"), this);
     _profilesButton->setToolTip(tr("Every profile as YAML: edit, save, import, export, delete"));
     top->addWidget(_profilesButton);
     root->addLayout(top);
 
     auto* splitter = new QSplitter(this);
+    // The gutters carry the patch cords from the devices to the picture and from it to the connectors
+    splitter->setHandleWidth(26);
+    splitter->setChildrenCollapsible(false);
     root->addWidget(splitter, 1);
 
     auto* left = new QWidget(splitter);
@@ -144,6 +170,13 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _testHaptics->setEnabled(false);
     _testHaptics->setToolTip(tr("Select a device"));
     header->addWidget(_testHaptics, 0, Qt::AlignTop);
+    _testButton = new QPushButton(tr("Test"), centre);
+    _testButton->setCheckable(true);
+    _testButton->setToolTip(tr("What the device sends: sticks with the dead zone and thresholds, triggers, buttons"));
+    header->addWidget(_testButton, 0, Qt::AlignTop);
+    _pictureButton = new QPushButton(tr("Picture…"), centre);
+    _pictureButton->setToolTip(tr("Use a photo of your own pad and place its controls on it"));
+    header->addWidget(_pictureButton, 0, Qt::AlignTop);
     connect(_testHaptics, &QPushButton::clicked, this, [this] {
         const int index = _hapticsEffect->currentIndex();
         if (index >= 0 && index < static_cast<int>(_hapticsTests.size()))
@@ -152,6 +185,9 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     centreLayout->addLayout(header);
     _picture = new ControllerPicture(centre);
     centreLayout->addWidget(_picture, 2);
+    _test = new DeviceTestPanel(centre);
+    _test->hide();
+    centreLayout->addWidget(_test);
     _table = new BindingTable(_host, centre);
     _table->setDebugTab(_host->DebugLayer());
     centreLayout->addWidget(_table, 3);
@@ -166,6 +202,7 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _connectors->horizontalHeader()->setStretchLastSection(true);
     _connectors->setEditTriggers(QAbstractItemView::NoEditTriggers);
     _connectors->verticalHeader()->hide();
+    _connectors->setSelectionMode(QAbstractItemView::NoSelection);
     rightLayout->addWidget(_connectors, 1);
     rightLayout->addWidget(new QLabel(tr("<b>Haptics</b>"), right));
     _hapticsLabel = new QLabel(right);
@@ -176,6 +213,11 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 2);
     splitter->setStretchFactor(2, 1);
+
+    // Over everything, last: the cords pass between the panes, mouse events go through
+    _cords = new PatchCordOverlay(this);
+    _cords->setGeometry(rect());
+    _cords->raise();
 
     _live = new QTimer(this);
     _live->setInterval(33);  // ui-ux.md §7: the 30 Hz live read, only while visible
@@ -200,6 +242,42 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
         _host->SetDebugLayer(on);
     });
     connect(_soundHaptics, &QCheckBox::toggled, _host, &HostControllers::SetSoundHaptics);
+    connect(_pauseOnDisconnect, &QCheckBox::toggled, _host, &HostControllers::SetPauseOnDisconnect);
+    connect(_testButton, &QPushButton::toggled, this, [this](bool on) {
+        _test->setVisible(on);
+        updateCords();
+    });
+    connect(_pictureButton, &QPushButton::clicked, this, [this] {
+#ifdef ENABLE_CONTROLLERS
+        const std::string device = selectedDevice();
+        if (device.empty())
+            return;
+        const DeviceMatch match = DeviceDatabase::Active()->ForFamily(selectedFamily(), selectedLayout());
+        QListWidgetItem* item = _devices->currentItem();
+        HotspotEditor::Hooks hooks;
+        hooks.live = [this, device] { return _host->Service().Live(device); };
+        hooks.userDir = HostControllers::UserControllersDir();
+        hooks.save = [this](const std::string& entry, QString& error) {
+            HostRequest request;
+            request.verb = "database-save";
+            request.options["text"] = entry;
+            const HostReply reply = _host->Host(request);
+            error = QString::fromStdString(reply.message);
+            return reply.Ok();
+        };
+        HotspotEditor editor({device, selectedFamily(), item->text().section('\n', 0, 0).toStdString(), match.images,
+                              match.controls},
+                             std::move(hooks), this);
+        if (editor.exec() != QDialog::Accepted)
+            return;
+        _pictureSet.clear();  // the set may have the same name with a new photo: load it again
+        rebuildControls();
+        if (selectedFamily() == "generic")
+            QMessageBox::information(this, tr("Controllers"),
+                                     tr("The picture is saved as a device entry of its own. It is used from the next "
+                                        "time the device connects."));
+#endif
+    });
     connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
     rebuild();
 }
@@ -344,7 +422,7 @@ void ControllersDialog::rebuildControls()
     if (!notice.empty())
         title += "<br>" + QString::fromStdString(notice).toHtmlEscaped();
     _deviceTitle->setText(title);
-    const DeviceMatch match = DeviceDatabase::Builtin().ForFamily(family, selectedLayout());
+    const DeviceMatch match = DeviceDatabase::Active()->ForFamily(family, selectedLayout());
     const QString set = device.empty() ? QString() : QString::fromStdString(match.images);
     if (set != _pictureSet)
     {
@@ -353,6 +431,16 @@ void ControllersDialog::rebuildControls()
     }
     _table->setDevice({device, family, device.empty() ? std::string{} : match.glyphs, name});
     _picture->setCaptions(_table->captions());
+    _pictureButton->setEnabled(!device.empty() && family != "keyboard" && family != "mouse");
+    QString detail;
+    for (const HostDeviceInfo& info : _host->Service().Router().Devices())
+        if (info.id == device)
+            detail = QString("%1 · %2 · %3")
+                         .arg(QString::fromStdString(info.backend), QString::fromStdString(info.family),
+                              QString::fromStdString(info.id));
+    if (!detail.isEmpty() && !_probeLabel->text().isEmpty())
+        detail += "  —  " + _probeLabel->text();
+    _test->setDevice(device, device.empty() ? std::vector<std::string>{} : match.controls, detail);
 #endif
 }
 
@@ -376,7 +464,16 @@ void ControllersDialog::rebuildConnectors()
     {
         const int row = _connectors->rowCount();
         _connectors->insertRow(row);
-        _connectors->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(connector.id)));
+        // The connector's colour and tag (as its cords), its name and the port the guest reads
+        const connectorview::Style style = connectorview::StyleFor(connector);
+        const QString port = connectorview::PortText(connector);
+        auto* name = new QTableWidgetItem(
+            Swatch(style.colour),
+            (style.tag.isEmpty() ? QString() : style.tag + "  ") + connectorview::DisplayName(connector) +
+                (port.isEmpty() ? QString() : "  " + port));
+        name->setData(Qt::UserRole, QString::fromStdString(connector.id));
+        name->setToolTip(QString::fromStdString(connector.id));
+        _connectors->setItem(row, 0, name);
         auto* combo = new QComboBox(_connectors);
         if (!connector.fixed)
             combo->addItem(tr("(empty)"), QString());
@@ -392,8 +489,10 @@ void ControllersDialog::rebuildConnectors()
                 plug(id, combo->currentData().toString());
         });
         _connectors->setCellWidget(row, 1, combo);
-        _connectors->setItem(row, 2, new QTableWidgetItem(MaskText(manager->State(static_cast<size_t>(row)))));
+        _connectors->setItem(row, 2, new QTableWidgetItem(connectorview::HeldText(
+                                         connector.device, manager->State(static_cast<size_t>(row)))));
     }
+    _connectors->resizeColumnToContents(0);
     _rebuildingConnectors = false;
 #endif
 }
@@ -441,6 +540,8 @@ void ControllersDialog::tick()
         const std::map<std::string, float> live = _host->Service().Live(device);
         _picture->setLive(live);
         _table->setLive(live);
+        if (_test->isVisible())
+            _test->setLive(live);
     }
     EmulatorContext* context = _host->BoundContext();
     if (context != nullptr && context->pControllerManager != nullptr)
@@ -448,15 +549,80 @@ void ControllersDialog::tick()
         ControllerManager* manager = context->pControllerManager;
         if (manager->Revision() != _machineRevision)
             rebuildConnectors();
-        for (int row = 0; row < _connectors->rowCount() && static_cast<size_t>(row) < manager->Count(); ++row)
+        const std::vector<Connector> connectors = manager->Connectors();
+        for (int row = 0; row < _connectors->rowCount() && static_cast<size_t>(row) < connectors.size(); ++row)
             if (QTableWidgetItem* cell = _connectors->item(row, 2))
             {
-                const QString text = MaskText(manager->State(static_cast<size_t>(row)));
+                const QString text = connectorview::HeldText(connectors[static_cast<size_t>(row)].device,
+                                                             manager->State(static_cast<size_t>(row)));
                 if (cell->text() != text)
                     cell->setText(text);
             }
     }
 #endif
+    updateCords();
+}
+
+void ControllersDialog::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    _cords->setGeometry(rect());
+    updateCords();
+}
+
+void ControllersDialog::updateCords()
+{
+    std::vector<PatchCordOverlay::Cord> cords;
+    QRectF passage;
+#ifdef ENABLE_CONTROLLERS
+    EmulatorContext* context = _host->BoundContext();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager != nullptr && _connectors->rowCount() > 0 && _devices->count() > 0)
+    {
+        std::map<std::string, Connector> byId;
+        for (const Connector& connector : manager->Connectors())
+            byId[connector.id] = connector;
+        const auto anchor = [this](QAbstractItemView* view, const QRect& row, bool right) {
+            return PatchCordOverlay::RowAnchor(this, view, row, right);
+        };
+        std::map<std::string, int> rows;
+        for (int row = 0; row < _connectors->rowCount(); ++row)
+            if (const QTableWidgetItem* item = _connectors->item(row, 0))
+                rows[item->data(Qt::UserRole).toString().toStdString()] = row;
+        const std::string selected = selectedDevice();
+        for (int i = 0; i < _devices->count(); ++i)
+        {
+            QListWidgetItem* item = _devices->item(i);
+            const std::string device = item->data(Qt::UserRole).toString().toStdString();
+            if (device.empty())
+                continue;
+            const std::vector<std::string> targets = _host->Service().Router().Connectors(device);
+            if (targets.empty())
+                continue;
+            const bool live = Sends(_host->Service().Live(device));
+            const QPointF from = anchor(_devices, _devices->visualItemRect(item), true);
+            for (const std::string& target : targets)
+            {
+                const auto row = rows.find(target);
+                const auto connector = byId.find(target);
+                if (row == rows.end() || connector == byId.end())
+                    continue;
+                const connectorview::Style style = connectorview::StyleFor(connector->second);
+                PatchCordOverlay::Cord cord;
+                cord.from = from;
+                cord.to = anchor(_connectors, _connectors->visualItemRect(_connectors->item(row->second, 0)), false);
+                cord.colour = style.colour;
+                cord.tag = style.tag;
+                cord.selected = device == selected;
+                cord.live = live;
+                cords.push_back(cord);
+            }
+        }
+        if (_picture->isVisible())
+            passage = QRectF(_picture->mapTo(this, QPoint(0, 0)), QSizeF(_picture->size()));
+    }
+#endif
+    _cords->setCords(cords, passage);
 }
 
 void ControllersDialog::setSurfaceTargets(SurfaceTargets* targets)
@@ -465,4 +631,5 @@ void ControllersDialog::setSurfaceTargets(SurfaceTargets* targets)
         return;
     _surfaces = new SurfacesTable(targets, this);
     _root->addWidget(_surfaces);
+    _cords->raise();
 }

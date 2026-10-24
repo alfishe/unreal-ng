@@ -6,6 +6,7 @@
 /// stick, a trigger fills), and a callout per control on its side, sorted by the anchor's height, naming the
 /// control and its binding. A click on a hotspot reports the control.
 
+#include <QImage>
 #include <QString>
 #include <QWidget>
 
@@ -22,8 +23,19 @@ class ControllerPicture : public QWidget
 public:
     explicit ControllerPicture(QWidget* parent = nullptr);
 
-    /// Load data/controllers/images/<imageSet>; false (and an empty picture) when the set is missing
+    /// Load the image set: the user's (<user dir>/images/<set>, a photo front.png / front.jpg or a front.svg) before
+    /// the shipped data/controllers/images/<set>; false (and an empty picture) when the set is missing
     bool load(const QString& imageSet);
+    /// The user's controllers folder (where devices.user.json lives); set once at start
+    static void SetUserDir(const QString& dir);
+    static QString UserDirectory();
+    /// The folder of an image set with its trailing '/', the user's first; empty when there is none
+    static QString ImageSetDir(const QString& imageSet);
+    /// The drawn picture's rectangle (widget coordinates); empty without a picture
+    QRectF pictureRect() const
+    {
+        return imageRect();
+    }
     bool empty() const
     {
         return _hotspots.empty();
@@ -64,6 +76,7 @@ private:
     QPointF toWidget(const QPointF& point) const;
 
     QSvgRenderer* _svg = nullptr;
+    QImage _raster;  ///< a photo set's front.png / front.jpg (then _svg is empty)
     QSizeF _size;
     std::vector<Hotspot> _hotspots;
     std::map<std::string, QString> _captions;
