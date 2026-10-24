@@ -547,6 +547,8 @@ TEST(HostInputControl_Test, DatabaseImportAndLearn)
     EXPECT_EQ(third.ControlMap(pad.id).size(), 2u);
     DeviceDatabase::SetUser("", error);
     service.Stop();
+}
+
 /// C6 / D7 / H-3: match gives the game profiles a program's signatures choose (by path through the owner, by
 /// signatures given, or the loaded program), the one chosen and what comes next; context shows them for the loaded one
 TEST(HostInputControl_Test, MatchBySignatures)

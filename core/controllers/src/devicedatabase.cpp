@@ -203,6 +203,7 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
                                      [&id](const Family& f) { return f.info.family == id; });
             // A user entry for a known family changes the fields it names (a photo, a name) and keeps the rest
             Family family = merge && same != families.end() ? *same : Family{};
+            family.user = family.user || (merge && same == families.end());
             family.info.family = id;
             Info(entry, family.info);
             if (const JsonValue* hid = entry.Find("hid"); hid != nullptr && !ReadHid(*hid, family.info.hid, error))
@@ -311,7 +312,8 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
                 continue;
             // A version or a bus that had to match makes the entry more specific (§3: exact before VID + PID)
             const int score = match.version >= 0 || !match.bus.empty() ? 100 : 80;
-            if (score > bestScore)
+            // On a tie the user's own family wins over a built-in one of the same VID:PID (an import, a learned map)
+            if (score > bestScore || (score == bestScore && best != nullptr && family.user && !best->user))
             {
                 best = &family;
                 bestMatch = &match;

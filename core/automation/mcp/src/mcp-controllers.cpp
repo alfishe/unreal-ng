@@ -46,6 +46,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"haptics_probe", {"kind", "address", "page", "port_mask", "play"}},
         {"role", {"device", "role"}},
         {"pin", {"device", "pin"}},
         {"identify", {"device"}},
@@ -57,7 +58,6 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"database_delete", {"id"}},
         {"database_import", {"text", "save"}},
         // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)
-        {"haptics_probe", {"kind", "address", "page", "port_mask", "play"}},
         {"aliases", {}},
         {"unalias", {"id"}},
         {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},

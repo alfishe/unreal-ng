@@ -906,6 +906,7 @@ QString ControllersDialog::openLearnWizard(const std::string& device)
     }
     if (_wizard != nullptr)
     {
+        _wizard->refresh();  // a session cancelled elsewhere since its last poll: not one to follow
         if (_wizard->device() == device && _wizard->learning())
         {
             _wizard->raise();

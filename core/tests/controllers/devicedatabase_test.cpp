@@ -137,6 +137,7 @@ TEST_F(DeviceDatabase_Test, HostVerbs_LookupSaveDelete)
     DirOwner owner(root.string());
     HostInputControl control(owner);
 
+    const std::string builtIn = DeviceDatabase::Active()->ForFamily("xbox-elite-2").images;
     HostReply reply = control.Execute({"database", {{"vidpid", "045e:0b22"}, {"bus", "bt"}}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
     EXPECT_EQ(reply.body.Find("match")->Find("family")->AsString(), "xbox-elite-2");
@@ -158,7 +159,7 @@ TEST_F(DeviceDatabase_Test, HostVerbs_LookupSaveDelete)
         << "a new family without a match is refused, the file unchanged";
     reply = control.Execute({"database_delete", {{"id", "xbox-elite-2"}}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
-    EXPECT_EQ(DeviceDatabase::Active()->ForFamily("xbox-elite-2").images, "generic-xbox-like");
+    EXPECT_EQ(DeviceDatabase::Active()->ForFamily("xbox-elite-2").images, builtIn) << "the built-in photo again";
     EXPECT_EQ(control.Execute({"database_delete", {{"id", "xbox-elite-2"}}}).HttpStatus(), 404);
     EXPECT_EQ(control.Execute({"database", {{"color", "x"}}}).error, "bad-request") << "an unknown option";
 }

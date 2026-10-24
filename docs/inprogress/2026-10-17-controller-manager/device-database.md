@@ -157,10 +157,11 @@ read at match time; the user imports a mapping for one pad instead (`database_im
 - a RetroArch autoconfig .cfg: `input_vendor_id` / `input_product_id` in decimal, the RetroPad names (`b` south, `a`
   east, `y` west, `x` north, `l` / `r` / `l2` / `r2` / `l3` / `r3`, `select` view, `start` menu, `menu_toggle` guide,
   the D-pad).
-The entry is `{"id": "user-<vid><pid>", "name", "layout": "generic", "match": [{vid, pid, bus}], "buttons", "controls",
-"source"}`; `buttons` names each HID button index (`b3` → index 3), and the HID pad decoder (`HidLayoutFor(layout,
-buttons)`) uses those names over the layout's own, on IOHID and Raw Input alike. An existing user entry of the same id
-keeps the members the import does not set (a photo's `images`). What the import cannot take over is listed
+The entry is `{"id": "user-<vid><pid>", "name", "layout": "generic", "match": [{vid, pid, bus}], "map", "controls",
+"source"}`; `map` turns the raw controls into the canonical ones (`b3` → `button.3`), on IOHID and Raw Input alike
+(a HID pad's own button names are the family's `hid.buttons`, read by `HidLayoutFor(match)`). The user's family wins
+over a built-in one of the same VID:PID. An existing user entry of the same id keeps the members the import does not
+set (a photo's `images`). What the import cannot take over is listed
 (`skipped`: `platform`, an axis bound to a button). The Qt dialog's **Import mapping…** picks the line of a whole
 gamecontrollerdb.txt by the selected device's VID:PID.
 

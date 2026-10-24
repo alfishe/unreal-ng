@@ -130,6 +130,7 @@ private:
         DeviceMatch info;
         std::vector<Match> matches;
         std::map<uint16_t, std::string> modes;
+        bool user = false;  ///< a family of the user layer's own (not a built-in one it changes): wins a tie
     };
     struct Template
     {
