@@ -64,13 +64,13 @@ On a modern multi-core system (e.g., an 8-core / 16-thread CPU):
 ### Linux
 **Zero external dependencies required.** Runs directly with Python 3.7+ out of the box:
 ```bash
-python3 utilities/workload-monitor/process-workload.py
+python3 tools/workload-monitor/process-workload.py
 ```
 
 ### macOS & Windows
 Requires the optional `psutil` library:
 ```bash
-pip install -r utilities/workload-monitor/requirements.txt
+pip install -r tools/workload-monitor/requirements.txt
 # or directly:
 pip install psutil
 ```
@@ -82,54 +82,54 @@ pip install psutil
 ### 1. Auto-Detect Running Application
 Automatically finds any running Unreal-NG process (`unreal-videowall`, `unreal-qt`, or `unreal-screen-viewer`):
 ```bash
-python3 utilities/workload-monitor/process-workload.py
+python3 tools/workload-monitor/process-workload.py
 ```
 
 ### 2. Monitor VideoWall Specifically
 ```bash
 # Target VideoWall using dedicated shortcut
-python3 utilities/workload-monitor/process-workload.py --videowall
+python3 tools/workload-monitor/process-workload.py --videowall
 # or
-python3 utilities/workload-monitor/process-workload.py -W
+python3 tools/workload-monitor/process-workload.py -W
 
 # With thread grouping enabled
-python3 utilities/workload-monitor/process-workload.py -W --group-threads
+python3 tools/workload-monitor/process-workload.py -W --group-threads
 ```
 
 ### 3. Monitor All Running Unreal-NG Processes (Multi-Process Overview)
 If you have multiple emulators or VideoWall running concurrently:
 ```bash
-python3 utilities/workload-monitor/process-workload.py --all
+python3 tools/workload-monitor/process-workload.py --all
 ```
 
 ### 4. Target `unreal-qt` Specifically
 ```bash
-python3 utilities/workload-monitor/process-workload.py --qt
+python3 tools/workload-monitor/process-workload.py --qt
 # or
-python3 utilities/workload-monitor/process-workload.py -Q
+python3 tools/workload-monitor/process-workload.py -Q
 ```
 
 ### 5. Monitor a Specific PID with 500 ms Refresh
 ```bash
-python3 utilities/workload-monitor/process-workload.py --pid 313539 --interval 0.5
+python3 tools/workload-monitor/process-workload.py --pid 313539 --interval 0.5
 ```
 
 ### 6. Single-Shot Snapshot Mode (CLI / Scripting)
 Takes a measurement over the specified interval, prints a clean report, and exits:
 ```bash
-python3 utilities/workload-monitor/process-workload.py -W --once --interval 1.0
+python3 tools/workload-monitor/process-workload.py -W --once --interval 1.0
 ```
 
 ### 7. Automated Benchmarks / JSON Mode
 Outputs machine-readable JSON (including VideoWall tile metrics) for automated benchmark scripts:
 ```bash
-python3 utilities/workload-monitor/process-workload.py -W --json --once
+python3 tools/workload-monitor/process-workload.py -W --json --once
 ```
 
 ### 8. Export Timeseries to CSV
 Logs every sample interval (including tile counts and rendering load) to a CSV file:
 ```bash
-python3 utilities/workload-monitor/process-workload.py -W --csv scratch/videowall-workload.csv --count 60
+python3 tools/workload-monitor/process-workload.py -W --csv scratch/videowall-workload.csv --count 60
 ```
 
 ---

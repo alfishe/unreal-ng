@@ -12,7 +12,7 @@ The shipped image data/rom/neogs/full_ngs.rom (NeoGS flash v1.11) is exactly:
 
 The parts come from the NedoPC `ngs` sources (z80/loader_ngs, z80/main_rom,
 z80/bootFPGA00; build_full_rom.bat does the same packing with Win32 tools).
-They are kept as binaries in utilities/neogs/parts/ (neogs-tdd.md §4.1).
+They are kept as binaries in tools/neogs/parts/ (neogs-tdd.md §4.1).
 
 Usage:
   pack_flash.py            rebuild and compare with the shipped image (exit 1 on mismatch)

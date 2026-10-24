@@ -12,8 +12,8 @@ recipe carries a `MCP (preferred)` section and a `WebAPI` section plus a
 short note at the top explaining when to use which. Reach for WebAPI only
 when:
 
-1. **A host-side Python tool drives the step** — `utilities/diskinfo`,
-   `utilities/diskconverter`, `utilities/porttrace/porttrace_capture.py` speak plain
+1. **A host-side Python tool drives the step** — `tools/diskinfo`,
+   `tools/diskconverter`, `tools/porttrace/porttrace_capture.py` speak plain
    HTTP; pipelines that embed them stay on WebAPI.
 2. **MCP is unavailable or faulty** — bridge not running (`unreal-mcp-bridge`
    absent), `:8092` busy (a busy port disables MCP for that instance with a

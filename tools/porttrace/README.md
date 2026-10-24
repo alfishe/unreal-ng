@@ -55,22 +55,22 @@ locally for conversion.
 
 ```bash
 # Capture everything for 5 seconds; produce trace.json, trace.csv, trace.txt
-utilities/porttrace/porttrace_capture.py --duration 5 -o /tmp/trace --to json,csv,text --summary
+tools/porttrace/porttrace_capture.py --duration 5 -o /tmp/trace --to json,csv,text --summary
 
 # Interactive: capture AY/TurboSound writes with a live counter, ANY key stops
-utilities/porttrace/porttrace_capture.py \
+tools/porttrace/porttrace_capture.py \
     --include port=FFFD,direction=out \
     --include port=BFFD,direction=out \
     --wait-key -o /tmp/ay-session --to json,markdown
 
 # Boot debugging: keep the START of the run in a big buffer
-utilities/porttrace/porttrace_capture.py --capacity 262144 --overflow stop \
+tools/porttrace/porttrace_capture.py --capacity 262144 --overflow stop \
     --duration 10 -o /tmp/boot --to json
 
 # Analyze a saved trace offline
-utilities/porttrace/porttrace_convert.py /tmp/trace.json --summary
-utilities/porttrace/porttrace_convert.py /tmp/trace.json --filter-unmapped --to text
-utilities/porttrace/porttrace_convert.py /tmp/trace.json --analyze-strictness
+tools/porttrace/porttrace_convert.py /tmp/trace.json --summary
+tools/porttrace/porttrace_convert.py /tmp/trace.json --filter-unmapped --to text
+tools/porttrace/porttrace_convert.py /tmp/trace.json --analyze-strictness
 ```
 
 ---
@@ -111,7 +111,7 @@ The workflow for reproducing a bug by hand: start the capture, play with the
 emulator until the glitch happens, tap a key, read the trace.
 
 ```text
-$ utilities/porttrace/porttrace_capture.py --wait-key --preset ay-only -o /tmp/glitch --to json,text
+$ tools/porttrace/porttrace_capture.py --wait-key --preset ay-only -o /tmp/glitch --to json,text
 Feature 'porttrace' enabled
 Filter: include: {port=0xFFFD}; {port=0xBFFD}
 Capturing... 1994 events  - press any key to stop
@@ -426,7 +426,7 @@ porttrace_convert.py /tmp/full.json --summary
 
 ```bash
 pip install PySide6
-utilities/porttrace/porttrace_gui.py
+tools/porttrace/porttrace_gui.py
 ```
 
 > Getting `ModuleNotFoundError: No module named 'PySide6'`? Your shell is using

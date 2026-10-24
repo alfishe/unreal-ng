@@ -191,6 +191,14 @@ TEST(TimeTravelEngine_Test, OneChangedPieceRecordsOneChange_TheRestIsShared)
 
     // One change record, not a copy of the whole map
     EXPECT_EQ(engine.ChangeCount(1, 0), 1u);
+    const auto changes = engine.ChangesAt(1, 0);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, 100u);
+    EXPECT_EQ(changes[0].second, engine.VersionAt(1, 0, 100));
+    std::vector<uint8_t> decoded(kTTDPieceSize);
+    ASSERT_TRUE(engine.PieceStore().Decode(changes[0].second, decoded.data()));
+    EXPECT_EQ(decoded, changed);
+    EXPECT_TRUE(engine.ChangesAt(9, 0).empty()) << "no such checkpoint";
     (void)blocksAfterFirst;
 }
 

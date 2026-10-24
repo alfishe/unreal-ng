@@ -206,6 +206,13 @@ struct Parser
                 else
                     Error(n.id, "context must be a string");
             }
+            if (j.contains("readonly"))
+            {
+                if (j["readonly"].is_boolean())
+                    n.readonly = j["readonly"].get<bool>();
+                else
+                    Error(n.id, "readonly must be true or false");
+            }
             for (const auto& it : j.value("items", json::array()))
                 n.items.push_back(ParseNode(it, false));
             for (const auto& d : j.value("dials", json::array()))
@@ -892,6 +899,8 @@ json ToJson(const Node& n)
     {
         if (!n.context.empty())
             j["context"] = n.context;
+        if (n.readonly)
+            j["readonly"] = true;
         json nav = json::object();
         if (n.nav.crumbs != Crumbs::Inherit)
             nav["breadcrumbs"] = ToString(n.nav.crumbs);

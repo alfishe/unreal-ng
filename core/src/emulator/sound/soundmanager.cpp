@@ -804,6 +804,12 @@ void SoundManager::resetVoicing()
 
 void SoundManager::onStateRestored()
 {
+    // The deltas of the timeline that was left never reach a frame end: drop them now (a search restores and
+    // replays one frame many times, each pass adding its deltas again until the integrator overflows)
+    if (_beeper)
+        _beeper->discardPending();
+    if (_covox)
+        _covox->discardPending();
     _stateRestored.store(true, std::memory_order_release);
 }
 

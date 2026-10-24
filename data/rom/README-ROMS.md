@@ -24,8 +24,8 @@ that the emulator works out of the box, on the following basis:
   0-3, earlier ERS) kept for the legacy BaseConf FPGA and TS-Conf.
 * **NeoGS flash image** (`neogs/full_ngs.rom`, NeoGS flash v1.11: loader, main ROM and FPGA configuration): built
   from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
-  like the rest of the NedoPC NeoGS material. The parts it is packed from are in `utilities/neogs/parts/`, and
-  `utilities/neogs/pack_flash.py` checks the image against them.
+  like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
+  `tools/neogs/pack_flash.py` checks the image against them.
 * **General Sound ROM 1.05b** (`gs105b.rom`): the firmware of the ZX-MultiSound card's General Sound
   (`GSProfile::MultiSound`, `core/src/emulator/sound/chips/gs/gsprofile.h`), "Version 1.05b" (1.04 Beta with
   bug fixes by psb and Evgeny Muchkin, 2007, 2015; sources: [psbhlw/gs-firmware](https://github.com/psbhlw/gs-firmware)).

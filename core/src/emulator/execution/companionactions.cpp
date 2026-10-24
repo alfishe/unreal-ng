@@ -21,6 +21,7 @@ enum class Needs
     History,
     Session,
     Cooldown,
+    SpeedFree,  ///< the host speed may change (no TTD history recorded at 1x holds it)
 };
 
 struct Entry
@@ -38,7 +39,7 @@ const std::vector<Entry>& Catalogue()
         {{"reset", ScopeRun, "POST /reset"}, Needs::Nothing},
         {{"nmi", ScopeRun, "POST /nmi"}, Needs::Nothing},
         {{"turbo", ScopeRun, "POST /settings/turbo_mode"}, Needs::Nothing},
-        {{"speed", ScopeRun, "POST /settings/speed"}, Needs::Nothing},
+        {{"speed", ScopeRun, "POST /settings/speed"}, Needs::SpeedFree},
         {{"keyboard", ScopeInput, "POST /keyboard/*"}, Needs::Nothing},
         {{"joystick", ScopeInput, "POST /joystick/*"}, Needs::Nothing},
         {{"mouse", ScopeInput, "POST /mouse/*"}, Needs::Nothing},
@@ -90,6 +91,7 @@ MachineView ViewOf(Emulator& emulator)
         view.holder = control.client.empty() ? control.surfaceLabel : control.client;
         view.cooldowns = !control.cooldowns.empty();
         view.history = context->pTimeTravelHooks && context->pTimeTravelHooks->HasHistory();
+        view.speedLock = emulator.SpeedLockReason();
     }
     return view;
 }
@@ -129,6 +131,9 @@ StateNode ActionsReport(const CompanionInfo& companion, const MachineView& view)
                 case Needs::Cooldown:
                     if (!view.cooldowns)
                         reason = "no client waits in a re-take cooldown";
+                    break;
+                case Needs::SpeedFree:
+                    reason = view.speedLock;
                     break;
                 case Needs::Nothing:
                     break;
