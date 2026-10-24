@@ -106,6 +106,11 @@ public:
     void SetInstanceMode(const HostDeviceId& device, InstanceMode mode, const std::string& pinned = {});
     /// The connector a device's `auto:` targets drive (the player's connector); empty = none
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
+    std::string PlayerConnector(const HostDeviceId& device) const;
+    /// The connectors a player device's bindings drive outside the debug layer (an `auto:` target as its player
+    /// connector), each once in binding order: the patch cords of the dialog (ui-ux.md §2.3). Empty for a debugger
+    /// remote or a disabled device
+    std::vector<std::string> Connectors(const HostDeviceId& device) const;
     /// The device's default role (its family's: the device database's `role`), what Role answers until SetRole sets
     /// one (control surfaces Q-8: a Surface Dial starts as a debugger remote, a pad as a player)
     void SetDefaultRole(const HostDeviceId& device, DeviceRole role);

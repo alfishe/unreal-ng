@@ -363,6 +363,37 @@ void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::stri
     _settings[device].connector = connector;
 }
 
+std::string InputRouter::PlayerConnector(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _settings.find(device);
+    return it != _settings.end() ? it->second.connector : std::string{};
+}
+
+std::vector<std::string> InputRouter::Connectors(const HostDeviceId& id) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<std::string> connectors;
+    const auto it = _devices.find(id);
+    if (it == _devices.end() || RoleLocked(id) != DeviceRole::Player)
+        return connectors;
+    const CompiledSet* set = BindingsForLocked(it->second);
+    if (set == nullptr)
+        return connectors;
+    const auto settings = _settings.find(id);
+    const std::string player = settings == _settings.end() ? std::string{} : settings->second.connector;
+    for (const CompiledBinding& compiled : set->bindings)
+    {
+        const Target& target = compiled.binding.target;
+        if (target.kind != TargetKind::Retro || compiled.binding.layer == kDebugLayer)
+            continue;
+        const std::string& connector = target.retro.connector == "auto" ? player : target.retro.connector;
+        if (!connector.empty() && std::find(connectors.begin(), connectors.end(), connector) == connectors.end())
+            connectors.push_back(connector);
+    }
+    return connectors;
+}
+
 void InputRouter::SetFocus(const std::string& instance)
 {
     std::vector<ActionEvent> actions;

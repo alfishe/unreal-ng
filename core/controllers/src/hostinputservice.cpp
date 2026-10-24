@@ -372,7 +372,7 @@ void HostInputService::OnDeviceAdded(const HostDeviceInfo& device)
     }
     // The family's role until somebody sets one (control surfaces Q-8: a Surface Dial is a debugger remote)
     if (!device.family.empty())
-        _router->SetDefaultRole(device.id, DeviceDatabase::Builtin().ForFamily(device.family, device.layout).role);
+        _router->SetDefaultRole(device.id, DeviceDatabase::Active()->ForFamily(device.family, device.layout).role);
     _router->OnDeviceAdded(device);
     ++_revision;
 }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <mutex>
 
 #include "profiles/json.h"
 
@@ -53,9 +54,51 @@ void Info(const JsonValue& entry, DeviceMatch& info)
     if (const JsonValue* role = entry.Find("role"); role != nullptr && role->IsString())
         DeviceRoleFromName(role->AsString(), info.role);  // an unknown name keeps the player role
     if (const JsonValue* controls = entry.Find("controls"); controls != nullptr && controls->IsArray())
+    {
+        info.controls.clear();  // a user entry's list replaces the built-in one
         for (const JsonValue& control : controls->Items())
             if (control.IsString())
                 info.controls.push_back(control.AsString());
+    }
+    if (const JsonValue* ignore = entry.Find("ignore"); ignore != nullptr && ignore->IsString())
+        info.ignore = !ignore->AsString().empty();
+}
+
+std::mutex& ActiveMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+struct ActiveState
+{
+    std::shared_ptr<const DeviceDatabase> database;
+    std::string userText;
+};
+
+ActiveState& ActiveSlot()
+{
+    static ActiveState state;
+    return state;
+}
+
+/// A devices.user.json text as its root object: an empty text is an empty database
+bool UserRoot(const std::string& text, JsonValue& root, std::string& error)
+{
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos)
+    {
+        root = JsonValue::Object({{"schema", JsonValue::Number(1)}, {"families", JsonValue::Array()}});
+        return true;
+    }
+    if (!ParseJson(text, root, error))
+        return false;
+    const JsonValue* schema = root.Find("schema");
+    if (!root.IsObject() || schema == nullptr || !schema->IsNumber() || schema->AsNumber() != 1)
+    {
+        error = "a device database is an object with 'schema': 1";
+        return false;
+    }
+    return true;
 }
 }  // namespace
 
@@ -88,22 +131,28 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
     {
         for (const JsonValue& entry : list->Items())
         {
-            Family family;
-            family.info.family = Text(entry, "id");
-            if (family.info.family.empty())
+            const std::string id = Text(entry, "id");
+            if (id.empty())
             {
                 error = "a family without an 'id'";
                 return false;
             }
+            auto same = std::find_if(families.begin(), families.end(),
+                                     [&id](const Family& f) { return f.info.family == id; });
+            // A user entry for a known family changes the fields it names (a photo, a name) and keeps the rest
+            Family family = merge && same != families.end() ? *same : Family{};
+            family.info.family = id;
             Info(entry, family.info);
-            family.info.ignore = !Text(entry, "ignore").empty();
             const JsonValue* matches = entry.Find("match");
-            if (matches == nullptr || !matches->IsArray())
+            if (matches != nullptr && matches->IsArray())
+                family.matches.clear();
+            else if (same == families.end() || !merge)
             {
                 error = "family '" + family.info.family + "': no 'match' list";
                 return false;
             }
-            for (const JsonValue& m : matches->Items())
+            static const std::vector<JsonValue> kNone;
+            for (const JsonValue& m : matches != nullptr && matches->IsArray() ? matches->Items() : kNone)
             {
                 Match match;
                 match.bus = Text(m, "bus");
@@ -137,8 +186,6 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
                     if (Hex(&key, product) && mode.IsString())
                         family.modes[product] = mode.AsString();
                 }
-            auto same = std::find_if(families.begin(), families.end(),
-                                     [&family](const Family& f) { return f.info.family == family.info.family; });
             if (same != families.end())
                 *same = std::move(family);
             else
@@ -251,6 +298,118 @@ std::string DeviceDatabase::Glyph(const std::string& glyphs, const std::string& 
         if (auto label = set->second.find(control); label != set->second.end())
             return label->second;
     return control;
+}
+
+std::vector<std::string> DeviceDatabase::FamilyIds() const
+{
+    std::vector<std::string> ids;
+    for (const Family& family : _families)
+        ids.push_back(family.info.family);
+    return ids;
+}
+
+std::shared_ptr<const DeviceDatabase> DeviceDatabase::Active()
+{
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    ActiveState& state = ActiveSlot();
+    if (!state.database)
+        state.database = std::make_shared<const DeviceDatabase>(Builtin());
+    return state.database;
+}
+
+bool DeviceDatabase::SetUser(const std::string& text, std::string& error)
+{
+    auto database = std::make_shared<DeviceDatabase>(Builtin());
+    JsonValue root;
+    if (!UserRoot(text, root, error) || !database->Merge(root.Dump(), error))
+        return false;
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    ActiveState& state = ActiveSlot();
+    state.database = std::move(database);
+    state.userText = text;
+    return true;
+}
+
+std::string DeviceDatabase::UserText()
+{
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    return ActiveSlot().userText;
+}
+
+std::vector<std::string> DeviceDatabase::UserFamilies(const std::string& text)
+{
+    std::vector<std::string> ids;
+    JsonValue root;
+    std::string error;
+    if (!UserRoot(text, root, error))
+        return ids;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+            if (const std::string id = Text(entry, "id"); !id.empty())
+                ids.push_back(id);
+    return ids;
+}
+
+bool DeviceDatabase::PutUserFamily(const std::string& text, const JsonValue& family, std::string& out,
+                                   std::string& error)
+{
+    const std::string id = family.IsObject() ? Text(family, "id") : std::string{};
+    if (id.empty())
+    {
+        error = "a device entry is an object with an 'id' (the family it adds or changes)";
+        return false;
+    }
+    JsonValue root;
+    if (!UserRoot(text, root, error))
+        return false;
+    std::vector<JsonValue> families;
+    bool replaced = false;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+        {
+            if (Text(entry, "id") == id)
+            {
+                families.push_back(family);
+                replaced = true;
+            }
+            else
+                families.push_back(entry);
+        }
+    if (!replaced)
+        families.push_back(family);
+    root.Set("families", JsonValue::Array(std::move(families)));
+    // The result must layer over the built-in database (a new family needs its 'match' list)
+    DeviceDatabase check = Builtin();
+    if (!check.Merge(root.Dump(), error))
+        return false;
+    out = root.Dump(2);
+    return true;
+}
+
+bool DeviceDatabase::RemoveUserFamily(const std::string& text, const std::string& id, std::string& out,
+                                      std::string& error)
+{
+    JsonValue root;
+    if (!UserRoot(text, root, error))
+        return false;
+    std::vector<JsonValue> families;
+    bool found = false;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+        {
+            if (Text(entry, "id") == id)
+                found = true;
+            else
+                families.push_back(entry);
+        }
+    if (!found)
+    {
+        error = "devices.user.json has no entry '" + id + "'";
+        return false;
+    }
+    root.Set("families", JsonValue::Array(std::move(families)));
+    out = root.Dump(2);
+    return true;
 }
 
 const DeviceDatabase& DeviceDatabase::Builtin()

@@ -247,3 +247,47 @@ TEST(McpControllers_Test, DevicesTextCarriesBatteryLightAndNotice)
     EXPECT_EQ(caller->calls.back().body["color"].asString(), "#ff0000");
     EXPECT_EQ(caller->calls.back().body["device"].asString(), "bt:054c:0ce6:1");
 }
+
+/// database is a GET with the lookup in the query and the match in one line of text; database-save a POST with the
+/// entry as text
+TEST(McpControllers_Test, DatabaseLookupAndSaveRoutes)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value found;
+    found["ok"] = true;
+    found["families"] = 27;
+    found["user"].append("xbox-elite-2");
+    found["match"]["family"] = "xbox-elite-2";
+    found["match"]["name"] = "Xbox Elite Wireless Controller Series 2";
+    found["match"]["layout"] = "xbox";
+    found["match"]["images"] = "my-elite";
+    found["match"]["step"] = "exact";
+    found["match"]["score"] = 100;
+    found["match"]["user"] = true;
+    caller->routes["GET /api/v1/controllers/database?bus=bt&vidpid=045e%3A0b22"] = {200, found};
+    Json::Value args;
+    args["action"] = "database";
+    args["vidpid"] = "045e:0b22";
+    args["bus"] = "bt";
+    const mcp::ToolResult result = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(result.isError) << result.text << " " << caller->calls.back().path;
+    EXPECT_NE(result.text.find("xbox-elite-2: Xbox Elite Wireless Controller Series 2 (layout xbox, images my-elite, "
+                               "exact match, score 100, from devices.user.json)"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("27 families; devices.user.json: xbox-elite-2"), std::string::npos) << result.text;
+
+    Json::Value saved;
+    saved["ok"] = true;
+    saved["message"] = "saved xbox-elite-2";
+    caller->routes["POST /api/v1/controllers/database-save"] = {200, saved};
+    Json::Value save;
+    save["action"] = "database-save";
+    save["text"] = R"({"id": "xbox-elite-2", "images": "my-elite"})";
+    const mcp::ToolResult put = RunControllersTool(*registry, save, *caller);
+    ASSERT_FALSE(put.isError) << put.text;
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_EQ(caller->calls.back().body["text"].asString(), R"({"id": "xbox-elite-2", "images": "my-elite"})");
+}

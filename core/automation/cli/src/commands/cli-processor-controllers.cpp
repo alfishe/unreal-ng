@@ -54,6 +54,10 @@ namespace
         "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
         "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
         "controllers light <device> <#RRGGBB|r,g,b|off> - A pad's light colour (a DualSense / DualShock 4 light bar)\n"
+        "controllers database [045e:0b00|<family>] [bus=usb|bt] [name=..] - The device database: a device's family,\n"
+        "                                             layout, image set and match step; the devices.user.json entries\n"
+        "controllers database-save <file>           - Put the entry (or the file's families) into devices.user.json\n"
+        "controllers database-delete <id>           - Remove an entry of devices.user.json\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -93,7 +97,8 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
+    /// A host verb: positional id (profile, delete, apply, database-delete), control (bind, unbind), file (save,
+    /// database-save), VID:PID or family (database) or device (haptics,
     /// rumble, then its effect; output, then its pattern; light, then its colour); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
@@ -125,7 +130,9 @@ namespace
                 if (verb == "light" && words.size() > 2)
                     request.options["color"] = words[2];
             }
-            else if (verb == "save")
+            else if (verb == "database")
+                request.options[words[1].find(':') != std::string::npos ? "vidpid" : "family"] = words[1];
+            else if (verb == "save" || verb == "database-save")
             {
                 std::ifstream file(words[1], std::ios::binary);
                 if (!file)
@@ -206,6 +213,24 @@ namespace
                     text += "    notice: " + notice->AsString() + "\n";
             }
             return "Host devices:\n" + (text.empty() ? "  none\n" : text);
+        }
+        if (verb == "database")
+        {
+            if (const JsonValue* match = reply.body.Find("match"))
+            {
+                text += "  " + match->Find("family")->AsString() + ": " + match->Find("name")->AsString() +
+                        "\n    layout " + match->Find("layout")->AsString() + ", images " +
+                        match->Find("images")->AsString();
+                if (const JsonValue* step = match->Find("step"))
+                    text += ", " + step->AsString() + " match, score " +
+                            std::to_string(static_cast<int>(match->Find("score")->AsNumber()));
+                text += match->Find("user")->AsBool() ? ", from devices.user.json\n" : "\n";
+            }
+            std::string user;
+            for (const JsonValue& id : reply.body.Find("user")->Items())
+                user += (user.empty() ? "" : ", ") + id.AsString();
+            return "Device database (" + std::to_string(static_cast<int>(reply.body.Find("families")->AsNumber())) +
+                   " families):\n" + text + "  devices.user.json: " + (user.empty() ? "no entries" : user) + "\n";
         }
         if (const JsonValue* profiles = reply.body.Find("profiles"))
         {

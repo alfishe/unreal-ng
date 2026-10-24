@@ -259,6 +259,22 @@ TEST_F(InputRouter_Test, Roles_InstancesAndTheAutoConnector)
     EXPECT_EQ(Kempston("emu-3"), kFire);
 }
 
+TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
+{
+    // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,
+    // each once; the debug layer and the non-retro targets draw none
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "auto:fire"), Bind({"dpad.*"}, "auto:dpad"), Bind({"east"}, "sinclair-1:fire"),
+                 To({"north"}, Keys("SPACE")), To({"west"}, Retro("keyjoy.1:fire"), kDebugLayer)});
+    EXPECT_EQ(_router.Connectors("fake:1"), std::vector<std::string>{"sinclair-1"}) << "no player connector yet";
+    _router.SetPlayerConnector("fake:1", "kempston");
+    EXPECT_EQ(_router.PlayerConnector("fake:1"), "kempston");
+    EXPECT_EQ(_router.Connectors("fake:1"), (std::vector<std::string>{"kempston", "sinclair-1"}));
+    _router.SetRole("fake:1", DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.Connectors("fake:1").empty()) << "a debugger remote reaches no connector";
+    EXPECT_TRUE(_router.Connectors("fake:9").empty()) << "an unknown device";
+}
+
 TEST_F(InputRouter_Test, Scopes_DeviceBeatsFamilyBeatsGlobal)
 {
     _router.OnDeviceAdded(kPad);

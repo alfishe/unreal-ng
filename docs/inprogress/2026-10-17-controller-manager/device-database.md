@@ -140,6 +140,16 @@ Rules:
 
 `gamecontrollerdb.user.txt` in the same folder is read after the bundled database.
 
+**As built (2026-10-23).** `DeviceDatabase::Active()` is the database every reader uses (the backends, the router's
+service, the profile store, the Qt dialog): the compiled-in families with devices.user.json merged over them
+(`DeviceDatabase::SetUser`), an immutable snapshot swapped under a mutex, so a reader holding the old one keeps it.
+The Qt client reads the file at start, before the backends match a device. An entry whose `id` names a built-in
+family is merged field by field (only the fields it names change; `controls` and `match` replace the list; `match`
+may be left out); an entry with a new id is a family of its own and needs `match`. A file that does not parse or
+does not validate leaves the active database as it was and is reported. The host verbs `database`, `database-save`
+and `database-delete` ([surfaces.md §2](surfaces.md#2-verbs)) read and edit the file on every plane; the hotspot
+editor writes through them. Not built: `gamecontrollerdb.user.txt`.
+
 ## 5. Licences of the sources
 
 | Source | Licence | Use |
@@ -269,6 +279,14 @@ For a device with no image, or when the user prefers a photo of their own pad:
 6. **Share.** "Share…" exports a folder (image, map, a provenance stub to fill in) ready for a pull request.
 
 The editor is the same widget the project uses to make built-in maps, so built-in and user maps cannot drift.
+
+**As built (2026-10-23).** `HotspotEditor` (unreal-qt `controllers/hotspoteditor.*`; ui-ux.md §3.6): a file (EXIF
+rotation applied) or a paste; no crop or rotate, the photo is kept as it is (scaled down only past 4096 × 3072) and
+letterboxed into the design canvas, by the editor and by `ControllerPicture` alike. Circles and rectangles (no
+ellipses or polygons yet); the set is saved as `images/user-<family>/front.png` + `front.hotspots.json`, the entry as
+`{"id": <family>, "images": "user-<family>"}`; a device the database does not know gets a family `user-<vid><pid>`
+with its name, its USB ids as `match` and its controls. `ControllerPicture` looks in the user's `images/` before the
+shipped ones and draws `front.png` / `front.jpg` as well as `front.svg`. Share… is not built.
 
 ## 10. Retro side images
 

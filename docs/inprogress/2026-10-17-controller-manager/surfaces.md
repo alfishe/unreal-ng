@@ -60,7 +60,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `scheme` | The scheme a user profile extends (how the pad works: Kempston, Sinclair 1, QAOP + Space), or none. |
 | `profiles` | List profiles (play and debug sets, scopes, match rules); `apply`, `save`, `delete`, `export`, `import`. |
 | `probe` | The backend report: loaded, why not, endpoints found, permissions. |
-| `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. |
+| `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. Built: `database` (GET) answers the families count, the user file's path and the ids it holds, and with `vidpid` (+ `bus`, `name`) the match a device of those ids gets, or with `family` that family (`family`, `name`, `layout`, `images`, `glyphs`, `controls`, `player`, `role`, `ignore`, `step`, `score`, `user`: the entry comes from devices.user.json); `database-save` (POST `text`: one family as JSON) adds or replaces an entry of devices.user.json, field by field over a built-in family of the same id, validated against the compiled-in database and written atomically; `database-delete` (POST `id`) removes one. The active database is swapped at once (holders of the old one keep their snapshot); a name or match change applies when the device connects again. The hotspot editor saves through `database-save`. Not built: SDL GUIDs, the gamecontrollerdb / RetroArch import. |
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
@@ -138,6 +138,7 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 | bindings / bind / unbind | yes | yes | yes | yes | yes | picture callouts |
 | profiles | yes | yes | yes | yes | yes | profile bar |
 | probe report | yes | yes | yes | yes | yes | Advanced |
+| device database lookup / user entries | `database`, `database-save`, `database-delete` | `controllers` | `controllers database [vid:pid\|family]`, `database-save <file>`, `database-delete <id>` | no (P3) | `controllers_database`, `controllers_save_device`, `controllers_delete_device` | hotspot editor (Picture…) |
 | learn wizard | yes | no (needs a human) | yes | yes | yes | wizard |
 | haptics mode / strength / play / stop | yes | `controllers` (`haptics_state`, `haptics_play`, `haptics_stop`) | yes | yes | yes | device card, Haptics tab |
 | debug actions | `POST /controllers/actions/{id}` | `control_execution`, `time_travel` (existing) | existing | existing | existing | debug layer |
@@ -163,9 +164,10 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | rumble {device, effect?}
                                              | output {device, pattern | steps, clicks | marks}
                                              | light {device, color}
+                                             | database-save {text} | database-delete {id}
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
-GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
+GET    /api/v1/controllers/database?vidpid=045e:0b00[&bus=usb&name=..] | family=..   (built; guid=.. not built)
 POST   /api/v1/controllers/database/import                   gamecontrollerdb line or RetroArch .cfg
 GET    /api/v1/controllers/probe
 
@@ -186,7 +188,8 @@ MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
 `controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`, `controllers_haptics`,
-`controllers_rumble`, `controllers_output`, `controllers_light`) and Lua `controllers_host(verb, opts)` (with
+`controllers_rumble`, `controllers_output`, `controllers_light`, `controllers_database`, `controllers_save_device`,
+`controllers_delete_device`) and Lua `controllers_host(verb, opts)` (with
 `controllers_haptics`, `controllers_rumble`, `controllers_output`, `controllers_light`) all
 build a `HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and
 `controllers_host`. Lua reaches the connectors through `controllers(verb, connector, device, opts)`.
@@ -197,7 +200,9 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 ## 7. MCP
 
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
-  `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`.
+  `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database` (built with
+  `database-save` and `database-delete`; the text names the match in one line: "xbox-elite-2: Xbox Elite Wireless
+  Controller Series 2 (layout xbox, images my-elite, exact match, score 100, from devices.user.json)").
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
   that really answer (it names ATM3 / Scorpion / TS-Conf only today, but Pentagon, Profi, Sprinter and Next answer too).
 - The `content[]` text states the decision in one line ("Kempston on `kempston` (port-read evidence: #1F read in 50 of

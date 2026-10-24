@@ -719,8 +719,18 @@ for device in emu.controllers_host("devices")["devices"]:
         emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
 ```
 
+The device database and the user's entries over it (devices.user.json):
+
+```python
+match = emu.controllers_database(vidpid="045e:0b22", bus="bt")["match"]
+print(match["family"], match["images"], match["step"], match["score"], match["user"])
+emu.controllers_save_device('{"id": "xbox-elite-2", "images": "user-xbox-elite-2"}')
+emu.controllers_delete_device("xbox-elite-2")   # back to the built-in entry
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+**options)`, `controllers_light(device, color)`, `controllers_database(**lookup)`, `controllers_save_device(text)`,
+`controllers_delete_device(id)`; `controllers_host("devices")` lists each device's `role`, `layers`,
 `context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).

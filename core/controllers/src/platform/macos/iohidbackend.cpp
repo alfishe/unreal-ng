@@ -580,7 +580,7 @@ private:
         identity.version = version;
         identity.name = StringProperty(ref, CFSTR(kIOHIDProductKey));
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         // Apple's synthetic legacy pad mirrors a GIP pad we read directly (research-host-apis.md §2.1)
         if (match.ignore)
             return;

@@ -75,7 +75,7 @@ bool RemoteByNature(const Profile& profile)
     return profile.devices.empty() && !profile.families.empty() &&
            std::all_of(profile.families.begin(), profile.families.end(), [](const std::string& family) {
                return family == "keyboard" ||
-                      DeviceDatabase::Builtin().ForFamily(family).role == DeviceRole::DebuggerRemote;
+                      DeviceDatabase::Active()->ForFamily(family).role == DeviceRole::DebuggerRemote;
            });
 }
 

@@ -45,6 +45,9 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"database", {"vidpid", "bus", "name", "family"}},
+        {"database-save", {"text"}},
+        {"database-delete", {"id"}},
     };
     return actions;
 }
@@ -141,6 +144,27 @@ namespace
             }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "database")
+        {
+            // The match in one line (an agent may see only the text), then the user entries
+            if (reply.isMember("match"))
+            {
+                const Json::Value& match = reply["match"];
+                out << match["family"].asString() << ": " << match["name"].asString() << " (layout "
+                    << match["layout"].asString() << ", images " << match["images"].asString();
+                if (match.isMember("step"))
+                    out << ", " << match["step"].asString() << " match, score " << match["score"].asInt();
+                if (match["user"].asBool())
+                    out << ", from devices.user.json";
+                out << ")\n";
+            }
+            out << reply["families"].asInt() << " families; devices.user.json:";
+            for (const Json::Value& id : reply["user"])
+                out << " " << id.asString();
+            if (reply["user"].empty())
+                out << " no entries";
             return out.str();
         }
         if (action == "bindings")
@@ -303,9 +327,16 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
+        "database-delete: the devices.user.json entry; "
         "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
-    schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
+    schema["properties"]["text"]["description"] =
+        "save: the whole profile, YAML or JSON (schema 1); database-save: one devices.user.json entry as JSON "
+        "({\"id\": \"xbox-elite-2\", \"images\": \"my-elite\"}: a known family changes the fields it names; a new "
+        "one needs its match list) or a file's {\"families\": [...]}";
+    schema["properties"]["vidpid"]["description"] = "database: look a device up by its USB ids (045e:0b00)";
+    schema["properties"]["bus"]["description"] = "database: with vidpid, usb or bt (some families match per bus)";
+    schema["properties"]["name"]["description"] = "database: the device's product name (the name templates)";
     schema["properties"]["effect"]["description"] =
         "rumble: the test effect (identify by default; low, high, clicks, left-trigger, right-trigger, swell: haptics "
         "lists a device's)";
@@ -324,7 +355,7 @@ void RegisterControllers(ToolRegistry& registry)
         "{\"none\": true}; plus label, turbo, ...)";
     schema["properties"]["layer"]["description"] = "bindings / bind / unbind: play (default), debug, a shift layer";
     schema["properties"]["family"]["description"] =
-        "bind / unbind / scheme: into user/<family> (xbox-elite-2, dualsense)";
+        "bind / unbind / scheme: into user/<family> (xbox-elite-2, dualsense); database: look a family up";
     schema["properties"]["profile"]["description"] =
         "bind / unbind: into this profile (a shipped one is copied into the user's); default user/global";
     schema["required"].append("action");
@@ -343,8 +374,10 @@ void RegisterControllers(ToolRegistry& registry)
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar). Options per "
-        "action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), database "
+        "(look a device up by VID:PID or family: its family, layout, image set, match step; the devices.user.json "
+        "entries), database-save / database-delete (an entry of devices.user.json: a user device, a new name, a "
+        "photo's image set). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -360,7 +393,7 @@ void RegisterControllers(ToolRegistry& registry)
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
                 static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics"};
+                                                            "haptics", "database"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

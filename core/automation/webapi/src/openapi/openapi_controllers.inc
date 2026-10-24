@@ -87,13 +87,13 @@
         auto replies = [](Json::Value& operation) {
             operation["responses"]["200"]["description"] = "The envelope: ok, error, message, then the verb's fields";
             operation["responses"]["400"]["description"] = "bad-request, invalid-binding";
-            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device";
+            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device, unknown-family";
             operation["responses"]["409"]["description"] = "read-only (a built-in profile cannot be deleted)";
             operation["responses"]["503"]["description"] = "unavailable: no host input in this process";
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, database";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -109,15 +109,19 @@
             "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
             "(?device=): per device whether the emulator can drive its motors (available, else the reason: no "
             "motors, an Xbox pad over USB on macOS, no write access on Linux), its actuators (low, high, "
-            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms)";
+            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms). database "
+            "(?vidpid=045e:0b00&bus=usb|bt&name= | ?family=): the device database with the user's devices.user.json "
+            "on top: families (count), user (the ids of the user entries), user_file, and with a query the match "
+            "(family, name, vendor, layout, images, glyphs, controls, player, role, ignore, mode, step and score of "
+            "the lookup, user: whether a user entry shaped it)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "database"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
             "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
-            "output; light";
+            "output; light; the user's device entries";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -135,9 +139,15 @@
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
             "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
             "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
-            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color";
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. "
+            "database-save {text}: one devices.user.json entry as JSON ({id: xbox-elite-2, images: my-elite}: an entry "
+            "of a known family changes the fields it names and keeps the others; a new family needs its match list) "
+            "or a file's {families: [...]}; checked against the built-in database, written, applied at once (a device "
+            "already connected takes a new name or match when it reconnects). database-delete {id}: removes the user "
+            "entry (the built-in family comes back); both answer user and user_file";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light",
+                             "database-save", "database-delete"});
         replies(post);
     }
 

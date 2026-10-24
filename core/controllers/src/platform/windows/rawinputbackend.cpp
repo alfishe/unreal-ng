@@ -631,7 +631,7 @@ private:
         identity.version = version;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         if (match.ignore)
             return;
 
@@ -847,7 +847,7 @@ private:
         identity.version = attributes.VersionNumber;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         const std::string id = WinDeviceId(where.bus, attributes.VendorID, attributes.ProductID,
                                            attributes.VersionNumber, serial, Utf8(path));
         HostDeviceInfo host;

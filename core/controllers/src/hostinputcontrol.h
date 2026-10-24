@@ -13,7 +13,8 @@
 /// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
-/// light colour: a DualSense / DualShock 4 light bar).
+/// light colour: a DualSense / DualShock 4 light bar), database (look a device up by VID:PID or family, list the user
+/// entries), database-save / database-delete (entries of devices.user.json: a user device, a renamed one, a photo).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -43,7 +44,8 @@ struct HostRequest
 
 struct HostReply
 {
-    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, bad-request, invalid-binding, read-only,
+    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, unknown-device, unknown-family, bad-request,
+                          ///< invalid-binding, read-only,
                           ///< unavailable
     std::string message;  ///< why, for a person (and an agent that reads only the text)
     JsonValue body = JsonValue::Object();  ///< verb-specific fields, merged into the envelope
@@ -78,6 +80,12 @@ public:
     virtual HostInputService* Input()
     {
         return nullptr;
+    }
+    /// `<user config>/unreal-ng/controllers`: devices.user.json and the user's photos (device-database.md §4, §9);
+    /// empty: the database verbs that write answer `unavailable`
+    virtual std::string UserControllersDir() const
+    {
+        return {};
     }
 };
 
@@ -123,6 +131,10 @@ private:
     HostReply Output(const HostRequest& request);
     /// A pad's light colour (architecture.md §10)
     HostReply Light(const HostRequest& request);
+    /// The device database (device-database.md §3-§4): a lookup by vidpid (bus, name) or family, the user entries
+    HostReply Database(const HostRequest& request);
+    /// database-save (one entry or a file's families into devices.user.json) / database-delete (an entry by id)
+    HostReply EditDatabase(const HostRequest& request, bool remove);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply
