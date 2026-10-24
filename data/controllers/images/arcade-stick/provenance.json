@@ -1,0 +1,40 @@
+{
+  "family": "arcade-stick",
+  "images": [
+    {
+      "view": "front",
+      "title": "Arcade stick, Vewlix layout (HORI Fighting Stick α as measured)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 410 x 300 x 120 mm (with the lever), 2.7 kg",
+          "source": "https://www.playstation.com/ja-jp/local/official-products/olp-peripherals/controller/fighting-stick-alpha/",
+          "author": "Sony Interactive Entertainment / HORI",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view: the case, the ledge, the lid frame and panel, every control's position and size",
+          "source": "https://gmedia.playstation.com/is/image/SIEPDC/fighting-stick-alpha-04-ja-06apr22",
+          "author": "HORI",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the 30 mm buttons (flange about 33 mm, plunger 24 mm) and the 35 mm ball top",
+          "source": "Sanwa OBSF-30 and JLF / LB-35 dimensions as the arcade parts shops list them; checked on the top view (the flange 33-35 mm, the ball 34.6 mm)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the same eight-button Vewlix layout on the HORI Real Arcade Pro, Qanba, Mayflash F300 / F500 and Victrix sticks the set stands for; their cases differ (an estimate that the layout is what identifies the controls)",
+          "source": "this POC",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

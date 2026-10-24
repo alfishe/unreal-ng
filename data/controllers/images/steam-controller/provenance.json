@@ -1,0 +1,46 @@
+{
+  "family": "steam-controller",
+  "images": [
+    {
+      "view": "front",
+      "title": "Valve Steam Controller (2015), front and back",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 160 mm (6.3 in, as retail listings carry it; Valve published no size): an estimate; the traced outline gives 99 mm deep",
+          "source": "moveonup.csd.auth.gr/products/steam-controller (retail listing)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "front view cut out on a transparent ground: the outline, the trackpads, stick, buttons and the face plate",
+          "source": "https://commons.wikimedia.org/wiki/File:Steam_Controller_(25483452893).png",
+          "author": "Kenming Wang",
+          "licence": "CC BY-SA 2.0",
+          "use": "measured geometry only (trace.py outline, positions on a 5 mm grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view: the check of the proportions and of the button positions",
+          "source": "https://commons.wikimedia.org/wiki/File:Steam_Controller_(top)_(24525157630).jpg",
+          "author": "Les Orchard",
+          "licence": "CC BY 2.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the back: the battery cover, the two grip buttons along the inner side of the grips",
+          "source": "https://commons.wikimedia.org/wiki/File:Steam_Controller_given_away_during_the_Steam_Dev_Days_2016_event_(steam-controller-from-steam-dev-day-in-2016-v0-xsnkezxoyccf3).webp",
+          "author": "Willow",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "the back view is drawn on the front outline turned over; the grip buttons' length and position are estimates (about 3 mm)"
+        }
+      ]
+    }
+  ]
+}

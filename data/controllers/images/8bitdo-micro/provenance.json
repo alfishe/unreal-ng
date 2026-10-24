@@ -1,0 +1,43 @@
+{
+  "family": "8bitdo-micro",
+  "images": [
+    {
+      "view": "front",
+      "title": "8BitDo Micro, blue (drawn at twice the scale)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 72 x 40.7 x 14.1 mm",
+          "source": "https://www.8bitdo.com/micro/",
+          "author": "8BitDo",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "front view (blue): the outline (depth 38.6 mm traced against 40.7 mm with the shoulders), the control positions and sizes",
+          "source": "https://www.8bitdo.com/images/2023/micro/micro-blue.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top-edge view: L outside L2 on each end",
+          "source": "https://www.8bitdo.com/images/2023/micro/micro-blue.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the scale: twice the pads' 8.6 px per mm, as the Zero 2",
+          "source": "this POC",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

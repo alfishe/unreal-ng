@@ -1,0 +1,423 @@
+{
+  "schema": 1,
+  "family": "xbox-adaptive",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "south",
+      "label": "A",
+      "shape": {
+        "circle": [
+          824,
+          510,
+          323
+        ]
+      },
+      "anchor": [
+        824,
+        510
+      ],
+      "callout": "left",
+      "order": 0
+    },
+    {
+      "control": "east",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1560,
+          508,
+          323
+        ]
+      },
+      "anchor": [
+        1560,
+        508
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "guide",
+      "label": "Xbox",
+      "shape": {
+        "circle": [
+          282,
+          243,
+          44
+        ]
+      },
+      "anchor": [
+        282,
+        243
+      ],
+      "callout": "left",
+      "order": 2
+    },
+    {
+      "control": "view",
+      "label": "View",
+      "shape": {
+        "circle": [
+          211,
+          367,
+          38
+        ]
+      },
+      "anchor": [
+        211,
+        367
+      ],
+      "callout": "left",
+      "order": 3
+    },
+    {
+      "control": "menu",
+      "label": "Menu",
+      "shape": {
+        "circle": [
+          362,
+          367,
+          38
+        ]
+      },
+      "anchor": [
+        362,
+        367
+      ],
+      "callout": "left",
+      "order": 4
+    },
+    {
+      "control": "profile",
+      "label": "Profile",
+      "shape": {
+        "circle": [
+          362,
+          498,
+          39
+        ]
+      },
+      "anchor": [
+        362,
+        498
+      ],
+      "callout": "left",
+      "order": 5
+    },
+    {
+      "control": "dpad.up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          250,
+          588,
+          76,
+          77
+        ]
+      },
+      "anchor": [
+        287,
+        627
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 6
+    },
+    {
+      "control": "dpad.down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          250,
+          741,
+          76,
+          77
+        ]
+      },
+      "anchor": [
+        287,
+        780
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 7
+    },
+    {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          172,
+          666,
+          77,
+          76
+        ]
+      },
+      "anchor": [
+        211,
+        703
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 8
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          325,
+          666,
+          77,
+          76
+        ]
+      },
+      "anchor": [
+        364,
+        703
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 9
+    },
+    {
+      "control": "lstick.click",
+      "label": "LS",
+      "shape": {
+        "rect": [
+          620,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        655,
+        1058
+      ],
+      "callout": "left",
+      "order": 10
+    },
+    {
+      "control": "lb",
+      "label": "LB",
+      "shape": {
+        "rect": [
+          705,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        739,
+        1058
+      ],
+      "callout": "left",
+      "order": 11
+    },
+    {
+      "control": "misc.1",
+      "label": "X1",
+      "shape": {
+        "rect": [
+          862,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        897,
+        1058
+      ],
+      "callout": "left",
+      "order": 12
+    },
+    {
+      "control": "misc.2",
+      "label": "X2",
+      "shape": {
+        "rect": [
+          941,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        976,
+        1058
+      ],
+      "callout": "left",
+      "order": 13
+    },
+    {
+      "control": "lt",
+      "label": "LT",
+      "shape": {
+        "rect": [
+          1183,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1217,
+        1058
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 14
+    },
+    {
+      "control": "rt",
+      "label": "RT",
+      "shape": {
+        "rect": [
+          1260,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1294,
+        1058
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 15
+    },
+    {
+      "control": "rb",
+      "label": "RB",
+      "shape": {
+        "rect": [
+          1336,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1370,
+        1058
+      ],
+      "callout": "right",
+      "order": 16
+    },
+    {
+      "control": "rstick.click",
+      "label": "RS",
+      "shape": {
+        "rect": [
+          1420,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1455,
+        1058
+      ],
+      "callout": "right",
+      "order": 17
+    },
+    {
+      "control": "west",
+      "label": "X",
+      "shape": {
+        "rect": [
+          1661,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1696,
+        1058
+      ],
+      "callout": "right",
+      "order": 18
+    },
+    {
+      "control": "north",
+      "label": "Y",
+      "shape": {
+        "rect": [
+          1743,
+          992,
+          69,
+          131
+        ]
+      },
+      "anchor": [
+        1777,
+        1058
+      ],
+      "callout": "right",
+      "order": 19
+    },
+    {
+      "control": "lstick.x",
+      "label": "Left USB (stick)",
+      "shape": {
+        "rect": [
+          70,
+          1010,
+          38,
+          96
+        ]
+      },
+      "anchor": [
+        90,
+        1058
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "stick",
+        "pair": "lstick.y",
+        "radius": 38
+      },
+      "order": 20
+    },
+    {
+      "control": "rstick.x",
+      "label": "Right USB (stick)",
+      "shape": {
+        "rect": [
+          1939,
+          1010,
+          38,
+          96
+        ]
+      },
+      "anchor": [
+        1958,
+        1058
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "stick",
+        "pair": "rstick.y",
+        "radius": 38
+      },
+      "order": 21
+    }
+  ]
+}

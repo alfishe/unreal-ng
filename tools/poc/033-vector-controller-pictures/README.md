@@ -69,13 +69,14 @@ first set.
 | `svgkit.py` | gradients, shades, text outlines, path helpers |
 | `style.py` | the house style: body, wells, sticks, buttons, D-pads, bumpers, triggers, paddles |
 | `model.py` | the canvas, the scale (8.6 px per mm), views, layers, hotspots in mm converted to canvas px |
-| `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`) |
+| `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`; the all-pads round adds `xbox_more`, `logitech`, `sony_more`, `joycon`, `nintendo_retro`, `others`, `eightbitdo_more`, `arcade`, each with a `SETS` dict) |
 | `trace.py` | measures an outline on a top view: silhouette, symmetry axis, left half mirrored, scaled to the measured width, cubic Beziers within a tolerance; `--shell` prints the right half for `mirrored_d`, `--grid` a 5 mm grid for reading the control positions, `--overlay` the fit |
 | `render.py` | Qt (PySide6 `QSvgRenderer`) and rsvg renders, the Qt-vs-rsvg numbers, the per-device sheets with every control highlighted as `ControllerPicture` paints it, the overview |
 | [`measurements-2026-10-23-render-check.md`](measurements-2026-10-23-render-check.md) | Qt vs rsvg, sizes, render cost |
 | [`analysis.md`](analysis.md) | what the numbers and the galleries show |
 | [`conclusions.md`](conclusions.md) | the goals and criteria, met / pending |
 | [`proposal.md`](proposal.md) | adopt; next devices; small widget changes |
+| [`inventory.md`](inventory.md) | every controller connectable today: ids per bus, the path on macOS / Windows / Linux, family, picture, gaps per host |
 
 ## Results
 
@@ -87,5 +88,13 @@ reference photo (`scratch/2026-10-23-poc-033/compare-<set>.png`). Coordinator re
 silhouettes were guessed and did not read; they are now measured with `trace.py` (DS4 on the Tokyoship DS4 layout
 drawing, the 8BitDo pads on 8BitDo's front views), and each compare sheet lays our render over the reference at 50 %.
 Details in [conclusions.md](conclusions.md).
+
+All-pads round (2026-10-24): 24 more sets for every controller one can connect today ([inventory.md](inventory.md)):
+Xbox 360, Xbox Adaptive, Logitech F310, DualShock 3, DualSense Edge (front and back), Joy-Con L / R / grip, NSO NES /
+SNES / N64 / Genesis, GameCube, Steam Controller (front and back), Stadia, Luna, 8BitDo Ultimate 2 / Lite 2 / Micro /
+64 / Arcade Stick, an arcade stick, a Saturn pad and a fight pad. Each module (`devices/xbox_more.py`, `logitech.py`,
+`sony_more.py`, `joycon.py`, `nintendo_retro.py`, `others.py`, `eightbitdo_more.py`, `arcade.py`) registers its
+`SETS`; `generate.py` collects them. Qt vs rsvg mean 0.02-0.07 of 255 on every new set. Not drawn: Switch 2 Pro and
+the 2026 Steam Controller (no orthographic view found; they use the Switch Pro and Steam Controller sets).
 
 Run: `python3 generate.py [--check] [--only <set>]`, then `python3 render.py [<set> ...]` (PySide6, rsvg-convert).

@@ -1,0 +1,42 @@
+{
+  "family": "fight-pad",
+  "images": [
+    {
+      "view": "front",
+      "title": "Six-button fight pad (HORI Fighting Commander OCTA as measured)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 170 mm (HORI gives W 170 x D 90 x H 48 mm, 230 g; the 90 mm depth does not match the views, which give 107-113 mm: the plan follows the views)",
+          "source": "https://www.playstation.com/ja-jp/local/official-products/olp-peripherals/controller/fighting-commander-octa/",
+          "author": "Sony Interactive Entertainment / HORI",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view: the outline (cable masked, left half mirrored, the shoulders above the case cut at 5.6 mm, mirror overlap 1.000), every control's position and size on a 5 mm grid",
+          "source": "https://gmedia.playstation.com/is/image/SIEPDC/fighting-commander-octa-02-ja-06apr22",
+          "author": "HORI",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the bottom view (the plan's proportions, 170 x 113 mm)",
+          "source": "https://gmedia.playstation.com/is/image/SIEPDC/fighting-commander-octa-08-ja-06apr22",
+          "author": "HORI",
+          "use": "reference only",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the right shoulders as L3 (front) and R3 (back): HORI's usual assignment on its one-stick pads; an assumption, not read on the device",
+          "source": "this POC",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

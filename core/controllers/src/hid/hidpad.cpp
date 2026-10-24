@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "devicedatabase.h"
+
 namespace controllers
 {
 
@@ -48,25 +50,50 @@ float Normalized(int32_t value, const HidField& field, bool centred)
 
 HidLayout HidLayoutFor(const std::string& layout)
 {
+    HidLayout out;
+    out.family = "generic";
     // Xbox over Bluetooth (the HID layout SDL's HIDAPI driver reads; research-host-apis.md §2.3b)
     if (layout == "xbox")
-        return {"xbox",
-                {"south", "east", "", "west", "north", "", "lb", "rb", "", "", "view", "menu", "guide", "lstick.click",
-                 "rstick.click"},
-                false};
+    {
+        out.family = "xbox";
+        out.buttons = {"south", "east", "",     "west", "north",        "",
+                       "lb",    "rb",   "",     "",     "view",         "menu",
+                       "guide", "lstick.click", "rstick.click"};
+    }
     // DualShock 4 and DualSense: Square Cross Circle Triangle L1 R1 L2 R2 Share/Create Options L3 R3 PS Touchpad
-    if (layout == "playstation")
-        return {"playstation",
-                {"west", "south", "east", "north", "lb", "rb", "lt.click", "rt.click", "view", "menu", "lstick.click",
-                 "rstick.click", "guide", "touchpad.click"},
-                true};
+    // (DualSense: Mic)
+    else if (layout == "playstation")
+    {
+        out.family = "playstation";
+        out.buttons = {"west", "south", "east", "north", "lb", "rb", "lt.click", "rt.click", "view", "menu",
+                       "lstick.click", "rstick.click", "guide", "touchpad.click", "misc.1"};
+        out.rxRyTriggers = true;
+    }
     // Switch Pro and pads in Switch mode: B A Y X L R ZL ZR - + LS RS Home Capture
-    if (layout == "nintendo")
-        return {"nintendo",
-                {"south", "east", "west", "north", "lb", "rb", "lt.click", "rt.click", "view", "menu", "lstick.click",
-                 "rstick.click", "guide", "share"},
-                false};
-    return {"generic", {}, false};
+    else if (layout == "nintendo")
+    {
+        out.family = "nintendo";
+        out.buttons = {"south", "east", "west", "north", "lb", "rb", "lt.click", "rt.click", "view", "menu",
+                       "lstick.click", "rstick.click", "guide", "share"};
+    }
+    return out;
+}
+
+HidLayout HidLayoutFor(const DeviceMatch& match)
+{
+    HidLayout layout = HidLayoutFor(match.layout);
+    const DeviceMatch::HidMap& map = match.hid;
+    if (!map.buttons.empty())
+        layout.buttons = map.buttons;
+    if (map.rxRyTriggers >= 0)
+        layout.rxRyTriggers = map.rxRyTriggers != 0;
+    layout.dpadAxes = map.dpadAxes;
+    if (!map.hat.empty())
+        layout.hat = map.hat;
+    layout.consumer = map.consumer;
+    for (const DeviceMatch::HidMap::Bit& bit : map.bits)
+        layout.bits.push_back({bit.report, bit.byte, bit.bit, bit.control});
+    return layout;
 }
 
 HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasReportIds(descriptor.hasReportIds)
@@ -90,8 +117,12 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
         {
             switch (field.usage)
             {
-                case 0x30: slot.kind = Kind::Axis; slot.control = "lstick.x"; break;
-                case 0x31: slot.kind = Kind::Axis; slot.control = "lstick.y"; break;
+                case 0x30:
+                case 0x31:
+                    slot.kind = layout.dpadAxes ? Kind::AxisDpad : Kind::Axis;
+                    slot.control = layout.dpadAxes ? (field.usage == 0x30 ? "dpad.x" : "dpad.y")
+                                                   : (field.usage == 0x30 ? "lstick.x" : "lstick.y");
+                    break;
                 case 0x32: slot.kind = Kind::Axis; slot.control = "rstick.x"; break;
                 case 0x35: slot.kind = Kind::Axis; slot.control = "rstick.y"; break;
                 case 0x33:
@@ -109,7 +140,7 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
                     break;
                 case 0x39:
                     slot.kind = Kind::Hat;
-                    slot.control = hats++ == 0 ? "dpad" : "hat." + std::to_string(hats - 1);
+                    slot.control = hats++ == 0 ? layout.hat : "hat." + std::to_string(hats - 1);
                     break;
                 case 0x36:
                 case 0x37:
@@ -129,6 +160,14 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
             slot.kind = Kind::Trigger;
             slot.control = field.usage == 0xC5 ? "lt" : "rt";  // Brake, Accelerator
         }
+        else if (field.usagePage == kConsumer &&
+                 std::any_of(layout.consumer.begin(), layout.consumer.end(),
+                             [&field](const auto& entry) { return entry.first == field.usage; }))
+        {
+            for (const auto& [usage, control] : layout.consumer)
+                if (usage == field.usage)
+                    slot.control = control;
+        }
         else if (field.usagePage == kConsumer && layout.family == "xbox")
         {
             if (field.usage == 0xB2)
@@ -144,6 +183,19 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
             continue;
         _slots.push_back(std::move(slot));
     }
+    if (_slots.empty())
+        return;  // not a pad: the extra bits alone make none
+    for (const HidBit& bit : layout.bits)
+    {
+        Slot slot;
+        slot.field.reportId = bit.report;
+        slot.field.bitOffset = bit.byte * 8u + bit.bit;
+        slot.field.bitSize = 1;
+        slot.field.usagePage = kButtonPage;
+        slot.field.logicalMax = 1;
+        slot.control = bit.control;
+        _slots.push_back(std::move(slot));
+    }
 }
 
 std::vector<std::string> HidPad::Controls() const
@@ -151,7 +203,12 @@ std::vector<std::string> HidPad::Controls() const
     std::vector<std::string> out;
     for (const Slot& slot : _slots)
     {
-        if (slot.kind == Kind::Hat)
+        if (slot.kind == Kind::Hat && (slot.control == "lstick" || slot.control == "rstick"))
+        {
+            out.push_back(slot.control + ".x");
+            out.push_back(slot.control + ".y");
+        }
+        else if (slot.kind == Kind::Hat)
         {
             const std::string base = slot.control == "dpad" ? "dpad." : slot.control + ".";
             for (const char* direction : {"up", "down", "left", "right"})
@@ -159,6 +216,12 @@ std::vector<std::string> HidPad::Controls() const
         }
         else if (slot.kind == Kind::Paddles)
             out.insert(out.end(), std::begin(kPaddles), std::end(kPaddles));
+        else if (slot.kind == Kind::AxisDpad)
+        {
+            const bool x = slot.control == "dpad.x";
+            out.push_back(x ? "dpad.left" : "dpad.up");
+            out.push_back(x ? "dpad.right" : "dpad.down");
+        }
         else if (slot.kind != Kind::Profile)
             out.push_back(slot.control);
     }
@@ -208,6 +271,25 @@ void HidPad::Decode(const uint8_t* report, size_t size, const ControlSink& sink)
             case Kind::Axis:
                 Emit(slot.control, Normalized(value, slot.field, true));
                 break;
+            case Kind::AxisDpad:
+            {
+                // Past half way is pressed: the two directions of the axis, each sent when it changes
+                auto side = [&slot](int32_t raw) {
+                    const float v = Normalized(raw, slot.field, true);
+                    return v <= -0.5f ? -1 : (v >= 0.5f ? 1 : 0);
+                };
+                const int was = first ? 0 : side(before);
+                const int now = side(value);
+                const bool x = slot.control == "dpad.x";
+                if (was != now)
+                {
+                    if (was != 0)
+                        Emit(was < 0 ? (x ? "dpad.left" : "dpad.up") : (x ? "dpad.right" : "dpad.down"), 0.0f);
+                    if (now != 0)
+                        Emit(now < 0 ? (x ? "dpad.left" : "dpad.up") : (x ? "dpad.right" : "dpad.down"), 1.0f);
+                }
+                break;
+            }
             case Kind::Trigger:
                 Emit(slot.control, Normalized(value, slot.field, false));
                 break;
@@ -215,6 +297,18 @@ void HidPad::Decode(const uint8_t* report, size_t size, const ControlSink& sink)
             {
                 const uint8_t was = first ? 0 : HatBits(before, slot.field);
                 const uint8_t now = HatBits(value, slot.field);
+                if (slot.control == "lstick" || slot.control == "rstick")
+                {
+                    // A stick reported as a hat (a single Joy-Con's simple report): full deflection on the axes
+                    const auto axis = [](uint8_t bits, int minus, int plus) {
+                        return ((bits >> plus) & 1 ? 1.0f : 0.0f) - ((bits >> minus) & 1 ? 1.0f : 0.0f);
+                    };
+                    if (axis(was, 3, 1) != axis(now, 3, 1) || first)
+                        Emit(slot.control + ".x", axis(now, 3, 1));
+                    if (axis(was, 0, 2) != axis(now, 0, 2) || first)
+                        Emit(slot.control + ".y", axis(now, 0, 2));
+                    break;
+                }
                 const std::string base = slot.control == "dpad" ? "dpad." : slot.control + ".";
                 const char* names[] = {"up", "right", "down", "left"};
                 for (int bit = 0; bit < 4; ++bit)

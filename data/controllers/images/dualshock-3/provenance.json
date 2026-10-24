@@ -1,0 +1,54 @@
+{
+  "family": "dualshock-3",
+  "images": [
+    {
+      "view": "front",
+      "title": "DualShock 3 wireless controller (PS3), Black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size about 157 x 95 x 55 mm (W x D x H), 192 g",
+          "source": "Sony DualShock 3 (CECHZC2) specifications as quoted by the instruction manual and retail listings",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "outline (trace.py's fit: the right half mirrored about the controls' centre line, Beziers within 0.3 mm, scaled to 157 mm) and the control positions and sizes (Hough circles, a 5 mm grid)",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock_3_(8092015935).jpg",
+          "author": "phrawr from Canada",
+          "licence": "CC BY 2.0",
+          "use": "measured geometry only; no pixels shipped",
+          "retrieved": "2026-10-24",
+          "note": "a near-top photo: its depth (102 mm) is scaled to Sony's 95 mm, an estimate of the camera's tilt"
+        },
+        {
+          "what": "second near-top view: the check of the positions, the D-pad keys and the Start triangle",
+          "source": "https://commons.wikimedia.org/wiki/File:PlayStation_3_DualShock_3_Controller_(53279128907).jpg",
+          "author": "Tillion_23",
+          "licence": "CC0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the shoulders (L1 / L2 stacked, the housings' tops), the stick housings",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock_3.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the shoulder buttons seen from the front, the top markings",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock3WhiteTopMarkings.jpg",
+          "author": "Bollinger",
+          "licence": "public domain",
+          "use": "reference only",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

@@ -608,7 +608,7 @@ private:
         };
         device->rumbleUnavailable = rumbleUnavailable();
         const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
-        const HidLayout layout = HidLayoutFor(match.layout);
+        const HidLayout layout = HidLayoutFor(match);
         size_t controls = 0;
         if (XboxGipPad::Handles(vendor, product) && maxInput == 18)
         {
@@ -636,6 +636,15 @@ private:
                 if (device->hid->Empty())
                     return;
                 controls = device->hid->Controls().size();
+                // A DualShock 3 on the cable sends no input report until feature report 0xF4 enables them (what a
+                // PS3 sends; SDL's PS3 driver does the same on macOS). Over Bluetooth it reports at once
+                constexpr uint16_t kSony = 0x054C;
+                constexpr uint16_t kDualShock3 = 0x0268;
+                if (vendor == kSony && product == kDualShock3 && !bluetooth)
+                {
+                    const uint8_t enable[] = {0xF4, 0x42, 0x0C, 0x00, 0x00};
+                    IOHIDDeviceSetReport(ref, kIOHIDReportTypeFeature, enable[0], enable, sizeof(enable));
+                }
             }
         }
         if (device->dial)

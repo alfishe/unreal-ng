@@ -52,6 +52,23 @@ SETS = {
 }
 
 
+def _more_sets():
+    """The sets of the device modules added after the first round: a module under devices/ that defines SETS (set
+    name -> function returning a Picture) registers them; the modules load in name order"""
+    import importlib
+    for path in sorted((HERE / "devices").glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+        module = importlib.import_module(f"devices.{path.stem}")
+        for name, make in getattr(module, "SETS", {}).items():
+            if name in SETS:
+                raise SystemExit(f"{name}: drawn by two modules")
+            SETS[name] = make
+
+
+_more_sets()
+
+
 def committed(path):
     """The file as the last commit has it (the set this generator replaces), or None"""
     rel = path.relative_to(ROOT)

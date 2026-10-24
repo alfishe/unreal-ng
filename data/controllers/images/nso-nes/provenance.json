@@ -1,0 +1,38 @@
+{
+  "family": "nso-nes",
+  "images": [
+    {
+      "view": "front",
+      "title": "Nintendo Entertainment System controller for Nintendo Switch Online (L)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 123.4 x 53.2 x 17.5 mm (the NES controller the NSO pad copies)",
+          "source": "https://www.dimensions.com/element/nes-controller",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view of the NES controller: the outline, the control positions and sizes",
+          "source": "https://commons.wikimedia.org/wiki/File:NES-Controller-Flat.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "measured geometry only (trace.py outline, positions on a grid and by colour); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the NSO version: the rail on the top edge with L and R, the same face",
+          "source": "https://assets.nintendo.com/image/upload/ncom/en_US/products/accessories/nintendo-switch/controllers/nintendo-entertainment-system-controllers.html/109045-nintendo-switch-online-nes-controller-left-1200x675",
+          "author": "Nintendo",
+          "licence": "product photo",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "the rail's span and the L / R positions read on this near-front view, about 1 mm"
+        }
+      ]
+    }
+  ]
+}
