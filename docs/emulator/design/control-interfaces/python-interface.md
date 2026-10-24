@@ -720,7 +720,9 @@ for device in emu.controllers_host("devices")["devices"]:
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+**options)`, `controllers_light(device, color)`, `controllers_aliases()` (`{aliases: [{from, to, connected, name}]}`:
+a pad first seen as `gc:...` and later matched to its HID device keeps its profiles) and `controllers_unalias(id)`;
+`controllers_host("devices")` lists each device's `role`, `layers`,
 `context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).

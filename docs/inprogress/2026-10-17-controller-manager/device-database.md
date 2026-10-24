@@ -128,6 +128,16 @@ Rules:
   match can be explained.
 - The wizard's result is saved as a user entry in the gamecontrollerdb line format plus our family fields. It can then
   be shared as a pull request to `data/controllers/`.
+- A `gc:` device (a pad only GameController sees, [architecture.md §5](architecture.md#5-device-identity-and-merging))
+  has no VID / PID: its family comes from step 5 on GameController's vendor name ("DualSense Wireless Controller" ->
+  the PlayStation family, "Xbox Wireless Controller" -> the Xbox one), else step 6.
+- The PlayStation pads (DualShock 4 054C:05C4 / 09CC / 0BA0, DualSense 054C:0CE6, DualSense Edge 054C:0DF2) and the
+  Switch Pro controller (057E:2009) are read by their own drivers on macOS (`SonyPad`, `SwitchProPad`, by VID / PID,
+  [haptics.md §9](haptics.md#9-backends)), whatever entry matched them; the entry gives the name, family, layout and
+  images as for any pad. So are the Joy-Cons (057E:2006, 2007; the `joy-con` entry, the OS's product name "Joy-Con
+  (L)" / "(R)"), alone or a left and a right one as one pad "Joy-Con (L/R)". The charging grip (200E) shows each Joy-Con in it
+  as an interface of its own: the side of each comes from the device info (below the USB handshake, subcommand 0x02),
+  then it is a Joy-Con as any and pairs the same way; an empty slot (no answer) stays hidden.
 
 ## 4. User overrides
 
