@@ -183,3 +183,51 @@ TEST(JoyCon_Test, PairingTakesTheOldestOfEachSide)
     EXPECT_FALSE(pairing.Add("L2", true).formed.has_value()) << "known already";
     EXPECT_EQ(pairing.PairCount(), 1u);
 }
+
+TEST(JoyCon_Test, ChargingGripAsksTheDeviceInfo)
+{
+    // hid-nintendo's joycon_read_info: subcommand 0x02, the type in the reply's data byte 2 (1 left, 2 right)
+    EXPECT_TRUE(SwitchProPad::IsChargingGrip(0x057E, 0x200E));
+    int type = -1;
+    SwitchProtocol protocol(false, {}, 0, [&type](uint8_t value) { type = value; });
+    uint64_t wake = 0;
+    uint64_t now = 0;
+    for (const uint8_t command : std::vector<uint8_t>{0x02, 0x03, 0x02})
+    {
+        std::optional<PadOutReport> next = protocol.Next(now, wake);
+        ASSERT_TRUE(next.has_value());
+        EXPECT_EQ(next->bytes[1], command);
+        const uint8_t ack[] = {0x81, command};
+        protocol.OnInput(ack, sizeof(ack), ++now);
+    }
+    std::optional<PadOutReport> next = protocol.Next(now, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->bytes[1], 0x04) << "force USB, no reply";
+    next = protocol.Next(now, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->bytes[0], 0x01);
+    EXPECT_EQ(next->bytes[10], 0x02) << "the device info subcommand after the handshake";
+    std::vector<uint8_t> reply(64, 0);
+    reply[0] = 0x21;
+    reply[13] = 0x82;
+    reply[14] = 0x02;
+    reply[15] = 0x04;  // firmware 4.33
+    reply[16] = 0x21;
+    reply[17] = 0x02;  // a right Joy-Con
+    protocol.OnInput(reply.data(), reply.size(), ++now);
+    EXPECT_EQ(type, 2);
+    next = protocol.Next(now, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->bytes[10], 0x10) << "on to the calibration reads";
+
+    // No answer: type 0 once the step gives up
+    int silent = -1;
+    SwitchProtocol quiet(true, {}, 0, [&silent](uint8_t value) { silent = value; });
+    now = 0;
+    while (silent < 0 && now < 2000)
+    {
+        quiet.Next(now, wake);
+        now += SwitchProtocol::kReplyMs;
+    }
+    EXPECT_EQ(silent, 0);
+}

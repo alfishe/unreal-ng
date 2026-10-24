@@ -96,12 +96,19 @@ public:
     static constexpr uint16_t kProController = 0x2009;
     static constexpr uint16_t kJoyConLeft = 0x2006;
     static constexpr uint16_t kJoyConRight = 0x2007;
+    /// The charging grip: each Joy-Con in it is an interface of its own under this one product id; which side a half
+    /// is comes from the device info (SwitchProtocol's TypeSink)
+    static constexpr uint16_t kChargingGrip = 0x200E;
+    static bool IsChargingGrip(uint16_t vendor, uint16_t product)
+    {
+        return vendor == kNintendo && product == kChargingGrip;
+    }
     static bool Handles(uint16_t vendor, uint16_t product)
     {
         return LayoutFor(vendor, product).has_value();
     }
-    /// The Pro Controller, a Joy-Con (alone until the backend pairs it); nullopt for anything else (the charging grip
-    /// 057E:200E shows both Joy-Cons under one product id and stays HidPad's)
+    /// The Pro Controller, a Joy-Con (alone until the backend pairs it); nullopt for anything else (a half of the
+    /// charging grip 057E:200E included: its side comes from the device info)
     static std::optional<SwitchLayout> LayoutFor(uint16_t vendor, uint16_t product);
     static bool IsJoyCon(SwitchLayout layout)
     {
@@ -169,9 +176,18 @@ public:
     static constexpr size_t kUsbLength = 64;
 
     using CalibrationSink = std::function<void(const SwitchStickCalibration& calibration)>;
+    /// The controller type of the device info (hid-nintendo's joycon_ctlr_type: 1 a left Joy-Con, 2 a right one, 3
+    /// the Pro Controller); 0 when the device gave none
+    using TypeSink = std::function<void(uint8_t type)>;
+    static constexpr uint8_t kTypeJoyConLeft = 0x01;
+    static constexpr uint8_t kTypeJoyConRight = 0x02;
 
-    /// @p onCalibration: called from OnInput (the thread that passes the input) once the calibration is read
-    SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs = kStartDelayMs);
+    /// @p onCalibration: called from OnInput (the thread that passes the input) once the calibration is read.
+    /// @p onType (a charging grip's half): the setup asks the device info (subcommand 0x02, hid-nintendo's
+    /// joycon_read_info; the type in the reply's byte 17) right after the USB handshake, and says the type from OnInput,
+    /// or 0 from Next once the step gave up
+    SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs = kStartDelayMs,
+                   TypeSink onType = nullptr);
 
     std::optional<PadOutReport> Next(uint64_t nowMs, uint64_t& wakeMs) override;
     void OnInput(const uint8_t* report, size_t size, uint64_t nowMs) override;
@@ -214,6 +230,7 @@ private:
 
     bool _bluetooth;
     CalibrationSink _onCalibration;
+    TypeSink _onType;
     std::vector<Step> _steps;
     size_t _step = 0;
     bool _started = false;  ///< the current step was written (waiting for its reply)

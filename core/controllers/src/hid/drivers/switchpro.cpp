@@ -53,6 +53,7 @@ constexpr uint8_t kHighSpeed = 0x03;
 constexpr uint8_t kForceUsb = 0x04;
 constexpr uint8_t kSetInputMode = 0x03;
 constexpr uint8_t kSpiRead = 0x10;
+constexpr uint8_t kDeviceInfo = 0x02;
 constexpr uint8_t kPlayerLights = 0x30;
 constexpr uint8_t kEnableVibration = 0x48;
 
@@ -456,8 +457,8 @@ uint8_t SwitchProtocol::PlayerLights(int player)
     return player <= 0 ? 0 : kPatterns[(player - 1) % 8];
 }
 
-SwitchProtocol::SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs)
-    : _bluetooth(bluetooth), _onCalibration(std::move(onCalibration))
+SwitchProtocol::SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs, TypeSink onType)
+    : _bluetooth(bluetooth), _onCalibration(std::move(onCalibration)), _onType(std::move(onType))
 {
     auto proprietary = [this](uint8_t command, bool wait) {
         Step step;
@@ -486,6 +487,8 @@ SwitchProtocol::SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, ui
         proprietary(kHandshake, true);
         proprietary(kForceUsb, false);
     }
+    if (_onType)
+        subcommand(kDeviceInfo, {});
     subcommand(kSpiRead, SpiRead(kUserCalibration, kUserCalibrationLength));
     subcommand(kSpiRead, SpiRead(kFactoryCalibration, kFactoryCalibrationLength));
     subcommand(kEnableVibration, {0x01});
@@ -599,7 +602,15 @@ void SwitchProtocol::OnInput(const uint8_t* report, size_t size, uint64_t nowMs)
     // SDL's ReadSubcommandReply: the ack bit, the same subcommand, for an SPI read the same address and length
     if ((report[13] & 0x80) == 0 || report[14] != step.id)
         return;
-    if (step.id == kSpiRead)
+    if (step.id == kDeviceInfo)
+    {
+        // Firmware version (2 bytes), then the controller type (SDL's deviceInfo.ucDeviceType)
+        if (size < 18)
+            return;
+        if (_onType)
+            _onType(report[17]);
+    }
+    else if (step.id == kSpiRead)
     {
         if (size < 20 || !std::equal(step.data.begin(), step.data.end(), report + 15))
             return;
@@ -661,6 +672,8 @@ std::optional<PadOutReport> SwitchProtocol::Next(uint64_t nowMs, uint64_t& wakeM
         }
         if (_started && _tries >= kAttempts)
         {
+            if (step.id == kDeviceInfo && step.kind == Step::Kind::Subcommand && _onType)
+                _onType(0);  // no type: the backend decides without it
             Advance(nowMs);  // no reply: on without it (SDL treats most of these as optional)
             return Next(nowMs, wakeMs);
         }

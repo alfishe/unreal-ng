@@ -64,6 +64,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
+| `aliases` | Built: the device aliases (`from`, `to`, `connected`, `name`): a `gc:` device promoted to its IOHID id keeps its profiles ([architecture.md §5](architecture.md)); `unalias` (`id` = the old id) forgets one, saved to `aliases.yaml` and applied at once (`unknown-alias` 404 when there is none). Lua reaches them through `controllers_host` only. |
 | `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
 
 ### Battery, light and notice (built)
@@ -114,7 +115,7 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 
 | Code | HTTP | When |
 |:--|:--|:--|
-| `unknown-connector`, `unknown-device`, `unknown-profile` | 404 | selector matched nothing |
+| `unknown-connector`, `unknown-device`, `unknown-profile`, `unknown-alias` | 404 | selector matched nothing |
 | `ambiguous-connector`, `ambiguous-device` | 409 | several matched; candidates listed |
 | `incompatible` | 409 | the retro device does not fit the connector (a Kempston mouse in a Sinclair socket) |
 | `owned-by-replay` | 409 | TTD replay or RZX playback owns input |

@@ -206,7 +206,9 @@ HostDeviceId = family-neutral, stable across replug and restart:
   writes `<user profiles>/aliases.yaml` (`schema: 1`, `aliases: [{from, to}]`), read again at start. A profile's
   `applies_to.devices` and a player pin match a device by its id or any of its old ids (substrings, as before), so
   the bindings and pin of the `gc:` id follow, and the next connect is the IOHID id at once. The router settings
-  (role, instance mode) are not kept across restarts for any id, so they move only at run time.
+  (role, instance mode) are not kept across restarts for any id, so they move only at run time. The host verbs
+  `aliases` (the list: `from`, `to`, `connected`) and `unalias` (`id` = the old id; saved and applied at once) show
+  and forget them on the CLI, REST, WebSocket, MCP and Python ([surfaces.md §2](surfaces.md)).
 
 ## 6. The canonical control vocabulary
 

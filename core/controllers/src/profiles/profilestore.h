@@ -155,6 +155,8 @@ public:
     /// endpoint, goes on under the IOHID id; the old id becomes an alias of the new one, so the profiles and player
     /// pins naming the old id apply to the new id (Resolve, Apply). An alias of @p from moves to @p to as well
     void AddAlias(const HostDeviceId& from, const HostDeviceId& to);
+    /// Forget the alias @p from (an old id): the profiles naming it no longer apply to its new id. False: no such alias
+    bool RemoveAlias(const HostDeviceId& from);
     /// The old ids of @p device
     std::vector<HostDeviceId> AliasesOf(const HostDeviceId& device) const;
     /// Old id -> new id

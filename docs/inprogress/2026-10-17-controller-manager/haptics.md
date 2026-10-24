@@ -272,8 +272,14 @@ libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering 
   layout (`HandleCombinedControllerStateL` / `R`; SL / SR as `paddle.p3` / `p4` on the left and `p2` / `p1` on the
   right, SDL's LEFT_PADDLE1 / 2 and RIGHT_PADDLE2 / 1), both show the pair's player lights, the left half rumbles with
   the `low` level and the right one with `high` (SDL's `HIDAPI_DriverSwitch_RumbleJoystick`), the battery is the lower
-  of the two. The charging grip (057E:200E: both Joy-Cons under one product id, the side only in the device info
-  subcommand) stays `HidPad`'s.
+  of the two. The charging grip (057E:200E, USB only: each Joy-Con in it an HID interface
+  of its own under the one product id) runs the USB setup with the device info first (subcommand 0x02 after the
+  handshake; the controller type in the reply's byte 17, `data[2]` of hid-nintendo's `joycon_read_info`: 1 left, 2
+  right, SDL's `deviceInfo.ucDeviceType`). Until it answers the half is not reported and its input is dropped; then it
+  is a Joy-Con of that side (`SwitchLayout::JoyConLeft` / `Right`, named "Joy-Con (L)" / "(R)") and pairs through
+  `JoyConPairing` as two Bluetooth ones do. No answer leaves it hidden (SDL's `CalculateControllerType`: "a Joy-Con
+  that's missing from a charging grip slot"; SDL then guesses the side from the interface number, which IOHID does not
+  give). The grip's halves never merge as endpoints of one pad (they share the grip's serial).
 - **HD rumble encoding** (`SwitchRumble`): per actuator the high band's frequency `hf` (9 bits) and amplitude `ha`,
   the low band's `lf` (7 bits) and `la` (9 bits) in 4 bytes. The handle motor levels play on the bands: `low` on the
   low band at `RumbleLevels::lowHz` (default 160 Hz), `high` on the high band at `highHz` (default 320 Hz), the

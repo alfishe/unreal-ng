@@ -656,6 +656,11 @@ void ProfileStore::AddAlias(const HostDeviceId& from, const HostDeviceId& to)
     _aliases[from] = to;
 }
 
+bool ProfileStore::RemoveAlias(const HostDeviceId& from)
+{
+    return _aliases.erase(from) != 0;
+}
+
 std::vector<HostDeviceId> ProfileStore::AliasesOf(const HostDeviceId& device) const
 {
     std::vector<HostDeviceId> out;

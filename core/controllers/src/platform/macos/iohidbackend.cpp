@@ -15,6 +15,7 @@
 #include <future>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -437,7 +438,7 @@ public:
         std::lock_guard lock(_mutex);
         size_t count = _gcKeys.size();
         for (const auto& [ref, device] : _devices)
-            count += _merge.IsInput(device->key) ? 1 : 0;
+            count += _merge.IsInput(device->key) && !device->gripPending ? 1 : 0;
         return count - _joyCons.PairCount();  // two Joy-Cons, one pad
     }
 
@@ -463,6 +464,12 @@ private:
         HostDeviceId reported;
         HostDeviceInfo single;  ///< a Joy-Con's own device, for when it is alone again
         bool shown = false;     ///< under _mutex: a Joy-Con's own device is reported (it is alone)
+        /// A charging grip's half waiting for its device info: not reported, its input dropped (io thread; atomic for
+        /// DeviceCount)
+        std::atomic<bool> gripPending{false};
+        /// The device info's type (SwitchProtocol::TypeSink, from the pump or the io thread); -1 not yet. Shared: the
+        /// pump's thread may still write it while the device goes
+        std::shared_ptr<std::atomic<int>> gripType = std::make_shared<std::atomic<int>>(-1);
         /// The pad's protocol (SonyProtocol, SwitchProtocol): rumble, light, player LEDs, set-up reports
         std::unique_ptr<PadPump> pump;
         bool pumpLight = false;       ///< the pump sets a light bar colour (the PlayStation pads)
@@ -536,7 +543,7 @@ private:
         {
             std::lock_guard lock(_mutex);
             for (auto& [ref, device] : _devices)
-                if (_merge.IsInput(device->key) &&
+                if (_merge.IsInput(device->key) && !device->gripPending &&
                     std::find(gone.begin(), gone.end(), device->reported) == gone.end())
                     gone.push_back(device->reported);  // a Joy-Con pair once
             for (const auto& [id, key] : _gcKeys)
@@ -875,6 +882,33 @@ private:
         out.added.push_back(info);
     }
 
+    /// A charging grip's half once its device info came: a Joy-Con of that side, paired as any. Another type (no
+    /// answer: SDL's CalculateControllerType calls that "a Joy-Con that's missing from a charging grip slot") keeps the
+    /// half hidden, its input dropped
+    void ResolveGrip(Device& device)
+    {
+        const int type = device.gripType->load();
+        const bool left = type == SwitchProtocol::kTypeJoyConLeft;
+        if (!left && type != SwitchProtocol::kTypeJoyConRight)
+            return;
+        PairEvents events;
+        {
+            std::lock_guard lock(_mutex);
+            device.gripPending = false;
+            device.joyCon = left ? 1 : 2;
+            device.switchPro->SetLayout(SwitchProPad::JoyConLayout(left, false));
+            device.single.name = left ? "Joy-Con (L)" : "Joy-Con (R)";
+            device.shown = true;
+            const JoyConPairing::Change change = _joyCons.Add(device.id, left);
+            if (change.formed)
+                device.shown = false;  // straight into the pair
+            else
+                events.added.push_back(device.single);
+            ApplyJoyConChangeLocked(change, {}, events);
+        }
+        ReportPairEvents(events);
+    }
+
     void ReportPairEvents(const PairEvents& events)
     {
         for (const HostDeviceId& id : events.removed)
@@ -916,7 +950,8 @@ private:
         // A PlayStation pad and the Switch Pro controller: their own full reports and protocols (haptics.md §9)
         const std::optional<SonyModel> sony = SonyPad::ModelOf(vendor, product);
         const std::optional<SwitchLayout> switchLayout = SwitchProPad::LayoutFor(vendor, product);
-        const bool switchPro = switchLayout.has_value();
+        const bool grip = SwitchProPad::IsChargingGrip(vendor, product);
+        const bool switchPro = switchLayout.has_value() || grip;
         auto rumbleUnavailable = [&]() -> std::string {
             if (device->xboxBluetooth || sony || switchPro)
                 return {};
@@ -981,16 +1016,26 @@ private:
         }
         else if (switchPro && !device->dial && !device->gip)
         {
-            device->switchPro = std::make_unique<SwitchProPad>(*switchLayout);
-            controls = std::max(controls, SwitchProPad::Controls(*switchLayout).size());
-            if (SwitchProPad::IsJoyCon(*switchLayout))
-                device->joyCon = *switchLayout == SwitchLayout::JoyConLeft ? 1 : 2;
+            const SwitchLayout layout = switchLayout.value_or(SwitchLayout::Pro);
+            device->switchPro = std::make_unique<SwitchProPad>(layout);
+            controls = std::max(controls, SwitchProPad::Controls(layout).size());
+            if (SwitchProPad::IsJoyCon(layout))
+                device->joyCon = layout == SwitchLayout::JoyConLeft ? 1 : 2;
+            // A half of the charging grip: its side from the device info, then as a Joy-Con of that side
+            SwitchProtocol::TypeSink onType;
+            if (grip)
+            {
+                device->gripPending = true;
+                std::shared_ptr<std::atomic<int>> type = device->gripType;
+                onType = [type](uint8_t value) { type->store(value); };
+            }
             // The calibration comes with a subcommand reply, on the io thread (PadPump::Input): the decoder is its
             SwitchProPad* decoder = device->switchPro.get();
-            device->pump = MakePump(ref, std::make_unique<SwitchProtocol>(
-                                             bluetooth, [decoder](const SwitchStickCalibration& calibration) {
-                                                 decoder->SetCalibration(calibration);
-                                             }));
+            device->pump = MakePump(
+                ref, std::make_unique<SwitchProtocol>(
+                         bluetooth,
+                         [decoder](const SwitchStickCalibration& calibration) { decoder->SetCalibration(calibration); },
+                         SwitchProtocol::kStartDelayMs, std::move(onType)));
             device->nativeActuators = kRumbleLow | kRumbleHigh;
         }
 
@@ -999,7 +1044,8 @@ private:
         const std::string location = std::to_string(IntProperty(ref, CFSTR(kIOHIDLocationIDKey)));
         // Two interfaces of one known pad are one device (EndpointMerge). A generic device never merges: a two-player
         // encoder shows two pads on one USB port. The Dial has one endpoint
-        const bool mergeable = match.family != "generic" && match.player && !device->dial;
+        // The grip's halves share its serial: never one device
+        const bool mergeable = match.family != "generic" && match.player && !device->dial && !grip;
         const std::string physical = !mergeable ? std::string()
                                                 : identity.bus + ":" + Hex4(vendor) + ":" + Hex4(product) + ":" +
                                                       (serial.empty() ? "@" + location : serial);
@@ -1052,6 +1098,8 @@ private:
             const bool joyCon = device->joyCon != 0;
             device->single = info;
             device->shown = joyCon && newDevice;
+            if (device->gripPending)
+                newDevice = false;  // shown once its side is known (ResolveGrip)
             _devices[ref] = std::move(device);
             UpdateInputsLocked(info.id);
             SyncHeldLocked(switches);
@@ -1095,6 +1143,8 @@ private:
             if (!removed.deviceGone)
                 UpdateInputsLocked(removed.device);  // another endpoint of the pad gives its input now
             SyncHeldLocked(switches);
+            if (device->gripPending)
+                removed.deviceGone = false;  // never reported
             if (device->joyCon != 0 && removed.deviceGone)
             {
                 const JoyConPairing::Change change = _joyCons.Remove(device->id);
@@ -1149,6 +1199,12 @@ private:
         // The protocol sees every report first (subcommand replies, acknowledgements)
         if (device.pump)
             device.pump->Input(report, size);
+        if (device.gripPending)
+        {
+            ResolveGrip(device);
+            if (device.gripPending)
+                return;  // which half it is decides what its buttons are
+        }
         if (device.sony || device.switchPro)
         {
             const bool full = device.sony ? device.sony->Decode(report, size, sink)
