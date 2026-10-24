@@ -8,8 +8,9 @@
 ///
 /// Besides the ports: the bits of a half-row the code tests after the read (row bits: the code after the IN is
 /// read, not run: the next `AND n`, `BIT b,r` or a right shift into a carry test within 8 instructions, once per
-/// code address), reads of the AY's R14 (the chip counts them: the Timex sticks, the 128 keypad, the AY mouse and
-/// the Magnum gun sit on port A) and of the Next's NR #B2 (the MD pads' X Y Z MODE: the port decoder counts them).
+/// code address), reads of the AY's R14 (the Timex sticks, the 128 keypad, the AY mouse and the Magnum gun sit on
+/// port A) and of the Next's NR #B2 (the MD pads' X Y Z MODE). The register reads are asked of a probe the owner
+/// sets while the watch runs (ControllerManager), on the same IN-hook path: the chips themselves pay nothing.
 
 #include <array>
 #include <cstdint>
@@ -79,6 +80,10 @@ struct PortReadEvidence
 using PortReadCodeReader = uint8_t (*)(const void* context, uint16_t address);
 uint8_t TestedBitsAfterIn(PortReadCodeReader read, const void* context, uint16_t next);
 
+/// Which register read an IN of @p port was (the AY's data port with R14 selected, the Next's #253B with NR #B2
+/// selected): true with its class in @p cls, false for any other read. Asked after the IN, on the machine's thread
+using PortReadRegisterProbe = bool (*)(const void* context, uint16_t port, PortReadClass& cls);
+
 class PortReadWatch
 {
 public:
@@ -113,12 +118,25 @@ public:
             Count(PortReadClass::Kempston2);
         else if (low == 0x7F)
             Count(PortReadClass::Fuller);
+        else if (_probe != nullptr)
+        {
+            PortReadClass cls = PortReadClass::Count;
+            if (_probe(_probeContext, port, cls) && cls < PortReadClass::Count)
+                Count(cls);
+        }
     }
 
-    /// The AY chip, on a bus read of R14; the Next's port decoder, on a read of NR #B2
+    /// A register read of class @p cls (AyR14, NextB2), as the probe reports it
     void OnRegisterRead(PortReadClass cls)
     {
         Count(cls);
+    }
+    /// What answers the register reads (PortReadRegisterProbe); nullptr (the default) counts none. Set on the
+    /// machine's thread
+    void SetRegisterProbe(PortReadRegisterProbe probe, const void* context)
+    {
+        _probe = probe;
+        _probeContext = context;
     }
     /// Where the row bits read the guest's code (the machine's memory as the CPU sees it, no side effects);
     /// nullptr (the default) samples no row bits. Set on the machine's thread
@@ -152,6 +170,8 @@ private:
     std::array<uint16_t, kPortReadClasses> _frame{};  ///< the frame being counted (machine thread only)
     std::array<uint8_t, 8> _frameRowBits{};           ///< the frame's row bits (machine thread only)
     PortReadCodeReader _read = nullptr;
+    PortReadRegisterProbe _probe = nullptr;
+    const void* _probeContext = nullptr;
     const void* _readContext = nullptr;
     std::array<uint32_t, 8> _sampledAt{kNotSampled, kNotSampled, kNotSampled, kNotSampled,
                                        kNotSampled, kNotSampled, kNotSampled, kNotSampled};  ///< per row: the last scan

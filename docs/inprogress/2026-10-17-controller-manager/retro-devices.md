@@ -266,9 +266,12 @@ Built (C6):
   op that replaces A (`CP` keeps it). The bits are cached per half-row by the code address, so a polling loop costs
   one scan; `PortReadEvidence::RowBits(row)` holds the window's union, `auto` shows them as `evidence.row_bits`
   (`{"row.ef": [0, 1, 2, 3, 4]}`).
-- **`ay.r14`** is counted where the AY chip answers a register read on the bus (`SoundChip_AY8910::readRegisterOnBus`
-  with port A selected), **`nr.b2`** where the Next answers `#253B` with register #B2 selected (`PortDecoder_Next`):
-  both through the CPU's `portReadWatch` pointer, one pointer test while the watch is off.
+- **`ay.r14`** (an IN of the AY's data port, `#FFFD` as the 128K family decodes it, with R14 selected) and
+  **`nr.b2`** (an IN of the Next's `#253B` with register #B2 selected) are counted by the watch itself, on the same
+  IN-hook path as the ports: `PortReadWatch::OnRead` asks a register probe `ControllerManager` sets while the watch
+  runs (`ITurboSoundDevice::getBusReadRegister`: the selected chip's register, -1 for the TSFM status byte or an FM
+  address; `NextBoard::SelectedRegister`). The chips and the port decoder carry no hook: nothing while the watch is
+  off (the unarmed R14 read benchmarks within noise of the code without the watch).
 - **`DecideFromPortReads`**: `nr.b2` every frame comes before the dedicated ports: an MD 6-button pad on
   `next.left`, on `next.right` when `#37` is read every frame too. `#EFFE` and `#F7FE` with bits 0-3 of `#F7FE` tested
   (keys 1-4: Sinclair 2's) is Sinclair 1 (two players), with only bit 4 (key 5) it stays Cursor; the reasons name the

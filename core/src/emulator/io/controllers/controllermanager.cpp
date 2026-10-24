@@ -20,9 +20,11 @@
 #include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
+#include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "ihapticfeed.h"
@@ -664,6 +666,31 @@ PortReadEvidence ControllerManager::PortReads() const
     return evidence;
 }
 
+namespace
+{
+/// The watch's register probe (PortReadRegisterProbe): an IN of the AY's data port (#FFFD as the 128K family decodes
+/// it) with R14 selected, an IN of the Next's #253B with NR #B2 selected. Runs only while the watch does, after the IN
+bool ProbeRegisterRead(const void* context, uint16_t port, PortReadClass& cls)
+{
+    const EmulatorContext* ctx = static_cast<const EmulatorContext*>(context);
+    if (port == 0x253B)
+    {
+        auto* next = dynamic_cast<PortDecoder_Next*>(ctx->pPortDecoder);
+        if (next == nullptr || next->Board().SelectedRegister() != 0xB2)
+            return false;
+        cls = PortReadClass::NextB2;
+        return true;
+    }
+    if ((port & 0xC002) != 0xC000 || ctx->pSoundManager == nullptr)
+        return false;
+    const ITurboSoundDevice* ay = ctx->pSoundManager->getTurboSound();
+    if (ay == nullptr || ay->getBusReadRegister() != 14)
+        return false;
+    cls = PortReadClass::AyR14;
+    return true;
+}
+}  // namespace
+
 void ControllerManager::ApplyWatchRequest()
 {
     Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
@@ -678,6 +705,7 @@ void ControllerManager::ApplyWatchRequest()
                     return static_cast<Memory*>(const_cast<void*>(memory))->DirectReadFromZ80Memory(address);
                 },
                 _context->pMemory);
+        _watch.SetRegisterProbe(&ProbeRegisterRead, _context);
         _watching.store(true, std::memory_order_release);
         if (cpu != nullptr)
             cpu->SetPortReadWatch(&_watch);
@@ -698,6 +726,7 @@ void ControllerManager::ApplyWatchRequest()
         if (cpu != nullptr)
             cpu->SetPortReadWatch(nullptr);
         _watch.SetCodeReader(nullptr, nullptr);
+        _watch.SetRegisterProbe(nullptr, nullptr);
     }
 }
 

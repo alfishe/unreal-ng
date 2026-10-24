@@ -12,7 +12,6 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
-#include "emulator/io/controllers/portreadwatch.h"
 #include "emulator/io/z80n/nexttiming.h"
 #include <filesystem>
 
@@ -553,10 +552,6 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
             result = SpiRead();
         else
             result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelectedByProgram();
-        // NR #B2 (the MD pads' X Y Z MODE) read by the program: port-read evidence while the watch runs
-        if (port == kPortRegData && _board->SelectedRegister() == 0xB2) [[unlikely]]
-            if (PortReadWatch* watch = _context->pPortReadWatch; watch != nullptr)
-                watch->OnRegisterRead(PortReadClass::NextB2);
         _lastPortDecoded = true;
         OnPortInComplete(port, result, pc, disp);
         return result;
