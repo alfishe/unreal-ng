@@ -383,14 +383,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
     // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
     // A seek's marks come back to the device that moved: it feels them (control surfaces architecture.md §9)
-    _guiActions = std::make_unique<GuiActions>(
-        m_binding, GuiActionHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
-                                  [this] { handleScreenshotRequested(); },
-                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); },
-                                  [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
-                                  [this](const std::string& device, const std::vector<std::string>& marks) {
-                                      _hostControllers->PlayMarks(device, marks);
-                                  }});
+    GuiActionHooks guiHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
+                            [this] { handleScreenshotRequested(); },
+                            [this](const QString& text) { statusBar()->showMessage(text, 3000); },
+                            [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
+                            [this](const std::string& device, const std::vector<std::string>& marks) {
+                                _hostControllers->PlayMarks(device, marks);
+                            }};
+    const auto showControllers = [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    };
+    guiHooks.showControllers = showControllers;
+    guiHooks.learn = [this, showControllers](const std::string& device) {
+        showControllers();
+        return _controllersDialog->openLearnWizard(device);
+    };
+    _guiActions = std::make_unique<GuiActions>(m_binding, std::move(guiHooks));
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
             [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
@@ -412,6 +422,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         _controllersDialog->show();
         _controllersDialog->raise();
         _controllersDialog->activateWindow();
+    });
+    // ui-ux.md §3.5: an unknown pad's first connection offers the learn wizard
+    connect(_hostControllers, &HostControllers::unknownDeviceConnected, this,
+            [this](const QString& name, const QString& device) {
+                _controllerToast->showText(tr("%1 connected: the emulator does not know this pad").arg(name),
+                                           QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Learn,
+                                           device);
+            });
+    connect(_controllerToast, &ControllerToast::learnRequested, this, [this](const QString& device) {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+        const QString why = _controllersDialog->openLearnWizard(device.toStdString());
+        if (!why.isEmpty())
+            statusBar()->showMessage(why, 5000);
     });
     // ui-ux.md §8: a pad's first connection on this computer, and a pad gone while the machine runs
     connect(_hostControllers, &HostControllers::deviceConnected, this,

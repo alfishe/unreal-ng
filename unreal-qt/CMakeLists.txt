@@ -653,6 +653,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/hotspoteditor.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.h"
         # Tools > Stream Deck...: the daemon's supervision, settings, the pairing approved here (Stream Deck daemon.md §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/streamdeckdialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.cpp"

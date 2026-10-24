@@ -9,7 +9,11 @@
 /// it there, a plugged device's chip dragged off its card unplugs it, both with undo (Ctrl+Z). Test shows the
 /// device's test panel (DeviceTestPanel); Picture… opens the hotspot editor for a photo of the user's own pad;
 /// Import mapping… takes a gamecontrollerdb line or a RetroArch autoconfig for a pad the database does not know.
+/// Under the title the selected device's role (player, debugger remote, disabled), the instances it drives (follow
+/// focus, all, one), Identify (a rumble and a blink; its row pulses) and Learn… (LearnWizard, ui-ux.md §3.5), each
+/// through its host verb, as every plane runs it.
 
+#include <QPointer>
 #include <QWidget>
 
 #include <functional>
@@ -27,6 +31,7 @@ class ControllerPicture;
 class DeviceTestPanel;
 class PatchCordOverlay;
 class HostControllers;
+class LearnWizard;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -70,6 +75,16 @@ public:
     /// Import mapping…'s work for @p text (a gamecontrollerdb.txt, many lines: the one with the selected device's
     /// VID:PID, else the first; or a RetroArch .cfg); the answer for the status line
     QString importMapping(const QString& text);
+    /// The learn wizard for @p device (Learn…, the learn toast, the ctl.learn action): selects the device, opens the
+    /// wizard and starts its session; an empty answer when it runs, else the reason (also in the status line)
+    QString openLearnWizard(const std::string& device);
+    /// The wizard open now (nullptr when none); for the tests
+    LearnWizard* learnWizard() const
+    {
+        return _wizard;
+    }
+    /// Identify on the selected device: the identify verb's answer (its row pulses while the pad rumbles)
+    QString identifySelected();
 
 signals:
     void visibilityChanged(bool visible);
@@ -95,6 +110,8 @@ private:
     std::string selectedDevice() const;
     std::string selectedFamily() const;
     std::string selectedLayout() const;
+    /// The role and pin combos from the router (another plane may have changed them); not while one is open
+    void refreshRolePin();
 
     HostControllers* _host = nullptr;
     QLabel* _profileLabel = nullptr;
@@ -132,6 +149,11 @@ private:
     DeviceTestPanel* _test = nullptr;
     QPushButton* _testButton = nullptr;
     QPushButton* _pictureButton = nullptr;
+    QComboBox* _role = nullptr;  ///< player, debugger-remote, disabled (the role verb)
+    QComboBox* _pin = nullptr;   ///< follow-focus, all, pinned:<instance> (the pin verb)
+    QPushButton* _identify = nullptr;
+    QPushButton* _learnButton = nullptr;
+    QPointer<LearnWizard> _wizard;
     QComboBox* _view = nullptr;  ///< Front | Back | Top: shown when the set has more than one map
     QCheckBox* _pauseOnDisconnect = nullptr;
     QLabel* _machineLabel = nullptr;
@@ -141,5 +163,6 @@ private:
     SurfacesTable* _surfaces = nullptr;
     uint64_t _machineRevision = ~0ull;
     unsigned _ticks = 0;
+    unsigned _rolePinTicks = 0;
     bool _rebuildingConnectors = false;
 };

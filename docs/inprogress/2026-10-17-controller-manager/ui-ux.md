@@ -325,8 +325,17 @@ Built, the core and the automation planes (C10): `LearnSession` (`core/controlle
 `learn` verb (`start`, `status`, `sample`, `skip`, `back`, `finish`, `cancel`) on CLI, REST, WebSocket and Python. While
 it runs the device's controls answer the prompts and drive nothing else; an answer waits for its control to come back
 before the next prompt; a raw control answers once. `finish` saves the map as a user family in `devices.user.json`
-with its `gamecontrollerdb` line (the Export text) and the device takes it at once. Not built: the Qt dialog and the
-toast (the UI stream).
+with its `gamecontrollerdb` line (the Export text) and the device takes it at once.
+
+**As built (2026-10-24), the Qt side.** `LearnWizard` (`unreal-qt/src/controllers/learnwizard.*`) is a view over the
+`learn` verb: **Learn…** in the device row of the dialog (and the `ctl.learn` GUI action, `params.device`) starts the
+session, or follows one a script started; a 30 Hz `status` read shows the prompt ("Control 3 of 14", "Press Left"),
+"Release it first" while the last answer is still held, and the map learned so far. **Back**, **Skip**, **Finish**
+(the name, **Save as my device**: off maps the pad for this connection only) and **Cancel** are the verb's steps;
+Finish shows the `gamecontrollerdb.txt` line to copy. A session another plane ends closes the wizard ("ended
+elsewhere"); a wizard closed while learning cancels it. The learn toast: a player pad of family `generic` with no
+map, connected for the first time, gets "<name> connected: the emulator does not know this pad" with **Learn…**
+(`ControllerToast::Kind::Learn`) instead of the first-connect toast.
 
 ### 3.6 Hotspot editor (user photos)
 
@@ -368,7 +377,10 @@ apart.
 Built in the core (C10): the `identify` verb (`HostInputService::Identify`) plays the 300 ms rumble where the device
 has drivable motors and blinks its light white where the emulator can set one, then puts the light back to the
 colour it had (a timer, kept across repeated identifies); `rumble`, `light` and `ms` say what it did, and a device with
-neither answers `unavailable` with both reasons. The pulse of its row and cord is the dialog's (the UI stream).
+neither answers `unavailable` with both reasons. In the dialog, **Identify** in the device row runs the verb and its
+row pulses for 600 ms; beside it the **Role** (Player, Debugger remote, Disabled) and **Drives** (Follow focus, All
+instances, one instance: this window's named so) combos run `role` and `pin` and follow a change from any plane
+within a third of a second.
 
 It is the first effect of **Test haptics** in the selected device's header (owner 2026-10-18/19): an effect list and
 the Test haptics button that plays the chosen one, both always there. The list holds Identify and one test effect per

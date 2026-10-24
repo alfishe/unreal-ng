@@ -138,13 +138,13 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 | plug / unplug / targets | yes | yes | yes | yes | yes | drag cords |
 | auto explain / apply | yes | yes | yes | yes | yes | profile bar, toast |
 | retro input press / release / set / tap / status | yes | `joystick_input` (extended) | `joystick` (extended) | yes | yes | test panel |
-| host devices, roles, pins, identify | yes (built) | `controllers` (built) | yes (built) | `controllers_host` | yes (built) | left pane |
+| host devices, roles, pins, identify | yes (built) | `controllers` (built) | yes (built) | `controllers_host` | yes (built) | left pane; the device row: Role, Drives, Identify |
 | bindings / bind / unbind | yes | yes | yes | yes | yes | picture callouts |
 | profiles | yes | yes | yes | yes | yes | profile bar |
 | probe report, endpoints, raw reports | `probe`, `reports` | `controllers` | `controllers probe [device]`, `reports <device>` | no (P3) | `controllers_probe`, `controllers_reports` | test panel |
 | a pad's player connector | `player` | `controllers` | `controllers player <device> [connector\|auto\|none]` | no (P3) | `controllers_player` | drag and drop, Machine > Controllers |
 | device database lookup / user entries | `database`, `database_save`, `database_delete`, `database_import` | `controllers` | `controllers database [vid:pid\|guid\|device\|family]`, `database_save <file>`, `database_delete <id>`, `database_import <file>` | no (P3) | `controllers_database`, `controllers_database_save`, `controllers_database_delete`, `controllers_database_import` | hotspot editor (Picture…), Import mapping… |
-| learn wizard | `learn` | no (needs a human) | `controllers learn <device> [step]` | no (P3) | `controllers_learn` | wizard |
+| learn wizard | `learn` | no (needs a human) | `controllers learn <device> [step]` | no (P3) | `controllers_learn` | LearnWizard (Learn…, the learn toast, the `ctl.learn` action) |
 | haptics mode / strength / play / stop | yes | `controllers` (`haptics_state`, `haptics_play`, `haptics_stop`) | yes | yes | yes | device card, Haptics tab |
 | debug actions | `POST /controllers/actions/{id}` | `control_execution`, `time_travel` (existing) | existing | existing | existing | debug layer |
 

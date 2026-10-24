@@ -1,5 +1,6 @@
 #include "controllersdialog.h"
 
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
@@ -29,12 +30,14 @@
 #include "controllers/controllerpicture.h"
 #include "controllers/devicetestpanel.h"
 #include "controllers/hotspoteditor.h"
+#include "controllers/learnwizard.h"
 #include "controllers/patchcordoverlay.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/profilesdialog.h"
 #include "controllers/surfacestable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 
 #ifdef ENABLE_CONTROLLERS
 #include "devicedatabase.h"
@@ -214,6 +217,29 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
             _hapticsTests[index]();
     });
     centreLayout->addLayout(header);
+    // What the device is for and which instance it drives; Identify and Learn… (ui-ux.md §3.5, §3.7)
+    auto* deviceRow = new QHBoxLayout();
+    deviceRow->addWidget(new QLabel(tr("Role:"), centre));
+    _role = new QComboBox(centre);
+    _role->addItem(tr("Player"), QStringLiteral("player"));
+    _role->addItem(tr("Debugger remote"), QStringLiteral("debugger-remote"));
+    _role->addItem(tr("Disabled"), QStringLiteral("disabled"));
+    _role->setToolTip(tr("Player: plays the machine through a connector. Debugger remote: only its debug bindings "
+                         "(step, breakpoints), never a connector. Disabled: it reaches nothing"));
+    deviceRow->addWidget(_role);
+    deviceRow->addWidget(new QLabel(tr("Drives:"), centre));
+    _pin = new QComboBox(centre);
+    _pin->setToolTip(tr("Which emulator instance the device drives: the one whose window has the focus, every "
+                        "instance (a demo on the video wall), or one"));
+    deviceRow->addWidget(_pin);
+    _identify = new QPushButton(tr("Identify"), centre);
+    _identify->setToolTip(tr("Rumble the device for 300 ms and blink its light, to tell two pads apart"));
+    deviceRow->addWidget(_identify);
+    _learnButton = new QPushButton(tr("Learn…"), centre);
+    _learnButton->setToolTip(tr("Teach the emulator a pad it does not know: press each control when it is asked for"));
+    deviceRow->addWidget(_learnButton);
+    deviceRow->addStretch(1);
+    centreLayout->addLayout(deviceRow);
     _picture = new ControllerPicture(centre);
     centreLayout->addWidget(_picture, 2);
     _test = new DeviceTestPanel(centre);
@@ -323,6 +349,28 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
 #endif
     });
     connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
+#ifdef ENABLE_CONTROLLERS
+    connect(_role, &QComboBox::activated, this, [this] {
+        const std::string device = selectedDevice();
+        if (device.empty())
+            return;
+        const HostReply reply =
+            _host->Host({"role", {{"device", device}, {"role", _role->currentData().toString().toStdString()}}});
+        setStatus(QString::fromStdString(reply.message), !reply.Ok());
+        refreshRolePin();
+    });
+    connect(_pin, &QComboBox::activated, this, [this] {
+        const std::string device = selectedDevice();
+        if (device.empty())
+            return;
+        const HostReply reply =
+            _host->Host({"pin", {{"device", device}, {"pin", _pin->currentData().toString().toStdString()}}});
+        setStatus(QString::fromStdString(reply.message), !reply.Ok());
+        refreshRolePin();
+    });
+    connect(_identify, &QPushButton::clicked, this, [this] { identifySelected(); });
+    connect(_learnButton, &QPushButton::clicked, this, [this] { openLearnWizard(selectedDevice()); });
+#endif
 #ifdef ENABLE_CONTROLLERS
     // ui-ux.md §2.3: Plug / Unplug on a device's context menu, P and U on the list, for those who do not drag
     _devices->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -537,6 +585,9 @@ void ControllersDialog::rebuildControls()
     _table->setDevice({device, family, device.empty() ? std::string{} : match.glyphs, name});
     _picture->setCaptions(_table->captions());
     _pictureButton->setEnabled(!device.empty() && family != "keyboard" && family != "mouse");
+    _learnButton->setEnabled(!device.empty() && family != "keyboard" && family != "mouse");
+    _identify->setEnabled(!device.empty());
+    refreshRolePin();
     QString detail;
     for (const HostDeviceInfo& info : _host->Service().Router().Devices())
         if (info.id == device)
@@ -748,6 +799,150 @@ void ControllersDialog::setStatus(const QString& text, bool error)
     _status->setText(text);
 }
 
+void ControllersDialog::refreshRolePin()
+{
+#ifdef ENABLE_CONTROLLERS
+    const std::string device = selectedDevice();
+    _role->setEnabled(!device.empty());
+    _pin->setEnabled(!device.empty());
+    if (device.empty() || _role->view()->isVisible() || _pin->view()->isVisible())
+        return;
+    const InputRouter& router = _host->Service().Router();
+    const int role = _role->findData(QString::fromLatin1(DeviceRoleName(router.Role(device))));
+    if (role >= 0 && role != _role->currentIndex())
+        _role->setCurrentIndex(role);
+    // Follow focus, all, then one entry per instance (this window's named so); a pin to an instance gone stays listed
+    std::string pinned;
+    const InstanceMode mode = router.GetInstanceMode(device, &pinned);
+    const QString current = mode == InstanceMode::All      ? QStringLiteral("all")
+                            : mode == InstanceMode::Pinned ? QString::fromStdString("pinned:" + pinned)
+                                                           : QStringLiteral("follow-focus");
+    std::vector<std::pair<QString, QString>> items = {{tr("Follow focus"), QStringLiteral("follow-focus")},
+                                                      {tr("All instances"), QStringLiteral("all")}};
+    Emulator* bound = _host->BoundEmulator();
+    std::vector<std::string> ids = EmulatorManager::GetInstance()->GetEmulatorIds();
+    if (mode == InstanceMode::Pinned && std::find(ids.begin(), ids.end(), pinned) == ids.end())
+        ids.push_back(pinned);
+    for (const std::string& id : ids)
+    {
+        const QString shortId = QString::fromStdString(id.substr(0, 8));
+        items.emplace_back(bound != nullptr && bound->GetId() == id ? tr("This instance (%1)").arg(shortId)
+                                                                     : tr("Instance %1").arg(shortId),
+                           QString::fromStdString("pinned:" + id));
+    }
+    bool same = static_cast<int>(items.size()) == _pin->count();
+    for (int i = 0; same && i < _pin->count(); i++)
+        same = _pin->itemData(i).toString() == items[static_cast<size_t>(i)].second &&
+               _pin->itemText(i) == items[static_cast<size_t>(i)].first;
+    if (!same)
+    {
+        _pin->clear();
+        for (const auto& [label, data] : items)
+            _pin->addItem(label, data);
+    }
+    const int pin = _pin->findData(current);
+    if (pin >= 0 && pin != _pin->currentIndex())
+        _pin->setCurrentIndex(pin);
+#endif
+}
+
+QString ControllersDialog::identifySelected()
+{
+#ifdef ENABLE_CONTROLLERS
+    const std::string device = selectedDevice();
+    if (device.empty())
+        return tr("Select a device");
+    const HostReply reply = _host->Host({"identify", {{"device", device}}});
+    const QString message = QString::fromStdString(reply.message);
+    setStatus(message, !reply.Ok());
+    if (reply.Ok())
+    {
+        // The row pulses as long as the pad rumbles, so two identical pads are told apart on screen too
+        if (QListWidgetItem* item = _devices->currentItem())
+        {
+            item->setBackground(QColor(255, 200, 60, 140));
+            QPointer<QListWidget> list(_devices);
+            const QString id = QString::fromStdString(device);
+            QTimer::singleShot(600, this, [list, id] {
+                if (list == nullptr)
+                    return;
+                for (int row = 0; row < list->count(); row++)
+                    if (list->item(row)->data(Qt::UserRole).toString() == id)
+                        list->item(row)->setBackground(QBrush());
+            });
+        }
+    }
+    return message;
+#else
+    return {};
+#endif
+}
+
+QString ControllersDialog::openLearnWizard(const std::string& device)
+{
+#ifdef ENABLE_CONTROLLERS
+    // The device's row, so the picture and the table show what is learned
+    QString name;
+    for (int row = 0; row < _devices->count(); row++)
+        if (_devices->item(row)->data(Qt::UserRole).toString().toStdString() == device)
+        {
+            _devices->setCurrentRow(row);
+            name = _devices->item(row)->text().section('\n', 0, 0);
+        }
+    if (name.isEmpty())
+    {
+        const QString why = tr("No connected host device '%1'").arg(QString::fromStdString(device));
+        setStatus(why, true);
+        return why;
+    }
+    if (_wizard != nullptr)
+    {
+        if (_wizard->device() == device && _wizard->learning())
+        {
+            _wizard->raise();
+            _wizard->activateWindow();
+            return {};
+        }
+        delete _wizard.data();  // its session ends with it
+    }
+    // The host may go first at exit: the wizard's last cancel then finds nobody to ask
+    const QPointer<HostControllers> host(_host);
+    auto* wizard = new LearnWizard(
+        device, name,
+        [host](const HostRequest& request) {
+            HostReply reply;
+            if (host == nullptr)
+            {
+                reply.error = "unavailable";
+                reply.message = "the controllers are gone";
+                return reply;
+            }
+            return host->Host(request);
+        },
+        this);
+    wizard->setAttribute(Qt::WA_DeleteOnClose);
+    _wizard = wizard;
+    connect(wizard, &LearnWizard::learned, this, [this](const QString& message) {
+        setStatus(message, false);
+        _pictureSet.clear();  // a saved family may bring a layout of its own
+        rebuildControls();
+    });
+    if (!wizard->start())
+    {
+        const QString why = wizard->statusText();
+        setStatus(why, true);
+        delete wizard;
+        return why;
+    }
+    wizard->show();
+    wizard->raise();
+    return {};
+#else
+    (void)device;
+    return {};
+#endif
+}
+
 QString ControllersDialog::importMapping(const QString& text)
 {
 #ifdef ENABLE_CONTROLLERS
@@ -808,6 +1003,8 @@ void ControllersDialog::tick()
                                           controllers::BatteryText(_host->Service().Battery(device)))));
     if (_battery->text() != battery)
         _battery->setText(battery);
+    if (++_rolePinTicks % 10 == 0)
+        refreshRolePin();  // a script's role / pin shows within a third of a second
     if (!device.empty())
     {
         const std::map<std::string, float> live = _host->Service().Live(device);

@@ -585,7 +585,11 @@ void HostControllers::poll()
             if (index >= 0)
                 connector = connectorview::DisplayName(context->pControllerManager->At(static_cast<size_t>(index)));
         }
-        emit deviceConnected(name, connector, first);
+        // A pad the database does not know and nobody taught yet: the toast offers the learn wizard
+        const bool unknown = device.family == "generic" && _service->ControlMap(device.id).empty();
+        if (first && unknown)
+            emit unknownDeviceConnected(name, QString::fromStdString(device.id));
+        emit deviceConnected(name, connector, first && !unknown);
         emit notice(connector.isEmpty() ? tr("%1 connected").arg(name) : tr("%1 connected → %2").arg(name, connector));
     }
     if (!arrived.empty())

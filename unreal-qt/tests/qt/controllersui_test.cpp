@@ -23,6 +23,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <memory>
 
 #include "_helpers/testpathhelper.h"
 #include "controllers/connectorcard.h"
@@ -31,7 +33,12 @@
 #include "controllers/controllertoast.h"
 #include "controllers/devicetestpanel.h"
 #include "controllers/hotspoteditor.h"
+#include "controllers/learnwizard.h"
 #include "controllers/patchcordoverlay.h"
+#include "devicedatabase.h"
+#include "fake/fakebackend.h"
+#include "hostinputcontrol.h"
+#include "hostinputservice.h"
 
 using namespace controllers;
 
@@ -52,6 +59,56 @@ Connector Plugged(const std::string& id, ConnectorKind kind, RetroDeviceKind dev
     connector.options.sinclairPort = sinclairPort;
     return connector;
 }
+
+/// The Qt client's HostControllers for the learn verb alone: the devices, the service, a user directory
+class LearnOwner : public IHostInputOwner
+{
+public:
+    explicit LearnOwner(const std::string& userDir) : _userDir(userDir)
+    {
+    }
+    ProfileStore& Profiles() override
+    {
+        return _store;
+    }
+    ProfileContext Context() const override
+    {
+        return _context;
+    }
+    const ResolvedProfiles& Resolved() const override
+    {
+        return _resolved;
+    }
+    std::string UserProfileDir() const override
+    {
+        return _userDir;
+    }
+    std::string ManualProfile() const override
+    {
+        return {};
+    }
+    void SetManualProfile(const std::string&) override
+    {
+    }
+    void Reapply() override
+    {
+    }
+    HostInputService* Input() override
+    {
+        return input;
+    }
+    ProfileContext& context()
+    {
+        return _context;
+    }
+    HostInputService* input = nullptr;
+
+private:
+    ProfileStore _store;
+    ProfileContext _context;
+    ResolvedProfiles _resolved;
+    std::string _userDir;
+};
 
 QString ShippedControllers()
 {
@@ -254,6 +311,22 @@ TEST(ControllersUi_Test, ToastKindsShowTheirButtons)
     EXPECT_TRUE(visible("Keep"));
     EXPECT_TRUE(visible("Change…"));
     EXPECT_FALSE(visible("Open controllers"));
+    EXPECT_FALSE(visible("Learn…"));
+
+    // An unknown pad's first connection: the learn toast offers the wizard for that device
+    toast.showText("USB Gamepad connected: the emulator does not know this pad", QRect(0, 0, 800, 600),
+                   ControllerToast::Kind::Learn, "usb:1234:5678:0100:s1");
+    EXPECT_TRUE(visible("Learn…"));
+    EXPECT_FALSE(visible("Keep"));
+    EXPECT_FALSE(visible("Open controllers"));
+    Grab(toast, "toast-learn.png");
+    QString learnFor;
+    QObject::connect(&toast, &ControllerToast::learnRequested, [&learnFor](const QString& device) { learnFor = device; });
+    for (QPushButton* button : toast.findChildren<QPushButton*>())
+        if (button->text() == "Learn…")
+            button->click();
+    EXPECT_EQ(learnFor.toStdString(), "usb:1234:5678:0100:s1");
+    EXPECT_FALSE(toast.isVisible());
 }
 
 /// The hotspot editor: a photo, controls placed by clicks (the callout side from the x), press-to-select, Save writes
@@ -629,4 +702,77 @@ TEST(ControllersUi_Test, TestPanelThresholdsEndpointsAndRawReports)
     panel.show();
     QApplication::processEvents();
     Grab(panel, "test-panel-endpoints.png");
+}
+
+/// The learn wizard follows the `learn` session: the pad's own press answers the prompt (the map grows, "release it
+/// first" until it comes back), Skip, Finish saves and shows the gamecontrollerdb line; a session another plane
+/// cancels closes it; a wizard closed while learning cancels the session
+TEST(ControllersUi_Test, LearnWizardFollowsTheSessionTheDeviceAnswers)
+{
+    const std::filesystem::path root = TestPathHelper::GetUniqueTestScratchPath("learn-wizard");
+    std::string error;
+    ASSERT_TRUE(DeviceDatabase::SetUser("", error)) << "no user layer from an earlier test";
+    LearnOwner owner((root / "profiles").string());
+    HostInputControl control(owner);
+    HostInputService service;
+    auto owned = std::make_unique<FakeBackend>();
+    FakeBackend* fake = owned.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(owned), reason)) << reason;
+    const HostDeviceInfo pad{"usb:1234:5678:0100:s1", "USB Gamepad", "generic", "generic", "fake"};
+    ASSERT_TRUE(fake->Connect(pad));
+    owner.context().devices = {pad};
+    owner.input = &service;
+    const auto call = [&control](const HostRequest& request) { return control.Execute(request); };
+
+    {
+        LearnWizard wizard(pad.id, "USB Gamepad", call);
+        QString learned;
+        QObject::connect(&wizard, &LearnWizard::learned, [&learned](const QString& message) { learned = message; });
+        ASSERT_TRUE(wizard.start()) << wizard.statusText().toStdString();
+        EXPECT_TRUE(wizard.learning());
+        EXPECT_EQ(wizard.promptText().toStdString(), "Press Up");
+        EXPECT_TRUE(wizard.progressText().startsWith("Control 1 of ")) << wizard.progressText().toStdString();
+
+        ASSERT_TRUE(fake->Set(pad.id, "lstick.y", -1.0f));  // the pad itself
+        wizard.refresh();
+        EXPECT_EQ(wizard.mapLines(), QStringList{"dpad.up = lstick.y-"});
+        ASSERT_TRUE(fake->Set(pad.id, "lstick.y", 0.0f));
+        wizard.refresh();
+        EXPECT_EQ(wizard.promptText().toStdString(), "Press Down");
+        EXPECT_TRUE(wizard.progressText().startsWith("Control 2 of "));
+        wizard.skip();
+        EXPECT_TRUE(wizard.progressText().startsWith("Control 3 of ")) << "Down skipped";
+        wizard.back();
+        EXPECT_TRUE(wizard.progressText().startsWith("Control 2 of "));
+        wizard.resize(460, 420);
+        wizard.show();
+        QApplication::processEvents();
+        Grab(wizard, "learn-wizard.png");
+
+        ASSERT_TRUE(wizard.finish()) << wizard.statusText().toStdString();
+        EXPECT_FALSE(wizard.learning());
+        EXPECT_TRUE(wizard.exportLine().startsWith("03000000341200007856000000010000,USB Gamepad,"))
+            << wizard.exportLine().toStdString();
+        EXPECT_TRUE(learned.contains("saved as user-12345678")) << learned.toStdString();
+        EXPECT_EQ(service.ControlMap(pad.id).size(), 1u) << "the pad takes the map at once";
+    }
+
+    {
+        LearnWizard wizard(pad.id, "USB Gamepad", call);
+        ASSERT_TRUE(wizard.start());
+        EXPECT_TRUE(control.Execute({"learn", {{"device", pad.id}, {"step", "cancel"}}}).Ok()) << "a script cancels";
+        wizard.refresh();
+        EXPECT_FALSE(wizard.learning());
+        EXPECT_TRUE(wizard.statusText().contains("ended elsewhere")) << wizard.statusText().toStdString();
+
+        ASSERT_TRUE(wizard.start()) << "started again";
+        EXPECT_TRUE(control.Execute({"learn", {{"device", pad.id}, {"step", "sample"}, {"control", "button.4"}}}).Ok());
+        wizard.refresh();
+        EXPECT_EQ(wizard.mapLines(), QStringList{"dpad.up = button.4"}) << "a scripted press shows as the pad's would";
+    }
+    EXPECT_EQ(control.Execute({"learn", {{"device", pad.id}}}).error, "bad-request")
+        << "the wizard closed while learning cancelled the session";
+    DeviceDatabase::SetUser("", error);
+    service.Stop();
 }

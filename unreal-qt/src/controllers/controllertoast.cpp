@@ -30,9 +30,12 @@ ControllerToast::ControllerToast(QWidget* owner)
     _keep = new QPushButton(tr("Keep"), this);
     _change = new QPushButton(tr("Change…"), this);
     _open = new QPushButton(tr("Open controllers"), this);
+    _learn = new QPushButton(tr("Learn…"), this);
+    _learn->setToolTip(tr("Teach the emulator this pad's controls: press each one when it is asked for"));
     buttons->addWidget(_keep);
     buttons->addWidget(_change);
     buttons->addWidget(_open);
+    buttons->addWidget(_learn);
     root->addLayout(buttons);
 
     _hide.setSingleShot(true);
@@ -42,6 +45,10 @@ ControllerToast::ControllerToast(QWidget* owner)
     connect(_keep, &QPushButton::clicked, this, [this] {
         hide();
         emit keepRequested();
+    });
+    connect(_learn, &QPushButton::clicked, this, [this] {
+        hide();
+        emit learnRequested(_device);
     });
     for (QPushButton* button : {_change, _open})
         connect(button, &QPushButton::clicked, this, [this] {
@@ -55,9 +62,11 @@ QString ControllerToast::text() const
     return _text->text();
 }
 
-void ControllerToast::showText(const QString& text, const QRect& area, Kind kind)
+void ControllerToast::showText(const QString& text, const QRect& area, Kind kind, const QString& device)
 {
     _kind = kind;
+    _device = device;
+    _learn->setVisible(kind == Kind::Learn);
     _keep->setVisible(kind == Kind::AutoProfile);
     _change->setVisible(kind == Kind::AutoProfile);
     _open->setVisible(kind == Kind::Connected);

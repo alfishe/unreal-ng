@@ -170,6 +170,9 @@ signals:
     /// A player device arrived; @p first: never seen on this computer before (the toast with Open controllers),
     /// @p connector: the one it drives ("" none)
     void deviceConnected(const QString& name, const QString& connector, bool first);
+    /// A player device the database does not know (no family, no learned or imported map) connected for the first
+    /// time: the learn toast (ui-ux.md §3.5) instead of the first-connect one
+    void unknownDeviceConnected(const QString& name, const QString& device);
     /// A player device left while the bound machine ran; @p paused: the pause-on-disconnect option paused it
     void deviceDisconnected(const QString& name, bool paused);
 
