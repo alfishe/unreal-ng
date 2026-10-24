@@ -127,9 +127,9 @@ TEST(DeviceMapping_Test, ControlMapTranslatesRawControls)
             out[event.control] = event.value;
         return out;
     };
-    EXPECT_EQ(translate("button.2", 1), (std::map<std::string, float>{{"south", 1}}));
+    EXPECT_EQ(translate("button.2", 1), (std::map<std::string, float>{{"south", 1.0f}}));
     EXPECT_EQ(translate("axis.0", -0.75f),
-              (std::map<std::string, float>{{"dpad.left", 0.75f}, {"dpad.right", 0}, {"lstick.x", -0.75f}}))
+              (std::map<std::string, float>{{"dpad.left", 0.75f}, {"dpad.right", 0.0f}, {"lstick.x", -0.75f}}))
         << "each half 0..1, the whole axis as it is";
     EXPECT_TRUE(translate("button.7", 1).empty());
 
