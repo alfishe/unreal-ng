@@ -1,8 +1,6 @@
 #include "soundchip_ay8910.h"
 
 #include "common/stringhelper.h"
-#include "emulator/cpu/core.h"
-#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/controllers/portreadwatch.h"
 #include <cstring>
@@ -543,9 +541,9 @@ uint8_t SoundChip_AY8910::readRegisterOnBus(uint8_t regAddr) const
 
     // A program reading port A (the Timex sticks, the 128 keypad, an AY mouse): port-read evidence while the
     // controllers' watch runs (retro-devices.md §6)
-    if (regAddr == AY_PORTA && _context != nullptr && _context->pCore != nullptr)
-        if (const Z80* cpu = _context->pCore->GetZ80(); cpu != nullptr && cpu->portReadWatch != nullptr)
-            cpu->portReadWatch->OnRegisterRead(PortReadClass::AyR14);
+    if (regAddr == AY_PORTA && _context != nullptr) [[unlikely]]
+        if (PortReadWatch* watch = _context->pPortReadWatch; watch != nullptr) [[unlikely]]
+            watch->OnRegisterRead(PortReadClass::AyR14);
 
     // Board wiring (the 128K family only): a pin the board holds low reads low
     if (_ioPortInput) [[unlikely]]

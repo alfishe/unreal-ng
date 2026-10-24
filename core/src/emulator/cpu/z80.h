@@ -678,6 +678,7 @@ public:
     void SetPortReadWatch(PortReadWatch* watch)
     {
         portReadWatch = watch;
+        _context->pPortReadWatch = watch;  // the register reads the chips count (EmulatorContext::pPortReadWatch)
         UpdateInResultHooks();
     }
 

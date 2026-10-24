@@ -18,6 +18,7 @@
 using unreal::UUID;
 
 class Core;
+class PortReadWatch;
 class Emulator;
 class Joystick;
 namespace controllers { class ControllerManager; }
@@ -117,6 +118,10 @@ public:
 
 	// Computer system instance
 	Core* pCore = nullptr;
+
+	// The controllers' port-read watch while it runs (Z80::SetPortReadWatch), else null: the chips that answer a
+	// register read (the AY's R14, the Next's NR #B2) count it with one load and a test while it is off
+	PortReadWatch* pPortReadWatch = nullptr;
 
 	// Keyboard controller instance
 	Keyboard* pKeyboard = nullptr;
