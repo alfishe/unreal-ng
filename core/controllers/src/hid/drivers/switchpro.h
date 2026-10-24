@@ -33,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -205,6 +206,11 @@ public:
     SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs = kStartDelayMs,
                    TypeSink onType = nullptr);
 
+    /// A pad a kernel driver has set up (Linux hid-nintendo: handshake, calibration, the full report, vibration on and
+    /// its own player lights): no setup, only the HD rumble as the 0x10 report under the same pacing; SetPlayer does
+    /// nothing (the driver's player lights stay)
+    static std::unique_ptr<SwitchProtocol> RumbleOnly(bool bluetooth);
+
     std::optional<PadOutReport> Next(uint64_t nowMs, uint64_t& wakeMs) override;
     void OnInput(const uint8_t* report, size_t size, uint64_t nowMs) override;
     void SetRumble(const RumbleLevels& levels) override;
@@ -245,6 +251,7 @@ private:
     void Calibrated();
 
     bool _bluetooth;
+    bool _rumbleOnly = false;  ///< RumbleOnly: the kernel driver owns the setup and the player lights
     CalibrationSink _onCalibration;
     TypeSink _onType;
     std::vector<Step> _steps;

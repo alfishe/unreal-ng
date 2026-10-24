@@ -111,6 +111,144 @@ TEST(HidrawNode_Test, UseFor_XboxBluetoothRumblesThroughHidrawWithoutFfRumble)
     EXPECT_FALSE(HasUse(HidrawUse::Input, HidrawUse::Rumble));
 }
 
+namespace
+{
+LinuxPadFacts Facts(bool bluetooth, uint16_t vendor, uint16_t product, const char* family, const char* layout,
+                    LinuxHidDriver driver, bool evdevRumble, bool edgeButtons = false)
+{
+    LinuxPadFacts facts;
+    facts.bluetooth = bluetooth;
+    facts.vendor = vendor;
+    facts.product = product;
+    facts.family = family;
+    facts.layout = layout;
+    facts.driver = driver;
+    facts.evdevRumble = evdevRumble;
+    facts.edgeButtons = edgeButtons;
+    return facts;
+}
+}  // namespace
+
+TEST(HidrawNode_Test, Driver_FromTheUeventsDriverName)
+{
+    EXPECT_EQ(LinuxHidDriverOf(""), LinuxHidDriver::Unknown);
+    EXPECT_EQ(LinuxHidDriverOf("hid-generic"), LinuxHidDriver::Generic);
+    EXPECT_EQ(LinuxHidDriverOf("playstation"), LinuxHidDriver::PlayStation);
+    EXPECT_EQ(LinuxHidDriverOf("sony"), LinuxHidDriver::Sony);
+    EXPECT_EQ(LinuxHidDriverOf("nintendo"), LinuxHidDriver::Nintendo);
+    EXPECT_EQ(LinuxHidDriverOf("microsoft"), LinuxHidDriver::Microsoft);
+    EXPECT_EQ(LinuxHidDriverOf("stadia"), LinuxHidDriver::Stadia);
+    EXPECT_EQ(LinuxHidDriverOf("hid-steam"), LinuxHidDriver::Steam);
+    EXPECT_EQ(LinuxHidDriverOf("xpadneo"), LinuxHidDriver::Other);
+    // hid-input names the keys by usage number under these: the family's HID map applies (LinuxGenericButton)
+    EXPECT_TRUE(LinuxHidUsageNamed(LinuxHidDriver::Generic));
+    EXPECT_TRUE(LinuxHidUsageNamed(LinuxHidDriver::Microsoft));
+    EXPECT_TRUE(LinuxHidUsageNamed(LinuxHidDriver::Stadia));
+    EXPECT_FALSE(LinuxHidUsageNamed(LinuxHidDriver::PlayStation));
+    EXPECT_FALSE(LinuxHidUsageNamed(LinuxHidDriver::Nintendo));
+    EXPECT_FALSE(LinuxHidUsageNamed(LinuxHidDriver::Other));
+    HidUevent uevent;
+    ASSERT_TRUE(ParseHidUevent(kEliteUevent, uevent));
+    EXPECT_EQ(uevent.driver, "microsoft");
+}
+
+TEST(HidrawNode_Test, UseFor_KernelDriversFirstHidrawForWhatTheyLack)
+{
+    using D = LinuxHidDriver;
+    // hid-playstation: the motors through FF_RUMBLE, the trigger effects through hidraw
+    EXPECT_EQ(HidrawUseFor(Facts(false, 0x054C, 0x0CE6, "dualsense", "playstation", D::PlayStation, true)),
+              HidrawUse::Triggers);
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x054C, 0x0CE6, "dualsense", "playstation", D::PlayStation, true)),
+              HidrawUse::Triggers);
+    // The Edge: its paddles and Fn buttons through the full report until hid-playstation reports them (7.2)
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x054C, 0x0DF2, "dualsense-edge", "playstation", D::PlayStation, true)),
+              HidrawUse::Triggers | HidrawUse::Input);
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x054C, 0x0DF2, "dualsense-edge", "playstation", D::PlayStation, true, true)),
+              HidrawUse::Triggers);
+    // The DualShock 4 has no trigger motors: everything is the kernel's (FF_RUMBLE, LED class, power supply)
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x054C, 0x09CC, "dualshock-4", "playstation", D::PlayStation, true)),
+              HidrawUse::None);
+    EXPECT_EQ(HidrawUseFor(Facts(false, 0x054C, 0x05C4, "dualshock-4", "playstation", D::Sony, true)),
+              HidrawUse::None);
+    // hid-nintendo: the HD rumble (its FF_RUMBLE plays fixed frequencies)
+    for (const uint16_t product : {0x2009, 0x2006, 0x2007, 0x200E})
+        EXPECT_EQ(HidrawUseFor(Facts(true, 0x057E, product, "switch-pro", "nintendo", D::Nintendo, true)),
+                  HidrawUse::SwitchRumble)
+            << std::hex << product;
+    // The NSO pads under hid-nintendo: the N64 one rumbles, the NES, SNES and Genesis ones have no motors
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x057E, 0x2019, "nso-n64", "nintendo", D::Nintendo, true)),
+              HidrawUse::SwitchRumble);
+    for (const uint16_t product : {0x2017, 0x201E})
+        EXPECT_EQ(HidrawUseFor(Facts(true, 0x057E, product, "nso-snes", "nintendo", D::Nintendo, true)),
+                  HidrawUse::None)
+            << std::hex << product;
+    LinuxPadFacts nes = Facts(true, 0x057E, 0x2007, "joy-con-r", "nintendo", D::Nintendo, true);
+    nes.name = "NES Controller";
+    EXPECT_EQ(HidrawUseFor(nes), HidrawUse::None) << "an NES pad by its name, not a right Joy-Con";
+    // No driver of its own: the whole protocol, as macOS reads it
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x054C, 0x0CE6, "dualsense", "playstation", D::Generic, false)),
+              HidrawUse::Protocol);
+    EXPECT_EQ(HidrawUseFor(Facts(false, 0x057E, 0x2009, "switch-pro", "nintendo", D::Generic, false)),
+              HidrawUse::Protocol);
+    // An unknown driver (the uevent not read) is taken as the kernel's own
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x057E, 0x2009, "switch-pro", "nintendo", D::Unknown, true)),
+              HidrawUse::SwitchRumble);
+    // joycond's combined device (057E:2008, uinput) is no HID device: nothing
+    EXPECT_EQ(HidrawUseFor(Facts(false, 0x057E, 0x2008, "joy-con", "nintendo", D::Other, true)), HidrawUse::None);
+    // The Xbox decisions are unchanged by the driver
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x045E, 0x0B13, "xbox-series", "xbox", D::Generic, false)), HidrawUse::Rumble);
+    EXPECT_EQ(HidrawUseFor(Facts(true, 0x045E, 0x0B22, "xbox-elite-2", "xbox", D::Other, true)), HidrawUse::Input);
+    // A HID map with vendor bits (no usage, so no evdev key): its full report. Consumer usages need none: they are
+    // KEY_* on the pad's node (the Luna's guide, view, record)
+    LinuxPadFacts luna = Facts(true, 0x0171, 0x0419, "luna", "xbox", D::Generic, false);
+    EXPECT_EQ(HidrawUseFor(luna), HidrawUse::None) << "no vendor bits in its map: evdev alone";
+    luna.hidExtras = true;
+    EXPECT_EQ(HidrawUseFor(luna), HidrawUse::Input);
+    luna.driver = D::Other;
+    EXPECT_EQ(HidrawUseFor(luna), HidrawUse::None) << "a driver of its own names its keys";
+    EXPECT_NE(HidrawUnavailable(HidrawUse::Input, "/dev/hidraw7", EACCES, "Permission denied", "luna")
+                  .find("vendor-defined buttons"),
+              std::string::npos);
+}
+
+TEST(HidrawNode_Test, UseAccess_ReadsAndWrites)
+{
+    EXPECT_TRUE(HidrawUseReads(HidrawUse::Input));
+    EXPECT_FALSE(HidrawUseWrites(HidrawUse::Input));
+    EXPECT_TRUE(HidrawUseReads(HidrawUse::Protocol));
+    EXPECT_TRUE(HidrawUseWrites(HidrawUse::Protocol));
+    for (const HidrawUse use : {HidrawUse::Output, HidrawUse::Rumble, HidrawUse::Triggers, HidrawUse::SwitchRumble})
+    {
+        EXPECT_FALSE(HidrawUseReads(use));
+        EXPECT_TRUE(HidrawUseWrites(use));
+    }
+}
+
+TEST(HidrawNode_Test, Reasons_ForThePlayStationAndSwitchUses)
+{
+    const std::string triggers = HidrawUnavailable(HidrawUse::Triggers, "/dev/hidraw2", EACCES, "Permission denied");
+    EXPECT_NE(triggers.find("adaptive triggers"), std::string::npos) << triggers;
+    EXPECT_NE(triggers.find("write access to /dev/hidraw2"), std::string::npos) << triggers;
+    EXPECT_NE(triggers.find("70-unreal-ng.rules"), std::string::npos) << triggers;
+    EXPECT_NE(triggers.find("hid-playstation"), std::string::npos) << "what still works: " << triggers;
+
+    const std::string hd = HidrawUnavailable(HidrawUse::SwitchRumble, "/dev/hidraw6", EACCES, "Permission denied");
+    EXPECT_NE(hd.find("HD rumble"), std::string::npos) << hd;
+    EXPECT_NE(hd.find("160 / 320 Hz"), std::string::npos) << hd;
+
+    const std::string edge =
+        HidrawUnavailable(HidrawUse::Input, "/dev/hidraw2", EACCES, "Permission denied", "dualsense-edge");
+    EXPECT_NE(edge.find("paddles and Fn buttons"), std::string::npos) << edge;
+    EXPECT_NE(edge.find("read access"), std::string::npos) << edge;
+    EXPECT_NE(edge.find("7.2"), std::string::npos) << edge;
+    EXPECT_EQ(edge.find("profile"), std::string::npos) << "the Elite's words are not the Edge's: " << edge;
+
+    const std::string protocol = HidrawUnavailable(HidrawUse::Protocol, "/dev/hidraw1", EACCES, "Permission denied");
+    EXPECT_NE(protocol.find("read and write access to /dev/hidraw1"), std::string::npos) << protocol;
+    EXPECT_NE(protocol.find("hid-generic"), std::string::npos) << protocol;
+    EXPECT_EQ(HidrawUnavailable(HidrawUse::Protocol, {}, 0, {}).find("udevadm"), std::string::npos);
+}
+
 TEST(HidrawNode_Test, Uevent_ParsesTheIdsAndRefusesANonHidDevice)
 {
     HidUevent uevent;
@@ -167,6 +305,11 @@ TEST(HidrawNode_Test, Find_TheNodeOfAnEvdevNodesHidDevice)
 
 TEST(HidrawNode_Test, Reasons_NameTheNodeAndTheUdevRule)
 {
+    const std::string adapter =
+        HidrawUnavailable(HidrawUse::Protocol, "/dev/hidraw9", EACCES, "Permission denied", "gamecube-adapter");
+    EXPECT_NE(adapter.find("GameCube adapter's controllers"), std::string::npos) << adapter;
+    EXPECT_NE(adapter.find("read and write access to /dev/hidraw9"), std::string::npos) << adapter;
+    EXPECT_EQ(adapter.find("hid-generic"), std::string::npos) << "not the Protocol pads' wording: " << adapter;
     const std::string denied = HidrawUnavailable(HidrawUse::Input, "/dev/hidraw3", EACCES, "Permission denied");
     EXPECT_NE(denied.find("paddles"), std::string::npos) << denied;
     EXPECT_NE(denied.find("read access to /dev/hidraw3"), std::string::npos) << denied;
@@ -303,7 +446,16 @@ TEST(HidrawNode_Test, RulesFile_GivesTheXboxBluetoothPadsAndTheDialToTheSeatUser
     // The Elite (paddles, rumble), the Dial (clicks), the other Xbox One / Series pads over Bluetooth (rumble)
     std::map<std::string, bool> hidraw = {{"045E:0B05", false}, {"045E:0B22", false}, {"045E:091B", false},
                                           {"045E:02E0", false}, {"045E:02FD", false}, {"045E:0B20", false},
-                                          {"045E:0B13", false}, {"045E:0B0C", false}, {"045E:0B21", false}};
+                                          {"045E:0B13", false}, {"045E:0B0C", false}, {"045E:0B21", false},
+                                          // The PlayStation pads (triggers, the Edge's paddles, hid-generic)
+                                          {"054C:0CE6", false}, {"054C:0DF2", false}, {"054C:05C4", false},
+                                          {"054C:09CC", false}, {"054C:0BA0", false},
+                                          // The Switch pads (HD rumble, hid-generic)
+                                          {"057E:2009", false}, {"057E:2006", false}, {"057E:2007", false},
+                                          {"057E:200E", false},
+                                          {"057E:2017", false}, {"057E:2019", false}, {"057E:201E", false},
+                                          {"057E:0337", false}};
+    bool playstationChannels = false;
     std::istringstream lines(text.str());
     std::string line;
     while (std::getline(lines, line))
@@ -315,6 +467,9 @@ TEST(HidrawNode_Test, RulesFile_GivesTheXboxBluetoothPadsAndTheDialToTheSeatUser
             // A light bar's LED class files: sysfs takes no ACL, so their mode is opened
             EXPECT_NE(line.find("RUN+=\"/bin/chmod 0666 /sys%p/brightness"), std::string::npos) << line;
             playstationLight = playstationLight || line.find("DRIVERS==\"playstation\"") != std::string::npos;
+            // The DualShock 4 under hid-playstation (6.2+) names its LEDs per colour, as hid-sony does
+            playstationChannels = playstationChannels || (line.find("DRIVERS==\"playstation\"") != std::string::npos &&
+                                                          line.find("*:red|*:green|*:blue") != std::string::npos);
             sonyLight = sonyLight || line.find("DRIVERS==\"sony\"") != std::string::npos;
             continue;
         }
@@ -327,5 +482,6 @@ TEST(HidrawNode_Test, RulesFile_GivesTheXboxBluetoothPadsAndTheDialToTheSeatUser
         EXPECT_TRUE(seen) << id;
     EXPECT_TRUE(playstationLight) << "the DualSense light bar (hid-playstation)";
     EXPECT_TRUE(sonyLight) << "the DualShock 4 light bar (hid-sony)";
+    EXPECT_TRUE(playstationChannels) << "the DualShock 4 light bar (hid-playstation)";
     EXPECT_NE(std::string(kHidrawRulesHint).find("70-unreal-ng.rules"), std::string::npos);
 }

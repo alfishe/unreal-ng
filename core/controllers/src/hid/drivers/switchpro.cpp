@@ -539,6 +539,15 @@ SwitchProtocol::SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, ui
     subcommand(kSetInputMode, {kFullReport});
 }
 
+std::unique_ptr<SwitchProtocol> SwitchProtocol::RumbleOnly(bool bluetooth)
+{
+    auto protocol = std::make_unique<SwitchProtocol>(bluetooth, nullptr, 0);
+    protocol->_steps.clear();
+    protocol->_rumbleOnly = true;
+    protocol->_calibrationDone = true;
+    return protocol;
+}
+
 void SwitchProtocol::Pad(std::vector<uint8_t>& report) const
 {
     report.resize(_bluetooth ? kBluetoothLength : kUsbLength, 0);
@@ -578,6 +587,8 @@ void SwitchProtocol::SetRumble(const RumbleLevels& levels)
 
 void SwitchProtocol::SetPlayer(int player)
 {
+    if (_rumbleOnly)
+        return;
     _player = player;
     _playerPending = true;
 }

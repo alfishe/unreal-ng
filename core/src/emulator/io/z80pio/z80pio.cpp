@@ -178,7 +178,7 @@ void Z80Pio::SetStrobe(uint8_t port, bool high)
     const uint8_t index = port & 1;
     Port& p = _port[index];
     const bool rising = !p.stb && high;
-    const uint8_t mode = (_port[0].mode == kModeBidirectional) ? kModeBidirectional : p.mode;
+    const uint8_t mode = (_port[0].mode == kModeBidirectional) ? static_cast<uint8_t>(kModeBidirectional) : p.mode;
     switch (mode)
     {
         case kModeOutput:

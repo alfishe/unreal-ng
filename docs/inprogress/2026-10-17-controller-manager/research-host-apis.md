@@ -223,6 +223,79 @@ There is a user report of Elite 2 paddles missing on Windows under SDL:
   - Over Bluetooth, the paddles are a usage "Assign Selection" bitfield (KEY_UNKNOWN) until the HID-BPF fix
     (<https://lkml.rescloud.iu.edu/2404.1/04303.html>).
 - xpadneo is an alternative Bluetooth driver, and SDL maps it automatically.
+- **PlayStation and Switch kernel drivers** (read in torvalds/linux drivers/hid at 2026-10-24, used by the evdev
+  backend):
+  - hid-playstation (DualSense since 5.12, DualShock 4 since 6.2): the pad's node is named after the HID device
+    (`hdev->name`), `uniq` is the MAC on USB and Bluetooth; separate "Touchpad" (`BTN_LEFT`, multitouch) and "Motion
+    Sensors" nodes. Axes 0..255, and both `BTN_TL2` / `BTN_TR2` and `ABS_Z` / `ABS_RZ` for the triggers. `FF_RUMBLE`
+    (`CONFIG_PLAYSTATION_FF`): strong to the left (low) motor, weak to the right one, as compatible vibration; the
+    trigger effects are never set. The mute button is no evdev key. The Edge's Fn1, Fn2, left and right paddle come
+    as `BTN_TRIGGER_HAPPY1-4` only from commit bf29bafe3eaa (for-7.2, 2026-05); the backend detects them by
+    capability. LEDs: the DualSense a multicolor `<input>:rgb:indicator` and five `<input>:white:player-N` the
+    kernel assigns itself; the DualShock 4 `<input>:red`, `:green`, `:blue` and `:global` (the light bar on, default
+    on). Battery `ps-controller-battery-<MAC>`. At probe it reads features 0x09 (pairing, MAC), 0x20 (firmware), 0x05
+    (calibration, which switches Bluetooth to the full report).
+  - hid-sony: the DualShock 3 (sixaxis: positional keys, `BTN_DPAD_*`, `ABS_Z` / `ABS_RZ` beside `BTN_TL2` /
+    `BTN_TR2`), the DualShock 4 before 6.2; LEDs `:red`, `:green`, `:blue`, `:global` (DualShock 4), `::sony1-4`
+    (DualShock 3).
+  - hid-nintendo (5.16+): Pro controller A = `BTN_EAST`, B = `BTN_SOUTH`, X = `BTN_NORTH`, Y = `BTN_WEST`, L / R
+    `BTN_TL` / `BTN_TR`, ZL / ZR `BTN_TL2` / `BTN_TR2`, - / + `BTN_SELECT` / `BTN_START`, Home `BTN_MODE`, Capture
+    `BTN_Z`, the d-pad as `ABS_HAT0X/Y`. A left Joy-Con has no `BTN_SOUTH` (its arrows are `BTN_DPAD_*`), SL / SR are
+    `BTN_TR` / `BTN_TR2` off the grip; a right Joy-Con's SL / SR are `BTN_TL` / `BTN_TL2`, its stick `ABS_RX/RY`. y is
+    the raw y negated (evdev + down). An IMU node "(IMU)" per pad. The kernel does the whole set-up (handshake, device
+    info, SPI calibration, IMU, report mode 0x30, vibration on, player LEDs it numbers itself) and needs the replies;
+    its `FF_RUMBLE` plays fixed 160 / 320 Hz and writes only while its rumble queue runs, so a 0x10 report of the
+    application's own (HD rumble) is not overwritten while `FF_RUMBLE` is unused. `uniq` is the MAC; battery
+    `nintendo_switch_controller_battery_<MAC>`.
+  - joycond (userspace, optional): grabs the Joy-Cons' evdev nodes and makes them 0600 root, then offers uinput
+    "Nintendo Switch Combined Joy-Cons" 057E:2008 (`BUS_VIRTUAL`, no `uniq`), its SL / SR as `BTN_TRIGGER_HAPPY1-4`
+    (left SL, left SR, right SL, right SR), axes ±32767, `EV_FF` forwarded to both halves.
+  - A HID device's uevent names its driver (`DRIVER=playstation`, `nintendo`, `sony`, `hid-generic`, `microsoft`):
+    the backend's choice of what hidraw adds (`HidrawUseFor(LinuxPadFacts)`).
+  - Not taken: the Steam Deck's virtual pad 28DE:11FF in game mode is the one the user plays with there, so it is not
+    ignored on Linux.
+  - Kernel versions, from the sources of the tags (checked 2026-10-24): hid-nintendo serves the NSO NES, SNES, N64
+    and Sega Genesis controllers from **6.8** (commit 94f18bb19945 "HID: nintendo: add support for nso controllers":
+    absent at v6.7, present at v6.8; the POC 033 inventory said 6.3, now corrected), the N64 one no longer taken for a
+    mouse from 6.9 (8db8c77059e7). The Switch 2 controllers (Joy-Con 2, Pro 2, the GameCube controller 057E:2073)
+    have a driver only on master after v7.2-rc3 (9417132df63e, 6efbb82b5271, 2026-10-06; not in any release yet),
+    and it needs real USB (`hid_is_usb`). hid-playstation reports the Edge's Fn and paddles from v7.2-rc1.
+  - Drivers that leave the keys to hid-input: hid-generic and the ones that add only force feedback, hid-microsoft
+    (`DRIVER=microsoft`, the Xbox pads over Bluetooth) and hid-google-stadiaff (`DRIVER=stadia`). hid-input numbers
+    a button instead of naming it (hid-input.c, `HID_UP_BUTTON`): Button n of a Game Pad application is
+    `BTN_GAMEPAD + n-1` (Joystick application: `BTN_JOYSTICK + n-1`) for n <= 16, `BTN_TRIGGER_HAPPY1 + n-17`
+    above; so an Xbox pad's X (Button 4) arrives as `BTN_NORTH`. A consumer usage inside the pad's application is a
+    key of the pad's node (AC Home `KEY_HOMEPAGE`, AC Back `KEY_BACK`, Record `KEY_RECORD`: the Luna's guide, view
+    and record, an Xbox pad's share); hid-generic sets `HID_QUIRK_INPUT_PER_APP`, so only a Consumer Control
+    application of its own would be another input device (which HidPad on macOS skips as well). The backend names
+    these pads through the family's HID map (`LinuxGenericButton` / `LinuxGenericAxis`, the names HidPad gives on
+    macOS and Windows) and reads a map's vendor bits (no usage, no key) from hidraw (`HidrawUse::Input`).
+  - hid-steam (`DRIVER=hid-steam`; Steam Controller 2015 28DE:1102 / receiver 1142, Steam Deck 1205, the 2026
+    controller 1302 / BLE 1303 / receivers 1304, 1305): the real interface is connected without a hidraw node; a
+    layered "client" HID device carries it, and while the Steam client has that open the driver unregisters the
+    pad's input device (hid-steam.c, `steam_work_connect_cb`) so nothing arrives twice. The backend then shows the
+    pad with a notice (quit Steam, or use Steam Input's virtual pad 28DE:11FF): `FindSteamHeldPads`,
+    `SteamClientRunning`.
+  - GameCube Controller Adapter 057E:0337: no kernel driver gives it an input device (its reports are on the Game
+    Controls page, which hid-input leaves unmapped), but usbhid binds its HID interface, so the hidraw node is
+    there. The backend finds it by the HID device's ids (`FindHidrawDevices`), writes the start report 0x13 and
+    decodes report 0x21 with the shared GameCubeAdapter; each port with a controller in it is a device
+    `<adapter id>:p1..p4`, as on macOS. Needs the udev rule (`057E:0337` hidraw, read and write); without it the
+    adapter is shown with the notice. Verified with a uhid adapter under hid-generic (the start write reaches the
+    device, a port's controller comes and goes); *unverified* on a real adapter: that usbhid sends the 0x13 output
+    report to the interrupt OUT pipe (usbhid does use an interrupt OUT endpoint when the interface has one), and
+    that the adapter takes it as two bytes (hidraw refuses a write under 2 bytes, so a zero byte follows the 0x13;
+    the descriptor gives report 0x13 one data byte).
+  - The Switch 2 controllers on kernels without the new hid-nintendo support: USB needs the bulk init on the vendor
+    interface (not HID), so neither hidraw nor evdev reaches them. libusb is no dependency of the project (only the
+    Stream Deck companion vendors hidapi). Proposal: usbfs directly (`/dev/bus/usb/BBB/DDD`,
+    `USBDEVFS_CLAIMINTERFACE`, `USBDEVFS_BULK`) for the init, then hidraw for the reports, with a udev rule
+    `SUBSYSTEM=="usb", ATTRS{idVendor}=="057e", ATTRS{idProduct}=="2066|2067|2068|2069|2073", TAG+="uaccess"`.
+    Not built: no controller to verify against.
+  - hid-nintendo's NSO pads (6.8+) have key maps of their own (nescon / n64con / gencon_button_mappings: the NES A
+    as `BTN_SOUTH`, the N64 C buttons as `BTN_FORWARD` / `BACK` / `LEFT` / `RIGHT`, the Genesis C as `BTN_WEST`):
+    `LinuxPadKind::NsoNes` / `NsoN64` / `NsoGenesis` name them as SwitchProPad does; an NES pad (a right Joy-Con
+    by its id) is told by its name. The NES, SNES and Genesis pads take no HD rumble (no motors).
 
 ### 3.4 Qt
 

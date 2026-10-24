@@ -26,7 +26,7 @@ Contents:
 Linux drivers named below: `xpad` (Xbox 360 / One / Series USB and the 360 wireless receiver, third-party Xbox
 pads), `hid-microsoft` (Xbox One S / Series over Bluetooth: rumble), `hid-sony` (DualShock 3, some licensed PS3
 pads), `hid-playstation` (DualShock 4 since 6.2, DualSense, DualSense Edge), `hid-nintendo` (Switch Pro, Joy-Con,
-the NSO pads since 6.3 *unverified*), `hid-steam` (Steam Controller, Steam Deck), `hid-google-stadiaff` (Stadia
+the NSO pads since 6.8, checked in the tags: commit 94f18bb19945), `hid-steam` (Steam Controller, Steam Deck), `hid-google-stadiaff` (Stadia
 rumble), `hid-wiimote` (Wii Remote, Wii U Pro), `hid-generic` (the rest).
 
 ## 2. The devices
@@ -68,9 +68,9 @@ Ids are VID:PID in hex; "BT" is Bluetooth classic or LE. Family = the `devices.j
 | Joy-Con (L) / (R), single | — | 057E:2006 / 2007 | HidPad, simple report 0x3F: the stick is the hat (`"hat": "lstick"`), held sideways | Raw Input | hid-nintendo (joycond pairs them, 2008) | `joy-con-l` / `joy-con-r` | `joy-con-l` / `joy-con-r` |
 | Joy-Con charging grip / joined pair | 057E:200E / 2008 | — / (2008 is joycond's virtual pair) | SwitchProPad: the grip's halves by the device info, the pair joined (ctl-hid) | Raw Input after the handshake | hid-nintendo | `joy-con-grip` | `joy-con-grip` |
 | NSO NES (pair) | — | 057E:2006 / 2007 (they report as Joy-Cons; SDL tells them by the device type in the SPI) | SwitchProPad, layout `Nes` by the product name ("NES Controller" / "HVC Controller", SDL); A east, B south; no motors | Raw Input | hid-nintendo | the Joy-Con families | `nso-nes` (picked by the user) |
-| NSO SNES / N64 / Sega Genesis | 057E:2017 / 2019 / 201E (USB = charging) | same | SwitchProPad, layouts `Snes` / `N64` / `Genesis` (bits after hid-nintendo and SDL; N64 Z `lt`, C buttons `misc.1-4`; Genesis C `rb`, Mode `view`); only the N64 pad rumbles | Raw Input | hid-nintendo (6.3+ *unverified*) | `nso-snes` / `nso-n64` / `nso-megadrive` | `nso-snes` / `nso-n64` / `nso-genesis` |
+| NSO SNES / N64 / Sega Genesis | 057E:2017 / 2019 / 201E (USB = charging) | same | SwitchProPad, layouts `Snes` / `N64` / `Genesis` (bits after hid-nintendo and SDL; N64 Z `lt`, C buttons `misc.1-4`; Genesis C `rb`, Mode `view`); only the N64 pad rumbles | Raw Input | hid-nintendo (6.8+) | `nso-snes` / `nso-n64` / `nso-megadrive` | `nso-snes` / `nso-n64` / `nso-genesis` |
 | Switch 2 Pro / Joy-Con 2 / NSO GameCube | 057E:2069 / 2066 2067 2068 / 2073 | BLE, proprietary | none: USB needs the bulk init on the vendor interface (an IOUSBLib claim, proposal §3.1); BT not supported by anyone | WinUSB + init | userspace (SDL with libusb) | `switch-2-pro` / `joy-con-2` / `nso-gamecube-2` | *switch-pro* (no orthographic view of the Switch 2 Pro found) / *joy-con-grip* / *gamecube* |
-| GameCube Controller Adapter (Wii U / Switch) | 057E:0337 | — | GameCubeAdapter over IOHID: output 0x13, then report 0x21; each port its own device `<id>:p1..p4` (*unverified*: that IOHID passes 0x13 to the interrupt OUT pipe; no rumble yet) | WinUSB (Zadig) | userspace (no in-kernel driver) | `gamecube-adapter` | `gamecube` |
+| GameCube Controller Adapter (Wii U / Switch) | 057E:0337 | — | GameCubeAdapter over IOHID: output 0x13, then report 0x21; each port its own device `<id>:p1..p4` (*unverified*: that IOHID passes 0x13 to the interrupt OUT pipe; no rumble yet) | WinUSB (Zadig) | no input device; GameCubeAdapter over hidraw (ctl-linux: 0x13, then 0x21; ports `<id>:p1..p4`; udev rule) | `gamecube-adapter` | `gamecube` |
 | Mayflash GameCube adapter (PC mode) | 0079:1843, 1844, 1846 | — | HidPad (1844 map from the Mac line) | Raw Input | hid-generic | `gamecube-mayflash` | *gamecube* |
 | Wii Remote / Wii Remote Plus / Wii U Pro | — | 057E:0306 / 0330 | recognised, no input: needs the Wiimote protocol (proposal §3.1) | Raw Input + Wiimote protocol | hid-wiimote | `wii-remote` | *generic-nintendo-like* |
 | Switch-licensed wired pads (Hori, PowerA, PDP) | 0F0D:0092 00C1 00F0, 0E6F:0180-018B, 20D6:A711-A718 | — | HidPad with the shared map | Raw Input | hid-generic | `switch-compatible` | *generic-nintendo-like* |
