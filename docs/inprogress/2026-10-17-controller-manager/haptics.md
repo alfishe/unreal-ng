@@ -222,7 +222,7 @@ asserts that frame hashes are identical with the feed active (§12).
 
 | OS | Handle motors | Impulse triggers | HD haptics |
 |:--|:--|:--|:--|
-| macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense (USB report 2, Bluetooth report 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller (0x10 / 0x01, HD rumble), the Surface Dial's clicks (report 1); else CoreHaptics through `GCDeviceHaptics` of the matched `GCController` (or a `gc:` device's own); none for an Xbox pad over USB (below) | Xbox report 3; DualSense trigger resistance; GC localities `leftTrigger` / `rightTrigger` | Switch Pro HD rumble (`RumbleLevels::lowHz` / `highHz`); CoreHaptics sharpness from the same frequency; AHAP patterns not yet |
+| macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense (USB report 2, Bluetooth report 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller and Joy-Cons (0x10 / 0x01, HD rumble; a pair split per half), the Surface Dial's clicks (report 1); else CoreHaptics through `GCDeviceHaptics` of the matched `GCController` (or a `gc:` device's own); none for an Xbox pad over USB (below) | Xbox report 3; DualSense trigger resistance; GC localities `leftTrigger` / `rightTrigger` | Switch Pro HD rumble (`RumbleLevels::lowHz` / `highHz`); CoreHaptics sharpness from the same frequency; AHAP patterns not yet |
 | Windows | GameInput `SetRumbleState`; XInput `XInputSetState` as the last resort | GameInput (Xbox) | DualSense raw output reports over Raw Input / HID (no OS API) |
 | Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path (below); none through evdev (`FF_RUMBLE` has no trigger motors) | hidraw output reports (hid-playstation for basic rumble) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
@@ -245,7 +245,9 @@ libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering 
 - **DualSense / DualShock 4** (`hid/drivers/sonypad`, `SonyProtocol`): over Bluetooth the pad starts with its short
   report 0x01 (the descriptor's, `HidPad`); the pump first reads the calibration feature report 0x05 (41 bytes, CRC-32
   seed 0xA3, three tries 100 ms apart), which switches it to the full report (hid-playstation reads it at probe for the
-  same reason; SDL reads 0x09 / 0x20). `SonyPad` then decodes the full reports (USB 0x01 64 bytes; Bluetooth 0x31 /
+  same reason; SDL reads 0x09 / 0x20). A DualShock 4 reads the USB calibration 0x02 first (37 bytes, no CRC, 35 or more
+  accepted, three tries), then 0x05: SDL's `HIDAPI_DriverPS4_LoadCalibrationData` does that over Bluetooth ("this
+  report switches them into advanced report mode", the 0x11 report); hid-playstation reads 0x05 alone there. `SonyPad` then decodes the full reports (USB 0x01 64 bytes; Bluetooth 0x31 /
   0x11 78 bytes, CRC-32 seed 0xA1 checked, a bad one dropped and counted): buttons, sticks, triggers, the first touch
   point (`touchpad.x` / `.y`, centred on lift), the mute button (`misc.1`), the Edge's paddles and Fn buttons, and the
   battery. Output: a DualSense report 2 (USB) or 0x31 (Bluetooth: sequence nibble, tag 0x10, CRC-32 seed 0xA2) with
@@ -261,6 +263,17 @@ libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering 
   SDL's extents, 0.7 of the calibrated range, widened by what the stick reaches; the battery); the simple 0x3F stays
   `HidPad`'s. Rumble: report 0x10 when the levels change, at least 30 ms apart, refreshed every 50 ms while it runs
   (SDL: the motors stop otherwise), the neutral `00 01 40 40` once at zero.
+- **Joy-Cons** (057E:2006 L, 2007 R; the same `SwitchProtocol`, `SwitchProPad` with a `SwitchLayout`): alone, a
+  Joy-Con is a small pad held sideways (SDL's `HandleMiniControllerStateL` / `R`: the four buttons by the stick are the
+  faces, SL / SR `lb` / `rb`, L / ZL `paddle.p3` / `p4`, R / ZR `paddle.p1` / `p2`, the stick turned a quarter as
+  `lstick`, + / - `menu`, Home / Capture `guide`). A left and a right one are one pad, as SDL combines them by default
+  (`JoyConPairing`: the oldest alone of each side pair, a Joy-Con whose partner goes is alone again and joins the next
+  one that waits; the pair's id is `<left id>+<right id>`, named "Joy-Con (L/R)"): each half gives its side of the Pro
+  layout (`HandleCombinedControllerStateL` / `R`; SL / SR as `paddle.p3` / `p4` on the left and `p2` / `p1` on the
+  right, SDL's LEFT_PADDLE1 / 2 and RIGHT_PADDLE2 / 1), both show the pair's player lights, the left half rumbles with
+  the `low` level and the right one with `high` (SDL's `HIDAPI_DriverSwitch_RumbleJoystick`), the battery is the lower
+  of the two. The charging grip (057E:200E: both Joy-Cons under one product id, the side only in the device info
+  subcommand) stays `HidPad`'s.
 - **HD rumble encoding** (`SwitchRumble`): per actuator the high band's frequency `hf` (9 bits) and amplitude `ha`,
   the low band's `lf` (7 bits) and `la` (9 bits) in 4 bytes. The handle motor levels play on the bands: `low` on the
   low band at `RumbleLevels::lowHz` (default 160 Hz), `high` on the high band at `highHz` (default 320 Hz), the

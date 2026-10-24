@@ -298,3 +298,44 @@ TEST(SonyPad_Test, ProtocolDualShock4UsbKeepsMotorsAndLightTogether)
     EXPECT_EQ(next->bytes[4], 255);
     EXPECT_EQ(next->bytes[6], 0x40) << "the light stays";
 }
+
+TEST(SonyPad_Test, ProtocolDualShock4BluetoothReadsFeature02Then05)
+{
+    // SDL_hidapi_ps4.c HIDAPI_DriverPS4_LoadCalibrationData: 0x02 switches a Bluetooth pad to the 0x11 report, then
+    // 0x05 (41 bytes, CRC seed 0xA3) is the Bluetooth calibration hid-playstation reads
+    SonyProtocol protocol(SonyModel::DualShock4, true);
+    uint64_t wake = 0;
+    std::optional<PadOutReport> next = protocol.Next(0, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->kind, PadOutReport::Kind::GetFeature);
+    EXPECT_EQ(next->featureId, 0x02);
+    EXPECT_EQ(next->featureSize, 37u);
+
+    std::vector<uint8_t> shortRead(20, 0);
+    shortRead[0] = 0x02;
+    protocol.OnFeature(0x02, shortRead, 0);
+    EXPECT_FALSE(protocol.Next(10, wake).has_value()) << "a short read waits for the retry";
+    next = protocol.Next(100, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->featureId, 0x02);
+
+    std::vector<uint8_t> usbCalibration(37, 0);
+    usbCalibration[0] = 0x02;
+    protocol.OnFeature(0x02, usbCalibration, 100);
+    EXPECT_FALSE(protocol.Ready());
+    next = protocol.Next(100, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->featureId, 0x05);
+    EXPECT_EQ(next->featureSize, 41u);
+
+    std::vector<uint8_t> btCalibration(41, 0);
+    btCalibration[0] = 0x05;
+    PutCrc(btCalibration, SonyPad::kFeatureCrcSeed);
+    protocol.OnFeature(0x05, btCalibration, 101);
+    EXPECT_TRUE(protocol.Ready());
+    protocol.SetPlayer(1);
+    next = protocol.Next(101, wake);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->kind, PadOutReport::Kind::Output);
+    EXPECT_EQ(next->bytes[0], 0x11) << "the light (player colour) goes out in the Bluetooth report";
+}

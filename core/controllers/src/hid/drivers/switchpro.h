@@ -1,8 +1,8 @@
 #pragma once
 
 /// @file switchpro.h
-/// @brief The Nintendo Switch Pro Controller (057E:2009) over Bluetooth and USB (haptics.md §9, H4): its full input
-/// report 0x30, the subcommands that set it up, and its HD rumble. Sources: dekuNukem's Nintendo_Switch_Reverse_
+/// @brief The Nintendo Switch Pro Controller (057E:2009) and the Joy-Cons (057E:2006 L, 2007 R) over Bluetooth and USB
+/// (haptics.md §9, H4): their full input report 0x30, the subcommands that set them up, and their HD rumble. Sources: dekuNukem's Nintendo_Switch_Reverse_
 /// Engineering (bluetooth_hid_notes.md, bluetooth_hid_subcommands_notes.md, rumble_data_table.md; b354f21ae81f),
 /// SDL3's src/joystick/hidapi/SDL_hidapi_switch.c (libsdl-org/SDL 3cffe56317b9) and Linux's drivers/hid/hid-nintendo.c
 /// (torvalds/linux 4169c9c90532).
@@ -12,6 +12,13 @@
 ///   SR SL R ZR from bit 0; 4: - + RS LS Home Capture; 5: down up right left SR SL L ZL), 6-8 the left stick and 9-11
 ///   the right one, two 12-bit values each (x = b0 | (b1 & 0x0F) << 8, y = b1 >> 4 | b2 << 4, up is larger).
 ///   The faces are positional: B south, A east, Y west, X north (SDL without button labels).
+/// - A Joy-Con sends the same report with its half of the buttons and its stick (SDL_hidapi_switch.c,
+///   HandleFullControllerState). Alone it is a small pad held sideways (SDL's HandleMiniControllerStateL / R: the
+///   four buttons by the stick are the faces, SL / SR the shoulders, L / ZL or R / ZR paddles, the stick turned a
+///   quarter); an L and an R together are one pad, each half giving its side of the Pro layout
+///   (HandleCombinedControllerStateL / R; SL / SR as paddles: SDL's RIGHT_PADDLE1 / 2 and LEFT_PADDLE1 / 2, the Elite
+///   P1 / P2 and P3 / P4). In a pair the left one rumbles with the low motor's level, the right one with the high
+///   one's (SDL's HIDAPI_DriverSwitch_RumbleJoystick).
 /// - Output 0x01: a packet number 0-15, 8 rumble bytes (left, right actuator), a subcommand and its data; 0x10 the
 ///   rumble alone; 0x80 the USB-only commands (handshake, high speed, force USB). 49 bytes over Bluetooth, 64 over USB
 ///   (SDL's WritePacket).
@@ -71,19 +78,50 @@ struct SwitchStickCalibration
     static SwitchStickCalibration Parse(const uint8_t* left, const uint8_t* right);
 };
 
+/// Which buttons and stick a 0x30 report gives, and as what
+enum class SwitchLayout : uint8_t
+{
+    Pro,          ///< the Pro Controller: everything
+    JoyConLeft,   ///< a left Joy-Con alone, sideways
+    JoyConRight,  ///< a right Joy-Con alone, sideways
+    PairLeft,     ///< the left half of a Joy-Con pair
+    PairRight,    ///< the right half
+};
+
 /// Reads 0x30 / 0x21 into controls
 class SwitchProPad
 {
 public:
     static constexpr uint16_t kNintendo = 0x057E;
     static constexpr uint16_t kProController = 0x2009;
+    static constexpr uint16_t kJoyConLeft = 0x2006;
+    static constexpr uint16_t kJoyConRight = 0x2007;
     static bool Handles(uint16_t vendor, uint16_t product)
     {
-        return vendor == kNintendo && product == kProController;
+        return LayoutFor(vendor, product).has_value();
     }
+    /// The Pro Controller, a Joy-Con (alone until the backend pairs it); nullopt for anything else (the charging grip
+    /// 057E:200E shows both Joy-Cons under one product id and stays HidPad's)
+    static std::optional<SwitchLayout> LayoutFor(uint16_t vendor, uint16_t product);
+    static bool IsJoyCon(SwitchLayout layout)
+    {
+        return layout != SwitchLayout::Pro;
+    }
+    /// The layout of a Joy-Con alone (@p paired false) or as a pair's half
+    static SwitchLayout JoyConLayout(bool left, bool paired);
+    /// A pair's half rumbles with its side's motor: the left the low level, the right the high one (SDL)
+    static RumbleLevels HalfRumble(const RumbleLevels& levels, bool left);
 
-    SwitchProPad();
+    explicit SwitchProPad(SwitchLayout layout = SwitchLayout::Pro);
+    /// The Pro Controller's controls
     static std::vector<std::string> Controls();
+    static std::vector<std::string> Controls(SwitchLayout layout);
+    SwitchLayout Layout() const
+    {
+        return _layout;
+    }
+    /// A Joy-Con joined or left a pair: the next report gives the whole state again (as the first one)
+    void SetLayout(SwitchLayout layout);
     /// A full report 0x30 / 0x31 or a subcommand reply 0x21: every control that changed goes to @p sink. False for any
     /// other report (the simple 0x3F stays HidPad's)
     bool Decode(const uint8_t* report, size_t size, const ControlSink& sink);
@@ -101,6 +139,7 @@ private:
     float Axis(int raw, int stick, int axis);
     void Set(size_t index, float value, bool button, const ControlSink& sink);
 
+    SwitchLayout _layout;
     SwitchStickCalibration _calibration;
     int _extentBelow[2][2] = {};
     int _extentAbove[2][2] = {};

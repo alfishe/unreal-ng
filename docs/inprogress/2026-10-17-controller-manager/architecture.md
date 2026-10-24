@@ -188,12 +188,25 @@ HostDeviceId = family-neutral, stable across replug and restart:
   at the start everything arrives together). The macOS backend checks every 0.1 s and reports it as
   `gc:<vendor name slug>#<n>` (the name in lower case, other characters as `-`, the lowest free n; family and layout
   from the database's name rules) with GameController's input (`GcPad`: the extended gamepad's elements, positional
-  faces, y negated; `GcCompanion::SetInput`), its haptics, light and battery. When its IOHID endpoint appears later
-  both give input until two coincident presses confirm the match (the same rule as above); the confirmation is
-  `promoted`: the `gc:` device is removed, `IBackendSink::OnDevicePromoted(gc, usb/bt)` moves the router settings
-  chosen for it (role, instance mode, player connector: `InputRouter::Promote`, unless the new id has its own) and the
-  IOHID id goes on with the companion's outputs. Not built: the profile store's alias (bindings naming the `gc:` id
-  do not follow; the store lives in the Qt client) and keeping the alias across restarts.
+  faces, y negated; `GcCompanion::SetInput`), its haptics, light and battery. When an IOHID device of its name
+  appears later, the rule above holds (one device, input from IOHID only, D18): the `gc:` device stays listed but its
+  input stops at once (`EndpointMerge::IsShadowed`; `GcCompanion::SetInput` off releases what it held, `GcPad::Release`)
+  and the IOHID device gives the input; the companion's presses are counted afresh for the match (the ones of its
+  standalone time had nothing to coincide with). Holding the IOHID one back instead would keep the `gc:` settings
+  working until the match, but the IOHID device is the one that stays and the one the match needs presses from, and
+  §5 names it the input. The shadow ends when the IOHID device goes, or after `kShadowPresses` (4) presses of the
+  companion with none coincident on it (another pad of that name): the `gc:` input comes back. A device of another
+  name does not shadow it (the presses alone may still match the two, both give input until then). Two coincident
+  presses confirm the match; the confirmation is `promoted`: the `gc:` device is removed,
+  `IBackendSink::OnDevicePromoted(gc, usb/bt)` moves the router settings chosen for it (role, instance mode, player
+  connector: `InputRouter::Promote`, unless the new id has its own) and the IOHID id goes on with the companion's
+  outputs.
+- **Aliases, built (2026-10-23)**: `HostInputService` keeps each promotion (`TakePromotions`); the Qt client's poll
+  records it in the profile store (`ProfileStore::AddAlias(old, new)`; an alias of the old id moves to the new one) and
+  writes `<user profiles>/aliases.yaml` (`schema: 1`, `aliases: [{from, to}]`), read again at start. A profile's
+  `applies_to.devices` and a player pin match a device by its id or any of its old ids (substrings, as before), so
+  the bindings and pin of the `gc:` id follow, and the next connect is the IOHID id at once. The router settings
+  (role, instance mode) are not kept across restarts for any id, so they move only at run time.
 
 ## 6. The canonical control vocabulary
 

@@ -56,4 +56,15 @@ void GcPad::Update(const GcPadSnapshot& snapshot, const ControlSink& sink)
     _seen = true;
 }
 
+void GcPad::Release(const ControlSink& sink)
+{
+    if (_seen)
+    {
+        GcPadSnapshot rest;
+        rest.present = _last.present;
+        Update(rest, sink);
+    }
+    Reset();
+}
+
 }  // namespace controllers

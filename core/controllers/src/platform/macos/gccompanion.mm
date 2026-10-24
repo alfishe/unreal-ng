@@ -540,6 +540,10 @@ void GcCompanion::SetInput(const std::string& key, bool on)
           if (entry.key != copy || entry.input == on)
               continue;
           entry.input = on;
+          if (!on && state->running && state->callbacks.control)
+              entry.pad.Release([&state, &copy](const std::string& control, float value) {
+                  state->callbacks.control(copy, control, value);
+              });
           entry.pad.Reset();
           if (on && state->running && state->callbacks.control && entry.controller.extendedGamepad != nil)
               entry.pad.Update(SnapshotOf(entry.controller.extendedGamepad),

@@ -352,7 +352,8 @@ std::vector<uint8_t> DualShock4Output::BluetoothReport(const RumbleLevels& level
 
 /// region <SonyProtocol>
 
-SonyProtocol::SonyProtocol(SonyModel model, bool bluetooth) : _model(model), _bluetooth(bluetooth), _ready(!bluetooth)
+SonyProtocol::SonyProtocol(SonyModel model, bool bluetooth)
+    : _model(model), _bluetooth(bluetooth), _ready(!bluetooth), _modeSwitched(model != SonyModel::DualShock4)
 {
     // A DualShock 4 report sets motors and light together: the light starts at player 1's blue, not off
     if (model == SonyModel::DualShock4)
@@ -432,8 +433,10 @@ std::optional<PadOutReport> SonyProtocol::Next(uint64_t nowMs, uint64_t& wakeMs)
             ++_featureTries;
             PadOutReport read;
             read.kind = PadOutReport::Kind::GetFeature;
-            read.featureId = SonyPad::kCalibrationFeature;
-            read.featureSize = SonyPad::kCalibrationFeatureSize;
+            // A DualShock 4 reads 0x02 first, then 0x05 with its CRC (SDL); a DualSense only 0x05 (hid-playstation)
+            read.featureId = _modeSwitched ? SonyPad::kCalibrationFeature : SonyPad::kDs4UsbCalibrationFeature;
+            read.featureSize =
+                _modeSwitched ? SonyPad::kCalibrationFeatureSize : SonyPad::kDs4UsbCalibrationFeatureSize;
             return read;
         }
     }
@@ -473,6 +476,19 @@ void SonyProtocol::OnWritten(bool ok, uint64_t nowMs)
 
 void SonyProtocol::OnFeature(uint8_t featureId, const std::vector<uint8_t>& data, uint64_t nowMs)
 {
+    if (featureId == SonyPad::kDs4UsbCalibrationFeature && !_modeSwitched)
+    {
+        // SDL accepts 35 bytes or more; the report carries no CRC
+        if (data.size() >= SonyPad::kDs4UsbCalibrationMinSize &&
+            data.size() <= SonyPad::kDs4UsbCalibrationFeatureSize && data[0] == featureId)
+        {
+            _modeSwitched = true;
+            _featureTries = 0;  // the 0x05 read gets its own attempts
+        }
+        else
+            _featureAfter = nowMs + kFeatureRetryMs;
+        return;
+    }
     if (featureId != SonyPad::kCalibrationFeature)
         return;
     // hid-playstation's ps_get_report: the size, the id, over Bluetooth the CRC (seed 0xA3)

@@ -58,6 +58,11 @@ public:
     /// The calibration feature report: reading it switches a Bluetooth pad to its full report (hid-playstation)
     static constexpr uint8_t kCalibrationFeature = 0x05;
     static constexpr size_t kCalibrationFeatureSize = 41;
+    /// The DualShock 4 USB calibration feature (37 bytes, no CRC). SDL's HIDAPI_DriverPS4_LoadCalibrationData reads it
+    /// first over Bluetooth as well: "this report switches them into advanced report mode" (the 0x11 report)
+    static constexpr uint8_t kDs4UsbCalibrationFeature = 0x02;
+    static constexpr size_t kDs4UsbCalibrationFeatureSize = 37;
+    static constexpr size_t kDs4UsbCalibrationMinSize = 35;  ///< SDL's short-read limit
     /// The DualSense firmware feature report (64 bytes, the update version at 44-45, hid-playstation)
     static constexpr uint8_t kFirmwareFeature = 0x20;
     static constexpr size_t kFirmwareFeatureSize = 64;
@@ -171,6 +176,7 @@ private:
     bool _bluetooth;
     bool _ready;
     int _featureTries = 0;
+    bool _modeSwitched = false;  ///< DualShock 4 over Bluetooth: feature 0x02 was read (then 0x05 follows)
     uint64_t _featureAfter = 0;
     uint8_t _sequence = 0;
     uint64_t _lastWriteMs = 0;

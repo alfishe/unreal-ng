@@ -288,4 +288,50 @@ TEST(EndpointMerge_Test, Standalone_AMatchedCompanionIsNotPromoted)
     EXPECT_TRUE(merge.StandaloneDue(100000).empty());
 }
 
+TEST(EndpointMerge_Test, Standalone_ADeviceOfItsNameHoldsItBackUntilConfirmed)
+{
+    // D18: until the match is confirmed the pad gives input from IOHID only
+    EndpointMerge merge;
+    merge.AddCompanion({"gc#1", "Pro Controller", 1000});
+    ASSERT_EQ(merge.StandaloneDue(5000).size(), 1u);
+    for (uint64_t t = 6000; t < 6010; ++t)
+        merge.CompanionEdge("gc#1", t * 10);  // played as a gc: device for a while
+    EXPECT_FALSE(merge.IsShadowed("gc#1"));
+
+    merge.AddHid(Hid("a", "bt:057e:2009:1", "bt:057e:2009:1", "Pro Controller", 20, 90000));
+    EXPECT_TRUE(merge.IsShadowed("gc#1"));
+    // Its standalone presses do not count against the match: two coincident presses confirm
+    EXPECT_FALSE(merge.HidEdge("bt:057e:2009:1", 100000).has_value());
+    EXPECT_FALSE(merge.CompanionEdge("gc#1", 100004).has_value());
+    EXPECT_FALSE(merge.HidEdge("bt:057e:2009:1", 101000).has_value());
+    const auto confirmed = merge.CompanionEdge("gc#1", 101006);
+    ASSERT_TRUE(confirmed.has_value());
+    EXPECT_TRUE(confirmed->promoted);
+    EXPECT_FALSE(merge.IsShadowed("gc#1"));
+}
+
+TEST(EndpointMerge_Test, Standalone_TheShadowEndsWithTheDeviceOrWithoutCoincidences)
+{
+    EndpointMerge merge;
+    merge.AddCompanion({"gc#1", "Pro Controller", 1000});
+    ASSERT_EQ(merge.StandaloneDue(5000).size(), 1u);
+    merge.AddHid(Hid("other", "usb:4567:0001:x", "usb:4567:0001:x", "USB Gamepad", 20, 6000));
+    EXPECT_FALSE(merge.IsShadowed("gc#1")) << "a device of another name does not hold it back";
+
+    merge.AddHid(Hid("a", "bt:057e:2009:1", "bt:057e:2009:1", "Pro Controller", 20, 7000));
+    EXPECT_TRUE(merge.IsShadowed("gc#1"));
+    merge.RemoveHid("a", 8000);
+    EXPECT_FALSE(merge.IsShadowed("gc#1")) << "the device went before a confirmation";
+
+    // Another pad of the same name: the companion's presses never coincide on it
+    merge.AddHid(Hid("b", "bt:057e:2009:2", "bt:057e:2009:2", "Pro Controller", 20, 9000));
+    ASSERT_TRUE(merge.IsShadowed("gc#1"));
+    for (int i = 0; i < EndpointMerge::kShadowPresses - 1; ++i)
+        merge.CompanionEdge("gc#1", 10000 + static_cast<uint64_t>(i) * 500);
+    EXPECT_TRUE(merge.IsShadowed("gc#1"));
+    merge.CompanionEdge("gc#1", 20000);
+    EXPECT_FALSE(merge.IsShadowed("gc#1"));
+    EXPECT_TRUE(merge.IsStandalone("gc#1"));
+}
+
 /// endregion </Standalone companions>

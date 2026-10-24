@@ -134,7 +134,9 @@ Rules:
 - The PlayStation pads (DualShock 4 054C:05C4 / 09CC / 0BA0, DualSense 054C:0CE6, DualSense Edge 054C:0DF2) and the
   Switch Pro controller (057E:2009) are read by their own drivers on macOS (`SonyPad`, `SwitchProPad`, by VID / PID,
   [haptics.md §9](haptics.md#9-backends)), whatever entry matched them; the entry gives the name, family, layout and
-  images as for any pad. Joy-Cons stay generic HID (no driver yet).
+  images as for any pad. So are the Joy-Cons (057E:2006, 2007; the `joy-con` entry, the OS's product name "Joy-Con
+  (L)" / "(R)"), alone or a left and a right one as one pad "Joy-Con (L/R)"; the charging grip (200E) stays generic
+  HID.
 
 ## 4. User overrides
 

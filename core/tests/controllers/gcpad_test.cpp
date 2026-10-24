@@ -53,6 +53,28 @@ TEST(GcPad_Test, SnapshotChangesBecomeControls)
     EXPECT_EQ(events.count("east"), 0u);
 }
 
+TEST(GcPad_Test, ReleaseLetsGoOfWhatIsHeld)
+{
+    // The input stops while a button is down and a stick is pushed: the router sees them come back
+    GcPad pad;
+    GcPadSnapshot snapshot;
+    for (size_t element = 0; element < GcPadSnapshot::kElementCount; element++)
+        snapshot.present[element] = true;
+    snapshot.values[GcPadSnapshot::kButtonA] = 1.0f;
+    snapshot.values[GcPadSnapshot::kLeftX] = 0.8f;
+    std::map<std::string, float> events;
+    const ControlSink sink = [&events](const std::string& control, float value) { events[control] = value; };
+    pad.Update(snapshot, sink);
+    events.clear();
+    pad.Release(sink);
+    EXPECT_EQ(events.size(), 2u);
+    EXPECT_FLOAT_EQ(events.at("south"), 0.0f);
+    EXPECT_FLOAT_EQ(events.at("lstick.x"), 0.0f);
+    events.clear();
+    pad.Release(sink);
+    EXPECT_TRUE(events.empty()) << "nothing is held after a release";
+}
+
 TEST(GcPad_Test, SharpnessFollowsTheSwitchFrequencyCodes)
 {
     EXPECT_FLOAT_EQ(GcPad::SharpnessFor(0), GcPad::kDefaultSharpness);

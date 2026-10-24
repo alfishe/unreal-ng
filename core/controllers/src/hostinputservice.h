@@ -125,6 +125,10 @@ public:
     MarksPlayed PlayMarks(const HostDeviceId& device, const std::vector<std::string>& marks, uint64_t nowMs = 0);
     /// endregion </Surface outputs>
 
+    /// The promotions since the last call (old id, new id; OnDevicePromoted): the profile store's owner records each
+    /// as an alias (ProfileStore::AddAlias) and keeps it (architecture.md §5). Revision counts them as a change
+    std::vector<std::pair<HostDeviceId, HostDeviceId>> TakePromotions();
+
     /// region <IBackendSink>
     void OnDeviceAdded(const HostDeviceInfo& device) override;
     void OnDeviceRemoved(const HostDeviceId& device) override;
@@ -144,6 +148,7 @@ private:
     /// The devices that drive @p instance and have motors, asked at every haptic frame
     std::function<std::vector<HostDeviceId>()> TargetsFor(const std::string& instance);
 
+
     mutable std::mutex _mutex;
     std::mutex _hapticsWrite;  ///< held across a backend's SetRumble; Stop takes it before it drops the backends
     std::vector<Entry> _backends;
@@ -152,6 +157,7 @@ private:
     mutable std::mutex _liveMutex;
     std::map<HostDeviceId, std::map<std::string, float>> _live;
     std::map<HostDeviceId, std::string> _deviceBackend;  ///< under _mutex: the backend that reported a device
+    std::vector<std::pair<HostDeviceId, HostDeviceId>> _promotions;  ///< under _mutex: for TakePromotions
     std::mutex _marksMutex;
     MarkLimiter _marks;  ///< under _marksMutex
     /// Last member: destroyed first, while the backends it writes to still exist

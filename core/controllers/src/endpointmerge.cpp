@@ -72,6 +72,21 @@ EndpointMerge::HidAdded EndpointMerge::AddHid(const HidEndpointInfo& endpoint)
     device.endpoints.emplace_back(endpoint.key, endpoint.controls);
     _devices[endpoint.id] = std::move(device);
     _endpoints[endpoint.key] = endpoint.id;
+    // A standalone companion of its name: held back from now on, its presses counted afresh for the match (the ones
+    // of its standalone time had no raw device to coincide with)
+    for (auto& [key, companion] : _companions)
+    {
+        if (!companion.standalone || !companion.device.empty() || !NamesMatch(companion.vendorName, endpoint.name))
+            continue;
+        if (companion.shadowedBy.empty())
+        {
+            companion.edges.clear();
+            companion.presses = 0;
+            companion.hits.clear();
+            companion.shadowPresses = 0;
+        }
+        companion.shadowedBy.push_back(endpoint.id);
+    }
     return {endpoint.id, true};
 }
 
@@ -98,6 +113,8 @@ EndpointMerge::HidRemoved EndpointMerge::RemoveHid(const std::string& key, uint6
         }
     for (auto& [companionKey, companion] : _companions)
     {
+        companion.shadowedBy.erase(std::remove(companion.shadowedBy.begin(), companion.shadowedBy.end(), id),
+                                   companion.shadowedBy.end());
         companion.hits.erase(id);
         for (CompanionEdgeRecord& record : companion.edges)
             record.hit.erase(std::remove(record.hit.begin(), record.hit.end(), id), record.hit.end());
@@ -189,6 +206,7 @@ std::optional<EndpointMerge::Confirmed> EndpointMerge::ConfirmLocked(const std::
         return std::nullopt;
     const bool promoted = companion.standalone;
     companion.standalone = false;
+    companion.shadowedBy.clear();
     companion.device = best;
     companion.edges.clear();
     companion.presses = 0;
@@ -253,7 +271,12 @@ std::optional<EndpointMerge::Confirmed> EndpointMerge::CompanionEdge(const std::
     ++companion.presses;
     // The hits stay counted when an old record goes; only the late presses look back this far
     KeepLast(companion.edges, kKeptEdges);
-    return ConfirmLocked(key, companion);
+    std::optional<Confirmed> confirmed = ConfirmLocked(key, companion);
+    if (!confirmed && !companion.shadowedBy.empty() && ++companion.shadowPresses >= kShadowPresses &&
+        std::none_of(companion.shadowedBy.begin(), companion.shadowedBy.end(),
+                     [&companion](const HostDeviceId& device) { return companion.hits.count(device) != 0; }))
+        companion.shadowedBy.clear();  // another pad of its name: the companion gives its input again
+    return confirmed;
 }
 
 std::vector<std::string> EndpointMerge::StandaloneDue(uint64_t nowMs)
@@ -283,6 +306,12 @@ bool EndpointMerge::IsStandalone(const std::string& companion) const
 {
     const auto found = _companions.find(companion);
     return found != _companions.end() && found->second.standalone;
+}
+
+bool EndpointMerge::IsShadowed(const std::string& companion) const
+{
+    const auto found = _companions.find(companion);
+    return found != _companions.end() && found->second.standalone && !found->second.shadowedBy.empty();
 }
 
 EndpointMerge::MatchState EndpointMerge::StateOf(const HostDeviceId& device) const

@@ -16,6 +16,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -32,6 +33,7 @@
 #include "hid/drivers/xboxgip.h"
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
+#include "joyconpairing.h"
 #include "platform/macos/gccompanion.h"
 
 namespace controllers
@@ -248,6 +250,8 @@ public:
     bool HasRumble(const HostDeviceId& device) const override
     {
         std::lock_guard lock(_mutex);
+        if (PairLocked(device).first != nullptr)
+            return true;
         return NativeRumbleLocked(device) != nullptr || CompanionActuatorsLocked(device) != 0;
     }
 
@@ -267,6 +271,8 @@ public:
         std::lock_guard lock(_mutex);
         if (const auto gc = _gcKeys.find(device); gc != _gcKeys.end())
             return GcUnavailableLocked(gc->second, false);
+        if (PairLocked(device).first != nullptr)
+            return {};
         const std::vector<Device*> endpoints = EndpointsLocked(device);
         if (endpoints.empty())
             return "The device is not connected";
@@ -286,6 +292,8 @@ public:
     uint8_t RumbleActuators(const HostDeviceId& device) const override
     {
         std::lock_guard lock(_mutex);
+        if (PairLocked(device).first != nullptr)
+            return static_cast<uint8_t>(kRumbleLow | kRumbleHigh);  // the left half's motor and the right one's
         if (const Device* native = NativeRumbleLocked(device))
             return native->nativeActuators;
         for (const Device* known : EndpointsLocked(device))
@@ -344,6 +352,13 @@ public:
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         std::lock_guard lock(_mutex);
+        if (const auto [left, right] = PairLocked(device); left != nullptr)
+        {
+            // A Joy-Con pair: the left half the low motor's level, the right one the high one's (SDL)
+            left->pump->SetRumble(SwitchProPad::HalfRumble(levels, true));
+            right->pump->SetRumble(SwitchProPad::HalfRumble(levels, false));
+            return true;
+        }
         if (Device* known = NativeRumbleLocked(device))
         {
             if (known->pump)
@@ -368,6 +383,8 @@ public:
     BatteryState Battery(const HostDeviceId& device) const override
     {
         std::lock_guard lock(_mutex);
+        if (const auto [left, right] = PairLocked(device); left != nullptr)
+            return JoyConPairing::Battery(left->battery, right->battery);
         for (const Device* known : EndpointsLocked(device))
             if (known->battery.known)
                 return known->battery;
@@ -387,6 +404,8 @@ public:
         std::lock_guard lock(_mutex);
         if (const auto gc = _gcKeys.find(device); gc != _gcKeys.end())
             return GcUnavailableLocked(gc->second, true);
+        if (PairLocked(device).first != nullptr)
+            return "Joy-Cons have no light the emulator can set (their player lights show the player)";
         if (EndpointsLocked(device).empty())
             return "The device is not connected";
         if (NativeLightLocked(device) != nullptr || CompanionLightLocked(device))
@@ -419,7 +438,7 @@ public:
         size_t count = _gcKeys.size();
         for (const auto& [ref, device] : _devices)
             count += _merge.IsInput(device->key) ? 1 : 0;
-        return count;
+        return count - _joyCons.PairCount();  // two Joy-Cons, one pad
     }
 
 private:
@@ -436,8 +455,14 @@ private:
         std::unique_ptr<SurfaceDialWriter> writer;  ///< a Dial's feature and output reports
         /// A DualSense / DualShock 4 full report (USB, Bluetooth 0x31 / 0x11); its short Bluetooth report stays hid's
         std::unique_ptr<SonyPad> sony;
-        /// A Switch Pro controller's full report 0x30 and subcommand replies; its simple 0x3F stays hid's
+        /// A Switch Pro controller's or a Joy-Con's full report 0x30 and subcommand replies; the simple 0x3F stays hid's
         std::unique_ptr<SwitchProPad> switchPro;
+        int joyCon = 0;         ///< 1 a left Joy-Con, 2 a right one (JoyConPairing)
+        /// The id its events go out under: its own, or its Joy-Con pair's (written on the io thread under _mutex, read
+        /// there by OnReport)
+        HostDeviceId reported;
+        HostDeviceInfo single;  ///< a Joy-Con's own device, for when it is alone again
+        bool shown = false;     ///< under _mutex: a Joy-Con's own device is reported (it is alone)
         /// The pad's protocol (SonyProtocol, SwitchProtocol): rumble, light, player LEDs, set-up reports
         std::unique_ptr<PadPump> pump;
         bool pumpLight = false;       ///< the pump sets a light bar colour (the PlayStation pads)
@@ -511,12 +536,15 @@ private:
         {
             std::lock_guard lock(_mutex);
             for (auto& [ref, device] : _devices)
-                if (_merge.IsInput(device->key))
-                    gone.push_back(device->id);
+                if (_merge.IsInput(device->key) &&
+                    std::find(gone.begin(), gone.end(), device->reported) == gone.end())
+                    gone.push_back(device->reported);  // a Joy-Con pair once
             for (const auto& [id, key] : _gcKeys)
                 gone.push_back(id);
             _gcKeys.clear();
             _gcIds.clear();
+            _gcHeld.clear();
+            _joyCons = JoyConPairing();
             devices.swap(_devices);
             _merge = EndpointMerge();
             _companion.reset();
@@ -618,6 +646,31 @@ private:
         if (_companion)
             _companion->SetInput(confirmed->companion, false);
     }
+    /// D18: a `gc:` device's input stops while an IOHID device of its name waits for the match, and comes back when
+    /// that device goes or is another pad (EndpointMerge::IsShadowed); the switches for the companion, outside the lock
+    using InputSwitch = std::pair<std::string, bool>;
+    void SyncHeldLocked(std::vector<InputSwitch>& out)
+    {
+        for (const auto& [key, id] : _gcIds)
+        {
+            const bool held = _merge.IsShadowed(key);
+            if (held == (_gcHeld.count(key) != 0))
+                continue;
+            if (held)
+                _gcHeld.insert(key);
+            else
+                _gcHeld.erase(key);
+            out.emplace_back(key, !held);
+        }
+        for (auto it = _gcHeld.begin(); it != _gcHeld.end();)
+            it = _gcIds.count(*it) == 0 ? _gcHeld.erase(it) : std::next(it);  // promoted or gone
+    }
+    void SwitchInputs(const std::vector<InputSwitch>& switches)
+    {
+        if (_companion)
+            for (const auto& [key, on] : switches)
+                _companion->SetInput(key, on);
+    }
     void Promote(const std::vector<Promotion>& promotions)
     {
         for (const auto& [from, to] : promotions)
@@ -689,16 +742,20 @@ private:
                     _gcKeys.erase(id->second);
                     _gcIds.erase(id);
                 }
+                _gcHeld.erase(key);
             }
             if (!gone.empty())
                 _sink->OnDeviceRemoved(gone);
         };
         callbacks.pressed = [this](const std::string& key, uint64_t timeMs) {
             std::vector<Promotion> promotions;
+            std::vector<InputSwitch> switches;
             {
                 std::lock_guard lock(_mutex);
                 PromoteLocked(_merge.CompanionEdge(key, timeMs), promotions);
+                SyncHeldLocked(switches);
             }
+            SwitchInputs(switches);
             Promote(promotions);
         };
         callbacks.control = [this](const std::string& key, const std::string& control, float value) {
@@ -734,6 +791,99 @@ private:
         return nullptr;
     }
 
+    /// region <Joy-Con pairs>
+    /// What a pair change shows the sink, outside the lock: the devices gone first, then the new ones
+    struct PairEvents
+    {
+        std::vector<HostDeviceId> removed;
+        std::vector<HostDeviceInfo> added;
+    };
+
+    Device* JoyConLocked(const HostDeviceId& id) const
+    {
+        for (const auto& [ref, known] : _devices)
+            if (known->joyCon != 0 && known->id == id)
+                return known.get();
+        return nullptr;
+    }
+
+    /// Both halves of a pair; nullptr, nullptr for any other id
+    std::pair<Device*, Device*> PairLocked(const HostDeviceId& device) const
+    {
+        const std::optional<JoyConPairing::Pair> pair = _joyCons.Find(device);
+        if (!pair)
+            return {nullptr, nullptr};
+        Device* left = JoyConLocked(pair->left);
+        Device* right = JoyConLocked(pair->right);
+        if (left == nullptr || right == nullptr)
+            return {nullptr, nullptr};
+        return {left, right};
+    }
+
+    /// A pair broke (@p gone left it) and / or one formed: the halves' layouts, ids, player LEDs, and what the sink
+    /// sees (on the io thread: the decoders are its own)
+    void ApplyJoyConChangeLocked(const JoyConPairing::Change& change, const HostDeviceId& gone, PairEvents& out)
+    {
+        if (change.broken)
+        {
+            out.removed.push_back(change.broken->id);
+            const HostDeviceId& alone = change.broken->left == gone ? change.broken->right : change.broken->left;
+            if (Device* device = JoyConLocked(alone))
+            {
+                device->reported = device->id;
+                device->switchPro->SetLayout(SwitchProPad::JoyConLayout(device->joyCon == 1, false));
+                if (device->pump)
+                {
+                    device->pump->SetPlayer(device->player);
+                    device->pump->SetRumble({});
+                }
+                device->shown = true;
+                out.added.push_back(device->single);
+            }
+        }
+        if (!change.formed)
+            return;
+        const JoyConPairing::Pair& pair = *change.formed;
+        Device* left = JoyConLocked(pair.left);
+        Device* right = JoyConLocked(pair.right);
+        if (left == nullptr || right == nullptr)
+            return;
+        for (Device* half : {left, right})
+        {
+            if (half->shown)
+            {
+                // Shown alone until now: gone, or never shown when it came back alone in this same change
+                const auto again = std::find_if(out.added.begin(), out.added.end(),
+                                                [half](const HostDeviceInfo& info) { return info.id == half->id; });
+                if (again != out.added.end())
+                    out.added.erase(again);
+                else
+                    out.removed.push_back(half->id);
+            }
+            half->shown = false;
+            half->reported = pair.id;
+            half->switchPro->SetLayout(SwitchProPad::JoyConLayout(half == left, true));
+            if (half->pump)
+            {
+                half->pump->SetPlayer(left->player);  // both show the pair's number (SDL sets each half's lights)
+                half->pump->SetRumble({});
+            }
+        }
+        HostDeviceInfo info = left->single;
+        info.id = pair.id;
+        info.name = "Joy-Con (L/R)";
+        out.added.push_back(info);
+    }
+
+    void ReportPairEvents(const PairEvents& events)
+    {
+        for (const HostDeviceId& id : events.removed)
+            _sink->OnDeviceRemoved(id);
+        for (const HostDeviceInfo& info : events.added)
+            _sink->OnDeviceAdded(info);
+    }
+    /// endregion </Joy-Con pairs>
+
     void OnAdded(IOHIDDeviceRef ref)
     {
         const uint16_t vendor = static_cast<uint16_t>(IntProperty(ref, CFSTR(kIOHIDVendorIDKey)));
@@ -765,7 +915,8 @@ private:
             device->nativeActuators = kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
         // A PlayStation pad and the Switch Pro controller: their own full reports and protocols (haptics.md §9)
         const std::optional<SonyModel> sony = SonyPad::ModelOf(vendor, product);
-        const bool switchPro = SwitchProPad::Handles(vendor, product);
+        const std::optional<SwitchLayout> switchLayout = SwitchProPad::LayoutFor(vendor, product);
+        const bool switchPro = switchLayout.has_value();
         auto rumbleUnavailable = [&]() -> std::string {
             if (device->xboxBluetooth || sony || switchPro)
                 return {};
@@ -773,8 +924,8 @@ private:
                 return "Xbox 360 pads do not rumble on macOS yet";
             if (vendor == kMicrosoft && match.layout == "xbox")
                 return "macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth";
-            return "On macOS rumble works for Xbox pads over Bluetooth, the DualSense, the DualShock 4 and the Switch "
-                   "Pro controller; this device has no motors the emulator can drive";
+            return "On macOS rumble works for Xbox pads over Bluetooth, the DualSense, the DualShock 4, the Switch "
+                   "Pro controller and the Joy-Cons; this device has no motors the emulator can drive";
         };
         device->rumbleUnavailable = rumbleUnavailable();
         const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
@@ -830,8 +981,10 @@ private:
         }
         else if (switchPro && !device->dial && !device->gip)
         {
-            device->switchPro = std::make_unique<SwitchProPad>();
-            controls = std::max(controls, SwitchProPad::Controls().size());
+            device->switchPro = std::make_unique<SwitchProPad>(*switchLayout);
+            controls = std::max(controls, SwitchProPad::Controls(*switchLayout).size());
+            if (SwitchProPad::IsJoyCon(*switchLayout))
+                device->joyCon = *switchLayout == SwitchLayout::JoyConLeft ? 1 : 2;
             // The calibration comes with a subcommand reply, on the io thread (PadPump::Input): the decoder is its
             SwitchProPad* decoder = device->switchPro.get();
             device->pump = MakePump(ref, std::make_unique<SwitchProtocol>(
@@ -859,12 +1012,14 @@ private:
             id = "usb:" + Hex4(vendor) + ":" + Hex4(product) + ":" + Hex4(version) + "@" + Hash(location);
 
         HostDeviceInfo info;
-        info.name = match.name;
+        info.name = device->joyCon != 0 && !identity.name.empty() ? identity.name : match.name;  // "Joy-Con (L)"
         info.family = match.family;
         info.layout = match.layout;
         info.backend = Name();
         Device* raw = device.get();
         bool newDevice = true;
+        std::vector<InputSwitch> switches;
+        PairEvents pairEvents;
         {
             std::lock_guard lock(_mutex);
             std::string unique = id;
@@ -877,6 +1032,7 @@ private:
                 _merge.AddHid({device->key, unique, physical, identity.name, controls, SteadyNowMs()});
             newDevice = added.newDevice;
             device->id = added.device;
+            device->reported = added.device;
             device->buffer.resize(static_cast<size_t>(maxInput > 0 ? maxInput : 64));
             info.id = added.device;
             // The player LEDs: the lowest number no other pump pad shows
@@ -893,12 +1049,29 @@ private:
             if (device->writer)
                 if (const auto steps = _dialSteps.find(info.id); steps != _dialSteps.end())
                     device->writer->Steps(steps->second);
+            const bool joyCon = device->joyCon != 0;
+            device->single = info;
+            device->shown = joyCon && newDevice;
             _devices[ref] = std::move(device);
             UpdateInputsLocked(info.id);
+            SyncHeldLocked(switches);
+            if (joyCon && newDevice)
+            {
+                // With a Joy-Con of the other side that waits: one pad (its own device never shows)
+                const JoyConPairing::Change change = _joyCons.Add(info.id, raw->joyCon == 1);
+                if (change.formed)
+                {
+                    raw->shown = false;
+                    newDevice = false;
+                }
+                ApplyJoyConChangeLocked(change, {}, pairEvents);
+            }
         }
         // A second endpoint of a device already reported adds nothing the sink sees
         if (newDevice)
             _sink->OnDeviceAdded(info);
+        ReportPairEvents(pairEvents);
+        SwitchInputs(switches);  // a `gc:` device of its name stops giving input
         // With the report's time stamp: the encoder's speed counts from when the report came, not when it ran
         IOHIDDeviceRegisterInputReportWithTimeStampCallback(ref, raw->buffer.data(),
                                                             static_cast<CFIndex>(raw->buffer.size()),
@@ -909,6 +1082,8 @@ private:
     {
         std::unique_ptr<Device> device;
         EndpointMerge::HidRemoved removed;
+        std::vector<InputSwitch> switches;
+        PairEvents pairEvents;
         {
             std::lock_guard lock(_mutex);
             auto it = _devices.find(ref);
@@ -919,12 +1094,22 @@ private:
             removed = _merge.RemoveHid(device->key, SteadyNowMs());
             if (!removed.deviceGone)
                 UpdateInputsLocked(removed.device);  // another endpoint of the pad gives its input now
+            SyncHeldLocked(switches);
+            if (device->joyCon != 0 && removed.deviceGone)
+            {
+                const JoyConPairing::Change change = _joyCons.Remove(device->id);
+                if (!device->shown)
+                    removed.deviceGone = false;  // its own device was never shown: the pair's removal says it
+                ApplyJoyConChangeLocked(change, device->id, pairEvents);
+            }
         }
+        SwitchInputs(switches);  // a `gc:` device it held back gives its input again
         IOHIDDeviceRegisterInputReportWithTimeStampCallback(ref, device->buffer.data(),
                                                             static_cast<CFIndex>(device->buffer.size()), nullptr,
                                                             nullptr);
         if (removed.deviceGone)
             _sink->OnDeviceRemoved(device->id);
+        ReportPairEvents(pairEvents);
         // The writer ends with the device: a write in flight finishes first (a gone device refuses it at once)
     }
 
@@ -959,7 +1144,7 @@ private:
                 }
                 Promote(promotions);
             }
-            _sink->OnControl({device.id, control, value, timeNs});
+            _sink->OnControl({device.reported, control, value, timeNs});
         };
         // The protocol sees every report first (subcommand replies, acknowledgements)
         if (device.pump)
@@ -1000,6 +1185,8 @@ private:
     std::map<std::string, GcCompanion::Pad> _companionPads;  ///< under _mutex
     std::map<HostDeviceId, std::string> _gcKeys;             ///< under _mutex: `gc:` devices -> their companion
     std::map<std::string, HostDeviceId> _gcIds;              ///< under _mutex: the other way
+    std::set<std::string> _gcHeld;  ///< under _mutex: `gc:` companions whose input is off (EndpointMerge::IsShadowed)
+    JoyConPairing _joyCons;         ///< under _mutex: a left and a right Joy-Con are one pad
 };
 }  // namespace
 

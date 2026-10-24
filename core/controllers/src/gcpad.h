@@ -72,6 +72,9 @@ public:
     {
         _seen = false;
     }
+    /// The input stops (GcCompanion::SetInput off: its IOHID endpoint gives it now): the pressed buttons up, the axes
+    /// and triggers at rest, then Reset
+    void Release(const ControlSink& sink);
 
 private:
     GcPadSnapshot _last;

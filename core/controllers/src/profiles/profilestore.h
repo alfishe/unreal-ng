@@ -150,8 +150,29 @@ public:
     /// The file Save writes
     static std::string SavePath(const Profile& profile, const std::string& root);
 
+    /// region <Aliases>
+    /// A promoted device (architecture.md §5): a `gc:` device GameController alone saw, later matched to its IOHID
+    /// endpoint, goes on under the IOHID id; the old id becomes an alias of the new one, so the profiles and player
+    /// pins naming the old id apply to the new id (Resolve, Apply). An alias of @p from moves to @p to as well
+    void AddAlias(const HostDeviceId& from, const HostDeviceId& to);
+    /// The old ids of @p device
+    std::vector<HostDeviceId> AliasesOf(const HostDeviceId& device) const;
+    /// Old id -> new id
+    const std::map<HostDeviceId, HostDeviceId>& Aliases() const
+    {
+        return _aliases;
+    }
+    /// `<root>/aliases.yaml`, kept across restarts: LoadAliases adds the file's (a missing file is no error)
+    bool LoadAliases(const std::string& root, std::string& error);
+    bool SaveAliases(const std::string& root, std::string& error) const;
+    static std::string AliasesPath(const std::string& root);
+    static std::string DumpAliases(const std::map<HostDeviceId, HostDeviceId>& aliases);
+    static bool ParseAliases(const std::string& text, std::map<HostDeviceId, HostDeviceId>& out, std::string& error);
+    /// endregion </Aliases>
+
 private:
     std::vector<Profile> _profiles;
+    std::map<HostDeviceId, HostDeviceId> _aliases;  ///< old id -> new id
     std::vector<std::string> _appliedScopes;
     std::vector<std::string> _hapticScopes;  ///< the scopes Apply gave surface haptics
     GameLibrary _games;

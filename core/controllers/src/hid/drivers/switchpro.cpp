@@ -97,14 +97,96 @@ enum Slot : size_t
     kLstickY,
     kRstickX,
     kRstickY,
+    kP1,
+    kP2,
+    kP3,
+    kP4,
     kSlotCount,
 };
 
 const char* const kSlotNames[kSlotCount] = {
-    "south", "east",         "west",         "north", "dpad.up", "dpad.down", "dpad.left", "dpad.right",
-    "lb",    "rb",           "lt",           "rt",    "view",    "menu",      "lstick.click", "rstick.click",
-    "guide", "share",        "lstick.x",     "lstick.y", "rstick.x", "rstick.y",
+    "south",     "east",      "west",      "north",    "dpad.up",      "dpad.down",    "dpad.left", "dpad.right",
+    "lb",        "rb",        "lt",        "rt",       "view",         "menu",         "lstick.click",
+    "rstick.click", "guide",  "share",     "lstick.x", "lstick.y",     "rstick.x",     "rstick.y",  "paddle.p1",
+    "paddle.p2", "paddle.p3", "paddle.p4",
 };
+
+/// One button bit of the report: byte 3 (right), 4 (shared) or 5 (left), its mask, the slot it gives
+struct ButtonBit
+{
+    uint8_t byte;
+    uint8_t mask;
+    Slot slot;
+};
+
+/// SDL_hidapi_switch.c HandleFullControllerState (the Pro Controller)
+constexpr ButtonBit kProBits[] = {
+    {3, 0x04, kSouth},  {3, 0x08, kEast},        {3, 0x01, kWest},        {3, 0x02, kNorth},
+    {5, 0x02, kDpadUp}, {5, 0x01, kDpadDown},    {5, 0x08, kDpadLeft},    {5, 0x04, kDpadRight},
+    {5, 0x40, kLb},     {3, 0x40, kRb},          {5, 0x80, kLt},          {3, 0x80, kRt},
+    {4, 0x01, kView},   {4, 0x02, kMenu},        {4, 0x08, kLstickClick}, {4, 0x04, kRstickClick},
+    {4, 0x10, kGuide},  {4, 0x20, kShare},
+};
+/// HandleMiniControllerStateL: held sideways, the arrows are the faces, SL / SR the shoulders
+constexpr ButtonBit kJoyConLeftBits[] = {
+    {4, 0x01, kMenu},  {4, 0x08, kLstickClick}, {4, 0x20, kGuide}, {5, 0x08, kSouth}, {5, 0x01, kEast},
+    {5, 0x02, kWest},  {5, 0x04, kNorth},       {5, 0x10, kRb},    {5, 0x20, kLb},    {5, 0x40, kP3},
+    {5, 0x80, kP4},
+};
+/// HandleMiniControllerStateR
+constexpr ButtonBit kJoyConRightBits[] = {
+    {3, 0x08, kSouth}, {3, 0x02, kEast},        {3, 0x04, kWest},  {3, 0x01, kNorth}, {3, 0x10, kRb},
+    {3, 0x20, kLb},    {3, 0x40, kP1},          {3, 0x80, kP2},    {4, 0x02, kMenu},  {4, 0x04, kLstickClick},
+    {4, 0x10, kGuide},
+};
+/// HandleCombinedControllerStateL
+constexpr ButtonBit kPairLeftBits[] = {
+    {4, 0x01, kView},      {4, 0x08, kLstickClick}, {4, 0x20, kShare}, {5, 0x01, kDpadDown}, {5, 0x02, kDpadUp},
+    {5, 0x04, kDpadRight}, {5, 0x08, kDpadLeft},    {5, 0x10, kP4},    {5, 0x20, kP3},       {5, 0x40, kLb},
+    {5, 0x80, kLt},
+};
+/// HandleCombinedControllerStateR
+constexpr ButtonBit kPairRightBits[] = {
+    {3, 0x04, kSouth}, {3, 0x08, kEast},  {3, 0x01, kWest},        {3, 0x02, kNorth}, {3, 0x10, kP1},
+    {3, 0x20, kP2},    {3, 0x40, kRb},    {3, 0x80, kRt},          {4, 0x02, kMenu},  {4, 0x04, kRstickClick},
+    {4, 0x10, kGuide},
+};
+
+struct LayoutBits
+{
+    const ButtonBit* bits;
+    size_t count;
+};
+
+template <size_t N>
+constexpr LayoutBits BitsOf(const ButtonBit (&bits)[N])
+{
+    return {bits, N};
+}
+
+LayoutBits BitsFor(SwitchLayout layout)
+{
+    switch (layout)
+    {
+        case SwitchLayout::JoyConLeft: return BitsOf(kJoyConLeftBits);
+        case SwitchLayout::JoyConRight: return BitsOf(kJoyConRightBits);
+        case SwitchLayout::PairLeft: return BitsOf(kPairLeftBits);
+        case SwitchLayout::PairRight: return BitsOf(kPairRightBits);
+        case SwitchLayout::Pro: break;
+    }
+    return BitsOf(kProBits);
+}
+
+/// The stick slots a layout gives
+bool HasLeftStick(SwitchLayout layout)
+{
+    return layout == SwitchLayout::Pro || layout == SwitchLayout::PairLeft || layout == SwitchLayout::JoyConLeft ||
+           layout == SwitchLayout::JoyConRight;  // a Joy-Con alone: its stick is the left one
+}
+bool HasRightStick(SwitchLayout layout)
+{
+    return layout == SwitchLayout::Pro || layout == SwitchLayout::PairRight;
+}
 }  // namespace
 
 /// region <SwitchRumble>
@@ -197,14 +279,69 @@ SwitchStickCalibration SwitchStickCalibration::Parse(const uint8_t* left, const 
 
 /// region <SwitchProPad>
 
-SwitchProPad::SwitchProPad() : _values(kSlotCount, 0.0f), _seen(kSlotCount, false)
+std::optional<SwitchLayout> SwitchProPad::LayoutFor(uint16_t vendor, uint16_t product)
+{
+    if (vendor != kNintendo)
+        return std::nullopt;
+    switch (product)
+    {
+        case kProController: return SwitchLayout::Pro;
+        case kJoyConLeft: return SwitchLayout::JoyConLeft;
+        case kJoyConRight: return SwitchLayout::JoyConRight;
+        default: return std::nullopt;
+    }
+}
+
+SwitchLayout SwitchProPad::JoyConLayout(bool left, bool paired)
+{
+    if (paired)
+        return left ? SwitchLayout::PairLeft : SwitchLayout::PairRight;
+    return left ? SwitchLayout::JoyConLeft : SwitchLayout::JoyConRight;
+}
+
+RumbleLevels SwitchProPad::HalfRumble(const RumbleLevels& levels, bool left)
+{
+    RumbleLevels half = levels;
+    if (left)
+        half.high = 0;
+    else
+        half.low = 0;
+    return half;
+}
+
+SwitchProPad::SwitchProPad(SwitchLayout layout)
+    : _layout(layout), _values(kSlotCount, 0.0f), _seen(kSlotCount, false)
 {
     SetCalibration(SwitchStickCalibration{});
 }
 
 std::vector<std::string> SwitchProPad::Controls()
 {
-    return std::vector<std::string>(std::begin(kSlotNames), std::end(kSlotNames));
+    return Controls(SwitchLayout::Pro);
+}
+
+std::vector<std::string> SwitchProPad::Controls(SwitchLayout layout)
+{
+    std::vector<bool> used(kSlotCount, false);
+    const LayoutBits bits = BitsFor(layout);
+    for (size_t i = 0; i < bits.count; i++)
+        used[bits.bits[i].slot] = true;
+    if (HasLeftStick(layout))
+        used[kLstickX] = used[kLstickY] = true;
+    if (HasRightStick(layout))
+        used[kRstickX] = used[kRstickY] = true;
+    std::vector<std::string> names;
+    for (size_t slot = 0; slot < kSlotCount; slot++)
+        if (used[slot])
+            names.emplace_back(kSlotNames[slot]);
+    return names;
+}
+
+void SwitchProPad::SetLayout(SwitchLayout layout)
+{
+    _layout = layout;
+    std::fill(_values.begin(), _values.end(), 0.0f);
+    std::fill(_seen.begin(), _seen.end(), false);
 }
 
 void SwitchProPad::SetCalibration(const SwitchStickCalibration& calibration)
@@ -264,44 +401,46 @@ bool SwitchProPad::Decode(const uint8_t* report, size_t size, const ControlSink&
 {
     if (size < 13 || (report[0] != kFullReport && report[0] != kFullMcuReport && report[0] != kSubcommandReply))
         return false;
-    const uint8_t right = report[3];
-    const uint8_t shared = report[4];
-    const uint8_t left = report[5];
-    const bool bits[] = {
-        (right & 0x04) != 0,   // B
-        (right & 0x08) != 0,   // A
-        (right & 0x01) != 0,   // Y
-        (right & 0x02) != 0,   // X
-        (left & 0x02) != 0,    // up
-        (left & 0x01) != 0,    // down
-        (left & 0x08) != 0,    // left
-        (left & 0x04) != 0,    // right
-        (left & 0x40) != 0,    // L
-        (right & 0x40) != 0,   // R
-        (left & 0x80) != 0,    // ZL
-        (right & 0x80) != 0,   // ZR
-        (shared & 0x01) != 0,  // -
-        (shared & 0x02) != 0,  // +
-        (shared & 0x08) != 0,  // LS
-        (shared & 0x04) != 0,  // RS
-        (shared & 0x10) != 0,  // Home
-        (shared & 0x20) != 0,  // Capture
-    };
-    for (size_t index = 0; index < sizeof(bits) / sizeof(bits[0]); index++)
+    const LayoutBits bits = BitsFor(_layout);
+    for (size_t i = 0; i < bits.count; i++)
     {
+        const ButtonBit& bit = bits.bits[i];
         // ZL / ZR are digital: lt / rt at 0 or 1 (SDL's trigger axes)
-        const bool trigger = index == kLt || index == kRt;
-        Set(index, bits[index] ? 1.0f : 0.0f, !trigger, sink);
+        const bool trigger = bit.slot == kLt || bit.slot == kRt;
+        Set(bit.slot, (report[bit.byte] & bit.mask) != 0 ? 1.0f : 0.0f, !trigger, sink);
     }
-    const uint8_t* sticks[2] = {report + 6, report + 9};
-    for (int stick = 0; stick < 2; stick++)
+    const auto raw = [report](int stick, int& x, int& y) {
+        const uint8_t* b = report + (stick == 0 ? 6 : 9);
+        x = b[0] | ((b[1] & 0x0F) << 8);
+        y = (b[1] >> 4) | (b[2] << 4);
+    };
+    int x = 0;
+    int y = 0;
+    switch (_layout)
     {
-        const uint8_t* b = sticks[stick];
-        const int x = b[0] | ((b[1] & 0x0F) << 8);
-        const int y = (b[1] >> 4) | (b[2] << 4);
-        Set(stick == 0 ? kLstickX : kRstickX, Axis(x, stick, 0), false, sink);
-        // Up is larger on the pad; -1 is up here (hostcontrols.h)
-        Set(stick == 0 ? kLstickY : kRstickY, -Axis(y, stick, 1), false, sink);
+        case SwitchLayout::JoyConLeft:
+            // Turned a quarter (HandleMiniControllerStateL): LEFTY = ~x, LEFTX = ~y
+            raw(0, x, y);
+            Set(kLstickX, -Axis(y, 0, 1), false, sink);
+            Set(kLstickY, -Axis(x, 0, 0), false, sink);
+            break;
+        case SwitchLayout::JoyConRight:
+            // HandleMiniControllerStateR: LEFTY = x, LEFTX = y of the right stick
+            raw(1, x, y);
+            Set(kLstickX, Axis(y, 1, 1), false, sink);
+            Set(kLstickY, Axis(x, 1, 0), false, sink);
+            break;
+        default:
+            for (int stick = 0; stick < 2; stick++)
+            {
+                if (stick == 0 ? !HasLeftStick(_layout) : !HasRightStick(_layout))
+                    continue;
+                raw(stick, x, y);
+                Set(stick == 0 ? kLstickX : kRstickX, Axis(x, stick, 0), false, sink);
+                // Up is larger on the pad; -1 is up here (hostcontrols.h)
+                Set(stick == 0 ? kLstickY : kRstickY, -Axis(y, stick, 1), false, sink);
+            }
+            break;
     }
     _battery = BatteryOf(report[2]);
     return true;
