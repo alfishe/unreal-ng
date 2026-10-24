@@ -173,11 +173,14 @@ gun. Reset to off on every gate close and on unbind.
 
 Haptics lives in the game profile, as a `haptics` section next to the bindings
 ([mapping-and-profiles.md](mapping-and-profiles.md)); it is selected with the same signature → machine default →
-manual order, and the reason string says which won.
+manual order, and the reason string says which won: `ResolvedProfiles::hapticsReason` (`context.haptics_reason` on
+every plane) is `game profile <id> (<how>)` - how being `manual`, `signature tape:sha256:...`, `file sha256 ...` or
+`file set: every entry kept, 1 of 5 files changed, 0 added` - or `<id> (default)` / `<id> (machine default)` for a profile that is not a game's. The
+signatures are `core/swsignature`'s ([mapping-and-profiles.md §6.1](mapping-and-profiles.md#61-order-dt-2-d7)).
 
 ```json
 {
-  "match": { "signature": "swsig:1a2b...", "title": "Exolon" },
+  "match": { "signatures": ["tape:sha256:1a2b..."], "title": "Exolon" },
   "haptics": {
     "sources": {
       "boom":   { "filter": "ay-envelope", "source": "ay:0" },
@@ -298,7 +301,7 @@ applies to the hooks on the memory and port paths.
 | H2 | audio taps and the register-level filters (`ay-noise`, `ay-envelope`, `beeper-density`), generic defaults |
 | H3 | probes (non-breaking watches), haptic profiles, the Haptics tab |
 | H4 | HD haptics (DualSense, Switch), adaptive triggers, AHAP patterns |
-| H5 | first built-in game profiles with haptics, chosen by signature once `swsignature` exists |
+| H5 | first built-in game profiles with haptics, chosen by signature (`core/swsignature`) |
 
 Open points:
 

@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <map>
 
 #include "_helpers/testpathhelper.h"
 #include "fake/fakebackend.h"
@@ -71,6 +72,24 @@ public:
     {
         _context.devices = std::move(devices);
     }
+    /// The Qt client's computes them with core/swsignature; here a table of path -> signatures
+    bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
+    {
+        const auto it = signaturesOf.find(path);
+        if (it == signaturesOf.end())
+        {
+            error = "cannot read '" + path + "'";
+            return false;
+        }
+        context.signatures = it->second;
+        return true;
+    }
+    void SetProgram(std::vector<std::string> signatures)
+    {
+        _context.signatures = std::move(signatures);
+        Reapply();
+    }
+    std::map<std::string, std::vector<std::string>> signaturesOf;
     int reapplied = 0;
     HostInputService* input = nullptr;
 
@@ -352,4 +371,50 @@ TEST(HostInputControl_Test, DevicesShowNoticeBatteryAndLight_LightSetsTheColour)
         << "an option light does not take";
     EXPECT_EQ(fake->Lights("fake:1").size(), 3u) << "nothing reached the pad on a refusal";
     service.Stop();
+}
+
+/// C6 / D7 / H-3: match gives the game profiles a program's signatures choose (by path through the owner, by
+/// signatures given, or the loaded program), the one chosen and what comes next; context shows them for the loaded one
+TEST(HostInputControl_Test, MatchBySignatures)
+{
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-match"));
+    HostInputControl control(owner);
+    std::string error;
+    ASSERT_TRUE(owner.Profiles().AddText("schema: 1\nkind: play\nid: user/game-tape\nmatch:\n"
+                                         "  signatures: [\"tape:sha256:abcd\"]\nlayers:\n  play:\n"
+                                         "    west: { key: X }\n",
+                                         ProfileScope::User, error))
+        << error;
+
+    HostReply reply = control.Execute({"match", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("matches")->Items().empty()) << "nothing loaded";
+    EXPECT_EQ(reply.body.Find("next")->AsString(), "port-reads") << "the heuristic decides";
+
+    reply = control.Execute({"match", {{"signatures", "file:sha256:0001, tape:sha256:ABCD"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape");
+    EXPECT_EQ(reply.body.Find("next")->AsString(), "game-profile");
+    EXPECT_EQ(reply.body.Find("matches")->Items()[0].Find("how")->AsString(), "signature tape:sha256:abcd");
+    EXPECT_EQ(reply.message, "user/game-tape (signature tape:sha256:abcd)");
+
+    owner.signaturesOf["/games/elite.tzx"] = {"file:sha256:0002", "tape:sha256:abcd"};
+    reply = control.Execute({"match", {{"path", "/games/elite.tzx"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape") << "a TZX of the same tape";
+    reply = control.Execute({"match", {{"path", "/games/missing.tap"}}});
+    EXPECT_FALSE(reply.Ok());
+    EXPECT_NE(reply.message.find("missing.tap"), std::string::npos) << reply.message;
+    EXPECT_FALSE(control.Execute({"match", {{"bogus", "1"}}}).Ok()) << "unknown options are refused";
+
+    // The loaded program: context carries its signatures, the matches and where the haptics come from
+    owner.SetProgram({"file:sha256:0003", "tape:sha256:abcd"});
+    reply = control.Execute({"context", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    ASSERT_EQ(reply.body.Find("signatures")->Items().size(), 2u);
+    ASSERT_EQ(reply.body.Find("game_matches")->Items().size(), 1u);
+    EXPECT_EQ(reply.body.Find("game_matches")->Items()[0].Find("id")->AsString(), "user/game-tape");
+    EXPECT_NE(reply.body.Find("haptics_reason"), nullptr);
+    reply = control.Execute({"match", {}});
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape") << "without options: the loaded program";
 }

@@ -1679,9 +1679,21 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
                                                          | light
+GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
+GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
+GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
 ```
+
+`GET /api/v1/controllers/match?path=game.trd` (or `signatures=a,b`, `file_sha256=`, `file_set=` comma lists,
+`machine=`; none: the loaded program) answers the game profiles the signatures choose, `matches` [{`id`, `how`}]
+strongest first, `profile` and `next` (`game-profile` or `port-reads`), `haptics_reason`; `context` carries the loaded
+program's `signatures`, `file_set`, `game_matches` and `haptics_reason`. The signature routes
+([command-interface.md section 18](./command-interface.md#18-media-signatures); OpenAPI tag `Signatures`) answer
+`{ok, path, signature: {...}}`, `{ok, media: [...]}` and `{ok, path, with, match: {level, matches, score, reason}}`;
+`404` for a file that is missing, `503` for a build without the library.
 
 The machine routes are ControllerControl, the host routes HostInputControl
 ([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb

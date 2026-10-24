@@ -93,7 +93,7 @@
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, match";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -102,8 +102,13 @@
             "(percent, absent when the OS gives none), coarse (a step, not a measurement), charging, wired), light "
             "({available}, else the reason: whether light can set its colour) and notice (what the device cannot do "
             "here and how to fix it, such as the udev rule for its hidraw node; absent when nothing is missing). "
-            "context: the machine, the loaded file's SHA-256, the manual game "
-            "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
+            "context: the machine, the loaded program's signatures (file_sha256, signatures: file / tape content / "
+            "TR-DOS file set / snapshot memory, file_set: the TR-DOS file tokens), the game profiles they match "
+            "(game_matches: [{id, how}]), where the haptics come from (haptics_reason), the manual game "
+            "profile, the applied profiles and the warnings. match (?path= | signatures=&file_sha256=&file_set= "
+            "comma lists, machine=; none: the loaded program): the game profiles the signatures choose (D7: exact "
+            "signature, file SHA-256, then the TR-DOS file set's fuzzy rule), the one chosen (profile, empty: next "
+            "is port-reads, the heuristic decides) and haptics_reason. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
             "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
@@ -111,7 +116,7 @@
             "motors, an Xbox pad over USB on macOS, no write access on Linux), its actuators (low, high, "
             "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "match"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];

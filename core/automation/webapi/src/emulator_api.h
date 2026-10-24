@@ -727,6 +727,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::symbolImportLive, "/api/v1/emulator/{id}/symbols/import/live", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::symbolImportSource, "/api/v1/emulator/{id}/symbols/import/source", drogon::Post);
     // Assembler sources through AsmControl (implementation: api/asm_api.cpp)
+    // Media signatures through SignatureControl (implementation: api/signature_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::signatureFile, "/api/v1/signature", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::signatureCompare, "/api/v1/signature/compare", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::signatureMedia, "/api/v1/emulator/{id}/signature", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmFormats, "/api/v1/asm/formats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmDialects, "/api/v1/asm/dialects", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmFiles, "/api/v1/emulator/{id}/asm/files", drogon::Get);
@@ -1845,6 +1849,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           const std::string& id) const;
     void symbolImportSource(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    // Media signatures (api/signature_api.cpp)
+    void signatureFile(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void signatureCompare(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void signatureMedia(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     // Assembler sources (api/asm_api.cpp)
     void asmFormats(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void asmDialects(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;

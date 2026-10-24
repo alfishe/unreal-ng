@@ -56,6 +56,36 @@ JsonValue Strings(const std::vector<std::string>& values)
     return JsonValue::Array(std::move(items));
 }
 
+/// "a,b, c" -> {a, b, c}; empty items dropped
+std::vector<std::string> SplitList(const std::string& text)
+{
+    std::vector<std::string> items;
+    std::string item;
+    for (size_t i = 0; i <= text.size(); i++)
+    {
+        if (i == text.size() || text[i] == ',')
+        {
+            const size_t first = item.find_first_not_of(" \t");
+            const size_t last = item.find_last_not_of(" \t");
+            if (first != std::string::npos)
+                items.push_back(item.substr(first, last - first + 1));
+            item.clear();
+        }
+        else
+            item.push_back(text[i]);
+    }
+    return items;
+}
+
+/// [{id, how}]
+JsonValue MatchesValue(const std::vector<std::pair<std::string, std::string>>& matches)
+{
+    std::vector<JsonValue> items;
+    for (const auto& [id, how] : matches)
+        items.push_back(JsonValue::Object({{"id", JsonValue::String(id)}, {"how", JsonValue::String(how)}}));
+    return JsonValue::Array(std::move(items));
+}
+
 /// The connected device @p id, or nullptr
 const HostDeviceInfo* FindDevice(const std::vector<HostDeviceInfo>& devices, const std::string& id)
 {
@@ -225,7 +255,8 @@ const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
-                                                   "scheme",  "haptics", "rumble",   "output",  "light"};
+                                                   "scheme",  "haptics", "rumble",   "output",  "light",
+                                                   "match"};
     return verbs;
 }
 
@@ -247,6 +278,7 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -331,6 +363,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Output(request);
     if (verb == "light")
         return Light(request);
+    if (verb == "match")
+        return Match(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -580,11 +614,58 @@ HostReply HostInputControl::Context()
     HostReply reply;
     reply.body.Set("machine", JsonValue::String(context.machine));
     reply.body.Set("file_sha256", Strings(context.fileSha256));
+    reply.body.Set("signatures", Strings(context.signatures));
+    reply.body.Set("file_set", Strings(context.fileSet));
+    reply.body.Set("game_matches", MatchesValue(resolved.gameMatches));
+    reply.body.Set("haptics_reason", JsonValue::String(resolved.hapticsReason));
     reply.body.Set("manual", JsonValue::String(_owner.ManualProfile()));
     reply.body.Set("applied", Strings(resolved.applied));
     reply.body.Set("warnings", Strings(resolved.warnings));
     reply.body.Set("debug_layer", JsonValue::Bool(context.debugLayer));
     reply.body.Set("user_dir", JsonValue::String(_owner.UserProfileDir()));
+    return reply;
+}
+
+HostReply HostInputControl::Match(const HostRequest& request)
+{
+    // The context to match: the loaded program's, or the signatures given; the devices stay the connected ones
+    ProfileContext context = _owner.Context();
+    context.manual.clear();
+    const bool given = request.options.count("path") != 0 || request.options.count("signatures") != 0 ||
+                       request.options.count("file_sha256") != 0 || request.options.count("file_set") != 0;
+    if (given)
+    {
+        context.signatures = SplitList(Option(request, "signatures"));
+        context.fileSha256 = SplitList(Option(request, "file_sha256"));
+        context.fileSet = SplitList(Option(request, "file_set"));
+    }
+    if (request.options.count("machine") != 0)
+        context.machine = Option(request, "machine");
+    const std::string path = Option(request, "path");
+    if (!path.empty())
+    {
+        std::string error;
+        if (!_owner.SignaturesOf(path, context, error))
+            return Fail(error.rfind("no signature library", 0) == 0 ? "unavailable" : "bad-request", error);
+    }
+    ProfileStore& store = _owner.Profiles();
+    std::vector<std::string> errors;
+    store.LoadGamesFor(context, errors);
+    const ResolvedProfiles resolved = store.Resolve(context);
+    HostReply reply;
+    reply.body.Set("machine", JsonValue::String(context.machine));
+    reply.body.Set("signatures", Strings(context.signatures));
+    reply.body.Set("file_sha256", Strings(context.fileSha256));
+    reply.body.Set("file_set", Strings(context.fileSet));
+    reply.body.Set("matches", MatchesValue(resolved.gameMatches));
+    const std::string chosen = resolved.gameMatches.empty() ? std::string() : resolved.gameMatches.front().first;
+    reply.body.Set("profile", JsonValue::String(chosen));
+    // D7: a signature first, then the port-read heuristic, then a manual choice
+    reply.body.Set("next", JsonValue::String(chosen.empty() ? "port-reads" : "game-profile"));
+    reply.body.Set("haptics_reason", JsonValue::String(resolved.hapticsReason));
+    reply.body.Set("errors", Strings(errors));
+    reply.message = chosen.empty() ? "no game profile matches: the port-read heuristic decides"
+                                   : chosen + " (" + resolved.gameMatches.front().second + ")";
     return reply;
 }
 

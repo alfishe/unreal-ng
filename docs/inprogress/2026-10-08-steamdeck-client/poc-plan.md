@@ -134,4 +134,4 @@ After them, the D0 skeleton is the P-1 code cleaned up.
 
 | ID | Date | Verdict | Numbers | Design change |
 |----|------|---------|---------|---------------|
-| — | — | — | — | — |
+| P-12 | 2026-10-23 | passed with changes ([POC 034](../../../tools/poc/034-media-signatures/conclusions.md)) | vtrd.in, 21 279 media: re-pack / rename 99.97 %; saved to 83.9 % (first-draft Jaccard rule 14.8 %); 0.391 % of disks match another release, nearly all the same title (different programs ~0.01 %); 10 000-11 400 files/s on 20 threads, 800-880 on one under load ~50; memory rule 1 / 5 same-game pairs, 1 / 6992 false | the catalog rule (`n:` entry tokens: every entry kept, ≤ 1 file changed, ≥ 1 unchanged, ≤ max(2, n) added) replaces Jaccard; TRD / SCL read from their sectors (10× faster); uniform RAM pages left out, ≥ 16 common pages; profiles use `mem:` only exactly |

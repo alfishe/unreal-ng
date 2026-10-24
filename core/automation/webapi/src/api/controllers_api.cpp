@@ -103,7 +103,7 @@ namespace
     {
 #ifdef ENABLE_CONTROLLERS
         static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                       "haptics"};
+                                                       "haptics", "match"};
         const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
         const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
                            HostInputControl::Verbs().end();

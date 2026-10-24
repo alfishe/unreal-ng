@@ -422,6 +422,8 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
+| `controllers match [path] [signatures=a,b] [file_set=..]` | The game profiles a program's signatures choose and how (`signature ...`, `file sha256 ...`, `file set: every entry kept, 1 of 5 files changed, 0 added`); without options the loaded program. `context` shows the loaded program's signatures, matches and `haptics_reason` |
+| `signature <file> [--details] [--external]`, `signature media`, `signature compare <known> <candidate>` | Media signatures ([command-interface.md §18](./command-interface.md#18-media-signatures)): the exact SHA-256, the tape content / TR-DOS file set / snapshot memory signature, the file set; of the loaded media; how two files relate (`exact`, `content`, `fuzzy`, `memory`, `none`) |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 
