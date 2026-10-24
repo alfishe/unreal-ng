@@ -37,6 +37,9 @@ struct DeviceMatch
     std::string glyphs;
     std::string mode;  ///< the PID's mode ("d-input") when the family names one
     std::vector<std::string> controls;
+    /// HID button n + 1 -> its control, over the layout's names (`"buttons"`: an imported gamecontrollerdb line or
+    /// RetroArch autoconfig, device-database.md §3); "" keeps the layout's name
+    std::vector<std::string> buttons;
     bool ignore = false;  ///< a device to filter out (the macOS synthetic pad)
     /// It takes a player connector (a pad, a stick); false for a control surface (the Surface Dial): `"player": false`
     bool player = true;

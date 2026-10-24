@@ -652,8 +652,11 @@ void StatusBarManager::updateJoystick(EmulatorContext* context)
         if (led.visible)
             _joystick->setLiveToolTip(led.toolTip);
         const bool debug = _controllers->DebugLayerHeld();
-        if (_debugLayer->isVisible() != debug)
+        if (_debugLayer->isHidden() == debug)  // hidden, not invisible: the status bar itself may be off
+        {
             _debugLayer->setVisible(debug);
+            emit controllerDebugLayerChanged(debug);
+        }
         return;
     }
 #endif

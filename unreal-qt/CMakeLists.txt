@@ -641,6 +641,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/controllersui_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/devicetestpanel.cpp"

@@ -394,6 +394,33 @@ std::vector<std::string> InputRouter::Connectors(const HostDeviceId& id) const
     return connectors;
 }
 
+bool InputRouter::Analog(const HostDeviceId& id, const std::string& control, AnalogOptions& out) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    out = AnalogOptions{};
+    const auto it = _devices.find(id);
+    if (it == _devices.end())
+        return false;
+    const CompiledSet* set = BindingsForLocked(it->second);
+    if (set == nullptr)
+        return false;
+    const std::vector<std::string> layers = ActiveLayersLocked(it->second);
+    // Top layer first: what a press reads now
+    for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer)
+        for (const CompiledBinding& compiled : set->bindings)
+        {
+            if (compiled.binding.layer != *layer)
+                continue;
+            for (const CompiledSource& source : compiled.sources)
+                if (source.control == control || source.control.rfind(control + ".", 0) == 0)
+                {
+                    out = compiled.binding.options.analog;
+                    return true;
+                }
+        }
+    return false;
+}
+
 void InputRouter::SetFocus(const std::string& instance)
 {
     std::vector<ActionEvent> actions;

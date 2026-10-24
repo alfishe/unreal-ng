@@ -2052,6 +2052,35 @@ namespace PythonBindings
                      options["id"] = id;
                      return HostControllerCallPy("database-delete", options);
                  }, py::arg("id"), "Remove an entry of devices.user.json (the built-in family comes back)")
+            .def("controllers_import_device", [](Emulator&, const std::string& text, bool save) {
+                     py::kwargs options;
+                     options["text"] = text;
+                     options["save"] = save;
+                     return HostControllerCallPy("database-import", options);
+                 }, py::arg("text"), py::arg("save") = true,
+                 "A gamecontrollerdb.txt line or a RetroArch joypad autoconfig .cfg as the devices.user.json entry "
+                 "user-<vid><pid> (its VID:PID, button indices and controls); save=False only answers the entry")
+            .def("controllers_player", [](Emulator&, const std::string& device, const py::object& connector) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     if (!connector.is_none())
+                         options["connector"] = connector;
+                     return HostControllerCallPy("player", options);
+                 }, py::arg("device"), py::arg("connector") = py::none(),
+                 "The connector a host pad's auto: targets drive (connector='kempston'; 'auto' = the automatic "
+                 "choice again, 'none' = no connector; None = only read it)")
+            .def("controllers_probe", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("probe", options);
+                 },
+                 "The host input backends (running, devices, reason); device='usb:...' adds its endpoints and what "
+                 "each gives (role, controls, driver, rumble, light, battery)")
+            .def("controllers_reports", [](Emulator&, const std::string& device) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     return HostControllerCallPy("reports", options);
+                 }, py::arg("device"),
+                 "A host device's newest raw HID input reports in hex (macOS IOHID); reading starts the tap, which "
+                 "stops 3 s after the last read")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

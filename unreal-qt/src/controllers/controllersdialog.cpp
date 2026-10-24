@@ -2,16 +2,20 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFile>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QShortcut>
 #include <QSplitter>
-#include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -20,6 +24,7 @@
 #include <set>
 
 #include "controllers/bindingtable.h"
+#include "controllers/connectorcard.h"
 #include "controllers/connectorview.h"
 #include "controllers/controllerpicture.h"
 #include "controllers/devicetestpanel.h"
@@ -36,6 +41,7 @@
 #include "emulator/io/controllers/controllercontrol.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "haptics/testeffects.h"
+#include "hid/reporttap.h"
 #include "router/inputrouter.h"
 
 using namespace controllers;
@@ -51,17 +57,28 @@ bool Sends(const std::map<std::string, float>& live)
     return false;
 }
 
-/// The connector's colour as a small dot for its table row
-QIcon Swatch(const QColor& colour)
+/// gamecontrollerdb.txt holds one line per pad: the one whose GUID carries @p vid / @p pid (little-endian words at
+/// 4 and 8), else the first mapping line; any other text (a RetroArch .cfg) as it is
+QString PickMapping(const QString& text, uint16_t vid, uint16_t pid)
 {
-    QPixmap pixmap(12, 12);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(colour);
-    painter.drawEllipse(QRectF(1.5, 1.5, 9, 9));
-    return QIcon(pixmap);
+    if (text.contains(QStringLiteral("input_device")) || text.contains(QStringLiteral("input_vendor_id")))
+        return text;
+    const auto word = [](uint16_t value) {
+        return QStringLiteral("%1%2").arg(value & 0xff, 2, 16, QChar('0')).arg(value >> 8, 2, 16, QChar('0'));
+    };
+    QString first;
+    for (const QString& raw : text.split('\n'))
+    {
+        const QString line = raw.trimmed();
+        if (line.isEmpty() || line.startsWith('#') || line.count(',') < 2)
+            continue;
+        if (first.isEmpty())
+            first = line;
+        const QString guid = line.section(',', 0, 0).toLower();
+        if ((vid != 0 || pid != 0) && guid.size() >= 24 && guid.mid(8, 4) == word(vid) && guid.mid(16, 4) == word(pid))
+            return line;
+    }
+    return first;
 }
 }  // namespace
 #endif
@@ -144,8 +161,14 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     auto* leftLayout = new QVBoxLayout(left);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->addWidget(new QLabel(tr("<b>Host devices</b>"), left));
-    _devices = new QListWidget(left);
+    _devices = new DeviceDragList(left);
+    _devices->setToolTip(tr("Drag a device onto a connector to plug it"));
     leftLayout->addWidget(_devices, 1);
+    _importButton = new QPushButton(tr("Import mapping…"), left);
+    _importButton->setToolTip(
+        tr("A gamecontrollerdb.txt line (SDL) or a RetroArch joypad autoconfig .cfg for a pad the database does not "
+           "know: its VID:PID, buttons and controls become a device entry of your own"));
+    leftLayout->addWidget(_importButton);
     _probeLabel = new QLabel(left);
     _probeLabel->setWordWrap(true);
     leftLayout->addWidget(_probeLabel);
@@ -174,6 +197,14 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _testButton->setCheckable(true);
     _testButton->setToolTip(tr("What the device sends: sticks with the dead zone and thresholds, triggers, buttons"));
     header->addWidget(_testButton, 0, Qt::AlignTop);
+    _view = new QComboBox(centre);
+    _view->setToolTip(tr("The side of the device the picture shows"));
+    _view->hide();
+    header->addWidget(_view, 0, Qt::AlignTop);
+    connect(_view, &QComboBox::activated, this, [this] {
+        _picture->load(_pictureSet, _view->currentData().toString());
+        _picture->setCaptions(_table->captions());
+    });
     _pictureButton = new QPushButton(tr("Picture…"), centre);
     _pictureButton->setToolTip(tr("Use a photo of your own pad and place its controls on it"));
     header->addWidget(_pictureButton, 0, Qt::AlignTop);
@@ -197,13 +228,25 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     rightLayout->setContentsMargins(0, 0, 0, 0);
     _machineLabel = new QLabel(right);
     rightLayout->addWidget(_machineLabel);
-    _connectors = new QTableWidget(0, 3, right);
-    _connectors->setHorizontalHeaderLabels({tr("Connector"), tr("Device"), tr("Held")});
-    _connectors->horizontalHeader()->setStretchLastSection(true);
-    _connectors->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    _connectors->verticalHeader()->hide();
-    _connectors->setSelectionMode(QAbstractItemView::NoSelection);
-    rightLayout->addWidget(_connectors, 1);
+    auto* scroll = new QScrollArea(right);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    _cardsBox = new QWidget(scroll);
+    _cardsLayout = new QVBoxLayout(_cardsBox);
+    _cardsLayout->setContentsMargins(0, 0, 4, 0);
+    _cardsLayout->setSpacing(6);
+    _cardsLayout->addStretch(1);
+    scroll->setWidget(_cardsBox);
+    rightLayout->addWidget(scroll, 1);
+    auto* statusRow = new QHBoxLayout();
+    _status = new QLabel(right);
+    _status->setWordWrap(true);
+    statusRow->addWidget(_status, 1);
+    _undoButton = new QPushButton(tr("Undo"), right);
+    _undoButton->setToolTip(tr("Undo the last plug or unplug (Ctrl+Z)"));
+    _undoButton->setEnabled(false);
+    statusRow->addWidget(_undoButton, 0, Qt::AlignTop);
+    rightLayout->addLayout(statusRow);
     rightLayout->addWidget(new QLabel(tr("<b>Haptics</b>"), right));
     _hapticsLabel = new QLabel(right);
     _hapticsLabel->setWordWrap(true);
@@ -245,6 +288,7 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     connect(_pauseOnDisconnect, &QCheckBox::toggled, _host, &HostControllers::SetPauseOnDisconnect);
     connect(_testButton, &QPushButton::toggled, this, [this](bool on) {
         _test->setVisible(on);
+        refreshTestPanel(true);
         updateCords();
     });
     connect(_pictureButton, &QPushButton::clicked, this, [this] {
@@ -279,6 +323,60 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
 #endif
     });
     connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
+#ifdef ENABLE_CONTROLLERS
+    // ui-ux.md §2.3: Plug / Unplug on a device's context menu, P and U on the list, for those who do not drag
+    _devices->setContextMenuPolicy(Qt::CustomContextMenu);
+    const auto plugMenu = [this](const QPoint& at) {
+        const std::string device = selectedDevice();
+        if (device.empty())
+            return;
+        QMenu menu(this);
+        QMenu* into = menu.addMenu(tr("&Plug into"));
+        for (const ConnectorCard* card : _cards)
+        {
+            const std::string id = card->connector().id;
+            QAction* action = into->addAction(connectorview::DisplayName(card->connector()));
+            const QString why = refusal(device, id);
+            action->setEnabled(why.isEmpty());
+            action->setToolTip(why);
+            connect(action, &QAction::triggered, this, [this, device, id] { plugDevice(device, id); });
+        }
+        QAction* unplug = menu.addAction(tr("&Unplug"));
+        unplug->setEnabled(_host->PlayerChoice(device) != "none" &&
+                           !_host->Service().Router().PlayerConnector(device).empty());
+        connect(unplug, &QAction::triggered, this, [this, device] { unplugDevice(device); });
+        menu.exec(at);
+    };
+    connect(_devices, &QWidget::customContextMenuRequested, this,
+            [this, plugMenu](const QPoint& at) { plugMenu(_devices->viewport()->mapToGlobal(at)); });
+    auto* plugKey = new QShortcut(QKeySequence(Qt::Key_P), _devices, nullptr, nullptr, Qt::WidgetShortcut);
+    connect(plugKey, &QShortcut::activated, this, [this, plugMenu] {
+        if (QListWidgetItem* item = _devices->currentItem())
+            plugMenu(_devices->viewport()->mapToGlobal(_devices->visualItemRect(item).center()));
+    });
+    auto* unplugKey = new QShortcut(QKeySequence(Qt::Key_U), _devices, nullptr, nullptr, Qt::WidgetShortcut);
+    connect(unplugKey, &QShortcut::activated, this, [this] {
+        if (!selectedDevice().empty())
+            unplugDevice(selectedDevice());
+    });
+#endif
+    connect(_undoButton, &QPushButton::clicked, this, [this] { undo(); });
+    auto* undoKey = new QShortcut(QKeySequence::Undo, this);
+    connect(undoKey, &QShortcut::activated, this, [this] { undo(); });
+    connect(_importButton, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Import a pad mapping"), QString(),
+            tr("Pad mappings (gamecontrollerdb.txt *.txt *.cfg);;All files (*)"));
+        if (path.isEmpty())
+            return;
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            setStatus(tr("Cannot read %1").arg(path), true);
+            return;
+        }
+        importMapping(QString::fromUtf8(file.readAll()));
+    });
     rebuild();
 }
 
@@ -428,6 +526,13 @@ void ControllersDialog::rebuildControls()
     {
         _pictureSet = set;
         _picture->load(set);
+        // Front | Back when the set maps more than one side (an Elite's paddles, a DualSense Edge's back buttons)
+        const QStringList views = ControllerPicture::Views(set);
+        _view->clear();
+        for (const QString& view : views)
+            _view->addItem(view == "front" ? tr("Front") : view == "back" ? tr("Back") : view == "top" ? tr("Top") : view,
+                           view);
+        _view->setVisible(views.size() > 1);
     }
     _table->setDevice({device, family, device.empty() ? std::string{} : match.glyphs, name});
     _picture->setCaptions(_table->captions());
@@ -441,6 +546,46 @@ void ControllersDialog::rebuildControls()
     if (!detail.isEmpty() && !_probeLabel->text().isEmpty())
         detail += "  —  " + _probeLabel->text();
     _test->setDevice(device, device.empty() ? std::vector<std::string>{} : match.controls, detail);
+    refreshTestPanel(true);
+#endif
+}
+
+void ControllersDialog::refreshTestPanel(bool full)
+{
+#ifdef ENABLE_CONTROLLERS
+    const std::string device = selectedDevice();
+    if (device.empty() || !_test->isVisible())
+        return;
+    if (full)
+    {
+        for (const char* control : {"lstick", "rstick", "lt", "rt"})
+        {
+            AnalogOptions options;
+            DeviceTestPanel::Thresholds read;
+            read.fromProfile = _host->Service().Router().Analog(device, control, options);
+            read.deadzone = options.deadzone;
+            read.saturation = options.saturation;
+            read.on = options.on;
+            read.off = options.off;
+            read.triggerClick = options.triggerClick;
+            read.triggerRelease = options.triggerRelease;
+            _test->setThresholds(control, read);
+        }
+        std::vector<QStringList> rows;
+        const auto yes = [this](bool on) { return on ? tr("yes") : QStringLiteral("—"); };
+        for (const EndpointInfo& endpoint : _host->Service().Endpoints(device))
+            rows.push_back({QString::fromStdString(endpoint.backend), QString::fromStdString(endpoint.name),
+                            QString::fromStdString(endpoint.role), QString::number(endpoint.controls),
+                            QString::fromStdString(endpoint.driver), yes(endpoint.rumble), yes(endpoint.light),
+                            yes(endpoint.battery), QString::fromStdString(endpoint.detail)});
+        _test->setEndpoints(rows);
+    }
+    // Reading them keeps the backend's tap armed; it disarms itself a few seconds after the panel closes
+    QStringList lines;
+    for (const RawReport& report : _host->Service().RawReports(device))
+        lines << QStringLiteral("%1  %2").arg(report.timeMs % 100000, 5, 10, QChar('0')).arg(
+                     QString::fromStdString(RawReportHex(report)));
+    _test->setRawReports(lines, QString::fromStdString(_host->Service().RawReportsUnavailable(device)));
 #endif
 }
 
@@ -450,59 +595,185 @@ void ControllersDialog::rebuildConnectors()
     Emulator* emulator = _host->BoundEmulator();
     EmulatorContext* context = _host->BoundContext();
     ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
-    _rebuildingConnectors = true;
-    _connectors->setRowCount(0);
     _machineLabel->setText(emulator != nullptr ? QString("<b>%1</b>").arg(QString::fromStdString(emulator->GetId()))
                                                : tr("No machine"));
-    if (manager == nullptr)
+    const std::vector<Connector> connectors = manager != nullptr ? manager->Connectors() : std::vector<Connector>{};
+    if (manager != nullptr)
+        _machineRevision = manager->Revision();
+    // A card per connector, kept across a rebuild: a drag in flight keeps its target
+    while (_cards.size() > connectors.size())
     {
-        _rebuildingConnectors = false;
-        return;
+        delete _cards.back();
+        _cards.pop_back();
     }
-    _machineRevision = manager->Revision();
-    for (const Connector& connector : manager->Connectors())
+    while (_cards.size() < connectors.size())
     {
-        const int row = _connectors->rowCount();
-        _connectors->insertRow(row);
-        // The connector's colour and tag (as its cords), its name and the port the guest reads
-        const connectorview::Style style = connectorview::StyleFor(connector);
-        const QString port = connectorview::PortText(connector);
-        auto* name = new QTableWidgetItem(
-            Swatch(style.colour),
-            (style.tag.isEmpty() ? QString() : style.tag + "  ") + connectorview::DisplayName(connector) +
-                (port.isEmpty() ? QString() : "  " + port));
-        name->setData(Qt::UserRole, QString::fromStdString(connector.id));
-        name->setToolTip(QString::fromStdString(connector.id));
-        _connectors->setItem(row, 0, name);
-        auto* combo = new QComboBox(_connectors);
-        if (!connector.fixed)
-            combo->addItem(tr("(empty)"), QString());
-        for (RetroDeviceKind kind : connector.accepts)
-            combo->addItem(RetroDeviceKindName(kind), QString(RetroDeviceKindName(kind)));
-        combo->setCurrentIndex(std::max(0, combo->findData(connector.device == RetroDeviceKind::None
-                                                               ? QString()
-                                                               : QString(RetroDeviceKindName(connector.device)))));
-        combo->setEnabled(!connector.fixed);
-        const std::string id = connector.id;
-        connect(combo, &QComboBox::currentIndexChanged, this, [this, combo, id](int) {
-            if (!_rebuildingConnectors)
-                plug(id, combo->currentData().toString());
+        auto* card = new ConnectorCard(_cardsBox);
+        _cardsLayout->insertWidget(static_cast<int>(_cards.size()), card);
+        connect(card, &ConnectorCard::retroDeviceChosen, this,
+                [this](const QString& connector, const QString& device) { plug(connector.toStdString(), device); });
+        connect(card, &ConnectorCard::deviceDropped, this, [this](const QString& device, const QString& connector) {
+            plugDevice(device.toStdString(), connector.toStdString());
         });
-        _connectors->setCellWidget(row, 1, combo);
-        _connectors->setItem(row, 2, new QTableWidgetItem(connectorview::HeldText(
-                                         connector.device, manager->State(static_cast<size_t>(row)))));
+        connect(card, &ConnectorCard::deviceDraggedOff, this,
+                [this](const QString& device, const QString&) { unplugDevice(device.toStdString()); });
+        _cards.push_back(card);
     }
-    _connectors->resizeColumnToContents(0);
-    _rebuildingConnectors = false;
+    for (size_t i = 0; i < connectors.size(); ++i)
+    {
+        ConnectorCard* card = _cards[i];
+        card->setConnector(connectors[i]);
+        const std::string id = connectors[i].id;
+        card->refusalFor = [this, id](const std::string& device) { return refusal(device, id); };
+        card->setHeld(manager->State(i));
+    }
 #endif
 }
 
-void ControllersDialog::plug(const std::string& connector, const QString& device)
+QString ControllersDialog::refusal(const std::string& device, const std::string& connector) const
+{
+#ifdef ENABLE_CONTROLLERS
+    const std::vector<HostDeviceInfo> devices = _host->Service().Router().Devices();
+    const auto info = std::find_if(devices.begin(), devices.end(),
+                                   [&device](const HostDeviceInfo& known) { return known.id == device; });
+    if (info == devices.end())
+        return tr("The device is gone");
+    if (info->family == "keyboard" || info->family == "mouse" ||
+        !DeviceDatabase::Active()->ForFamily(info->family, info->layout).player)
+        return tr("%1 does not plug: its bindings name their targets").arg(QString::fromStdString(info->name));
+    EmulatorContext* context = _host->BoundContext();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+        return tr("No machine");
+    const int index = manager->Find(connector);
+    if (index < 0)
+        return tr("The connector is gone");
+    const Connector found = manager->At(static_cast<size_t>(index));
+    if (found.device == RetroDeviceKind::None && (found.fixed || found.accepts.empty()))
+        return QString::fromStdString(found.id + " is part of the board");
+    return {};
+#else
+    (void)device;
+    (void)connector;
+    return tr("No controllers in this build");
+#endif
+}
+
+bool ControllersDialog::plugDevice(const std::string& device, const std::string& connector)
+{
+#ifdef ENABLE_CONTROLLERS
+    const QString refused = refusal(device, connector);
+    if (!refused.isEmpty())
+    {
+        setStatus(refused, true);
+        return false;
+    }
+    ControllerManager* manager = _host->BoundContext()->pControllerManager;
+    const Connector target = manager->At(static_cast<size_t>(manager->Find(connector)));
+    UndoStep step{device, _host->PlayerChoice(device), {}};
+    // An empty connector gets the first retro device it takes: the drop is the whole gesture
+    if (target.device == RetroDeviceKind::None)
+    {
+        if (!plug(target.id, QString::fromLatin1(RetroDeviceKindName(target.accepts.front()))))
+            return false;
+        step.pluggedConnector = target.id;
+    }
+    std::string message;
+    const std::string error = _host->ChoosePlayerConnector(device, target.id, message);
+    if (!error.empty())
+    {
+        if (!step.pluggedConnector.empty())
+            plug(step.pluggedConnector, QString());
+        setStatus(QString::fromStdString(message), true);
+        return false;
+    }
+    _undo.push_back(step);
+    _undoButton->setEnabled(true);
+    setStatus(tr("%1 plugged into %2").arg(QString::fromStdString(device), connectorview::DisplayName(target)), false);
+    rebuildConnectors();
+    return true;
+#else
+    (void)device;
+    (void)connector;
+    return false;
+#endif
+}
+
+void ControllersDialog::unplugDevice(const std::string& device)
+{
+#ifdef ENABLE_CONTROLLERS
+    std::string message;
+    const std::string before = _host->PlayerChoice(device);
+    if (const std::string error = _host->ChoosePlayerConnector(device, "none", message); !error.empty())
+    {
+        setStatus(QString::fromStdString(message), true);
+        return;
+    }
+    _undo.push_back({device, before, {}});
+    _undoButton->setEnabled(true);
+    setStatus(tr("%1 unplugged (Ctrl+Z puts it back)").arg(QString::fromStdString(device)), false);
+    rebuildConnectors();
+#else
+    (void)device;
+#endif
+}
+
+bool ControllersDialog::undo()
+{
+    if (_undo.empty())
+        return false;
+    const UndoStep step = _undo.back();
+    _undo.pop_back();
+    _undoButton->setEnabled(!_undo.empty());
+#ifdef ENABLE_CONTROLLERS
+    std::string message;
+    // "" goes back to the automatic choice, "none" and a connector id as they were
+    _host->ChoosePlayerConnector(step.device, step.choice, message);
+#endif
+    if (!step.pluggedConnector.empty())
+        plug(step.pluggedConnector, QString());
+    setStatus(tr("Undone"), false);
+    rebuildConnectors();
+    return true;
+}
+
+QString ControllersDialog::statusText() const
+{
+    return _status->text();
+}
+
+void ControllersDialog::setStatus(const QString& text, bool error)
+{
+    _status->setStyleSheet(error ? QStringLiteral("color: #c0504d;") : QString());
+    _status->setText(text);
+}
+
+QString ControllersDialog::importMapping(const QString& text)
+{
+#ifdef ENABLE_CONTROLLERS
+    // A USB or Bluetooth id carries the VID:PID ("usb:2dc8:6101:..."); other ids pick the first line
+    const QStringList parts = QString::fromStdString(selectedDevice()).split(':');
+    const uint16_t vid = parts.size() >= 3 ? parts[1].toUShort(nullptr, 16) : 0;
+    const uint16_t pid = parts.size() >= 3 ? parts[2].toUShort(nullptr, 16) : 0;
+    HostRequest request;
+    request.verb = "database-import";
+    request.options["text"] = PickMapping(text, vid, pid).toStdString();
+    const HostReply reply = _host->Host(request);
+    const QString answer = QString::fromStdString(reply.message);
+    setStatus(reply.Ok() ? tr("%1. Used from the next time the pad connects.").arg(answer) : answer, !reply.Ok());
+    return answer;
+#else
+    (void)text;
+    return {};
+#endif
+}
+
+bool ControllersDialog::plug(const std::string& connector, const QString& device)
 {
 #ifdef ENABLE_CONTROLLERS
     EmulatorContext* context = _host->BoundContext();
     if (context == nullptr)
-        return;
+        return false;
     ControllerControl control(context);
     ControllerRequest request;
     request.verb = device.isEmpty() ? "unplug" : "plug";
@@ -511,11 +782,13 @@ void ControllersDialog::plug(const std::string& connector, const QString& device
     request.options["async"] = "";
     const ControllerReply reply = control.Execute(request);
     if (!reply.result.Ok())
-        QMessageBox::warning(this, tr("Controllers"), QString::fromStdString(reply.result.message));
+        setStatus(QString::fromStdString(reply.result.message), true);
     _host->Reapply();
+    return reply.result.Ok();
 #else
     (void)connector;
     (void)device;
+    return false;
 #endif
 }
 
@@ -541,7 +814,10 @@ void ControllersDialog::tick()
         _picture->setLive(live);
         _table->setLive(live);
         if (_test->isVisible())
+        {
             _test->setLive(live);
+            refreshTestPanel(++_ticks % 30 == 0);  // the thresholds and endpoints once a second
+        }
     }
     EmulatorContext* context = _host->BoundContext();
     if (context != nullptr && context->pControllerManager != nullptr)
@@ -549,15 +825,16 @@ void ControllersDialog::tick()
         ControllerManager* manager = context->pControllerManager;
         if (manager->Revision() != _machineRevision)
             rebuildConnectors();
-        const std::vector<Connector> connectors = manager->Connectors();
-        for (int row = 0; row < _connectors->rowCount() && static_cast<size_t>(row) < connectors.size(); ++row)
-            if (QTableWidgetItem* cell = _connectors->item(row, 2))
-            {
-                const QString text = connectorview::HeldText(connectors[static_cast<size_t>(row)].device,
-                                                             manager->State(static_cast<size_t>(row)));
-                if (cell->text() != text)
-                    cell->setText(text);
-            }
+        // Per card the held controls and the host devices that drive it, in the device list's order
+        std::map<std::string, std::vector<std::pair<std::string, QString>>> drivers;
+        for (const HostDeviceInfo& info : _host->Service().Router().Devices())
+            for (const std::string& target : _host->Service().Router().Connectors(info.id))
+                drivers[target].emplace_back(info.id, QString::fromStdString(info.name));
+        for (size_t i = 0; i < _cards.size(); ++i)
+        {
+            _cards[i]->setHeld(manager->State(i));
+            _cards[i]->setDrivers(drivers[_cards[i]->connector().id]);
+        }
     }
 #endif
     updateCords();
@@ -577,7 +854,7 @@ void ControllersDialog::updateCords()
 #ifdef ENABLE_CONTROLLERS
     EmulatorContext* context = _host->BoundContext();
     ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
-    if (manager != nullptr && _connectors->rowCount() > 0 && _devices->count() > 0)
+    if (manager != nullptr && !_cards.empty() && _devices->count() > 0)
     {
         std::map<std::string, Connector> byId;
         for (const Connector& connector : manager->Connectors())
@@ -585,10 +862,9 @@ void ControllersDialog::updateCords()
         const auto anchor = [this](QAbstractItemView* view, const QRect& row, bool right) {
             return PatchCordOverlay::RowAnchor(this, view, row, right);
         };
-        std::map<std::string, int> rows;
-        for (int row = 0; row < _connectors->rowCount(); ++row)
-            if (const QTableWidgetItem* item = _connectors->item(row, 0))
-                rows[item->data(Qt::UserRole).toString().toStdString()] = row;
+        std::map<std::string, const ConnectorCard*> cards;
+        for (const ConnectorCard* card : _cards)
+            cards[card->connector().id] = card;
         const std::string selected = selectedDevice();
         for (int i = 0; i < _devices->count(); ++i)
         {
@@ -603,14 +879,18 @@ void ControllersDialog::updateCords()
             const QPointF from = anchor(_devices, _devices->visualItemRect(item), true);
             for (const std::string& target : targets)
             {
-                const auto row = rows.find(target);
+                const auto card = cards.find(target);
                 const auto connector = byId.find(target);
-                if (row == rows.end() || connector == byId.end())
+                if (card == cards.end() || connector == byId.end() || !card->second->isVisible())
                     continue;
                 const connectorview::Style style = connectorview::StyleFor(connector->second);
                 PatchCordOverlay::Cord cord;
                 cord.from = from;
-                cord.to = anchor(_connectors, _connectors->visualItemRect(_connectors->item(row->second, 0)), false);
+                // A card scrolled away: the cord pins to the visible edge of the cards' column
+                const QWidget* port = _cardsBox->parentWidget();
+                const QPoint top = port->mapTo(this, QPoint(0, 0));
+                const QPoint at = card->second->mapTo(this, card->second->cordAnchor());
+                cord.to = QPointF(at.x(), std::clamp(at.y(), top.y(), top.y() + std::max(0, port->height() - 1)));
                 cord.colour = style.colour;
                 cord.tag = style.tag;
                 cord.selected = device == selected;

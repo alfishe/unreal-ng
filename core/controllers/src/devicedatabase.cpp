@@ -60,6 +60,12 @@ void Info(const JsonValue& entry, DeviceMatch& info)
             if (control.IsString())
                 info.controls.push_back(control.AsString());
     }
+    if (const JsonValue* buttons = entry.Find("buttons"); buttons != nullptr && buttons->IsArray())
+    {
+        info.buttons.clear();
+        for (const JsonValue& button : buttons->Items())
+            info.buttons.push_back(button.IsString() ? button.AsString() : std::string{});
+    }
     if (const JsonValue* ignore = entry.Find("ignore"); ignore != nullptr && ignore->IsString())
         info.ignore = !ignore->AsString().empty();
 }

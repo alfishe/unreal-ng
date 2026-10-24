@@ -424,6 +424,9 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
 | `controllers database [<vid:pid>\|<family>] [bus=usb\|bt] [name=..]` | The device database: what a device of those ids matches (family, layout, images, match step and score), and the ids of devices.user.json |
 | `controllers database-save <file>`, `database-delete <id>` | Add or replace an entry of devices.user.json (one family as JSON), remove one |
+| `controllers database-import <file> [save=false]` | A gamecontrollerdb.txt line or a RetroArch autoconfig .cfg as a devices.user.json entry, matched by its VID:PID |
+| `controllers player <device> [connector\|auto\|none]` | The connector a pad's `auto:` targets drive: read, choose, back to automatic, none |
+| `controllers probe [device]`, `reports <device>` | The backends and a device's endpoints; its newest raw input reports in hex |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 

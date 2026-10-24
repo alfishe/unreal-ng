@@ -29,6 +29,9 @@ struct HidLayout
 
 /// A device database layout (`xbox`, `playstation`, `nintendo`); anything else is `generic`
 HidLayout HidLayoutFor(const std::string& layout);
+/// As above, with a family's own button names over it (the database's `buttons`, an imported gamecontrollerdb line or
+/// RetroArch autoconfig: index n = HID button n + 1; an empty entry keeps the layout's name)
+HidLayout HidLayoutFor(const std::string& layout, const std::vector<std::string>& buttons);
 
 using ControlSink = std::function<void(const std::string& control, float value)>;
 

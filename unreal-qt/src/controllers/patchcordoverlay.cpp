@@ -1,6 +1,7 @@
 #include "patchcordoverlay.h"
 
 #include <QAbstractItemView>
+#include <QFontMetrics>
 #include <QPainter>
 
 #include <algorithm>
@@ -60,12 +61,24 @@ std::vector<QPainterPath> PatchCordOverlay::pathsOf(size_t index) const
     return {Curve(cord.from, QPointF(_passage.left(), y)), Curve(QPointF(_passage.right(), y), cord.to)};
 }
 
+QRectF PatchCordOverlay::TagRect(const Cord& cord, const QFontMetrics& metrics)
+{
+    const double width = metrics.horizontalAdvance(cord.tag) + 6.0;
+    const double height = metrics.height() + 1.0;
+    // Just before the connector: the cord runs into the tag's left side
+    return {cord.to.x() - width - 1.0, cord.to.y() - height / 2.0, width, height};
+}
+
 void PatchCordOverlay::paintEvent(QPaintEvent*)
 {
     if (_cords.empty())
         return;
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    QFont font = painter.font();
+    font.setPointSizeF(std::max(7.0, font.pointSizeF() - 3.0));
+    font.setBold(true);
+    painter.setFont(font);
     // A slow breath, not a blink: 1.2 Hz between 55 % and 100 %
     const double phase = 0.5 + 0.5 * std::sin(2.0 * kPi * 1.2 * static_cast<double>(_clock.elapsed()) / 1000.0);
     // The quiet ones first: the selected device's cords lie on top
@@ -88,10 +101,22 @@ void PatchCordOverlay::paintEvent(QPaintEvent*)
             painter.setBrush(Qt::NoBrush);
             for (const QPainterPath& path : pathsOf(i))
                 painter.drawPath(path);
-            // The plugs: a dot at each end (the connector's row carries the tag: colour is never the only signal)
+            // The plugs: a dot at the device's end, the connector's tag at the other (ui-ux.md §6: colour is never
+            // the only signal)
             painter.setPen(Qt::NoPen);
             painter.setBrush(colour);
             painter.drawEllipse(cord.from, 2.5, 2.5);
-            painter.drawEllipse(cord.to, 2.5, 2.5);
+            if (cord.tag.isEmpty())
+            {
+                painter.drawEllipse(cord.to, 2.5, 2.5);
+                continue;
+            }
+            const QRectF tag = TagRect(cord, painter.fontMetrics());
+            QColor fill = cord.colour;
+            fill.setAlphaF(selected ? 1.0f : 0.85f);
+            painter.setBrush(fill);
+            painter.drawRoundedRect(tag, 3, 3);
+            painter.setPen(Qt::white);
+            painter.drawText(tag, Qt::AlignCenter, cord.tag);
         }
 }

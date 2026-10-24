@@ -2,6 +2,8 @@
 
 #include <QCoreApplication>
 
+#include <algorithm>
+
 using namespace controllers;
 
 namespace connectorview
@@ -104,6 +106,79 @@ QString HeldText(RetroDeviceKind device, uint16_t mask)
         if (index < bits && (mask & (1u << index)))
             held << Tr(md ? pad[index] : stick[index]);
     return held.isEmpty() ? QStringLiteral("—") : held.join(QStringLiteral(", "));
+}
+
+QString ImageSetFor(RetroDeviceKind device)
+{
+    switch (device)
+    {
+        case RetroDeviceKind::KempstonJoystick:
+        case RetroDeviceKind::FullerJoystick:
+            return QStringLiteral("kempston-joystick");
+        case RetroDeviceKind::SinclairJoystick:
+            return QStringLiteral("sinclair-joystick");
+        case RetroDeviceKind::CursorJoystick:
+            return QStringLiteral("cursor-joystick");
+        case RetroDeviceKind::KeysJoystick:
+            return QStringLiteral("generic-db9-stick");
+        case RetroDeviceKind::Md6Pad:
+            return QStringLiteral("md6-pad");
+        default:
+            return QString();
+    }
+}
+
+std::map<std::string, float> LiveOf(RetroDeviceKind device, uint16_t mask)
+{
+    static const char* const stick[] = {"right", "left", "down", "up", "fire", "fire2", "fire3", "fire4"};
+    static const char* const pad[] = {"right", "left", "down", "up", "b", "c", "a", "start", "y", "z", "x", "mode"};
+    const bool md = device == RetroDeviceKind::Md6Pad;
+    std::map<std::string, float> live;
+    for (int bit = 0; bit < (md ? 12 : 8); ++bit)
+        if (mask & (1u << bit))
+            live[md ? pad[bit] : stick[bit]] = 1.0f;
+    return live;
+}
+
+std::vector<StripKey> KeyStrip(const Connector& connector)
+{
+    switch (connector.device)
+    {
+        case RetroDeviceKind::SinclairJoystick:
+            if (SinclairTwo(connector))
+                return {{"1", "left", kLeft}, {"2", "right", kRight}, {"3", "down", kDown}, {"4", "up", kUp},
+                        {"5", "fire", kFire}};
+            return {{"6", "left", kLeft}, {"7", "right", kRight}, {"8", "down", kDown}, {"9", "up", kUp},
+                    {"0", "fire", kFire}};
+        case RetroDeviceKind::CursorJoystick:
+            return {{"5", "left", kLeft}, {"6", "down", kDown}, {"7", "up", kUp}, {"8", "right", kRight},
+                    {"0", "fire", kFire}};
+        default:
+            return {};
+    }
+}
+
+std::vector<std::pair<std::string, std::string>> SwapPorts(const std::vector<std::pair<std::string, std::string>>& pads,
+                                                           const std::vector<std::string>& joysticks)
+{
+    std::vector<std::pair<std::string, std::string>> driving;
+    for (const auto& pad : pads)
+        if (!pad.second.empty())
+            driving.push_back(pad);
+    if (driving.size() >= 2)
+    {
+        if (driving[0].second == driving[1].second)
+            return {};
+        return {{driving[0].first, driving[1].second}, {driving[1].first, driving[0].second}};
+    }
+    if (driving.size() == 1 && joysticks.size() >= 2)
+    {
+        const auto at = std::find(joysticks.begin(), joysticks.end(), driving[0].second);
+        const size_t next = at == joysticks.end() ? 0 : static_cast<size_t>(at - joysticks.begin() + 1) % joysticks.size();
+        if (joysticks[next] != driving[0].second)
+            return {{driving[0].first, joysticks[next]}};
+    }
+    return {};
 }
 
 Led DescribeLed(const std::vector<Connector>& connectors, const std::vector<uint16_t>& states,

@@ -2,10 +2,10 @@
 
 /// @file patchcordoverlay.h
 /// @brief The patch cords of the controllers dialog (docs/inprogress/2026-10-17-controller-manager/ui-ux.md §2.3): one
-/// cord per plug, from a host device's row to the connector it drives, through the picture: a cord leaves the device
-/// row in the gutter between the device list and the picture, enters the picture at its middle, and leaves it on the
-/// other side towards the connector's row, so the photo itself is never drawn over. The colour is the connector's,
-/// with its tag in the connector's row; the selected device's cords are drawn full, the others quieter; a cord pulses
+/// cord per plug, from a host device's row to the connector card it drives, through the picture: a cord leaves the
+/// device row in the gutter between the device list and the picture, enters the picture at its middle, and leaves it
+/// on the other side towards the connector's card, so the photo itself is never drawn over. The colour is the
+/// connector's, and the connector's tag (K, S1, CUR...) sits at the cord's end (§6); the selected device's cords are drawn full, the others quieter; a cord pulses
 /// while its device sends (a control away from rest).
 ///
 /// A transparent child over the whole dialog (mouse events pass through); the dialog hands it the geometry and the
@@ -22,6 +22,7 @@
 #include <vector>
 
 class QAbstractItemView;
+class QFontMetrics;
 
 class PatchCordOverlay : public QWidget
 {
@@ -31,7 +32,7 @@ public:
     struct Cord
     {
         QPointF from;  ///< the device row's right edge (overlay coordinates)
-        QPointF to;    ///< the connector row's left edge
+        QPointF to;    ///< the connector card's left edge
         QColor colour;
         QString tag;
         bool selected = false;  ///< the device shown in the picture
@@ -56,6 +57,8 @@ public:
     static QPointF RowAnchor(QWidget* parent, QAbstractItemView* view, const QRect& row, bool right);
     /// The path one cord takes (exposed for the tests): the left run, and the right run when it passes the picture
     std::vector<QPainterPath> pathsOf(size_t index) const;
+    /// Where a cord's tag is drawn: just left of its connector end
+    static QRectF TagRect(const Cord& cord, const QFontMetrics& metrics);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

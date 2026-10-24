@@ -1,7 +1,16 @@
 #include "devicetestpanel.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QFontDatabase>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
+#include <QTableWidget>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +25,7 @@ namespace
 constexpr double kStick = 96.0;    // a stick plot's side, px
 constexpr double kTrigger = 18.0;  // a trigger bar's width
 constexpr double kLamp = 9.0;      // a lamp's diameter
+constexpr int kPlot = static_cast<int>(kStick) + 56;  // the painted part on top, px
 
 #ifdef ENABLE_CONTROLLERS
 /// The device has @p control: named, or under one of its `prefix.*` entries
@@ -49,13 +59,111 @@ QString LampLabel(const std::string& control)
 
 DeviceTestPanel::DeviceTestPanel(QWidget* parent) : QWidget(parent)
 {
-    setMinimumHeight(static_cast<int>(kStick) + 52);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    // The plots are painted on top; the endpoints and the raw reports are widgets below them
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, kPlot, 4, 2);
+    layout->setSpacing(3);
+    _endpoints = new QTableWidget(0, 8, this);
+    _endpoints->setHorizontalHeaderLabels(
+        {tr("Endpoint"), tr("Role"), tr("Controls"), tr("Driver"), tr("Rumble"), tr("Light"), tr("Battery"),
+         tr("Detail")});
+    _endpoints->horizontalHeader()->setStretchLastSection(true);
+    _endpoints->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    _endpoints->verticalHeader()->hide();
+    _endpoints->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    _endpoints->setSelectionMode(QAbstractItemView::NoSelection);
+    _endpoints->setFocusPolicy(Qt::NoFocus);
+    _endpoints->setFixedHeight(_endpoints->horizontalHeader()->sizeHint().height() + 2 * 22 + 4);
+    _endpoints->setToolTip(tr("What each endpoint of the device gives: one decodes the input, a companion may add "
+                              "outputs (rumble, light) or a battery"));
+    layout->addWidget(_endpoints);
+    auto* raw = new QHBoxLayout();
+    _raw = new QLabel(this);
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    mono.setPointSizeF(std::max(8.0, mono.pointSizeF() - 1.0));
+    _raw->setFont(mono);
+    _raw->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _raw->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    _raw->setFixedHeight(QFontMetrics(mono).lineSpacing() * 4 + 4);
+    _raw->setToolTip(tr("The newest raw input reports as the device sends them (hex, oldest first)"));
+    raw->addWidget(_raw, 1);
+    _copy = new QPushButton(tr("Copy"), this);
+    _copy->setToolTip(tr("Copy the raw reports: paste them into a bug report or a device entry"));
+    _copy->setEnabled(false);
+    raw->addWidget(_copy, 0, Qt::AlignTop);
+    layout->addLayout(raw);
+    connect(_copy, &QPushButton::clicked, this,
+            [this] { QApplication::clipboard()->setText(_rawLines.join(QStringLiteral("\n"))); });
 }
 
 QSize DeviceTestPanel::sizeHint() const
 {
-    return {520, static_cast<int>(kStick) + 56};
+    return {520, layout()->sizeHint().height()};  // its top margin is the plot
+}
+
+QSize DeviceTestPanel::minimumSizeHint() const
+{
+    return sizeHint();
+}
+
+void DeviceTestPanel::setThresholds(const std::string& control, const Thresholds& thresholds)
+{
+    const auto it = _thresholds.find(control);
+    if (it != _thresholds.end() && it->second == thresholds)
+        return;
+    _thresholds[control] = thresholds;
+    update();
+}
+
+DeviceTestPanel::Thresholds DeviceTestPanel::thresholds(const std::string& control) const
+{
+    const auto it = _thresholds.find(control);
+    return it != _thresholds.end() ? it->second : Thresholds{};
+}
+
+void DeviceTestPanel::setEndpoints(const std::vector<QStringList>& rows)
+{
+    _endpoints->setRowCount(static_cast<int>(rows.size()));
+    for (int row = 0; row < static_cast<int>(rows.size()); ++row)
+    {
+        const QStringList& cells = rows[static_cast<size_t>(row)];
+        // backend · name in the first column; the rest as they come
+        const QString endpoint = cells.value(0) + QStringLiteral(" · ") + cells.value(1);
+        const QStringList shown = {endpoint,       cells.value(2), cells.value(3), cells.value(4),
+                                   cells.value(5), cells.value(6), cells.value(7), cells.value(8)};
+        for (int column = 0; column < shown.size(); ++column)
+        {
+            QTableWidgetItem* item = _endpoints->item(row, column);
+            if (item == nullptr)
+                _endpoints->setItem(row, column, item = new QTableWidgetItem());
+            if (item->text() != shown[column])
+                item->setText(shown[column]);
+        }
+    }
+}
+
+int DeviceTestPanel::endpointRows() const
+{
+    return _endpoints->rowCount();
+}
+
+void DeviceTestPanel::setRawReports(const QStringList& lines, const QString& unavailable)
+{
+    if (!lines.isEmpty())
+        _rawLines = lines;  // the last ones stay while the pad rests
+    const QString text = !_rawLines.isEmpty() ? _rawLines.mid(std::max(0, static_cast<int>(_rawLines.size()) - 4))
+                                                    .join(QStringLiteral("\n"))
+                         : unavailable.isEmpty() ? tr("Raw reports: move a control")
+                                                 : tr("Raw reports: %1").arg(unavailable);
+    if (_raw->text() != text)
+        _raw->setText(text);
+    _copy->setEnabled(!_rawLines.isEmpty());
+}
+
+QString DeviceTestPanel::rawText() const
+{
+    return _raw->text();
 }
 
 void DeviceTestPanel::setDevice(const std::string& id, const std::vector<std::string>& controls, const QString& detail)
@@ -67,6 +175,11 @@ void DeviceTestPanel::setDevice(const std::string& id, const std::vector<std::st
     _buttons.clear();
     _max.clear();
     _live.clear();
+    _thresholds.clear();
+    _rawLines.clear();
+    _endpoints->setRowCount(0);
+    _raw->clear();
+    _copy->setEnabled(false);
 #ifdef ENABLE_CONTROLLERS
     for (const char* stick : {"lstick", "rstick"})
         if (Has(controls, std::string(stick) + ".x") || Has(controls, stick))
@@ -150,7 +263,12 @@ void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std
     const float x = value(stick + ".x");
     const float y = value(stick + ".y");
 #ifdef ENABLE_CONTROLLERS
-    const controllers::AnalogOptions options;
+    const Thresholds read = thresholds(stick);
+    controllers::AnalogOptions options;
+    options.deadzone = read.deadzone;
+    options.saturation = read.saturation;
+    options.on = read.on;
+    options.off = read.off;
     // The dead zone filled, the on / off thresholds of a direction as two rings (in the stick's own travel)
     faint.setAlphaF(0.25f);
     painter.setPen(Qt::NoPen);
@@ -180,8 +298,13 @@ void DeviceTestPanel::paintStick(QPainter& painter, const QRectF& box, const std
     painter.drawEllipse(QPointF(centre.x() + r * std::clamp(x, -1.0f, 1.0f), centre.y() + r * std::clamp(y, -1.0f, 1.0f)),
                         5.0, 5.0);
     painter.setPen(text);
-    painter.drawText(QRectF(box.left(), box.bottom() + 2, box.width(), 14), Qt::AlignCenter,
+    painter.drawText(QRectF(box.left() - 10, box.bottom() + 2, box.width() + 20, 14), Qt::AlignCenter,
                      QString("%1  %2, %3").arg(label).arg(x, 0, 'f', 2).arg(y, 0, 'f', 2));
+    // Where the dead zone came from: a profile's binding, or the defaults
+    painter.setPen(palette().color(QPalette::PlaceholderText));
+    painter.drawText(QRectF(box.left() - 10, box.bottom() + 16, box.width() + 20, 14), Qt::AlignCenter,
+                     tr("dz %1%2").arg(thresholds(stick).deadzone, 0, 'f', 2)
+                         .arg(thresholds(stick).fromProfile ? tr(" · profile") : QString()));
 }
 
 void DeviceTestPanel::paintTrigger(QPainter& painter, const QRectF& box, const std::string& trigger,
@@ -199,7 +322,7 @@ void DeviceTestPanel::paintTrigger(QPainter& painter, const QRectF& box, const s
     painter.fillRect(fill, accent);
     const auto mark = [&box](float at) { return box.bottom() - box.height() * at; };
 #ifdef ENABLE_CONTROLLERS
-    const controllers::AnalogOptions options;
+    const Thresholds options = thresholds(trigger);
     painter.setPen(QPen(text, 1.0));
     painter.drawLine(QPointF(box.left() - 3, mark(options.triggerClick)), QPointF(box.right() + 3, mark(options.triggerClick)));
     painter.setPen(QPen(faint, 1.0, Qt::DashLine));
@@ -217,7 +340,7 @@ void DeviceTestPanel::paintTrigger(QPainter& painter, const QRectF& box, const s
     QString caption = QString("%1 %2").arg(label).arg(level, 0, 'f', 2);
 #ifdef ENABLE_CONTROLLERS
     // Pulled past its click and still short of 1: where this pad's travel ends (an Elite's hair-trigger stop)
-    if (max >= controllers::AnalogOptions().triggerClick && max < 0.97f)
+    if (max >= thresholds(trigger).triggerClick && max < 0.97f)
         caption += "\n" + tr("full %1").arg(max, 0, 'f', 2);
 #endif
     painter.drawText(QRectF(box.left() - 30, box.bottom() + 2, box.width() + 60, 28), Qt::AlignHCenter | Qt::AlignTop,
@@ -232,7 +355,7 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
     if (_device.empty())
     {
         painter.setPen(palette().color(QPalette::PlaceholderText));
-        painter.drawText(rect(), Qt::AlignCenter, tr("Select a device to test it"));
+        painter.drawText(QRect(0, 0, width(), kPlot), Qt::AlignCenter, tr("Select a device to test it"));
         return;
     }
     double x = 8;
@@ -273,6 +396,6 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
                          tr("The device database lists no controls for this device"));
     }
     painter.setPen(palette().color(QPalette::PlaceholderText));
-    painter.drawText(QRectF(8, height() - 18, width() - 16, 16), Qt::AlignLeft | Qt::AlignVCenter,
+    painter.drawText(QRectF(8, kPlot - 18, width() - 16, 16), Qt::AlignLeft | Qt::AlignVCenter,
                      metrics.elidedText(_detail, Qt::ElideRight, width() - 16));
 }

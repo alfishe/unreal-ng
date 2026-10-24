@@ -85,6 +85,15 @@ public:
     /// "Keep" on the auto toast: a user game profile keyed by the loaded file's SHA-256 (mapping-and-profiles.md
     /// §6.1) holding the connector and the first pad's pin; false with the reason
     bool KeepAutoDecision(QString& error);
+    /// The connector a player device drives, chosen by the user (the dialog's drag and drop, the `player` verb); an
+    /// empty @p connector: back to the automatic choice; "none": no connector (a cord dragged off). Kept for the
+    /// session by device id (a replug keeps it). Empty when done, else the error code with @p message
+    std::string ChoosePlayerConnector(const std::string& device, const std::string& connector, std::string& message);
+    /// "" automatic, "none", or the chosen connector's id
+    std::string PlayerChoice(const std::string& device) const;
+    /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
+    /// machine's order decide again
+    void ResetPlayerChoices();
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
     bool DebugLayer() const
@@ -222,6 +231,7 @@ private:
     std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
     std::vector<controllers::HostDeviceId> _known;
     std::map<controllers::HostDeviceId, std::pair<std::string, bool>> _knownNames;  ///< name, a player, by id
+    std::map<controllers::HostDeviceId, std::string> _playerChoice;  ///< the user's connector per device
 #endif
     bool _pauseOnDisconnect = false;
     EmulatorBinding* _binding = nullptr;

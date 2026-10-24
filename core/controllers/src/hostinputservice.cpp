@@ -133,6 +133,47 @@ BatteryState HostInputService::Battery(const HostDeviceId& device) const
     return backend != nullptr ? backend->Battery(device) : BatteryState{};
 }
 
+std::vector<EndpointInfo> HostInputService::Endpoints(const HostDeviceId& device) const
+{
+    const size_t seen = Live(device).size();  // before _mutex: the two locks are never held together
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return {};
+    std::vector<EndpointInfo> endpoints = backend->Endpoints(device);
+    for (EndpointInfo& endpoint : endpoints)
+        if (endpoint.role == "input")
+            endpoint.battery = backend->Battery(device).known;
+    if (!endpoints.empty())
+        return endpoints;
+    // One endpoint: what the backend answers for the device
+    EndpointInfo endpoint;
+    endpoint.backend = backend->Name();
+    endpoint.role = "input";
+    endpoint.rumble = backend->HasRumble(device);
+    endpoint.light = backend->HasLight(device);
+    endpoint.battery = backend->Battery(device).known;
+    endpoint.controls = seen;
+    endpoint.detail = "controls seen so far";
+    return {endpoint};
+}
+
+std::string HostInputService::RawReportsUnavailable(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return "The device is not connected";
+    return backend->RawReportsUnavailable(device);
+}
+
+std::vector<RawReport> HostInputService::RawReports(const HostDeviceId& device)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr ? backend->RawReports(device) : std::vector<RawReport>{};
+}
+
 bool HostInputService::HasLight(const HostDeviceId& device) const
 {
     std::lock_guard<std::mutex> lock(_mutex);

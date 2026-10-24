@@ -48,6 +48,10 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"database", {"vidpid", "bus", "name", "family"}},
         {"database-save", {"text"}},
         {"database-delete", {"id"}},
+        {"database-import", {"text", "save"}},
+        {"player", {"device", "connector"}},
+        {"probe", {"device"}},
+        {"reports", {"device"}},
     };
     return actions;
 }
@@ -144,6 +148,41 @@ namespace
             }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "probe")
+        {
+            for (const Json::Value& backend : reply["backends"])
+                out << backend["name"].asString()
+                    << (backend["running"].asBool() ? " ok, " + std::to_string(backend["devices"].asInt()) + " devices"
+                                                    : ": " + backend["reason"].asString())
+                    << "\n";
+            for (const Json::Value& endpoint : reply["endpoints"])
+            {
+                out << "endpoint " << endpoint["backend"].asString() << " (" << endpoint["role"].asString() << "): "
+                    << endpoint["name"].asString() << ", " << endpoint["controls"].asInt() << " controls via "
+                    << endpoint["driver"].asString();
+                for (const char* cap : {"rumble", "light", "battery"})
+                    if (endpoint[cap].asBool())
+                        out << ", " << cap;
+                if (!endpoint["detail"].asString().empty())
+                    out << ", " << endpoint["detail"].asString();
+                out << "\n";
+            }
+            return out.str();
+        }
+        if (action == "reports")
+        {
+            out << reply["message"].asString() << "\n";
+            for (const Json::Value& report : reply["reports"])
+                out << report["hex"].asString() << " (" << report["size"].asInt() << " B)\n";
+            return out.str();
+        }
+        if (action == "database-import")
+        {
+            out << reply["message"].asString() << "\n" << Compact(reply["entry"]);
+            for (const Json::Value& skipped : reply["skipped"])
+                out << "\nnot taken over: " << skipped.asString();
             return out.str();
         }
         if (action == "database")
@@ -285,12 +324,13 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["connector"]["type"] = "string";
     schema["properties"]["connector"]["description"] =
         "Connector selector: id (kempston, sinclair-1, keyjoy.1, next.left, fuller), alias (left, right), kind:index "
-        "(keyboard-joystick:0); 'auto' for plug (the first free connector that takes the device)";
+        "(keyboard-joystick:0); 'auto' for plug (the first free connector that takes the device); player: the "
+        "connector the host pad's auto: targets drive ('auto' = the automatic choice)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light: a host device id (devices "
-        "lists them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light / player / probe / "
+        "reports: a host device id (devices lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -333,7 +373,9 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["text"]["description"] =
         "save: the whole profile, YAML or JSON (schema 1); database-save: one devices.user.json entry as JSON "
         "({\"id\": \"xbox-elite-2\", \"images\": \"my-elite\"}: a known family changes the fields it names; a new "
-        "one needs its match list) or a file's {\"families\": [...]}";
+        "one needs its match list) or a file's {\"families\": [...]}; database-import: a gamecontrollerdb.txt line "
+        "or a RetroArch joypad autoconfig .cfg";
+    schema["properties"]["save"]["description"] = "database-import: false = only answer the entry, do not save it";
     schema["properties"]["vidpid"]["description"] = "database: look a device up by its USB ids (045e:0b00)";
     schema["properties"]["bus"]["description"] = "database: with vidpid, usb or bt (some families match per bus)";
     schema["properties"]["name"]["description"] = "database: the device's product name (the name templates)";
@@ -377,7 +419,11 @@ void RegisterControllers(ToolRegistry& registry)
         "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), database "
         "(look a device up by VID:PID or family: its family, layout, image set, match step; the devices.user.json "
         "entries), database-save / database-delete (an entry of devices.user.json: a user device, a new name, a "
-        "photo's image set). Options per action:" +
+        "photo's image set), database-import (a gamecontrollerdb line or a RetroArch autoconfig as a user entry "
+        "matched by its VID:PID), player (the connector a host pad's auto: targets drive; connector=auto: back to "
+        "the automatic choice, connector=none: no connector), probe (the backends; with device its endpoints: "
+        "IOHID interfaces, a GameController companion, what each gives), reports (a device's newest raw HID input reports in hex; the tap runs while "
+        "they are read). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -392,8 +438,10 @@ void RegisterControllers(ToolRegistry& registry)
             {
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
+                if (action == "player" && !connector.empty())
+                    (*body)["connector"] = connector;  // here the host pad's connector, not the machine target
                 static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics", "database"};
+                                                            "haptics", "database", "probe", "reports"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

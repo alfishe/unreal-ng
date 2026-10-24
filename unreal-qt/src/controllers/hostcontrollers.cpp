@@ -90,6 +90,15 @@ public:
     {
         return &_host.Service();
     }
+    std::string ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                      std::string& message) override
+    {
+        return _host.ChoosePlayerConnector(device, connector, message);
+    }
+    std::string PlayerChoice(const std::string& device) const override
+    {
+        return _host.PlayerChoice(device);
+    }
 
 private:
     HostControllers& _host;
@@ -646,6 +655,10 @@ void HostControllers::Reapply()
     context.debugLayer = _debugLayer || _debugFocus;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
+    for (const HostDeviceInfo& device : context.devices)
+        if (const auto choice = _playerChoice.find(device.id); choice != _playerChoice.end())
+            _service->Router().SetPlayerConnector(device.id, choice->second);
     _context = context;
     applyConnectorPlans();
     attachHaptics();
@@ -799,6 +812,74 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});
         ++n;
     }
+}
+
+std::string HostControllers::ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                                   std::string& message)
+{
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const auto info = std::find_if(devices.begin(), devices.end(),
+                                   [&device](const HostDeviceInfo& known) { return known.id == device; });
+    if (info == devices.end())
+    {
+        message = "no connected host device '" + device + "' (devices lists them)";
+        return "unknown-device";
+    }
+    if (info->family == "keyboard" || info->family == "mouse" ||
+        !DeviceDatabase::Active()->ForFamily(info->family, info->layout).player)
+    {
+        message = info->name + " takes no player connector: its bindings name their targets";
+        return "bad-request";
+    }
+    if (connector.empty())
+    {
+        _playerChoice.erase(device);
+        Reapply();
+        return {};
+    }
+    if (connector == "none")
+    {
+        // Unplugged by hand (a cord dragged off its connector): the device drives no player connector
+        _playerChoice[device].clear();
+        Reapply();
+        return {};
+    }
+    EmulatorContext* context = _binding->context();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+    {
+        message = "no machine is bound: start one first";
+        return "unavailable";
+    }
+    const int index = manager->Find(connector);
+    if (index < 0)
+    {
+        message = "no connector '" + connector + "' on this machine (list names them)";
+        return "bad-request";
+    }
+    const Connector found = manager->At(static_cast<size_t>(index));
+    if (found.device == RetroDeviceKind::None)
+    {
+        message = found.id + " holds no device: plug one first (plug " + found.id + " kempston-joystick)";
+        return "bad-request";
+    }
+    _playerChoice[device] = found.id;
+    Reapply();
+    return {};
+}
+
+void HostControllers::ResetPlayerChoices()
+{
+    _playerChoice.clear();
+    Reapply();
+}
+
+std::string HostControllers::PlayerChoice(const std::string& device) const
+{
+    const auto it = _playerChoice.find(device);
+    if (it == _playerChoice.end())
+        return {};
+    return it->second.empty() ? std::string("none") : it->second;
 }
 
 HostReply HostControllers::Host(const HostRequest& request)

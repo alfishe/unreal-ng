@@ -129,6 +129,24 @@ Rules:
 - The wizard's result is saved as a user entry in the gamecontrollerdb line format plus our family fields. It can then
   be shared as a pull request to `data/controllers/`.
 
+**As built (2026-10-23): steps 3 and 4 as an import.** No gamecontrollerdb.txt is bundled and no RetroArch profile is
+read at match time; the user imports a mapping for one pad instead (`database-import`, `ImportDevice` in
+`core/controllers/src/deviceimport.*`), and it becomes a devices.user.json entry that steps 1-2 then match:
+- a gamecontrollerdb.txt line: the GUID's little-endian words give bus (word 0: 3 = `usb`, 5 = `bt`), VID (word 2) and
+  PID (word 4); a GUID whose words 3 and 5 are not 0 carries no USB ids and is refused. SDL names map to the
+  vocabulary (`a` south, `b` east, `x` west, `y` north, `back` view, `start` menu, `guide`, shoulders `lb` / `rb`,
+  triggers `lt` / `rt`, stick clicks, `dp*` the D-pad, `misc1` share, `paddle1-4`, `touchpad`), axes add `lstick.*` /
+  `rstick.*`;
+- a RetroArch autoconfig .cfg: `input_vendor_id` / `input_product_id` in decimal, the RetroPad names (`b` south, `a`
+  east, `y` west, `x` north, `l` / `r` / `l2` / `r2` / `l3` / `r3`, `select` view, `start` menu, `menu_toggle` guide,
+  the D-pad).
+The entry is `{"id": "user-<vid><pid>", "name", "layout": "generic", "match": [{vid, pid, bus}], "buttons", "controls",
+"source"}`; `buttons` names each HID button index (`b3` → index 3), and the HID pad decoder (`HidLayoutFor(layout,
+buttons)`) uses those names over the layout's own, on IOHID and Raw Input alike. An existing user entry of the same id
+keeps the members the import does not set (a photo's `images`). What the import cannot take over is listed
+(`skipped`: `platform`, an axis bound to a button). The Qt dialog's **Import mapping…** picks the line of a whole
+gamecontrollerdb.txt by the selected device's VID:PID.
+
 ## 4. User overrides
 
 `<user config>/unreal-ng/controllers/devices.user.json` has the same schema:
@@ -148,7 +166,8 @@ family is merged field by field (only the fields it names change; `controls` and
 may be left out); an entry with a new id is a family of its own and needs `match`. A file that does not parse or
 does not validate leaves the active database as it was and is reported. The host verbs `database`, `database-save`
 and `database-delete` ([surfaces.md §2](surfaces.md#2-verbs)) read and edit the file on every plane; the hotspot
-editor writes through them. Not built: `gamecontrollerdb.user.txt`.
+editor writes through them; `database-import` adds an entry from a gamecontrollerdb line or a RetroArch autoconfig
+(§3). Not built: `gamecontrollerdb.user.txt` read as a file (an import of its line instead).
 
 ## 5. Licences of the sources
 
@@ -280,13 +299,18 @@ For a device with no image, or when the user prefers a photo of their own pad:
 
 The editor is the same widget the project uses to make built-in maps, so built-in and user maps cannot drift.
 
-**As built (2026-10-23).** `HotspotEditor` (unreal-qt `controllers/hotspoteditor.*`; ui-ux.md §3.6): a file (EXIF
-rotation applied) or a paste; no crop or rotate, the photo is kept as it is (scaled down only past 4096 × 3072) and
-letterboxed into the design canvas, by the editor and by `ControllerPicture` alike. Circles and rectangles (no
-ellipses or polygons yet); the set is saved as `images/user-<family>/front.png` + `front.hotspots.json`, the entry as
-`{"id": <family>, "images": "user-<family>"}`; a device the database does not know gets a family `user-<vid><pid>`
+**As built (2026-10-23).** `HotspotEditor` (unreal-qt `controllers/hotspoteditor.*`; ui-ux.md §3.6): per view (front,
+back, top) a file (EXIF rotation applied) or a paste, turned by quarter turns, straightened by up to ±15° and cropped
+(applied to the photo as picked, not stacked); the result is kept as it is (scaled down only past 4096 × 3072) and
+letterboxed into the design canvas, by the editor and by `ControllerPicture` alike. Every shape of §8: circle,
+ellipse, rectangle, polygon (drawn corner by corner; drag-to-size is a Size and a Height box instead). The set is
+saved as `images/<device id>/<view>.png` + `<view>.hotspots.json` for each view with a photo and a spot (the front
+is required), where the device id is the database entry's (`xbox-elite-2`, `user-2dc8abcd`), the entry as
+`{"id": <family>, "images": <device id>}`; a device the database does not know gets a family `user-<vid><pid>`
 with its name, its USB ids as `match` and its controls. `ControllerPicture` looks in the user's `images/` before the
-shipped ones and draws `front.png` / `front.jpg` as well as `front.svg`. Share… is not built.
+shipped ones, draws `<view>.png` / `.jpg` as well as `<view>.svg`, and lists a set's views (`Views`). Share… writes
+the same set into a chosen folder with `provenance.json` (§7: view, `"source": "own photograph"`, today's date, the
+author, licence and retouch fields empty) and `entry.json`.
 
 ## 10. Retro side images
 

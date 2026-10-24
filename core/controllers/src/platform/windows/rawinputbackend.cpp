@@ -637,7 +637,7 @@ private:
 
         auto pad = std::make_unique<Pad>();
         pad->path = path;
-        pad->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match.layout));
+        pad->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match.layout, match.buttons));
         if (pad->hid->Empty())
             return;
         pad->dualSenseUsb = where.bus == "usb" && DualSenseOutput::Handles(vendor, product);

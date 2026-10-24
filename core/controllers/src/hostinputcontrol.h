@@ -14,7 +14,10 @@
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
 /// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
 /// light colour: a DualSense / DualShock 4 light bar), database (look a device up by VID:PID or family, list the user
-/// entries), database-save / database-delete (entries of devices.user.json: a user device, a renamed one, a photo).
+/// entries), database-save / database-delete (entries of devices.user.json: a user device, a renamed one, a photo),
+/// database-import (a gamecontrollerdb line or a RetroArch autoconfig as a user entry), player (the connector a
+/// player device's `auto:` targets drive: the dialog's drag and drop), probe (the backends; with a device its endpoints
+/// and what each can do), reports (a device's newest raw input reports in hex: the test panel's raw view).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -87,6 +90,23 @@ public:
     {
         return {};
     }
+    /// The connector a player device's `auto:` targets drive, chosen by the user (empty @p connector: back to the
+    /// automatic choice). Empty when done, else the error code (surfaces.md §4: bad-request, unavailable) with
+    /// @p message
+    virtual std::string ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                              std::string& message)
+    {
+        (void)device;
+        (void)connector;
+        message = "this process does not assign player connectors";
+        return "unavailable";
+    }
+    /// The user's choice for @p device; empty: automatic
+    virtual std::string PlayerChoice(const std::string& device) const
+    {
+        (void)device;
+        return {};
+    }
 };
 
 class HostInputControl
@@ -135,6 +155,15 @@ private:
     HostReply Database(const HostRequest& request);
     /// database-save (one entry or a file's families into devices.user.json) / database-delete (an entry by id)
     HostReply EditDatabase(const HostRequest& request, bool remove);
+    /// A gamecontrollerdb line or a RetroArch autoconfig as a devices.user.json entry (deviceimport.h); saved unless
+    /// save=false
+    HostReply ImportDatabase(const HostRequest& request);
+    /// The connector a player device drives (its `auto:` targets): read, choose, or back to automatic
+    HostReply Player(const HostRequest& request);
+    /// The backends; with device= its endpoints (EndpointInfo)
+    HostReply ProbeVerb(const HostRequest& request);
+    /// A device's newest raw input reports (IBackend::RawReports)
+    HostReply Reports(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

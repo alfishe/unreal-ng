@@ -93,7 +93,8 @@
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, database";
+        get["summary"] =
+            "Host game controllers: devices, context, profiles, profile, bindings, haptics, database, probe, reports";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -113,9 +114,15 @@
             "(?vidpid=045e:0b00&bus=usb|bt&name= | ?family=): the device database with the user's devices.user.json "
             "on top: families (count), user (the ids of the user entries), user_file, and with a query the match "
             "(family, name, vendor, layout, images, glyphs, controls, player, role, ignore, mode, step and score of "
-            "the lookup, user: whether a user entry shaped it)";
+            "the lookup, user: whether a user entry shaped it). probe (?device=): the backends (name, running, "
+            "devices, reason) and with a device its endpoints (backend, name, role input / outputs / none, controls, "
+            "driver, rumble, light, battery, detail: the IOHID interfaces of one pad, a GameController companion). "
+            "reports (?device=): the device's newest raw input reports (ms, size, hex: at most 64 bytes each, 16 "
+            "reports); reading starts the backend's tap, which stops 3 s after the last read (macOS IOHID; elsewhere "
+            "unavailable)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "database"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "database", "probe",
+                            "reports"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
@@ -144,10 +151,15 @@
             "of a known family changes the fields it names and keeps the others; a new family needs its match list) "
             "or a file's {families: [...]}; checked against the built-in database, written, applied at once (a device "
             "already connected takes a new name or match when it reconnects). database-delete {id}: removes the user "
-            "entry (the built-in family comes back); both answer user and user_file";
+            "entry (the built-in family comes back); both answer user and user_file. database-import {text, save}: a "
+            "gamecontrollerdb.txt line or a RetroArch joypad autoconfig .cfg as the entry user-<vid><pid> (matched by "
+            "the VID:PID it names, its button indices as buttons, its controls), merged over a user entry of that id "
+            "and saved unless save=false; answers source, entry, skipped (what it maps that is not taken over: axes "
+            "and hats follow the HID usages). player {device, connector}: the connector a host pad's auto: targets "
+            "drive (auto or empty: the automatic choice again); answers connector, chosen, drives";
         post["tags"].append("Controllers");
         verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light",
-                             "database-save", "database-delete"});
+                             "database-save", "database-delete", "database-import", "player"});
         replies(post);
     }
 

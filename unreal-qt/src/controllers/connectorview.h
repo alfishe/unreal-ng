@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "emulator/io/controllers/controllermanager.h"
@@ -35,6 +36,29 @@ QString DisplayName(const controllers::Connector& connector);
 QString PortText(const controllers::Connector& connector);
 /// The held controls in words ("up, fire"; an MD pad: "up, B, START"); "—" when nothing is held
 QString HeldText(controllers::RetroDeviceKind device, uint16_t mask);
+
+/// The image set of a retro device's picture (device-database.md §10): kempston-joystick, sinclair-joystick,
+/// cursor-joystick, md6-pad; "" for an empty connector
+QString ImageSetFor(controllers::RetroDeviceKind device);
+/// The held bits as the picture's live values by retro control (`up`, `fire`; an MD pad's `a`, `start`, `mode`)
+std::map<std::string, float> LiveOf(controllers::RetroDeviceKind device, uint16_t mask);
+
+/// One key of a keyboard joystick's strip (ui-ux.md §4): the ZX key it presses and the control bit
+struct StripKey
+{
+    QString key;  ///< "6"
+    QString control;  ///< "left"
+    uint16_t bit = 0;
+};
+/// The five keys a Sinclair or Cursor joystick presses, in key order; empty for every other device
+std::vector<StripKey> KeyStrip(const controllers::Connector& connector);
+
+/// Machine > Controllers > Swap joystick ports (ui-ux.md §8): @p pads the player pads with the connector each drives
+/// ("" none), @p joysticks the connectors holding a joystick or pad, in machine order. Two pads or more: the first
+/// two trade connectors; one pad: it moves on to the next joystick connector. Answers the new connector per pad
+/// that changes; empty when there is nothing to swap
+std::vector<std::pair<std::string, std::string>> SwapPorts(const std::vector<std::pair<std::string, std::string>>& pads,
+                                                           const std::vector<std::string>& joysticks);
 
 /// The status-bar connector LED (ui-ux.md §8)
 struct Led

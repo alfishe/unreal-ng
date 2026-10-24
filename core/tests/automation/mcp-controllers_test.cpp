@@ -291,3 +291,84 @@ TEST(McpControllers_Test, DatabaseLookupAndSaveRoutes)
     EXPECT_EQ(caller->calls.back().method, "POST");
     EXPECT_EQ(caller->calls.back().body["text"].asString(), R"({"id": "xbox-elite-2", "images": "my-elite"})");
 }
+
+/// probe and reports are GETs with the device in the query, their answers in text an agent can read; player keeps its
+/// connector in the body (the host pad's connector, not a machine target); database-import a POST with the text
+TEST(McpControllers_Test, ProbeReportsPlayerAndImportRoutes)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value probed;
+    probed["ok"] = true;
+    Json::Value backend;
+    backend["name"] = "iohid";
+    backend["running"] = true;
+    backend["devices"] = 1;
+    probed["backends"].append(backend);
+    Json::Value endpoint;
+    endpoint["backend"] = "iohid";
+    endpoint["role"] = "input";
+    endpoint["name"] = "Xbox Wireless Controller";
+    endpoint["controls"] = 18;
+    endpoint["driver"] = "xbox gip";
+    endpoint["rumble"] = true;
+    endpoint["light"] = false;
+    endpoint["battery"] = true;
+    endpoint["detail"] = "";
+    probed["endpoints"].append(endpoint);
+    caller->routes["GET /api/v1/controllers/probe?device=bt%3A045e%3A0b22%3A1"] = {200, probed};
+    Json::Value args;
+    args["action"] = "probe";
+    args["device"] = "bt:045e:0b22:1";
+    const mcp::ToolResult probe = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(probe.isError) << probe.text << " " << caller->calls.back().path;
+    EXPECT_NE(probe.text.find("iohid ok, 1 devices"), std::string::npos) << probe.text;
+    EXPECT_NE(probe.text.find("endpoint iohid (input): Xbox Wireless Controller, 18 controls via xbox gip, rumble, "
+                              "battery"),
+              std::string::npos)
+        << probe.text;
+
+    Json::Value reports;
+    reports["ok"] = true;
+    reports["message"] = "2 reports from bt:045e:0b22:1";
+    Json::Value report;
+    report["ms"] = 120;
+    report["size"] = 3;
+    report["hex"] = "01 00 80";
+    reports["reports"].append(report);
+    caller->routes["GET /api/v1/controllers/reports?device=bt%3A045e%3A0b22%3A1"] = {200, reports};
+    args["action"] = "reports";
+    const mcp::ToolResult raw = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(raw.isError) << raw.text << " " << caller->calls.back().path;
+    EXPECT_NE(raw.text.find("01 00 80 (3 B)"), std::string::npos) << raw.text;
+
+    Json::Value player;
+    player["ok"] = true;
+    player["message"] = "bt:045e:0b22:1 drives sinclair-1 (chosen)";
+    caller->routes["POST /api/v1/controllers/player"] = {200, player};
+    Json::Value choose;
+    choose["action"] = "player";
+    choose["device"] = "bt:045e:0b22:1";
+    choose["connector"] = "sinclair-1";
+    const mcp::ToolResult chosen = RunControllersTool(*registry, choose, *caller);
+    ASSERT_FALSE(chosen.isError) << chosen.text << " " << caller->calls.back().path;
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_EQ(caller->calls.back().body["connector"].asString(), "sinclair-1");
+    EXPECT_EQ(caller->calls.back().body["device"].asString(), "bt:045e:0b22:1");
+
+    Json::Value imported;
+    imported["ok"] = true;
+    imported["message"] = "imported user-2dc86101 from gamecontrollerdb";
+    imported["entry"]["id"] = "user-2dc86101";
+    imported["skipped"].append("platform");
+    caller->routes["POST /api/v1/controllers/database-import"] = {200, imported};
+    Json::Value import;
+    import["action"] = "database-import";
+    import["text"] = "03000000c82d00000161000000000000,8BitDo SN30 Pro,a:b1,platform:Mac OS X,";
+    const mcp::ToolResult taken = RunControllersTool(*registry, import, *caller);
+    ASSERT_FALSE(taken.isError) << taken.text;
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_NE(taken.text.find("user-2dc86101"), std::string::npos) << taken.text;
+    EXPECT_NE(taken.text.find("not taken over: platform"), std::string::npos) << taken.text;
+}

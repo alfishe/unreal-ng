@@ -58,6 +58,12 @@ namespace
         "                                             layout, image set and match step; the devices.user.json entries\n"
         "controllers database-save <file>           - Put the entry (or the file's families) into devices.user.json\n"
         "controllers database-delete <id>           - Remove an entry of devices.user.json\n"
+        "controllers database-import <file> [save=false] - A gamecontrollerdb line or a RetroArch autoconfig .cfg as a\n"
+        "                                             devices.user.json entry (matched by its VID:PID)\n"
+        "controllers player <device> [connector|auto|none] - The connector the pad's auto: targets drive\n"
+        "                                             (auto: the automatic choice again, none: no connector)\n"
+        "controllers probe [device]                 - The backends; with a device its endpoints and what each can do\n"
+        "controllers reports <device>               - The newest raw input reports in hex (macOS IOHID)\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -120,6 +126,12 @@ namespace
         {
             if (verb == "bind" || verb == "unbind")
                 request.options["control"] = words[1];
+            else if (verb == "player" || verb == "probe" || verb == "reports")
+            {
+                request.options["device"] = words[1];
+                if (verb == "player" && words.size() > 2)
+                    request.options["connector"] = words[2];
+            }
             else if (verb == "haptics" || verb == "rumble" || verb == "output" || verb == "light")
             {
                 request.options["device"] = words[1];
@@ -132,7 +144,7 @@ namespace
             }
             else if (verb == "database")
                 request.options[words[1].find(':') != std::string::npos ? "vidpid" : "family"] = words[1];
-            else if (verb == "save" || verb == "database-save")
+            else if (verb == "save" || verb == "database-save" || verb == "database-import")
             {
                 std::ifstream file(words[1], std::ios::binary);
                 if (!file)
@@ -231,6 +243,40 @@ namespace
                 user += (user.empty() ? "" : ", ") + id.AsString();
             return "Device database (" + std::to_string(static_cast<int>(reply.body.Find("families")->AsNumber())) +
                    " families):\n" + text + "  devices.user.json: " + (user.empty() ? "no entries" : user) + "\n";
+        }
+        if (verb == "probe")
+        {
+            for (const JsonValue& backend : reply.body.Find("backends")->Items())
+                text += "  " + backend.Find("name")->AsString() +
+                        (backend.Find("running")->AsBool()
+                             ? " ok, " + std::to_string(static_cast<int>(backend.Find("devices")->AsNumber())) +
+                                   " devices\n"
+                             : ": " + backend.Find("reason")->AsString() + "\n");
+            if (const JsonValue* endpoints = reply.body.Find("endpoints"))
+            {
+                text += "Endpoints of " + reply.body.Find("device")->AsString() + ":\n";
+                for (const JsonValue& endpoint : endpoints->Items())
+                {
+                    std::string caps;
+                    for (const char* cap : {"rumble", "light", "battery"})
+                        if (endpoint.Find(cap)->AsBool())
+                            caps += std::string(caps.empty() ? "" : ", ") + cap;
+                    text += "  " + endpoint.Find("backend")->AsString() + "  " + endpoint.Find("role")->AsString() +
+                            "  " + endpoint.Find("name")->AsString() + "  " +
+                            std::to_string(static_cast<int>(endpoint.Find("controls")->AsNumber())) + " controls (" +
+                            endpoint.Find("driver")->AsString() + ")" + (caps.empty() ? "" : "; " + caps) +
+                            (endpoint.Find("detail")->AsString().empty() ? "" : "; " + endpoint.Find("detail")->AsString()) +
+                            "\n";
+                }
+            }
+            return "Backends:\n" + text;
+        }
+        if (verb == "reports")
+        {
+            for (const JsonValue& report : reply.body.Find("reports")->Items())
+                text += "  " + report.Find("hex")->AsString() + "  (" +
+                        std::to_string(static_cast<int>(report.Find("size")->AsNumber())) + " B)\n";
+            return reply.message + ":\n" + (text.empty() ? "  none yet: read again while pressing a control\n" : text);
         }
         if (const JsonValue* profiles = reply.body.Find("profiles"))
         {

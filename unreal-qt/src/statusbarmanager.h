@@ -82,6 +82,8 @@ public:
 signals:
     /// A click on the connector LED
     void controllersRequested();
+    /// A player pad's debug layer went up or down by its layer key (the DEBUG tag; the HUD shows it too)
+    void controllerDebugLayerChanged(bool held);
 
 private slots:
     void refresh();

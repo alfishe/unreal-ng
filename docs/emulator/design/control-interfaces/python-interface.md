@@ -728,9 +728,23 @@ emu.controllers_save_device('{"id": "xbox-elite-2", "images": "user-xbox-elite-2
 emu.controllers_delete_device("xbox-elite-2")   # back to the built-in entry
 ```
 
+A pad the database does not know, from a gamecontrollerdb.txt line or a RetroArch autoconfig; the connector a pad
+drives; what its endpoints give and the raw reports it sends:
+
+```python
+line = "03000000c82d00000161000000000000,8BitDo SN30 Pro,a:b1,b:b0,x:b4,y:b3,platform:Mac OS X,"
+print(emu.controllers_import_device(line)["entry"]["id"])        # user-2dc86101, saved into devices.user.json
+emu.controllers_player("usb:2dc8:6101:1", "sinclair-1")         # "auto" back to the automatic choice, "none" none
+for endpoint in emu.controllers_probe(device="usb:2dc8:6101:1")["endpoints"]:
+    print(endpoint["backend"], endpoint["role"], endpoint["driver"], endpoint["rumble"])
+for report in emu.controllers_reports("usb:2dc8:6101:1")["reports"]:
+    print(report["ms"], report["hex"])
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
 **options)`, `controllers_light(device, color)`, `controllers_database(**lookup)`, `controllers_save_device(text)`,
-`controllers_delete_device(id)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+`controllers_delete_device(id)`, `controllers_import_device(text, save=True)`, `controllers_player(device,
+connector=None)`, `controllers_probe(**options)`, `controllers_reports(device)`; `controllers_host("devices")` lists each device's `role`, `layers`,
 `context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).

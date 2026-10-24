@@ -59,6 +59,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
 #include "controllers/controllersdialog.h"
+#include "controllers/controllersmenu.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
@@ -770,6 +771,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
     _statusBarManager->setControllers(_hostControllers);
+    if (QMenu* controllers = _menuManager->machineControllersMenu())
+        connect(controllers, &QMenu::aboutToShow, this,
+                [this, controllers] { controllersmenu::Fill(controllers, _hostControllers); });
+    // ui-ux.md §8: the DEBUG tag in the HUD as well, while the HUD is on
+    connect(_statusBarManager, &StatusBarManager::controllerDebugLayerChanged, this, [this](bool held) {
+        if (!_hudModel)
+            return;
+        if (held)
+            _hudModel->setIndicator("controllers-debug", HudState::Alert, tr("DEBUG").toStdString(),
+                                    tr("pad").toStdString());
+        else
+            _hudModel->clearIndicator("controllers-debug");
+    });
     connect(_statusBarManager, &StatusBarManager::controllersRequested, this, [this] {
         _controllersDialog->show();
         _controllersDialog->raise();

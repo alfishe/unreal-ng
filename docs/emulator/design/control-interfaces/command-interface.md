@@ -3807,12 +3807,19 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
 | `controllers database` | `[<vid:pid>\|<family>] [bus=usb\|bt] [name=..]` | The device database: the families count, the ids devices.user.json holds, and the match a device of those USB ids gets (or a family): family, name, layout, images, glyphs, controls, player, role, the match step and score, and whether the entry is the user's | ✅ Implemented |
 | `controllers database-save` / `database-delete` | `<file>` / `<id>` | Add or replace an entry of devices.user.json (one family as JSON; a built-in id changes only the fields it names, such as `images`), validated and written at once; remove one. The picture changes at once, a name or match when the device connects again. The dialog's Picture… saves through it | ✅ Implemented |
+| `controllers database-import` | `<file> [save=false]` | A gamecontrollerdb.txt line or a RetroArch joypad autoconfig .cfg as the devices.user.json entry `user-<vid><pid>`: its VID:PID (and bus), its button indices by name, its controls; what it cannot take over is listed. `save=false` only answers the entry. The dialog's Import mapping… | ✅ Implemented |
+| `controllers player` | `<device> [connector\|auto\|none]` | The connector a player pad's `auto:` targets drive: read it, choose one (it wins over the machine's order and a profile's pin for the session), `auto` back to the automatic choice, `none` no connector. The dialog's drag and drop, Swap joystick ports and Reset bindings to default | ✅ Implemented |
+| `controllers probe` | `[device]` | The input backends (running, devices, or why not); with a device its endpoints: backend, name, role (`input`, `outputs`), the controls its driver decodes, rumble, light, battery | ✅ Implemented |
+| `controllers reports` | `<device>` | The device's newest raw HID input reports in hex (up to 16, oldest first). The read arms the backend's tap; it disarms itself 3 s after the last read. macOS IOHID (and the fake backend); elsewhere `unavailable` with the reason | ✅ Implemented |
 
 **Device database.** `<user config>/unreal-ng/controllers/devices.user.json` is read at start over the compiled-in
 database; the three verbs read and edit it on every plane (WebAPI `GET /api/v1/controllers/database`,
 `POST .../database-save {text}`, `POST .../database-delete {id}`; MCP `controllers` with the same actions; Python
 `controllers_database(vidpid=, bus=, name=, family=)`, `controllers_save_device(text)`,
-`controllers_delete_device(id)`). Design:
+`controllers_delete_device(id)`, `controllers_import_device(text, save=True)`). `database-import` is
+`POST .../database-import {text, save}`; `player`, `probe` and `reports` are `POST .../player {device, connector}`,
+`GET .../probe?device=..` and `GET .../reports?device=..`, Python `controllers_player(device, connector=None)`,
+`controllers_probe(device=..)`, `controllers_reports(device)`. Design:
 [device-database.md §4](../../../inprogress/2026-10-17-controller-manager/device-database.md#4-user-overrides).
 
 ```
@@ -3821,7 +3828,10 @@ controllers database 045e:0b22 bus=bt
 #   xbox-elite-2: Xbox Elite Wireless Controller Series 2
 #     layout xbox, images xbox-elite-2, exact match, score 100
 #   devices.user.json: no entries
-controllers database-save my-elite.json      # {"id": "xbox-elite-2", "images": "user-xbox-elite-2"}
+controllers database-save my-elite.json      # {"id": "xbox-elite-2", "images": "xbox-elite-2"}
+controllers database-import sn30.txt         # one gamecontrollerdb.txt line: user-2dc86101
+controllers player usb:2dc8:6101:1 sinclair-1
+controllers reports usb:2dc8:6101:1
 ```
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,

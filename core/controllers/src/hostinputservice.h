@@ -52,6 +52,13 @@ public:
     std::string LightUnavailable(const HostDeviceId& device) const;
     /// Set the light's colour; never blocks. False when it has no light here
     bool SetLight(const HostDeviceId& device, const LightColor& color);
+    /// The device's endpoints, the input one first (IBackend::Endpoints); a backend that lists none: the device as one
+    /// endpoint with what the backend answers for it
+    std::vector<EndpointInfo> Endpoints(const HostDeviceId& device) const;
+    /// Why the device's raw reports cannot be shown; "" when RawReports answers them
+    std::string RawReportsUnavailable(const HostDeviceId& device) const;
+    /// The newest raw input reports (starts the backend's tap, ReportTap)
+    std::vector<RawReport> RawReports(const HostDeviceId& device);
     /// Stop every backend: their devices are removed
     void Stop();
 
