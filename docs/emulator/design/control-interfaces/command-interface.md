@@ -3480,6 +3480,7 @@ to the **machine's own mouse**, whatever it is (design:
 | ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
 | ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
 | Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+| 48K, 128K, +2, +2A, +3 with the slot card `amx-mouse` | AMX mouse (`amx`, kind `amx-pio`) | one IM 2 interrupt per mickey from a Z80 PIO (`#1F` X, `#3F` Y, bit 0 the direction), buttons `#DF` (D7 left, D6 middle, D5 right, active low); status `pio` |
 
 **How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
@@ -3633,8 +3634,10 @@ a held button is a 1 bit. The program running on the machine reads it with `IN #
 tests the bits. Worked example: up and fire held reads `0x18` (up = bit 3 = 8, fire = bit 4 =
 16). Unlike the mouse it is not relative: the byte is the state, so `joystick set 0x18`
 means "exactly up and fire are held now". Machines that decode the port: ZX-Evo (ATM3, `IN #1F`
-outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`).
-Other machines accept the input with a warning, because the program cannot see it.
+outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`), Pentagon (`#1F`
+outside a TR-DOS session), Profi (`#1F` in the normal port set), Sprinter (`#1F` outside TR-DOS, `#FF` in it) and the
+Next (its left DB9 connector). The 48K, 128K, +2, +2A, +3 and the ATM Turbo 2+ (no Kempston on the board) accept
+the input with a warning, because the program cannot see it ([.recipe/input/joystick.md](../../../../.recipe/input/joystick.md)).
 
 **Buttons and limits** (same in every interface):
 

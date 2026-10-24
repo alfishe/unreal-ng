@@ -83,7 +83,7 @@ void SavePlug(const Connector& connector, uint8_t* dst)
 
 void LoadPlug(const uint8_t* src, Connector& connector)
 {
-    connector.device = src[0] <= static_cast<uint8_t>(RetroDeviceKind::FullerJoystick)
+    connector.device = src[0] <= static_cast<uint8_t>(RetroDeviceKind::AmxMouse)
                            ? static_cast<RetroDeviceKind>(src[0])
                            : RetroDeviceKind::None;
     connector.options.sinclairPort = src[1] == 2 ? 2 : 1;
@@ -511,6 +511,8 @@ uint16_t ControllerManager::State(size_t index) const
         case ConnectorKind::KeyboardJoystick:
         case ConnectorKind::Fuller:
             return connector.mask;
+        case ConnectorKind::Amx:
+            return 0;  // a mouse: its input is the mouse's (MouseManager), not a control mask
     }
     return 0;
 }
@@ -551,6 +553,8 @@ bool ControllerManager::EventFor(size_t index, uint16_t mask, ttd::TTDInputEvent
             ev.key = static_cast<uint8_t>(index);
             ev.dx = static_cast<int16_t>(mask);
             return true;
+        case ConnectorKind::Amx:
+            return false;  // the AMX mouse is fed and journaled through the mouse input kinds
     }
     return false;
 }

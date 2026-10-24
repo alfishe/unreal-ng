@@ -8,6 +8,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/mouse/mouse.h"
 
 /// region <SetUp / TearDown>
@@ -862,6 +863,34 @@ TEST(PortDecoder_ATM2Mouse_Test, ExternalKempstonCardOnBothBoards)
         context->pMouse->SetPresent(false);
         EXPECT_FALSE(decoder->IsPort_KempstonMouse(0xFBDF, reg)) << "Mouse=NONE: no card";
 
+        emulators->RemoveEmulator(emulator->GetId());
+    }
+}
+
+/// The ATM Turbo 2 / 2+ boards have no Kempston joystick ("22. Kempston joystick and mouse - Not supported", TURBO 2+
+/// Assembly and Configuration Manual; controller manager research-retro-hardware.md §0.4): the decoder claims no
+/// joystick, so the machine gets no `kempston` connector and IN #1F outside the shadow ports reads the idle bus
+TEST(PortDecoder_ATM2Mouse_Test, NoKempstonJoystickOnTheBoard)
+{
+    EmulatorManager* emulators = EmulatorManager::GetInstance();
+    for (const char* model : {"ATM710", "ATM450"})
+    {
+        SCOPED_TRACE(model);
+        auto emulator = emulators->CreateEmulatorWithModel("atm2-joystick", model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        EXPECT_FALSE(context->pPortDecoder->HasKempstonJoystick());
+        ASSERT_NE(context->pControllerManager, nullptr);
+        EXPECT_LT(context->pControllerManager->Find("kempston"), 0) << "no Kempston connector on the board";
+
+        if (std::string(model) == "ATM710")
+        {
+            // Spectrum mode (CPM set), outside a TR-DOS session: #1F is nobody's
+            context->emulatorState.atm.aFF77 |= PortDecoder_ATM710::ATM_AFF77_CPM;
+            context->emulatorState.flags &= ~(CF_DOSPORTS | CF_TRDOS);
+            context->pPortDecoder->DecodePortIn(0x001F, 0x8000);
+            EXPECT_FALSE(context->pPortDecoder->WasLastPortDecoded()) << "#1F outside the shadow ports: nobody";
+        }
         emulators->RemoveEmulator(emulator->GetId());
     }
 }

@@ -426,8 +426,9 @@ void MainLoop::RunFrame()
     // of a skipped frame. The screen-side flag covers ALL DrawPeriod entries
     // in one place - including Screen::SetBorderColor's own UpdateScreen call,
     // which border-striping loaders reach thousands of times per frame. It is
-    // cleared again before frame end, so batch render, framebuffer latch and
-    // any manual debug stepping while paused are never affected.
+    // cleared again before frame end, so batch render and framebuffer latch
+    // are never affected; OnFrameStart sets it for every frame, so a direct
+    // run after a pause inside this cycle skips at most the rest of the frame.
     _screen->SetTurboRenderSkip(!_renderThisFrame);
 
     ExecuteCPUFrameCycle();
@@ -597,6 +598,12 @@ void MainLoop::OnFrameStart()
         UpdateTurboRenderDecimation(config.turbo_mode, config);
         _renderThisFrame = !config.turbo_mode || recording ||
                            (_state->frame_counter % _turboRenderDecimation == 0);
+
+        // The screen-side skip follows this frame's decision on every frame start, not only around RunFrame's CPU
+        // cycle: a pause parks the loop inside that cycle, so a skipped turbo frame left the flag set, and the direct
+        // runs that follow (run_frames, steps) drew nothing at all - every later frame was latched with the old
+        // pixels until the machine ran free again
+        _screen->SetTurboRenderSkip(!_renderThisFrame);
 
         // A rendered frame after skipped ones starts with a stale _prevTstate
         // (InitFrame does not reset it). DrawPeriod would self-heal through

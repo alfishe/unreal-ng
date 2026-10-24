@@ -181,3 +181,25 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     out.result.report.insert(out.result.report.end(), out.media.lines.begin(), out.media.lines.end());
     return out;
 }
+
+ModelSwitch::RunStateBefore ModelSwitch::RunStateBefore::Of(Emulator& emulator)
+{
+    RunStateBefore state;
+    state.running = emulator.IsRunning() && !emulator.IsPaused();
+    state.paused = emulator.IsRunning() && emulator.IsPaused();
+    return state;
+}
+
+bool ModelSwitch::StartAsBefore(Emulator& fresh, const RunStateBefore& before, const std::function<void()>& start)
+{
+    if (!before.running && !before.paused)
+        return false;
+    if (start)
+        start();
+    else
+        fresh.StartAsync();
+    // The start's Run intent is queued first: this pause is newer and wins at the loop's first park
+    if (before.paused)
+        fresh.Pause(execution::Requester{execution::Origin::Lifecycle, {}}, "restart");
+    return true;
+}

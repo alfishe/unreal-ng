@@ -424,10 +424,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Slot changes (ZX-bus slots, Q1 / Q6): every change restarts the machine; the window follows the new one
     SlotChangeController::Hooks slotHooks;
     slotHooks.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
-    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, bool start) {
+    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, const ModelSwitch::RunStateBefore& before) {
         adoptEmulator(emulator, EmulatorOrigin::CreatedByGui);
-        if (start)
-            emulator->StartAsync();
+        ModelSwitch::StartAsBefore(*emulator, before, [&emulator]() { emulator->StartAsync(); });
     };
     slotHooks.restarting = [this](bool on) { _switchingModel = on; };
     _slotChangeController = new SlotChangeController(std::move(slotHooks), this);

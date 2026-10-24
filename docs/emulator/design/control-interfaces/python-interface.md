@@ -845,7 +845,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2" | "amx"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```

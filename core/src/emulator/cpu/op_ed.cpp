@@ -254,6 +254,9 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
     // CPU-LIBRARY-MIGRATION(reti-hook): the engine's RETI callback
     if (IInterruptSource* source = cpu->GetInterruptSource()) [[unlikely]]
         source->OnReti();
+    // The daisy chain decodes ED 4D only (its mirrors ED 5D / 6D / 7D share this body: not RETI on the data bus)
+    if (cpu->opcode == 0x4D && !cpu->Im2Chain().Empty()) [[unlikely]]
+        cpu->Im2Chain().Reti(cpu->t);
 
     uint16_t sp = cpu->sp;
 

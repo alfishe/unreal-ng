@@ -18,6 +18,7 @@ constexpr KindName kKindNames[] = {
     {RetroDeviceKind::CursorJoystick, "cursor-joystick"},
     {RetroDeviceKind::KeysJoystick, "keys-joystick"},
     {RetroDeviceKind::FullerJoystick, "fuller-joystick"},
+    {RetroDeviceKind::AmxMouse, "amx-mouse"},
 };
 }  // namespace
 
@@ -56,6 +57,8 @@ const char* ConnectorKindName(ConnectorKind kind)
             return "keyboard-joystick";
         case ConnectorKind::Fuller:
             return "fuller";
+        case ConnectorKind::Amx:
+            return "amx";
     }
     return "keyboard-joystick";
 }
