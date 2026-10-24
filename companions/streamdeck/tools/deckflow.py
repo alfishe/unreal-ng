@@ -72,8 +72,8 @@ NAV_GLYPHS = {"back": "nav.back", "home": "nav.home"}
 KEY_FIELDS = ["at", "uc", "open", "action", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
               "glyph", "glyph_on", "state", "show", "face", "face_on", "tags", "activity", "extra"]
 INCLUDE_FIELDS = ["at", "open", "uc", "title", "label", "glyph", "face", "tags", "extra"]
-MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "strip", "back", "navigation", "face", "tags", "extra",
-               "dials", "keys"]
+MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "readonly", "strip", "back", "navigation", "face", "tags",
+               "extra", "dials", "keys"]
 DIAL_FIELDS = ["label", "uc", "turn", "press", "left", "right"]
 TOP_FIELDS = ["scenario", "shared", "model", "pack", "settings"]
 DERIVED = ("title", "glyph", "glyph_on", "state", "hold")
@@ -720,7 +720,7 @@ class Project:
                        "tags": self.tags(e, meta)}
                 if n.get("at") is not None:
                     out["at"] = n["at"]
-                for f in ("context", "strip"):
+                for f in ("context", "readonly", "strip"):
                     if n.get(f) is not None:
                         out[f] = n[f]
                 if "back" in n:
@@ -883,7 +883,7 @@ def project_model(doc, vocab, base=None, where=""):
         if rest:
             m["tags"] = rest
         known = {"id", "type", "title", "tags", "at", "face", "face_on", "items", "do", "then", "state", "nav",
-                 "dials", "strip", "context", "file", "node", "activity", "included_from"}
+                 "dials", "strip", "context", "readonly", "file", "node", "activity", "included_from"}
         x = {k: v for k, v in n.items() if k not in known}
         face = dict(n.get("face") or {})
         b = bnodes.get(nid)
@@ -912,7 +912,7 @@ def project_model(doc, vocab, base=None, where=""):
             return
         if t == "menu":
             m["kind"] = "menu"
-            for f in ("context", "strip"):
+            for f in ("context", "readonly", "strip"):
                 if n.get(f) is not None:
                     m[f] = n[f]
             nav = dict(n.get("nav") or {})
@@ -1512,6 +1512,12 @@ def check_model(model, vocab, spec=None, where_default=""):
             for r in sorted(p["required"] - have):
                 if not (r == "value" and value is not None):
                     issues.append(Issue(at(nid, field), f"{aid}: '{r}' is needed ({a.get('params')})", False))
+        if a.get("kind") == "press" and value is not None and not isinstance(value, (dict, bool)):
+            # a press takes its parameters as an object: a bare value never reaches the action (set.speed: the
+            # number became a press, the host ran its default, the next speed)
+            name = next(iter(sorted(p["names"])), "value") if len(p["names"]) == 1 else "<param>"
+            issues.append(Issue(at(nid, field), f"{aid} is a press: write 'value: {{{name}: {value}}}' "
+                                                f"({a.get('params') or 'no params'})"))
         if a.get("kind") == "text" and value is None:
             issues.append(Issue(at(nid, field), f"{aid} is a text action: it needs a value", False))
         if a.get("kind") == "delta" and field not in ("turn", "left", "right") and not str(field).startswith("dial"):
@@ -2053,6 +2059,8 @@ class MetaDoc:
             facts.append("use cases " + ", ".join(n["uc"]))
         if n.get("context"):
             facts.append(f"context `{n['context']}`")
+        if n.get("readonly"):
+            facts.append("read-only (its keys only show)")
         if n.get("in"):
             facts.append(f"opened from `{n['in']}` at {n.get('at')}")
         elif doc.get("kind") != "shared":

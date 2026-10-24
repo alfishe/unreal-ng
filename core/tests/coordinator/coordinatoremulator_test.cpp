@@ -545,14 +545,25 @@ TEST_F(CoordinatorEmulator_Test, AChangeOfTheMachineItselfEndsTheSessionAndDrops
     EXPECT_FALSE(_emulator->RomReloadPending());
 }
 
-// M6: a speed change drops a stopped session's history (frame timing is part of the determinism contract)
-TEST_F(CoordinatorEmulator_Test, ASpeedChangeIsLoggedAndDropsAHistory)
+// A history the user recorded keeps its 1x: a speed change is refused with the reason (frame timing is part of the
+// determinism contract, so the control goes, not the history); without the history the change is a logged op again
+TEST_F(CoordinatorEmulator_Test, ASpeedChangeIsRefusedWhileAHistoryIsKeptAndLoggedWithout)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
     _ttd->StopRecording();
     ASSERT_TRUE(_ttd->HasHistory());
 
+    Mark();
+    EXPECT_FALSE(_emulator->SetSpeedMultiplier(2));
+    EXPECT_TRUE(_ttd->HasHistory()) << "the history stays";
+    EXPECT_EQ(_emulator->SpeedLockReason(), "TTD holds a history recorded at 1x: discard it to change the speed");
+    EXPECT_TRUE(_emulator->SetSpeedMultiplier(1)) << "re-selecting the current speed is not a change";
+    EXPECT_TRUE(Logged().empty());
+
+    _ttd->InvalidateSession("test");
+    ASSERT_FALSE(_ttd->HasHistory());
+    EXPECT_TRUE(_emulator->SpeedLockReason().empty());
     Mark();
     ASSERT_TRUE(_emulator->SetSpeedMultiplier(2));
     ASSERT_TRUE(_emulator->SetSpeedMultiplier(1));
@@ -562,8 +573,6 @@ TEST_F(CoordinatorEmulator_Test, ASpeedChangeIsLoggedAndDropsAHistory)
     EXPECT_EQ(log[0].summary, "2x");
     EXPECT_EQ(log[0].effect, SessionEffect::TimingChanged);
     EXPECT_EQ(log[1].summary, "1x");
-    EXPECT_FALSE(_ttd->HasHistory());
-    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "speed-multiplier-change");
 }
 
 // M6: TTD v1 refuses a change of the machine itself while recording (D26), as the emulator's owner refusal, logged;

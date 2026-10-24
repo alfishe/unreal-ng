@@ -4,6 +4,7 @@ name: speed
 root:
   face:
     glyph: set.speed
+    label: SPEED
   id: speed
   items:
     -
@@ -13,7 +14,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 1
+        value:
+          value: 1
       face:
         glyph: set.speed
         label: X1
@@ -29,7 +31,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 2
+        value:
+          value: 2
       face:
         glyph: set.speed
         label: X2
@@ -45,7 +48,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 4
+        value:
+          value: 4
       face:
         glyph: set.speed
         label: X4
@@ -61,7 +65,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 8
+        value:
+          value: 8
       face:
         glyph: set.speed
         label: X8
@@ -77,7 +82,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 16
+        value:
+          value: 16
       face:
         glyph: set.speed
         label: X16
@@ -110,6 +116,7 @@ root:
         kind: action
       face:
         glyph: mach.turbo
+        label: TURBO
       face_on:
         glyph: mach.turbo.on
       id: turbo
@@ -129,7 +136,7 @@ root:
           name: turbo_audio
       face:
         glyph: settings.toggle
-        label: SOUND
+        label: "TURBO SND"
       face_on:
         glyph: settings.toggle.on
       id: audio
@@ -149,7 +156,7 @@ root:
           name: fast_tape
       face:
         glyph: settings.toggle
-        label: TAPE
+        label: "FAST TAPE"
       face_on:
         glyph: settings.toggle.on
       id: tape
@@ -169,7 +176,7 @@ root:
           name: fast_disk
       face:
         glyph: settings.toggle
-        label: DISK
+        label: "FAST DISK"
       face_on:
         glyph: settings.toggle.on
       id: disk

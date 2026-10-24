@@ -423,7 +423,9 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         }
         if (!emulator->SetSpeedMultiplier(static_cast<uint8_t>(multiplier)))
         {
-            reply(HttpStatusCode::k409Conflict, "Conflict", "Cannot change the speed while TTD recording is active (only 1)");
+            const std::string why = emulator->SpeedLockReason();
+            reply(HttpStatusCode::k409Conflict, "Conflict",
+                  why.empty() ? "Cannot change the speed while TTD recording is active (only 1)" : why);
             return;
         }
         Json::Value ret;

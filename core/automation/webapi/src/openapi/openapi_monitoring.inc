@@ -46,12 +46,15 @@
             "protect}], loaded, dirty}; recording.state: {recording, paused, mode, file, frames, duration_s, "
             "file_bytes, fps}; debug.labels: {total, sets}; ttd.status: {state, recording, history, frame, first, "
             "end, frames, checkpoints, memory_bytes, history_bytes, bookmarks, ...}; debug.analyzers: {opcode, memory, "
-            "calltrace, coverage, pchist}; controllers.state: {connectors, plugged}; breakpoint_groups: {groups "
+            "calltrace, coverage, pchist}; debug.buffers: {opcode, calltrace, calltrace_hot, porttrace, gsporttrace, "
+            "pchist, aylog, coverage: {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent}, ttd: "
+            "{history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, "
+            "write_journal_bytes}}; controllers.state: {connectors, plugged}; breakpoint_groups: {groups "
             "[{name, total, active, ids}]}",
             "{ok, instance? (an instance's name), ...the value's fields}");
         param(name, "name", "path", true,
               "host.stats | host.clients | emulator.stats | debug.breakpoints | media.slots | recording.state | "
-              "debug.labels | ttd.status | debug.analyzers | controllers.state | breakpoint_groups");
+              "debug.labels | ttd.status | debug.analyzers | debug.buffers | controllers.state | breakpoint_groups");
         param(name, "instance", "query", false, instanceText);
 
         Json::Value& groups = op("/api/v1/emulator/{id}/breakpoints/groups", "The breakpoint groups",
