@@ -1256,6 +1256,22 @@ void Z80::SetInterruptSource(IInterruptSource* source)
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
 }
 
+bool Z80::DeviceIntAsserted()
+{
+    uint32_t lines = _deviceIntLines;
+    // The chain's bit says only that a device is armed: whether it pulls /INT now is the chain's answer
+    if ((lines & kDeviceIntIm2Chain) && !_im2Chain.IsIntAsserted(t)) [[unlikely]]
+        lines &= ~kDeviceIntIm2Chain;
+    return lines != 0;
+}
+
+bool Z80::ChainAcknowledge(uint8_t& vector)
+{
+    if ((_deviceIntLines & kDeviceIntIm2Chain) == 0) [[likely]]
+        return false;
+    return _im2Chain.Acknowledge(t, vector);
+}
+
 void Z80::SetDeviceIntLine(uint32_t line, bool asserted)
 {
     const uint32_t lines = asserted ? (_deviceIntLines | line) : (_deviceIntLines & ~line);
@@ -1936,12 +1952,18 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         const bool sourceInt = _interruptSource->IsIntAsserted(cpu.t);
         cpu.int_pending = sourceInt;
         if constexpr (DeviceInt)
-            cpu.int_pending = sourceInt || _deviceIntLines != 0;
+            cpu.int_pending = sourceInt || DeviceIntAsserted();
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            // Wired-OR: the machine's logic drives its vector when it asserts;
-            // a device alone drives none, the bus reads #FF
-            uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            // Wired-OR: a daisy-chain device that requests drives its vector (the machine's request stays pending);
+            // else the machine's logic drives its vector when it asserts; a plain device line drives none, the bus
+            // reads #FF
+            uint8_t vector = 0xFF;
+            bool chainDrove = false;
+            if constexpr (DeviceInt)
+                chainDrove = ChainAcknowledge(vector);
+            if (!chainDrove && sourceInt)
+                vector = _interruptSource->AcknowledgeInterrupt(cpu.t);
             if (const Joystick* joystick = _context->pJoystick)
                 vector = joystick->Im2Vector(vector, cpu.pc);
             // TTD (Phase 3): every vector the CPU took, recorded (a check and a
@@ -2006,13 +2028,17 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     // in int_pending, which tracks the machine's own pulse
     bool intLine = cpu.int_pending;
     if constexpr (DeviceInt)
-        intLine = intLine || _deviceIntLines != 0;
+        intLine = intLine || DeviceIntAsserted();
 
     if (intLine && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
-        // The idle bus reads #FF; a cheap Kempston interface may drive it (Joystick::Im2Vector)
+        // The idle bus reads #FF; a daisy-chain device that requests drives its vector (Im2DaisyChain), a cheap
+        // Kempston interface may drive it too (Joystick::Im2Vector)
+        uint8_t vector = 0xFF;
+        if constexpr (DeviceInt)
+            ChainAcknowledge(vector);
         const Joystick* joystick = _context->pJoystick;
-        HandleINT(joystick ? joystick->Im2Vector(0xFF, cpu.pc) : 0xFF);
+        HandleINT(joystick ? joystick->Im2Vector(vector, cpu.pc) : vector);
         intHandled = true;  // Signal caller to skip Z80Step this iteration
     }
 

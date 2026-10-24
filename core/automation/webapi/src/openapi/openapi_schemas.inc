@@ -179,10 +179,10 @@
     schemas["MouseDevice"]["type"] = "object";
     schemas["MouseDevice"]["description"] = "One mouse device of the machine and what it gives the guest";
     schemas["MouseDevice"]["properties"]["id"]["type"] = "string";
-    schemas["MouseDevice"]["properties"]["id"]["description"] = "kempston, sprinter, evo-ps2";
+    schemas["MouseDevice"]["properties"]["id"]["description"] = "kempston, sprinter, evo-ps2, amx";
     schemas["MouseDevice"]["properties"]["name"]["type"] = "string";
     schemas["MouseDevice"]["properties"]["kind"]["type"] = "string";
-    for (const char* kind : {"kempston", "serial-microsoft", "ps2-avr"})
+    for (const char* kind : {"kempston", "serial-microsoft", "ps2-avr", "amx-pio"})
         schemas["MouseDevice"]["properties"]["kind"]["enum"].append(kind);
     for (const char* flag : {"fitted", "in_use", "wheel"})
         schemas["MouseDevice"]["properties"][flag]["type"] = "boolean";
@@ -196,6 +196,11 @@
         "pending, packets sent, bytes received, framing errors, the receive FIFO and overrun";
     schemas["MouseDevice"]["properties"]["ps2"]["type"] = "object";
     schemas["MouseDevice"]["properties"]["ps2"]["description"] = "PS/2 mouse on the AVR: connected, resolution";
+    schemas["MouseDevice"]["properties"]["pio"]["type"] = "object";
+    schemas["MouseDevice"]["properties"]["pio"]["description"] =
+        "AMX mouse: the interface's Z80 PIO ports a (X, #1F) and b (Y, #3F) - mode, vector, data, interrupt_enabled, "
+        "interrupt_pending, under_service - the mickeys not yet strobed (pending dx / dy), buttons_port (IN #DF) "
+        "and strobes";
 
     schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
     schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";

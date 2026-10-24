@@ -13,7 +13,7 @@ menu home:
     pause:  {at: [0, 0], uc: C1.1, action: run.pause_toggle}    # the state-bound face
     reset:  {at: [0, 1], uc: C1.2, action: mach.reset}
     nmi:    {uc: C1.3, action: mach.nmi}                         # placed by the tool: [0, 2]
-    x4:     {at: [1, 0], uc: C2.1, action: set.speed, value: 4, label: X4}
+    x4:     {at: [1, 0], uc: C2.1, action: set.speed, value: {value: 4}, label: X4}
     bench:  {at: [1, 1], title: Bench, glyph: mach.start, then: home,
              steps: [{action: mach.start, value: {model: PENTAGON, ram_kb: 128, replace: true}}, {action: media.open, value: {path: $data/testsnapshots/z80/newbench.z80}}]}
     speed:  {at: [1, 3], open: fxspeed}

@@ -365,6 +365,34 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
     }
 }
 
+TEST_F(OsdKeyboardWindow_Test, SymbolShiftHeldDimsTheOtherModeLegends)
+{
+    auto emulator = Create("48K");
+    ASSERT_NE(emulator, nullptr);
+    Keyboard* keyboard = emulator->GetContext()->pKeyboard;
+    OsdKeyboardWindow window;
+    window.setRoot(Root());
+    window.setBinding(&_binding);
+    window.refresh();
+    EXPECT_TRUE(window.dimmed().empty()) << "nothing held: every legend as printed";
+
+    keyboard->PressKey(ZXKEY_SYM_SHIFT);
+    window.refresh();
+    EXPECT_EQ(window.dimmed().count("keyword"), 1u);
+    EXPECT_EQ(window.dimmed().count("extend"), 1u);
+    EXPECT_EQ(window.dimmed().count("symbol"), 0u) << "the symbols are what Symbol Shift types";
+    EXPECT_EQ(window.dimmed().count("main"), 0u);
+    EXPECT_FALSE(window.renderImage(400).isNull()) << "the dimmed picture renders";
+
+    keyboard->PressKey(ZXKEY_CAPS_SHIFT);
+    window.refresh();
+    EXPECT_TRUE(window.dimmed().empty()) << "both shifts: the Extend Mode switch";
+    keyboard->ReleaseKey(ZXKEY_CAPS_SHIFT);
+    keyboard->ReleaseKey(ZXKEY_SYM_SHIFT);
+    window.refresh();
+    EXPECT_TRUE(window.dimmed().empty());
+}
+
 TEST_F(OsdKeyboardWindow_Test, ANextExtendedKeyIsOneKeyOfItsOwn)
 {
     // The Next's LEFT is a membrane key: the machine presses CAPS SHIFT + 5 and shows it in NR #B0

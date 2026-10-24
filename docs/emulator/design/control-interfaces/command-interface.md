@@ -2841,7 +2841,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting audio_rate <value>` | | `<rate>` or `auto` | Pin the core audio sample rate for this run — one of `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, or `auto` to follow the resolution chain (connected device rate > `[SOUND] CoreRate` > 44100). Runtime only, never persisted to the ini. Applied at the next frame boundary; deferred while a recording is in progress. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading (feature `fastdisk`, on by default). When enabled, floppy controller timing is shortened and the TR-DOS ROM read loops are trapped, so disk access is almost instant. Refused while TTD holds it off (recording, replaying history, or sitting in history). | ✅ Implemented |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
-| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. | ✅ Implemented |
+| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. While a history the user recorded is kept (stopped, paused, loaded) the speed is refused too, with the reason (`TTD holds a history recorded at 1x: discard it to change the speed`): frame timing is part of the recording, so the control is refused rather than the history dropped; after a recording the speed stays 1x while its history is kept (it comes back only once there is none). A black box refuses nothing (it stops before the machine runs faster). Re-selecting the current speed changes nothing. The `set.speed` action is unavailable meanwhile (the `actions.unavailable` readout names it). | ✅ Implemented |
 | `setting turbo_audio <on\|off>` | | `on` or `off` | Keep generating audio (at a raised pitch) while turbo mode runs. Off (the default) mutes audio in turbo mode. Applied at once if turbo is running. | ✅ Implemented |
 | `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
 | `setting reset` | | | Reset all settings to default values | 🔮 Planned |
@@ -3202,7 +3202,6 @@ Only a recording you started (`ttd start` without `black_box`, the TTD panel's R
 | Disk load, disk create | New media. |
 | ROM reload | The machine's code changed under the history. |
 | General Sound card type switch | The device set changed under the history (`gs-card-switch`); a seek could not put the other card type back. |
-| Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
 | A device TTD cannot follow | None today: the ZX-Evo / ATM3 Z-Controller SD card is recorded (the card's state, the guest's sector writes), so SD card activity no longer ends a recording. Such a device would end the recording (history dropped) at the next frame boundary, and `last_drop_reason` would say so. |
 
@@ -3481,6 +3480,7 @@ to the **machine's own mouse**, whatever it is (design:
 | ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
 | ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
 | Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+| 48K, 128K, +2, +2A, +3 with the slot card `amx-mouse` | AMX mouse (`amx`, kind `amx-pio`) | one IM 2 interrupt per mickey from a Z80 PIO (`#1F` X, `#3F` Y, bit 0 the direction), buttons `#DF` (D7 left, D6 middle, D5 right, active low); status `pio` |
 
 **How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
@@ -3634,8 +3634,10 @@ a held button is a 1 bit. The program running on the machine reads it with `IN #
 tests the bits. Worked example: up and fire held reads `0x18` (up = bit 3 = 8, fire = bit 4 =
 16). Unlike the mouse it is not relative: the byte is the state, so `joystick set 0x18`
 means "exactly up and fire are held now". Machines that decode the port: ZX-Evo (ATM3, `IN #1F`
-outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`).
-Other machines accept the input with a warning, because the program cannot see it.
+outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`), Pentagon (`#1F`
+outside a TR-DOS session), Profi (`#1F` in the normal port set), Sprinter (`#1F` outside TR-DOS, `#FF` in it) and the
+Next (its left DB9 connector). The 48K, 128K, +2, +2A, +3 and the ATM Turbo 2+ (no Kempston on the board) accept
+the input with a warning, because the program cannot see it ([.recipe/input/joystick.md](../../../../.recipe/input/joystick.md)).
 
 **Buttons and limits** (same in every interface):
 
@@ -3811,7 +3813,8 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers probe` | | The input backends: `running`, else the `reason`; the devices each found with their database `match` (`step`, `score`) and `notice`; `user_devices` (the `devices.user.json` path) | ✅ Implemented |
 | `controllers database` | `<vid:pid\|SDL GUID\|device> [name=..] [version=..]` | What the device database says (built-in plus the user's families): `query` (`vid`, `pid`, `bus`, `version`, `name`, `sdl_guid`) and `match` (`family`, `name`, `layout`, `role`, `step`: `exact`, `vid-pid`, `name`, `unknown`, `score`, `controls`, `map`) | ✅ Implemented |
 | `controllers database_import` | `<file> [save=false]` | Import a `gamecontrollerdb.txt` line or a RetroArch autoconfig file: the map (canonical -> raw control), the entries with no control here (`skipped`), the `gamecontrollerdb` line; unless `save=false` a user family `user-<vid><pid>` in `devices.user.json`, which a connected device of that VID / PID takes at once | ✅ Implemented |
-| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented |
+| `controllers learn` | `<device> [start\|status\|skip\|back\|finish\|cancel] [controls=..] [name=..] [save=false]`, `<device> sample <control> [value]` | The learn wizard of an unknown device, as data: `start` takes the device (its controls answer the prompts and reach nothing else), each step answers the prompt (`control`, `prompt`, `index` / `count`, `waiting_for_release`, `map`); a press on the device answers it, `sample` feeds a raw control as a script; `finish` saves the map as a user family (as `database_import`) with its `gamecontrollerdb` line; `cancel` saves nothing | ✅ Implemented || `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
+| `controllers unalias` | `<old id>` | Forget an alias: the profiles naming the old id stop applying to the new one; saved and applied at once. `unknown-alias` (404) when there is none | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3894,12 +3897,12 @@ Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
 | :--- | :--- | :--- | :--- |
-| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...`, `controllers light <device> <color>` |
-| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}`, `POST /api/v1/controllers/light {device, color}` |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` (`aliases`, `unalias <old id>` too) | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...`, `controllers light <device> <color>` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405; `GET .../aliases`, `POST .../unalias {id}`) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}`, `POST /api/v1/controllers/light {device, color}` |
 | WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}`, the same for `/light` |
-| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
-| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
-| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme`, `aliases`, `unalias` (`id`) (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ..., `controllers_aliases()`, `controllers_unalias(id)` | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` (`aliases`, `unalias` through it, no helpers of their own) | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
 
 Devices, the database and the learn wizard:
 
@@ -3912,7 +3915,7 @@ Devices, the database and the learn wizard:
 | Python | `controllers_role(device, role)`, `controllers_pin(device, pin)`, `controllers_identify(device)` | `controllers_probe()`, `controllers_database(vidpid=, guid=, device=)`, `controllers_database_import(text, save=True)` | `controllers_learn(device, step="status", **options)` |
 | Lua | `controllers_host("role", {device=, role=})` (no named wrappers: Lua is P3) | `controllers_host("probe")`, ... | `controllers_host("learn", {...})` |
 
-Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
+Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`, `unknown-alias`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
 the Qt client (it owns the game controllers): a headless process answers `unavailable`.
 
@@ -4169,6 +4172,7 @@ by its manager's revision.
 | `monitor debug.labels` | `[instance=]` | `total` labels, `sets` [{`id`, `title`, `enabled`, `symbols`}] (recounted on `NC_LABEL_CHANGED`, at most every 2 s) | ✅ Implemented |
 | `monitor ttd.status` | `[instance=]` | From the published cursor: `state`, `recording`, `history`, `frame`, `first`, `end`, `frames`; from the published session summary (refreshed every 2 s at most, never the live session): `checkpoints`, `memory_bytes`, `history_bytes`, `page_store_bytes`, `bookmarks`, `write_journal_records`, `input_events`, `evicted_checkpoints` | ✅ Implemented |
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
+| `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
 
 `instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:

@@ -916,6 +916,30 @@ namespace PythonBindings
             ps2["counts_per_mm"] = 1 << device.ps2.resolution;
             d["ps2"] = ps2;
         }
+        if (device.hasPio)
+        {
+            const MouseDeviceStatus::Pio& pio = device.pio;
+            py::dict out;
+            for (int axis = 0; axis < 2; axis++)
+            {
+                const MouseDeviceStatus::Pio::Port& port = pio.port[axis];
+                py::dict p;
+                p["mode"] = static_cast<int>(port.mode);
+                p["vector"] = static_cast<int>(port.vector);
+                p["data"] = static_cast<int>(port.data);
+                p["interrupt_enabled"] = port.ie;
+                p["interrupt_pending"] = port.ip;
+                p["under_service"] = port.ius;
+                out[axis == 0 ? "a" : "b"] = p;
+            }
+            py::dict pending;
+            pending["dx"] = pio.pendingDx;
+            pending["dy"] = pio.pendingDy;
+            out["pending"] = pending;
+            out["buttons_port"] = static_cast<int>(pio.buttonsPort);
+            out["strobes"] = pio.strobes;
+            d["pio"] = out;
+        }
         return d;
     }
 
@@ -1975,7 +1999,7 @@ namespace PythonBindings
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
                  "bindings, bind, unbind, scheme, haptics, rumble, output, light, role, pin, identify, probe, database, "
-                 "database_import, learn) with its options as keywords")
+                 "database_import, learn, aliases, unalias) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2077,7 +2101,14 @@ namespace PythonBindings
                      return HostControllerCallPy("learn", all);
                  }, py::arg("device"), py::arg("step") = "status",
                  "The learn wizard of an unknown device: step='start' (controls='dpad.up,south,..'), 'status', "
-                 "'sample' (control='button.3', value=1), 'skip', 'back', 'finish' (name=, save=), 'cancel'")
+                 "'sample' (control='button.3', value=1), 'skip', 'back', 'finish' (name=, save=), 'cancel'")            .def("controllers_aliases", [](Emulator&) { return HostControllerCallPy("aliases", py::kwargs()); },
+                 "The device aliases: {aliases: [{from, to, connected, name}]}; a pad first seen through "
+                 "GameController alone (gc:...) and later matched to its HID device keeps its profiles under the new id")
+            .def("controllers_unalias", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("unalias", options);
+                 }, py::arg("id"), "Forget a device alias (the old id): saved and applied at once; {from, to}")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")
@@ -4996,7 +5027,7 @@ namespace PythonBindings
                 for (const MouseDeviceStatus& device : mgr.GetState().devices)
                     devices.append(MouseDeviceDict(device));
                 return devices;
-            }, "The machine's mouse devices (kempston, sprinter, evo-ps2)")
+            }, "The machine's mouse devices (kempston, sprinter, evo-ps2, amx)")
             .def("mouse_busy", [](Emulator& self) -> bool {
                 return MouseManagerOrThrow(self).IsBusy();
             }, "True while a glide (and the input queued behind it) is in progress")

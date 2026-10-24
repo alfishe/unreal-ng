@@ -4,6 +4,7 @@
 #include <functional>
 
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/im2daisychain.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portinterceptor.h"
@@ -534,6 +535,8 @@ protected:
 
     // Device INT lines (SetDeviceIntLine): bit set = that device holds /INT low
     uint32_t _deviceIntLines = 0;
+    // The daisy chain on the bus (Im2DaisyChain): its line kDeviceIntIm2Chain is set while a device is armed
+    Im2DaisyChain _im2Chain{*this};
     uint64_t _localIntEndFrame = 0;
     uint32_t _localIntEndT = 0;
     
@@ -904,7 +907,13 @@ public:
     {
         kDeviceIntZxNetUsb = 1u << 0,   ///< ZXNETUSB card (W5300), ZX-Bus /INT
         kDeviceIntAtm2Kbc = 1u << 1,    ///< ATM Turbo 2+ keyboard controller (INT_T, P1.5)
+        /// The IM 2 daisy chain (Im2DaisyChain): not a level - set while a chain device is armed, the chain says at
+        /// each boundary whether it pulls /INT, and its device drives the vector in the acknowledge
+        kDeviceIntIm2Chain = 1u << 2,
     };
+
+    /// The Z80-family peripherals on the bus that drive their own IM 2 vector and decode RETI (a slot card's PIO)
+    Im2DaisyChain& Im2Chain() { return _im2Chain; }
 
     /// A device drives its /INT output: asserted = the line held low. A level,
     /// not a pulse: it stays until the device releases it (the program clears
@@ -914,6 +923,10 @@ public:
     /// bit only while a line is low, so a machine without such a device, or
     /// with the line released, keeps the plain step
     void SetDeviceIntLine(uint32_t line, bool asserted);
+    /// The device lines as /INT sees them at this boundary (the daisy chain's bit only while the chain pulls it)
+    bool DeviceIntAsserted();
+    /// The acknowledge cycle on the daisy chain: true with the vector when a chain device drove the data bus
+    bool ChainAcknowledge(uint8_t& vector);
     uint32_t GetDeviceIntLines() const { return _deviceIntLines; }
 
     /// An NMI requested and not taken yet (TTD: TTDCpuState::nmi_pending)

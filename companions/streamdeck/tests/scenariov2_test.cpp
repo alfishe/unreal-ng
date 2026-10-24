@@ -636,10 +636,12 @@ void TestScenarioV2()
                     for (int x = 0; x < 112; ++x)
                         differ += a.At(x, y)[0] != b.At(x, y)[0] ? 1 : 0;
                 CHECK(differ > 200);
-                int text = 0;  // the label: light pixels in the low band, where the full-size picture has none
-                for (int y = 112 - 8 - 22; y < 112 - 8; ++y)
+                int text = 0;  // the label in the low band, where the full-size picture has none: dark on a light
+                               // pack, light on a dark one
+                const std::uint8_t* bg = a.At(56, 112 - 9);
+                for (int y = 112 - 8 - 26; y < 112 - 8; ++y)
                     for (int x = 8; x < 104; ++x)
-                        text += a.At(x, y)[0] > 200 && a.At(x, y)[1] > 200 ? 1 : 0;
+                        text += std::abs(a.At(x, y)[0] - bg[0]) > 100 ? 1 : 0;
                 CHECK(text > 20);
             }
         }

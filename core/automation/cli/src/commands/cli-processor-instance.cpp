@@ -1529,7 +1529,7 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
     }
 
     // Nothing here may keep the old machine alive
-    const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    const ModelSwitch::RunStateBefore before = ModelSwitch::RunStateBefore::Of(*emulator);
     emulator.reset();
     _emulator.reset();
 
@@ -1544,8 +1544,10 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
         return;
     }
 
-    if (wasRunning)
-        EmulatorManager::GetInstance()->StartEmulatorAsync(switched.emulator->GetId());
+    // The run state the user had: a paused machine comes back started and paused, not "initialized"
+    const std::string newId = switched.emulator->GetId();
+    ModelSwitch::StartAsBefore(*switched.emulator, before,
+                               [&newId]() { EmulatorManager::GetInstance()->StartEmulatorAsync(newId); });
     const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*switched.emulator);
     ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb
        << "KB, power-on RAM: " << identity.RamPowerOn << ")" << NEWLINE

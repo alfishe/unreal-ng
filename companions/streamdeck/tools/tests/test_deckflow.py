@@ -380,12 +380,12 @@ class SyncTest(Base):
 
     def test_spec_only_change(self):
         write(self.paths.spec("fx"), self.spec0.replace("action: mach.nmi}", "action: mach.nmi, title: Magic}")
-              .replace("value: 4, label: X4", "value: 8, label: X8"))
+              .replace("value: {value: 4}, label: X4", "value: {value: 8}, label: X8"))
         changes, _ = self.build()
         self.assertTrue(any("wrote" in c and "fx.deck.yaml" in c for c in changes), changes)
         root = y.load(read(self.paths.project("fx")))["root"]
         self.assertEqual(find(root, "nmi")["title"], "Magic")
-        self.assertEqual((find(root, "x4")["do"]["value"], find(root, "x4")["face"]["label"]), (8, "X8"))
+        self.assertEqual((find(root, "x4")["do"]["value"], find(root, "x4")["face"]["label"]), ({"value": 8}, "X8"))
         self.assertNotIn("project changes taken over", " ".join(changes))
 
     def test_project_only_changes(self):
@@ -395,7 +395,7 @@ class SyncTest(Base):
             a["at"], b["at"] = b["at"], a["at"]
             find(r, "nmi")["title"] = "Magic NMI"  # retitle
             x4 = find(r, "x4")
-            x4["do"]["value"] = 16  # rebind
+            x4["do"]["value"] = {"value": 16}  # rebind
             x4["face"]["label"] = "X16"
             r["items"].append({"id": "mute", "type": "action", "at": [3, 0], "title": "Mute",
                                "do": {"kind": "action", "id": "audio.mute_toggle"},
@@ -420,7 +420,7 @@ class SyncTest(Base):
         self.assertIn("    reset:  {at: [0, 0], uc: C1.2, action: mach.reset}", text)
         self.assertIn("    nmi:    {uc: C1.3, action: mach.nmi, title: Magic NMI}                         # placed "
                       "by the tool: [0, 2]", text)  # still placed by the tool, the comment kept
-        self.assertIn("    x4:     {at: [1, 0], uc: C2.1, action: set.speed, value: 16, label: X16}", text)
+        self.assertIn("    x4:     {at: [1, 0], uc: C2.1, action: set.speed, value: {value: 16}, label: X16}", text)
         self.assertIn("    mute:   {at: [3, 0], action: audio.mute_toggle, face: {icon: mute}}", text)
         self.assertNotIn("bench", text)
         self.assertIn('    cpu:    {at: [1, 1], uc: C10.2, label: CPU, show: {readout: host.stats.cpu_percent, '
@@ -498,7 +498,7 @@ class SyncTest(Base):
     def test_shared_menu_edited_in_its_project(self):
         self.studio_edit(lambda d: find(d["root"], "x2").update(title="Double"), "fxspeed", shared=True)
         self.build()
-        self.assertIn("x2:     {at: [0, 2], uc: C2.1, action: set.speed, value: 2, label: X2, title: Double}",
+        self.assertIn("x2:     {at: [0, 2], uc: C2.1, action: set.speed, value: {value: 2}, label: X2, title: Double}",
                       self.spec_text("fxspeed", True))
 
     def test_studio_saved_move(self):

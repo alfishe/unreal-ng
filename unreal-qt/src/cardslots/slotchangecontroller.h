@@ -42,8 +42,9 @@ public:
     {
         /// The old machine stopped, before it goes: the window unbinds its views
         std::function<void(Emulator& old)> beforeRelease;
-        /// The restarted machine: the window adopts it and starts it when the old one ran
-        std::function<void(std::shared_ptr<Emulator> emulator, bool start)> adopt;
+        /// The restarted machine: the window adopts it and puts it into the old one's run state
+        /// (ModelSwitch::StartAsBefore: running, or started and paused)
+        std::function<void(std::shared_ptr<Emulator> emulator, const ModelSwitch::RunStateBefore& before)> adopt;
         /// A restart is in progress (the window ignores the instance notifications meanwhile)
         std::function<void(bool on)> restarting;
         /// A question with buttons: returns the index of the button clicked, -1 for none (closed). Default: QMessageBox

@@ -469,4 +469,27 @@ TEST_F(HostActions_Test, AStartReplacesTheInstanceAndAColdResetRestartsTheModel)
     EXPECT_EQ(Run("run.pause", Press()).error, "Not Found") << "the instance is gone";
 }
 
+/// mach.cold_reset keeps the run state the user had: a paused machine comes back started and paused, so resume and
+/// typing work on it (not "initialized", where both are refused). Boot-bound (two started machines): about 40 ms
+TEST_F(HostActions_Test, AColdResetOfAPausedMachineLeavesItStartedAndPaused)
+{
+    EmulatorManager& manager = *EmulatorManager::GetInstance();
+    _emulator->StartAsync();
+    _emulator->Pause();
+    ASSERT_TRUE(_emulator->IsRunning() && _emulator->IsPaused());
+
+    const ActionResult restarted = Run("mach.cold_reset", Press());
+    ASSERT_TRUE(restarted.ok) << restarted.message;
+    _emulator = nullptr;  // removed by the switch
+    const std::string after = restarted.body.find("emulator_id")->s;
+    std::shared_ptr<Emulator> current = manager.GetEmulator(after);
+    ASSERT_NE(current, nullptr);
+    EXPECT_TRUE(current->IsRunning()) << "started";
+    EXPECT_TRUE(current->IsPaused()) << "and paused, as the old one was";
+    current.reset();
+    _id = after;
+    EXPECT_TRUE(Run("run.resume", Press()).ok) << "a started machine resumes";
+    manager.RemoveEmulator(after);
+}
+
 /// endregion </Run and machine>

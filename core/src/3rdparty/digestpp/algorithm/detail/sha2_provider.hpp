@@ -10,6 +10,7 @@ This code is written by kerukuro and released into public domain.
 #include "../../detail/validate_hash_size.hpp"
 #include "constants/sha2_constants.hpp"
 #include <array>
+#include <cstring>
 
 namespace digestpp
 {
@@ -204,8 +205,9 @@ private:
 		for (size_t blk = 0; blk < num_blks; blk++)
 		{
 			T M[16];
+			std::memcpy(M, data + blk * sizeof M, sizeof M);   // the input may sit at any address
 			for (int i = 0; i < 16; i++)
-				M[i] = byteswap(reinterpret_cast<const T*>(data)[blk * 16 + i]);
+				M[i] = byteswap(M[i]);
 
 			const int rounds = N == 512 ? 80 : 64;
 			T W[rounds];

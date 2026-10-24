@@ -410,3 +410,44 @@ TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
     EXPECT_EQ(loaded->connectors.at("kempston").device, "kempston-joystick");
     fs::remove_all(root);
 }
+
+TEST(ProfileStore_Test, Aliases_APromotedDeviceKeepsItsProfilesAcrossRestarts)
+{
+    // architecture.md §5: a `gc:` device promoted to its IOHID id; the profiles naming the old id follow it
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText(Play("user/my-pad", R"(, "applies_to": {"devices": ["gc:dualsense-wireless-controller#1"]})",
+                                   R"("north": {"key": "ENTER"})"),
+                              ProfileScope::User, error))
+        << error;
+    const HostDeviceId gc = "gc:dualsense-wireless-controller#1";
+    const HostDeviceId bt = "bt:054c:0ce6:5a5a";
+    ProfileContext context;
+    context.devices = {{bt, "DualSense Wireless Controller", "dualsense", "playstation", "fake"}};
+    EXPECT_EQ(Find(store.Resolve(context), bt, "", "north"), nullptr) << "no alias yet";
+
+    store.AddAlias(gc, bt);
+    EXPECT_EQ(store.AliasesOf(bt), std::vector<HostDeviceId>{gc});
+    const Binding* north = Find(store.Resolve(context), bt, "", "north");
+    ASSERT_NE(north, nullptr) << "the device scope under the new id";
+    EXPECT_EQ(north->target.kind, TargetKind::Keys);
+
+    // Promoted once more: the oldest id follows to the newest
+    store.AddAlias(bt, "usb:054c:0ce6:7");
+    EXPECT_EQ(store.Aliases().at(gc), "usb:054c:0ce6:7");
+    EXPECT_EQ(store.AliasesOf("usb:054c:0ce6:7").size(), 2u);
+
+    // Kept across a restart
+    const std::filesystem::path root = TestPathHelper::GetUniqueTestScratchPath("aliases");
+    ASSERT_TRUE(store.SaveAliases(root.string(), error)) << error;
+    ProfileStore restarted;
+    ASSERT_TRUE(restarted.LoadAliases(root.string(), error)) << error;
+    EXPECT_EQ(restarted.Aliases(), store.Aliases());
+    ProfileStore fresh;
+    EXPECT_TRUE(fresh.LoadAliases((root / "none").string(), error)) << "no file: no aliases, no error";
+    EXPECT_TRUE(fresh.Aliases().empty());
+
+    std::map<HostDeviceId, HostDeviceId> parsed;
+    EXPECT_FALSE(ProfileStore::ParseAliases("aliases:\n  - from: x\n", parsed, error));
+    std::filesystem::remove_all(root);
+}

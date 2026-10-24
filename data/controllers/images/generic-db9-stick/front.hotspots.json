@@ -8,96 +8,93 @@
   ],
   "controls": [
     {
-      "control": "dpad.up",
-      "label": "Up",
+      "control": "dpad.fire",
+      "label": "Fire",
       "shape": {
         "rect": [
-          974,
-          180,
-          100,
-          100
+          632,
+          484,
+          194,
+          108
         ]
       },
       "anchor": [
-        1024,
-        230
+        729,
+        538
       ],
       "callout": "left",
-      "group": "directions",
       "order": 0
     },
     {
-      "control": "dpad.down",
-      "label": "Down",
+      "control": "dpad.up",
+      "label": "Up",
       "shape": {
-        "rect": [
-          974,
-          860,
-          100,
-          100
+        "circle": [
+          1024,
+          188,
+          47
         ]
       },
       "anchor": [
         1024,
-        910
+        188
       ],
       "callout": "left",
       "group": "directions",
       "order": 1
     },
     {
-      "control": "dpad.left",
-      "label": "Left",
+      "control": "dpad.down",
+      "label": "Down",
       "shape": {
-        "rect": [
-          760,
-          520,
-          100,
-          100
+        "circle": [
+          1024,
+          577,
+          47
         ]
       },
       "anchor": [
-        810,
-        570
+        1024,
+        577
       ],
       "callout": "left",
       "group": "directions",
       "order": 2
     },
     {
-      "control": "dpad.right",
-      "label": "Right",
+      "control": "dpad.left",
+      "label": "Left",
       "shape": {
-        "rect": [
-          1188,
-          520,
-          100,
-          100
+        "circle": [
+          815,
+          383,
+          47
         ]
       },
       "anchor": [
-        1238,
-        570
+        815,
+        383
       ],
-      "callout": "right",
+      "callout": "left",
       "group": "directions",
       "order": 3
     },
     {
-      "control": "dpad.fire",
-      "label": "Fire",
+      "control": "dpad.right",
+      "label": "Right",
       "shape": {
         "circle": [
-          760,
-          1000,
-          80
+          1233,
+          383,
+          47
         ]
       },
       "anchor": [
-        760,
-        1000
+        1233,
+        383
       ],
-      "callout": "left",
+      "callout": "right",
+      "group": "directions",
       "order": 4
     }
   ]

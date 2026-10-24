@@ -417,8 +417,10 @@ void TestReadoutPathsAndNeeds()
     if (s)
     {
         const scn::SurfaceNeeds n = scn::NeedsOf(*s);
-        CHECK(n.readouts == (std::vector<std::string>{"audio.mute", "media.tape", "ttd.position"}));
-        CHECK(n.paths == std::vector<std::string>{"audio.mute.muted"});
+        // an action key: the actions the host cannot run now (its key greys out)
+        CHECK(n.readouts ==
+              (std::vector<std::string>{"actions.unavailable", "audio.mute", "media.tape", "ttd.position"}));
+        CHECK(n.paths == (std::vector<std::string>{"actions.unavailable", "audio.mute.muted"}));
         CHECK(n.timeline && n.target["view"] == 2);
     }
 }
@@ -470,14 +472,27 @@ void TestStripTimeline()
     live.readouts = &readouts;
     live.target = &target;
     const Rgb im = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
-    const int track = m.lcdLogicalH - 24;
-    // the played part (theme blue) up to a quarter, the position (a fine light line), the bookmark (amber)
+    // the capsule under the header (scale 3 on the + XL strip): the played part (a blue-to-cyan gradient) up to a
+    // quarter, the position (a light pill), the bookmark (amber, a diamond over the capsule)
+    const int barY = 8 + 7 * 3 + 12, barH = 16;
     const int x0 = 12, x1 = m.lcdLogicalW - 12, quarter = x0 + (x1 - x0 - 1) / 4;
-    CHECK(Count(im, {0, 110, 200}, x0, quarter - 2, track, track + 2) > (quarter - x0) * 2 - 10);
-    CHECK(Count(im, {0, 110, 200}, quarter + 4, x1, track, track + 2) == 0);
-    CHECK(Count(im, {235, 240, 250}, quarter - 1, quarter + 3, track - 9, track + 4) > 20);
+    auto playedIn = [&](const Rgb& pic, int xa, int xb) {
+        int n = 0;
+        for (int y = barY; y < barY + barH; ++y)
+            for (int x = xa; x < xb; ++x)
+            {
+                const std::uint8_t* p = pic.At(x, y);
+                n += p[2] > 120 && p[2] > p[0] + 60;  // blue, little red
+            }
+        return n;
+    };
+    auto played = [&](int xa, int xb) { return playedIn(im, xa, xb); };
+    CHECK(played(x0 + 8, quarter - 6) > (quarter - 6 - x0 - 8) * barH * 3 / 4);
+    CHECK(played(quarter + 8, x1) == 0);
+    CHECK(Count(im, {235, 240, 250}, quarter - 3, quarter + 4, barY - 7, barY + barH + 7) > 20);
     const int half = x0 + (x1 - x0 - 1) / 2;
-    CHECK(Count(im, {200, 160, 60}, half - 1, half + 2, track - 7, track) >= 5);
+    CHECK(Count(im, {200, 160, 60}, half - 3, half + 4, barY - 9, barY + barH + 2) >= 5);
+    const int track = barY;
     CHECK(Count(im, {90, 200, 230}, x0, x1, 0, track - 12) > 50);  // the frame counter
     CHECK(Pink(im) == 0);
     CHECK(scn::TargetLine(target) == "PENTAGON 128K (1)" && scn::TargetLine(nullptr) == "NO MACHINE");
@@ -485,7 +500,7 @@ void TestStripTimeline()
     // the link lost: the target line says so, the timeline is not drawn from a stale readout
     live.link = scn::StripLive::Link::Lost;
     const Rgb lost = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
-    CHECK(Count(lost, {0, 110, 200}, x0, x1, track, track + 2) == 0);
+    CHECK(playedIn(lost, x0, x1) == 0);
     CHECK(Count(lost, {220, 170, 60}, x1 - 260, x1, 0, 40) > 20);  // RECONNECTING, amber
     // the revoked notice over everything
     live.link = scn::StripLive::Link::None;

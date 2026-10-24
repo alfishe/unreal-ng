@@ -785,3 +785,37 @@ TEST(HostInputService_Test, Repeat_TheTimerRunsItWhilePaused)
 }
 
 /// endregion </C7: repeat>
+
+TEST_F(InputRouter_Test, PromoteMovesTheChosenSettings)
+{
+    // A gc: device had a role and a pin; its IOHID id takes over (architecture.md §5)
+    _router.SetRole("gc:pro-controller#1", DeviceRole::DebuggerRemote);
+    _router.SetInstanceMode("gc:pro-controller#1", InstanceMode::Pinned, "emu-2");
+    _router.Promote("gc:pro-controller#1", "fake:1");
+    EXPECT_EQ(_router.Role("fake:1"), DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.RoleSet("fake:1"));
+
+    // A device with settings of its own keeps them
+    _router.SetRole("fake:2", DeviceRole::Disabled);
+    _router.Promote("gc:pro-controller#1", "fake:2");
+    EXPECT_EQ(_router.Role("fake:2"), DeviceRole::Disabled);
+    // Nothing chosen for the old id: nothing moves
+    _router.Promote("gc:unknown#1", "fake:3");
+    EXPECT_FALSE(_router.RoleSet("fake:3"));
+}
+
+TEST(HostInputService_Test, PromotionsAreKeptForTheProfileStore)
+{
+    // The service moves the router settings and keeps the promotion for the store's alias (architecture.md §5)
+    HostInputService service;
+    service.Router().SetRole("gc:pro-controller#1", DeviceRole::DebuggerRemote);
+    const uint64_t revision = service.Revision();
+    service.OnDevicePromoted("gc:pro-controller#1", "bt:057e:2009:1");
+    EXPECT_GT(service.Revision(), revision);
+    EXPECT_EQ(service.Router().Role("bt:057e:2009:1"), DeviceRole::DebuggerRemote);
+    const auto promotions = service.TakePromotions();
+    ASSERT_EQ(promotions.size(), 1u);
+    EXPECT_EQ(promotions[0].first, "gc:pro-controller#1");
+    EXPECT_EQ(promotions[0].second, "bt:057e:2009:1");
+    EXPECT_TRUE(service.TakePromotions().empty()) << "each once";
+}

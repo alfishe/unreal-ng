@@ -183,11 +183,27 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 }
 }  // namespace
 
+// The actions the user's hands could not run now, {id: reason}: the catalogue's dry run of the gates (published state
+// only, no session opened) as a device acting for the user sees it (a paired deck's own scopes are its own), so a deck
+// greys a key out before it is pressed
+static StateNode UnavailableActions(Emulator& emulator)
+{
+    ActionOrigin origin;
+    origin.origin = execution::Origin::HostDevice;
+    origin.identity = "readout|actions.unavailable";
+    StateNode node = StateNode::Object();
+    for (const ActionStatus& status : ActionRegistry::Instance().Statuses(emulator.GetId(), origin))
+        if (!status.available)
+            node[status.info.id] = status.reason.empty() ? status.error : status.reason;
+    return node;
+}
+
 const std::vector<std::string>& BaseReadoutNames()
 {
     static const std::vector<std::string> names = [] {
         std::vector<std::string> all = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                        "media.disk",   "audio.mute", "debug.mode", "audio.mixer"};
+                                        "media.disk",   "audio.mute", "debug.mode", "audio.mixer",
+                                        "actions.unavailable"};
         // Monitoring (monitoring::ReadProcess / ReadInstance; the WebSocket topics of the same names)
         for (const std::string& name : monitoring::ProcessNames())
             all.push_back(name);
@@ -237,6 +253,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return {};
     if (name == "ttd.position")
         return TtdPosition(emulator);
+    if (name == "actions.unavailable")
+        return UnavailableActions(emulator);
     if (name == "run.state")
         return RunState(emulator);
     if (name == "machine")

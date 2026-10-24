@@ -4,7 +4,7 @@
 
 /// region <Fields>
 
-volatile bool Logger::g_mute = false;
+std::atomic<bool> Logger::g_mute{false};
 int Logger::_stdout = -1;
 int Logger::_stderr = -1;
 int Logger::_outFile = -1;

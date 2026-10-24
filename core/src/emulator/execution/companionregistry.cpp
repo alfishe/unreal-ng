@@ -727,10 +727,14 @@ void CompanionRegistry::LoadStoreLocked()
     const std::filesystem::path path = FileHelper::ToFsPath(_storePath);
     if (!std::filesystem::is_regular_file(path, ec))
         return;
-    std::ifstream in(path, std::ios::binary);
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    const std::string text = buffer.str();
+    std::string text;
+    {
+        // Closed before a broken store is renamed below: Windows renames no open file
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        text = buffer.str();
+    }
 
     static std::once_flag once;
     std::call_once(once, [] { ryml::set_callbacks(ryml::Callbacks(nullptr, nullptr, nullptr, &ThrowOnError)); });

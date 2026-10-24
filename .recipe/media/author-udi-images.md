@@ -41,14 +41,14 @@ see Path C.
 
 ## Path A — host-side conversion (fully automated)
 
-`utilities/diskconverter` (pure Python, no emulator needed):
+`tools/diskconverter` (pure Python, no emulator needed):
 
 ```bash
 # sector-preserving chain, any order: TRD ↔ FDI ↔ UDI
-python3 utilities/diskconverter/diskconvert.py scratch/game.fdi scratch/game.udi
+python3 tools/diskconverter/diskconvert.py scratch/game.fdi scratch/game.udi
 
 # lossy targets refuse instead of corrupting:
-python3 utilities/diskconverter/diskconvert.py scratch/protected.udi scratch/out.trd
+python3 tools/diskconverter/diskconvert.py scratch/protected.udi scratch/out.trd
 # → error: non-standard geometry (that refusal is the point)
 ```
 
@@ -62,7 +62,7 @@ Import the package and build tracks sector-by-sector (real API,
 stream + clock bitmap on save:
 
 ```python
-import sys; sys.path.insert(0, 'utilities/diskconverter')
+import sys; sys.path.insert(0, 'tools/diskconverter')
 from diskconverter import DiskImage
 from diskconverter.disk_image import Sector
 from diskconverter.formats import udi
@@ -93,9 +93,9 @@ MFM with synthesized gaps only).
 Then verify what you built (never ship an image you did not re-read):
 
 ```bash
-python3 utilities/diskinfo/diskinfo.py scratch/protected.udi --tracks
+python3 tools/diskinfo/diskinfo.py scratch/protected.udi --tracks
 # protection analysis block should list exactly the signals you planted
-python3 utilities/diskconverter/diskconvert.py scratch/protected.udi scratch/rt.udi  # udi→udi sanity
+python3 tools/diskconverter/diskconvert.py scratch/protected.udi scratch/rt.udi  # udi→udi sanity
 ```
 
 ## Path C — author inside the emulator (byte-authentic)
@@ -134,7 +134,7 @@ will wire Greaseweazle capture live; loaders already read the files.
 | deleted marks, deliberate bad CRC | refuse | yes | yes | yes |
 | FM / mixed-encoding tracks | refuse | no | yes | yes |
 | **weak / flaky bits** | no | no | **no** | **yes** |
-| written by utilities/diskconverter | yes | yes | yes | no (read-only loaders) |
+| written by tools/diskconverter | yes | yes | yes | no (read-only loaders) |
 
 ## WebAPI
 

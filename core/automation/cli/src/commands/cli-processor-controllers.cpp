@@ -64,7 +64,8 @@ namespace
         "                                             devices.user.json (the device gets the map at once)\n"
         "controllers learn <device> [start|status|skip|back|finish|cancel] [controls=dpad.up,south,..] - The learn\n"
         "                                             wizard: press the prompted control on the device after each step\n"
-        "controllers learn <device> sample <control> [value] - Feed a raw control (button.3, axis.1) as if pressed\n"
+        "controllers learn <device> sample <control> [value] - Feed a raw control (button.3, axis.1) as if pressed\n"        "controllers aliases                        - Device aliases: old id -> new (a gc: pad matched to its HID device)\n"
+        "controllers unalias <old id>               - Forget an alias: profiles naming the old id stop applying\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -104,9 +105,10 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save, database_import), a
-    /// key (database: vid:pid, an SDL GUID or a device) or device (haptics, rumble, then its effect; output, then its
-    /// pattern; light, then its colour; role / pin, then the role / pin; identify; learn, then the step, control, value); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// A host verb: positional id (profile, delete, apply, unalias), control (bind, unbind), file (save,
+    /// database_import), a key (database: vid:pid, an SDL GUID or a device) or device (haptics, rumble, then its
+    /// effect; output, then its pattern; light, then its colour; role / pin, then the role / pin; identify; learn, then
+    /// the step, control, value); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
@@ -243,6 +245,17 @@ namespace
             }
             return "Backends:\n" + (text.empty() ? "  none\n" : text) + "User devices: " +
                    reply.body.Find("user_devices")->AsString() + "\n";
+        }
+        if (verb == "aliases")
+        {
+            for (const JsonValue& alias : reply.body.Find("aliases")->Items())
+            {
+                text += "  " + alias.Find("from")->AsString() + " -> " + alias.Find("to")->AsString();
+                if (alias.Find("connected")->AsBool())
+                    text += "  (" + alias.Find("name")->AsString() + ", connected)";
+                text += "\n";
+            }
+            return "Device aliases (old id -> new id):\n" + (text.empty() ? "  none\n" : text);
         }
         if (verb == "devices")
         {

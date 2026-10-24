@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <deque>
 #include <map>
 #include <vector>
@@ -464,6 +465,15 @@ public:
     {
         const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
         return r ? r->changeCount : 0;
+    }
+    /// Those pieces with their new versions (PieceStore().Decode reads one)
+    std::vector<std::pair<uint32_t, TTDPieceId>> ChangesAt(size_t index, uint32_t region) const
+    {
+        std::vector<std::pair<uint32_t, TTDPieceId>> changes;
+        if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+            for (uint32_t k = 0; k < r->changeCount; ++k)
+                changes.emplace_back(ChangeAt(r->firstChange + k).piece, ChangeAt(r->firstChange + k).id);
+        return changes;
     }
     /// Whether checkpoint @p index holds a full table of @p region
     bool HasFullTable(size_t index, uint32_t region) const

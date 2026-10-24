@@ -747,4 +747,45 @@ TEST_F(SlotControl_Test, PlanChangesChainsTheRequests)
     EXPECT_TRUE(requests.empty()) << "nothing to change";
 }
 
+/// A restart keeps the run state the user had (every surface starts the new machine with startWhenRunning): a paused
+/// machine comes back started and paused - not "initialized", where resume and typing are refused - and a machine
+/// never started stays as created. One started machine, two restarts (~60 ms with the emulation thread)
+TEST_F(SlotControl_Test, ARestartKeepsThePausedRunState)
+{
+    std::shared_ptr<Emulator> emulator = Create("48K", {});
+    ASSERT_NE(emulator, nullptr);
+    const std::string firstId = emulator->GetId();
+    ASSERT_TRUE(EmulatorManager::GetInstance()->StartEmulatorAsync(firstId));
+    emulator->Pause();
+    ASSERT_TRUE(emulator->IsRunning() && emulator->IsPaused());
+    emulator.reset();
+
+    SlotControlRequest plug = Request("plug", firstId, "edge.1", "amx-mouse");
+    plug.startWhenRunning = true;
+    const SlotControlReply applied = SlotControl::Execute(plug);
+    ASSERT_EQ(applied.status, "applied") << applied.message;
+    ASSERT_NE(applied.emulator, nullptr);
+    _ids.push_back(applied.emulator->GetId());
+    const StateNode& restart = Field(applied.body, "restart");
+    EXPECT_TRUE(Field(restart, "wasPaused").b);
+    EXPECT_FALSE(Field(restart, "wasRunning").b);
+    EXPECT_TRUE(Field(restart, "started").b);
+    EXPECT_TRUE(applied.emulator->IsRunning()) << "the paused machine came back started";
+    EXPECT_TRUE(applied.emulator->IsPaused()) << "and paused, as the user had it";
+
+    // A machine never started: the restart leaves it as created
+    std::shared_ptr<Emulator> idle = Create("48K", {});
+    ASSERT_NE(idle, nullptr);
+    const std::string idleId = idle->GetId();
+    idle.reset();
+    SlotControlRequest idlePlug = Request("plug", idleId, "edge.1", "amx-mouse");
+    idlePlug.startWhenRunning = true;
+    const SlotControlReply idleApplied = SlotControl::Execute(idlePlug);
+    ASSERT_EQ(idleApplied.status, "applied") << idleApplied.message;
+    ASSERT_NE(idleApplied.emulator, nullptr);
+    _ids.push_back(idleApplied.emulator->GetId());
+    EXPECT_FALSE(Field(Field(idleApplied.body, "restart"), "started").b);
+    EXPECT_FALSE(idleApplied.emulator->IsRunning());
+}
+
 // endregion

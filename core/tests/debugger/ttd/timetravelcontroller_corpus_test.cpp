@@ -34,6 +34,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/ttdmultisoundsessions.h"
 #include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
@@ -196,8 +197,12 @@ protected:
 
 TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExactly)
 {
-    const std::vector<fs::path> files = EngineCorpus();
-    ASSERT_GE(files.size(), 9u) << "testdata/ttd/engine/ should hold the engine-recorded corpus";
+    const std::vector<fs::path> corpus = EngineCorpus();
+    ASSERT_GE(corpus.size(), 9u) << "testdata/ttd/engine/ should hold the engine-recorded corpus";
+    // A 48K demo, a quiet 128K session, the TurboSound FM; every fixture in the long tier (about 0.4 s each)
+    const std::vector<fs::path> files =
+        TestTier::Sample(corpus, {"active_demo.ttd", "idle_session.ttd", "tsfm_tech_support.ttd"});
+    ASSERT_EQ(files.size(), TestTier::Long() ? corpus.size() : 3u);
 
     for (const fs::path& file : files)
     {
@@ -217,12 +222,12 @@ TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExa
         for (const size_t index : {size_t(0), size_t(50), size_t(51), count - 1})
             ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(index));
 
-        // What the recording shows at checkpoints 38..62, then the same frames run live
+        // What the recording shows at checkpoints 38..45 (..62 in the long tier), then the same frames run live
         // from checkpoint 37 of the loaded session
         constexpr size_t kFrom = 37;
-        constexpr size_t kReplay = 25;
+        const size_t replay = TestTier::Pick<size_t>(8, 25);
         std::vector<LiveMachine> recorded;
-        for (size_t step = 1; step <= kReplay; ++step)
+        for (size_t step = 1; step <= replay; ++step)
         {
             ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(kFrom + step));
             recorded.push_back(Live());
@@ -231,11 +236,11 @@ TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExa
         ttd::TTDSeekResult seek;
         ASSERT_TRUE(_controller->SeekTo(start, &seek));
         ASSERT_TRUE(_controller->ResumeRecordingFrom(start)) << "a loaded session continues";
-        _emulator->RunNFrames(kReplay, /*skipBreakpoints=*/true);
+        _emulator->RunNFrames(replay, /*skipBreakpoints=*/true);
         _controller->StopRecording();
-        ASSERT_GE(_controller->GetCheckpointCount(), kFrom + 1 + kReplay);
+        ASSERT_GE(_controller->GetCheckpointCount(), kFrom + 1 + replay);
         // The checkpoints captured live restore what the recorded ones did
-        for (size_t step = 1; step <= kReplay; ++step)
+        for (size_t step = 1; step <= replay; ++step)
         {
             ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(kFrom + step));
             ExpectSame(Live(), recorded[step - 1], "replay " + std::to_string(kFrom) + " + " + std::to_string(step));

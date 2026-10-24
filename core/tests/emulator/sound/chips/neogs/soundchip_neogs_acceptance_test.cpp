@@ -29,6 +29,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/trdostesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -267,7 +268,7 @@ TEST_F(NeoGSAcceptance_Test, FlasherReprogramsTheFlashFromTheSdCard)
     // header of entries {DD offset << 8 | page, DW length, DW crc, name[6],
     // DW date}; each block lands at the start of its 64 KB sector, the rest
     // erased, and name + date form the sector's 8-byte trailer
-    const std::vector<uint8_t> upd = readFile(TestPathHelper::FindProjectRoot() / "utilities/neogs/parts/ngs_rom.upd");
+    const std::vector<uint8_t> upd = readFile(TestPathHelper::FindProjectRoot() / "tools/neogs/parts/ngs_rom.upd");
     ASSERT_GT(upd.size(), 0x28u);
     ASSERT_EQ(0, memcmp(upd.data() + 2, "NGSF", 4));
     const size_t headerSize = upd[0] | (upd[1] << 8);
@@ -716,8 +717,10 @@ uint64_t FramebufferHash(Emulator* emulator)
 /// 896-1778) changes the picture every frame, and the rotator (1792-2674) - a
 /// ZX/GS handshake per frame, a new picture every second frame.
 ///
-/// Runtime justification: ~70 emulated seconds (assembly on the ZX, the
-/// 18-second intro, two effects), about 10 s of host time.
+/// The default run stops once the assembled demo has sent the card its program
+/// (the tunnel on the card is ReleaseDiskBootsIntoTheDemo's too); the long tier
+/// (UNREAL_LONG_TESTS=1) plays on through the 18-second intro and both effects,
+/// ~70 emulated seconds.
 TEST(NeoGSTheLink_Test, DemoAssemblesItselfAndRunsItsCardRenderedEffects)
 {
     constexpr uint64_t kTStatesPerSecond = 3500000;
@@ -751,15 +754,17 @@ TEST(NeoGSTheLink_Test, DemoAssemblesItselfAndRunsItsCardRenderedEffects)
         // The demo's card program: 24 MHz, no ROM, extended paging (GSPROGGO)
         ASSERT_TRUE(trdos.runUntil([&] { return card->gscfg0() == 0x09; }, 60ull * kTStatesPerSecond, 25))
             << "the card never received the demo's program";
+        if (TestTier::Long())
+        {
+            ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1000; }, 40ull * kTStatesPerSecond, 25)) << "no tunnel";
+            EXPECT_GE(changedFrames(100, trdos), 90) << "the tunnel changes the picture every frame";
+            EXPECT_TRUE(card->hadHostTransferActivityLastFrame()) << "the HUD's 'NeoGS <->': ZX-DMA every frame, no sound";
 
-        ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1000; }, 40ull * kTStatesPerSecond, 25)) << "no tunnel";
-        EXPECT_GE(changedFrames(100, trdos), 90) << "the tunnel changes the picture every frame";
-        EXPECT_TRUE(card->hadHostTransferActivityLastFrame()) << "the HUD's 'NeoGS <->': ZX-DMA every frame, no sound";
-
-        ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1900; }, 30ull * kTStatesPerSecond, 25)) << "no rotator";
-        const int rotator = changedFrames(100, trdos);
-        EXPECT_GE(rotator, 40) << "the rotator: a new picture every second frame";
-        EXPECT_LE(rotator, 60);
+            ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1900; }, 30ull * kTStatesPerSecond, 25)) << "no rotator";
+            const int rotator = changedFrames(100, trdos);
+            EXPECT_GE(rotator, 40) << "the rotator: a new picture every second frame";
+            EXPECT_LE(rotator, 60);
+        }
     }
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
 }

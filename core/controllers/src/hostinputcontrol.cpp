@@ -286,7 +286,7 @@ int HostReply::HttpStatus() const
 {
     if (error.empty())
         return 200;
-    if (error == "unknown-profile" || error == "unknown-device")
+    if (error == "unknown-profile" || error == "unknown-device" || error == "unknown-alias")
         return 404;
     if (error == "read-only")
         return 409;
@@ -300,7 +300,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
     static const std::vector<std::string> verbs = {
         "devices", "context",  "profiles", "profile", "save",     "delete", "apply",    "bindings",        "bind",
         "unbind",  "scheme",   "haptics",  "rumble",  "output",   "light",  "role",     "pin",             "identify",
-        "probe",   "database", "database_import",     "learn"};
+        "probe",   "database", "database_import",     "learn",    "aliases", "unalias"};
     return verbs;
 }
 
@@ -328,7 +328,8 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"probe", {}},
         {"database", {"vidpid", "guid", "device", "name", "version"}},
         {"database_import", {"text", "save"}},
-        {"learn", {"device", "step", "controls", "control", "value", "name", "save"}},
+        {"learn", {"device", "step", "controls", "control", "value", "name", "save"}},        {"aliases", {}},
+        {"unalias", {"id"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -426,7 +427,10 @@ HostReply HostInputControl::Execute(const HostRequest& request)
     if (verb == "database_import")
         return DatabaseImport(request);
     if (verb == "learn")
-        return Learn(request);
+        return Learn(request);    if (verb == "aliases")
+        return Aliases();
+    if (verb == "unalias")
+        return Unalias(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -1076,6 +1080,53 @@ HostReply HostInputControl::Learn(const HostRequest& request)
                                                  LearnSession::Prompt(session.Current()) +
                                                  (session.WaitingForRelease() ? " (release the last one first)" : "");
     });
+    return reply;
+}
+
+HostReply HostInputControl::Aliases()
+{
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    std::vector<JsonValue> list;
+    for (const auto& [from, to] : _owner.Profiles().Aliases())
+    {
+        JsonValue item = JsonValue::Object();
+        item.Set("from", JsonValue::String(from));
+        item.Set("to", JsonValue::String(to));
+        const HostDeviceInfo* device = FindDevice(devices, to);
+        item.Set("connected", JsonValue::Bool(device != nullptr));
+        if (device != nullptr)
+            item.Set("name", JsonValue::String(device->name));
+        list.push_back(std::move(item));
+    }
+    HostReply reply;
+    reply.message = list.empty() ? std::string("no device aliases")
+                                 : std::to_string(list.size()) + (list.size() == 1 ? " device alias" : " device aliases");
+    reply.body.Set("aliases", JsonValue::Array(std::move(list)));
+    return reply;
+}
+
+HostReply HostInputControl::Unalias(const HostRequest& request)
+{
+    const std::string id = Option(request, "id");
+    if (id.empty())
+        return Fail("bad-request", "unalias needs id= the old device id (aliases lists them)");
+    ProfileStore& store = _owner.Profiles();
+    const auto it = store.Aliases().find(id);
+    if (it == store.Aliases().end())
+        return Fail("unknown-alias", "no device alias '" + id + "' (aliases lists them)");
+    const std::string to = it->second;
+    store.RemoveAlias(id);
+    std::string error;
+    if (!store.SaveAliases(_owner.UserProfileDir(), error))
+    {
+        store.AddAlias(id, to);  // as it was: the file and the store agree
+        return Fail("bad-request", error);
+    }
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = "removed the alias " + id + " -> " + to + ": profiles naming " + id + " no longer apply to " + to;
+    reply.body.Set("from", JsonValue::String(id));
+    reply.body.Set("to", JsonValue::String(to));
     return reply;
 }
 

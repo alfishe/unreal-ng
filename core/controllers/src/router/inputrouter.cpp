@@ -371,6 +371,35 @@ InstanceMode InputRouter::GetInstanceMode(const HostDeviceId& device, std::strin
     return it != _settings.end() ? it->second.mode : InstanceMode::FollowFocus;
 }
 
+void InputRouter::Promote(const HostDeviceId& from, const HostDeviceId& to)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto source = _settings.find(from);
+        if (source == _settings.end() || from == to)
+            return;
+        Settings& target = _settings[to];
+        const bool chosen = target.roleSet || target.mode != InstanceMode::FollowFocus || !target.connector.empty();
+        if (chosen)
+            return;
+        const DeviceRole before = RoleLocked(to);
+        target.roleSet = source->second.roleSet;
+        target.role = source->second.role;
+        target.mode = source->second.mode;
+        target.pinned = source->second.pinned;
+        target.connector = source->second.connector;
+        const auto it = _devices.find(to);
+        if (it != _devices.end() && RoleLocked(to) != before)
+        {
+            it->second.layers.clear();
+            it->second.epoch++;
+            EvaluateLocked(it->second, Now(), actions);
+        }
+    }
+    Dispatch(actions);
+}
+
 void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::string& connector)
 {
     std::lock_guard<std::mutex> lock(_mutex);

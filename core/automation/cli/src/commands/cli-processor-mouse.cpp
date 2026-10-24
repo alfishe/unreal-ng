@@ -304,7 +304,7 @@ void CLIProcessor::ShowMouseHelp(const ClientSession& session)
     ss << "  wheel <steps>           - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
     ss << "  clear                   - Release all buttons, cancel pending click and queued input" << NEWLINE;
     ss << "  status [device]         - Kempston counters, ports, routing; the machine's mouse device" << NEWLINE;
-    ss << "  devices                 - The machine's mouse devices (kempston, sprinter, evo-ps2)" << NEWLINE;
+    ss << "  devices                 - The machine's mouse devices (kempston, sprinter, evo-ps2, amx)" << NEWLINE;
     ss << "  set <x> <y>             - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     ss << NEWLINE;
     ss << "Input goes to the machine's own mouse (Kempston interface, Sprinter serial mouse," << NEWLINE;

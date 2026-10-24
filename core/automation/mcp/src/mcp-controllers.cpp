@@ -52,7 +52,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"probe", {}},
         {"database", {"vidpid", "guid", "device", "name", "version"}},
         {"database_import", {"text", "save"}},
-        // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)
+        // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)        {"aliases", {}},
+        {"unalias", {"id"}},
     };
     return actions;
 }
@@ -194,6 +195,20 @@ namespace
             if (reply["skipped"].size() > 0)
                 out << "\nskipped " << Compact(reply["skipped"]);
             out << "\ngamecontrollerdb: " << reply["gamecontrollerdb"].asString();
+            return out.str();
+        }
+        if (action == "aliases")
+        {
+            // Old id -> new id: the profiles naming the old id apply to the new one
+            for (const Json::Value& alias : reply["aliases"])
+            {
+                out << alias["from"].asString() << " -> " << alias["to"].asString();
+                if (alias["connected"].asBool())
+                    out << " (" << alias["name"].asString() << ", connected)";
+                out << "\n";
+            }
+            if (reply["aliases"].empty())
+                out << "no device aliases";
             return out.str();
         }
         if (action == "bindings")
@@ -358,7 +373,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
-        "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
+        "unalias: the old device id of an alias (aliases lists them); scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
     schema["properties"]["text"]["description"] =
         "save: the whole profile, YAML or JSON (schema 1); database_import: a gamecontrollerdb.txt line or a RetroArch "
@@ -415,7 +430,9 @@ void RegisterControllers(ToolRegistry& registry)
         "and a light blink, to tell two pads apart), probe (the backends, running or why not, and the devices each "
         "found), database (look up a VID:PID, an SDL GUID or a connected device), database_import (a gamecontrollerdb "
         "line or a RetroArch autoconfig file into the user's device database; the learn wizard is on REST, CLI and "
-        "Python: it needs a person). Options per action:" +
+        "Python: it needs a person), aliases (old device id -> new: a controller first seen through GameController "
+        "alone (gc:...) and later matched to its HID device keeps its profiles under the new id), unalias (forget "
+        "one, id = the old id). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -430,8 +447,8 @@ void RegisterControllers(ToolRegistry& registry)
             {
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
-                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile",
-                                                            "bindings", "haptics", "probe",   "database"};
+                static const std::set<std::string> reads = {"devices",  "context", "profiles", "profile", "bindings",
+                                                            "haptics",  "probe",   "database", "aliases"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

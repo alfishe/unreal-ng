@@ -97,8 +97,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postControllerVerb, "/api/v1/emulator/{id}/controllers/{connector}/{verb}",
                   drogon::Post);
     // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics, probe,
-    // database (GET); save, delete, apply, bind, unbind, scheme, rumble, output, light, role, pin, identify,
-    // database_import, learn (POST)
+    // database, aliases (GET); save, delete, apply, bind, unbind, scheme, rumble, output, light, role, pin, identify,
+    // database_import, learn, unalias (POST)
     ADD_METHOD_TO(EmulatorAPI::getHostControllers, "/api/v1/controllers/{verb}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postHostControllers, "/api/v1/controllers/{verb}", drogon::Post);
     // The same verbs in the spec's paths: database/import, and a device's role / pin / identify / learn

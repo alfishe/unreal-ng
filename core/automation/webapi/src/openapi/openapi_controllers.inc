@@ -87,13 +87,14 @@
         auto replies = [](Json::Value& operation) {
             operation["responses"]["200"]["description"] = "The envelope: ok, error, message, then the verb's fields";
             operation["responses"]["400"]["description"] = "bad-request, invalid-binding";
-            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device";
+            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device, unknown-alias";
             operation["responses"]["409"]["description"] = "read-only (a built-in profile cannot be deleted)";
             operation["responses"]["503"]["description"] = "unavailable: no host input in this process";
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, probe, database";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, probe, database, "
+                         "aliases";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -115,15 +116,18 @@
             "(id, name, family, match {step, score}, notice), and user_devices (the devices.user.json path). database "
             "(?vidpid=045e:0b00 | guid=<SDL GUID> | device=<id>, name=, version=): what the device database says "
             "(query {vid, pid, bus, version, name, sdl_guid}, match {family, name, vendor, layout, role, step: exact | "
-            "vid-pid | name | unknown, score, controls, map})";
+            "vid-pid | name | unknown, score, controls, map}). aliases: the device aliases, {from, to, connected, "
+            "name}: a controller first seen through GameController alone (gc:...) and later matched to its HID device "
+            "goes on under the new id, and the profiles naming the old one apply to it (kept in aliases.yaml)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "probe", "database"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "probe", "database",
+                            "aliases"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
             "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
-            "output; light; role, pin, identify a device; import a mapping; learn an unknown device";
+            "output; light; role, pin, identify a device; import a mapping; learn an unknown device; unalias";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -152,10 +156,11 @@
             "triggers, View, Menu) takes the device: its controls answer the prompts and reach nothing else; status; "
             "sample {control, value} feeds a raw control as the device would; skip; back; finish {name?, save?} "
             "maps and saves (map, gamecontrollerdb, saved, family, path); cancel. Each answers learning, index, count, "
-            "control, prompt, waiting_for_release, map";
+            "control, prompt, waiting_for_release, map. unalias {id}: forget a device alias (id = the old id; "
+            "unknown-alias when there is none), saved and applied at once; answers from and to";
         post["tags"].append("Controllers");
         verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "role",
-                             "pin", "identify", "database_import", "learn"});
+                             "pin", "identify", "database_import", "learn", "unalias"});
         replies(post);
 
         Json::Value& import = paths["/api/v1/controllers/database/import"]["post"];

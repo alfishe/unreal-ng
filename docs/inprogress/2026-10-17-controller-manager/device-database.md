@@ -128,6 +128,16 @@ Rules:
   match can be explained.
 - The wizard's result is saved as a user entry in the gamecontrollerdb line format plus our family fields. It can then
   be shared as a pull request to `data/controllers/`.
+- A `gc:` device (a pad only GameController sees, [architecture.md §5](architecture.md#5-device-identity-and-merging))
+  has no VID / PID: its family comes from step 5 on GameController's vendor name ("DualSense Wireless Controller" ->
+  the PlayStation family, "Xbox Wireless Controller" -> the Xbox one), else step 6.
+- The PlayStation pads (DualShock 4 054C:05C4 / 09CC / 0BA0, DualSense 054C:0CE6, DualSense Edge 054C:0DF2) and the
+  Switch Pro controller (057E:2009) are read by their own drivers on macOS (`SonyPad`, `SwitchProPad`, by VID / PID,
+  [haptics.md §9](haptics.md#9-backends)), whatever entry matched them; the entry gives the name, family, layout and
+  images as for any pad. So are the Joy-Cons (057E:2006, 2007; the `joy-con` entry, the OS's product name "Joy-Con
+  (L)" / "(R)"), alone or a left and a right one as one pad "Joy-Con (L/R)". The charging grip (200E) shows each Joy-Con in it
+  as an interface of its own: the side of each comes from the device info (below the USB handshake, subcommand 0x02),
+  then it is a Joy-Con as any and pairs the same way; an empty slot (no answer) stays hidden.
 
 ## 4. User overrides
 
@@ -163,9 +173,12 @@ user images through this file.
 
 ## 6. Images: the house style
 
-Per D5, images start as manufacturer photos or openly licensed photos and are retouched into one house style.
-Vectorization is a separate study (Q-1). Until that study ends, the canonical asset is a retouched raster with a hotspot
-map.
+Q-1 is answered (owner, 2026-10-23): the pictures are vector art. Each device is drawn from a data model in millimetres
+by a generator, not traced: [POC 033](../../../tools/poc/033-vector-controller-pictures/README.md) writes
+`front.svg` (SVG Tiny 1.2 for QSvgRenderer, named layers, one `control-<name>` group per control) with its
+`front.hotspots.json` from the same geometry and a `provenance.json`. Photos (the sources below) are references for
+sizes and layout only, nothing is copied; platform logos are left out (D5). A user may still add a photo with its own
+hotspot map: the format is the same for SVG and raster.
 
 **Sources, in order of preference:**
 
@@ -301,28 +314,29 @@ The keyboard images double as the target picker for "bind to a ZX key": a click 
 ## 11. Seed families
 
 The first `devices.json`, from [research-host-apis.md §5](research-host-apis.md#5-other-controllers). Image status:
-`own` = we photograph it, `find` = a source to find, `generic` = the family fallback until then.
+`vector` = drawn by POC 033 (own set), `own` = we photograph it as a reference, `find` = a source to find, `generic` =
+the family fallback (the POC 033 generic pad or DB9 stick) until then.
 
 | # | Family id | VID | PIDs | Layout | Images |
 |:--|:--|:--|:--|:--|:--|
-| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | own |
+| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | vector |
 | 2 | `xbox-elite-1` | 045E | 02E3 | xbox | find |
 | 3 | `xbox-360` | 045E | 028E (real wired; not the macOS synthetic) | xbox | find |
-| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | find |
-| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | find |
-| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | find |
+| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | vector |
+| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | vector |
+| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | vector |
 | 7 | `xbox-adaptive` | 045E | 0B0A, 0B0C, 0B21 | xbox | find |
 | 8 | `xbox-wireless-adapter` | 045E | 02E6, 02FE (pads behind it report their own families) | — | — |
-| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | find |
-| 10 | `dualsense` | 054C | 0CE6 | playstation | find |
+| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | vector |
+| 10 | `dualsense` | 054C | 0CE6 | playstation | vector |
 | 11 | `dualsense-edge` | 054C | 0DF2 | playstation | find |
-| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | find |
+| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | vector |
 | 13 | `joy-con` | 057E | 2006, 2007, 200E | nintendo-positional | find |
 | 14 | `nso-snes` / `nso-n64` / `nso-megadrive` | 057E | 2017 / 2019 / 201E | snes / n64 / megadrive | find |
-| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | find |
-| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | find |
-| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | find |
-| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | find |
+| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | vector |
+| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | vector |
+| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | vector |
+| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | vector |
 | 19 | `megadrive-mini` | 0CA3 | 0024 (6B), 0025 (3B) | megadrive | find |
 | 20 | `atari-vcs` | 3250 | 1001 (Classic), 1002 (Modern) | atari / xbox | find |
 | 21 | `atari-cx` | 0E6A | 4011 | atari | find |
@@ -333,6 +347,14 @@ The first `devices.json`, from [research-host-apis.md §5](research-host-apis.md
 | 26 | `generic-snes-usb` | 0810, 0079 | E501; 0011 | snes | generic |
 | 27 | `arcade-stick` | 0F30, 0079, 0738 | 1100-1116; 1830, 181A, 181B; 8180 | arcade | generic |
 | 28 | `macos-synthetic-xbox` | 045E | 028E version 0, IOClass `AppleGCResource` | — | ignored |
+| 29 | `8bitdo-sn30-pro-plus` | 2DC8 | 6002, 6102 | nintendo-positional | vector |
+| 30 | `8bitdo-sn30` / `8bitdo-sf30` | 2DC8 | 2840, 5103, AB20 / 3001, 2830, AB21 | nintendo-positional | vector |
+| 31 | `8bitdo-m30` | 2DC8 | 5001, 5006, 5101 | megadrive | vector |
+| 32 | `8bitdo-zero-2` | 2DC8 | 3230, 9018 | nintendo-positional | vector |
+
+Rows 29-32 and the extra PIDs of rows 17 (3010, 6103) and 18 (3011, 3012, 3013, 6007, 310B) come from
+SDL_GameControllerDB (the 2DC8 GUIDs, product in bytes 8-9 little-endian, 2026-10-23); SDL3's `usb_ids.h` and
+`controller_list.h` confirm rows 15-18. A PID listed under two names there (2862, 9012, 3810) is left out.
 
 The Stream Deck (0FD9) is not a host device here. It is a companion client through the WebAPI
 ([debug-and-ttd.md](debug-and-ttd.md), [research-host-apis.md §6](research-host-apis.md#6-stream-deck)).
@@ -341,6 +363,6 @@ The Stream Deck (0FD9) is not a host device here. It is a companion client throu
 
 | # | Question |
 |:--|:--|
-| Q-1 | Vectorization: trace the retouched photos into SVG (themeable, small, crisp at any size, Mesen2-style), or keep rasters? A separate study: tools, cost per device, the look next to the photos, dark / light themes. Until then the raster + hotspot map is canonical, and the map format does not change if the image becomes SVG. |
+| Q-1 | Answered (owner, 2026-10-23): vector pictures drawn by a generator from per-device data, POC 033 ([§6](#6-images-the-house-style)). |
 | Q-8 | Retro Games Ltd THEJOYSTICK / THESPECTRUM pad VID/PIDs: read them from ioreg when a device is available. |
 | Q-9 | Manufacturer press-kit terms. **Answered** (D5): allowed with the source and terms recorded per image, platform logos removed in the retouch; where a vendor forbids it, CC images or our own photos. |

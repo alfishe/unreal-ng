@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """POC 031: draws the keyboard of every model in each style, with its key map, and the gallery.
 
-    generate.py [names]           write keyboards/out/<id>.<style>.svg, <id>.keys.json, gallery.html
+    generate.py [names]           write data/controllers/keyboards/<id>.<style>.svg, <id>.keys.json, index.json; gallery.html here
     generate.py --check [names]   also check the maps and render each SVG with Qt (qtrender) and rsvg into
                                   scratch/2026-10-19-poc-031/render/
 

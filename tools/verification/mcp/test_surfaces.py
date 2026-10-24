@@ -361,5 +361,30 @@ def test_host_devices_show_battery_light_and_notice_and_the_light_verb_checks(s)
     expect('light #0040ff on' in r.text, 'the pad takes the colour', r.text)
 
 
+def test_host_aliases_list_and_unalias_refuses_an_unknown_id(s):
+    """aliases lists the promoted devices' old ids ({from, to, connected}) on REST, the socket and MCP; unalias is a
+    POST that names an unknown id (a live run never forgets the owner's real aliases)"""
+    status, rest = http(s, 'GET', '/api/v1/controllers/aliases')
+    if status == 503:
+        return  # a process without the Qt client: no host input
+    expect(status == 200 and rest['ok'] and isinstance(rest['aliases'], list), 'the aliases', rest)
+    for alias in rest['aliases']:
+        expect(alias['from'] and alias['to'] and isinstance(alias['connected'], bool), 'an alias entry', alias)
+    socket = ws_calls(s, [('GET', '/api/v1/controllers/aliases', None)])
+    expect(socket[1]['status'] == 200 and socket[1]['body']['aliases'] == rest['aliases'],
+           'the socket call answers as REST', socket)
+    r = s.call('controllers', {'action': 'aliases'})
+    expect(('no device aliases' in r.text) == (not rest['aliases']), 'MCP names the aliases in its text', r.text)
+    for alias in rest['aliases']:
+        expect(alias['from'] + ' -> ' + alias['to'] in r.text, 'each alias in the text', r.text)
+
+    status, body = http(s, 'POST', '/api/v1/controllers/unalias', {'id': 'gc:no-such-device'})
+    expect(status == 404 and body['error'] == 'unknown-alias', 'an unknown alias', body)
+    status, body = http(s, 'GET', '/api/v1/controllers/unalias?id=gc:no-such-device')
+    expect(status == 405, 'unalias is a POST', body)
+    r = s.call('controllers', {'action': 'unalias', 'id': 'gc:no-such-device'}, ok=False)
+    expect(r.is_error and 'unknown-alias' in r.text, 'MCP: an unknown alias', r.text)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))
