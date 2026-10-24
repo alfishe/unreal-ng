@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "devicedatabase.h"
+#include "haptics/hapticprofile.h"
 #include "haptics/testeffects.h"
 #include "hostinputservice.h"
 #include "profiles/yaml.h"
@@ -256,7 +257,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
                                                    "scheme",  "haptics", "rumble",   "output",  "light",
-                                                   "aliases", "unalias", "match"};
+                                                   "haptics-probe", "aliases", "unalias", "match"};
     return verbs;
 }
 
@@ -276,6 +277,7 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"scheme", {"id", "family", "device", "profile"}},
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
+        {"haptics-probe", {"kind", "address", "page", "port_mask", "play"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
         {"aliases", {}},
@@ -361,6 +363,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Haptics(request);
     if (verb == "rumble")
         return Rumble(request);
+    if (verb == "haptics-probe")
+        return HapticsProbe(request);
     if (verb == "output")
         return Output(request);
     if (verb == "light")
@@ -455,6 +459,85 @@ HostReply HostInputControl::Haptics(const HostRequest& request)
                                           {"effects", JsonValue::Array(std::move(effects))}}));
     }
     reply.body.Set("devices", JsonValue::Array(std::move(list)));
+    return reply;
+}
+
+HostReply HostInputControl::HapticsProbe(const HostRequest& request)
+{
+    static const std::pair<const char*, HapticProbeKind> kKinds[] = {{"exec", HapticProbeKind::Exec},
+                                                                     {"read", HapticProbeKind::Read},
+                                                                     {"write", HapticProbeKind::Write},
+                                                                     {"port-in", HapticProbeKind::PortIn},
+                                                                     {"port-out", HapticProbeKind::PortOut}};
+    const std::string kind = Option(request, "kind");
+    HapticProbe probe;
+    bool known = false;
+    for (const auto& [name, value] : kKinds)
+        if (kind == name)
+        {
+            probe.kind = value;
+            known = true;
+        }
+    if (!known)
+        return Fail("bad-request", "haptics-probe needs kind= exec, read, write, port-in or port-out");
+    auto number = [&request](const char* field, unsigned long limit, unsigned long& out) {
+        const std::string text = Option(request, field);
+        if (text.empty())
+            return true;
+        char* end = nullptr;
+        out = std::strtoul(text.c_str(), &end, text.rfind("0x", 0) == 0 || text.rfind("0X", 0) == 0 ? 16 : 10);
+        return end != nullptr && *end == '\0' && out <= limit;
+    };
+    unsigned long address = 0x10000, page = 0xFFFF, mask = 0xFFFF;
+    if (!number("address", 0xFFFF, address) || address > 0xFFFF)
+        return Fail("bad-request", "haptics-probe needs address= (#0000-#FFFF; a port for port-in / port-out)");
+    if (!number("page", 255, page) || !number("port_mask", 0xFFFF, mask))
+        return Fail("bad-request", "page= is a RAM page 0-255, port_mask= a 16-bit mask");
+    probe.address = probe.end = static_cast<uint16_t>(address);
+    probe.page = static_cast<uint16_t>(page);
+    probe.portMask = static_cast<uint16_t>(mask);
+
+    const ProfileContext context = _owner.Context();
+    if (context.fileSha256.empty() || context.fileSha256.front().empty())
+        return Fail("unavailable", "no program loaded from a file: a probe belongs to a game profile");
+    const std::string& sha = context.fileSha256.front();
+    const std::string id = "user/game-" + sha.substr(0, 16);
+    ProfileStore& store = _owner.Profiles();
+    Profile profile;
+    if (const Profile* existing = store.Find(id))
+        profile = *existing;
+    else
+    {
+        profile.kind = ProfileKind::Play;
+        profile.id = id;
+        profile.label = id;
+        profile.fileSha256 = {sha};
+        profile.options = JsonValue::Object();
+        // From the haptics that play now: the probe adds to the game's profile rather than replacing it
+        const std::string& playing = _owner.Resolved().hapticsProfile;
+        if (const Profile* game = playing.empty() ? nullptr : store.Find(playing))
+            profile.haptics = game->haptics;
+    }
+    profile.scope = ProfileScope::User;
+    std::string source, error;
+    if (!AddHapticProbeSource(profile.haptics, probe, Option(request, "play", "hit"), source, error))
+        return Fail("bad-request", error);
+    Profile checked;
+    if (!ParseProfile(ProfileStore::Dump(profile), checked, error))
+        return Fail("bad-request", error);
+    checked.scope = ProfileScope::User;
+    if (!ProfileStore::Save(checked, _owner.UserProfileDir(), error))
+        return Fail("bad-request", error);
+    checked.path = ProfileStore::SavePath(checked, _owner.UserProfileDir());
+    const std::string path = checked.path;
+    if (!store.Add(std::move(checked), error))
+        return Fail("bad-request", error);
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = "haptic probe " + source + " (" + kind + ") added to " + id;
+    reply.body.Set("id", JsonValue::String(id));
+    reply.body.Set("source", JsonValue::String(source));
+    reply.body.Set("path", JsonValue::String(path));
     return reply;
 }
 

@@ -1681,7 +1681,7 @@ POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options}
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
                                                          | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | unalias
+                                                         | light | haptics-probe | unalias
 GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
 GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
 GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
@@ -1702,6 +1702,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/haptics-probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
+a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
+game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
+`unavailable` without a program loaded from a file.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or

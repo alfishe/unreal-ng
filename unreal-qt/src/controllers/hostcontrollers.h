@@ -16,6 +16,7 @@
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
+#include "emulator/io/controllers/ihapticfeed.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
@@ -77,6 +78,10 @@ public:
     /// the file's SHA-256; mapping-and-profiles.md §6.1) holding the connector and the first pad's pin; false with the
     /// reason
     bool KeepAutoDecision(QString& error);
+    /// "Add probe from debugger" (haptics.md §7): @p probe (a debugger breakpoint) as a source of the user game profile
+    /// of the loaded file (the haptics-probe verb: user/game-<sha>, made from the profile whose haptics play now), with
+    /// a `hit` rule; the source's name in @p name; false with the reason
+    bool AddHapticProbe(const controllers::HapticProbe& probe, QString& name, QString& error);
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
     bool DebugLayer() const
@@ -97,6 +102,13 @@ public:
         return _soundHaptics;
     }
     void SetSoundHaptics(bool on);
+    /// The Haptics panel's "DSP filters" (haptics.md §4, off by default, kept in the settings): the sound haptics add
+    /// `lowband(mix)` on the low motor and `onset(mix)` as a high-motor tick to the AY / beeper filters
+    bool SoundHapticsDsp() const
+    {
+        return _soundHapticsDsp;
+    }
+    void SetSoundHapticsDsp(bool on);
     /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
     /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
     /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine.
@@ -214,6 +226,7 @@ private:
     bool _debugFocus = false;  ///< the debugger window has the focus
     std::string _manualProfile;
     bool _soundHaptics = false;
+    bool _soundHapticsDsp = false;
     bool _globalShortcuts = false;
     QWidget* _mainWindow = nullptr;
     QWidget* _debuggerWindow = nullptr;

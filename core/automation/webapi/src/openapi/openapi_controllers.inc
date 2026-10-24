@@ -143,12 +143,16 @@
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
             "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
             "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
-            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. unalias {id}: "
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. haptics-probe "
+            "{kind, address, page?, port_mask?, play?}: a probe (exec, read, write, port-in, port-out: a breakpoint that "
+            "never stops, haptics.md §5) at an address or port as a source of the loaded game's user profile "
+            "(user/game-<sha>, started from the haptics that play now), with a rule that plays the effect (hit by "
+            "default); answers id, source and path; unavailable without a program loaded from a file. unalias {id}: "
             "forget a device alias (id = the old id; unknown-alias when there is none), saved and applied at once; "
             "answers from and to";
         post["tags"].append("Controllers");
-        verbParameter(post,
-                      {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "unalias"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light",
+                             "haptics-probe", "unalias"});
         replies(post);
     }
 

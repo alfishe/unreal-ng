@@ -46,6 +46,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
         {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
+        {"haptics-probe", {"kind", "address", "page", "port_mask", "play"}},
         {"aliases", {}},
         {"unalias", {"id"}},
     };
@@ -372,6 +373,14 @@ void RegisterControllers(ToolRegistry& registry)
         "output: a seek's marks, strongest first (second, ten_seconds, bookmark, edge, barrier): the pattern the "
         "device's top layer plays for them";
     schema["properties"]["color"]["description"] = "light: #RRGGBB, r,g,b (0..255 each) or off";
+    schema["properties"]["kind"]["description"] = "haptics-probe: exec, read, write, port-in or port-out";
+    schema["properties"]["address"]["description"] =
+        "haptics-probe: the address (exec, read, write) or port (port-in, port-out), 0x5C3A or decimal";
+    schema["properties"]["page"]["description"] = "haptics-probe: a RAM page (the address is the offset in it)";
+    schema["properties"]["port_mask"]["description"] = "haptics-probe: the port's decoded bits (0x00FF; all by default)";
+    schema["properties"]["play"]["description"] =
+        "haptics-probe: the library effect its rule plays (hit by default; tick, knock, thump, explosion, engine, "
+        "heartbeat, life-lost, pickup, shot, rumble-strip)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -398,11 +407,13 @@ void RegisterControllers(ToolRegistry& registry)
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), aliases (old device id -> new: a "
-        "controller first seen through GameController alone (gc:...) and later matched to its HID device keeps its "
-        "profiles under the new id), unalias (forget one, id = the old id), match (the game profiles a program's "
-        "signatures choose: exact, file SHA-256, then the TR-DOS file set's fuzzy rule; context shows them for the "
-        "loaded program with where the haptics come from). Options per action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), haptics-probe (a "
+        "non-breaking breakpoint as a haptic source of the loaded game's user profile, with a rule; the debugger's "
+        "Add as Haptic Probe), aliases (old device id -> new: a controller first seen through GameController alone "
+        "(gc:...) and later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = "
+        "the old id), match (the game profiles a program's signatures choose: exact, file SHA-256, then the TR-DOS "
+        "file set's fuzzy rule; context shows them for the loaded program with where the haptics come from). Options "
+        "per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

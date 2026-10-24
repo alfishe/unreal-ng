@@ -109,6 +109,42 @@ DSP filters read the per-source stream decimated to 8 kHz.
 The defaults without a game profile (Advanced, off for players): `lowband(mix)` → handle low motor, `onset(mix)` → a
 short high-motor tick. That alone already gives a usable feel in most games, and a profile replaces it.
 
+Built (2026-10-23):
+
+- **Taps.** The feed names the streams it reads (`IHapticFeed::Streams`, at most four). The core then decimates each
+  to 8 kHz mono at the frame end (`SoundManager::setHapticTaps` / `hapticTap`; an integer box filter whose phase runs
+  on across frames) and hands it over in `HapticFrame::streams` (159 or 160 samples a frame of 69888 T at 3.5 MHz).
+  - The taps sit before mute and volume: `mix` is the master mix, the others the per-source buffers.
+  - `next-dac` is the Next's four DAC channels alone (`NextAudio`'s part tap, before the part gains). On a model with
+    no DAC part, `covox` / `soundrive` is the Covox device.
+  - A source the machine lacks gives an empty stream. Nothing is tapped while no feed asks.
+- **Filters.** `haptics/audiofilters.{h,cpp}` work in integers, so every compiler gives the same levels.
+  - The coefficients are Q16, from plain arithmetic: no libm, with π as a literal.
+  - The dB ratios come from a table of literals.
+- **Filter options.**
+  - `envelope`: `attack_ms` (default 5), `release_ms` (default 80) and `scale`.
+  - `lowband`: `low_hz` (default 20) and `high_hz` (default 150). It is a one-pole high-pass followed by two one-pole
+    low-passes (12 dB / octave above the band), then the envelope. This is a deviation from the biquad above: it is
+    exact in integers and the band edges matter little for a motor. A 60 Hz square wave passes and a 2 kHz one stays
+    under 2 %.
+  - `onset`: `rise_db` (default 12), `within_ms` (default 30), `floor` (default 0.05 of full scale) and `release_ms`
+    (default 50). It is a 1 ms-attack envelope kept per millisecond. It fires when the level rises over the level
+    `within_ms` earlier by `rise_db` and is above the floor; after that it stays quiet for `within_ms`.
+- **Selectors.** `source` takes `mix`, `beeper`, `ay:0`..`ay:2`, `covox`, `soundrive`, `soundrive:0`..`soundrive:3`,
+  `gs`, `neogs`, `next-dac`, `saa` or `moonsound`.
+  - `soundrive:<n>` is one Soundrive channel alone (0 left A, 1 left B, 2 right A, 3 right B), `(value - #80) x 128`
+    before the channel's gain (`Covox::SetChannelTap`, filled up to each write's sample). `soundrive` and `covox` are
+    the whole device.
+  - On the Next, `ay:<n>` is that chip alone. NextAudio renders each tapped chip's mono with the DC of its unsigned
+    sum taken out (an integer one-pole), before the part gain. Its scale is the other machines' chip taps (a
+    channel at full level is INT16_MAX / 2 of the mono), so one profile's thresholds fit every model.
+  - `saa` is the ZX-MultiSound card's SAA1099 row. `moonsound` is the OPL4's FM and PCM summed.
+  - A source the machine lacks gives an empty stream.
+- **The DSP defaults.** `SoundHaptics(…, dspDefaults)` and `HostInputService::SetHapticsDspDefaults` add
+  `lowband(mix)` on the low motor and `onset(mix)` as a 40 ms high-motor tick to the register-level defaults. They are
+  off by default. The controllers dialog's Haptics panel has the switch: **DSP filters on the sound**, enabled while
+  **Haptics from the sound** is on and kept in the settings (`Controllers/SoundHapticsDsp`).
+
 ## 5. Sources: game events
 
 Exact sources, written per game in its haptic profile. They are **probes**: debugger-style watches that never stop
@@ -127,6 +163,35 @@ the CPU and cost nothing when not armed.
 Probe implementation reuses the debugger's watch machinery with a new non-breaking action ("notify feed"), so
 memory banking, Next MMU and page selectors behave the same as in breakpoints. Addresses are page-qualified
 (`page:5:0x5c3a`, `bank:...`) where the game is paged.
+
+Built (2026-10-23):
+
+- **Two kinds of probe.**
+  - `value`, `frame` and a plain `write` read their byte at the frame end (`IHapticFeed::Watches`).
+  - `exec`, `read`, `port-in`, `port-out` and `write` with `each_write: true` are breakpoint probes
+    (`IHapticFeed::Probes`, at most 16).
+- **How a breakpoint probe works.**
+  - Each one is a hidden breakpoint with the owner `haptics` and the probe index (`BreakpointDescriptor::probe`).
+  - `HapticProbes`, the `IBreakpointProbeSink`, is told of each hit with the address and the byte written. Nothing
+    stops, and the hit counts as one in the breakpoint's counter.
+  - A probe is never adopted by a user breakpoint of the same address, and it never adopts one either.
+  - A probe with a page is a bank breakpoint on that RAM page.
+  - The OUT's byte now reaches the port path (`HandlePortOut(port, value)`).
+- **What the feed gets.** At the frame end the feed gets the frame's hits per probe (`HapticFrame::probeHits`) and the
+  writes and OUTs in order (`probeEvents`, the first 64; for a write, the byte before and after).
+- **A write undone within one frame.** `write` with `each_write` sees every write, so a decrease followed by the
+  restore in the same frame fires. A frame-end watch never sees it.
+- **Port probes.** `port-in` / `port-out` take `port` and `port_mask`. `port-out` can also take `value` / `mask` on the
+  written byte: `{probe: port-out, port: 0xFE, port_mask: 0x01, value: 2, mask: 7}` is a red border.
+- **Cost.**
+  - With nothing armed the feed costs the frame-end call only.
+  - Port probes use the port path's existing gate.
+  - Exec / read / write probes need the CPU's debug path. `FeatureManager::setProbeDebugHold` holds it on while they
+    are armed, and the memory's breakpoint cache follows it. The cost is measured in §12.
+- **A 16-bit value.** `value` takes `word: true`: the little-endian word at `address` and `address + 1` (two
+  frame-end watches), scaled as a byte is (`value * scale / 255`), so a speed of 0 to 511 takes `scale: 0.5`.
+- **During replay.** The breakpoint manager skips memory and port breakpoints while `ttdReplayActive`, and
+  ControllerManager drops a replayed frame's hits.
 
 ## 6. Effects
 
@@ -151,6 +216,20 @@ An effect is a short program with an envelope and a target:
 | `shape` | `pulse`, `adsr`, `ramp`, `pattern` (a list of on/off/level steps), `follow` (track a continuous value) |
 | `priority` | the mixer ducks lower priorities while a higher one plays |
 | `hd` | optional, used only on voice-coil devices: frequency, waveform (`sine`, `square`, `noise`), or a CoreHaptics AHAP file shipped with the profile |
+
+Built (2026-10-23), the HD frequency:
+
+- **The fields.** `RumbleLevels` carries `lowHz` / `highHz`: the frequency each band plays at on a voice-coil pad
+  (Switch HD rumble, CoreHaptics sharpness). 0 means the backend's default, and ERM motors ignore it.
+- **The library.** Each built-in effect has a frequency per band. The heavy effects sit low (`explosion` 50 / 120 Hz,
+  `thump` 60 / 160) and the light ones high (`tick` high band 320, `pickup` 400). All of them are inside the Switch HD
+  bands.
+- **A rule's `hd`.** A rule's `hd: {frequency_hz, low_hz, high_hz}` (1 to 2000 Hz) overrides them: `frequency_hz` sets
+  both bands, and `low_hz` / `high_hz` set one each. `waveform` and AHAP files are not read yet.
+- **The mixer.** Each band is written at the frequency of the effect that is loudest in it, after the envelope and the
+  ducking. A silent band carries 0.
+- **Retargeting.** A band that takes the other band's level (`target: handle.low` on a high-only effect) takes that
+  band's frequency too (`HdHaptics_Test.FrequencyOfTheLoudestEffectPerBand`).
 
 ### 6.2 Built-in effect library
 
@@ -202,6 +281,13 @@ The addresses above are an illustration of the format, not verified values for t
 
 - **Authoring**: the Advanced dialog has a "Haptics" tab with a live meter per source and per actuator, and
   "Add probe from debugger": a watch or breakpoint in the debugger can be turned into a probe with one click.
+  - Built (2026-10-23): the breakpoint list's context menu has **Add as Haptic Probe**. It turns an exec, read or
+    write breakpoint, or a port-in or port-out one, into a source of the loaded game's user profile
+    (`user/game-<sha16>`) with a rule that plays `hit`. A page breakpoint keeps its page.
+  - A write probe sees every write (`each_write`, `when: changed`).
+  - The first probe copies the haptics that play now into the user profile, so the probe adds to the game's profile
+    and does not replace it.
+  - The menu entry runs the `haptics-probe` host verb (§11): the surfaces and the menu write the same file.
 - **Sharing**: profiles in `data/controllers/profiles/` (built-in, reviewed) and the user folder; the same format for
   both.
 - **Device independence**: profiles name abstract targets; a device without trigger motors plays the fallback.
@@ -220,6 +306,19 @@ The addresses above are an illustration of the format, not verified values for t
 
 Probes and taps read emulator state but never change it, so emulation is the same with haptics on or off. A test
 asserts that frame hashes are identical with the feed active (§12).
+
+Built (2026-10-23): the hold is an event, not the host's 250 ms poll.
+
+- **Who calls it.** `ControllerManager::UpdateHapticHold` runs at each of these points:
+  - when either TTD controller enters or leaves replay mode (`EnterReplayMode` / `ExitReplayMode`) or changes session
+    state (`SetState`: into the history, back to live);
+  - when OnFrame sees replay take input or give it back.
+- **What it does.** The hold is `ttdReplayActive` or the input owned by a replay (RZX playback, the recorded history).
+  On a change it calls `IHapticFeed::OnHapticHold` at once, on the thread of the seek.
+- **What the feeds do.** On the hold the profile and sound feeds stop the game effects of their instance's devices
+  (`HapticMixer::StopGameEffects`: debug feedback stays, other instances are not touched). They then ignore frames until
+  the hold ends. A seek therefore writes zero to the motors inside `SeekTo`.
+- **The host gate.** The host's gate poll stays for pause, turbo and focus.
 
 ## 9. Backends
 
@@ -337,6 +436,17 @@ haptics` / `controllers rumble`, WebAPI `GET /api/v1/controllers/haptics`, `POST
 `controllers_haptics()` / `controllers_rumble()`. The effects are one table (`haptics/testeffects.h`) that the
 dialog's Test haptics also plays. Mode, strength, gate and stop are still to come.
 
+Built (2026-10-23): the host verb `haptics-probe` (`kind` exec / read / write / port-in / port-out, `address`, `page`,
+`port_mask`, `play`). It adds a probe with its rule to the loaded game's user profile and answers `id`, `source` and
+`path`; without a program loaded from a file it is `unavailable`. It is on every plane:
+
+- CLI `controllers haptics-probe <kind> <address> [page= port_mask= play=]`;
+- WebAPI `POST /api/v1/controllers/haptics-probe`, in OpenAPI, and a socket `call` like every route;
+- MCP `controllers` action `haptics-probe`;
+- Python `controllers_haptics_probe(kind, address, ...)`.
+
+Lua is excluded, as decided.
+
 A companion client (Steam Deck, phone) may receive the effect stream and play it on its own actuators.
 
 ## 12. Testing
@@ -344,10 +454,15 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 | Test | Asserts |
 |:--|:--|
 | `Haptics_AyEnvelopeOnset` | R13 writes with shape 0 produce one `explosion` event per restart, none on repeated R13 with the same value if the game does not restart |
-| `Haptics_LowbandFilter` | a synthetic 60 Hz burst passes, a 2 kHz tone does not |
+| `Haptics_LowbandFilter` | a synthetic 60 Hz burst passes, a 2 kHz tone does not (built: `HapticFilters_Test`, with the envelope, onset, probe parse and evaluation, DSP defaults and Add-probe tests) |
 | `Haptics_ProbeWriteDecreased` | a test program decrementing a byte fires `died` once per decrement and never on increment |
-| `Haptics_GateOnSeek` | a seek closes the gate within the same frame; the fake driver records zero within 10 ms |
-| `Haptics_NotJournaled` | a recording with haptics active has no extra journal events; frame hashes equal with the feed on and off |
+| `Haptics_GateOnSeek` | a seek closes the gate within the same frame; the fake driver records zero within 10 ms (built: `HapticFeed_Test`, the zero is written inside `SeekTo`) |
+| `Haptics_NotJournaled` | a recording with haptics active has no extra journal events; frame hashes equal with the feed on and off (built: `HapticFeed_Test`, every probe and three taps, ten frames) |
+| `ProbesSeeEveryAccessAndNeverStop` | on a 48K running a test program: exec, read, both writes of a change undone in the frame, the OUT with its byte, the IN; 159 or 160 samples a frame per tap; disarmed on detach |
+| `TheNextDacIsAStreamOfItsOwn` | on a Next, `next-dac` is the mono sum of the DAC channels before the mixer's DAC row, and `covox` is the same stream there |
+| `GameHapticsGames_Test` | each built-in game profile (H5) is found by its image's hash on a Pentagon, and each of its sources fires alone and plays when a test program calls the game's address |
+| `ChaseHqSpeedDrivesTheEngine` | the 16-bit speed word drives the engine on the low motor in proportion, full at 511 |
+| `FrequencyOfTheLoudestEffectPerBand` | the mixer writes each band at the frequency of its loudest effect, 0 when silent; the library defaults, a rule's `hd` over them, the frequency moving with a retarget, bad `hd` refused |
 | `Haptics_Fallback` | `trigger.right\|handle.high` plays on handle.high for a device without trigger motors |
 | `Haptics_NoCostWhenIdle` | no ring pushes when no device with actuators is bound |
 
@@ -364,10 +479,42 @@ applies to the hooks on the memory and port paths.
 | H4 | HD haptics (DualSense, Switch), adaptive triggers, AHAP patterns |
 | H5 | first built-in game profiles with haptics, chosen by signature (`core/swsignature`) |
 
-Open points:
+Built (2026-10-23, widened 2026-10-24), H5: game profiles in `data/controllers/profiles/games/pentagon/`, found by
+the SHA-256 of the disk image (no signature library yet) on a Pentagon with TR-DOS. Each file is a bundle: one
+document per address set, each listing the hashes of the releases that share it. Every address was checked by play
+through the WebAPI: an exec counter or breakpoint hit at the moment, and the game's state changed as expected. The
+surveys covered every release on disk: the collection in `/Volumes/TB4-4Tb/Data/zx-spectrum/software/games/haptics/`
+and the vtrd mirror. All of them are TR-DOS images: no tape image of the three games is on disk.
 
-- Which games first: the owner's pick (a shooter with AY explosions, a racing game with an engine value, a platformer
-  with a lives counter is a good first set).
+| Profile | Releases | Sources → effects |
+|:--|:--|:--|
+| `builtin/game/manic-miner` | 19: MMIN_EST and 18 mods on the Bug-Byte engine (Manic Miner 2 to 6, the Triumph and Korund mods, the "3D demo") | exec #8906 (death in a real game; #88FF also runs in the demo) → `life-lost`; #8F82 (item taken) → `pickup`; #8C7B (jump starts) → `tick` on the high motor; on MMIN_EST also #89AA (game over) → `thump`, #90D9 (air counted into the score) → `rumble-strip`, #91B5 (Kong falls) → `explosion`, #907D (the ending) → `heartbeat` |
+| `builtin/game/manic-miner-phantom` | MAMINPHL (code 6 to 11 bytes higher) | #890C → `life-lost`, #8F8D → `pickup`, #8C86 → `tick` |
+| `builtin/game/exolon` | 3 that fire with Space: EXLNSlTb (bugfix), EXOL_CAP, EXOLO | exec #8366 (blaster shot) → `shot` on the right trigger or the high motor; #9221 (grenade launched) → `knock`; #92D4 (grenade detonates) → `explosion`; #9CB9 (Vitorc killed) → `life-lost`; #99CE / #9978 (grenades / ammo taken) → `pickup`; the sound #C155 (enemy destroyed) → `hit`; the sound #C0E7 (bullet hits a solid object) → `tick` |
+| `builtin/game/exolon-m` | 21 that fire with M | the same |
+| `builtin/game/exolon-demo` | EXOLONGD (relocated) | #83E5 → `shot`, #92AD → `knock`, #9360 → `explosion`, #9D45 → `life-lost` |
+| `builtin/game/chase-hq` | 16 part-1 releases, among them CHHQ+2_T (bugfix), the 48K beeper build CHASHQMK and CHHQ_FSS (boots on a Profi only, so the document lists PROFI too) | the speed word #A24A (0 to 511 with turbo) → `engine` on the low motor; exec #A4B1 (crash into the roadside) → `thump`; #A78A (the criminal's car hit) → `hit`; #889C (turbo start) → `explosion` at 0.6; #B076 (landing after a hill crest, effect id 2) → `knock`; #A437 (scraping a tunnel wall, id 6) → `rumble-strip` |
+| `builtin/game/chase-hq-gs` | CHASE_GS (General Sound version) | the speed, crash, hit and turbo above; its effect requests go to the GS |
+| `builtin/game/chase-hq-demo` | CHASEHQD (Sinclair User demo, variables #514 lower) | the speed word #9D36, #9F8E, #A1B0, #8327, as above; the pad drives its Sinclair joystick keys |
+
+Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
+
+- Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
+  once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.
+- The tests do not use the games (they are not in the repository). A test program on a Pentagon calls each address
+  instead, at a RET stub (`GameHapticsGames_Test`, one row per address set, plus a release that only shares one).
+- Not used, because they were not confirmed by play:
+  - Manic Miner: the title tune (#92F8; it plays once on entering the title, not wanted as haptics). Kong's fall ran in
+    play, but its switches were set by poke. The Phantom release's game over, Kong, air and ending addresses. The
+    JSW64-engine releases (ULT_M_M, JSWJBOND; death #8C01, jump #8F96 played) have no profile: their keys were not
+    checked.
+  - Exolon: the demo's pickups and enemy sounds.
+  - Chase H.Q.: effect id 5 (game over screens only), id 7 (requested every frame while accelerating), id 8 (the
+    hidden test mode only). CHASE.SCL boots on no model.
+- Most non-bugfix Exolon builds kill Vitorc again and again near a zone's start (the bug the 2024 fix clamps at
+  #9D06), so they give many more `died` events.
+
+Open points:
 - macOS USB output reports through the dext (§9).
 - Whether a homebrew "haptic port" (a virtual OUT port that games can write to) is wanted; it would be emulator-only
   and must not decode on real-machine ports.

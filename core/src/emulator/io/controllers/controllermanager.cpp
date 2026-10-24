@@ -25,6 +25,7 @@
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
+#include "hapticprobes.h"
 #include "ihapticfeed.h"
 #include "ihostinputsource.h"
 
@@ -123,6 +124,9 @@ ControllerManager::ControllerManager(EmulatorContext* context) : _context(contex
 {
     Rebuild();
 }
+
+// The probes' breakpoints went with the debugger, which the emulator releases first: nothing to remove here
+ControllerManager::~ControllerManager() = default;
 
 /// region <Connectors>
 
@@ -594,6 +598,97 @@ void ControllerManager::SetHapticFeed(std::shared_ptr<IHapticFeed> feed)
     _hapticFeed = std::move(feed);
 }
 
+void ControllerManager::UpdateHapticHold()
+{
+    std::lock_guard<std::mutex> hold(_holdMutex);
+    const bool held = _context != nullptr && (_context->ttdReplayActive || InputOwnedByReplay());
+    if (_hapticHeld.exchange(held, std::memory_order_acq_rel) == held)
+        return;
+    std::shared_ptr<IHapticFeed> feed;
+    {
+        std::lock_guard<std::mutex> lock(_sourceMutex);
+        feed = _hapticFeed;
+    }
+    if (feed)
+        feed->OnHapticHold(held);
+}
+
+namespace
+{
+SoundManager::HapticTapSource TapSource(HapticStream stream)
+{
+    using Tap = SoundManager::HapticTapSource;
+    switch (stream)
+    {
+        case HapticStream::Mix:
+            return {AudioSourceType::MasterMix};
+        case HapticStream::Beeper:
+            return {AudioSourceType::Beeper};
+        case HapticStream::Ay0:
+            return {AudioSourceType::AY1_All};
+        case HapticStream::Ay1:
+            return {AudioSourceType::AY2_All};
+        case HapticStream::Ay2:
+            return {AudioSourceType::AY3_All};
+        case HapticStream::Covox:
+            return {AudioSourceType::COVOX};
+        case HapticStream::Gs:
+            return {AudioSourceType::GeneralSound};
+        case HapticStream::NextDac:
+            return {AudioSourceType::NextDac};
+        case HapticStream::Saa:
+            return {AudioSourceType::MultiSoundSaa};
+        case HapticStream::Moonsound:
+            return Tap{AudioSourceType::Moonsound_FM, AudioSourceType::Moonsound_PCM, -1};
+        case HapticStream::Soundrive0:
+        case HapticStream::Soundrive1:
+        case HapticStream::Soundrive2:
+        case HapticStream::Soundrive3:
+            return Tap{AudioSourceType::COVOX, AudioSourceType::Custom,
+                       static_cast<int>(stream) - static_cast<int>(HapticStream::Soundrive0)};
+    }
+    return {AudioSourceType::MasterMix};
+}
+}  // namespace
+
+void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed)
+{
+    DetachHapticFeed();
+    _hapticFed = feed;  // the counters ran up while nobody listened: this frame only starts them
+    _hapticWatches = feed->Watches();
+    if (_hapticWatches.size() > HapticFrame::kMaxWatches)
+        _hapticWatches.resize(HapticFrame::kMaxWatches);
+    std::vector<HapticStream> streams = feed->Streams();
+    if (streams.size() > HapticFrame::kMaxStreams)
+        streams.resize(HapticFrame::kMaxStreams);
+    std::vector<SoundManager::HapticTapSource> taps;
+    for (HapticStream stream : streams)
+        taps.push_back(TapSource(stream));
+    _hapticStreams = taps.size();
+    if (_context->pSoundManager != nullptr && !taps.empty())
+        _context->pSoundManager->setHapticTaps(taps);
+    const std::vector<HapticProbe> probes = feed->Probes();
+    if (!probes.empty())
+    {
+        if (!_hapticProbes)
+            _hapticProbes = std::make_unique<HapticProbes>(_context);
+        _hapticProbes->Arm(probes);
+    }
+    if (_hapticHeld.load(std::memory_order_acquire))
+        feed->OnHapticHold(true);
+}
+
+void ControllerManager::DetachHapticFeed()
+{
+    if (_hapticStreams > 0 && _context != nullptr && _context->pSoundManager != nullptr)
+        _context->pSoundManager->setHapticTaps(std::vector<SoundManager::HapticTapSource>{});
+    _hapticStreams = 0;
+    if (_hapticProbes)
+        _hapticProbes->Disarm();
+    _hapticWatches.clear();
+    _hapticFed.reset();
+}
+
 void ControllerManager::FeedHaptics(uint64_t frame)
 {
     std::shared_ptr<IHapticFeed> feed;
@@ -604,7 +699,8 @@ void ControllerManager::FeedHaptics(uint64_t frame)
     SoundManager* sound = _context ? _context->pSoundManager : nullptr;
     if (!feed || sound == nullptr)
     {
-        _hapticFed = nullptr;
+        if (_hapticFed)
+            DetachHapticFeed();
         return;
     }
     HapticFrame summary;
@@ -632,12 +728,9 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         ay.envelopeRestarts = chip->TakeEnvelopeRestarts();
         ay.envelopeShape = regs[AY_ENVELOPE_SHAPE];
     }
-    if (_hapticFed != feed.get())
+    if (_hapticFed != feed)
     {
-        _hapticFed = feed.get();  // the counters ran up while nobody listened
-        _hapticWatches = feed->Watches();
-        if (_hapticWatches.size() > HapticFrame::kMaxWatches)
-            _hapticWatches.resize(HapticFrame::kMaxWatches);
+        AttachHapticFeed(feed);
         return;
     }
     if (Memory* memory = _context->pMemory)
@@ -653,6 +746,20 @@ void ControllerManager::FeedHaptics(uint64_t frame)
             summary.watched[summary.watchCount++] = value;
         }
     }
+    for (size_t index = 0; index < _hapticStreams && index < sound->hapticTapCount(); index++)
+    {
+        HapticStreamFrame& stream = summary.streams[summary.streamCount++];
+        size_t count = 0;
+        const int16_t* samples = sound->hapticTap(index, count);
+        count = std::min<size_t>(count, HapticStreamFrame::kMaxSamples);
+        stream.count = static_cast<uint16_t>(count);
+        if (samples != nullptr && count > 0)
+            std::copy(samples, samples + count, stream.samples.begin());
+    }
+    if (_hapticStreams > 0)
+        sound->takeHapticTaps();
+    if (_hapticProbes && _hapticProbes->Armed())
+        _hapticProbes->TakeFrame(summary);
     feed->OnHapticFrame(summary);
 }
 
@@ -703,8 +810,17 @@ void ControllerManager::OnFrame(uint64_t frame)
     if (InputOwnedByReplay())
     {
         _wasOwned = true;
+        if (!_hapticHeld.load(std::memory_order_acquire))
+            UpdateHapticHold();
+        // The haptics stay quiet over replayed frames: their probe hits and tapped sound are dropped
+        if (_hapticProbes)
+            _hapticProbes->Clear();
+        if (_hapticStreams > 0 && _context->pSoundManager != nullptr)
+            _context->pSoundManager->takeHapticTaps();
         return;
     }
+    if (_hapticHeld.load(std::memory_order_acquire))
+        UpdateHapticHold();
     if (_wasOwned)
     {
         // Replay gave input back (a seek resumed live): the devices hold the restored state, so the next sample

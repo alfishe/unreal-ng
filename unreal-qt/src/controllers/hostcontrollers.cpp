@@ -132,11 +132,13 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 {
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
+    _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
 #ifdef ENABLE_CONTROLLERS
     _service = std::make_unique<HostInputService>();
     // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
     _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
+    _service->SetHapticsDspDefaults(_soundHapticsDsp);
     _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
@@ -214,6 +216,19 @@ HostControllers::~HostControllers()
     releaseWheelMenu();
     _service->Router().SetActionSink(nullptr);
     _service->Stop();
+#endif
+}
+
+void HostControllers::SetSoundHapticsDsp(bool on)
+{
+    if (on == _soundHapticsDsp)
+        return;
+    _soundHapticsDsp = on;
+    QSettings().setValue("Controllers/SoundHapticsDsp", on);
+#ifdef ENABLE_CONTROLLERS
+    _service->SetHapticsDspDefaults(on);
+    if (_attached)
+        attachHaptics();  // the key below names the filters: the sound feed is made again
 #endif
 }
 
@@ -622,7 +637,8 @@ void HostControllers::attachHaptics()
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
     const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string("sound") : std::string());
+                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                  : std::string());
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -779,6 +795,29 @@ bool HostControllers::KeepAutoDecision(QString& error)
     profile.connectors[_autoConnector] = plan;
     profile.players = {{"auto:1", _autoConnector}};
     return saveUserProfile(std::move(profile), error);
+}
+
+bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+{
+    // The surfaces' haptics-probe verb, so the menu and an agent write the same profile
+    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
+    HostRequest request;
+    request.verb = "haptics-probe";
+    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
+    request.options["address"] = std::to_string(probe.address);
+    if (probe.page != 0xFFFF)
+        request.options["page"] = std::to_string(probe.page);
+    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
+        request.options["port_mask"] = std::to_string(probe.portMask);
+    const HostReply reply = Host(request);
+    if (!reply.Ok())
+    {
+        error = QString::fromStdString(reply.message);
+        return false;
+    }
+    const JsonValue* source = reply.body.Find("source");
+    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
+    return true;
 }
 
 void HostControllers::updateHapticsGate()
