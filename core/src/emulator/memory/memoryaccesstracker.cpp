@@ -36,6 +36,11 @@ void MemoryAccessTracker::Initialize(TrackingMode mode)
 // Reset all counters and statistics
 void MemoryAccessTracker::ResetCounters()
 {
+    // Under the allocation mutex: a feature change on another thread (UpdateFeatureCache) must not free the buffers
+    // while they are zeroed (a snapshot load's Core::Reset on a WebAPI thread beside the GUI's or another request's
+    // feature change: memset on a freed buffer of the old size)
+    std::lock_guard<std::mutex> lock(_allocationMutex);
+
     // Skip if counters haven't been allocated yet (lazy allocation)
     if (!_isAllocated.load(std::memory_order_acquire))
     {
@@ -111,56 +116,53 @@ TrackingMode MemoryAccessTracker::GetTrackingMode() const
 // Update feature cache (call when features change at runtime)
 void MemoryAccessTracker::UpdateFeatureCache()
 {
+    // Several threads change features (the GUI, WebAPI requests, the loop thread). The buffers follow the feature
+    // state, applied under the allocation mutex, never a flag another thread wrote meanwhile (a decision on a stale
+    // "was enabled" freed the buffers of an enabled tracker). The FeatureManager is read outside the mutex (its own
+    // lock may be held by a caller of this, a TTD recording start), so the state is applied until a read after the
+    // apply finds it unchanged: the last change wins whatever order the threads take the mutex in
     FeatureManager* fm = _context->pFeatureManager;
-    if (fm)
+    const auto wanted = [fm](bool& tracking, bool& calltrace) {
+        const bool debugMode = fm != nullptr && fm->isEnabled(Features::kDebugMode);
+        tracking = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        calltrace = debugMode && fm->isEnabled(Features::kCallTrace);
+    };
+    bool tracking = false, calltrace = false;
+    wanted(tracking, calltrace);
+    for (;;)
     {
-        bool debugMode = fm->isEnabled(Features::kDebugMode);
-        bool wasTrackingEnabled = _feature_memorytracking_enabled;
-        bool wasCalltraceEnabled = _feature_calltrace_enabled;
-        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
-
-        if (wasTrackingEnabled != _feature_memorytracking_enabled || wasCalltraceEnabled != _feature_calltrace_enabled)
-        {
-            LOGDEBUG("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
-                    _feature_memorytracking_enabled ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF",
-                    _feature_calltrace_enabled ? "ON" : "OFF", wasCalltraceEnabled ? "ON" : "OFF");
-        }
-
-        // Lazy allocation: allocate counters only when tracking is first enabled
-        if (_feature_memorytracking_enabled && !_isAllocated.load(std::memory_order_acquire))
         {
             std::lock_guard<std::mutex> lock(_allocationMutex);
-            if (!_isAllocated.load(std::memory_order_relaxed))
+            const bool wasTrackingEnabled = _feature_memorytracking_enabled;
+            const bool wasCalltraceEnabled = _feature_calltrace_enabled;
+            _feature_memorytracking_enabled = tracking;
+            _feature_calltrace_enabled = calltrace;
+            if (wasTrackingEnabled != tracking || wasCalltraceEnabled != calltrace)
             {
+                LOGDEBUG("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
+                         tracking ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF", calltrace ? "ON" : "OFF",
+                         wasCalltraceEnabled ? "ON" : "OFF");
+            }
+
+            // Lazy allocation: the counters exist exactly while tracking is enabled (freed when it is off)
+            const bool allocated = _isAllocated.load(std::memory_order_relaxed);
+            if (tracking && !allocated)
                 AllocateCounters();
-            }
-        }
-        // Deallocation: free counters when tracking is disabled to reclaim memory
-        else if (!_feature_memorytracking_enabled && wasTrackingEnabled && _isAllocated.load(std::memory_order_acquire))
-        {
-            std::lock_guard<std::mutex> lock(_allocationMutex);
-            if (_isAllocated.load(std::memory_order_relaxed))
-            {
+            else if (!tracking && allocated)
                 DeallocateCounters();
-            }
-        }
 
-        // Create call trace buffer if needed
-        if (_feature_calltrace_enabled && !_callTraceBuffer)
-        {
-            _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+            // The call trace buffer the same way
+            if (calltrace && !_callTraceBuffer)
+                _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+            else if (!calltrace && _callTraceBuffer)
+                _callTraceBuffer.reset();
         }
-        // Free call trace buffer when disabled
-        else if (!_feature_calltrace_enabled && _callTraceBuffer)
-        {
-            _callTraceBuffer.reset();
-        }
-    }
-    else
-    {
-        _feature_memorytracking_enabled = false;
-        _feature_calltrace_enabled = false;
+        bool trackingNow = false, calltraceNow = false;
+        wanted(trackingNow, calltraceNow);
+        if (trackingNow == tracking && calltraceNow == calltrace)
+            break;
+        tracking = trackingNow;
+        calltrace = calltraceNow;
     }
 }
 

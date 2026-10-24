@@ -2,11 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 
+#include "_helpers/testthread.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -525,6 +528,48 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_EnableAllocatesBuffers)
     ASSERT_NE(regionStats, nullptr) << "Region stats should be available";
     EXPECT_GE(regionStats->readCount, 1) << "Read count should be tracked";
     EXPECT_GE(regionStats->writeCount, 1) << "Write count should be tracked";
+}
+
+TEST_F(MemoryAccessTracker_Test, ResetWhileAnotherThreadTogglesTracking)
+{
+    // The SIGSEGV of 2026-10-24: a snapshot load (Core::Reset -> ResetCounters on a WebAPI thread) zeroed the counters
+    // while another thread's feature change freed them (DeallocateCounters drops the storage before the size), so
+    // memset ran on a null buffer of the old size. A reset and an allocate / free never overlap now
+    FeatureManager* fm = _context->pFeatureManager;
+    ASSERT_NE(fm, nullptr);
+    std::atomic<bool> done{false};
+    std::atomic<int> toggles{0};
+    TestThread toggler(
+        [&] {
+            bool on = false;
+            while (!done.load())
+            {
+                fm->setFeature(Features::kMemoryTracking, on);
+                _tracker->UpdateFeatureCache();
+                on = !on;
+                toggles.fetch_add(1);
+            }
+        },
+        [&] { done = true; });
+    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; })) << "the toggling thread runs";
+    // Each reset waits for the next toggle, so both sides make progress (a reset holds the mutex for its 75 MB)
+    int resets = 0;
+    int interleaved = 0;
+    for (; resets < 12; resets++)
+    {
+        const int before = toggles.load();
+        _tracker->ResetCounters();
+        interleaved += TestWait::For([&] { return toggles.load() > before; }) ? 1 : 0;
+    }
+    toggler.Join();
+    EXPECT_EQ(interleaved, resets) << "a free or an allocation ran after every reset";
+    EXPECT_GE(toggles.load(), resets) << "the frees and allocations ran beside the resets";
+
+    // The last word is the feature's: the buffers follow it, whatever order the threads ended in
+    fm->setFeature(Features::kMemoryTracking, true);
+    _tracker->UpdateFeatureCache();
+    EXPECT_TRUE(_tracker->_isAllocated.load());
+    EXPECT_FALSE(_tracker->_z80ReadCounters.empty());
 }
 
 // Test that disabling debug mode also disables memory tracking

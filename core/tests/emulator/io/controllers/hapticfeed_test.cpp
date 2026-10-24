@@ -218,6 +218,28 @@ TEST_F(HapticFeed_Test, ProbesSeeEveryAccessAndNeverStop)
     EXPECT_FALSE(_emulator->GetFeatureManager()->probeDebugHold());
 }
 
+TEST_F(HapticFeed_Test, ExecProbesFireOnTheInstructionStartOnly)
+{
+    // An exec probe is the instruction's first byte: the operand fetches of LD A,(#9000) at #8009 (#800A, #800B) run
+    // every frame but are no instruction start
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->probes.resize(3);
+    const uint16_t addresses[] = {kAfterHalt, kAfterHalt + 1, kAfterHalt + 2};
+    for (size_t i = 0; i < 3; i++)
+    {
+        feed->probes[i].kind = HapticProbeKind::Exec;
+        feed->probes[i].address = feed->probes[i].end = addresses[i];
+    }
+    _manager->SetHapticFeed(feed);
+    _emulator->RunNFrames(3, false);
+    ASSERT_FALSE(feed->frames.empty());
+    const HapticFrame& frame = feed->frames.back();
+    ASSERT_EQ(frame.probeCount, 3u);
+    EXPECT_EQ(frame.probeHits[0], 1u) << "the opcode";
+    EXPECT_EQ(frame.probeHits[1], 0u) << "the operand's low byte";
+    EXPECT_EQ(frame.probeHits[2], 0u) << "the operand's high byte";
+}
+
 TEST_F(HapticFeed_Test, Haptics_NotJournaled)
 {
     // The same program on two machines, one with every probe and three taps: the same machine state each frame,
