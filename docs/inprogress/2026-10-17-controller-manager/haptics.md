@@ -326,7 +326,7 @@ Built (2026-10-23): the hold is an event, not the host's 250 ms poll.
 |:--|:--|:--|:--|
 | macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense (USB report 2, Bluetooth report 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller and Joy-Cons (0x10 / 0x01, HD rumble; a pair split per half), the Surface Dial's clicks (report 1); else CoreHaptics through `GCDeviceHaptics` of the matched `GCController` (or a `gc:` device's own); none for an Xbox pad over USB (below) | Xbox report 3; DualSense trigger resistance; GC localities `leftTrigger` / `rightTrigger` | Switch Pro HD rumble (`RumbleLevels::lowHz` / `highHz`); CoreHaptics sharpness from the same frequency; AHAP patterns not yet |
 | Windows | GameInput `SetRumbleState` (Xbox); XInput `XInputSetState` as the last resort; HID output reports over the Raw Input device's handle (overlapped `WriteFile`): DualSense / Edge (USB 2, Bluetooth 0x31), DualShock 4 (USB 0x05, Bluetooth 0x11), Switch Pro controller and Joy-Cons (0x10 / 0x01, HD rumble; a pair split per half), the Surface Dial's clicks | GameInput (Xbox); DualSense trigger resistance | Switch Pro and Joy-Con HD rumble (`RumbleLevels::lowHz` / `highHz`); no CoreHaptics equivalent: the frequency is dropped for every other pad |
-| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path (below); none through evdev (`FF_RUMBLE` has no trigger motors) | hidraw output reports (hid-playstation for basic rumble) |
+| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation, hid-sony, hid-nintendo, joycond's combined Joy-Cons); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); a PlayStation or Switch pad under hid-generic through its own protocol (as macOS); a Joy-Con pair split per half; the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path; a DualSense's trigger resistance through a trigger-only hidraw report beside hid-playstation's motors (below); none through evdev (`FF_RUMBLE` has no trigger motors) | Switch Pro / Joy-Con HD rumble through the hidraw 0x10 report beside hid-nintendo (its `FF_RUMBLE` plays fixed 160 / 320 Hz) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
 
 macOS over USB (2026-10-19): an Xbox pad over USB does not rumble. The `XboxGamepad.dext` endpoint offers only vendor
@@ -438,6 +438,37 @@ levels are not written again, two writes are at least 8 ms apart, and zero is wr
 backend stops. A pad whose driver offers `FF_RUMBLE` (hid-microsoft, xpadneo) keeps evdev (the handle motors only).
 The node needs write access: `data/controllers/70-unreal-ng.rules` (uaccess for the Xbox Bluetooth product ids);
 without it the Test haptics button is off with the node, the rule and the commands.
+
+Linux PlayStation and Switch pads (2026-10-24, built, unit-tested, run against the kernel's own drivers with the
+pads emulated through uhid, not exercised on hardware). The kernel driver is the first path; hidraw adds only what it
+lacks (`HidrawUseFor(LinuxPadFacts)`, the driver from the HID device's uevent `DRIVER=`):
+
+- hid-playstation (DualSense, Edge, DualShock 4 since 6.2) and hid-sony (DualShock 3, the DualShock 4 before 6.2):
+  the motors through `FF_RUMBLE` (strong = the low motor, weak = the high one; hid-playstation's compatible
+  vibration). A DualSense's trigger resistance has no kernel path: the backend writes output report 2 (USB) / 0x31
+  (Bluetooth, its own sequence counter, CRC) with only the trigger valid flags (`DualSenseOutput::TriggerReport`), so
+  hid-playstation's own reports (motors, light bar, player LEDs) and the backend's never overwrite each other's
+  fields. The writes go through a `RumbleWriter` of their own (trigger levels only: a change of the motors alone writes
+  nothing). Without access to the node the motors still play; the device notice says the triggers need the rule.
+- hid-nintendo (Switch Pro controller, Joy-Cons, the charging grip): the kernel did the set-up (handshake, calibration,
+  the full report, vibration on, its own player lights); its `FF_RUMBLE` plays fixed 160 / 320 Hz. With the node
+  writable the backend sends the HD rumble itself: report 0x10 at the effect's frequencies
+  (`SwitchProtocol::RumbleOnly`: no set-up, `SetPlayer` ignored, the same 30 ms pacing and 50 ms refresh, neutral at
+  the end) and leaves `FF_RUMBLE` unused, so the kernel's rumble queue stays empty. Without the node `FF_RUMBLE` is
+  the path (the handle motors at the fixed frequencies).
+- hid-generic (no hid-playstation / hid-nintendo: an old kernel, the module not loaded): the pad is read and driven
+  through hidraw as on macOS: `SonyPad` / `SwitchProPad` decode the full reports, a `PadPump` runs `SonyProtocol` /
+  `SwitchProtocol` (calibration feature, set-up, rumble, light bar, player LEDs the backend numbers itself).
+- A Joy-Con pair (the backend's, as on macOS): the left half the low level, the right one the high one, each through
+  its own path. joycond's combined device forwards `FF_RUMBLE` to both halves itself.
+
+`LinuxUhid_Test` (opt-in: `UNREAL_UHID_TESTS=1`, root; Linux 7.0 on x86_64) creates the pads through `/dev/uhid`, so
+the kernel's own hid-playstation / hid-nintendo / hid-generic bind them and the test sees every output report: a
+DualSense (hid-playstation's report 2 with the `FF_RUMBLE` motors, the backend's trigger-only report beside it, the
+light bar through the LED class), a DualSense Edge (paddles and Fn from hidraw on a kernel before 7.2), a DualSense
+under hid-generic (motors, trigger and light bar in the backend's own report 2), a Switch Pro controller (the HD
+rumble as the backend's report 0x10 while hid-nintendo serves the pad) and two Joy-Cons (joined into one pad, each
+half rumbling its side). What uhid cannot show: the real pads' timing and firmware, BlueZ's path, joycond.
 
 ## 10. UI
 

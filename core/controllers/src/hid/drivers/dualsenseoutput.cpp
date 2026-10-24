@@ -43,12 +43,25 @@ bool DualSenseOutput::Handles(uint16_t vendor, uint16_t product)
 
 void DualSenseOutput::Common(const RumbleLevels& levels, uint8_t* common)
 {
-    common[0] |= kFlag0CompatibleVibration | kFlag0HapticsSelect | kFlag0RightTrigger | kFlag0LeftTrigger;
+    common[0] |= kFlag0CompatibleVibration | kFlag0HapticsSelect;
     common[2] = Byte(levels.high);
     common[3] = Byte(levels.low);
+    Triggers(levels, common);
+    common[38] |= kFlag2CompatibleVibration2;
+}
+
+void DualSenseOutput::Triggers(const RumbleLevels& levels, uint8_t* common)
+{
+    common[0] |= kFlag0RightTrigger | kFlag0LeftTrigger;
     Trigger(levels.rightTrigger, common + 10);
     Trigger(levels.leftTrigger, common + 21);
-    common[38] |= kFlag2CompatibleVibration2;
+}
+
+std::vector<uint8_t> DualSenseOutput::TriggerReport(const RumbleLevels& levels, bool bluetooth, uint8_t sequence)
+{
+    DualSenseOutputState state;
+    state.triggers = levels;
+    return Report(state, bluetooth, sequence);
 }
 
 std::vector<uint8_t> DualSenseOutput::UsbReport(const RumbleLevels& levels)
@@ -91,6 +104,8 @@ std::vector<uint8_t> DualSenseOutput::Report(const DualSenseOutputState& state, 
     }
     if (state.rumble)
         Common(*state.rumble, common);
+    else if (state.triggers)
+        Triggers(*state.triggers, common);
     if (state.light)
     {
         common[1] |= kFlag1LightbarControl;

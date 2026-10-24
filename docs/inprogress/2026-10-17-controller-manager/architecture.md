@@ -137,7 +137,7 @@ and the universal raw HID fallback (D2, D6). Measurements: [research-host-apis.m
 |:--|:--|:--|:--|:--|
 | macOS | **IOKit HID** (`IOHIDManager`): real VID/PID/version/serial, every HID pad, Xbox pads through the `XboxGamepad.dext` vendor pipe (report 0x20, GIP; over USB truncated to 18 bytes, so Elite paddles only over Bluetooth, research §2.3a); over BLE the plain HID report carries paddles and the profile on every profile (§2.3b); GameController never reports Elite paddles, used for outputs only (§2.3c) | **GameController.framework** (outputs; never the Elite paddles or battery): haptics incl. impulse triggers, battery of pads that report it, light, SF Symbols names, MFi and Bluetooth pads with no HID endpoint | our raw HID drivers (part of the primary) | SDL3 |
 | Windows | **GameInput** (installer prerequisite, loaded dynamically, D17) for the Xbox families only: VID/PID, paddles (3.3+), trigger rumble, Guide and Share (system-button callback) | **Raw Input** for every other HID pad: generic pads, joysticks, DB9 adapters, the Surface Dial, and the DualSense / Edge, DualShock 4, Switch Pro controller, Joy-Cons, NSO pads, Steam Controllers (vendor page, lizard mode off) and the GameCube adapter (ports as devices) with their protocols (`ProtocolPads`: full reports, rumble, light, player LEDs, battery, Joy-Con pairs, the charging grip; a DualShock 3 gets its enable report and a notice about DsHidMini); **XInput** only if GameInput is missing | our raw HID drivers over Raw Input | SDL3 |
-| Linux | **evdev** (`/dev/input/event*`, uaccess ACLs): xpad maps Elite paddles to `BTN_TRIGGER_HAPPY5-8` (kernel 6.1+) | **hidraw** where udev rules allow it: LEDs, paddles over Bluetooth, vendor features | our raw HID drivers over hidraw | SDL3 |
+| Linux | **evdev** (`/dev/input/event*`, uaccess ACLs) with the kernel drivers first: xpad (Elite paddles `BTN_GRIP*`, older kernels `BTN_TRIGGER_HAPPY5-8`), hid-playstation (the Edge's paddles and Fn buttons from 7.2), hid-sony, hid-nintendo, joycond; the motors through `FF_RUMBLE`, battery and light through the power supply and LED classes | **hidraw** where udev rules allow it, only for what the driver lacks: paddles over Bluetooth, DualSense trigger effects, Switch HD rumble, Xbox Bluetooth rumble without `FF_RUMBLE`, the Dial's clicks | our raw HID drivers over hidraw: the whole protocol of a PlayStation / Switch pad under hid-generic | SDL3 |
 
 Rules:
 
@@ -211,6 +211,28 @@ HostDeviceId = family-neutral, stable across replug and restart:
   (GameInput takes the Xbox families; Raw Input skips every XInput-compatible collection, the `&IG_` in its path,
   whichever of GameInput or XInput serves them). Unique ids within the backend cover
   ProtocolPads' devices and Joy-Con pairs (`ProtocolPads::IdTaken`).
+- **Linux, built (2026-10-24, run against the kernel drivers with uhid-emulated pads, not exercised with a real
+  pad)**: the ids come from the evdev node (`LinuxDeviceId`,
+  platform/linuxpads.h): `bt:<vid>:<pid>:<hash of uniq, else phys>`, `usb:<vid>:<pid>:<version>:<uniq>` (hid-playstation
+  and hid-nintendo set `uniq` to the pad's MAC over USB as well, so a DualSense keeps one id on the cable and the
+  same MAC hash over Bluetooth stays per bus), else `usb:...@<hash of phys>`; a uinput device `virtual:` (joycond).
+  The version is the node's: hid-playstation and hid-nintendo set bit 15 of it (their mappings, for SDL), so a USB
+  pad's id under hid-generic (an old kernel, the module not loaded) differs from the one under its driver
+  (`usb:054c:0ce6:0100:...` against `8100`); a Bluetooth id has no version. Identical ids get `#<n>`. hid-playstation's extra nodes (Touchpad, Motion Sensors) and hid-nintendo's IMU nodes
+  have no pad keys and are not devices. The evdev node and the hidraw node of one HID device are one device
+  (`HidrawSourceMerge`: the hidraw reports while they are read, evdev otherwise). Joy-Cons: the backend pairs a left
+  and a right one as on macOS (`JoyConPairing`, id `left+right`, "Joy-Con (L/R)"; each half's evdev keys renamed to
+  the pair layout); joycond, when installed, takes the halves' evdev nodes (EVIOCGRAB, mode 0600: the backend closes
+  a node that stops being readable) and offers "Nintendo Switch Combined Joy-Cons" (057E:2008) instead, whose id is
+  the same pair id when exactly one taken left and one taken right Joy-Con are found in sysfs
+  (`FindJoyConHalves`, `JoycondPairId`), so a profile of the pair applies with or without joycond; else
+  `virtual:057e:2008:0000@<hash>`. No promotion happens on Linux (no companion backend), so no alias is recorded.
+  Under hid-generic, hid-microsoft and hid-google-stadiaff (`LinuxHidUsageNamed`) the evdev keys are HID button
+  numbers, named by the family's HID map (devices.json `hid`, `HidLayoutFor(DeviceMatch)`) as HidPad names them, so
+  a profile written on macOS fits; its consumer usages (the Luna's guide, view, record) are keys of the same node,
+  named by the map; a map's vendor bits are read from hidraw. A Steam pad the Steam client holds (hid-steam took its
+  input device away) is a device with no controls and a notice. A GameCube adapter (no input device) is read from
+  its hidraw node alone, each port a device `<adapter id>:p1..p4`.
 - **Aliases, built (2026-10-23)**: `HostInputService` keeps each promotion (`TakePromotions`); the Qt client's poll
   records it in the profile store (`ProfileStore::AddAlias(old, new)`; an alias of the old id moves to the new one) and
   writes `<user profiles>/aliases.yaml` (`schema: 1`, `aliases: [{from, to}]`), read again at start. A profile's

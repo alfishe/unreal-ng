@@ -19,6 +19,10 @@ namespace controllers
 struct DualSenseOutputState
 {
     std::optional<RumbleLevels> rumble;  ///< the motors and the trigger effects
+    /// The trigger effects alone (RumbleLevels::leftTrigger / rightTrigger), the motors left to another writer: on
+    /// Linux hid-playstation drives them through FF_RUMBLE while the backend writes the triggers through hidraw.
+    /// Ignored when @p rumble is set (it carries the triggers)
+    std::optional<RumbleLevels> triggers;
     std::optional<LightColor> light;
     /// Release the firmware's own light bar first (light bar setup "light out"), once before the first colour
     bool releaseLight = false;
@@ -41,6 +45,9 @@ public:
     /// Bluetooth report 0x31 (78 bytes): the sequence in the high nibble of byte 1, tag 0x10 at 2, the common part
     /// from 3, the CRC-32 of 0xA2 + bytes 0..73 at 74..77 (little endian)
     static std::vector<uint8_t> BluetoothReport(const RumbleLevels& levels, uint8_t sequence);
+    /// USB report 0x02 / Bluetooth 0x31 with only the trigger effects of @p levels (valid flag 0 bits 2-3): the motors,
+    /// the light bar and the player LEDs are left as the kernel driver set them
+    static std::vector<uint8_t> TriggerReport(const RumbleLevels& levels, bool bluetooth, uint8_t sequence);
     /// Any mix of rumble, light and player LEDs, for USB (48 bytes, as UsbReport) or Bluetooth (78, as
     /// BluetoothReport)
     static std::vector<uint8_t> Report(const DualSenseOutputState& state, bool bluetooth, uint8_t sequence);
@@ -53,6 +60,7 @@ public:
 private:
     /// The 47-byte common part: valid flags, motors, the trigger effects at 10 (right) and 21 (left)
     static void Common(const RumbleLevels& levels, uint8_t* common);
+    static void Triggers(const RumbleLevels& levels, uint8_t* common);
 };
 
 }  // namespace controllers
