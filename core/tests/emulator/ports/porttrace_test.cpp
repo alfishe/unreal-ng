@@ -685,7 +685,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     EXPECT_EQ(info.decodeRules[5].port, 0x00BB) << "GS command/status row";
 
     // All three formats write successfully; the offline converter
-    // (utilities/porttrace/porttrace_convert.py) is validated against these exact artifacts
+    // (tools/porttrace/porttrace_convert.py) is validated against these exact artifacts
     const std::string jsonPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.json");
     const std::string csvPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.csv");
     const std::string binPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.bin");

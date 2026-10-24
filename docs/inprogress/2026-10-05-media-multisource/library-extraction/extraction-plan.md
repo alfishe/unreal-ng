@@ -180,11 +180,11 @@ MDOS, Opus, iS-DOS, then AmigaDOS (largest, proves the block / RDB path), CBM, t
 
 | Item | Days |
 |---|---|
-| `umedia` CLI (api-and-integration §8), JSON output, exit codes, `utilities/diskinfo` parity (geometry, protection hints, dumps) | 8 |
+| `umedia` CLI (api-and-integration §8), JSON output, exit codes, `tools/diskinfo` parity (geometry, protection hints, dumps) | 8 |
 | Python module (pybind11), wheel CI for Linux / macOS / Windows | 8 |
 | `media fs` verbs on WebAPI + OpenAPI, CLI, MCP, Lua, Python (api-and-integration §6) | 6 |
 | Qt media panel: a file view per slot (browse, extract, drop files in, check), using `OpenVolume` | 6 |
-| Retire `utilities/diskinfo` and `utilities/diskconverter` (wrappers with a deprecation line, removed one release later), update recipes | 1 |
+| Retire `tools/diskinfo` and `tools/diskconverter` (wrappers with a deprecation line, removed one release later), update recipes | 1 |
 
 ### X12 — Packs, plugins and reference integrations (75 days)
 
@@ -321,7 +321,7 @@ through `tools/build/`, and media-directory freezes per phase.
   `ModelSwitch` and the adapters.
 - One TR-DOS implementation, one FAT implementation, and the same for every other file system;
   every surface and tool goes through the VFS.
-- The `umedia` CLI and the Python module ship; `utilities/diskinfo` and `utilities/diskconverter` are
+- The `umedia` CLI and the Python module ship; `tools/diskinfo` and `tools/diskconverter` are
   retired.
 - Behaviour, JSON and image bytes are identical to the X0 goldens (except where a phase
   deliberately adds features). Performance is within the noise band.

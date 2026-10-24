@@ -267,7 +267,7 @@ TEST_F(NeoGSAcceptance_Test, FlasherReprogramsTheFlashFromTheSdCard)
     // header of entries {DD offset << 8 | page, DW length, DW crc, name[6],
     // DW date}; each block lands at the start of its 64 KB sector, the rest
     // erased, and name + date form the sector's 8-byte trailer
-    const std::vector<uint8_t> upd = readFile(TestPathHelper::FindProjectRoot() / "utilities/neogs/parts/ngs_rom.upd");
+    const std::vector<uint8_t> upd = readFile(TestPathHelper::FindProjectRoot() / "tools/neogs/parts/ngs_rom.upd");
     ASSERT_GT(upd.size(), 0x28u);
     ASSERT_EQ(0, memcmp(upd.data() + 2, "NGSF", 4));
     const size_t headerSize = upd[0] | (upd[1] << 8);

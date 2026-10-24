@@ -32,7 +32,7 @@ Legend: ✅ matches spec · ⚠️ partial/incorrect · ❌ missing.
 | ProfROM quadrant state machine (`switch_table`) | **absent** — no `profrom_bank`, no `CF_PROFROM` producer, no `set_scorp_profrom` port | ❌ |
 | Read strobe hook (`#0100-#010F` while service ROM active) | absent (was also dormant in original UnrealSpeccy) | ❌ |
 | Extended ROM 512 KB-2 MB | `MAX_ROM_PAGES = 64` (1 MB) in `platform.h:244`; no `#7EFD` handling anywhere (`p7EFD` field survives in `EmulatorState`, `platform.h:809`) | ❌ |
-| `MAX_ROM_PAGES` consumers that hard-code 64 | `utilities/python/emulator_discovery.py:37`, `utilities/python/monitor_mmap_file.py:73` (mmap layout — will silently misread after the bump); `loader_z80.h:169` staging array (grows automatically); `labelmanager.cpp:576`, `memory.cpp:1117` (comments) | ⚠️ audit list for Task 2 |
+| `MAX_ROM_PAGES` consumers that hard-code 64 | `tools/python/emulator_discovery.py:37`, `tools/python/monitor_mmap_file.py:73` (mmap layout — will silently misread after the bump); `loader_z80.h:169` staging array (grows automatically); `labelmanager.cpp:576`, `memory.cpp:1117` (comments) | ⚠️ audit list for Task 2 |
 | ROM-set mode for 4 base pages | `use_romset` path exists | ✅ |
 
 ## 3. Memory manager (paging)

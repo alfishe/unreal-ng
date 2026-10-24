@@ -4,7 +4,7 @@
 Drives a running Unreal-NG instance over the WebAPI (default http://localhost:8090):
 enables the `porttrace` runtime feature, configures the filter, captures for a
 duration (or until Enter), saves the canonical trace server-side, and converts
-it to any requested formats with utilities/porttrace/porttrace_convert.py.
+it to any requested formats with tools/porttrace/porttrace_convert.py.
 
 Requires the emulator's WebAPI transport (the automation binary or unreal-qt
 with automation enabled) running on the same machine — the server-side save
@@ -312,7 +312,7 @@ def main() -> int:
     if not canonical.exists():
         print(f"NOTE: {canonical} is not visible from this machine - the WebAPI "
               f"server runs elsewhere. Copy it over and convert with "
-              f"utilities/porttrace/porttrace_convert.py", file=sys.stderr)
+              f"tools/porttrace/porttrace_convert.py", file=sys.stderr)
         return 0
 
     session, events = porttrace_convert.read_json(canonical)

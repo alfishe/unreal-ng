@@ -93,7 +93,7 @@
             "code), 'binz' the compressed PTR2 v3 container (columnar delta/xor transform + zstd, typically "
             "50-100x smaller than 'bin'). Exports embed the model's decode-rule table and internal code "
             "names so traces are self-describing "
-            "(utilities/porttrace/porttrace_convert.py reads every format).";
+            "(tools/porttrace/porttrace_convert.py reads every format).";
         addIdParam(savePath, "post");
         paths[savePath]["post"]["responses"]["200"]["description"] = "Saved event count and path";
 
