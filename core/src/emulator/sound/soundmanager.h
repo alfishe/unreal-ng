@@ -81,6 +81,8 @@ protected:
     struct HapticTap
     {
         AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
         uint32_t phase = 0;  ///< the decimator's position, carried over frames
         int32_t sum = 0;
         uint32_t summed = 0;
@@ -855,6 +857,15 @@ public:
     /// machine whose own DAC is a part) is rendered alone for it. Empty: no work. The emulation thread only (the
     /// controller manager sets them at a frame boundary)
     static constexpr uint32_t kHapticTapRate = 8000;
+    /// One tap: a source's buffer; `also` a second one summed into it (the Moonsound's FM and PCM); `dacChannel` 0..3
+    /// one channel of the Covox / Soundrive alone (Covox::SetChannelTap) instead of `source`
+    struct HapticTapSource
+    {
+        AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
+    };
+    void setHapticTaps(const std::vector<HapticTapSource>& sources);
     void setHapticTaps(const std::vector<AudioSourceType>& sources);
     size_t hapticTapCount() const { return _hapticTaps.size(); }
     /// The last frame's samples of tap @p index (count 0: the source is not fitted or rendered nothing); a second

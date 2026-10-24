@@ -97,11 +97,13 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 {
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
+    _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
 #ifdef ENABLE_CONTROLLERS
     _service = std::make_unique<HostInputService>();
     // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
     _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
+    _service->SetHapticsDspDefaults(_soundHapticsDsp);
     _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
@@ -175,6 +177,19 @@ HostControllers::~HostControllers()
     releaseWheelMenu();
     _service->Router().SetActionSink(nullptr);
     _service->Stop();
+#endif
+}
+
+void HostControllers::SetSoundHapticsDsp(bool on)
+{
+    if (on == _soundHapticsDsp)
+        return;
+    _soundHapticsDsp = on;
+    QSettings().setValue("Controllers/SoundHapticsDsp", on);
+#ifdef ENABLE_CONTROLLERS
+    _service->SetHapticsDspDefaults(on);
+    if (_attached)
+        attachHaptics();  // the key below names the filters: the sound feed is made again
 #endif
 }
 
@@ -573,7 +588,8 @@ void HostControllers::attachHaptics()
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
     const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string("sound") : std::string());
+                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                  : std::string());
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;

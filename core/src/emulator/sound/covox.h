@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 
 #include <cstdint>
@@ -165,6 +166,13 @@ protected:
     // Core output rate (multirate plan phase 6)
     size_t _sampleRate;
 
+    // The haptic feed's channel taps (SetChannelTap): each channel's level per output sample, before its gain, filled
+    // up to the sample of each write and to the frame's end in handleFrameEnd. Off: no work
+    bool _channelTap = false;
+    std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, 4> _channelTapBuffer{};
+    std::array<size_t, 4> _channelTapFilled{};
+    void FillChannelTap(int channel, size_t upTo);
+
     // Input clock (T-states fed to blip): base CPU clock x frequency
     // multiplier - the T-state position is descaled by EmulatorState::AudioTstate
     size_t _clockRate = CPU_CLOCK_RATE;
@@ -175,6 +183,14 @@ public:
     virtual ~Covox();
 
     // Buffer access for registry
+    /// The haptic feed's `soundrive:<n>` (SoundManager::setHapticTaps): each channel alone, mono int16 at the core
+    /// rate, the frame's samples after handleFrameEnd, (value - #80) x 128 before the channel's gain
+    void SetChannelTap(bool on);
+    const int16_t* ChannelTap(int channel) const
+    {
+        return _channelTap && channel >= 0 && channel < 4 ? _channelTapBuffer[static_cast<size_t>(channel)].data()
+                                                          : nullptr;
+    }
     int16_t* getBuffer() { return _buffer; }
     const int16_t* getBuffer() const { return _buffer; }
 

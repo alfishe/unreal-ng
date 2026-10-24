@@ -94,7 +94,8 @@ public:
     bool AudioPartActive(size_t part) const override { return part < kParts && _partPeak[part] > 0.002f; }
     void AudioChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const override;
     void SetAudioChannel(AudioSourceType type, size_t index, bool muted, float volume) override;
-    /// The DAC part alone (the haptic feed's `next-dac`): the four channels' mono sum at full scale, before the gains
+    /// A part alone for the haptic feed: the DAC (`next-dac`, the four channels' mono sum at full scale) or a chip
+    /// (`ay:<n>`, its mono with the DC out), before the gains
     void SetAudioPartTap(size_t part, bool on) override;
     const int16_t* AudioPartTap(size_t part) const override;
     /// endregion
@@ -142,6 +143,13 @@ private:
     bool _dacTap = false;
     std::vector<int32_t> _tickDac;
     std::array<int16_t, MAX_SAMPLES_PER_FRAME> _dacTapBuffer{};
+    /// The chip taps (the haptic feed's `ay:<n>` on the Next): each chip's mono per tick, its DC out, then per sample
+    std::array<bool, kChips> _partTap{};
+    bool _chipTaps = false;
+    std::array<std::vector<int32_t>, kChips> _tickChip;
+    std::array<int64_t, kChips> _chipTapDc{};
+    std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, kChips> _chipTapBuffer{};
+    void PushChipTaps(const std::array<int32_t, kChips>& mono, size_t ticks);
     int32_t DacMono() const
     {
         return ((_dac[0] - 128) + (_dac[1] - 128) + (_dac[2] - 128) + (_dac[3] - 128)) * 8;

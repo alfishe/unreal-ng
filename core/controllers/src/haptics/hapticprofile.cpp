@@ -260,7 +260,8 @@ bool ParseStreamFilter(const JsonValue& spec, const std::string& stream, HapticS
     if (!stream.empty() && !ParseHapticStream(stream, source.stream))
     {
         error = where + ": 'source' '" + stream +
-                "' unknown (known: mix, beeper, ay:0..ay:2, covox, soundrive, gs, neogs, next-dac)";
+                "' unknown (known: mix, beeper, ay:0..ay:2, covox, soundrive, soundrive:0..soundrive:3, gs, neogs, "
+                "next-dac, saa, moonsound)";
         return false;
     }
     struct Field
@@ -467,7 +468,9 @@ bool ParseHapticStream(const std::string& text, HapticStream& out)
         {"mix", HapticStream::Mix},     {"beeper", HapticStream::Beeper}, {"ay:0", HapticStream::Ay0},
         {"ay:1", HapticStream::Ay1},    {"ay:2", HapticStream::Ay2},      {"covox", HapticStream::Covox},
         {"soundrive", HapticStream::Covox}, {"gs", HapticStream::Gs},     {"neogs", HapticStream::Gs},
-        {"next-dac", HapticStream::NextDac}};
+        {"next-dac", HapticStream::NextDac}, {"saa", HapticStream::Saa}, {"moonsound", HapticStream::Moonsound},
+        {"soundrive:0", HapticStream::Soundrive0}, {"soundrive:1", HapticStream::Soundrive1},
+        {"soundrive:2", HapticStream::Soundrive2}, {"soundrive:3", HapticStream::Soundrive3}};
     for (const auto& [name, stream] : kStreams)
     {
         if (text == name)
@@ -499,6 +502,18 @@ const char* HapticStreamName(HapticStream stream)
             return "gs";
         case HapticStream::NextDac:
             return "next-dac";
+        case HapticStream::Saa:
+            return "saa";
+        case HapticStream::Moonsound:
+            return "moonsound";
+        case HapticStream::Soundrive0:
+            return "soundrive:0";
+        case HapticStream::Soundrive1:
+            return "soundrive:1";
+        case HapticStream::Soundrive2:
+            return "soundrive:2";
+        case HapticStream::Soundrive3:
+            return "soundrive:3";
     }
     return "mix";
 }

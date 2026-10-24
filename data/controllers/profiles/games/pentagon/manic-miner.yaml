@@ -1,13 +1,42 @@
-# Manic Miner (Bug-Byte 1983), the eYe-Q TR-DOS version MMIN_EST.SCL: LOAD GAME in its menu, ENTER at the title.
-# O left, P right, Space jumps. Haptics (haptics.md §13 H5), every address checked by play on a Pentagon: #8906 is the
-# death of a real game (not the demo), #8F82 takes an item, #8C7B starts a jump
+# Manic Miner (Bug-Byte 1983) on a Pentagon with TR-DOS. Two documents: the releases on the original addresses, and
+# Phantom Ltd's release, whose code sits 6 to 11 bytes higher. O left, P right, Space jumps. Haptics (haptics.md §13
+# H5), checked by play on a Pentagon: #8906 is the death of a real game (not the demo), #8F82 takes an item, #8C7B
+# starts a jump (these three in every listed release), #89AA is the game over, #90D9 counts the air into the score at a
+# cavern's end, #91B5 drops Kong, #907D is the ending after the last cavern (these four in MMIN_EST).
+#
+# The first document's releases (the SHA-256 of each .SCL, in this order): MMIN_EST (eYe-Q'99), MMINERWC (AmoNik'00),
+# MANICMDG (D. Gultyaev'94, menu 2), MANICMKK (K. Kalantaj'01), MANM_THH (The Hot Heads'99), MNC+2SMK (Smokers'97,
+# Manic Miner 1 and 2), MMINE2WC (Manic Miner 2, Welcome Corp., infinite lives), M_MINER3 (Korund), MMINR3DL
+# (D-Love'00), M_MINER4 (Korund), MM4SE_TM (Triumph'04), MNMINER5 (V. Drozd), M_MINER6 (Korund), MMBUDDTM, MMMAJOTM,
+# MMHOB_TM (Triumph'04), MM_HOBBE, MM_HOBBH (Korund), MM3DDEMO (the "3D demo" April fool cavern). The mods keep the
+# Bug-Byte engine and change caverns, tunes and texts only. Matching by content signature (`match.signatures`, from
+# swsignature) replaces the hash lists once the library exists.
 schema: 1
 kind: play
 id: builtin/game/manic-miner
 label: Manic Miner
 match:
   machines: [PENTAGON]
-  file_sha256: ["38e952ec0c06b3ac4abe287771176be891e095daef4304212966d3a6de350efa"]
+  file_sha256:
+    - "38e952ec0c06b3ac4abe287771176be891e095daef4304212966d3a6de350efa"
+    - "58957861f117bb1ec6a366ce1930798ea0d9dccea1fa91d14276d7defc216672"
+    - "315933a6723eed4e2ae1db860d35cc92a3f2f8bd04e1481673fecb6d1824cc11"
+    - "3f87f80974d098af4e7cce463f3f5a433ee3348e435ec37e02b48971d49a56b5"
+    - "8685e579c678c8f49361e10d21a2a3c8d37a33c51386361d2db54b931a5a970e"
+    - "5f97385006a10e7ccb63bb1a05177019adc4322b5fc4072e399f618e1091485d"
+    - "186c8b80469487d5196bb250dddedf3cb78fd3121cebd9fb40ea0315c28a4573"
+    - "5f8fb8afc0fead5498faecde7ec4cc880016bf57ab0d8d0ab00c23c12eb61d6b"
+    - "82a0c870f54665a98c7d4f920bd80ff6ed72be6e1c77140c08e41b8c53d138d2"
+    - "beb12f10895fa6589a03515bb690af6b18fb08a396b61f1ed2bf3f8081817350"
+    - "e995e1708f4c1aec8552f9d6adaf6f7d179f265559b649f36c9f6b736a47f1a3"
+    - "575cbbd135a414a7a3ab51584008d3681f409d5be26a634154e4e7a2640ef5e0"
+    - "4c686ed3bdad7f018f397bb9a77fd2abf5ff046ee5492609b4acac512d40a56b"
+    - "1b6892dc791a035f4aed04d7a553f022d978c6aaa9835a31d7c4d6a2ec6499d9"
+    - "e466ed8e6fef3236e4ecf47da69c3ee2f78029cb0262749751f43107b958436c"
+    - "199344f45f8489a1c0c6ad006406b3de215b6dafd64d2b4e93c2ff5b1d561855"
+    - "ad6304ab5e8de5cb6da1011ab7eb90724d5a79bc7b72336bae60386441322694"
+    - "21ad831429f59f2513dacca71732ea547a08dc56ed65e463ce9534faa9ce8748"
+    - "e87fe15c1276ba26cae2ed70fd182cd23a6f585c25506111040893ea8ea73200"
 layers:
   play:
     "dpad.*":     { none: true }
@@ -24,6 +53,46 @@ haptics:
     died: { probe: exec, address: "0x8906" }
     item: { probe: exec, address: "0x8F82" }
     jump: { probe: exec, address: "0x8C7B" }
+    game-over: { probe: exec, address: "0x89AA" }
+    air-to-score: { probe: exec, address: "0x90D9" }
+    kong: { probe: exec, address: "0x91B5" }
+    ending: { probe: exec, address: "0x907D" }
+  rules:
+    - { on: died, play: life-lost }
+    - { on: item, play: pickup }
+    - { on: jump, play: tick, target: handle.high }
+    - { on: game-over, play: thump }
+    - { on: air-to-score, play: rumble-strip }
+    - { on: kong, play: explosion }
+    - { on: ending, play: heartbeat }
+---
+# MAMINPHL.SCL (Phantom Ltd): the same engine, its code 6 to 11 bytes higher. Checked by play: death #890C, item
+# #8F8D, jump #8C86. The game over (#89B0), Kong (#91C0), air-to-score (#90E4) and ending (#9088) were found by the
+# code's bytes but not played, so they are left out. The original addresses are wrong here: #8F82 and #8C7B run while
+# nothing happens.
+schema: 1
+kind: play
+id: builtin/game/manic-miner-phantom
+label: Manic Miner (Phantom)
+match:
+  machines: [PENTAGON]
+  file_sha256: ["64a6411419e3209668c301a6f4321a5c557e5dd8541c02d3c8a390c34f19e472"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    south:        { key: SPACE, label: Jump }
+    dpad.up:      { key: SPACE, label: Jump }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    died: { probe: exec, address: "0x890C" }
+    item: { probe: exec, address: "0x8F8D" }
+    jump: { probe: exec, address: "0x8C86" }
   rules:
     - { on: died, play: life-lost }
     - { on: item, play: pickup }

@@ -45,6 +45,12 @@ enum class HapticStream : uint8_t
     Covox,    ///< `covox`: the Covox / Soundrive DAC, a machine's own DAC (the Sprinter's), the Next's DAC part
     Gs,       ///< `gs`, `neogs`: the General Sound slot's card
     NextDac,  ///< `next-dac`: the ZX Next's four-channel DAC alone
+    Saa,        ///< `saa`: the SAA1099 (the ZX-MultiSound card's)
+    Moonsound,  ///< `moonsound`: the OPL4's FM and PCM, summed
+    Soundrive0, ///< `soundrive:0` .. `soundrive:3`: one Soundrive channel alone (left A, left B, right A, right B)
+    Soundrive1,
+    Soundrive2,
+    Soundrive3,
 };
 
 /// One stream over a frame: mono at kRate, `count` samples

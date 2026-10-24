@@ -130,12 +130,20 @@ Built (2026-10-23):
   - `onset`: `rise_db` (default 12), `within_ms` (default 30), `floor` (default 0.05 of full scale) and `release_ms`
     (default 50). It is a 1 ms-attack envelope kept per millisecond. It fires when the level rises over the level
     `within_ms` earlier by `rise_db` and is above the floor; after that it stays quiet for `within_ms`.
-- **Selectors.** `source` takes `mix`, `beeper`, `ay:0`..`ay:2`, `covox`, `soundrive`, `gs`, `neogs` or `next-dac`.
-  `saa`, `moonsound` and `soundrive:<n>` are not tapped yet. On the Next `ay:<n>` is silent: its three AYs mix
-  inside `NextAudio`, which taps only its DAC part (`next-dac`); `mix` holds them.
+- **Selectors.** `source` takes `mix`, `beeper`, `ay:0`..`ay:2`, `covox`, `soundrive`, `soundrive:0`..`soundrive:3`,
+  `gs`, `neogs`, `next-dac`, `saa` or `moonsound`.
+  - `soundrive:<n>` is one Soundrive channel alone (0 left A, 1 left B, 2 right A, 3 right B), `(value - #80) x 128`
+    before the channel's gain (`Covox::SetChannelTap`, filled up to each write's sample). `soundrive` and `covox` are
+    the whole device.
+  - On the Next, `ay:<n>` is that chip alone. NextAudio renders each tapped chip's mono with the DC of its unsigned
+    sum taken out (an integer one-pole), before the part gain. Its scale is the other machines' chip taps (a
+    channel at full level is INT16_MAX / 2 of the mono), so one profile's thresholds fit every model.
+  - `saa` is the ZX-MultiSound card's SAA1099 row. `moonsound` is the OPL4's FM and PCM summed.
+  - A source the machine lacks gives an empty stream.
 - **The DSP defaults.** `SoundHaptics(…, dspDefaults)` and `HostInputService::SetHapticsDspDefaults` add
   `lowband(mix)` on the low motor and `onset(mix)` as a 40 ms high-motor tick to the register-level defaults. They are
-  off by default, and the Advanced switch for them is still to come.
+  off by default. The controllers dialog's Haptics panel has the switch: **DSP filters on the sound**, enabled while
+  **Haptics from the sound** is on and kept in the settings (`Controllers/SoundHapticsDsp`).
 
 ## 5. Sources: game events
 
@@ -407,26 +415,40 @@ applies to the hooks on the memory and port paths.
 | H4 | HD haptics (DualSense, Switch), adaptive triggers, AHAP patterns |
 | H5 | first built-in game profiles with haptics, chosen by signature once `swsignature` exists |
 
-Built (2026-10-23), H5: three game profiles in `data/controllers/profiles/games/pentagon/`, found by the SHA-256 of
-the disk image (no signature library yet) on a Pentagon with TR-DOS. The images are the bugfix releases listed in
-`/Volumes/TB4-4Tb/Data/zx-spectrum/software/games/haptics/README.md`. Every address was checked by play through the
-WebAPI: an exec breakpoint or exec counter hit at the moment, and the game's state changed as expected.
+Built (2026-10-23, widened 2026-10-24), H5: game profiles in `data/controllers/profiles/games/pentagon/`, found by
+the SHA-256 of the disk image (no signature library yet) on a Pentagon with TR-DOS. Each file is a bundle: one
+document per address set, each listing the hashes of the releases that share it. Every address was checked by play
+through the WebAPI: an exec counter or breakpoint hit at the moment, and the game's state changed as expected. The
+surveys covered every release on disk: the collection in `/Volumes/TB4-4Tb/Data/zx-spectrum/software/games/haptics/`
+and the vtrd mirror. All of them are TR-DOS images: no tape image of the three games is on disk.
 
-| Profile | Image | Sources → effects |
+| Profile | Releases | Sources → effects |
 |:--|:--|:--|
-| `builtin/game/manic-miner` | `MMIN_EST.SCL` | exec #8906 (death in a real game; #88FF also runs in the demo) → `life-lost`; exec #8F82 (item taken) → `pickup`; exec #8C7B (jump starts) → `tick` on the high motor |
-| `builtin/game/exolon` | `EXOLON.SCL` (EXLNSlTb), AY sound | exec #8366 (blaster shot) → `shot` on the right trigger or the high motor; exec #9221 (grenade launched) → `knock`; exec #92D4 (grenade detonates) → `explosion`; exec #9CB9 (Vitorc killed) → `life-lost` |
-| `builtin/game/chase-hq` | `CHHQ+2_T.SCL`, part 1, Keyboard | the speed word #A24A (0 to 511 with turbo) → `engine` on the low motor; exec #A4B1 (crash into the roadside) → `thump`; exec #A78A (the criminal's car hit) → `hit`; exec #889C (turbo start) → `explosion` at 0.6 |
+| `builtin/game/manic-miner` | 19: MMIN_EST and 18 mods on the Bug-Byte engine (Manic Miner 2 to 6, the Triumph and Korund mods, the "3D demo") | exec #8906 (death in a real game; #88FF also runs in the demo) → `life-lost`; #8F82 (item taken) → `pickup`; #8C7B (jump starts) → `tick` on the high motor; on MMIN_EST also #89AA (game over) → `thump`, #90D9 (air counted into the score) → `rumble-strip`, #91B5 (Kong falls) → `explosion`, #907D (the ending) → `heartbeat` |
+| `builtin/game/manic-miner-phantom` | MAMINPHL (code 6 to 11 bytes higher) | #890C → `life-lost`, #8F8D → `pickup`, #8C86 → `tick` |
+| `builtin/game/exolon` | 3 that fire with Space: EXLNSlTb (bugfix), EXOL_CAP, EXOLO | exec #8366 (blaster shot) → `shot` on the right trigger or the high motor; #9221 (grenade launched) → `knock`; #92D4 (grenade detonates) → `explosion`; #9CB9 (Vitorc killed) → `life-lost`; #99CE / #9978 (grenades / ammo taken) → `pickup`; the sound #C155 (enemy destroyed) → `hit`; the sound #C0E7 (bullet hits a solid object) → `tick` |
+| `builtin/game/exolon-m` | 21 that fire with M | the same |
+| `builtin/game/exolon-demo` | EXOLONGD (relocated) | #83E5 → `shot`, #92AD → `knock`, #9360 → `explosion`, #9D45 → `life-lost` |
+| `builtin/game/chase-hq` | 16 part-1 releases, among them CHHQ+2_T (bugfix), the 48K beeper build CHASHQMK and CHHQ_FSS (boots on a Profi only, so the document lists PROFI too) | the speed word #A24A (0 to 511 with turbo) → `engine` on the low motor; exec #A4B1 (crash into the roadside) → `thump`; #A78A (the criminal's car hit) → `hit`; #889C (turbo start) → `explosion` at 0.6; #B076 (landing after a hill crest, effect id 2) → `knock`; #A437 (scraping a tunnel wall, id 6) → `rumble-strip` |
+| `builtin/game/chase-hq-gs` | CHASE_GS (General Sound version) | the speed, crash, hit and turbo above; its effect requests go to the GS |
+| `builtin/game/chase-hq-demo` | CHASEHQD (Sinclair User demo, variables #514 lower) | the speed word #9D36, #9F8E, #A1B0, #8327, as above; the pad drives its Sinclair joystick keys |
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
 
+- Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
+  once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.
 - The tests do not use the games (they are not in the repository). A test program on a Pentagon calls each address
-  instead, at a RET stub (`GameHapticsGames_Test`).
+  instead, at a RET stub (`GameHapticsGames_Test`, one row per address set, plus a release that only shares one).
 - Not used, because they were not confirmed by play:
-  - Manic Miner: the game over, Kong and air-to-score sounds.
-  - Exolon: the enemy-destroyed and pickup sounds. Its beeper option unpacks the code elsewhere.
-  - Chase H.Q.: effect ids 2 and 5 to 8.
-- The addresses hold for these images only. Other releases of the same game get their own profiles.
+  - Manic Miner: the title tune (#92F8; it plays once on entering the title, not wanted as haptics). Kong's fall ran in
+    play, but its switches were set by poke. The Phantom release's game over, Kong, air and ending addresses. The
+    JSW64-engine releases (ULT_M_M, JSWJBOND; death #8C01, jump #8F96 played) have no profile: their keys were not
+    checked.
+  - Exolon: the demo's pickups and enemy sounds.
+  - Chase H.Q.: effect id 5 (game over screens only), id 7 (requested every frame while accelerating), id 8 (the
+    hidden test mode only). CHASE.SCL boots on no model.
+- Most non-bugfix Exolon builds kill Vitorc again and again near a zone's start (the bug the 2024 fix clamps at
+  #9D06), so they give many more `died` events.
 
 Open points:
 - macOS USB output reports through the dext (§9).

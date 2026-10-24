@@ -1,14 +1,40 @@
-# Chase H.Q. (Ocean 1989), part 1 of tiboh's bugfix TR-DOS version CHHQ+2_T.SCL, with 4 (Keyboard) in its menu.
-# O left, P right, Q accelerates, A brakes, Space changes gear, T turbo. Haptics (haptics.md §13 H5), every address
-# checked by play on a Pentagon: the speed is the word at #A24A (0 to 511 with turbo), #A4B1 is a crash into the
-# roadside, #A78A a hit on the criminal's car, #889C a turbo start
+# Chase H.Q. (Ocean 1989), part 1, on a Pentagon with TR-DOS (the Flash Star release boots on a Profi only). Three
+# documents: the releases on the bugfix's addresses, the General Sound version, and the Sinclair User demo, whose code
+# sits elsewhere. With 4 (Keyboard) in the menu: O left, P right, Q accelerates, A brakes, Space changes gear, T turbo
+# (some builds bind other keys; option 5 redefines them). Haptics (haptics.md §13 H5), checked by play in every listed
+# release: the speed is the word at #A24A (0 to 511 with turbo), #A4B1 is a crash into the roadside, #A78A a hit on the
+# criminal's car, #889C a turbo start. Checked by play on CHHQ+2_T, at the same bytes in the others: #B076 requests
+# the landing after a hill crest (effect id 2), #A437 the scrape along a tunnel wall (id 6).
+# Matching by content signature (`match.signatures`, from swsignature) replaces the hash lists once the library exists.
+#
+# The releases (the SHA-256 of each image, in this order): CHHQ+2_T (tiboh's bugfix, +2 trainer), CHHQ_TMA
+# (Torgunakov 1994), CHHQLAKS (LAKS), CHSHQAVF (AVF), CHHQR_ES (Russian "Pogonya!", E. Sardak), CHASE_1 (Maxsoft),
+# CHASHQAP (Popushin), CHASHQHS (Hackersoft'25), CHASE_HQ (Power of Sound'97, +5 levels), CHASEVAD (VAD), CHHQAKHZ
+# (Kurenin), C_HQ_KSA (KSA Software, 128K), CHASE1GD (Golden Eagle & Mad Max, 128K, intro menu 1), CHHQ_SCI (ASW /
+# Fantastic Soft 1995), CHASHQMK (the 48K beeper build, Mazanov & Kverznev 1992), CHHQ_FSS (Flash Star, Profi only).
 schema: 1
 kind: play
 id: builtin/game/chase-hq
 label: Chase H.Q.
 match:
-  machines: [PENTAGON]
-  file_sha256: ["8ecfe859f329794319ef940d9ed66cf608194c86fc9402d37e33d50b8de348b6"]
+  machines: [PENTAGON, PROFI]
+  file_sha256:
+    - "8ecfe859f329794319ef940d9ed66cf608194c86fc9402d37e33d50b8de348b6"
+    - "7a2ccf955c839528f15b5c7d1f23ab65d8abf3064b75680074024663c48323ed"
+    - "bb3966b8a3d4eeb01aba799525cbf1489e1d88c329354cb081561f7e9c216e2d"
+    - "f4d446795587003a20f4c8ca6a793a499bae790092cfb3744f4a4eb46a444076"
+    - "87d0a80b0a46734a7fab0b1bda451a1fef49f1bd3a6966b113eded0aae453503"
+    - "c1558706a0ac61c945b80af03b2c63a2194057d9116b3a31813cd5162cc86899"
+    - "3facdef26bb7f778f2cf69eb34781a6fb0501def3e05f54f71ff71f004373d63"
+    - "bed8716a5cabc95e0b58dca7580adc8f77e3266ffc162c3d597c74db0bdad808"
+    - "cd9edfcca50fab299cf60705569bcf8ff4acef5ef3cb039b06663ec434f06a7d"
+    - "da150906673de3754b452fd08e94ea9ad0aa6980f10c99216be1c218456b2940"
+    - "d697623f993f530f7de58e79769fd3b42c3b3cf6e75ff6e2c1ee6c4951b09f3a"
+    - "ba26ff86e79ef6b6869fa2da41f52e8f65112695b2b9b7cb82825b156fcdd987"
+    - "b5351d3f11f7928ec74314e09ac5d0888e3df4dca39f2b1f6bb9916d0ef7fa0b"
+    - "22e239c7e643eba77394472e26b10f870bb6a4b99dcedfc6ff89c3440f91c3de"
+    - "0b567987e05c8bf16662fd9b75799c9ac868fbf8eadaf8d07a31d05fedf8beb2"
+    - "d0f6367329270c68f62a63867720defe429c025a85820d9a7b42009ae1b92128"
 layers:
   play:
     "dpad.*":     { none: true }
@@ -30,6 +56,84 @@ haptics:
     crash:    { probe: exec, address: "0xA4B1" }
     rammed:   { probe: exec, address: "0xA78A" }
     turbo:    { probe: exec, address: "0x889C" }
+    landing:  { probe: exec, address: "0xB076" }
+    scrape:   { probe: exec, address: "0xA437" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: thump }
+    - { on: rammed, play: hit }
+    - { on: turbo, play: explosion, scale: 0.6 }
+    - { on: landing, play: knock }
+    - { on: scrape, play: rumble-strip }
+---
+# CHASE_GS.TRD, the General Sound version (Mike Blum / ZX-Masters 1998, "1. start music & effects"): the speed, the
+# crash, the hit and the turbo sit at the bugfix's addresses and were played; its effect requests go to the General
+# Sound instead (#813C), so the landing and the scrape are left out.
+schema: 1
+kind: play
+id: builtin/game/chase-hq-gs
+label: Chase H.Q. (General Sound)
+match:
+  machines: [PENTAGON]
+  file_sha256: ["8074c8253b6d22940e7f6a47bf34fa064be4afca06cf5b26870e61aeb3dfd8be"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: Q, label: Accelerate }
+    west:         { key: A, label: Brake }
+    east:         { key: SPACE, label: Gear }
+    north:        { key: T, label: Turbo }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed:    { probe: value, address: "0xA24A", word: true, scale: 0.5 }
+    crash:    { probe: exec, address: "0xA4B1" }
+    rammed:   { probe: exec, address: "0xA78A" }
+    turbo:    { probe: exec, address: "0x889C" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: thump }
+    - { on: rammed, play: hit }
+    - { on: turbo, play: explosion, scale: 0.6 }
+---
+# CHASEHQD.SCL, the Sinclair User playable demo (tiboh'16): the same code, its variables #514 lower. Played: the speed
+# word #9D36, the crash #9F8E, the hit on the criminal #A1B0, the turbo start #8327. Its keyboard option did not take,
+# so the pad drives its Sinclair joystick keys: 6 left, 7 right, 9 accelerates, 8 brakes, 0 changes gear, Space turbo.
+schema: 1
+kind: play
+id: builtin/game/chase-hq-demo
+label: Chase H.Q. (demo)
+match:
+  machines: [PENTAGON]
+  file_sha256: ["5d51ecbd2c9aea0feb40ed838f21257f90bc35d998fbfe004c90c8e7b264fc63"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: "6" }
+    dpad.right:   { key: "7" }
+    lstick.left:  { key: "6" }
+    lstick.right: { key: "7" }
+    rt.click:     { key: "9", label: Accelerate }
+    lt.click:     { key: "8", label: Brake }
+    south:        { key: "9", label: Accelerate }
+    west:         { key: "8", label: Brake }
+    east:         { key: "0", label: Gear }
+    north:        { key: SPACE, label: Turbo }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed:    { probe: value, address: "0x9D36", word: true, scale: 0.5 }
+    crash:    { probe: exec, address: "0x9F8E" }
+    rammed:   { probe: exec, address: "0xA1B0" }
+    turbo:    { probe: exec, address: "0x8327" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: thump }

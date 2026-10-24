@@ -611,28 +611,39 @@ void ControllerManager::UpdateHapticHold()
 
 namespace
 {
-AudioSourceType TapSource(HapticStream stream)
+SoundManager::HapticTapSource TapSource(HapticStream stream)
 {
+    using Tap = SoundManager::HapticTapSource;
     switch (stream)
     {
         case HapticStream::Mix:
-            return AudioSourceType::MasterMix;
+            return {AudioSourceType::MasterMix};
         case HapticStream::Beeper:
-            return AudioSourceType::Beeper;
+            return {AudioSourceType::Beeper};
         case HapticStream::Ay0:
-            return AudioSourceType::AY1_All;
+            return {AudioSourceType::AY1_All};
         case HapticStream::Ay1:
-            return AudioSourceType::AY2_All;
+            return {AudioSourceType::AY2_All};
         case HapticStream::Ay2:
-            return AudioSourceType::AY3_All;
+            return {AudioSourceType::AY3_All};
         case HapticStream::Covox:
-            return AudioSourceType::COVOX;
+            return {AudioSourceType::COVOX};
         case HapticStream::Gs:
-            return AudioSourceType::GeneralSound;
+            return {AudioSourceType::GeneralSound};
         case HapticStream::NextDac:
-            return AudioSourceType::NextDac;
+            return {AudioSourceType::NextDac};
+        case HapticStream::Saa:
+            return {AudioSourceType::MultiSoundSaa};
+        case HapticStream::Moonsound:
+            return Tap{AudioSourceType::Moonsound_FM, AudioSourceType::Moonsound_PCM, -1};
+        case HapticStream::Soundrive0:
+        case HapticStream::Soundrive1:
+        case HapticStream::Soundrive2:
+        case HapticStream::Soundrive3:
+            return Tap{AudioSourceType::COVOX, AudioSourceType::Custom,
+                       static_cast<int>(stream) - static_cast<int>(HapticStream::Soundrive0)};
     }
-    return AudioSourceType::MasterMix;
+    return {AudioSourceType::MasterMix};
 }
 }  // namespace
 
@@ -646,7 +657,7 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
     std::vector<HapticStream> streams = feed->Streams();
     if (streams.size() > HapticFrame::kMaxStreams)
         streams.resize(HapticFrame::kMaxStreams);
-    std::vector<AudioSourceType> taps;
+    std::vector<SoundManager::HapticTapSource> taps;
     for (HapticStream stream : streams)
         taps.push_back(TapSource(stream));
     _hapticStreams = taps.size();
@@ -666,7 +677,7 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
 void ControllerManager::DetachHapticFeed()
 {
     if (_hapticStreams > 0 && _context != nullptr && _context->pSoundManager != nullptr)
-        _context->pSoundManager->setHapticTaps({});
+        _context->pSoundManager->setHapticTaps(std::vector<SoundManager::HapticTapSource>{});
     _hapticStreams = 0;
     if (_hapticProbes)
         _hapticProbes->Disarm();

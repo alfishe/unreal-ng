@@ -13,6 +13,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -57,13 +58,47 @@ struct Game
 const Game kGames[] = {
     {"builtin/game/manic-miner",
      "38e952ec0c06b3ac4abe287771176be891e095daef4304212966d3a6de350efa",
-     {{"died", 0x8906}, {"item", 0x8F82}, {"jump", 0x8C7B}}},
+     {{"died", 0x8906},
+      {"item", 0x8F82},
+      {"jump", 0x8C7B},
+      {"game-over", 0x89AA},
+      {"air-to-score", 0x90D9},
+      {"kong", 0x91B5},
+      {"ending", 0x907D}}},
+    {"builtin/game/manic-miner",  // a mod on the same engine (Manic Miner 2, Welcome Corp.)
+     "186c8b80469487d5196bb250dddedf3cb78fd3121cebd9fb40ea0315c28a4573",
+     {{"died", 0x8906}}},
+    {"builtin/game/manic-miner-phantom",
+     "64a6411419e3209668c301a6f4321a5c557e5dd8541c02d3c8a390c34f19e472",
+     {{"died", 0x890C}, {"item", 0x8F8D}, {"jump", 0x8C86}}},
     {"builtin/game/exolon",
      "598021f0f0f850f0ad6c214369be8eb65a71ff3e878c60ed716066add15cb35a",
-     {{"shot", 0x8366}, {"grenade", 0x9221}, {"blast", 0x92D4}, {"died", 0x9CB9}}},
+     {{"shot", 0x8366},
+      {"grenade", 0x9221},
+      {"blast", 0x92D4},
+      {"died", 0x9CB9},
+      {"grenades", 0x99CE},
+      {"ammo", 0x9978},
+      {"kill", 0xC155},
+      {"ricochet", 0xC0E7}}},
+    {"builtin/game/exolon-m",  // the Breeze release, M fires
+     "9eecb12b1b5c1a3aaeea7a1b6dc27b4bf02af94dd1e96c1d830907e24f65be5e",
+     {{"shot", 0x8366}, {"kill", 0xC155}}},
+    {"builtin/game/exolon-demo",
+     "fd4a6ac0da1daa7088dec4658a544688da3a8ad57cfa70bbe34661f5b3d487ee",
+     {{"shot", 0x83E5}, {"grenade", 0x92AD}, {"blast", 0x9360}, {"died", 0x9D45}}},
     {"builtin/game/chase-hq",
      "8ecfe859f329794319ef940d9ed66cf608194c86fc9402d37e33d50b8de348b6",
+     {{"crash", 0xA4B1}, {"rammed", 0xA78A}, {"turbo", 0x889C}, {"landing", 0xB076}, {"scrape", 0xA437}}},
+    {"builtin/game/chase-hq",  // the 48K beeper build (Mazanov & Kverznev 1992)
+     "0b567987e05c8bf16662fd9b75799c9ac868fbf8eadaf8d07a31d05fedf8beb2",
+     {{"crash", 0xA4B1}}},
+    {"builtin/game/chase-hq-gs",
+     "8074c8253b6d22940e7f6a47bf34fa064be4afca06cf5b26870e61aeb3dfd8be",
      {{"crash", 0xA4B1}, {"rammed", 0xA78A}, {"turbo", 0x889C}}},
+    {"builtin/game/chase-hq-demo",
+     "5d51ecbd2c9aea0feb40ed838f21257f90bc35d998fbfe004c90c8e7b264fc63",
+     {{"crash", 0x9F8E}, {"rammed", 0xA1B0}, {"turbo", 0x8327}}},
 };
 
 /// The game's haptics section, found as the emulator finds it: the image's hash on a Pentagon
@@ -111,6 +146,8 @@ protected:
         memory->DirectWriteToZ80Memory(kIdle, 0xC9);
         memory->DirectWriteToZ80Memory(0xA24A, 0);  // Chase H.Q.'s speed: standing still
         memory->DirectWriteToZ80Memory(0xA24B, 0);
+        memory->DirectWriteToZ80Memory(0x9D36, 0);  // and its demo's
+        memory->DirectWriteToZ80Memory(0x9D37, 0);
         for (const Game& game : kGames)
             for (const auto& [source, address] : game.calls)
                 memory->DirectWriteToZ80Memory(address, 0xC9);
@@ -186,13 +223,16 @@ INSTANTIATE_TEST_SUITE_P(Games, GameHapticsGames_Test, ::testing::Range<size_t>(
                              for (char c : id.substr(id.rfind('/') + 1))
                                  if (c != '-')
                                      name += c;
-                             return name;
+                             return name + "_" + std::string(kGames[info.param].sha256, 8);  // a release per row
                          });
 
 TEST_F(GameHaptics_Test, ChaseHqSpeedDrivesTheEngine)
 {
-    const HapticProfile haptics = Resolve(kGames[2]);
-    _feed = std::make_shared<ProfileHaptics>(haptics, kGames[2].id, _mixer,
+    const Game& chase = *std::find_if(std::begin(kGames), std::end(kGames), [](const Game& game) {
+        return std::string_view(game.id) == "builtin/game/chase-hq";
+    });
+    const HapticProfile haptics = Resolve(chase);
+    _feed = std::make_shared<ProfileHaptics>(haptics, chase.id, _mixer,
                                              [] { return std::vector<HostDeviceId>{"pad"}; });
     _context->pControllerManager->SetHapticFeed(_feed);
     Memory* memory = _context->pMemory;

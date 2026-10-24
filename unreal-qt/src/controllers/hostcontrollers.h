@@ -101,6 +101,13 @@ public:
         return _soundHaptics;
     }
     void SetSoundHaptics(bool on);
+    /// The Haptics panel's "DSP filters" (haptics.md §4, off by default, kept in the settings): the sound haptics add
+    /// `lowband(mix)` on the low motor and `onset(mix)` as a high-motor tick to the AY / beeper filters
+    bool SoundHapticsDsp() const
+    {
+        return _soundHapticsDsp;
+    }
+    void SetSoundHapticsDsp(bool on);
     /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
     /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
     /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine.
@@ -216,6 +223,7 @@ private:
     bool _debugFocus = false;  ///< the debugger window has the focus
     std::string _manualProfile;
     bool _soundHaptics = false;
+    bool _soundHapticsDsp = false;
     bool _globalShortcuts = false;
     QWidget* _mainWindow = nullptr;
     QWidget* _debuggerWindow = nullptr;

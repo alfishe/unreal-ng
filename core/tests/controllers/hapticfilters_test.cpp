@@ -178,7 +178,7 @@ TEST(HapticFilters_Test, ProbesParse)
         {R"({"sources": {"s": {"probe": "port-in", "port": 254, "value": 1}}})", "port-out only"},
         {R"({"sources": {"s": {"probe": "port-in", "port": 65536}}})", "above #FFFF"},
         {R"({"sources": {"s": {"probe": "value", "address": 1, "each_write": true}}})", "each_write"},
-        {R"({"sources": {"s": {"filter": "lowband", "source": "saa"}}})", "'source' 'saa' unknown"},
+        {R"({"sources": {"s": {"filter": "lowband", "source": "opl9"}}})", "'source' 'opl9' unknown"},
         {R"({"sources": {"s": {"filter": "lowband", "low_hz": 200, "high_hz": 100}}})", "below 'high_hz'"},
         {R"({"sources": {"s": {"filter": "onset", "rise_db": 90}}})", "'rise_db' is 1..60"},
         {R"({"sources": {"s": {"filter": "ringing"}}})", "unknown"},
@@ -322,4 +322,17 @@ TEST(HapticFilters_Test, AddProbeFromDebugger)
     EXPECT_EQ(parsed.rules[1].on, "probe-2");
     EXPECT_FALSE(AddHapticProbeSource(haptics, out, "boing", name, error)) << "an unknown effect is refused";
     EXPECT_EQ(haptics.Find("rules")->Items().size(), 2u) << "and nothing changed";
+}
+
+TEST(HapticFilters_Test, EveryStreamNameRoundTrips)
+{
+    for (const char* name : {"mix", "beeper", "ay:0", "ay:1", "ay:2", "covox", "gs", "next-dac", "saa", "moonsound",
+                             "soundrive:0", "soundrive:1", "soundrive:2", "soundrive:3"})
+    {
+        HapticStream stream = HapticStream::Mix;
+        ASSERT_TRUE(ParseHapticStream(name, stream)) << name;
+        EXPECT_STREQ(HapticStreamName(stream), name);
+    }
+    HapticStream stream = HapticStream::Mix;
+    EXPECT_FALSE(ParseHapticStream("soundrive:4", stream));
 }

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "base/featuremanager.h"
 #include "common/dumphelper.h"
@@ -630,12 +631,23 @@ bool SoundManager::hasDeviceBuffer(AudioSourceType type) const
 namespace
 {
 /// The part of a model audio source that is its DAC (the Next's), or -1
-int ModelDacPart(const IModelAudioSource* model)
+/// The part of a machine's own sound device a tap reads alone, -1 for none: the part of that type; on a device with
+/// parts COVOX is its DAC part (NextDac) and the AY sockets' sources are its chips (the Next's three AYs)
+int ModelPartFor(const IModelAudioSource* model, AudioSourceType source)
 {
     if (model == nullptr)
         return -1;
+    AudioSourceType wanted = source;
+    if (source == AudioSourceType::COVOX)
+        wanted = AudioSourceType::NextDac;
+    else if (source == AudioSourceType::AY1_All)
+        wanted = AudioSourceType::NextAy1;
+    else if (source == AudioSourceType::AY2_All)
+        wanted = AudioSourceType::NextAy2;
+    else if (source == AudioSourceType::AY3_All)
+        wanted = AudioSourceType::NextAy3;
     for (size_t part = 0; part < model->AudioPartCount(); part++)
-        if (model->AudioPartType(part) == AudioSourceType::NextDac)
+        if (model->AudioPartType(part) == wanted)
             return static_cast<int>(part);
     return -1;
 }
@@ -643,18 +655,33 @@ int ModelDacPart(const IModelAudioSource* model)
 
 void SoundManager::setHapticTaps(const std::vector<AudioSourceType>& sources)
 {
-    const int dacPart = ModelDacPart(_modelAudio);
-    bool dac = false;
-    _hapticTaps.clear();
+    std::vector<HapticTapSource> specs;
     for (AudioSourceType source : sources)
+        specs.push_back({source, AudioSourceType::Custom, -1});
+    setHapticTaps(specs);
+}
+
+void SoundManager::setHapticTaps(const std::vector<HapticTapSource>& sources)
+{
+    _hapticTaps.clear();
+    std::vector<bool> parts(_modelAudio != nullptr ? _modelAudio->AudioPartCount() : 0, false);
+    bool channels = false;
+    for (const HapticTapSource& source : sources)
     {
         HapticTap tap;
-        tap.source = source;
+        tap.source = source.source;
+        tap.also = source.also;
+        tap.dacChannel = source.dacChannel;
         _hapticTaps.push_back(tap);
-        dac = dac || source == AudioSourceType::NextDac || (source == AudioSourceType::COVOX && dacPart >= 0);
+        const int part = source.dacChannel < 0 ? ModelPartFor(_modelAudio, source.source) : -1;
+        if (part >= 0)
+            parts[static_cast<size_t>(part)] = true;
+        channels = channels || source.dacChannel >= 0;
     }
-    if (dacPart >= 0)
-        _modelAudio->SetAudioPartTap(static_cast<size_t>(dacPart), dac);
+    for (size_t part = 0; part < parts.size(); part++)
+        _modelAudio->SetAudioPartTap(part, parts[part]);
+    if (_covox != nullptr)
+        _covox->SetChannelTap(channels);
 }
 
 const int16_t* SoundManager::hapticTap(size_t index, size_t& count) const
@@ -674,21 +701,31 @@ void SoundManager::takeHapticTaps()
 
 void SoundManager::captureHapticTaps(size_t samplesThisFrame)
 {
-    const int dacPart = ModelDacPart(_modelAudio);
     const uint32_t rate = static_cast<uint32_t>(_coreRate);
     for (HapticTap& tap : _hapticTaps)
     {
         tap.count = 0;
         const int16_t* source = nullptr;
+        const int16_t* also = nullptr;
         size_t stride = AUDIO_CHANNELS;
-        if (dacPart >= 0 && (tap.source == AudioSourceType::NextDac || tap.source == AudioSourceType::COVOX))
+        const int part = tap.dacChannel < 0 ? ModelPartFor(_modelAudio, tap.source) : -1;
+        if (tap.dacChannel >= 0)
         {
-            source = _modelAudio->AudioPartTap(static_cast<size_t>(dacPart));
+            source = _covox != nullptr && _modelAudio == nullptr ? _covox->ChannelTap(tap.dacChannel) : nullptr;
+            stride = 1;
+        }
+        else if (part >= 0)
+        {
+            source = _modelAudio->AudioPartTap(static_cast<size_t>(part));
             stride = 1;
         }
         else if (tap.source != AudioSourceType::NextDac)
         {
             source = deviceBuffer(tap.source);
+            if (tap.also != AudioSourceType::Custom)
+                also = deviceBuffer(tap.also);
+            if (source == nullptr)
+                std::swap(source, also);
         }
         if (source == nullptr || samplesThisFrame == 0 || rate < kHapticTapRate)
             continue;
@@ -696,8 +733,11 @@ void SoundManager::captureHapticTaps(size_t samplesThisFrame)
         // each time it passes the core rate. Integers only: the same samples on every compiler
         for (size_t i = 0; i < samplesThisFrame; i++)
         {
-            const int32_t mono = stride == 1 ? source[i]
-                                             : (static_cast<int32_t>(source[i * stride]) + source[i * stride + 1]) / 2;
+            int32_t mono = stride == 1 ? source[i]
+                                       : (static_cast<int32_t>(source[i * stride]) + source[i * stride + 1]) / 2;
+            if (also != nullptr)
+                mono = std::clamp<int32_t>(
+                    mono + (static_cast<int32_t>(also[i * stride]) + also[i * stride + 1]) / 2, -32768, 32767);
             tap.sum += mono;
             tap.summed++;
             tap.phase += kHapticTapRate;

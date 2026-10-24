@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -26,7 +27,9 @@
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/sound/covox.h"
 #include "emulator/sound/nextaudio.h"
+#include "emulator/sound/soundmanager.h"
 #include "haptics/hapticmixer.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
@@ -316,6 +319,70 @@ TEST(HapticFeedNext_Test, TheNextDacIsAStreamOfItsOwn)
     ASSERT_GE(frame.streams[0].count, 150u);
     EXPECT_EQ(frame.streams[0].samples[10], (127 + 127) * 8) << "A and C at #FF, the mono sum";
     EXPECT_EQ(frame.streams[1].samples[10], frame.streams[0].samples[10]) << "covox on the Next is its DAC";
+    context->pControllerManager->SetHapticFeed(nullptr);
+    emulator->RunNFrames(1, true);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(HapticFeedNext_Test, EachAyIsAStreamOfItsOwn)
+{
+    // ay:<n> on the Next: its chips mix inside NextAudio, which renders each tapped chip alone (its DC out)
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ports->Board().Write(0x08, 0x02 | 0x08);  // turbosound and the DAC on
+    SoundChip_AY8910* chip = ports->Audio().Chip(0);
+    ASSERT_NE(chip, nullptr);
+    chip->writeRegister(0, 0x40);  // tone A: period #040, about 1.7 kHz
+    chip->writeRegister(1, 0x00);
+    chip->writeRegister(7, 0x3E);  // tone A only
+    chip->writeRegister(8, 0x0F);  // full volume
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->streams = {HapticStream::Ay0, HapticStream::Ay1};
+    context->pControllerManager->SetHapticFeed(feed);
+    emulator->RunNFrames(4, true);
+    ASSERT_FALSE(feed->frames.empty());
+    const HapticFrame& frame = feed->frames.back();
+    ASSERT_EQ(frame.streamCount, 2u);
+    ASSERT_GE(frame.streams[0].count, 150u);
+    const auto swing = [&frame](size_t stream) {
+        const auto& samples = frame.streams[stream].samples;
+        const auto [low, high] = std::minmax_element(samples.begin(), samples.begin() + frame.streams[stream].count);
+        return static_cast<int>(*high) - static_cast<int>(*low);
+    };
+    EXPECT_GT(swing(0), 2000) << "chip 0 plays its tone";
+    EXPECT_LT(swing(1), 50) << "chip 1 is silent";
+    context->pControllerManager->SetHapticFeed(nullptr);
+    emulator->RunNFrames(1, true);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(HapticFeedTaps_Test, SoundriveChannelsAlone)
+{
+    // soundrive:<n>: one Soundrive channel before its gain, (value - #80) x 128, on a Pentagon with the card
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    Covox* covox = context->pSoundManager->getCovox();
+    ASSERT_NE(covox, nullptr) << "the Pentagon's default config fits the Soundrive";
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->streams = {HapticStream::Soundrive0, HapticStream::Soundrive3, HapticStream::Saa, HapticStream::Moonsound};
+    context->pControllerManager->SetHapticFeed(feed);
+    emulator->RunNFrames(1, true);
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_A, 0xFF);
+    emulator->RunNFrames(2, true);
+    ASSERT_FALSE(feed->frames.empty());
+    const HapticFrame& frame = feed->frames.back();
+    ASSERT_EQ(frame.streamCount, 4u);
+    ASSERT_GE(frame.streams[0].count, 150u);
+    EXPECT_EQ(frame.streams[0].samples[0], 127 * 128) << "left A at #FF";
+    EXPECT_EQ(frame.streams[0].samples[100], 127 * 128);
+    EXPECT_EQ(frame.streams[1].count, frame.streams[0].count);
+    EXPECT_EQ(frame.streams[1].samples[100], 0) << "right B at rest";
+    EXPECT_EQ(frame.streams[2].count, 0u) << "no MultiSound card: no SAA";
+    EXPECT_EQ(frame.streams[3].count, 0u) << "no Moonsound";
     context->pControllerManager->SetHapticFeed(nullptr);
     emulator->RunNFrames(1, true);
     EmulatorTestHelper::CleanupEmulator(emulator);
