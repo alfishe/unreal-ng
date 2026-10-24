@@ -118,6 +118,7 @@ private:
     HostReply Scheme(const HostRequest& request);
     HostReply Haptics(const HostRequest& request);
     HostReply Rumble(const HostRequest& request);
+    HostReply HapticsProbe(const HostRequest& request);
     /// A surface's outputs (control surfaces controls-and-feedback.md §3): a pattern, the steps / clicks, or a seek's
     /// marks as the device's top layer plays them
     HostReply Output(const HostRequest& request);

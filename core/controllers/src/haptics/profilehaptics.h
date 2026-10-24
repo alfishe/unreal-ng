@@ -2,10 +2,12 @@
 
 /// @file profilehaptics.h
 /// @brief A game's haptics (haptics.md §5, §7): the sources of its profile's `haptics` section read from the core's
-/// frame summaries, and its rules played on the mixer. Probes are read at the frame end (the core reads the watched
-/// bytes, IHapticFeed::Watches), so a `write` probe sees a byte that changed between two frame ends; a change undone
-/// within one frame is not seen until the exec / write watches of the debugger come (TODO.md H3).
+/// frame summaries, and its rules played on the mixer. `write` (without `each_write`), `value` and `frame` read the
+/// watched bytes at the frame end (IHapticFeed::Watches); `exec`, `read`, `port-in`, `port-out` and `write` with
+/// `each_write` are breakpoint probes (IHapticFeed::Probes), which see every access, so a change undone within one frame
+/// fires too. `envelope`, `lowband` and `onset` filter the sample streams the feed asks for (IHapticFeed::Streams).
 
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -13,6 +15,7 @@
 #include <vector>
 
 #include "emulator/io/controllers/ihapticfeed.h"
+#include "haptics/audiofilters.h"
 #include "haptics/hapticmixer.h"
 #include "haptics/hapticprofile.h"
 
@@ -30,6 +33,10 @@ public:
 
     void OnHapticFrame(const HapticFrame& frame) override;
     std::vector<HapticWatch> Watches() const override;
+    std::vector<HapticStream> Streams() const override;
+    std::vector<HapticProbe> Probes() const override;
+    /// A replay or seek: the game effects on the targets stop now, frames are ignored until the hold ends
+    void OnHapticHold(bool held) override;
 
     const std::string& Name() const
     {
@@ -44,6 +51,11 @@ private:
     struct State
     {
         int watch = -1;  ///< the probe's index in Watches()
+        int probe = -1;  ///< in Probes()
+        int stream = -1; ///< in Streams()
+        EnvelopeFilter envelope;
+        LowbandFilter lowband;
+        OnsetFilter onset;
         bool seen = false;
         uint8_t last = 0;
         float level = 0;  ///< after the release (ay-noise)
@@ -56,6 +68,9 @@ private:
     std::function<std::vector<HostDeviceId>()> _targets;
     std::function<uint8_t(const HostDeviceId&)> _actuators;
     std::vector<HapticWatch> _watches;
+    std::vector<HapticStream> _streams;
+    std::vector<HapticProbe> _probes;
+    std::atomic<bool> _held{false};
     std::vector<State> _states;  ///< per source
     mutable std::mutex _levelsMutex;
     std::vector<std::pair<std::string, float>> _levels;

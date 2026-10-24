@@ -1,0 +1,37 @@
+# Chase H.Q. (Ocean 1989), part 1 of tiboh's bugfix TR-DOS version CHHQ+2_T.SCL, with 4 (Keyboard) in its menu.
+# O left, P right, Q accelerates, A brakes, Space changes gear, T turbo. Haptics (haptics.md §13 H5), every address
+# checked by play on a Pentagon: the speed is the word at #A24A (0 to 511 with turbo), #A4B1 is a crash into the
+# roadside, #A78A a hit on the criminal's car, #889C a turbo start
+schema: 1
+kind: play
+id: builtin/game/chase-hq
+label: Chase H.Q.
+match:
+  machines: [PENTAGON]
+  file_sha256: ["8ecfe859f329794319ef940d9ed66cf608194c86fc9402d37e33d50b8de348b6"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: Q, label: Accelerate }
+    west:         { key: A, label: Brake }
+    east:         { key: SPACE, label: Gear }
+    north:        { key: T, label: Turbo }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed:    { probe: value, address: "0xA24A", word: true, scale: 0.5 }
+    crash:    { probe: exec, address: "0xA4B1" }
+    rammed:   { probe: exec, address: "0xA78A" }
+    turbo:    { probe: exec, address: "0x889C" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: thump }
+    - { on: rammed, play: hit }
+    - { on: turbo, play: explosion, scale: 0.6 }

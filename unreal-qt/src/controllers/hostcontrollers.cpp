@@ -721,6 +721,29 @@ bool HostControllers::KeepAutoDecision(QString& error)
     return saveUserProfile(std::move(profile), error);
 }
 
+bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+{
+    // The surfaces' haptics-probe verb, so the menu and an agent write the same profile
+    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
+    HostRequest request;
+    request.verb = "haptics-probe";
+    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
+    request.options["address"] = std::to_string(probe.address);
+    if (probe.page != 0xFFFF)
+        request.options["page"] = std::to_string(probe.page);
+    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
+        request.options["port_mask"] = std::to_string(probe.portMask);
+    const HostReply reply = Host(request);
+    if (!reply.Ok())
+    {
+        error = QString::fromStdString(reply.message);
+        return false;
+    }
+    const JsonValue* source = reply.body.Find("source");
+    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
+    return true;
+}
+
 void HostControllers::updateHapticsGate()
 {
     Emulator* emulator = _binding->emulator();

@@ -16,6 +16,7 @@
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
+#include "emulator/io/controllers/ihapticfeed.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
@@ -76,6 +77,10 @@ public:
     /// "Keep" on the auto toast: a user game profile keyed by the loaded file's SHA-256 (mapping-and-profiles.md
     /// §6.1) holding the connector and the first pad's pin; false with the reason
     bool KeepAutoDecision(QString& error);
+    /// "Add probe from debugger" (haptics.md §7): @p probe (a debugger breakpoint) as a source of the user game profile
+    /// of the loaded file (the haptics-probe verb: user/game-<sha>, made from the profile whose haptics play now), with
+    /// a `hit` rule; the source's name in @p name; false with the reason
+    bool AddHapticProbe(const controllers::HapticProbe& probe, QString& name, QString& error);
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
     bool DebugLayer() const

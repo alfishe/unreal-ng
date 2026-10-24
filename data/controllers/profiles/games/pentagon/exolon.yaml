@@ -1,0 +1,27 @@
+# Exolon (Hewson 1987), the bugfix TR-DOS version EXOLON.SCL (EXLNSlTb), AY sound (its default). Q A O P move,
+# Space fires; hold fire for a grenade. Haptics (haptics.md §13 H5), every address checked by play on a Pentagon: #8366
+# fires the blaster, #9221 launches a grenade, #92D4 detonates it, #9CB9 kills Vitorc
+schema: 1
+kind: play
+id: builtin/game/exolon
+label: Exolon
+extends: [scheme/qaop-space]
+match:
+  machines: [PENTAGON]
+  file_sha256: ["598021f0f0f850f0ad6c214369be8eb65a71ff3e878c60ed716066add15cb35a"]
+layers:
+  play:
+    south:        { key: SPACE, label: Fire }
+    north:        { key: Q, label: Jump }
+    menu:         { key: "1", label: Start }
+haptics:
+  sources:
+    shot:    { probe: exec, address: "0x8366" }
+    grenade: { probe: exec, address: "0x9221" }
+    blast:   { probe: exec, address: "0x92D4" }
+    died:    { probe: exec, address: "0x9CB9" }
+  rules:
+    - { on: shot, play: shot, target: "trigger.right|handle.high" }
+    - { on: grenade, play: knock }
+    - { on: blast, play: explosion }
+    - { on: died, play: life-lost }

@@ -1,0 +1,30 @@
+# Manic Miner (Bug-Byte 1983), the eYe-Q TR-DOS version MMIN_EST.SCL: LOAD GAME in its menu, ENTER at the title.
+# O left, P right, Space jumps. Haptics (haptics.md §13 H5), every address checked by play on a Pentagon: #8906 is the
+# death of a real game (not the demo), #8F82 takes an item, #8C7B starts a jump
+schema: 1
+kind: play
+id: builtin/game/manic-miner
+label: Manic Miner
+match:
+  machines: [PENTAGON]
+  file_sha256: ["38e952ec0c06b3ac4abe287771176be891e095daef4304212966d3a6de350efa"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    south:        { key: SPACE, label: Jump }
+    dpad.up:      { key: SPACE, label: Jump }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    died: { probe: exec, address: "0x8906" }
+    item: { probe: exec, address: "0x8F82" }
+    jump: { probe: exec, address: "0x8C7B" }
+  rules:
+    - { on: died, play: life-lost }
+    - { on: item, play: pickup }
+    - { on: jump, play: tick, target: handle.high }

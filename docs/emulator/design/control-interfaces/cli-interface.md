@@ -421,6 +421,7 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
+| `controllers haptics-probe <kind> <address> [page=N port_mask=M play=hit]` | A haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`) as a source of the loaded game's user profile, with a rule |
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).

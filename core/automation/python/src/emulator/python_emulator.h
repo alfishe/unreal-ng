@@ -1974,7 +1974,7 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output) with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics-probe) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2017,6 +2017,16 @@ namespace PythonBindings
                      return HostControllerCallPy("rumble", options);
                  }, py::arg("device"), py::arg("effect") = "identify",
                  "Play a test effect on a host device: identify, low, high, clicks, left-trigger, right-trigger, swell")
+            .def("controllers_haptics_probe", [](Emulator&, const std::string& kind, const std::string& address,
+                                                 const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["kind"] = kind;
+                     all["address"] = address;
+                     return HostControllerCallPy("haptics-probe", all);
+                 }, py::arg("kind"), py::arg("address"),
+                 "A haptic probe (exec, read, write, port-in, port-out: a breakpoint that never stops) at an address "
+                 "or port ('0x5C3A') as a source of the loaded game's user profile, with a rule: page=, port_mask=, "
+                 "play='hit'. {ok, id, source, path}")
             .def("controllers_output", [](Emulator&, const std::string& device, const py::kwargs& options) {
                      py::kwargs all = options;
                      all["device"] = device;

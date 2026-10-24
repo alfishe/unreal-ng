@@ -94,6 +94,9 @@ public:
     bool AudioPartActive(size_t part) const override { return part < kParts && _partPeak[part] > 0.002f; }
     void AudioChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const override;
     void SetAudioChannel(AudioSourceType type, size_t index, bool muted, float volume) override;
+    /// The DAC part alone (the haptic feed's `next-dac`): the four channels' mono sum at full scale, before the gains
+    void SetAudioPartTap(size_t part, bool on) override;
+    const int16_t* AudioPartTap(size_t part) const override;
     /// endregion
 
     /// Off: every tick through Tick (comparisons); the count of the ticks the quiet runs took (AdvanceTo)
@@ -135,6 +138,14 @@ private:
     bool _hadSound = false;
     size_t _rate = AUDIO_SAMPLING_RATE;
     std::vector<float> _tickLeft, _tickRight;  ///< the level of each tick of this frame
+    /// The DAC tap (SetAudioPartTap): its mono level per tick, then per sample (integers: the DAC's levels are)
+    bool _dacTap = false;
+    std::vector<int32_t> _tickDac;
+    std::array<int16_t, MAX_SAMPLES_PER_FRAME> _dacTapBuffer{};
+    int32_t DacMono() const
+    {
+        return ((_dac[0] - 128) + (_dac[1] - 128) + (_dac[2] - 128) + (_dac[3] - 128)) * 8;
+    }
     bool _quietTicksEnabled = true;
     uint64_t _quietTicks = 0;
 

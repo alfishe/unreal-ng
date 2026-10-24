@@ -720,7 +720,8 @@ for device in emu.controllers_host("devices")["devices"]:
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
+play=)` (a haptic probe with its rule in the loaded game's user profile); `controllers_host("devices")` lists each device's `role`, `layers`,
 `context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).

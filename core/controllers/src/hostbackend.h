@@ -30,11 +30,15 @@ struct RumbleLevels
     float high = 0;
     float leftTrigger = 0;
     float rightTrigger = 0;
+    /// HD haptics (haptics.md §6.1 `hd`): the frequency the low / high level plays at on a voice-coil pad (Switch HD
+    /// rumble, CoreHaptics sharpness), 0 its default; ERM motors ignore it
+    uint16_t lowHz = 0;
+    uint16_t highHz = 0;
 
     bool operator==(const RumbleLevels& other) const
     {
         return low == other.low && high == other.high && leftTrigger == other.leftTrigger &&
-               rightTrigger == other.rightTrigger;
+               rightTrigger == other.rightTrigger && lowHz == other.lowHz && highHz == other.highHz;
     }
     bool operator!=(const RumbleLevels& other) const
     {

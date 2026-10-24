@@ -2,3 +2,6 @@
 version: 1
 profiles:
   - { id: builtin/game/vradarks-revenge, label: "Vradark's Revenge", machines: [NEXT], file: next/vradarks-revenge.yaml, offset: 0, length: 1054, keys: ["sha256:32ad0b5fa7cbb749841ecf26bdd6fce7563d8ffbcc736c15689b1fa4abcbcd9e"] }
+  - { id: builtin/game/chase-hq, label: Chase H.Q., machines: [PENTAGON], file: pentagon/chase-hq.yaml, offset: 0, length: 1522, keys: ["sha256:8ecfe859f329794319ef940d9ed66cf608194c86fc9402d37e33d50b8de348b6"] }
+  - { id: builtin/game/exolon, label: Exolon, machines: [PENTAGON], file: pentagon/exolon.yaml, offset: 0, length: 1066, keys: ["sha256:598021f0f0f850f0ad6c214369be8eb65a71ff3e878c60ed716066add15cb35a"] }
+  - { id: builtin/game/manic-miner, label: Manic Miner, machines: [PENTAGON], file: pentagon/manic-miner.yaml, offset: 0, length: 1118, keys: ["sha256:38e952ec0c06b3ac4abe287771176be891e095daef4304212966d3a6de350efa"] }

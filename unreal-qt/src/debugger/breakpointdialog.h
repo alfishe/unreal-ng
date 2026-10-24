@@ -35,6 +35,11 @@ public:
     explicit BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~BreakpointDialog();
 
+signals:
+    /// "Add as haptic probe" (haptics.md §7): @p kind 0 exec, 1 read, 2 write, 3 port-in, 4 port-out (HapticProbeKind);
+    /// @p page a RAM page or -1; @p portMask for a port
+    void hapticProbeRequested(int kind, int address, int page, int portMask);
+
 private slots:
     // Table actions
     void addBreakpoint();

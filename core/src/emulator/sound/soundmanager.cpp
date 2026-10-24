@@ -625,6 +625,95 @@ bool SoundManager::hasDeviceBuffer(AudioSourceType type) const
     }
 }
 
+/// region <Haptic taps>
+
+namespace
+{
+/// The part of a model audio source that is its DAC (the Next's), or -1
+int ModelDacPart(const IModelAudioSource* model)
+{
+    if (model == nullptr)
+        return -1;
+    for (size_t part = 0; part < model->AudioPartCount(); part++)
+        if (model->AudioPartType(part) == AudioSourceType::NextDac)
+            return static_cast<int>(part);
+    return -1;
+}
+}  // namespace
+
+void SoundManager::setHapticTaps(const std::vector<AudioSourceType>& sources)
+{
+    const int dacPart = ModelDacPart(_modelAudio);
+    bool dac = false;
+    _hapticTaps.clear();
+    for (AudioSourceType source : sources)
+    {
+        HapticTap tap;
+        tap.source = source;
+        _hapticTaps.push_back(tap);
+        dac = dac || source == AudioSourceType::NextDac || (source == AudioSourceType::COVOX && dacPart >= 0);
+    }
+    if (dacPart >= 0)
+        _modelAudio->SetAudioPartTap(static_cast<size_t>(dacPart), dac);
+}
+
+const int16_t* SoundManager::hapticTap(size_t index, size_t& count) const
+{
+    count = 0;
+    if (index >= _hapticTaps.size())
+        return nullptr;
+    count = _hapticTaps[index].count;
+    return _hapticTaps[index].samples.data();
+}
+
+void SoundManager::takeHapticTaps()
+{
+    for (HapticTap& tap : _hapticTaps)
+        tap.count = 0;
+}
+
+void SoundManager::captureHapticTaps(size_t samplesThisFrame)
+{
+    const int dacPart = ModelDacPart(_modelAudio);
+    const uint32_t rate = static_cast<uint32_t>(_coreRate);
+    for (HapticTap& tap : _hapticTaps)
+    {
+        tap.count = 0;
+        const int16_t* source = nullptr;
+        size_t stride = AUDIO_CHANNELS;
+        if (dacPart >= 0 && (tap.source == AudioSourceType::NextDac || tap.source == AudioSourceType::COVOX))
+        {
+            source = _modelAudio->AudioPartTap(static_cast<size_t>(dacPart));
+            stride = 1;
+        }
+        else if (tap.source != AudioSourceType::NextDac)
+        {
+            source = deviceBuffer(tap.source);
+        }
+        if (source == nullptr || samplesThisFrame == 0 || rate < kHapticTapRate)
+            continue;
+        // A box average down to kHapticTapRate: each input sample adds kHapticTapRate to the phase, an output is due
+        // each time it passes the core rate. Integers only: the same samples on every compiler
+        for (size_t i = 0; i < samplesThisFrame; i++)
+        {
+            const int32_t mono = stride == 1 ? source[i]
+                                             : (static_cast<int32_t>(source[i * stride]) + source[i * stride + 1]) / 2;
+            tap.sum += mono;
+            tap.summed++;
+            tap.phase += kHapticTapRate;
+            if (tap.phase < rate)
+                continue;
+            tap.phase -= rate;
+            if (tap.count < tap.samples.size())
+                tap.samples[tap.count++] = static_cast<int16_t>(tap.sum / static_cast<int32_t>(tap.summed));
+            tap.sum = 0;
+            tap.summed = 0;
+        }
+    }
+}
+
+/// endregion </Haptic taps>
+
 const int16_t* SoundManager::slotCardBuffer(AudioSourceType type) const
 {
     for (const ICard* card : _slotCards)
@@ -1768,6 +1857,10 @@ void SoundManager::handleFrameEnd()
         for (const auto& entry : _frameAudioTaps)
             entry.second(_outBuffer, samplesThisFrame, frame);
     }
+
+    // The haptic feed's streams (the same vantage); nothing to do without one
+    if (!_hapticTaps.empty())
+        captureHapticTaps(samplesThisFrame);
 
     /// region <Analyzer audio tap (MCP automation)>
     // Post-mix, pre-mute/DRC vantage — identical to the recording tap above.

@@ -220,6 +220,8 @@ void NextAudio::Tick()
     right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.push_back(static_cast<float>(left / 32768.0));
     _tickRight.push_back(static_cast<float>(right / 32768.0));
+    if (_dacTap)
+        _tickDac.push_back(_dacEnabled ? DacMono() : 0);
 }
 
 bool NextAudio::QuietTicks(size_t ticks)
@@ -251,6 +253,8 @@ bool NextAudio::QuietTicks(size_t ticks)
     right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.insert(_tickLeft.end(), ticks, static_cast<float>(left / 32768.0));
     _tickRight.insert(_tickRight.end(), ticks, static_cast<float>(right / 32768.0));
+    if (_dacTap)
+        _tickDac.insert(_tickDac.end(), ticks, _dacEnabled ? DacMono() : 0);
     for (const auto& chip : _chips)
         chip->advanceSilent(static_cast<uint32_t>(ticks));
     _quietTicks += ticks;
@@ -299,6 +303,7 @@ void NextAudio::AudioFrameStart(bool synthesisSuppressed)
     }
     _tickLeft.clear();
     _tickRight.clear();
+    _tickDac.clear();
     ResetMeters();
 }
 
@@ -334,6 +339,20 @@ void NextAudio::AudioFrameEnd(size_t samples)
         _buffer[k * 2 + 1] = static_cast<int16_t>(std::clamp(r * 32767.0, -32768.0, 32767.0));
     }
     _hadSound = peak > 0.002f;
+    if (_dacTap)
+    {
+        // The same tick-to-sample mapping as the mix above, in integers
+        const size_t ticks = _tickDac.size();
+        for (size_t k = 0; k < samples; k++)
+        {
+            const size_t from = ticks * k / samples, to = std::max(from + 1, ticks * (k + 1) / samples);
+            int64_t sum = 0;
+            size_t count = 0;
+            for (size_t i = from; i < to && i < ticks; i++, count++)
+                sum += _tickDac[i];
+            _dacTapBuffer[k] = static_cast<int16_t>(count ? sum / static_cast<int64_t>(count) : 0);
+        }
+    }
 
     // The parts' meters: each chip's swing (half the largest side's peak-to-peak), the DAC's largest side, in the
     // 13-bit PCM x 4 of Tick, as a share of full scale
@@ -366,6 +385,19 @@ double NextAudio::DacSide(bool right) const
     if (!_dacGainActive)
         return ((_dac[a] - 128) + (_dac[a + 1] - 128)) * 16.0;
     return ((_dac[a] - 128) * _dacGain[a] + (_dac[a + 1] - 128) * _dacGain[a + 1]) * 16.0;
+}
+
+void NextAudio::SetAudioPartTap(size_t part, bool on)
+{
+    if (part != kChips)
+        return;
+    _dacTap = on;
+    _tickDac.clear();
+}
+
+const int16_t* NextAudio::AudioPartTap(size_t part) const
+{
+    return part == kChips && _dacTap ? _dacTapBuffer.data() : nullptr;
 }
 
 void NextAudio::UpdateDacGains()
