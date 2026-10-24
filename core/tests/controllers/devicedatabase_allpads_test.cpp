@@ -114,13 +114,18 @@ TEST(DeviceDatabase_Test, AllPads_HidMapsPerMatchAndVersion)
     EXPECT_TRUE(buffalo.hid.dpadAxes);
     EXPECT_EQ(buffalo.step, "exact");
     // The family map reaches the layout; the layout's own fields stay where the map is silent
-    const HidLayout edge = HidLayoutFor(db.ForFamily("dualsense-edge"));
-    EXPECT_EQ(edge.family, "playstation");
-    EXPECT_EQ(edge.bits.size(), 4u);
-    EXPECT_EQ(edge.buttons.size(), 15u);
+    const HidLayout stadia = HidLayoutFor(db.ForFamily("stadia"));
+    EXPECT_EQ(stadia.family, "xbox");
+    ASSERT_GE(stadia.buttons.size(), 9u);
+    EXPECT_EQ(stadia.buttons[8], "guide");
+    EXPECT_FALSE(stadia.rxRyTriggers);
+    // ZL / ZR of the Switch layout drive the triggers at full travel (the picture's `lt` / `rt` light)
+    const HidLayout nintendo = HidLayoutFor("nintendo");
+    EXPECT_EQ(nintendo.buttons[6], "lt");
+    EXPECT_EQ(nintendo.buttons[7], "rt");
     const HidLayout joyCon = HidLayoutFor(db.ForFamily("joy-con-l"));
     EXPECT_EQ(joyCon.hat, "lstick");
-    EXPECT_EQ(joyCon.buttons[8], "view");
+    EXPECT_EQ(joyCon.buttons[8], "menu") << "a Joy-Con alone: minus is its menu key, as SwitchProPad names it";
 }
 
 TEST(DeviceDatabase_Test, AllPads_MalformedHidMapsAreRefused)

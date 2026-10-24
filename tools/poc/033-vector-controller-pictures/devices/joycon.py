@@ -185,11 +185,23 @@ def shell(view, segments, dx, colors):
     style.sheen(view, d)
 
 
+# A Joy-Con alone is held sideways: the controls are named as SwitchProPad reports them (SDL's
+# HandleMiniControllerStateL / R): the four keys under the thumb are the faces, SL / SR the shoulders, L / ZL (R / ZR)
+# paddles, the one stick the left stick. Drawn upright, the left one's left arrow is the bottom key when held
+SIDEWAYS_LEFT = {"dpad.left": "south", "dpad.down": "east", "dpad.up": "west", "dpad.right": "north",
+                 "misc.1": "lb", "misc.2": "rb", "lb": "paddle.p3", "lt": "paddle.p4", "view": "menu",
+                 "share": "guide", "dpad": "faces"}
+SIDEWAYS_RIGHT = {"south": "west", "east": "south", "west": "north", "north": "east", "misc.1": "lb",
+                  "misc.2": "rb", "rb": "paddle.p1", "rt": "paddle.p2", "rstick": "lstick"}
+
+
 def left():
     pic = Picture("joy-con-l", "Nintendo Switch Joy-Con (L), grey")
     pic.sources = sources("front view of the grey pair: the outline, the rail, the control positions and sizes",
                           "Nintendo_Switch_Joy-Con_Controllers.png")
     view = pic.view("front", ox=1024 - 1.5 * 1.5 * PX_PER_MM, scale=1.5 * PX_PER_MM)
+    view.rename = SIDEWAYS_LEFT
+    pic.renames = "named as SwitchProPad reports a Joy-Con held sideways (not on master yet)"
     _shoulders(view, 0, -1, COLORS, ("lb", "lt"), ("L", "ZL"))
     shell(view, LEFT_SHELL, 0, COLORS)
     rail(view, 0, -1, COLORS, (("misc.1", "SL"), ("misc.2", "SR")))
@@ -202,6 +214,8 @@ def right():
     pic.sources = sources("front view of the grey pair: the outline, the rail, the control positions and sizes",
                           "Nintendo_Switch_Joy-Con_Controllers.png")
     view = pic.view("front", ox=1024 + 1.5 * 1.5 * PX_PER_MM, scale=1.5 * PX_PER_MM)
+    view.rename = SIDEWAYS_RIGHT
+    pic.renames = "named as SwitchProPad reports a Joy-Con held sideways (not on master yet)"
     _shoulders(view, 0, 1, COLORS, ("rb", "rt"), ("R", "ZR"))
     shell(view, RIGHT_SHELL, 0, COLORS)
     rail(view, 0, 1, COLORS, (("misc.2", "SR"), ("misc.1", "SL")))

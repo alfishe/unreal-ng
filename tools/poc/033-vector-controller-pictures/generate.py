@@ -112,7 +112,8 @@ def problems(name, pic, written):
     if len(ids) != len(set(ids)):
         found.append(f"{name}: an element id twice: {sorted(i for i in set(ids) if ids.count(i) > 1)}")
     old = committed(OUT / name / "front.hotspots.json")
-    if old:
+    # A set may rename its controls on purpose before it ships (`pic.renames`: the reason), never silently
+    if old and not getattr(pic, "renames", None):
         lost = {c["control"] for c in json.loads(old)["controls"]} - set(names)
         if lost:
             found.append(f"{name}: controls of the previous set missing: {sorted(lost)}")

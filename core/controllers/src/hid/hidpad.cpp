@@ -69,11 +69,12 @@ HidLayout HidLayoutFor(const std::string& layout)
                        "lstick.click", "rstick.click", "guide", "touchpad.click", "misc.1"};
         out.rxRyTriggers = true;
     }
-    // Switch Pro and pads in Switch mode: B A Y X L R ZL ZR - + LS RS Home Capture
+    // Switch Pro and pads in Switch mode: B A Y X L R ZL ZR - + LS RS Home Capture. ZL / ZR are switches: they drive
+    // `lt` / `rt` at full travel (the picture lights them; `lt.click` bindings read them through the router)
     else if (layout == "nintendo")
     {
         out.family = "nintendo";
-        out.buttons = {"south", "east", "west", "north", "lb", "rb", "lt.click", "rt.click", "view", "menu",
+        out.buttons = {"south", "east", "west", "north", "lb", "rb", "lt", "rt", "view", "menu",
                        "lstick.click", "rstick.click", "guide", "share"};
     }
     return out;

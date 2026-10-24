@@ -8,7 +8,7 @@
   ],
   "controls": [
     {
-      "control": "lt",
+      "control": "paddle.p4",
       "label": "ZL",
       "shape": {
         "rect": [
@@ -30,7 +30,7 @@
       "order": 0
     },
     {
-      "control": "lb",
+      "control": "paddle.p3",
       "label": "L",
       "shape": {
         "rect": [
@@ -48,7 +48,7 @@
       "order": 1
     },
     {
-      "control": "misc.1",
+      "control": "lb",
       "label": "SL",
       "shape": {
         "rect": [
@@ -66,7 +66,7 @@
       "order": 2
     },
     {
-      "control": "misc.2",
+      "control": "rb",
       "label": "SR",
       "shape": {
         "rect": [
@@ -84,7 +84,7 @@
       "order": 3
     },
     {
-      "control": "view",
+      "control": "menu",
       "label": "-",
       "shape": {
         "rect": [
@@ -143,7 +143,7 @@
       "order": 6
     },
     {
-      "control": "dpad.up",
+      "control": "west",
       "label": "Up",
       "shape": {
         "circle": [
@@ -157,11 +157,11 @@
         707
       ],
       "callout": "left",
-      "group": "dpad",
+      "group": "faces",
       "order": 7
     },
     {
-      "control": "dpad.down",
+      "control": "east",
       "label": "Down",
       "shape": {
         "circle": [
@@ -175,11 +175,11 @@
         903
       ],
       "callout": "left",
-      "group": "dpad",
+      "group": "faces",
       "order": 8
     },
     {
-      "control": "dpad.left",
+      "control": "south",
       "label": "Left",
       "shape": {
         "circle": [
@@ -193,11 +193,11 @@
         805
       ],
       "callout": "left",
-      "group": "dpad",
+      "group": "faces",
       "order": 9
     },
     {
-      "control": "dpad.right",
+      "control": "north",
       "label": "Right",
       "shape": {
         "circle": [
@@ -211,11 +211,11 @@
         805
       ],
       "callout": "left",
-      "group": "dpad",
+      "group": "faces",
       "order": 10
     },
     {
-      "control": "share",
+      "control": "guide",
       "label": "Capture",
       "shape": {
         "rect": [
