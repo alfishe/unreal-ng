@@ -54,3 +54,6 @@ Index: [README.md](README.md).
       [2026-10-11-bus-analyzer/mutation-tests.md](../2026-10-11-bus-analyzer/mutation-tests.md)
 - [ ] Symbols: load `system.exp` / `system.sym` next to the running `system.dos`
       ([estex-dss-build.md](../2026-09-28-sprinter/estex-dss-build.md) §3)
+- [ ] FM handle names: DSS overwrites byte 0 of the name field on an open entry (drive/state), so
+      live handles render as `YSTEM  BAT` - read the name from +1 or decode byte 0 (live 2026-10-24
+      run in scratch/osaware-live/)

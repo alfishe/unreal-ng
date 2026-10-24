@@ -265,6 +265,15 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         // ==================== <name> events ====================
         if (action == "events")
         {
+            size_t limit = 50;  // Default; --limit=N overrides
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                if (args[i].substr(0, 8) == "--limit=")
+                {
+                    limit = std::stoul(args[i].substr(8));
+                }
+            }
+
             if (analyzerName == "trdos")
             {
                 TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(manager->getAnalyzer(analyzerName));
@@ -272,16 +281,6 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                 {
                     session.SendResponse(std::string("Error: TRDOSAnalyzer not available.") + NEWLINE);
                     return;
-                }
-
-                // Parse --limit option
-                size_t limit = 50;  // Default
-                for (size_t i = 2; i < args.size(); i++)
-                {
-                    if (args[i].substr(0, 8) == "--limit=")
-                    {
-                        limit = std::stoul(args[i].substr(8));
-                    }
                 }
 
                 auto events = trdos->getEvents();

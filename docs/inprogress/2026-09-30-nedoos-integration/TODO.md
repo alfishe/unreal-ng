@@ -56,7 +56,8 @@ Index: [README.md](README.md).
   `tsys_pages` owner polling, and the QUIT audit finding "task exits owning pages"
   (a synthetic `leak.com` covers it in `core/tests/debugger/analyzers/nedoos/`). One
   `IOSAnalyzer` branch in the WebAPI/CLI/Python/Lua surfaces serves every OS analyzer
-  (`analyzer nedoos events|state` in the CLI).
+  (`analyzer nedoos events|state` in the CLI). Driving both OS analyzers from MCP/WebAPI/CLI/Lua/Python,
+  with the leak-and-hungriness runbooks: [../2026-10-04-estex-dss-debugging/osaware-recipes.md](../2026-10-04-estex-dss-debugging/osaware-recipes.md).
 - Side note: AVR hard reset from the PS/2 stream (Ctrl-Alt-Del, F12,
   PrintScreen) and the hard vs. soft reset split (hard reset clears the PS/2
   log) are not emulated.
