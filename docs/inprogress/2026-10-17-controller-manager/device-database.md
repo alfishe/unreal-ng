@@ -153,9 +153,12 @@ Rules:
 
 ## 6. Images: the house style
 
-Per D5, images start as manufacturer photos or openly licensed photos and are retouched into one house style.
-Vectorization is a separate study (Q-1). Until that study ends, the canonical asset is a retouched raster with a hotspot
-map.
+Q-1 is answered (owner, 2026-10-23): the pictures are vector art. Each device is drawn from a data model in millimetres
+by a generator, not traced: [POC 033](../../../tools/poc/033-vector-controller-pictures/README.md) writes
+`front.svg` (SVG Tiny 1.2 for QSvgRenderer, named layers, one `control-<name>` group per control) with its
+`front.hotspots.json` from the same geometry and a `provenance.json`. Photos (the sources below) are references for
+sizes and layout only, nothing is copied; platform logos are left out (D5). A user may still add a photo with its own
+hotspot map: the format is the same for SVG and raster.
 
 **Sources, in order of preference:**
 
@@ -291,22 +294,23 @@ The keyboard images double as the target picker for "bind to a ZX key": a click 
 ## 11. Seed families
 
 The first `devices.json`, from [research-host-apis.md §5](research-host-apis.md#5-other-controllers). Image status:
-`own` = we photograph it, `find` = a source to find, `generic` = the family fallback until then.
+`vector` = drawn by POC 033 (own set), `own` = we photograph it as a reference, `find` = a source to find, `generic` =
+the family fallback (the POC 033 generic pad or DB9 stick) until then.
 
 | # | Family id | VID | PIDs | Layout | Images |
 |:--|:--|:--|:--|:--|:--|
-| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | own |
+| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | vector |
 | 2 | `xbox-elite-1` | 045E | 02E3 | xbox | find |
 | 3 | `xbox-360` | 045E | 028E (real wired; not the macOS synthetic) | xbox | find |
-| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | find |
-| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | find |
-| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | find |
+| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | vector |
+| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | vector |
+| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | vector |
 | 7 | `xbox-adaptive` | 045E | 0B0A, 0B0C, 0B21 | xbox | find |
 | 8 | `xbox-wireless-adapter` | 045E | 02E6, 02FE (pads behind it report their own families) | — | — |
 | 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | find |
-| 10 | `dualsense` | 054C | 0CE6 | playstation | find |
+| 10 | `dualsense` | 054C | 0CE6 | playstation | vector |
 | 11 | `dualsense-edge` | 054C | 0DF2 | playstation | find |
-| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | find |
+| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | vector |
 | 13 | `joy-con` | 057E | 2006, 2007, 200E | nintendo-positional | find |
 | 14 | `nso-snes` / `nso-n64` / `nso-megadrive` | 057E | 2017 / 2019 / 201E | snes / n64 / megadrive | find |
 | 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | find |
@@ -331,6 +335,6 @@ The Stream Deck (0FD9) is not a host device here. It is a companion client throu
 
 | # | Question |
 |:--|:--|
-| Q-1 | Vectorization: trace the retouched photos into SVG (themeable, small, crisp at any size, Mesen2-style), or keep rasters? A separate study: tools, cost per device, the look next to the photos, dark / light themes. Until then the raster + hotspot map is canonical, and the map format does not change if the image becomes SVG. |
+| Q-1 | Answered (owner, 2026-10-23): vector pictures drawn by a generator from per-device data, POC 033 ([§6](#6-images-the-house-style)). |
 | Q-8 | Retro Games Ltd THEJOYSTICK / THESPECTRUM pad VID/PIDs: read them from ioreg when a device is available. |
 | Q-9 | Manufacturer press-kit terms. **Answered** (D5): allowed with the source and terms recorded per image, platform logos removed in the retouch; where a vendor forbids it, CC images or our own photos. |

@@ -85,7 +85,8 @@ TEST(HidPad_Test, DeviceDatabase_LookupStepsAndTheSyntheticPad)
     EXPECT_EQ(match.step, "name");
     EXPECT_EQ(match.name, "Generic DB9 Joystick");
     EXPECT_EQ(db.Lookup({"usb", 0x1234, 0x5678, -1, "Thing", ""}).step, "unknown");
-    EXPECT_EQ(db.ForFamily("dualsense").images, "generic-playstation-like");
+    EXPECT_EQ(db.ForFamily("dualsense").images, "dualsense");
+    EXPECT_EQ(db.ForFamily("dualsense-edge").images, "generic-playstation-like");
     EXPECT_EQ(db.ForFamily("fake-pad", "nintendo").images, "generic-nintendo-like");
     EXPECT_EQ(db.ForFamily("fake-pad").images, "generic-unknown");
 
