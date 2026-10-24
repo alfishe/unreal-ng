@@ -1679,8 +1679,9 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | aliases
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light
+                                                         | light | unalias
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1700,7 +1701,10 @@ when known also `level` (absent without one), `coarse`, `charging`, `wired`), `l
 `reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
 `POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
 query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
-reason where the OS does not let the emulator set it. On the WebSocket `/api/v1/ws` all of them are `call`s, as every
+reason where the OS does not let the emulator set it. `GET /api/v1/controllers/aliases` lists the device aliases
+(`{aliases: [{from, to, connected, name}]}`: a pad first seen through GameController alone, `gc:...`, and later
+matched to its HID device keeps its profiles under the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}`
+forgets one (`200` with `from`, `to`; `404` `unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every
 route.
 
 ### Host Actions

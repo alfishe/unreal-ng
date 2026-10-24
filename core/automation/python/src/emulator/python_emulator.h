@@ -1974,7 +1974,8 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output) with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, aliases, unalias) with its options as "
+                 "keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return StreamDeckPy(verb, options);
                  }, py::arg("verb") = "status",
@@ -2034,6 +2035,14 @@ namespace PythonBindings
                  "A pad's light colour (a DualSense / DualShock 4 light bar): color='#RRGGBB', 'r,g,b' or 'off'; "
                  "unavailable with the reason where the OS does not let the emulator set it (controllers_host('devices') "
                  "names each device's battery, light and notice)")
+            .def("controllers_aliases", [](Emulator&) { return HostControllerCallPy("aliases", py::kwargs()); },
+                 "The device aliases: {aliases: [{from, to, connected, name}]}; a pad first seen through "
+                 "GameController alone (gc:...) and later matched to its HID device keeps its profiles under the new id")
+            .def("controllers_unalias", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("unalias", options);
+                 }, py::arg("id"), "Forget a device alias (the old id): saved and applied at once; {from, to}")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

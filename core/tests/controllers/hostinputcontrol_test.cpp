@@ -353,3 +353,49 @@ TEST(HostInputControl_Test, DevicesShowNoticeBatteryAndLight_LightSetsTheColour)
     EXPECT_EQ(fake->Lights("fake:1").size(), 3u) << "nothing reached the pad on a refusal";
     service.Stop();
 }
+
+/// aliases lists the promoted devices' old ids (architecture.md §5) and whether the new one is here; unalias forgets
+/// one, in the store and in aliases.yaml
+TEST(HostInputControl_Test, AliasesListAndUnaliasForgets)
+{
+    const std::string dir = TestPathHelper::GetUniqueTestScratchPath("host-aliases");
+    FakeOwner owner(dir);
+    HostInputControl control(owner);
+    HostReply listed = control.Execute({"aliases", {}});
+    ASSERT_TRUE(listed.Ok()) << listed.message;
+    EXPECT_TRUE(listed.body.Find("aliases")->Items().empty());
+    EXPECT_EQ(listed.message, "no device aliases");
+
+    ProfileStore& store = owner.Profiles();
+    store.AddAlias("gc:dualsense:1", "bt:054c:0ce6:1");
+    store.AddAlias("gc:xbox:2", "usb:045e:0b13:1");
+    listed = control.Execute({"aliases", {}});
+    ASSERT_TRUE(listed.Ok()) << listed.message;
+    const JsonValue& aliases = *listed.body.Find("aliases");
+    const JsonValue* dualSense = FindItem(aliases, "from", "gc:dualsense:1");
+    ASSERT_NE(dualSense, nullptr);
+    EXPECT_EQ(dualSense->Find("to")->AsString(), "bt:054c:0ce6:1");
+    EXPECT_TRUE(dualSense->Find("connected")->AsBool());
+    EXPECT_EQ(dualSense->Find("name")->AsString(), "DualSense");
+    const JsonValue* xbox = FindItem(aliases, "from", "gc:xbox:2");
+    ASSERT_NE(xbox, nullptr);
+    EXPECT_FALSE(xbox->Find("connected")->AsBool());
+    EXPECT_EQ(xbox->Find("name"), nullptr);
+
+    EXPECT_EQ(control.Execute({"unalias", {}}).error, "bad-request");
+    const HostReply unknown = control.Execute({"unalias", {{"id", "gc:none"}}});
+    EXPECT_EQ(unknown.error, "unknown-alias");
+    EXPECT_EQ(unknown.HttpStatus(), 404);
+
+    const int before = owner.reapplied;
+    const HostReply removed = control.Execute({"unalias", {{"id", "gc:dualsense:1"}}});
+    ASSERT_TRUE(removed.Ok()) << removed.message;
+    EXPECT_EQ(removed.body.Find("to")->AsString(), "bt:054c:0ce6:1");
+    EXPECT_EQ(owner.reapplied, before + 1);
+    EXPECT_EQ(store.Aliases().count("gc:dualsense:1"), 0u);
+    ProfileStore reloaded;
+    std::string error;
+    ASSERT_TRUE(reloaded.LoadAliases(dir, error)) << error;
+    EXPECT_EQ(reloaded.Aliases().size(), 1u) << "the file keeps only the other alias";
+    EXPECT_EQ(reloaded.Aliases().count("gc:xbox:2"), 1u);
+}
