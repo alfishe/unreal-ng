@@ -275,6 +275,9 @@ void Memory16KBWidget::updateMemoryImage()
     const uint32_t* execCounters = nullptr;
     uint32_t counterBaseOffset = 0;  // Base offset into counter arrays
 
+    // Held to the end of the render: a feature switch-off on another thread waits instead of freeing the counters
+    // under the loop below (it reads 16K entries, well under a millisecond)
+    MemoryAccessTracker::CountersView counters;
     if (needsOverlay)
     {
         MemoryAccessTracker& tracker = memory->GetAccessTracker();
@@ -283,23 +286,22 @@ void Memory16KBWidget::updateMemoryImage()
         {
             // Z80 mode: counters indexed by Z80 address (0x0000-0xFFFF)
             counterBaseOffset = baseAddress;
-            if (_showReadOverlay)
-                readCounters = tracker.GetZ80ReadCountersPtr();
-            if (_showWriteOverlay)
-                writeCounters = tracker.GetZ80WriteCountersPtr();
-            if (_showExecuteOverlay)
-                execCounters = tracker.GetZ80ExecuteCountersPtr();
+            counters = tracker.Z80CountersView();
         }
         else
         {
             // Physical page mode: counters indexed by physPageNumber * BANK_SIZE + offset
             counterBaseOffset = static_cast<uint32_t>(_physicalPageNumber) * BANK_SIZE;
+            counters = tracker.PhysCountersView();
+        }
+        if (counters.reads && counterBaseOffset + BANK_SIZE <= counters.size)
+        {
             if (_showReadOverlay)
-                readCounters = tracker.GetPhysReadCountersPtr();
+                readCounters = counters.reads;
             if (_showWriteOverlay)
-                writeCounters = tracker.GetPhysWriteCountersPtr();
+                writeCounters = counters.writes;
             if (_showExecuteOverlay)
-                execCounters = tracker.GetPhysExecuteCountersPtr();
+                execCounters = counters.executes;
         }
     }
 

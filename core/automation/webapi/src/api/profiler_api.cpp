@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <vector>
 #include <base/featuremanager.h>
 #include <common/filehelper.h>
 #include <drogon/HttpResponse.h>
@@ -902,16 +903,10 @@ void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
         return;
     }
 
-    const uint32_t* reads = nullptr;
-    const uint32_t* writes = nullptr;
-    const uint32_t* executes = nullptr;
     unsigned long size = 0;
     unsigned long page = 0;
     if (mode == "z80")
     {
-        reads = tracker->GetZ80ReadCountersPtr();
-        writes = tracker->GetZ80WriteCountersPtr();
-        executes = tracker->GetZ80ExecuteCountersPtr();
         size = 0x10000;
     }
     else
@@ -922,22 +917,7 @@ void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
                             callback, addCors);
             return;
         }
-        const size_t base = static_cast<size_t>(page) * PAGE_SIZE;
-        reads = tracker->GetPhysReadCountersPtr();
-        writes = tracker->GetPhysWriteCountersPtr();
-        executes = tracker->GetPhysExecuteCountersPtr();
-        if (reads && writes && executes)
-        {
-            reads += base;
-            writes += base;
-            executes += base;
-        }
         size = PAGE_SIZE;
-    }
-    if (!reads || !writes || !executes)
-    {
-        ReplyBadRequest("no counters yet: start a session with POST .../profiler/memory/start", callback, addCors);
-        return;
     }
 
     unsigned long start = 0;
@@ -947,6 +927,27 @@ void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
         end >= size)
     {
         ReplyBadRequest("start/end must satisfy start <= end < " + std::to_string(size), callback, addCors);
+        return;
+    }
+
+    // Copy the window under the counters' lock (a feature switch-off on another thread must not free them under the
+    // read), then format without it: the lock is held for a memcpy only, never for the JSON building
+    const size_t count = end - start + 1;
+    std::vector<uint32_t> reads, writes, executes;
+    {
+        const MemoryAccessTracker::CountersView view =
+            mode == "z80" ? tracker->Z80CountersView() : tracker->PhysCountersView();
+        const size_t base = mode == "z80" ? 0 : static_cast<size_t>(page) * PAGE_SIZE;
+        if (view.reads && base + end < view.size)
+        {
+            reads.assign(view.reads + base + start, view.reads + base + start + count);
+            writes.assign(view.writes + base + start, view.writes + base + start + count);
+            executes.assign(view.executes + base + start, view.executes + base + start + count);
+        }
+    }
+    if (reads.empty())
+    {
+        ReplyBadRequest("no counters yet: start a session with POST .../profiler/memory/start", callback, addCors);
         return;
     }
 
@@ -965,9 +966,9 @@ void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
         Json::Value r(Json::arrayValue), w(Json::arrayValue), x(Json::arrayValue);
         for (unsigned long a = start; a <= end; a++)
         {
-            r.append(reads[a]);
-            w.append(writes[a]);
-            x.append(executes[a]);
+            r.append(reads[a - start]);
+            w.append(writes[a - start]);
+            x.append(executes[a - start]);
         }
         ret["counters"]["reads"] = r;
         ret["counters"]["writes"] = w;
@@ -978,13 +979,13 @@ void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
         Json::Value list(Json::arrayValue);
         for (unsigned long a = start; a <= end; a++)
         {
-            if (reads[a] == 0 && writes[a] == 0 && executes[a] == 0)
+            if (reads[a - start] == 0 && writes[a - start] == 0 && executes[a - start] == 0)
                 continue;
             Json::Value entry(Json::arrayValue);
             entry.append(static_cast<Json::UInt>(a));
-            entry.append(reads[a]);
-            entry.append(writes[a]);
-            entry.append(executes[a]);
+            entry.append(reads[a - start]);
+            entry.append(writes[a - start]);
+            entry.append(executes[a - start]);
             list.append(entry);
         }
         ret["addresses"] = list;

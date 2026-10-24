@@ -393,3 +393,4 @@ What these instruments found (the bug entries are in the git history of
 | valgrind (2026-10-11) | test fixtures leaked their `Core`, drives and context | `befe0e730` |
 | TSan on Linux (2026-10-11) | ZX-Poly status read the members' registers while they ran | `a5aa1b910` |
 | TSan on Linux (2026-10-11) | two overscan switches at once both saw the old video mode | `c13e28bb0` |
+| TSan, `core-tests` (2026-10-24) | a snapshot load zeroed the memory-tracking counters while another thread's feature change freed them (SIGSEGV in `MemoryAccessTracker::ResetCounters`) | `MemoryAccessTracker_Test.ResetWhileAnotherThreadTogglesTracking` |
