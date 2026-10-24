@@ -23,6 +23,7 @@ enum class RetroDeviceKind : uint8_t
     CursorJoystick,    ///< overlay: 5 L, 6 D, 7 U, 8 R, 0 F
     KeysJoystick,      ///< overlay: a user key per control (QAOP + Space by default)
     FullerJoystick,    ///< the Fuller Box's stick: #7F active low, F---RLDU (a card's connector, journaled as ConnectorState)
+    AmxMouse,          ///< the AMX mouse on its interface card: a mouse (the mouse journal kinds), not ConnectorState
 };
 
 enum class ConnectorKind : uint8_t
@@ -32,8 +33,9 @@ enum class ConnectorKind : uint8_t
     KeyboardJoystick,  ///< a joystick wired to the keyboard matrix: built-in sockets (+2 / +2A / +3) and the
                        ///< keyjoy sockets every machine has for keys-only games
     Fuller,            ///< the Fuller Box card's joystick socket: fixed fuller-joystick, while the card is fitted
+    Amx,               ///< the AMX mouse interface card's mouse socket: fixed amx-mouse, while the card is fitted
 };
-constexpr unsigned kConnectorKinds = 4;
+constexpr unsigned kConnectorKinds = 5;
 
 /// Retro control bits, the Kempston order every connector device shares (the Md6Pad adds bits 4-11 of PadState)
 constexpr uint16_t kRight = 0x01;
@@ -47,11 +49,12 @@ constexpr uint16_t kFire4 = 0x80;
 /// The controls a keyboard joystick has: four directions and up to four fire buttons
 constexpr unsigned kOverlayControls = 8;
 
-/// kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick, fuller-joystick ("none" for None)
+/// kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick, fuller-joystick, amx-mouse ("none"
+/// for None)
 const char* RetroDeviceKindName(RetroDeviceKind kind);
 /// The reverse; false when the name is unknown
 bool RetroDeviceKindFromName(const std::string& name, RetroDeviceKind& kind);
-/// kempston, next-db9, keyboard-joystick, fuller
+/// kempston, next-db9, keyboard-joystick, fuller, amx
 const char* ConnectorKindName(ConnectorKind kind);
 
 /// The error of a connector operation; the text codes and HTTP statuses are the surfaces' (surfaces.md §4)

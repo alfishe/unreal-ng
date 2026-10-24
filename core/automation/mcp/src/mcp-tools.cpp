@@ -4391,7 +4391,8 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
-        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
+        "status: report this device of the machine (kempston, sprinter, evo-ps2, amx - the AMX mouse card); default the "
+        "first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -4606,7 +4607,8 @@ void RegisterJoystickInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston joystick (reads at IN #1F on ATM3 / Scorpion / TS-Conf). 'press' holds buttons, 'release' lets them go, "
+        "Kempston joystick (reads at IN #1F on the machines whose board decodes it: Pentagon, Scorpion, Profi, ZX-Evo "
+        "BaseConf, TS-Conf, Sprinter, Next; not the 48K / 128K / +2 / +2A / +3 or the ATM Turbo 2+). 'press' holds buttons, 'release' lets them go, "
         "'set' makes exactly the given buttons (or state byte) held, 'tap' presses for N frames then releases. Input is "
         "applied immediately; call control_execution run_frames to let the program react.";
     schema["properties"]["target"]["type"] = "string";

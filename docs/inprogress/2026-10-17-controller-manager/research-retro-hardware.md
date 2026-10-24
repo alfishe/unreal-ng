@@ -213,7 +213,24 @@ written as an emulator note).
 - Each mickey raises an IM2 interrupt, A for X, B for Y; the sign is in the data register (0 = +, 1 = -). Up to about
   32 interrupts per frame per axis in emulation.
 - Needs a daisy-chained, RETI-aware IM2 interrupt model. Port clashes: `#1F` (Kempston, DISCiPLE), `#3F` (Multiface),
-  `#DF`. Not in ZEsarUX or unreal-ng; zxsp has a TODO class (`zxsp/.../AmxMouse.cpp:9-14`).
+  `#DF`. Not in ZEsarUX; zxsp has a TODO class (`zxsp/.../AmxMouse.cpp:9-14`).
+
+Primary facts (2026-10-23, built in C11 as the slot card `amx-mouse`):
+
+- [Schematic](https://velesoft.speccy.cz/othermouse/amx_mouse/schematic/amx-sch-color.png) (velesoft's redrawn
+  original): PIO /CE = A7, B/A = A5, C/D = A6, nothing else decoded (the PIO answers any port with A7 = 0; the
+  [Sinclair Wiki](https://sinclair.wiki.zxnet.co.uk/wiki/AMX_Mouse) says the same). X phase A on /ASTB, phase B on A0;
+  Y phase A on /BSTB, phase B on B0; ARDY / BRDY open; /INT on the edge's /INT, IEI tied high, IEO open.
+- Buttons: a 74LS00 / 74LS32 select on A7 = 1, A6 = 1, A5 = 0 with /IORQ and /RD (no M1); a held button pulls its line
+  low through a diode, D7 left, D6 middle, D5 right (schematic, Sinclair Wiki; z88dk's driver reads D6 right, D5
+  middle); released buttons and the other bits are the idle bus. The `#FF` / `#00` above is wrong (z88dk says so too).
+- AMX Art 1.1 (disassembled): `I = #EE`, vectors `#F0` (X) and `#F2` (Y), `OUT (#5F) / (#7F)`: `#4F` (mode 1), the
+  vector, `#87` (interrupts on, no mask); the handlers read the data port, `AND 1` (X: 1 = left; Y: 0 = up, BASIC PLOT
+  coordinates) and end with `EI : RETI`; the frame interrupt's vector is the idle bus `#FF` and its handler ends with
+  `RET`. z88dk writes the vector, `#97`, `#4F`: the `#4F` is then the mask word (UM0081, MAME), the port stays in mode 1
+  from reset; it takes any non-zero data byte as the negative direction, so the other data lines must read 0.
+- One interrupt per quadrature cycle (phase A's rising edge) is read from the schematic, unconfirmed. The SZX `AMXM`
+  block's exact layout is unconfirmed (the spec page is gone); the loader still reports it as not emulated.
 
 ### 2.3 AY mouse (V.M.G. / Korvet style, Unreal Speccy `Mouse=AY`)
 

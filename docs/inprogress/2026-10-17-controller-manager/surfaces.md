@@ -199,7 +199,8 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
   `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`.
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
-  that really answer (it names ATM3 / Scorpion / TS-Conf only today, but Pentagon, Profi, Sprinter and Next answer too).
+  that really answer: Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next (fixed 2026-10-23, E-4; it named
+  ATM3 / Scorpion / TS-Conf only).
 - The `content[]` text states the decision in one line ("Kempston on `kempston` (port-read evidence: #1F read in 50 of
   50 frames)"), because an agent may see only the text.
 - Debug actions stay in `control_execution` and `time_travel`; the controller tool does not duplicate them.

@@ -916,6 +916,30 @@ namespace PythonBindings
             ps2["counts_per_mm"] = 1 << device.ps2.resolution;
             d["ps2"] = ps2;
         }
+        if (device.hasPio)
+        {
+            const MouseDeviceStatus::Pio& pio = device.pio;
+            py::dict out;
+            for (int axis = 0; axis < 2; axis++)
+            {
+                const MouseDeviceStatus::Pio::Port& port = pio.port[axis];
+                py::dict p;
+                p["mode"] = static_cast<int>(port.mode);
+                p["vector"] = static_cast<int>(port.vector);
+                p["data"] = static_cast<int>(port.data);
+                p["interrupt_enabled"] = port.ie;
+                p["interrupt_pending"] = port.ip;
+                p["under_service"] = port.ius;
+                out[axis == 0 ? "a" : "b"] = p;
+            }
+            py::dict pending;
+            pending["dx"] = pio.pendingDx;
+            pending["dy"] = pio.pendingDy;
+            out["pending"] = pending;
+            out["buttons_port"] = static_cast<int>(pio.buttonsPort);
+            out["strobes"] = pio.strobes;
+            d["pio"] = out;
+        }
         return d;
     }
 
@@ -4952,7 +4976,7 @@ namespace PythonBindings
                 for (const MouseDeviceStatus& device : mgr.GetState().devices)
                     devices.append(MouseDeviceDict(device));
                 return devices;
-            }, "The machine's mouse devices (kempston, sprinter, evo-ps2)")
+            }, "The machine's mouse devices (kempston, sprinter, evo-ps2, amx)")
             .def("mouse_busy", [](Emulator& self) -> bool {
                 return MouseManagerOrThrow(self).IsBusy();
             }, "True while a glide (and the input queued behind it) is in progress")

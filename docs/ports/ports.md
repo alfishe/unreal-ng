@@ -249,12 +249,14 @@ Timex models were official licensed clones/derivatives, primarily sold in the US
         *   `Atr(4,5)`: May still return attribute-like data as per the floating bus, but specific Timex models might have defined reads.
     *   **Notes:** The source indicates `Atr(4,5)` for reads and `Vid/Pag(4/5)` for writes. This is a key differentiator for Timex machines.
 
-*   **AY Sound Ports (`#F4`-`#F6` or `#FFFD`/`#BFFD` on some variants):**
+*   **AY Sound Ports (`#F5` / `#F6`, or `#FFFD`/`#BFFD` on some variants):**
     *   The TS2068 (US version of TC2068) included an AY-3-8910/8912 sound chip.
     *   The port addresses for AY sound on Timex machines are **different** from Sinclair 128K:
-        *   **Port `#F4` (TS2068, some TC2048 variants):** AY Data Read.
-        *   **Port `#F5` (TS2068, some TC2048 variants):** AY Register Select (Write-only).
-        *   **Port `#F6` (TS2068, some TC2048 variants):** AY Data Write.
+        *   **Port `#F5` (TS2068 / TC2068):** AY Register Select (write-only).
+        *   **Port `#F6` (TS2068 / TC2068):** AY Data, read and write. The joysticks are read here (AY port A, R14),
+            the stick picked by A8 / A9 of the port address.
+        *   **Port `#F4` is not an AY port:** it is the TS2068's horizontal select (the MMU's bank select)
+            (`mame/src/mame/sinclair/timex.cpp:529-531`: `#F4` port_f4, `#F5` ay address_w, `#F6` ay data_r / data_w).
     *   The source table doesn't explicitly list these under Timex (`4`), but they are a known feature of models like the TS2068. If a TC2048 has AY sound, it would likely use these ports or Sinclair-compatible ones if modified.
 
 **Similarities with Sinclair 48K:**
