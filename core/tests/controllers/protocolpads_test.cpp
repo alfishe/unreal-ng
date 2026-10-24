@@ -437,3 +437,200 @@ TEST(ProtocolPads_Test, ChargingGripHalvesBecomeAPairByTheirDeviceInfo)
     pads.Clear();
     EXPECT_EQ(sink.Events(), (std::vector<std::string>{"-" + pair}));
 }
+
+namespace
+{
+/// A 2015 Steam Controller state report (type 1, after SDL's ValveInReport_t) with @p buttons, as Windows hands it:
+/// report id 0 first (the collection has no ids)
+std::vector<uint8_t> SteamStateOnWindows(uint64_t buttons)
+{
+    std::vector<uint8_t> report(65, 0);
+    report[1] = 0x01;  // version 0x0001
+    report[3] = 1;     // ID_CONTROLLER_STATE
+    report[4] = 60;
+    report[5] = 1;
+    for (int i = 0; i < 8; i++)
+        report[9 + static_cast<size_t>(i)] = static_cast<uint8_t>(buttons >> (8 * i));
+    return report;
+}
+
+/// The GameCube adapter's report 0x21: every port empty, its axes at rest; @p state for port 3
+std::vector<uint8_t> GameCubeReport(uint8_t port3State, uint8_t port3Buttons = 0)
+{
+    std::vector<uint8_t> report(37, 0);
+    report[0] = 0x21;
+    for (size_t port = 0; port < 4; port++)
+        for (size_t axis = 3; axis < 9; axis++)
+            report[1 + port * 9 + axis] = axis >= 7 ? 40 : 128;
+    report[1 + 2 * 9] = port3State;
+    report[1 + 2 * 9 + 1] = port3Buttons;
+    return report;
+}
+
+/// Writes and feature writes kept, nothing answered
+struct Recorder
+{
+    std::mutex mutex;
+    std::vector<std::vector<uint8_t>> writes;
+    std::vector<std::vector<uint8_t>> features;
+    void Give(ProtocolPads::Endpoint& endpoint)
+    {
+        endpoint.write = [this](const std::vector<uint8_t>& report) {
+            std::lock_guard<std::mutex> lock(mutex);
+            writes.push_back(report);
+            return true;
+        };
+        endpoint.setFeature = [this](const std::vector<uint8_t>& report) {
+            std::lock_guard<std::mutex> lock(mutex);
+            features.push_back(report);
+            return true;
+        };
+        endpoint.getFeature = [](uint8_t, size_t, std::vector<uint8_t>&) { return false; };
+    }
+    size_t Writes()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return writes.size();
+    }
+    size_t Features()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return features.size();
+    }
+};
+}  // namespace
+
+TEST(ProtocolPads_Test, CollectionsAndPortIds)
+{
+    EXPECT_TRUE(ProtocolPads::TakesCollection(0x28DE, 0x1102, 0xFF00)) << "the Steam Controller's vendor interface";
+    EXPECT_FALSE(ProtocolPads::TakesCollection(0x28DE, 0x1102, 0x01)) << "its lizard keyboard / mouse, a game pad page";
+    EXPECT_FALSE(ProtocolPads::TakesCollection(0x28DE, 0x1205, 0xFF00)) << "the Steam Deck: a plain HID pad";
+    EXPECT_TRUE(ProtocolPads::TakesCollection(0x057E, 0x0337, 0x05)) << "the GameCube adapter, whatever its page";
+    EXPECT_TRUE(ProtocolPads::TakesCollection(0x054C, 0x0CE6, 0x01));
+    EXPECT_TRUE(ProtocolPads::Handles(0x057E, 0x2017)) << "NSO SNES";
+    EXPECT_FALSE(ProtocolPads::Handles(0x054C, 0x0268)) << "the DualShock 3 is a HID pad";
+    EXPECT_EQ(ProtocolPads::PortId("usb:057e:0337:0100@ab", 2), "usb:057e:0337:0100@ab:p3");
+}
+
+TEST(ProtocolPads_Test, SteamControllerLeavesLizardModeAndReadsWindowsReports)
+{
+    Sink sink;
+    ProtocolPads pads(sink, Fast());
+    Recorder recorder;
+    ClearOnExit clearOnExit{pads};
+    ProtocolPads::Endpoint endpoint = MakeEndpoint("s", "usb:28de:1102:0100:sc", 0x1102, false);
+    endpoint.vendor = 0x28DE;
+    endpoint.zeroReportIdFirst = true;
+    recorder.Give(endpoint);
+    ASSERT_TRUE(pads.Add(std::move(endpoint)));
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"+usb:28de:1102:0100:sc"}));
+    const size_t setup = SteamProtocol::ControllerSetup().size();
+    ASSERT_TRUE(TestWait::For([&] { return recorder.Features() >= setup; })) << "lizard mode off: feature reports";
+    EXPECT_EQ(recorder.Writes(), 0u) << "no output reports";
+
+    const std::vector<uint8_t> report = SteamStateOnWindows(0x80);  // A
+    pads.Input("s", report.data(), report.size());
+    EXPECT_EQ(sink.Controls("usb:28de:1102:0100:sc")["south"], 1.0f) << "the 0 Windows put first is dropped";
+    EXPECT_EQ(pads.RumbleActuators("usb:28de:1102:0100:sc"), 0);
+    EXPECT_FALSE(pads.RumbleUnavailable("usb:28de:1102:0100:sc").empty());
+    EXPECT_FALSE(pads.HasLight("usb:28de:1102:0100:sc"));
+}
+
+TEST(ProtocolPads_Test, SteamDongleSlotShowsWhileAPadIsOnIt)
+{
+    Sink sink;
+    ProtocolPads pads(sink, Fast());
+    Recorder recorder;
+    ClearOnExit clearOnExit{pads};
+    ProtocolPads::Endpoint endpoint = MakeEndpoint("d", "usb:28de:1142:0100:d1", 0x1142, false);
+    endpoint.vendor = 0x28DE;
+    endpoint.zeroReportIdFirst = true;
+    recorder.Give(endpoint);
+    ASSERT_TRUE(pads.Add(std::move(endpoint)));
+    EXPECT_TRUE(sink.Events().empty()) << "an empty slot is no device";
+    EXPECT_EQ(pads.DeviceCount(), 0u);
+
+    std::vector<uint8_t> wireless(65, 0);
+    wireless[1] = 0x01;
+    wireless[3] = 3;  // ID_CONTROLLER_WIRELESS
+    wireless[4] = 1;
+    wireless[5] = 2;  // established
+    pads.Input("d", wireless.data(), wireless.size());
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"+usb:28de:1142:0100:d1"}));
+    EXPECT_TRUE(pads.Has("usb:28de:1142:0100:d1"));
+    wireless[5] = 1;  // gone
+    pads.Input("d", wireless.data(), wireless.size());
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"-usb:28de:1142:0100:d1"}));
+    EXPECT_EQ(pads.DeviceCount(), 0u);
+}
+
+TEST(ProtocolPads_Test, GameCubeAdapterPortsAreDevices)
+{
+    Sink sink;
+    ProtocolPads pads(sink, Fast());
+    Recorder recorder;
+    ClearOnExit clearOnExit{pads};
+    const std::string adapter = "usb:057e:0337:0100@ab";
+    ProtocolPads::Endpoint endpoint = MakeEndpoint("g", adapter, 0x0337, false);
+    endpoint.info.name = "GameCube adapter";
+    recorder.Give(endpoint);
+    ASSERT_TRUE(pads.Add(std::move(endpoint)));
+    EXPECT_TRUE(sink.Events().empty()) << "the adapter itself is no pad";
+    ASSERT_TRUE(TestWait::For([&] { return recorder.Writes() >= 1; }));
+    {
+        std::lock_guard<std::mutex> lock(recorder.mutex);
+        EXPECT_EQ(recorder.writes[0], (std::vector<uint8_t>{0x13})) << "its start report";
+    }
+
+    std::vector<uint8_t> report = GameCubeReport(0x14, 0x01);  // port 3: a wired controller, A held
+    pads.Input("g", report.data(), report.size());
+    const std::string port = adapter + ":p3";
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"+" + port}));
+    EXPECT_EQ(sink.names[port], "GameCube adapter (port 3)");
+    EXPECT_EQ(sink.Controls(port)["south"], 1.0f);
+    EXPECT_TRUE(pads.Has(port));
+    EXPECT_FALSE(pads.Has(adapter));
+    EXPECT_EQ(pads.DeviceCount(), 1u);
+    EXPECT_FALSE(pads.RumbleUnavailable(port).empty());
+    EXPECT_FALSE(pads.LightUnavailable(port).empty());
+
+    report = GameCubeReport(0x04);  // taken out
+    pads.Input("g", report.data(), report.size());
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"-" + port}));
+    report = GameCubeReport(0x14);
+    pads.Input("g", report.data(), report.size());
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"+" + port}));
+    pads.Remove("g");
+    EXPECT_EQ(sink.Events(), (std::vector<std::string>{"-" + port}));
+
+    ProtocolPads::Endpoint mute = MakeEndpoint("m", "usb:057e:0337:0100@cd", 0x0337, false);
+    EXPECT_FALSE(pads.Add(std::move(mute))) << "no writes: the adapter never starts";
+}
+
+TEST(ProtocolPads_Test, NintendoSwitchOnlinePads)
+{
+    Sink sink;
+    ProtocolPads pads(sink, Fast());
+    FakeSwitch snes(pads, "snes");
+    FakeSwitch left(pads, "L");
+    FakeSwitch nes(pads, "nes");
+    ClearOnExit clearOnExit{pads};
+    ProtocolPads::Endpoint first = MakeEndpoint("snes", "bt:057e:2017:s", 0x2017, true);
+    snes.Give(first);
+    ASSERT_TRUE(pads.Add(std::move(first)));
+    EXPECT_EQ(pads.RumbleActuators("bt:057e:2017:s"), 0) << "the SNES pad has no motors";
+    EXPECT_FALSE(pads.RumbleUnavailable("bt:057e:2017:s").empty());
+    EXPECT_FALSE(pads.SetRumble("bt:057e:2017:s", RumbleLevels{0.5f, 0.5f, 0, 0, 0, 0}));
+
+    // An NES pad comes as a right Joy-Con by its product id; its name keeps it from pairing with a left Joy-Con
+    ProtocolPads::Endpoint joyCon = MakeEndpoint("L", "bt:057e:2006:l", 0x2006, true);
+    left.Give(joyCon);
+    ASSERT_TRUE(pads.Add(std::move(joyCon)));
+    ProtocolPads::Endpoint famicom = MakeEndpoint("nes", "bt:057e:2007:n", 0x2007, true);
+    famicom.productName = "NES Controller (R)";
+    nes.Give(famicom);
+    ASSERT_TRUE(pads.Add(std::move(famicom)));
+    EXPECT_EQ(sink.Events(),
+              (std::vector<std::string>{"+bt:057e:2017:s", "+bt:057e:2006:l", "+bt:057e:2007:n"}));
+    EXPECT_EQ(pads.DeviceCount(), 3u);
+}

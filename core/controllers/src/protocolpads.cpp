@@ -6,10 +6,25 @@
 namespace controllers
 {
 
-bool ProtocolPads::Handles(uint16_t vendor, uint16_t product)
+bool ProtocolPads::Handles(uint16_t vendor, uint16_t product, const std::string& productName)
 {
-    return SonyPad::ModelOf(vendor, product).has_value() || SwitchProPad::Handles(vendor, product) ||
-           SwitchProPad::IsChargingGrip(vendor, product);
+    return SonyPad::ModelOf(vendor, product).has_value() || SwitchProPad::Handles(vendor, product, productName) ||
+           SwitchProPad::IsChargingGrip(vendor, product) || SteamPad::ModelOf(vendor, product).has_value() ||
+           GameCubeAdapter::Handles(vendor, product);
+}
+
+bool ProtocolPads::TakesCollection(uint16_t vendor, uint16_t product, uint16_t usagePage,
+                                   const std::string& productName)
+{
+    if (!Handles(vendor, product, productName))
+        return false;
+    constexpr uint16_t kVendorPages = 0xFF00;
+    return !SteamPad::ModelOf(vendor, product).has_value() || usagePage >= kVendorPages;
+}
+
+HostDeviceId ProtocolPads::PortId(const HostDeviceId& adapter, int port)
+{
+    return adapter + ":p" + std::to_string(port + 1);
 }
 
 size_t ProtocolPads::ReportSize(uint16_t vendor, uint16_t product, bool bluetooth, const uint8_t* report, size_t size)
@@ -50,9 +65,12 @@ ProtocolPads::~ProtocolPads()
 bool ProtocolPads::Add(Endpoint endpoint)
 {
     const std::optional<SonyModel> sony = SonyPad::ModelOf(endpoint.vendor, endpoint.product);
-    const std::optional<SwitchLayout> switchLayout = SwitchProPad::LayoutFor(endpoint.vendor, endpoint.product);
+    const std::optional<SwitchLayout> switchLayout =
+        SwitchProPad::LayoutFor(endpoint.vendor, endpoint.product, endpoint.productName);
     const bool grip = SwitchProPad::IsChargingGrip(endpoint.vendor, endpoint.product);
-    if (!sony && !switchLayout && !grip)
+    const std::optional<SteamModel> steam = SteamPad::ModelOf(endpoint.vendor, endpoint.product);
+    const bool gameCube = GameCubeAdapter::Handles(endpoint.vendor, endpoint.product);
+    if (!sony && !switchLayout && !grip && !steam && !gameCube)
         return false;
 
     auto device = std::make_unique<Device>();
@@ -78,11 +96,41 @@ bool ProtocolPads::Add(Endpoint endpoint)
                                                      std::move(endpoint.write), std::move(endpoint.getFeature),
                                                      _options.clock);
     }
+    else if (steam)
+    {
+        // Its own reports (no usable descriptor), out of lizard mode first through feature reports; a dongle's slot
+        // shows once a pad is on it
+        device->steam = std::make_unique<SteamPad>(*steam);
+        device->zeroReportIdFirst = endpoint.zeroReportIdFirst && !SteamPad::IsTriton(*steam);
+        device->slotPending = SteamPad::IsDongle(*steam);
+        device->noRumble = "The emulator drives no Steam Controller haptics yet";
+        if (endpoint.setFeature)
+            device->pump = std::make_unique<PadPump>(std::make_unique<SteamProtocol>(*steam), PadPump::Write{},
+                                                     PadPump::GetFeature{}, _options.clock,
+                                                     std::move(endpoint.setFeature));
+        else if (device->outputsUnavailable.empty())
+            device->outputsUnavailable = "No feature reports: the Steam Controller stays in lizard mode";
+    }
+    else if (gameCube)
+    {
+        // Four controllers on one device: the adapter is never reported, each port with a controller is (OnGameCube).
+        // It sends nothing before its start report: no writes, no adapter
+        if (!writable)
+            return false;
+        device->gameCube = std::make_unique<GameCubeAdapter>();
+        device->slotPending = true;
+        device->noRumble = "The emulator drives no GameCube adapter rumble yet";
+        device->pump = std::make_unique<PadPump>(std::make_unique<GameCubeProtocol>(), std::move(endpoint.write),
+                                                 std::move(endpoint.getFeature), _options.clock);
+    }
     else
     {
         const SwitchLayout layout = switchLayout.value_or(SwitchLayout::Pro);
         device->switchPro = std::make_unique<SwitchProPad>(layout);
-        device->actuators = kRumbleLow | kRumbleHigh;
+        if (SwitchProPad::HasRumble(layout))
+            device->actuators = kRumbleLow | kRumbleHigh;
+        else
+            device->noRumble = "This Nintendo Switch Online pad has no motors";
         if (SwitchProPad::IsJoyCon(layout))
             device->joyCon = layout == SwitchLayout::JoyConLeft ? 1 : 2;
         // A half of the charging grip: its side from the device info, then a Joy-Con of that side
@@ -110,14 +158,14 @@ bool ProtocolPads::Add(Endpoint endpoint)
 
     HostDeviceInfo info = endpoint.info;
     Device* raw = device.get();
-    bool show = !device->gripPending;
+    bool show = !device->gripPending && !device->slotPending;
     Events events;
     {
         std::lock_guard lock(_mutex);
         if (_devices.count(device->key) != 0)
             return true;
         // The player LEDs: the lowest number no other pad shows
-        if (device->pump)
+        if (device->pump && (device->sony || device->switchPro))
         {
             int player = 1;
             while (std::any_of(_devices.begin(), _devices.end(),
@@ -160,6 +208,9 @@ void ProtocolPads::Remove(const std::string& key)
         _devices.erase(it);
         if (device->shown)
             events.removed.push_back(device->id);
+        for (int port = 0; port < GameCubeAdapter::kPorts; port++)
+            if (device->portShown[static_cast<size_t>(port)])
+                events.removed.push_back(PortId(device->id, port));
         if (device->joyCon != 0 && !device->gripPending)
             ApplyJoyConChangeLocked(_joyCons.Remove(device->id), device->id, events);
     }
@@ -174,8 +225,14 @@ void ProtocolPads::Clear()
     {
         std::lock_guard lock(_mutex);
         for (const auto& [key, device] : _devices)
-            if (!device->gripPending && std::find(gone.begin(), gone.end(), device->reported) == gone.end())
+        {
+            if (!device->gripPending && !device->slotPending &&
+                std::find(gone.begin(), gone.end(), device->reported) == gone.end())
                 gone.push_back(device->reported);  // a Joy-Con pair once
+            for (int port = 0; port < GameCubeAdapter::kPorts; port++)
+                if (device->portShown[static_cast<size_t>(port)])
+                    gone.push_back(PortId(device->id, port));
+        }
         devices.swap(_devices);
         _joyCons = JoyConPairing();
     }
@@ -198,9 +255,26 @@ void ProtocolPads::Input(const std::string& key, const uint8_t* report, size_t s
     if (found == nullptr)
         return;
     Device& device = *found;
-    // The protocol sees every report first (subcommand replies, acknowledgements)
+    if (device.zeroReportIdFirst)
+    {
+        if (report[0] != 0 || size < 2)
+            return;
+        ++report;
+        --size;
+    }
+    // The protocol sees every report first (subcommand replies, acknowledgements, a dongle's wireless events)
     if (device.pump)
         device.pump->Input(report, size);
+    if (device.gameCube)
+    {
+        OnGameCube(device, report, size, timeNs);
+        return;
+    }
+    if (device.steam)
+    {
+        OnSteam(device, report, size, timeNs);
+        return;
+    }
     if (device.gripPending)
     {
         ResolveGrip(device);
@@ -228,6 +302,72 @@ void ProtocolPads::Input(const std::string& key, const uint8_t* report, size_t s
         device.hid->Decode(report, size, sink);
 }
 
+void ProtocolPads::OnGameCube(Device& device, const uint8_t* report, size_t size, uint64_t timeNs)
+{
+    std::vector<GameCubeAdapter::PortChange> changes;
+    std::vector<std::pair<int, std::pair<std::string, float>>> controls;
+    if (!device.gameCube->Decode(
+            report, size,
+            [&controls](int port, const std::string& control, float value) {
+                controls.push_back({port, {control, value}});
+            },
+            changes))
+        return;
+    Events events;
+    {
+        std::lock_guard lock(_mutex);
+        for (const GameCubeAdapter::PortChange& change : changes)
+        {
+            device.portShown[static_cast<size_t>(change.port)] = change.connected;
+            if (!change.connected)
+            {
+                events.removed.push_back(PortId(device.id, change.port));
+                continue;
+            }
+            HostDeviceInfo info = device.single;
+            info.id = PortId(device.id, change.port);
+            info.name += " (port " + std::to_string(change.port + 1) + ")";
+            events.added.push_back(info);
+        }
+    }
+    Report(events);
+    for (const auto& [port, control] : controls)
+        _sink.OnControl({PortId(device.id, port), control.first, control.second, timeNs});
+}
+
+void ProtocolPads::OnSteam(Device& device, const uint8_t* report, size_t size, uint64_t timeNs)
+{
+    const auto sink = [this, &device, timeNs](const std::string& control, float value) {
+        _sink.OnControl({device.reported, control, value, timeNs});
+    };
+    bool pending = false;
+    {
+        std::lock_guard lock(_mutex);
+        pending = device.slotPending;
+    }
+    const SteamPad::Event event = device.steam->Decode(report, size, pending ? ControlSink{} : ControlSink(sink));
+    if (event == SteamPad::Event::Disconnected)
+        device.steam->Release(pending ? ControlSink{} : ControlSink(sink));
+    if (!SteamPad::IsDongle(device.steam->Model()))
+        return;
+    // A dongle's slot: shown when a pad comes to it (its connect event or a state), gone when it goes
+    const bool there = event == SteamPad::Event::Connected || event == SteamPad::Event::State;
+    const bool gone = event == SteamPad::Event::Disconnected;
+    if ((there && !pending) || (gone && pending) || (!there && !gone))
+        return;
+    Events events;
+    {
+        std::lock_guard lock(_mutex);
+        device.slotPending = gone;
+        device.shown = !gone;
+        if (gone)
+            events.removed.push_back(device.id);
+        else
+            events.added.push_back(device.single);
+    }
+    Report(events);
+}
+
 /// region <Queries and outputs>
 
 ProtocolPads::Device* ProtocolPads::FindLocked(const HostDeviceId& id) const
@@ -238,10 +378,20 @@ ProtocolPads::Device* ProtocolPads::FindLocked(const HostDeviceId& id) const
     return nullptr;
 }
 
+ProtocolPads::Device* ProtocolPads::PortLocked(const HostDeviceId& id) const
+{
+    for (const auto& [key, device] : _devices)
+        if (device->gameCube)
+            for (int port = 0; port < GameCubeAdapter::kPorts; port++)
+                if (device->portShown[static_cast<size_t>(port)] && PortId(device->id, port) == id)
+                    return device.get();
+    return nullptr;
+}
+
 bool ProtocolPads::Has(const HostDeviceId& device) const
 {
     std::lock_guard lock(_mutex);
-    return FindLocked(device) != nullptr || PairLocked(device).first != nullptr;
+    return FindLocked(device) != nullptr || PairLocked(device).first != nullptr || PortLocked(device) != nullptr;
 }
 
 bool ProtocolPads::IdTaken(const HostDeviceId& id) const
@@ -258,7 +408,10 @@ size_t ProtocolPads::DeviceCount() const
     std::lock_guard lock(_mutex);
     size_t count = 0;
     for (const auto& [key, device] : _devices)
+    {
         count += device->shown ? 1 : 0;
+        count += static_cast<size_t>(std::count(device->portShown.begin(), device->portShown.end(), true));
+    }
     return count + _joyCons.PairCount();
 }
 
@@ -277,10 +430,14 @@ std::string ProtocolPads::RumbleUnavailable(const HostDeviceId& device) const
     if (const auto [left, right] = PairLocked(device); left != nullptr)
         return left->pump && right->pump ? std::string()
                                          : (left->pump ? right : left)->outputsUnavailable;
+    if (const Device* adapter = PortLocked(device))
+        return adapter->noRumble;
     const Device* known = FindLocked(device);
     if (known == nullptr)
         return "The device is not connected";
-    return known->pump ? std::string() : known->outputsUnavailable;
+    if (!known->pump)
+        return known->outputsUnavailable;
+    return known->actuators != 0 ? std::string() : known->noRumble;
 }
 
 bool ProtocolPads::SetRumble(const HostDeviceId& device, const RumbleLevels& levels)
@@ -296,7 +453,7 @@ bool ProtocolPads::SetRumble(const HostDeviceId& device, const RumbleLevels& lev
         return left->pump || right->pump;
     }
     Device* known = FindLocked(device);
-    if (known == nullptr || !known->pump)
+    if (known == nullptr || !known->pump || known->actuators == 0)
         return false;
     // Queued: a DualSense's trigger levels become their resistance (haptics.md §6.4), a Switch pad plays the HD
     // frequencies of the levels (SwitchRumble::Pair)
@@ -316,13 +473,19 @@ std::string ProtocolPads::LightUnavailable(const HostDeviceId& device) const
     std::lock_guard lock(_mutex);
     if (PairLocked(device).first != nullptr)
         return "Joy-Cons have no light the emulator can set (their player lights show the player)";
+    if (PortLocked(device) != nullptr)
+        return "A GameCube controller has no light";
     const Device* known = FindLocked(device);
     if (known == nullptr)
         return "The device is not connected";
     if (!known->light)
-        return known->joyCon != 0 ? "Joy-Cons have no light the emulator can set (their player lights show the player)"
-                                  : "The Switch Pro controller has no light the emulator can set (its player lights "
-                                    "show the player)";
+    {
+        if (known->steam)
+            return "The emulator sets no Steam Controller light";
+        if (known->joyCon != 0)
+            return "Joy-Cons have no light the emulator can set (their player lights show the player)";
+        return "This Switch pad has no light the emulator can set (its player lights show the player)";
+    }
     return known->pump ? std::string() : known->outputsUnavailable;
 }
 
