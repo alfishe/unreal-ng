@@ -63,6 +63,7 @@
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
 #include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screenshotter.h>
@@ -3162,18 +3163,69 @@ namespace PythonBindings
                             events.append(evts[i].format());
                         }
                     }
+                } else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name))) {
+                    auto evts = osAnalyzer->getOsEvents();
+                    size_t start = (evts.size() > limit) ? evts.size() - limit : 0;
+                    for (size_t i = start; i < evts.size(); i++) {
+                        events.append(evts[i].format());
+                    }
                 }
                 return events;
             }, "Get analyzer events", py::arg("name"), py::arg("limit") = 50)
+            .def("analyzer_state", [](Emulator& self, const std::string& name) -> py::dict {
+                py::dict state;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return state;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return state;
+
+                IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name));
+                if (!osAnalyzer) return state;
+
+                OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+                state["os"] = snapshot.os;
+                state["detected"] = snapshot.detected;
+                state["profile"] = snapshot.profile;
+                py::list tasks;
+                for (const auto& task : snapshot.tasks) {
+                    py::dict t;
+                    t["id"] = task.id;
+                    t["parent"] = task.parent;
+                    t["flags"] = task.flags;
+                    t["mainpg"] = task.mainpg;
+                    tasks.append(t);
+                }
+                state["tasks"] = tasks;
+                py::list blocks;
+                for (const auto& block : snapshot.blocks) {
+                    py::dict b;
+                    b["index"] = block.index;
+                    b["owner"] = block.owner;
+                    blocks.append(b);
+                }
+                state["blocks"] = blocks;
+                py::list handles;
+                for (const auto& handle : snapshot.handles) {
+                    py::dict h;
+                    h["index"] = handle.index;
+                    h["owner"] = handle.owner;
+                    if (!handle.name.empty()) h["name"] = handle.name;
+                    handles.append(h);
+                }
+                state["handles"] = handles;
+                return state;
+            }, "OS analyzer state: tasks, page/block ownership, file handles", py::arg("name"))
             .def("analyzer_clear", [](Emulator& self, const std::string& name) {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return;
                 AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
                 if (!am) return;
-                
+
                 if (name == "trdos") {
                     TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
                     if (trdos) trdos->clear();
+                } else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name))) {
+                    osAnalyzer->clearOsEvents();
                 }
             }, "Clear analyzer events", py::arg("name"))
             

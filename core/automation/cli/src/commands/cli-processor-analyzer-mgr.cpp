@@ -6,6 +6,7 @@
 #include <common/stringhelper.h>
 #include <debugger/debugmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <emulator/emulatorcontext.h>
 
@@ -303,9 +304,85 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                 
                 session.SendResponse(ss.str());
             }
+            else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(analyzerName)))
+            {
+                // OS-aware analyzers (nedoos, dss)
+                auto events = osAnalyzer->getOsEvents();
+                std::stringstream ss;
+
+                size_t start = (events.size() > limit) ? events.size() - limit : 0;
+                for (size_t i = start; i < events.size(); i++)
+                {
+                    ss << events[i].format() << NEWLINE;
+                }
+
+                if (events.empty())
+                {
+                    ss << "(no events captured)" << NEWLINE;
+                }
+                else if (start > 0)
+                {
+                    ss << "... (" << start << " earlier events not shown, use --limit=N)" << NEWLINE;
+                }
+
+                session.SendResponse(ss.str());
+            }
             else
             {
                 session.SendResponse("Error: events not implemented for '" + analyzerName + "'." + NEWLINE);
+            }
+            return;
+        }
+
+        // ==================== <name> state ====================
+        if (action == "state")
+        {
+            if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(analyzerName)))
+            {
+                OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+                std::stringstream ss;
+
+                ss << "OS: " << snapshot.os << "  detected: " << (snapshot.detected ? "yes" : "no")
+                   << "  profile: " << (snapshot.profile.empty() ? "-" : snapshot.profile) << NEWLINE;
+
+                ss << "Tasks (" << snapshot.tasks.size() << "):" << NEWLINE;
+                for (const auto& task : snapshot.tasks)
+                {
+                    ss << "  id=" << static_cast<unsigned>(task.id)
+                       << " parent=" << static_cast<unsigned>(task.parent)
+                       << " flags=#" << std::hex << static_cast<unsigned>(task.flags) << std::dec
+                       << " mainpg=" << static_cast<unsigned>(task.mainpg) << NEWLINE;
+                }
+
+                ss << "Owned memory (" << snapshot.blocks.size() << "):" << NEWLINE;
+                for (const auto& block : snapshot.blocks)
+                {
+                    ss << "  " << (snapshot.os == "dss" ? "block" : "page") << " "
+                       << static_cast<unsigned>(block.index) << " -> task "
+                       << static_cast<unsigned>(block.owner) << NEWLINE;
+                }
+
+                if (!snapshot.handles.empty())
+                {
+                    ss << "File handles (" << snapshot.handles.size() << "):" << NEWLINE;
+                    for (const auto& handle : snapshot.handles)
+                    {
+                        ss << "  handle " << static_cast<unsigned>(handle.index) << " -> task "
+                           << static_cast<unsigned>(handle.owner);
+                        if (!handle.name.empty())
+                        {
+                            ss << " '" << handle.name << "'";
+                        }
+                        ss << NEWLINE;
+                    }
+                }
+
+                session.SendResponse(ss.str());
+            }
+            else
+            {
+                session.SendResponse("Error: state not implemented for '" + analyzerName
+                                     + "' (OS analyzers only)." + NEWLINE);
             }
             return;
         }
