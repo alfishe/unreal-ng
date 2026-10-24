@@ -7,12 +7,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -22,6 +24,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/controllers/hapticprobes.h"
 #include "emulator/io/controllers/ihapticfeed.h"
@@ -238,6 +241,34 @@ TEST_F(HapticFeed_Test, ExecProbesFireOnTheInstructionStartOnly)
     EXPECT_EQ(frame.probeHits[0], 1u) << "the opcode";
     EXPECT_EQ(frame.probeHits[1], 0u) << "the operand's low byte";
     EXPECT_EQ(frame.probeHits[2], 0u) << "the operand's high byte";
+}
+
+TEST_F(HapticFeed_Test, ProbeDebugHoldSwitchesWithTheCpuHeld)
+{
+    // Arming the probes from another thread (the GUI, a WebAPI request) switches the CPU's debug flag, the memory
+    // interface and the tracker's caches, all read by the running loop without locks: the switch holds the CPU, as a
+    // feature change does (TSan flagged the bare writes)
+    FeatureManager* features = _emulator->GetFeatureManager();
+    _emulator->EnableTurboMode();
+    _emulator->StartAsync();
+    const uint64_t& frame = _context->emulatorState.frame_counter;
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->IsRunning() && frame > 1; }, std::chrono::seconds(10)));
+
+    int held = 0;
+    int ran = 0;
+    for (int i = 0; i < 6; i++)
+    {
+        const uint64_t applied = _emulator->GetArbiter().GetSnapshot().applied;
+        const uint64_t before = frame;
+        features->setProbeDebugHold(i % 2 == 0);
+        held += _emulator->GetArbiter().GetSnapshot().applied > applied ? 1 : 0;
+        EXPECT_EQ(_context->pCore->GetZ80()->isDebugMode, features->debugModeInEffect());
+        ran += TestWait::For([&] { return frame > before; }) ? 1 : 0;
+    }
+    _emulator->Stop();
+    EXPECT_EQ(held, 6) << "every switch went through the arbiter";
+    EXPECT_EQ(ran, 6) << "the machine ran on between the switches";
+    EXPECT_FALSE(features->probeDebugHold());
 }
 
 TEST_F(HapticFeed_Test, Haptics_NotJournaled)

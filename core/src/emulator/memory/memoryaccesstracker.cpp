@@ -39,7 +39,7 @@ void MemoryAccessTracker::ResetCounters()
     // Under the allocation mutex: a feature change on another thread (UpdateFeatureCache) must not free the buffers
     // while they are zeroed (a snapshot load's Core::Reset on a WebAPI thread beside the GUI's or another request's
     // feature change: memset on a freed buffer of the old size)
-    std::lock_guard<std::mutex> lock(_allocationMutex);
+    std::lock_guard<std::shared_mutex> lock(_allocationMutex);
 
     // Skip if counters haven't been allocated yet (lazy allocation)
     if (!_isAllocated.load(std::memory_order_acquire))
@@ -132,7 +132,7 @@ void MemoryAccessTracker::UpdateFeatureCache()
     for (;;)
     {
         {
-            std::lock_guard<std::mutex> lock(_allocationMutex);
+            std::lock_guard<std::shared_mutex> lock(_allocationMutex);
             const bool wasTrackingEnabled = _feature_memorytracking_enabled;
             const bool wasCalltraceEnabled = _feature_calltrace_enabled;
             _feature_memorytracking_enabled = tracking;
@@ -902,6 +902,9 @@ void MemoryAccessTracker::AddToCallerMap(std::unordered_map<uint16_t, uint32_t>&
 // Get total access count for a Z80 bank
 uint32_t MemoryAccessTracker::GetZ80BankTotalAccessCount(uint8_t bank) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty() || bank >= 4)
+        return 0;
     uint32_t result = 0;
     uint8_t bankBit = 1 << bank;
     bool bankWasRead = _z80BankReadMarks & bankBit;
@@ -930,6 +933,9 @@ uint32_t MemoryAccessTracker::GetZ80BankTotalAccessCount(uint8_t bank) const
 // Get read access count for a Z80 bank
 uint32_t MemoryAccessTracker::GetZ80BankReadAccessCount(uint8_t bank) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty() || bank >= 4)
+        return 0;
     uint32_t result = 0;
     uint8_t bankBit = 1 << bank;
 
@@ -950,6 +956,9 @@ uint32_t MemoryAccessTracker::GetZ80BankReadAccessCount(uint8_t bank) const
 // Get write access count for a Z80 bank
 uint32_t MemoryAccessTracker::GetZ80BankWriteAccessCount(uint8_t bank) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty() || bank >= 4)
+        return 0;
     uint32_t result = 0;
     uint8_t bankBit = 1 << bank;
 
@@ -970,6 +979,9 @@ uint32_t MemoryAccessTracker::GetZ80BankWriteAccessCount(uint8_t bank) const
 // Get execute access count for a Z80 bank
 uint32_t MemoryAccessTracker::GetZ80BankExecuteAccessCount(uint8_t bank) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty() || bank >= 4)
+        return 0;
     uint32_t result = 0;
     uint8_t bankBit = 1 << bank;
 
@@ -989,6 +1001,7 @@ uint32_t MemoryAccessTracker::GetZ80BankExecuteAccessCount(uint8_t bank) const
 
 uint32_t MemoryAccessTracker::GetZ80AddressReadCount(uint16_t address) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
     if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty())
         return 0;
     return _z80ReadCounters[address];
@@ -996,6 +1009,7 @@ uint32_t MemoryAccessTracker::GetZ80AddressReadCount(uint16_t address) const
 
 uint32_t MemoryAccessTracker::GetZ80AddressWriteCount(uint16_t address) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
     if (!_isAllocated.load(std::memory_order_acquire) || _z80WriteCounters.empty())
         return 0;
     return _z80WriteCounters[address];
@@ -1003,15 +1017,50 @@ uint32_t MemoryAccessTracker::GetZ80AddressWriteCount(uint16_t address) const
 
 uint32_t MemoryAccessTracker::GetZ80AddressExecuteCount(uint16_t address) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
     if (!_isAllocated.load(std::memory_order_acquire) || _z80ExecuteCounters.empty())
         return 0;
     return _z80ExecuteCounters[address];
 }
 
+MemoryAccessTracker::CountersView MemoryAccessTracker::Z80CountersView() const
+{
+    CountersView view;
+    view._lock = std::shared_lock<std::shared_mutex>(_allocationMutex);
+    if (_isAllocated.load(std::memory_order_acquire) && !_z80ReadCounters.empty())
+    {
+        view.reads = _z80ReadCounters.data();
+        view.writes = _z80WriteCounters.data();
+        view.executes = _z80ExecuteCounters.data();
+        view.size = _z80ReadCounters.size();
+    }
+    return view;
+}
+
+MemoryAccessTracker::CountersView MemoryAccessTracker::PhysCountersView() const
+{
+    CountersView view;
+    view._lock = std::shared_lock<std::shared_mutex>(_allocationMutex);
+    if (_isAllocated.load(std::memory_order_acquire) && !_physReadCounters.empty())
+    {
+        view.reads = _physReadCounters.data();
+        view.writes = _physWriteCounters.data();
+        view.executes = _physExecuteCounters.data();
+        view.size = _physReadCounters.size();
+    }
+    return view;
+}
+
 // Get total access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageTotalAccessCount(uint16_t page) const
 {
-    if (page >= MAX_PAGES)
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return PageTotalCountUnlocked(page);
+}
+
+uint32_t MemoryAccessTracker::PageTotalCountUnlocked(uint16_t page) const
+{
+    if (page >= MAX_PAGES || page >= _pageReadCounters.size())
     {
         return 0;
     }
@@ -1021,6 +1070,12 @@ uint32_t MemoryAccessTracker::GetPageTotalAccessCount(uint16_t page) const
 
 // Get read access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageReadAccessCount(uint16_t page) const
+{
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return PageReadCountUnlocked(page);
+}
+
+uint32_t MemoryAccessTracker::PageReadCountUnlocked(uint16_t page) const
 {
     if (page >= MAX_PAGES || page >= _pageReadCounters.size())
     {
@@ -1033,6 +1088,12 @@ uint32_t MemoryAccessTracker::GetPageReadAccessCount(uint16_t page) const
 // Get write access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageWriteAccessCount(uint16_t page) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return PageWriteCountUnlocked(page);
+}
+
+uint32_t MemoryAccessTracker::PageWriteCountUnlocked(uint16_t page) const
+{
     if (page >= MAX_PAGES || page >= _pageWriteCounters.size())
     {
         return 0;
@@ -1043,6 +1104,12 @@ uint32_t MemoryAccessTracker::GetPageWriteAccessCount(uint16_t page) const
 
 // Get execute access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageExecuteAccessCount(uint16_t page) const
+{
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return PageExecuteCountUnlocked(page);
+}
+
+uint32_t MemoryAccessTracker::PageExecuteCountUnlocked(uint16_t page) const
 {
     if (page >= MAX_PAGES || page >= _pageExecuteCounters.size())
     {
@@ -1300,6 +1367,9 @@ std::string MemoryAccessTracker::GeneratePortReport() const
 // Check if there's any activity (read/write/execute) in the specified address range
 bool MemoryAccessTracker::HasActivity(uint16_t start, uint16_t end) const
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty())
+        return false;
     // Ensure start <= end
     if (start > end)
     {
@@ -1406,6 +1476,7 @@ std::string MemoryAccessTracker::GenerateSegmentReport() const
 std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const std::string& format,
                                                 bool singleFile, const std::vector<std::string>& filterPages)
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
     namespace fs = std::filesystem;
 
     try
@@ -1528,12 +1599,12 @@ void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector
         std::string pageName = "RAM " + std::to_string(page);
         if (!filterPages.empty() && std::find(filterPages.begin(), filterPages.end(), pageName) == filterPages.end())
             continue;
-        if (GetPageTotalAccessCount(page) > 0)
+        if (PageTotalCountUnlocked(page) > 0)
         {
             out << "  \"" << pageName << "\":" << std::endl;
-            out << "    reads: " << GetPageReadAccessCount(page) << std::endl;
-            out << "    writes: " << GetPageWriteAccessCount(page) << std::endl;
-            out << "    executes: " << GetPageExecuteAccessCount(page) << std::endl;
+            out << "    reads: " << PageReadCountUnlocked(page) << std::endl;
+            out << "    writes: " << PageWriteCountUnlocked(page) << std::endl;
+            out << "    executes: " << PageExecuteCountUnlocked(page) << std::endl;
         }
     }
     // Save ROM pages (start after RAM, cache, and misc pages)
@@ -1546,7 +1617,7 @@ void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector
         if (!filterPages.empty() && std::find(filterPages.begin(), filterPages.end(), pageName) == filterPages.end())
             continue;
         uint16_t physicalPage = FIRST_ROM_PAGE + page;
-        if (GetPageTotalAccessCount(physicalPage) > 0)
+        if (PageTotalCountUnlocked(physicalPage) > 0)
         {
             std::string hash, title;
             if (rom && romBase)
@@ -1556,9 +1627,9 @@ void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector
             }
             out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title)
                 << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
-            out << "    reads: " << GetPageReadAccessCount(physicalPage) << std::endl;
+            out << "    reads: " << PageReadCountUnlocked(physicalPage) << std::endl;
             out << "    writes: 0" << std::endl;
-            out << "    executes: " << GetPageExecuteAccessCount(physicalPage) << std::endl;
+            out << "    executes: " << PageExecuteCountUnlocked(physicalPage) << std::endl;
         }
     }
 }
@@ -1578,7 +1649,7 @@ bool MemoryAccessTracker::SaveDetailedAccessData(const std::filesystem::path& di
         }
 
         // Skip pages with no activity
-        if (GetPageTotalAccessCount(page) == 0)
+        if (PageTotalCountUnlocked(page) == 0)
         {
             continue;
         }
@@ -1610,7 +1681,7 @@ bool MemoryAccessTracker::SaveDetailedAccessData(const std::filesystem::path& di
         uint16_t physicalPage = FIRST_ROM_PAGE + page;
 
         // Skip pages with no activity
-        if (GetPageTotalAccessCount(physicalPage) == 0)
+        if (PageTotalCountUnlocked(physicalPage) == 0)
         {
             continue;
         }
@@ -1644,7 +1715,7 @@ void MemoryAccessTracker::SaveDetailedAccessData(std::ostream& out, const std::v
         {
             continue;
         }
-        if (GetPageTotalAccessCount(page) > 0)
+        if (PageTotalCountUnlocked(page) > 0)
         {
             out << "  \"" << pageName << "\":" << std::endl;
             out << "    accessed_addresses:" << std::endl;
@@ -1665,7 +1736,7 @@ void MemoryAccessTracker::SaveDetailedAccessData(std::ostream& out, const std::v
         }
 
         uint16_t physicalPage = FIRST_ROM_PAGE + page;
-        if (GetPageTotalAccessCount(physicalPage) > 0)
+        if (PageTotalCountUnlocked(physicalPage) > 0)
         {
             std::string hash;
             std::string title;
@@ -1755,6 +1826,7 @@ std::string MemoryAccessTracker::GetBankPageName(uint8_t bank) const
 
 bool MemoryAccessTracker::DumpVisualizationData(const std::string& filename)
 {
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
     std::ofstream out(FileHelper::ToFsPath(filename), std::ios::binary);
     if (!out)
         return false;
@@ -1905,7 +1977,7 @@ void MemoryAccessTracker::StartMemorySession()
     // Ensure counters are allocated
     if (!_isAllocated.load(std::memory_order_acquire))
     {
-        std::lock_guard<std::mutex> lock(_allocationMutex);
+        std::lock_guard<std::shared_mutex> lock(_allocationMutex);
         if (!_isAllocated.load(std::memory_order_relaxed))
         {
             AllocateCounters();

@@ -129,6 +129,12 @@ void FeatureManager::applyDebugMode()
 {
     if (!_context || !_context->pCore)
         return;
+    // As onFeatureChanged: the emulation thread reads the debug flag, the memory interface and the tracker's buffers
+    // without locks, so switch them with the CPU held (the tracker frees its counters when the debug mode goes off).
+    // Free on the loop thread (the haptic probes arm at a frame end) and under a hold (a TTD replay's operation)
+    std::optional<Emulator::CpuHold> hold;
+    if (_context->pEmulator)
+        hold.emplace(*_context->pEmulator, "debug mode");
     _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
     _context->pCore->SelectMemoryInterface();  // the debug path, contended where the machine is
     if (Memory* memory = _context->pCore->GetMemory())
