@@ -29,6 +29,15 @@ Feature docs updated: [input-and-profiles.md §4](../../../docs/inprogress/2026-
   profile.
 - **The memory threshold**: the five oracle pairs and 6992 other pairs are separated anywhere between 63 % and 67 %;
   more recordings of the same games at other moments (RZX) are needed before a fuzzy memory match is offered.
-- **Core findings for their owners**: `LoaderTRD::format` refuses 86-cylinder TRDs that `FloppyFormats::ProbeData`
-  accepts (`system/BBR.zip`); the tape probe then takes the 704 KB disk as a TAP. The SCL writer drops a file whose
-  sector chain leaves the TR-DOS geometry (two TRDs of the corpus).
+- **SCL load of a corrupt archive**: `LoaderSCL::loadData` formats the 80 x 2 disk (~20 ms) before it checks the
+  archive's sum; checking first would make refusals free.
+
+## Core defects found and fixed
+
+- `LoaderTRD`: TRDs of 81-86 cylinders (TR-DOS formatters on 80-track drives; `system/BBR.zip`) did not load: `parse`
+  refused 86 and `format` anything but 40 / 80. Test `LoaderTRD_Test.EightySixCylinders`.
+- `LoaderSCL::writeImage` stopped at the volume sector's file count; TR-DOS reads the catalogue up to the first 0x00
+  entry (CAT and FIND_NAME in the 5.04T source), so entries past the count (files, 0-sector catalogue text lines)
+  were lost (three re-pack misses). Test `LoaderRoundTrip_Test.SCL_WriteImage_ExportsEntriesPastTheFileCount`. A
+  file whose sector chain really runs outside the geometry is still skipped with a warning: SCL stores exactly
+  `SizeInSectors` sectors per entry and has no way to say "fewer", so the choice is skipping or inventing data.

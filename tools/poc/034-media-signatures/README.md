@@ -60,6 +60,7 @@ Jaccard 0.67); exact-content collisions only between releases that hold the same
   compares; prints `summary.md` and writes per-file TSV into `--out`
 - [measurements-2026-10-23-corpus.md](measurements-2026-10-23-corpus.md) — the corpus run: formats, re-pack, saved to,
   matches between releases, the sector path, snapshots, speed
+- [analysis.md](analysis.md) — what the numbers mean, the rules compared
 - [conclusions.md](conclusions.md) — the criteria met / not met
 - [proposal.md](proposal.md) — what the library adopted and what is left
 
@@ -81,7 +82,7 @@ directories prints both paths' signatures for it.
 
 ## Outcome
 
-Gate P-12 passed with changes (2026-10-23): re-pack / rename 99.97 %; saved to 83.9 % with the catalog rule (the
+Gate P-12 passed with changes (2026-10-23): re-pack / rename 99.97 % (100 % after two core loader fixes); saved to 83.9 % with the catalog rule (the
 first-draft Jaccard rule 14.8 %); 0.391 % of disks match another release, nearly all the same title (different
 programs ~0.01 %); 10 000+ files/s on all cores, 800-880 on one under load. The library adopted the catalog rule, the
 sector path for TRD / SCL and uniform-page skipping for memory. Details in [conclusions.md](conclusions.md).

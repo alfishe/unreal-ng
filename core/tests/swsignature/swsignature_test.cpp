@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -19,6 +20,7 @@
 #include "swsignature.h"
 #include "unrealdisk/diskimage.h"
 #include "unrealdisk/floppyformats.h"
+#include "unrealdisk/trdos.h"
 #include "unrealdisk/trdosfs.h"
 
 using namespace unrealng::swsignature;
@@ -62,6 +64,54 @@ std::vector<uint8_t> SaveAs(unrealdisk::DiskImage& disk, const std::string& name
 
 const std::string kScl = "loaders/scl/eyeache2.scl";
 const std::string kTap = "loaders/tap/aydetect.tap";
+
+/// A small TR-DOS disk in memory: single-sided 40 tracks (a quarter of the tracks of an 80 x 2 image, so the
+/// DiskImage loaders format it four times faster), a BASIC loader, two code files and a data file
+std::vector<uint8_t> SyntheticTrd()
+{
+    struct File
+    {
+        const char* name;
+        char type;
+        uint16_t start;
+        uint16_t length;
+    };
+    const File files[] = {{"boot    ", 'B', 40, 300}, {"game    ", 'C', 0x6000, 1000}, {"screen  ", 'C', 0x4000, 512},
+                          {"levels  ", 'D', 0, 700}};
+    constexpr size_t kSector = 256;
+    constexpr size_t kTrack = 16 * kSector;
+    std::vector<uint8_t> disk(40 * kTrack, 0);
+    size_t locator = 16;  // track 1, sector 0
+    size_t slot = 0;
+    for (const File& file : files)
+    {
+        const size_t sectors = (file.length + kSector - 1) / kSector;
+        uint8_t* entry = disk.data() + slot * 16;
+        std::memcpy(entry, file.name, 8);
+        entry[8] = static_cast<uint8_t>(file.type);
+        entry[9] = static_cast<uint8_t>(file.start);
+        entry[10] = static_cast<uint8_t>(file.start >> 8);
+        entry[11] = static_cast<uint8_t>(file.length);
+        entry[12] = static_cast<uint8_t>(file.length >> 8);
+        entry[13] = static_cast<uint8_t>(sectors);
+        entry[14] = static_cast<uint8_t>(locator % 16);
+        entry[15] = static_cast<uint8_t>(locator / 16);
+        for (size_t i = 0; i < file.length; i++)
+            disk[locator * kSector + i] = static_cast<uint8_t>(i * 7 + slot * 31 + 1);
+        locator += sectors;
+        slot++;
+    }
+    unrealdisk::TRDVolumeInfo info;
+    info.firstFreeSector = static_cast<uint8_t>(locator % 16);
+    info.firstFreeTrack = static_cast<uint8_t>(locator / 16);
+    info.diskType = unrealdisk::SS_40;
+    info.fileCount = static_cast<uint8_t>(slot);
+    info.freeSectorCount = static_cast<uint16_t>(40 * 16 - locator);
+    info.reserved3 = 0;
+    std::memcpy(info.label, "SYNTHDSK", 8);
+    std::memcpy(disk.data() + 8 * kSector, &info, sizeof(info));
+    return disk;
+}
 }  // namespace
 
 TEST(Signature_Test, ExactHashAndUnknownFormat)
@@ -123,22 +173,26 @@ TEST(Signature_Test, TapeContentSurvivesTapToTzx)
 
 TEST(Signature_Test, TrdosFileSetSurvivesRepackAndRename)
 {
-    const std::vector<uint8_t> scl = ReadAll(TestPathHelper::GetTestDataPath(kScl));
-    const Signatures fromScl = Of(scl, "eyeache2.scl");
-    ASSERT_EQ(fromScl.kind, MediaKind::Disk);
-    ASSERT_EQ(fromScl.content.rfind(kTrdosPrefix, 0), 0u) << fromScl.content;
-    ASSERT_FALSE(fromScl.files.empty());
+    const std::vector<uint8_t> trd = SyntheticTrd();
+    const Signatures fromTrd = Of(trd, "synth.trd");
+    ASSERT_EQ(fromTrd.kind, MediaKind::Disk);
+    ASSERT_EQ(fromTrd.content.rfind(kTrdosPrefix, 0), 0u) << fromTrd.content;
+    ASSERT_EQ(fromTrd.files.size(), 4u);
 
-    std::unique_ptr<unrealdisk::DiskImage> disk = LoadDisk(scl, "eyeache2.scl");
+    std::unique_ptr<unrealdisk::DiskImage> disk = LoadDisk(trd, "synth.trd");
     ASSERT_TRUE(disk);
-    for (const char* name : {"EYEACHE.TRD", "eye ache 2 (renamed).fdi", "copy.udi"})
+    for (const char* name : {"SYNTH.SCL", "synth (renamed).fdi", "copy.udi"})
     {
         const Signatures other = Of(SaveAs(*disk, name), name);
-        EXPECT_NE(other.sha256, fromScl.sha256) << name;
-        EXPECT_EQ(other.content, fromScl.content) << name;
-        EXPECT_EQ(other.FileSet(), fromScl.FileSet()) << name;
-        EXPECT_EQ(Compare(fromScl, other).level, MatchLevel::Content) << name;
+        EXPECT_NE(other.sha256, fromTrd.sha256) << name;
+        EXPECT_EQ(other.content, fromTrd.content) << name;
+        EXPECT_EQ(other.FileSet(), fromTrd.FileSet()) << name;
+        EXPECT_EQ(Compare(fromTrd, other).level, MatchLevel::Content) << name;
     }
+    // Another disk label: the same content
+    std::vector<uint8_t> relabelled = trd;
+    std::memcpy(relabelled.data() + 8 * 256 + 0xF5, "RENAMED!", 8);
+    EXPECT_EQ(Of(relabelled, "synth.trd").content, fromTrd.content);
 }
 
 /// The sector-image path (TRD, SCL from their bytes) gives what the core's DiskImage loaders give
@@ -164,36 +218,38 @@ void ExpectSameAsDiskImage(const std::vector<uint8_t>& bytes, const std::string&
 
 TEST(Signature_Test, SectorImagesReadAsTheDiskImageLoaders)
 {
+    // A real SCL (the DiskImage path formats an 80 x 2 disk for every SCL: the slowest step here, ~20 ms). A broken
+    // sum is no TR-DOS disk on the sector path (LoaderSCL refuses it too, after the same format: not repeated here)
     const std::vector<uint8_t> scl = ReadAll(TestPathHelper::GetTestDataPath(kScl));
     ExpectSameAsDiskImage(scl, "eyeache2.scl");
-    std::unique_ptr<unrealdisk::DiskImage> disk = LoadDisk(scl, "eyeache2.scl");
-    ASSERT_TRUE(disk);
-    ExpectSameAsDiskImage(SaveAs(*disk, "plain.trd"), "plain.trd");
-    // A deleted entry stays in the catalog: both paths leave it out
-    const Signatures reference = Of(scl, "eyeache2.scl");
-    unrealdisk::TrdosFileSystem fs(*disk);
-    std::string error;
-    ASSERT_TRUE(fs.Delete(reference.files.front().name, reference.files.front().type, error)) << error;
-    const std::vector<uint8_t> deleted = SaveAs(*disk, "deleted.trd");
-    ExpectSameAsDiskImage(deleted, "deleted.trd");
-    EXPECT_EQ(Of(deleted, "deleted.trd").files.size(), reference.files.size() - 1);
-    // A TRD cut short: the loader pads it, the sector path hands it over
-    std::vector<uint8_t> cut = SaveAs(*disk, "cut.trd");
-    cut.resize(16 * 256 * 3);
-    ExpectSameAsDiskImage(cut, "cut.trd");
-    // A broken SCL sum: neither reads it as a disk
     std::vector<uint8_t> badSum = scl;
     badSum.back() ^= 0x55;
-    ExpectSameAsDiskImage(badSum, "bad.scl");
+    Signatures bad;
+    std::string error;
+    Compute(badSum.data(), badSum.size(), "bad.scl", bad, error);
+    EXPECT_TRUE(bad.files.empty());
+    EXPECT_EQ(bad.content.rfind(kTrdosPrefix, 0), std::string::npos) << bad.content;
+
+    // A plain TRD; a deleted entry stays in the catalog and both paths leave it out; a TRD cut short (the loader
+    // pads it, the sector path hands it over)
+    const std::vector<uint8_t> trd = SyntheticTrd();
+    ExpectSameAsDiskImage(trd, "plain.trd");
+    std::vector<uint8_t> deleted = trd;
+    deleted[16] = 0x01;
+    ExpectSameAsDiskImage(deleted, "deleted.trd");
+    EXPECT_EQ(Of(deleted, "deleted.trd").files.size(), 3u);
+    std::vector<uint8_t> cut = trd;
+    cut.resize(16 * 256 * 3);
+    ExpectSameAsDiskImage(cut, "cut.trd");
 }
 
 TEST(Signature_Test, FuzzyMatchesASavedToDiskOnly)
 {
-    const std::vector<uint8_t> scl = ReadAll(TestPathHelper::GetTestDataPath(kScl));
-    const Signatures reference = Of(scl, "eyeache2.scl");
-    std::unique_ptr<unrealdisk::DiskImage> disk = LoadDisk(scl, "eyeache2.scl");
+    const std::vector<uint8_t> trd = SyntheticTrd();
+    const Signatures reference = Of(trd, "synth.trd");
+    std::unique_ptr<unrealdisk::DiskImage> disk = LoadDisk(trd, "synth.trd");
     ASSERT_TRUE(disk);
-    ASSERT_GE(reference.files.size(), 4u) << "the fixture needs a few files for one added to stay >= 0.8";
+    ASSERT_EQ(reference.files.size(), 4u);
 
     // A high-score file the game saved: another file set, the same title
     unrealdisk::TrdosFileSystem fs(*disk);
@@ -213,7 +269,7 @@ TEST(Signature_Test, FuzzyMatchesASavedToDiskOnly)
             code = &file;
     ASSERT_NE(code, nullptr);
     {
-        std::unique_ptr<unrealdisk::DiskImage> copy = LoadDisk(scl, "eyeache2.scl");
+        std::unique_ptr<unrealdisk::DiskImage> copy = LoadDisk(trd, "synth.trd");
         unrealdisk::TrdosFileSystem rewrite(*copy);
         unrealdisk::TrdosFile entry;
         ASSERT_TRUE(rewrite.Find(code->name, code->type, entry, error)) << error;
@@ -309,20 +365,21 @@ TEST(Signature_Test, MemorySignatureOfOneGameAtTwoMoments)
 TEST(Signature_Test, ControlVerbs)
 {
     SignatureControl control;
-    const std::string scl = TestPathHelper::GetTestDataPath(kScl);
-    SignatureReply reply = control.Execute({"file", {{"path", scl}, {"details", ""}}});
+    // A 396-byte tape: the verbs, not the hashing, are under test
+    const std::string tap = TestPathHelper::GetTestDataPath(kTap);
+    SignatureReply reply = control.Execute({"file", {{"path", tap}, {"details", ""}}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
     const StateNode* signature = reply.body.find("signature");
     ASSERT_NE(signature, nullptr);
-    ASSERT_NE(signature->find("files"), nullptr);
-    EXPECT_GT(signature->find("files")->size(), 0u);
-    EXPECT_EQ(signature->find("kind")->s, "disk");
+    ASSERT_NE(signature->find("blocks"), nullptr);
+    EXPECT_GT(signature->find("blocks")->size(), 0u);
+    EXPECT_EQ(signature->find("kind")->s, "tape");
 
-    reply = control.Execute({"compare", {{"path", scl}, {"with", scl}}});
+    reply = control.Execute({"compare", {{"path", tap}, {"with", tap}}});
     ASSERT_TRUE(reply.Ok());
     EXPECT_EQ(reply.body.find("match")->find("level")->s, "exact");
 
-    reply = control.Execute({"file", {{"path", scl + ".missing"}}});
+    reply = control.Execute({"file", {{"path", tap + ".missing"}}});
     EXPECT_EQ(reply.error, "not-found");
     EXPECT_EQ(reply.HttpStatus(), 404);
     EXPECT_EQ(control.Execute({"media", {}}).error, "unavailable");

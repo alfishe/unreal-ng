@@ -49,15 +49,21 @@ cmake-build-agent-release/bin/signature-poc --out scratch/2026-10-23-poc-034/spe
 |---|---:|
 | SCL → TRD, FDI, UDI | 1975 / 1975 each |
 | TRD → FDI, UDI | 93 / 93 each |
-| TRD → SCL | 91 / 93 |
-| FDI → SCL, UDI; UDI → FDI, SCL, TRD | 2/3, 3/3, 3/3, 3/3, 2/2 |
+| TRD → SCL | 91 / 93 (93 / 93 after the SCL writer fix) |
+| FDI → SCL, UDI; UDI → FDI, SCL, TRD | 2/3 (3/3 after the fix), 3/3, 3/3, 3/3, 2/2 |
 | TAP → TZX, TAP → TAP, TZX → TAP | 32 / 32, 32 / 32, 1 / 1 |
 | the file renamed | 2107 / 2107 |
 | the disk label changed | 2070 / 2070 |
-| **all** | **10 458 / 10 461 = 99.97 %** |
+| **all** | **10 458 / 10 461 = 99.97 %; 10 461 / 10 461 = 100 % after the fix** |
 
-The three misses: `full_ver/POLECACL.zip` and `press/emga/EMGA.zip` (TRD → SCL: the SCL writer leaves out a file whose
-sector chain runs outside the TR-DOS geometry), `full_ver/X-REVERS.zip` (an FDI whose SCL copy has no TR-DOS files).
+The three misses (`full_ver/POLECACL.zip`, `press/emga/EMGA.zip` TRD → SCL, `full_ver/X-REVERS.zip` FDI → SCL) were
+one core defect: their catalogues hold entries past the file count of the volume sector (#E4: POLECACL 10 counted,
+12 entries, the last two 0-sector catalogue text lines; EMGA 63 counted, 119 entries), and the SCL writer stopped at
+the count. TR-DOS ends the catalogue at the first entry starting with 0x00: CAT (`A2FC6`) and `FIND_NAME` (LOAD, RUN,
+...) in the TR-DOS 5.04T source walk all 128 slots up to that marker, #E4 is only the number CAT prints and the slot
+SAVE writes next. `LoaderSCL::writeImage` now exports every live entry up to the marker (regression test
+`LoaderRoundTrip_Test.SCL_WriteImage_ExportsEntriesPastTheFileCount`); the re-run 2026-10-24
+(`scratch/2026-10-24-poc-034-fix/`, `--repack-every 10 --cross-check`) has no miss left.
 
 ## Saved to
 
@@ -122,10 +128,14 @@ Every disk computed twice: TRD / SCL from their sectors (the default) and throug
 | Disks | Results differ | Default path | DiskImage path |
 |---:|---:|---:|---:|
 | 20 908 | 1 | 1.97 ms a disk | 21.3 ms a disk |
+| 20 908 (re-run 2026-10-24, the loaders fixed, load average ~100) | 0 | 2.92 ms a disk | 29.5 ms a disk |
 
 The one difference: `system/BBR.zip BBR.trd`, an 86-cylinder TRD (704 512 bytes). `FloppyFormats::ProbeData` takes it
-as TRD (up to 86 cylinders), `LoaderTRD::format` refuses anything but 40 / 80 cylinders, so the DiskImage path falls
-through to the tape probe (which accepts the file as a TAP); the sector path reads its TR-DOS catalogue (4 files).
+as TRD (up to 86 cylinders), but `LoaderTRD::parse` refused 86 (`>= MAX_CYLINDERS`, the other loaders take
+1..`MAX_CYLINDERS`) and `LoaderTRD::format` anything but 40 / 80 cylinders, so the DiskImage path fell through to the
+tape probe (which accepts the file as a TAP); the sector path reads its TR-DOS catalogue (4 files). Fixed: `format`
+lays out 1..86 cylinders on one or two sides (80-track disk type above 42 cylinders, free sectors from the geometry),
+`parse` takes 86 (regression test `LoaderTRD_Test.EightySixCylinders`).
 
 ## Snapshots (memory signature)
 

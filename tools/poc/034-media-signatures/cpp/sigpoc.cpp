@@ -1015,6 +1015,29 @@ int main(int argc, char** argv)
                 std::printf("  %-8s %c %5u %5u %3u %s\n", file.name.c_str(), file.type, file.start, file.length, file.sectors,
                             file.dataSha256.substr(0, 16).c_str());
         }
+        // With --out: the disk re-packed to every writable format, each copy's signature
+        std::unique_ptr<unrealdisk::DiskImage> disk;
+        std::string format;
+        if (!run.out.empty() && unrealdisk::FloppyFormats::LoadData({}, bytes.data(), bytes.size(), name, disk, format).Ok() &&
+            disk)
+        {
+            fs::create_directories(run.out);
+            for (const char* ext : {"trd", "scl", "fdi", "udi"})
+            {
+                const fs::path path = run.out / (fs::path(name).stem().string() + "-repack." + ext);
+                const unrealdisk::FloppySaveResult saved = unrealdisk::FloppyFormats::Save({}, *disk, path.string(), false);
+                Signatures sig;
+                std::string error;
+                const std::vector<uint8_t> copy = saved.saved ? ReadAll(saved.savedPath) : std::vector<uint8_t>{};
+                if (saved.saved)
+                    Compute(copy.data(), copy.size(), saved.savedPath, sig, error);
+                std::printf("%s -> %s: %s%s files %zu content %s\n", format.c_str(), ext, saved.saved ? "saved" : "refused",
+                            saved.reason.empty() ? "" : (" (" + saved.reason + ")").c_str(), sig.files.size(),
+                            sig.content.c_str());
+                for (const std::string& warning : sig.warnings)
+                    std::printf("  warning: %s\n", warning.c_str());
+            }
+        }
         return 0;
     }
     if (run.speed > 0)
