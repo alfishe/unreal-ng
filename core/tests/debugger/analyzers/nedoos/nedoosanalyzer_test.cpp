@@ -266,5 +266,37 @@ TEST_F(NedoOsAnalyzer_Boot_Test, DetectsKernelStreamsCallsAndFlagsLeakedPages)
     const OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
     EXPECT_TRUE(snapshot.detected);
     EXPECT_FALSE(snapshot.profile.empty());
-    EXPECT_FALSE(snapshot.tasks.empty()) << "the shell task must be visible";
+    ASSERT_GE(snapshot.tasks.size(), 3u) << "idle -> term -> cmd must be visible";
+
+    // Task names come from the command line in each task's own main page
+    const auto byName = [&](const char* needle) {
+        return std::any_of(snapshot.tasks.begin(), snapshot.tasks.end(),
+                           [needle](const OsTask& t) { return t.name.find(needle) != std::string::npos; });
+    };
+    EXPECT_TRUE(byName("term")) << "the terminal task is named";
+    EXPECT_TRUE(byName("cmd")) << "the shell task is named";
+
+    // The terminal wired cmd's stdio through pipes (handles 0x80+)
+    EXPECT_FALSE(snapshot.pipes.empty()) << "term's stdin/stdout pipes must be visible";
+    for (const auto& pipe : snapshot.pipes)
+    {
+        EXPECT_GE(pipe.handle, 0x80);
+        EXPECT_LE(pipe.handle, 0x87);
+    }
+
+    // Time quanta: the idle task always ran, the shell too
+    const OsTask* idle = nullptr;
+    const OsTask* cmd = nullptr;
+    for (const auto& t : snapshot.tasks)
+    {
+        if (t.name.find("cmd") != std::string::npos)
+            cmd = &t;
+        if (t.parent == 0)
+            idle = &t;
+    }
+    ASSERT_NE(cmd, nullptr);
+    ASSERT_NE(idle, nullptr);
+    EXPECT_GT(idle->lastTime, 0u);
+    EXPECT_GT(cmd->lastTime, 0u);
+    EXPECT_NE(cmd->stdinFd, 0u) << "cmd reads from a pipe";
 }

@@ -6578,6 +6578,11 @@ public:
                 item["parent"] = task.parent;
                 item["flags"] = task.flags;
                 item["mainpg"] = task.mainpg;
+                item["name"] = task.name;
+                item["stdin"] = task.stdinFd;
+                item["stdout"] = task.stdoutFd;
+                item["stderr"] = task.stderrFd;
+                item["last_time"] = task.lastTime;
                 tasks[index + 1] = item;
                 index++;
             }
@@ -6603,10 +6608,27 @@ public:
                 item["index"] = handle.index;
                 item["owner"] = handle.owner;
                 item["name"] = handle.name;
+                item["position"] = handle.position;
+                item["size"] = handle.size;
                 handles[index + 1] = item;
                 index++;
             }
             result["handles"] = handles;
+
+            sol::table pipes = lua_view.create_table();
+            index = 0;
+            for (const auto& pipe : snapshot.pipes)
+            {
+                sol::table item = lua_view.create_table();
+                item["handle"] = pipe.handle;
+                item["open_sides"] = pipe.openSides;
+                item["reader"] = pipe.reader;
+                item["lines"] = pipe.lines;
+                item["queued"] = pipe.queued;
+                pipes[index + 1] = item;
+                index++;
+            }
+            result["pipes"] = pipes;
             return result;
         });
 

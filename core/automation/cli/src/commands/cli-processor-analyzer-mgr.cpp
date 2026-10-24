@@ -345,12 +345,24 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                    << "  profile: " << (snapshot.profile.empty() ? "-" : snapshot.profile) << NEWLINE;
 
                 ss << "Tasks (" << snapshot.tasks.size() << "):" << NEWLINE;
+                uint32_t totalTime = 0;
+                for (const auto& task : snapshot.tasks)
+                    totalTime += task.lastTime;
                 for (const auto& task : snapshot.tasks)
                 {
                     ss << "  id=" << static_cast<unsigned>(task.id)
                        << " parent=" << static_cast<unsigned>(task.parent)
                        << " flags=#" << std::hex << static_cast<unsigned>(task.flags) << std::dec
-                       << " mainpg=" << static_cast<unsigned>(task.mainpg) << NEWLINE;
+                       << " mainpg=" << static_cast<unsigned>(task.mainpg);
+                    if (!task.name.empty())
+                        ss << " '" << task.name << "'";
+                    if (task.stdinFd != 0)
+                        ss << " io=#" << std::hex << static_cast<unsigned>(task.stdinFd)
+                           << "/" << static_cast<unsigned>(task.stdoutFd)
+                           << "/" << static_cast<unsigned>(task.stderrFd) << std::dec;
+                    if (totalTime > 0)
+                        ss << " cpu=" << (task.lastTime * 100 / totalTime) << "%";
+                    ss << NEWLINE;
                 }
 
                 ss << "Owned memory (" << snapshot.blocks.size() << "):" << NEWLINE;
@@ -372,7 +384,24 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                         {
                             ss << " '" << handle.name << "'";
                         }
+                        if (handle.size != 0)
+                        {
+                            ss << " pos=" << handle.position << "/" << handle.size;
+                        }
                         ss << NEWLINE;
+                    }
+                }
+
+                if (!snapshot.pipes.empty())
+                {
+                    ss << "Pipes (" << snapshot.pipes.size() << "):" << NEWLINE;
+                    for (const auto& pipe : snapshot.pipes)
+                    {
+                        ss << "  #" << std::hex << pipe.handle << std::dec
+                           << " sides=" << static_cast<unsigned>(pipe.openSides)
+                           << " reader=" << static_cast<unsigned>(pipe.reader)
+                           << " lines=" << static_cast<unsigned>(pipe.lines)
+                           << " queued=" << pipe.queued << NEWLINE;
                     }
                 }
 

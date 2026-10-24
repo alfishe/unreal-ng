@@ -15,7 +15,8 @@ class Z80;
 class EmulatorContext;
 
 /// Build profile: symbol values of one NedoOS kernel revision.
-/// All values are offsets inside the kernel's system page (pgsys).
+/// All values are offsets inside the kernel's system page (pgsys), except
+/// fatFs2Page/filArrayOff (the FAT FS work page holding ffilearray).
 struct NedoProfile
 {
     const char* name;
@@ -23,11 +24,21 @@ struct NedoProfile
     uint16_t callBdos;     // jp callbdos stub at #0009
     uint16_t sysSysint;    // jp sys_sysint at #0038
     uint16_t tsysPages;    // page owner array: byte per physical page
-    uint16_t sysNpages;    // byte holding the owner array length
+    uint16_t sysNpages;    // assemble-time page count (an EQU, e.g. 192)
     uint16_t appAddr;      // word holding the current app struct pointer
     uint16_t app1;         // first STRUCT app slot
     uint16_t appSz;        // slot stride
     uint8_t maxApps;
+    uint8_t pageXor;       // window port value ^ pageXor = physical page (atm: 0xFF)
+    uint8_t fatFs2Page;    // role page of pgfatfs2 (FAT FS tables)
+    uint16_t filArrayOff;  // ffilearray offset inside pgfatfs2 (addr - 0xC000)
+    uint16_t filSz;        // sizeof(FIL)
+    uint8_t maxFiles;
+    uint8_t filOwnerOff;   // FIL.PAD1 = owner task id
+    uint16_t freePipes;    // 8 bytes: open sides per pipe
+    uint16_t pipeOwners;   // 8 bytes: reader task per pipe
+    uint16_t pipeTypes;    // 8 bytes: queued terminated lines per pipe
+    uint16_t pipeBufs;     // 8 x 256 bytes: [0]=len, [1..]=queued bytes
 };
 
 /// NedoOS-aware analyzer: detects a running NedoOS kernel, streams decoded
@@ -52,6 +63,11 @@ public:
     static constexpr uint16_t APP_ID = 1;
     static constexpr uint16_t APP_PARENT = 2;
     static constexpr uint16_t APP_MAINPG = 3;
+    static constexpr uint16_t APP_STDIN = 4;
+    static constexpr uint16_t APP_STDOUT = 5;
+    static constexpr uint16_t APP_STDERR = 6;
+    static constexpr uint16_t APP_LASTTIME = 7;
+    static constexpr uint16_t COMMAND_LINE = 0x0080; // the string itself, program name first
 
     explicit NedoOsAnalyzer(EmulatorContext* context);
 
@@ -95,6 +111,7 @@ private:
     uint16_t readPhysWord(uint16_t offset) const;
     uint8_t currentTaskId() const;
     uint16_t ownerPageCount() const;                 // sys_npages, 0 means 256
+    std::string taskName(uint8_t mainpgPort, const NedoProfile& profile) const;
 
     std::string _uuid;
     EmulatorContext* _context;

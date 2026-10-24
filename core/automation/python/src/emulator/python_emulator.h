@@ -3193,6 +3193,11 @@ namespace PythonBindings
                     t["parent"] = task.parent;
                     t["flags"] = task.flags;
                     t["mainpg"] = task.mainpg;
+                    if (!task.name.empty()) t["name"] = task.name;
+                    t["stdin"] = task.stdinFd;
+                    t["stdout"] = task.stdoutFd;
+                    t["stderr"] = task.stderrFd;
+                    t["last_time"] = task.lastTime;
                     tasks.append(t);
                 }
                 state["tasks"] = tasks;
@@ -3210,9 +3215,22 @@ namespace PythonBindings
                     h["index"] = handle.index;
                     h["owner"] = handle.owner;
                     if (!handle.name.empty()) h["name"] = handle.name;
+                    h["position"] = handle.position;
+                    h["size"] = handle.size;
                     handles.append(h);
                 }
                 state["handles"] = handles;
+                py::list pipes;
+                for (const auto& pipe : snapshot.pipes) {
+                    py::dict p;
+                    p["handle"] = pipe.handle;
+                    p["open_sides"] = pipe.openSides;
+                    p["reader"] = pipe.reader;
+                    p["lines"] = pipe.lines;
+                    p["queued"] = pipe.queued;
+                    pipes.append(p);
+                }
+                state["pipes"] = pipes;
                 return state;
             }, "OS analyzer state: tasks, page/block ownership, file handles", py::arg("name"))
             .def("analyzer_clear", [](Emulator& self, const std::string& name) {

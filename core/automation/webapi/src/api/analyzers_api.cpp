@@ -490,6 +490,17 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 t["parent"] = task.parent;
                 t["flags"] = task.flags;
                 t["mainpg"] = task.mainpg;
+                if (!task.name.empty())
+                {
+                    t["name"] = task.name;
+                }
+                if (task.stdinFd != 0)
+                {
+                    t["stdin"] = task.stdinFd;
+                    t["stdout"] = task.stdoutFd;
+                    t["stderr"] = task.stderrFd;
+                }
+                t["last_time"] = task.lastTime;
                 tasksJson.append(t);
             }
             snapJson["tasks"] = tasksJson;
@@ -514,9 +525,27 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 {
                     h["name"] = handle.name;
                 }
+                if (handle.size != 0)
+                {
+                    h["position"] = static_cast<Json::UInt64>(handle.position);
+                    h["size"] = static_cast<Json::UInt64>(handle.size);
+                }
                 handlesJson.append(h);
             }
             snapJson["handles"] = handlesJson;
+
+            Json::Value pipesJson(Json::arrayValue);
+            for (const auto& pipe : snapshot.pipes)
+            {
+                Json::Value p;
+                p["handle"] = pipe.handle;
+                p["open_sides"] = pipe.openSides;
+                p["reader"] = pipe.reader;
+                p["lines"] = pipe.lines;
+                p["queued"] = pipe.queued;
+                pipesJson.append(p);
+            }
+            snapJson["pipes"] = pipesJson;
 
             ret["snapshot"] = snapJson;
         }

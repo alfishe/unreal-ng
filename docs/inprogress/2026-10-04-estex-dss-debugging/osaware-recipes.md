@@ -49,6 +49,14 @@ curl -s -X DELETE http://localhost:8090/api/v1/emulator/$ID/analyzer/dss/events
 PAGE_ALLOC|PAGE_FREE|FILE_OPEN|FILE_CLOSE|FINDING`), `severity`, `pc`, `caller`,
 `task_id`, `syscall`, `message`, `detail`, `frame_number`, `formatted`.
 
+Снимок NedoOS (с 2026-10-24) богаче: у задач `name` (первое слово командной строки
+из страницы задачи), `stdin/stdout/stderr` (пайпы 0x80+) и `last_time` (кванты
+ядра; относительная доля = CPU% - CLI `analyzer nedoos state` печатает его),
+плюс `pipes[]` (стороны/читатель/строки/байты) и `handles[]` из `ffilearray`
+(открытые FAT-файлы с владельцем, позицией и размером). Пример живого снимка
+(idle → term.com → cmd.com, пайпы скрещены): task 2 'term.com' io=#80/#81,
+task 3 'cmd.com' io=#81/#80, pipe #80 reader=2, pipe #81 reader=3.
+
 ## 3. CLI (telnet :8765)
 
 ```

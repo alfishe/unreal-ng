@@ -45,7 +45,8 @@ std::string OsEvent::format() const
 const std::vector<NedoProfile>& NedoOsAnalyzer::knownProfiles()
 {
     static const std::vector<NedoProfile> profiles = {
-        {"nedoos-44049473", 0x0B7E, 0x0B57, 0x0909, 0x2B29, 0x00C0, 0x0786, 0x0112, 0x0068, 16},
+        {"nedoos-44049473", 0x0B7E, 0x0B57, 0x0909, 0x2B29, 0x00C0, 0x0786, 0x0112, 0x0068, 16,
+         0xFF, 11, 0x1C97, 0x0220, 16, 5, 0x2565, 0x256D, 0x2575, 0x2BE9},
     };
     return profiles;
 }
@@ -637,7 +638,7 @@ OsSnapshot NedoOsAnalyzer::getOsSnapshot() const
     {
         const uint16_t slot = static_cast<uint16_t>(profile.app1
                                                     + static_cast<uint32_t>(i) * profile.appSz);
-        if (slot + APP_MAINPG >= 0x4000)
+        if (slot + APP_LASTTIME >= 0x4000)
         {
             break;
         }
@@ -650,6 +651,11 @@ OsSnapshot NedoOsAnalyzer::getOsSnapshot() const
         task.parent = base[slot + APP_PARENT];
         task.flags = base[slot + APP_FLAGS];
         task.mainpg = base[slot + APP_MAINPG];
+        task.stdinFd = base[slot + APP_STDIN];
+        task.stdoutFd = base[slot + APP_STDOUT];
+        task.stderrFd = base[slot + APP_STDERR];
+        task.lastTime = base[slot + APP_LASTTIME];
+        task.name = taskName(task.mainpg, profile);
         snapshot.tasks.push_back(task);
     }
 
@@ -665,7 +671,95 @@ OsSnapshot NedoOsAnalyzer::getOsSnapshot() const
             }
         }
     }
+
+    // Open FAT files: ffilearray in pgfatfs2, FIL.fs == 0 marks a free slot
+    if (profile.filArrayOff > 0 && _context->pMemory)
+    {
+        const uint8_t* fil = _context->pMemory->RAMPageAddress(profile.fatFs2Page);
+        if (fil)
+        {
+            for (uint8_t i = 0; i < profile.maxFiles; i++)
+            {
+                const uint32_t at = static_cast<uint32_t>(profile.filArrayOff)
+                                    + static_cast<uint32_t>(i) * profile.filSz;
+                if (at + 10 >= 0x4000)
+                {
+                    break;
+                }
+                const uint16_t fs = static_cast<uint16_t>(fil[at] | (fil[at + 1] << 8));
+                if (fs == 0)
+                {
+                    continue;
+                }
+                OsHandle handle;
+                handle.index = i;
+                handle.owner = fil[at + profile.filOwnerOff];
+                handle.position = fil[at + 6] | (fil[at + 7] << 8)
+                                   | (static_cast<uint32_t>(fil[at + 8]) << 16)
+                                   | (static_cast<uint32_t>(fil[at + 9]) << 24);
+                handle.size = fil[at + 10] | (fil[at + 11] << 8)
+                              | (static_cast<uint32_t>(fil[at + 12]) << 16)
+                              | (static_cast<uint32_t>(fil[at + 13]) << 24);
+                snapshot.handles.push_back(handle);
+            }
+        }
+    }
+
+    // Pipes: freepipes/pipeowners/pipetypes/pipebufs in pgsys (8 pipes, 0x80+i)
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        if (profile.pipeBufs + 256u * (i + 1) > 0x4000)
+        {
+            break;
+        }
+        const uint8_t sides = base[profile.freePipes + i];
+        const uint8_t reader = base[profile.pipeOwners + i];
+        if (sides == 0 && reader == 0)
+        {
+            continue;
+        }
+        OsPipe pipe;
+        pipe.handle = static_cast<uint16_t>(0x80 + i);
+        pipe.openSides = sides;
+        pipe.reader = reader;
+        pipe.lines = base[profile.pipeTypes + i];
+        pipe.queued = base[profile.pipeBufs + 256u * i];
+        snapshot.pipes.push_back(pipe);
+    }
     return snapshot;
+}
+
+std::string NedoOsAnalyzer::taskName(uint8_t mainpgPort, const NedoProfile& profile) const
+{
+    if (!_context || !_context->pMemory || mainpgPort == 0)
+    {
+        return {};
+    }
+    // mainpg is the window port value; physical = port ^ pageXor (atm: 0xFF).
+    // The command line lives at COMMAND_LINE in the task's own main page;
+    // its first word is the program name.
+    const uint8_t phys = static_cast<uint8_t>(mainpgPort ^ profile.pageXor);
+    const uint8_t* page = _context->pMemory->RAMPageAddress(phys);
+    if (!page)
+    {
+        return {};
+    }
+    auto printable = [&](uint8_t c) { return c >= 0x20 && c < 0x7F; };
+
+    std::string name;
+    for (uint16_t at = COMMAND_LINE; at < COMMAND_LINE + 24; at++)
+    {
+        const uint8_t c = page[at];
+        if (c == 0 || c == ' ')
+        {
+            break;
+        }
+        if (printable(c))
+        {
+            name.push_back(static_cast<char>(c));
+        }
+    }
+    return name;
 }
 
 std::string NedoOsAnalyzer::osProfileName() const

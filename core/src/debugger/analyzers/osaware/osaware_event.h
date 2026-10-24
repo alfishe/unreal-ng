@@ -84,6 +84,11 @@ struct OsTask
     uint8_t parent = 0;
     uint8_t flags = 0;
     uint8_t mainpg = 0;          // NedoOS mainpg; DSS: 0
+    std::string name;            // first word of the task's command line, when known
+    uint8_t stdinFd = 0;         // NedoOS stdin pipe handle (0x80+i); 0 = none
+    uint8_t stdoutFd = 0;
+    uint8_t stderrFd = 0;
+    uint8_t lastTime = 0;        // NedoOS time quanta consumed (raw kernel counter)
 };
 
 /// One owned memory unit. NedoOS: a 16K RAM page; DSS: a block id in MEMTAB.
@@ -93,12 +98,24 @@ struct OsBlock
     uint8_t owner = 0;           // task id, 0xFF = system
 };
 
-/// One file handle owned by a task (DSS FM table entries).
+/// One file handle owned by a task (DSS FM table entries, NedoOS FAT FIL entries).
 struct OsHandle
 {
     uint16_t index = 0;
     uint8_t owner = 0;
     std::string name;            // best-effort name, may be empty
+    uint32_t position = 0;       // file pointer, when the OS stores one
+    uint32_t size = 0;           // file size, when the OS stores one
+};
+
+/// One pipe between NedoOS tasks (handle numbers are 0x80+i like the kernel's).
+struct OsPipe
+{
+    uint16_t handle = 0;
+    uint8_t openSides = 0;       // sides still open (writer bits / reader bit)
+    uint8_t reader = 0;          // task id that owns the read end (0 = none yet)
+    uint8_t lines = 0;           // terminated lines queued
+    uint16_t queued = 0;         // bytes queued
 };
 
 /// Point-in-time OS state for surfaces (tasks, ownership, handles).
@@ -110,6 +127,7 @@ struct OsSnapshot
     std::vector<OsTask> tasks;
     std::vector<OsBlock> blocks;
     std::vector<OsHandle> handles;
+    std::vector<OsPipe> pipes;
 };
 
 /// Query mixin implemented by OS-aware analyzers; surfaces branch on this
