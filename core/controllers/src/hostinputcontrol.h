@@ -21,7 +21,8 @@
 /// database_delete (entries of devices.user.json: a user device, a renamed one, a photo), database_import (a
 /// gamecontrollerdb line or a RetroArch autoconfig file as a user family with its control map), learn (the learn
 /// wizard for an unknown device as data: start, status, sample, skip, back, finish, cancel), aliases (the old ids of
-/// promoted devices: a `gc:` device later matched to its IOHID endpoint, architecture.md §5), unalias (forget one).
+/// promoted devices: a `gc:` device later matched to its IOHID endpoint, architecture.md §5), unalias (forget one),
+/// haptics_probe (a debugger probe as a haptic source), match (the game profiles a program's signatures choose, D7).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -83,6 +84,16 @@ public:
     virtual void SetManualProfile(const std::string& id) = 0;
     /// Resolve and apply the profiles again (after a change in the store)
     virtual void Reapply() = 0;
+    /// The signatures of the file at @p path into @p context (signatures, fileSha256, fileSet): the owner links the
+    /// signature library (core/swsignature), this library does not. False with the reason; the default says there is
+    /// no signature library in this process
+    virtual bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error)
+    {
+        (void)path;
+        (void)context;
+        error = "no signature library in this process";
+        return false;
+    }
     /// The service whose motors haptics / rumble drive; nullptr: no host output in this process
     virtual HostInputService* Input()
     {
@@ -150,6 +161,7 @@ private:
     HostReply Scheme(const HostRequest& request);
     HostReply Haptics(const HostRequest& request);
     HostReply Rumble(const HostRequest& request);
+    HostReply HapticsProbe(const HostRequest& request);
     /// A surface's outputs (control surfaces controls-and-feedback.md §3): a pattern, the steps / clicks, or a seek's
     /// marks as the device's top layer plays them
     HostReply Output(const HostRequest& request);
@@ -188,6 +200,9 @@ private:
     HostReply Aliases();
     /// Forget an alias (id= the old id), saved to aliases.yaml and applied at once
     HostReply Unalias(const HostRequest& request);
+    /// The game profiles a program's signatures match (D7), the one chosen and the haptics reason (H-3): `path` (the
+    /// owner computes its signatures), `signatures` / `file_sha256` / `file_set` (comma lists) or the loaded program
+    HostReply Match(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

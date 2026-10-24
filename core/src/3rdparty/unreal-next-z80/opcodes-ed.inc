@@ -70,6 +70,13 @@
 
 /// endregion </Information>
 
+// IN r,(C) flags: S Z P from the byte, H = N = 0, C kept; the Zilog die takes F5/F3 from the byte, the T80N persona keeps them
+static Z80NINLINE uint8_t Z80nInFlags(const Z80nCPU *cpu, const Z80nRegs *rf, uint8_t v)
+{
+    const uint8_t f = static_cast<uint8_t>(log_f[v] | (rf->f & CF));
+    return cpu->t80Persona ? static_cast<uint8_t>((f & ~(F3 | F5)) | (rf->f & (F3 | F5))) : f;
+}
+
 // ED opcodes
 
 Z80NOPCODE ope_40(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in b,(c)
@@ -78,7 +85,7 @@ Z80NOPCODE ope_40(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in b,(c)
 
    cputact(1);
    rf->b = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->b] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->b);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -221,7 +228,7 @@ Z80NOPCODE ope_48(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in c,(c)
 
    cputact(1);
    rf->c = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->c] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->c);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -330,7 +337,7 @@ Z80NOPCODE ope_50(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in d,(c)
 
    cputact(1);
    rf->d = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->d] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->d);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -407,8 +414,10 @@ Z80NOPCODE ope_56(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 1
 
 Z80NOPCODE ope_57(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld a,i
    Z80N_T_BEGIN(cpu);
+   const uint8_t fOld = rf->f;
    rf->a = rf->i;
    rf->f = (log_f[rf->a] & ~(PV | HF | NF)) | (rf->iff2 ? PV : 0) | (rf->f & CF);
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (fOld & (F3 | F5)));  // T80N: F5/F3 kept
    cpuidle(Z80N_IR(rf), 1);
    Z80N_RETURN_Q(0x28, tact_);
 }
@@ -419,7 +428,7 @@ Z80NOPCODE ope_58(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in e,(c)
 
    cputact(1);
    rf->e = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->e] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->e);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -492,8 +501,10 @@ Z80NOPCODE ope_5E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 2
 
 Z80NOPCODE ope_5F(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld a,r
    Z80N_T_BEGIN(cpu);
+   const uint8_t fOld = rf->f;
    rf->a = (rf->r_low & 0x7F) | rf->r_hi;
    rf->f = (log_f[rf->a] & ~(PV | HF | NF)) | (rf->iff2 ? PV : 0) | (rf->f & CF);
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (fOld & (F3 | F5)));  // T80N: F5/F3 kept
    cpuidle(Z80N_IR(rf), 1);
    Z80N_RETURN_Q(0x28, tact_);
 }
@@ -504,7 +515,7 @@ Z80NOPCODE ope_60(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in h,(c)
 
    cputact(1);
    rf->h = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->h] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->h);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -568,7 +579,7 @@ Z80NOPCODE ope_68(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in l,(c)
 
    cputact(1);
    rf->l = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->l] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->l);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -633,7 +644,7 @@ Z80NOPCODE ope_70(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in (c) - Undocumen
    rf->memptr = rf->bc + 1;
 
    cputact(1);
-   rf->f = log_f[Z80nPin(cpu, rf->bc)] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, Z80nPin(cpu, rf->bc));
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -714,7 +725,7 @@ Z80NOPCODE ope_78(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // in a,(c)
 
    cputact(1);
    rf->a = Z80nPin(cpu, rf->bc);
-   rf->f = log_f[rf->a] | (rf->f & CF);
+   rf->f = Z80nInFlags(cpu, rf, rf->a);
 
    cputact(3);
    Z80N_RETURN_Q(0x28, tact_);
@@ -808,6 +819,7 @@ Z80NOPCODE ope_A1(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpi
    uint8_t value = Z80nRd(cpu, rf->hl++);
 
    rf->f = cpf8b[rf->a * 0x100 + value] + cf;
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (value & (F3 | F5)));  // T80N: the CP flags, F5/F3 of the byte
 
    if (--rf->bc)
 	   rf->f |= PV;
@@ -854,6 +866,7 @@ Z80NOPCODE ope_A2(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ini
     if (!(pf & 1)) rf->f |= PV;
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -895,6 +908,7 @@ Z80NOPCODE ope_A3(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // outi
     if (!(pf & 1)) rf->f |= PV;
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -930,6 +944,8 @@ Z80NOPCODE ope_A9(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpd
     uint8_t value = Z80nRd(cpu, hl--);
 
     rf->f = cpf8b[rf->a * 0x100 + value] + cf;
+    if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (value & (F3 | F5)));  // T80N: the CP flags, F5/F3 of the byte
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (value & (F3 | F5)));  // T80N: the CP flags, F5/F3 of the byte
 
     if (--rf->bc)
         rf->f |= PV;
@@ -976,6 +992,7 @@ Z80NOPCODE ope_AA(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ind
     if (!(pf & 1)) rf->f |= PV;
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -1016,6 +1033,7 @@ Z80NOPCODE ope_AB(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // outd
     if (!(pf & 1)) rf->f |= PV;
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -1039,7 +1057,8 @@ Z80NOPCODE ope_B0(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ldir
 		rf->pc = (rf->pc - 2) & 0xFFFF;
 
 		// Interrupted block instruction: YF=PC.13, XF=PC.11
-		rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+		if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+		    rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
 		cpuidle(de - 1, 7);  // 2 + 5 for the repeat, on the write address
 
@@ -1065,6 +1084,7 @@ Z80NOPCODE ope_B1(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpir
    uint8_t value = Z80nRd(cpu, hl++);
 
    rf->f = cpf8b[rf->a * 0x100 + value] + cf;
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (value & (F3 | F5)));  // T80N: the CP flags, F5/F3 of the byte
 
    // Set PV flag and XF/YF from PC BEFORE any cputact calls
    // so interrupts occurring during cycles see correct flags
@@ -1077,7 +1097,8 @@ Z80NOPCODE ope_B1(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpir
           rf->pc = (rf->pc - 2) & 0xFFFF;
 
           // Interrupted block instruction: YF=PC.13, XF=PC.11
-          rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+          if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+              rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
           rf->memptr = rf->pc + 1;
 
@@ -1160,7 +1181,8 @@ Z80NOPCODE ope_B2(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // inir
         // during the 5 extra T (z80test z80memptr INIR/INDR->NOP', which the
         // BC-derived value fails; verified empirically against its CRCs).
         rf->memptr = rf->pc + 1;
-        rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+        if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+            rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
         cpuidle(hl - 1, 5);  // repeat, on the write address
     }
@@ -1176,6 +1198,7 @@ Z80NOPCODE ope_B2(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // inir
     }
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -1251,7 +1274,8 @@ Z80NOPCODE ope_B3(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // otir
         rf->pc = (rf->pc - 2) & 0xFFFF;
 
         // Interrupted block instruction: YF=PC.13, XF=PC.11
-        rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+        if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+            rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
         // Repeat path: WZ = jump-back address + 1 (shared block-repeat
         // mechanism; verified for LDIR/CPIR/INIR/INDR, inferred for OTIR/
@@ -1277,6 +1301,7 @@ Z80NOPCODE ope_B3(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // otir
     }
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -1299,7 +1324,8 @@ Z80NOPCODE ope_B8(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // lddr
        rf->pc = (rf->pc - 2) & 0xFFFF;
 
        // Interrupted block instruction: YF=PC.13, XF=PC.11
-       rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+       if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+           rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
        // Repeating block op: MEMPTR = PC+1 (FUSE-verified, same as LDIR)
        rf->memptr = rf->pc + 1;
@@ -1326,6 +1352,7 @@ Z80NOPCODE ope_B9(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpdr
    uint8_t value = Z80nRd(cpu, hl--);
 
    rf->f = cpf8b[rf->a * 0x100 + value] + cf;
+   if (cpu->t80Persona) rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (value & (F3 | F5)));  // T80N: the CP flags, F5/F3 of the byte
 
    // Set PV flag and XF/YF from PC BEFORE any cputact calls
    // so interrupts occurring during cycles see correct flags
@@ -1338,7 +1365,8 @@ Z80NOPCODE ope_B9(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // cpdr
           rf->pc = (rf->pc - 2) & 0xFFFF;
 
           // Interrupted block instruction: YF=PC.13, XF=PC.11
-          rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+          if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+              rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
           rf->memptr = rf->pc + 1;
 
@@ -1421,7 +1449,8 @@ Z80NOPCODE ope_BA(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // indr
         // during the 5 extra T (z80test z80memptr INIR/INDR->NOP', which the
         // BC-derived value fails; verified empirically against its CRCs).
         rf->memptr = rf->pc + 1;
-        rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+        if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+            rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
 
         cpuidle(hl + 1, 5);  // repeat, on the write address
     }
@@ -1438,6 +1467,7 @@ Z80NOPCODE ope_BA(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // indr
     }
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 
@@ -1499,7 +1529,8 @@ Z80NOPCODE ope_BB(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // otdr
 
         rf->f = sf | pf | hf | nf | cf;
         rf->pc = (rf->pc - 2) & 0xFFFF;
-        rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
+        if (!cpu->t80Persona)  // T80N: no repeat-specific flags
+            rf->f = (rf->f & ~(F3|F5)) | ((rf->pc >> 8) & (F3|F5));
         rf->memptr = rf->pc + 1;  // repeat path, see ope_B3
 
         cpuidle(rf->bc, 5);  // repeat, on the port address
@@ -1517,6 +1548,7 @@ Z80NOPCODE ope_BB(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // otdr
     }
 
     rf->hl = hl;
+    if (cpu->t80Persona) rf->f = Z80nT80BlockIoFlags(rf->b);  // T80N: flags of SUB B,1
     Z80N_RETURN_Q(0x28, tact_);
 }
 

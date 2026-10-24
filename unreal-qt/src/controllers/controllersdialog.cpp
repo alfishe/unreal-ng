@@ -274,6 +274,13 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     statusRow->addWidget(_undoButton, 0, Qt::AlignTop);
     rightLayout->addLayout(statusRow);
     rightLayout->addWidget(new QLabel(tr("<b>Haptics</b>"), right));
+    _soundHapticsDsp = new QCheckBox(tr("DSP filters on the sound"), right);
+    _soundHapticsDsp->setToolTip(
+        tr("With \"Haptics from the sound\": the bass of the whole mix on the low motor and a short tick on the "
+           "high motor at each sharp onset, besides the AY and beeper filters"));
+    _soundHapticsDsp->setChecked(_host->SoundHapticsDsp());
+    _soundHapticsDsp->setEnabled(_host->SoundHaptics());
+    rightLayout->addWidget(_soundHapticsDsp);
     _hapticsLabel = new QLabel(right);
     _hapticsLabel->setWordWrap(true);
     _hapticsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -348,6 +355,8 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
                                         "time the device connects."));
 #endif
     });
+    connect(_soundHaptics, &QCheckBox::toggled, _soundHapticsDsp, &QCheckBox::setEnabled);
+    connect(_soundHapticsDsp, &QCheckBox::toggled, _host, &HostControllers::SetSoundHapticsDsp);
     connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
 #ifdef ENABLE_CONTROLLERS
     connect(_role, &QComboBox::activated, this, [this] {

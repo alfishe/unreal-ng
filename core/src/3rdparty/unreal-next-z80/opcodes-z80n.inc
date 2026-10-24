@@ -93,14 +93,14 @@ Z80NOPCODE ope_33(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // add bc,a
 
 Z80NOPCODE ope_93(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // pixeldn: HL one pixel line down in ULA screen addressing
     Z80N_T_BEGIN(cpu);
-    uint16_t hl = rf->hl;
-    if ((hl & 0x0700) != 0x0700)
-        hl = static_cast<uint16_t>(hl + 0x0100);
-    else if ((hl & 0x00E0) != 0x00E0)
-        hl = static_cast<uint16_t>((hl & 0xF8FF) + 0x0020);
-    else
-        hl = static_cast<uint16_t>((hl & 0xF81F) + 0x0800);
-    rf->hl = hl;
+    // The FPGA core increments the 8-bit pixel row {H4,H3,L7,L6,L5,H2,H1,H0} with wrap-around (t80n.vhd, PIXELDN):
+    // H7..H5 and L4..L0 never change, so 0x5FFF goes to 0x401F, not 0x601F
+    const uint8_t h = static_cast<uint8_t>(rf->hl >> 8);
+    const uint8_t l = static_cast<uint8_t>(rf->hl);
+    const uint8_t row = static_cast<uint8_t>(((((h >> 3) & 3) << 6) | (((l >> 5) & 7) << 3) | (h & 7)) + 1);
+    const uint8_t nh = static_cast<uint8_t>((h & 0xE0) | (((row >> 6) & 3) << 3) | (row & 7));
+    const uint8_t nl = static_cast<uint8_t>((l & 0x1F) | (((row >> 3) & 7) << 5));
+    rf->hl = static_cast<uint16_t>((nh << 8) | nl);
     Z80N_RETURN_Q(0, tact_);
 }
 
@@ -229,7 +229,7 @@ static Z80NINLINE void Z80nBlockXFlags(Z80nRegs *rf, uint8_t value)
 }
 
 // One element: read from `src`, write to DE unless the byte equals A, then the flags. Returns after the write cycle.
-static Z80NINLINE void Z80nBlockXStep(Z80nCPU *cpu, Z80nRegs *&rf, uint16_t src, int &tact_)
+static Z80NINLINE uint8_t Z80nBlockXStep(Z80nCPU *cpu, Z80nRegs *&rf, uint16_t src, int &tact_)
 {
     const uint8_t value = Z80nRd(cpu, src);
     rf->bc = static_cast<uint16_t>(rf->bc - 1);
@@ -243,6 +243,7 @@ static Z80NINLINE void Z80nBlockXStep(Z80nCPU *cpu, Z80nRegs *&rf, uint16_t src,
         cpuidle(rf->de, 5);
     }
     Z80nBlockXFlags(rf, value);
+    return value;
 }
 
 Z80NOPCODE ope_A4(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ldix
@@ -291,7 +292,12 @@ Z80NOPCODE ope_BC(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // lddrx
 // ldpirx: the source address is (HL & #FFF8) | (DE & 7); HL does not change; repeats like ldirx
 Z80NOPCODE ope_B7(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ldpirx
     Z80N_T_BEGIN(cpu);
-    Z80nBlockXStep(cpu, rf, static_cast<uint16_t>((rf->hl & 0xFFF8) | (rf->de & 7)), tact_);
+    const uint16_t src = static_cast<uint16_t>((rf->hl & 0xFFF8) | (rf->de & 7));
+    const uint8_t value = Z80nBlockXStep(cpu, rf, src, tact_);
+    {   // F5/F3 come from the ALU with BusA = B (Set_BusA_To is commented out in t80n_mcode.vhd, X"B7")
+        const uint8_t n = static_cast<uint8_t>(rf->b | value);
+        rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | (n & F3) | ((n << 4) & F5));
+    }
     rf->de = static_cast<uint16_t>(rf->de + 1);
     Z80nBlockXRepeat(rf, tact_, cpu);
     Z80N_RETURN_Q(0x28, tact_);
@@ -301,12 +307,16 @@ Z80NOPCODE ope_B7(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ldpirx
 // like ldirx (the scaling would add BC' to HL and DE' to DE). Implemented as that.
 #define ope_B6 ope_B4
 
-// ldws (14 T): (DE) = (HL); then L and D are incremented alone; flags as INC D
+// ldws (14 T): (DE) = (HL); then L and D are incremented alone. The FPGA core increments D with the ALU's ADD
+// (t80n_mcode.vhd, X"A5": ALU_Op 0000, no PreserveC), so the flags are those of ADD D,1 - including the carry -
+// although the SpecNext wiki documents them as INC D
 Z80NOPCODE ope_A5(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ldws
     Z80N_T_BEGIN(cpu);
     const uint8_t value = Z80nRd(cpu, rf->hl);
     Z80nWd(cpu, rf->de, value);
     rf->l = static_cast<uint8_t>(rf->l + 1);
-    inc8(rf, rf->d);
+    const uint8_t d = rf->d;
+    inc8(rf, rf->d);                                                       // S Z F5 H F3 V N as INC D
+    rf->f = static_cast<uint8_t>((rf->f & ~CF) | (d == 0xFF ? CF : 0));    // C as ADD D,1
     Z80N_RETURN_Q(0x28, tact_);
 }

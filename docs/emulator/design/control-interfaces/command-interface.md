@@ -3796,7 +3796,8 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
 | `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
 | `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`), `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`), `battery` (`known`, `text`; when known `level`, `coarse`, `charging`, `wired`), `light` (`available`, else the `reason`) and `notice` (what is missing and how to fix it, such as the udev rule; absent when nothing is) | ✅ Implemented |
-| `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
+| `controllers context` | | Machine, the loaded program's `file_sha256`, `signatures` (§18) and `file_set`, the game profiles they match (`game_matches` [{`id`, `how`}], strongest first), where the haptics come from (`haptics_reason`), the manual game profile, the applied profiles, warnings | ✅ Implemented |
+| `controllers match` | `[path] [signatures=a,b] [file_sha256=..] [file_set=..] [machine=..]` | The game profiles a program's signatures choose (D7: signature, file SHA-256, then the TR-DOS file set's fuzzy rule): `matches` [{`id`, `how`}], `profile` (the one chosen, empty: `next` is `port-reads`, the heuristic decides), `haptics_reason`. A `path` is a host file whose signatures the Qt client computes; without options, the loaded program | ✅ Implemented |
 | `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
 | `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
 | `controllers save` / `delete` / `apply` | `<file>` / `<id>` / `<id\|none>` | Save a profile file into the user's profiles; delete a user profile; choose the game profile by hand | ✅ Implemented |
@@ -3806,6 +3807,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
+| `controllers haptics_probe` | `<exec\|read\|write\|port-in\|port-out> <address> [page=N] [port_mask=M] [play=hit]` | A haptic probe (a breakpoint that never stops) at an address or port as a source of the loaded game's user profile (`user/game-<sha16>`, started from the haptics that play now), with a rule that plays the effect; answers `id`, `source`, `path`; `unavailable` without a program loaded from a file. The debugger's **Add as Haptic Probe** runs it ([haptics.md §5, §7](../../../inprogress/2026-10-17-controller-manager/haptics.md#5-sources-game-events)) | ✅ Implemented |
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
 | `controllers role` | `<device> <player\|debugger-remote\|disabled>` | What a host device is for: a player (the play layer, a connector), a debugger remote (its debug bindings only, never a connector) or nothing. Kept by device id across a replug | ✅ Implemented |
 | `controllers pin` | `<device> <follow-focus\|all\|pinned:<emulator id>>` | Which instance a host device drives: the one whose window has the focus (default), every instance (a demo on the video wall), or one. `devices` shows it as `pin` | ✅ Implemented |
@@ -4217,6 +4219,45 @@ by its manager's revision.
 
 `run.state`'s `speed` (topic, readout, `GET /api/v1/surfaces/readouts`) is the host setting (1..16) everywhere; the
 composed clock multiplier with the machine's own turbo is `emulator.stats` `cpu.multiplier`.
+
+### 18. Media Signatures
+
+Signatures that recognise a title after a re-pack (TAP ↔ TZX, TRD ↔ SCL ↔ FDI ↔ UDI ↔ TD0), a rename or a save:
+`core/swsignature` (`unrealng::swsignature`, option `ENABLE_SWSIGNATURE`), through `SignatureControl` on every plane.
+Design: [Steam Deck input-and-profiles.md §4](../../../inprogress/2026-10-08-steamdeck-client/input-and-profiles.md#4-signatures);
+the game profiles they choose: §15 `controllers match`
+([mapping-and-profiles.md §6.1](../../../inprogress/2026-10-17-controller-manager/mapping-and-profiles.md#61-order-dt-2-d7));
+measured by [POC 034](../../../../tools/poc/034-media-signatures/README.md).
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `signature` | `<file> [--details] [--external]` | `signature`: `name`, `kind` (`tape`, `disk`, `snapshot`, `unknown`), `format`, `size`, `sha256`, `content` (`tape:sha256:` over the data payloads, `trdset:sha256:` over the TR-DOS entry hashes, `mem:sha256:` over the RAM pages; empty when the medium has none), `keys` (`file:sha256:<hex>` and the content signature: what a game profile's `match.signatures` holds), `file_set` (`n:` entry and `c:` / `d:` content tokens for `match.file_set`), `machine_hint` and `memory_pages` (snapshots), `warnings`; `--details` adds `blocks` / `files`, `--external` `sha1` and `md5` | ✅ Implemented |
+| `signature media` | `[--details]` | The same for each medium in the machine's tape and floppy slots, from its source file: `media` [{`slot`, `source`, `dirty`, `signature` \| `error`}] | ✅ Implemented |
+| `signature compare` | `<known> <candidate>` | `match`: `level` (`exact`, `content`, `fuzzy`: the catalog rule - every TR-DOS entry of the known title kept, at most one file with other data, at most max(2, n) entries added; Jaccard ≥ 0.8 and no code file missing for a set without entry tokens, `memory`: ≥ 90 % of ≥ 16 common RAM pages equal, `none`), `matches`, `score`, `reason` | ✅ Implemented |
+
+Errors: `bad-request` (no path), `not-found` (404: no such file), `unavailable` (503: built without the library, or
+`media` without a machine).
+
+| Surface | File | Loaded media | Compare |
+| :--- | :--- | :--- | :--- |
+| CLI | `signature <file> [--details] [--external] [--json]` | `signature media` | `signature compare <known> <candidate>` |
+| WebAPI | `GET /api/v1/signature?path=&details=&external=` | `GET /api/v1/emulator/{id}/signature?details=` | `GET /api/v1/signature/compare?path=&with=` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/signature?path=..."}` (every route is a call) | the same `call` | the same `call` |
+| MCP | `signature_info` action `file` (`path`, `details`, `external`) | action `media` (`target`) | action `compare` (`path`, `with`) |
+| Python | `emu.signature(path, details=True)` | `emu.signature_media()` | `emu.signature_compare(path, candidate)` |
+| Lua | not provided (Lua is P3) | | |
+
+No topic: a signature changes only when a medium is inserted, which `media.slots` pushes already.
+
+```
+signature eyeache2.scl
+# eyeache2.scl  disk scl, 41216 bytes
+#   sha256   5d0c...
+#   content  trdset:sha256:9b41...
+#   file set c:0b8e... c:5a77... d:e019...
+controllers match eyeache2.trd
+# OK: user/game-9b41... (signature trdset:sha256:9b41...)
+```
 
 ## Future Capabilities
 

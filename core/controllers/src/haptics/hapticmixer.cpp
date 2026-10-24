@@ -116,6 +116,22 @@ void HapticMixer::Forget(const HostDeviceId& device)
     _written.erase(device);
 }
 
+void HapticMixer::StopGameEffects(const HostDeviceId& device)
+{
+    std::vector<std::pair<HostDeviceId, RumbleLevels>> writes;
+    {
+        std::lock_guard lock(_mutex);
+        auto found = _active.find(device);
+        if (found == _active.end())
+            return;
+        auto& effects = found->second;
+        effects.erase(std::remove_if(effects.begin(), effects.end(), [](const Active& a) { return !a.effect.feedback; }),
+                      effects.end());
+        TickLocked(Clock::now(), writes);
+    }
+    Write(writes);
+}
+
 void HapticMixer::StopAll()
 {
     std::vector<std::pair<HostDeviceId, RumbleLevels>> writes;
@@ -167,8 +183,17 @@ void HapticMixer::TickLocked(Clock::time_point now, std::vector<std::pair<HostDe
             if (active.effect.priority < top)
                 scale *= kDuck;
             const RumbleLevels& peak = active.effect.levels;
-            mix.low = std::max(mix.low, peak.low * scale);
-            mix.high = std::max(mix.high, peak.high * scale);
+            // HD haptics: each band plays at the frequency of the effect loudest in it (0 while the band is silent)
+            if (peak.low * scale > mix.low)
+            {
+                mix.low = peak.low * scale;
+                mix.lowHz = peak.lowHz;
+            }
+            if (peak.high * scale > mix.high)
+            {
+                mix.high = peak.high * scale;
+                mix.highHz = peak.highHz;
+            }
             mix.leftTrigger = std::max(mix.leftTrigger, peak.leftTrigger * scale);
             mix.rightTrigger = std::max(mix.rightTrigger, peak.rightTrigger * scale);
         }

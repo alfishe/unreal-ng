@@ -37,6 +37,61 @@ std::string Text(const JsonValue& object, const char* field)
     return value != nullptr && value->IsString() ? value->AsString() : std::string{};
 }
 
+/// A `hid` object (device-database.md §2); false with the reason for a malformed one
+bool ReadHid(const JsonValue& hid, DeviceMatch::HidMap& out, std::string& error)
+{
+    if (!hid.IsObject())
+    {
+        error = "'hid' is an object";
+        return false;
+    }
+    if (const JsonValue* buttons = hid.Find("buttons"); buttons != nullptr)
+    {
+        if (!buttons->IsArray())
+        {
+            error = "'hid.buttons' is a list of control names";
+            return false;
+        }
+        for (const JsonValue& button : buttons->Items())
+            out.buttons.push_back(button.IsString() ? button.AsString() : std::string{});
+    }
+    if (const JsonValue* triggers = hid.Find("rxRyTriggers"); triggers != nullptr && triggers->IsBool())
+        out.rxRyTriggers = triggers->AsBool() ? 1 : 0;
+    if (const JsonValue* dpad = hid.Find("dpadAxes"); dpad != nullptr && dpad->IsBool())
+        out.dpadAxes = dpad->AsBool();
+    out.hat = Text(hid, "hat");
+    if (const JsonValue* consumer = hid.Find("consumer"); consumer != nullptr && consumer->IsObject())
+        for (const auto& [usage, control] : consumer->GetMembers())
+        {
+            JsonValue key = JsonValue::String(usage);
+            uint16_t code = 0;
+            if (!Hex(&key, code) || !control.IsString())
+            {
+                error = "'hid.consumer' maps a hex usage to a control name";
+                return false;
+            }
+            out.consumer.emplace_back(code, control.AsString());
+        }
+    if (const JsonValue* bits = hid.Find("bits"); bits != nullptr && bits->IsArray())
+        for (const JsonValue& entry : bits->Items())
+        {
+            const JsonValue* report = entry.Find("report");
+            const JsonValue* byte = entry.Find("byte");
+            const JsonValue* bit = entry.Find("bit");
+            const std::string control = Text(entry, "control");
+            if (report == nullptr || byte == nullptr || bit == nullptr || !report->IsNumber() || !byte->IsNumber() ||
+                !bit->IsNumber() || bit->AsNumber() < 0 || bit->AsNumber() > 7 || byte->AsNumber() < 0 ||
+                byte->AsNumber() > 1024 || report->AsNumber() < 0 || report->AsNumber() > 255 || control.empty())
+            {
+                error = "a 'hid.bits' entry is {report, byte, bit 0-7, control}";
+                return false;
+            }
+            out.bits.push_back({static_cast<uint8_t>(report->AsNumber()), static_cast<uint32_t>(byte->AsNumber()),
+                                static_cast<uint8_t>(bit->AsNumber()), control});
+        }
+    return true;
+}
+
 void Info(const JsonValue& entry, DeviceMatch& info)
 {
     for (const auto& [field, target] : {std::pair<const char*, std::string*>{"name", &info.name},
@@ -66,12 +121,6 @@ void Info(const JsonValue& entry, DeviceMatch& info)
         for (const auto& [canonical, raw] : map->GetMembers())
             if (raw.IsString())
                 info.map[canonical] = raw.AsString();
-    }
-    if (const JsonValue* buttons = entry.Find("buttons"); buttons != nullptr && buttons->IsArray())
-    {
-        info.buttons.clear();
-        for (const JsonValue& button : buttons->Items())
-            info.buttons.push_back(button.IsString() ? button.AsString() : std::string{});
     }
     if (const JsonValue* ignore = entry.Find("ignore"); ignore != nullptr && ignore->IsString())
         info.ignore = !ignore->AsString().empty();
@@ -156,6 +205,11 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
             Family family = merge && same != families.end() ? *same : Family{};
             family.info.family = id;
             Info(entry, family.info);
+            if (const JsonValue* hid = entry.Find("hid"); hid != nullptr && !ReadHid(*hid, family.info.hid, error))
+            {
+                error = "family '" + family.info.family + "': " + error;
+                return false;
+            }
             const JsonValue* matches = entry.Find("match");
             if (matches != nullptr && matches->IsArray())
                 family.matches.clear();
@@ -170,6 +224,15 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
                 Match match;
                 match.bus = Text(m, "bus");
                 match.backend = Text(m, "backend");
+                if (const JsonValue* hid = m.Find("hid"); hid != nullptr)
+                {
+                    if (!ReadHid(*hid, match.hid, error))
+                    {
+                        error = "family '" + family.info.family + "': " + error;
+                        return false;
+                    }
+                    match.hasHid = true;
+                }
                 uint16_t version = 0;
                 if (Hex(m.Find("version"), version))
                     match.version = version;
@@ -231,6 +294,7 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
 DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
 {
     const Family* best = nullptr;
+    const Match* bestMatch = nullptr;
     int bestScore = 0;
     for (const Family& family : _families)
     {
@@ -250,6 +314,7 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
             if (score > bestScore)
             {
                 best = &family;
+                bestMatch = &match;
                 bestScore = score;
             }
         }
@@ -260,6 +325,8 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
         result = best->info;
         result.score = bestScore;
         result.step = bestScore == 100 ? "exact" : "vid-pid";
+        if (bestMatch->hasHid)
+            result.hid = bestMatch->hid;
         if (auto mode = best->modes.find(device.product); mode != best->modes.end())
             result.mode = mode->second;
     }

@@ -295,6 +295,10 @@ struct Z80nCPU
     // NMOS variant switch (default 1): an INT accepted right after LD A,I / LD A,R clears P/V; a CMOS part keeps it
     uint8_t ldAirQuirk;
 
+    // T80N persona (default 0 = Zilog NMOS die): the Next's CPU is the T80 of the official FPGA core (3.02.03, T80
+    // v0247), which never matched the undocumented flags of the Zilog die. 1 = flags of that core, see README.md
+    uint8_t t80Persona;
+
     // ---- Z80N ----
     Z80nCpuNextRegFn nextRegFn;  // NEXTREG n,x / n,A (null = ignored)
     void* nextRegData;
@@ -499,6 +503,15 @@ Z80NINLINE void xor8(Z80nRegs* rf, uint8_t src)
 {
     rf->a ^= src;
     rf->f = log_f[rf->a];
+}
+
+// The T80N persona's flags of a block I/O iteration (INI/IND/OUTI/OUTD and the repeating forms): the microcode runs
+// B = B - 1 through the ALU's SUB (t80n_mcode.vhd, X"A2".."BB"), so the flags are those of SUB B,1 - C is the borrow,
+// P/V the overflow - and nothing of the Zilog die's INI/OUTI research applies (the data byte and C do not matter)
+Z80NINLINE uint8_t Z80nT80BlockIoFlags(uint8_t bOut)
+{
+    return static_cast<uint8_t>((bOut & (SF | F3 | F5)) | (bOut == 0 ? ZF : 0) | NF | ((bOut & 0x0F) == 0x0F ? HF : 0) |
+                                (bOut == 0x7F ? PV : 0) | (bOut == 0xFF ? CF : 0));
 }
 
 // BIT n,(HL) and xxCB BIT n,(xx+d): X/Y flags come from MEMPTR high byte.

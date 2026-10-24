@@ -41,6 +41,8 @@ Style StyleFor(const Connector& connector)
             return {QColor(138, 143, 152), QStringLiteral("KEY")};
         case RetroDeviceKind::FullerJoystick:
             return {QColor(192, 96, 96), QStringLiteral("F")};
+        case RetroDeviceKind::AmxMouse:
+            return {QColor(150, 110, 180), QStringLiteral("AMX")};
         case RetroDeviceKind::None:
             break;
     }
@@ -61,6 +63,8 @@ QString DisplayName(const Connector& connector)
         return Tr("Next right");
     if (connector.id == "fuller")
         return Tr("Fuller");
+    if (connector.id == "amx")
+        return Tr("AMX mouse");
     if (connector.id.rfind("keyjoy.", 0) == 0)
         return Tr("Keys socket %1").arg(QString::fromStdString(connector.id.substr(7)));
     return QString::fromStdString(connector.id);
@@ -76,6 +80,8 @@ QString PortText(const Connector& connector)
             return QStringLiteral("#7F");
         case ConnectorKind::NextDb9:
             return QStringLiteral("NR #05");
+        case ConnectorKind::Amx:
+            return Tr("AMX card");
         case ConnectorKind::KeyboardJoystick:
             break;
     }

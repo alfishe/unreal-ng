@@ -231,3 +231,91 @@ TEST(JoyCon_Test, ChargingGripAsksTheDeviceInfo)
     }
     EXPECT_EQ(silent, 0);
 }
+
+TEST(NsoPad_Test, LayoutsByProductAndName)
+{
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x2017), SwitchLayout::Snes);
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x2019), SwitchLayout::N64);
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x201E), SwitchLayout::Genesis);
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x2007, "NES Controller (R)"), SwitchLayout::Nes);
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x2007, "HVC Controller"), SwitchLayout::Nes);
+    EXPECT_EQ(SwitchProPad::LayoutFor(0x057E, 0x2007, "Joy-Con (R)"), SwitchLayout::JoyConRight);
+    for (SwitchLayout layout : {SwitchLayout::Nes, SwitchLayout::Snes, SwitchLayout::N64, SwitchLayout::Genesis})
+        EXPECT_FALSE(SwitchProPad::IsJoyCon(layout));
+    EXPECT_TRUE(SwitchProPad::HasRumble(SwitchLayout::N64));
+    EXPECT_FALSE(SwitchProPad::HasRumble(SwitchLayout::Snes));
+}
+
+TEST(NsoPad_Test, ControlsCoverTheirPictures)
+{
+    // The controls of the POC 033 pictures data/controllers/images/nso-*/front.hotspots.json
+    const std::map<SwitchLayout, std::vector<std::string>> pictures = {
+        {SwitchLayout::Nes, {"lb", "rb", "view", "menu", "dpad.up", "dpad.down", "dpad.left", "dpad.right", "south",
+                             "east"}},
+        {SwitchLayout::Snes, {"lb", "rb", "lt", "rt", "dpad.up", "dpad.down", "dpad.left", "dpad.right", "north",
+                              "west", "east", "south", "view", "menu"}},
+        {SwitchLayout::N64, {"lb", "rb", "share", "guide", "rt", "dpad.up", "dpad.down", "dpad.left", "dpad.right",
+                             "misc.1", "misc.2", "misc.3", "misc.4", "west", "south", "menu", "lstick.x", "lt"}},
+        {SwitchLayout::Genesis, {"share", "guide", "view", "dpad.up", "dpad.down", "dpad.left", "dpad.right", "menu",
+                                 "south", "east", "rb"}},
+    };
+    for (const auto& [layout, picture] : pictures)
+    {
+        const std::vector<std::string> controls = SwitchProPad::Controls(layout);
+        for (const std::string& control : picture)
+            EXPECT_NE(std::find(controls.begin(), controls.end(), control), controls.end())
+                << control << " of layout " << static_cast<int>(layout);
+    }
+    const std::vector<std::string> snes = SwitchProPad::Controls(SwitchLayout::Snes);
+    EXPECT_EQ(std::find(snes.begin(), snes.end(), "lstick.x"), snes.end()) << "the SNES pad has no stick";
+}
+
+TEST(NsoPad_Test, N64CButtonsAndTriggers)
+{
+    SwitchProPad pad(SwitchLayout::N64);
+    Events events;
+    std::vector<uint8_t> report = Report();
+    report[3] = 0x08 | 0x01 | 0x80;  // A, C-Up (the Pro's Y), C-Down (the Pro's ZR)
+    report[4] = 0x08 | 0x01;         // ZR (the Pro's left stick click), C-Right (minus)
+    report[5] = 0x80;                // Z (the Pro's ZL)
+    PutStick(report.data() + 6, 2048 + kReach, 2048);
+    ASSERT_TRUE(pad.Decode(report.data(), report.size(), Collect(events)));
+    EXPECT_EQ(events["south"], 1.0f);
+    EXPECT_EQ(events["misc.1"], 1.0f);
+    EXPECT_EQ(events["misc.2"], 1.0f);
+    EXPECT_EQ(events["misc.4"], 1.0f);
+    EXPECT_EQ(events["rt"], 1.0f) << "ZR: digital, the full trigger value";
+    EXPECT_EQ(events["lt"], 1.0f) << "Z";
+    EXPECT_EQ(events.count("misc.3"), 0u) << "C-Left not pressed: no event";
+    EXPECT_EQ(events.count("rstick.x"), 0u);
+    EXPECT_EQ(events.count("lstick.click"), 0u) << "the stick click is ZR";
+    EXPECT_NEAR(events["lstick.x"], 1.0f, 0.01f);
+
+    report[3] |= 0x02;  // C-Left (the Pro's X)
+    ASSERT_TRUE(pad.Decode(report.data(), report.size(), Collect(events)));
+    EXPECT_EQ(events["misc.3"], 1.0f);
+}
+
+TEST(NsoPad_Test, GenesisAndSnesFaces)
+{
+    SwitchProPad genesis(SwitchLayout::Genesis);
+    Events events;
+    std::vector<uint8_t> report = Report();
+    report[3] = 0x08 | 0x40 | 0x80;  // A, C (the Pro's R), Mode (ZR)
+    ASSERT_TRUE(genesis.Decode(report.data(), report.size(), Collect(events)));
+    EXPECT_EQ(events["south"], 1.0f);
+    EXPECT_EQ(events["rb"], 1.0f);
+    EXPECT_EQ(events["view"], 1.0f);
+    EXPECT_EQ(events["east"], 0.0f);
+    EXPECT_EQ(events.count("lstick.x"), 0u);
+
+    SwitchProPad snes(SwitchLayout::Snes);
+    events.clear();
+    report = Report();
+    report[3] = 0x08;  // A
+    report[5] = 0x80;  // ZL
+    ASSERT_TRUE(snes.Decode(report.data(), report.size(), Collect(events)));
+    EXPECT_EQ(events["east"], 1.0f) << "A on the right of the diamond";
+    EXPECT_EQ(events["lt"], 1.0f);
+    EXPECT_EQ(events["south"], 0.0f);
+}

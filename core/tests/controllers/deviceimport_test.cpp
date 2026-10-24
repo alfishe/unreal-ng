@@ -1,7 +1,6 @@
 /// @file deviceimport_test.cpp
-/// @brief Other projects' mappings as user device entries (device-database.md §3, FR-7): a family's `buttons` rename
-/// the HID pad's buttons, and the database_import verb (the parsers: devicemapping_test.cpp) merges its family over a
-/// user photo of the same device and saves it.
+/// @brief Other projects' mappings as user device entries (device-database.md §3, FR-7): the database_import verb
+/// (the parsers: devicemapping_test.cpp) merges its family over a user photo of the same device and saves it.
 
 #include <gtest/gtest.h>
 
@@ -75,19 +74,6 @@ const char* kSn30 =
     "dpup:h0.1,leftshoulder:b6,leftstick:b13,lefttrigger:b8,leftx:a0,lefty:a1,rightshoulder:b7,rightstick:b14,"
     "righttrigger:b9,rightx:a2,righty:a3,start:b11,x:b4,y:b3,misc2:b15,platform:Mac OS X,";
 }  // namespace
-
-TEST_F(DeviceImport_Test, FamilyButtonsRenameTheHidPadButtons)
-{
-    const HidLayout plain = HidLayoutFor("generic", {});
-    EXPECT_TRUE(plain.buttons.empty());
-    const HidLayout named = HidLayoutFor("generic", {"east", "", "south"});
-    ASSERT_EQ(named.buttons.size(), 3u);
-    EXPECT_EQ(named.buttons[0], "east");
-    EXPECT_EQ(named.buttons[1], "") << "button.1 stays";
-    const HidLayout over = HidLayoutFor("xbox", {"", "west"});
-    EXPECT_EQ(over.buttons[0], HidLayoutFor("xbox").buttons[0]) << "the layout's name where the entry has none";
-    EXPECT_EQ(over.buttons[1], "west");
-}
 
 TEST_F(DeviceImport_Test, ImportVerb_SavesMergedOverAUserPhotoAndTheLookupUsesIt)
 {

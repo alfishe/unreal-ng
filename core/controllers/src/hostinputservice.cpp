@@ -522,7 +522,7 @@ std::function<std::vector<HostDeviceId>()> HostInputService::TargetsFor(const st
 
 std::shared_ptr<IHapticFeed> HostInputService::HapticFeedFor(const std::string& instance)
 {
-    return std::make_shared<SoundHaptics>(*_haptics, TargetsFor(instance));
+    return std::make_shared<SoundHaptics>(*_haptics, TargetsFor(instance), _hapticsDsp.load());
 }
 
 std::shared_ptr<IHapticFeed> HostInputService::HapticFeedFor(const std::string& instance, const HapticProfile& profile,

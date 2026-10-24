@@ -37,9 +37,24 @@ struct DeviceMatch
     std::string glyphs;
     std::string mode;  ///< the PID's mode ("d-input") when the family names one
     std::vector<std::string> controls;
-    /// HID button n + 1 -> its control, over the layout's names (`"buttons"`: an imported gamecontrollerdb line or
-    /// RetroArch autoconfig, device-database.md §3); "" keeps the layout's name
-    std::vector<std::string> buttons;
+    /// The family's own HID map (devices.json `hid`, a match's own `hid` replaces it): the controls of its button
+    /// usages, its trigger axes, a D-pad on X / Y, controls in vendor bits; HidLayoutFor(DeviceMatch) applies it
+    struct HidMap
+    {
+        struct Bit
+        {
+            uint8_t report = 0;
+            uint32_t byte = 0;
+            uint8_t bit = 0;
+            std::string control;
+        };
+        std::vector<std::string> buttons;  ///< usage n (from 1) -> control; "" keeps `button.<n-1>`
+        int rxRyTriggers = -1;             ///< -1 the layout's, 0 / 1 overridden
+        bool dpadAxes = false;
+        std::string hat;  ///< "" the layout's ("dpad")
+        std::vector<std::pair<uint16_t, std::string>> consumer;
+        std::vector<Bit> bits;
+    } hid;
     bool ignore = false;  ///< a device to filter out (the macOS synthetic pad)
     /// It takes a player connector (a pad, a stick); false for a control surface (the Surface Dial): `"player": false`
     bool player = true;
@@ -107,6 +122,8 @@ private:
         std::vector<uint16_t> products;
         int version = -1;
         std::string backend;
+        bool hasHid = false;  ///< the match's own `hid` replaces the family's
+        DeviceMatch::HidMap hid;
     };
     struct Family
     {

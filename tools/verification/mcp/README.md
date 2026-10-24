@@ -50,6 +50,7 @@ build). Exit code 0 = every test passed. The whole set takes about 5 seconds.
 | `test_router.py` | `search_api`, `invoke_api` | search by words, a GET by path, a missing path |
 | `test_analysis.py` | `analyze_performance` | frame cost and profiler status in the text, coverage over a run |
 | `test_asm_source.py` | `asm_source` | dialects and formats, an encode / decode round trip |
+| `test_signature.py` | `signature_info`, `controllers` (`match`, `context`), `media` | The media signatures: a tape's content signature and hashes in the text, a disk's TR-DOS file set, compare (exact; a tape against a disk: none), a missing file named, the signature of a disk inserted into a drive, the game-profile match of a signature and of a path (the Qt client computes it), context naming the matches and the haptics reason |
 | `test_text_coverage.py` | many | the share of the `structuredContent` values the default text carries, per call, against a floor: a call whose text falls back to a headline fails |
 
 The disassembler's quality against z88dk / sjasmplus is [`../disasm/`](../disasm/README.md) (needs those tools).

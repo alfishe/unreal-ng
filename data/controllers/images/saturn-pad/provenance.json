@@ -1,0 +1,51 @@
+{
+  "family": "saturn-pad",
+  "images": [
+    {
+      "view": "front",
+      "title": "Saturn-style six-button pad (Sega Saturn control pad, Japanese / model 2 shell)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 155 x 86 x 45.7 mm (model 2)",
+          "source": "https://www.dimensions.com/element/sega-saturn-controller-model-2",
+          "author": "Dimensions.com",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "near-top view of the model 2 pad: the outline (cable masked, left half mirrored, mirror overlap 0.977), the control positions and sizes on a 5 mm grid",
+          "source": "https://commons.wikimedia.org/wiki/File:Sega_Saturn_Controller_-_Type_2.png",
+          "author": "Alphathon",
+          "licence": "CC BY-SA 3.0",
+          "use": "measured geometry only; no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the colours of the Japanese grey pad (light grey shell, dark A B C, pale blue X Y Z, blue Start and L / R), the D-pad disc",
+          "source": "https://commons.wikimedia.org/wiki/File:Sega-Saturn-JP-Mk1-Controller.jpg",
+          "author": "Evan-Amos",
+          "licence": "CC BY-SA 3.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the model 2 shell in three-quarter view (the shoulders at the back corners)",
+          "source": "https://commons.wikimedia.org/wiki/File:Sega-Saturn-Controller-NA-Mk-II-FL.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the photo is not a true plan (a slight tilt): positions to about 1.5 mm; the shoulders' extent is an estimate",
+          "source": "this POC",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

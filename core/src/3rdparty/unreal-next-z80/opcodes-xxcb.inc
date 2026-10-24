@@ -249,7 +249,11 @@ Z80NINLINE int Z80NFAST ddfd_prefixes(Z80nCPU *cpu, uint8_t opcode, int tact0, Z
         cpuidle(ptr, 1);
 
         if ((opcode & 0xC0) == 0x40)
+        {
+            if (cpu->t80Persona)  // T80N: F5/F3 are 0 for BIT n,(IX+d); the undocumented BIT n,r forms take the byte's
+                rf->f = static_cast<uint8_t>((rf->f & ~(F3 | F5)) | ((opcode & 7) == 6 ? 0 : (operand & (F3 | F5))));
             return Z80nFinishFlags(cpu, tact_, rf); // bit n,rm: writes F
+        }
 
         // Select destination register for shift/res/set:
         // [0] - b

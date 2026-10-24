@@ -741,8 +741,18 @@ for report in emu.controllers_reports("usb:2dc8:6101:1")["reports"]:
     print(report["ms"], report["hex"])
 ```
 
+Media signatures and the game profile they choose ([command-interface.md §18](./command-interface.md#18-media-signatures)):
+
+```python
+sig = emu.signature("/games/elite.tzx", details=True)["signature"]   # kind, format, sha256, content, keys, file_set
+emu.signature_media()["media"]                           # the loaded tapes and disks: slot, source, dirty, signature
+emu.signature_compare("elite.tap", "elite.tzx")["match"]["level"]    # exact | content | fuzzy | memory | none
+emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}], profile, next, haptics_reason}
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
+play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
 `controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
 `controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
 `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,

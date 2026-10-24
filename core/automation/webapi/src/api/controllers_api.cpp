@@ -102,8 +102,9 @@ namespace
                      const std::string& verb, bool post, const std::string& device = {})
     {
 #ifdef ENABLE_CONTROLLERS
-        static const std::vector<std::string> reads = {"devices", "context",  "profiles", "profile", "bindings",
-                                                       "haptics", "database", "probe",    "reports", "aliases"};
+        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile",
+                                                       "bindings", "haptics", "database", "probe",
+                                                       "reports", "aliases", "match"};
         const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
         const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
                            HostInputControl::Verbs().end();

@@ -103,7 +103,8 @@ Memory::Memory(EmulatorContext* context)
         // It's probably better to have a master switch
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        // The haptic probes' hold (FeatureManager::setProbeDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->probeDebugHold();
         _feature_sharedmemory_enabled = fm->isEnabled(Features::kSharedMemory);
         // TTD requires debugMode (uses the debug write path) AND the runtime timetravel flag.
         // Per TDD §6.2 the gate is the same shape as _feature_memorytracking_enabled:
@@ -2143,7 +2144,8 @@ void Memory::UpdateFeatureCache()
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        // The haptic probes' hold (FeatureManager::setProbeDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->probeDebugHold();
         // A TTD replay observes accesses whatever the user's debug mode: it
         // engages the debug path for its own duration (EnterReplayMode)
         _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;

@@ -41,6 +41,8 @@ public:
     uint8_t A() const { return Reg(Z80nCpuRegAf) >> 8; }
     uint8_t F() const { return Reg(Z80nCpuRegAf) & 0xFF; }
     void SetA(uint8_t a) { Set(Z80nCpuRegAf, static_cast<uint16_t>((a << 8) | F())); }
+    /// The ZX Next's CPU is the T80 of the FPGA core; the default of the library is the Zilog die
+    void T80Persona() { Z80nCpuSetT80Persona(cpu, 1); }
     void SetF(uint8_t f) { Set(Z80nCpuRegAf, static_cast<uint16_t>((A() << 8) | f)); }
 
     /// The kinds of the bus events as a string: M P R W I O N
@@ -345,7 +347,7 @@ TEST(Z80nOpcodes_Test, OutinbWritesMemoryToThePortAndKeepsB)
     EXPECT_EQ(f.Step(), 16);
     EXPECT_EQ(f.Reg(Z80nCpuRegHl), 0x9001);
     EXPECT_EQ(f.Reg(Z80nCpuRegBc), 0x12FE) << "B is not decremented";
-    EXPECT_EQ(f.F(), 0xAA);
+    EXPECT_EQ(f.F(), 0xAA) << "flags untouched: the official core runs no SUB for OUTINB";
     EXPECT_EQ(f.Shape(), "MMNRO") << "one idle T, the data read, the port write";
     EXPECT_EQ(f.bus.events.back().addr, 0x12FE);
     EXPECT_EQ(f.bus.events.back().value, 0x5C);
@@ -532,7 +534,7 @@ TEST(Z80nOpcodes_Test, LdwsIncrementsOnlyLAndDWithIncDFlags)
     EXPECT_EQ(f.bus.memory[0x7FA0], 0x77);
     EXPECT_EQ(f.Reg(Z80nCpuRegHl), 0x9000) << "L wraps, H stays";
     EXPECT_EQ(f.Reg(Z80nCpuRegDe), 0x80A0) << "D increments, E stays";
-    EXPECT_EQ(f.F(), static_cast<uint8_t>(kC | kS | kH | kPv)) << "INC D of #7F: S, H, P/V; N = 0; the carry stays";
+    EXPECT_EQ(f.F(), static_cast<uint8_t>(kS | kH | kPv)) << "D #7F -> #80: S, H, P/V; N = 0; C = 0 (ADD D,1, not INC D)";
 }
 
 // ---- the aliases the FPGA decodes as RETN ----------------------------------------------------------------------------
@@ -625,4 +627,190 @@ TEST(Z80nOpcodes_Test, ARetnWithoutAStacklessNmiPopsTheStack)
     f.Step();
     EXPECT_EQ(f.Reg(Z80nCpuRegPc), 0x9000);
     EXPECT_EQ(sink.loads, 0);
+}
+
+// ---- behaviors pinned against the FPGA core's VHDL (t80n.vhd / t80n_mcode.vhd), GHDL differential run 2026-10-23 ----
+
+TEST(Z80nOpcodes_Test, PixeldnWrapsTheEightBitRowCounterLikeTheFpga)
+{
+    // t80n.vhd PIXELDN: {H4,H3,L7,L6,L5,H2,H1,H0} + 1 with wrap-around; H7..H5 and L4..L0 are never touched
+    struct Case { uint16_t from, to; };
+    for (Case c : {Case{0x5FFF, 0x401F}, Case{0x5FE0, 0x4000}, Case{0x7FFF, 0x601F}, Case{0xFFE5, 0xE005}, Case{0x47E0, 0x4800}})
+    {
+        Z80nFixture f;
+        f.Program({0xED, 0x93});
+        f.Set(Z80nCpuRegHl, c.from);
+        f.Step();
+        EXPECT_EQ(f.Reg(Z80nCpuRegHl), c.to) << std::hex << c.from;
+    }
+}
+
+TEST(Z80nOpcodes_Test, LdwsCarryIsTheAluAddOfD)
+{
+    // t80n_mcode.vhd X"A5": D goes through ALU_Op 0000 without PreserveC, so C = (D == #FF); the other flags as INC D
+    {
+        Z80nFixture f;
+        f.Program({0xED, 0xA5});
+        f.Set(Z80nCpuRegHl, 0x9000);
+        f.Set(Z80nCpuRegDe, 0xFF10);
+        f.SetF(0x00);
+        f.Step();
+        EXPECT_EQ(f.Reg(Z80nCpuRegDe), 0x0010);
+        EXPECT_EQ(f.F(), static_cast<uint8_t>(kZ | kH | kC)) << "D #FF -> #00: Z, H, and the carry set";
+    }
+    {
+        Z80nFixture f;
+        f.Program({0xED, 0xA5});
+        f.Set(Z80nCpuRegHl, 0x9000);
+        f.Set(Z80nCpuRegDe, 0x3010);
+        f.SetF(kC);
+        f.Step();
+        EXPECT_EQ(f.F() & kC, 0) << "the carry is not preserved";
+    }
+}
+
+TEST(Z80nOpcodes_Test, LdpirxXyComeFromBOrTheByte)
+{
+    // t80n_mcode.vhd X"B7": Set_BusA_To is commented out, the flag ALU sees B (after the decrement) and the byte
+    Z80nFixture f;
+    f.Program({0xED, 0xB7});
+    f.bus.memory[0x9003] = 0x02;            // (HL & #FFF8) | (E & 7) = #9003
+    f.Set(Z80nCpuRegHl, 0x9000);
+    f.Set(Z80nCpuRegDe, 0xA003);
+    f.Set(Z80nCpuRegBc, 0x0801);            // B = 8 after the decrement too (BC #0801 -> #0800)
+    f.SetA(0x06);                           // A + byte = #08 would give X = 1, Y = 0
+    f.SetF(0x00);
+    f.Step();
+    // B | byte = #0A: bit 3 -> X, bit 1 -> Y
+    EXPECT_EQ(f.F() & (kX | kY), kX | kY);
+}
+
+// ---- the T80N persona: the flags of the official FPGA core (3.02.03, T80 v0247) -------------------------------------------
+// Expected values are the VHDL's, found by the GHDL differential run (every opcode of every table, 63 000 vectors).
+
+TEST(Z80nOpcodes_Test, T80ScfCcfTakeXyFromAOnly)
+{
+    for (uint8_t op : {0x37, 0x3F})
+    {
+        Z80nFixture f;
+        f.T80Persona();
+        f.Program({op});
+        f.SetA(0x00);
+        f.SetF(0x28);                       // F5/F3 set before: a Zilog die would OR them in (Q = 0)
+        f.Step();
+        EXPECT_EQ(f.F() & (kX | kY), 0) << std::hex << int(op);
+
+        Z80nFixture z;                      // the Zilog default still ORs them in
+        z.Program({op});
+        z.SetA(0x00);
+        z.SetF(0x28);
+        z.Step();
+        EXPECT_EQ(z.F() & (kX | kY), kX | kY) << std::hex << int(op);
+    }
+}
+
+TEST(Z80nOpcodes_Test, T80RepeatingLdirKeepsLdiXy)
+{
+    Z80nFixture f;                          // PC #8000: a Zilog die would give Y = PC.13 = 0, X = PC.11 = 0
+    f.T80Persona();
+    f.Program({0xED, 0xB0});
+    f.bus.memory[0x9000] = 0x06;
+    f.Set(Z80nCpuRegHl, 0x9000);
+    f.Set(Z80nCpuRegDe, 0xA000);
+    f.Set(Z80nCpuRegBc, 2);
+    f.SetA(0x02);                           // A + byte = #08 -> X = 1
+    f.SetF(0x00);
+    f.Step();
+    EXPECT_EQ(f.Reg(Z80nCpuRegPc), 0x8000) << "repeats";
+    EXPECT_EQ(f.F() & (kX | kY), kX);
+}
+
+TEST(Z80nOpcodes_Test, T80BitOnMemoryHasNoXy)
+{
+    // t80n_alu.vhd BIT: F5/F3 = 0 when IR(2:0) = 110, the byte's bits otherwise (the undocumented DDCB forms)
+    Z80nFixture f;
+    f.T80Persona();
+    f.Program({0xCB, 0x46, 0xDD, 0xCB, 0x01, 0x46, 0xDD, 0xCB, 0x01, 0x40});
+    f.Set(Z80nCpuRegHl, 0x2800);            // the Zilog die would take F5/F3 from MEMPTR / the address high byte
+    f.Set(Z80nCpuRegIx, 0x2800);
+    f.bus.memory[0x2800] = 0x28;
+    f.bus.memory[0x2801] = 0x28;
+    f.SetF(0x00);
+    f.Step();
+    EXPECT_EQ(f.F() & (kX | kY), 0) << "BIT 0,(HL)";
+    f.Step();
+    EXPECT_EQ(f.F() & (kX | kY), 0) << "BIT 0,(IX+1)";
+    f.Step();
+    EXPECT_EQ(f.F() & (kX | kY), kX | kY) << "DDCB 40: the byte's F5/F3";
+}
+
+TEST(Z80nOpcodes_Test, T80InRCKeepsXyAndLdAirKeepsXy)
+{
+    Z80nFixture f;
+    f.T80Persona();
+    f.Program({0xED, 0x40, 0xED, 0x57});    // IN B,(C) ; LD A,I
+    f.Set(Z80nCpuRegBc, 0x2800);            // the test bus reads the port's high byte: #28 (F5/F3 set in the byte)
+    f.Set(Z80nCpuRegI, 0x28);
+    f.SetF(0x00);
+    f.Step();
+    EXPECT_EQ(f.Reg(Z80nCpuRegBc) >> 8, 0x28);
+    EXPECT_EQ(f.F() & (kX | kY), 0) << "IN B,(C): F5/F3 are not the byte's";
+    f.Step();
+    EXPECT_EQ(f.A(), 0x28);
+    EXPECT_EQ(f.F() & (kX | kY), 0) << "LD A,I: F5/F3 are kept";
+}
+
+TEST(Z80nOpcodes_Test, T80CpiTakesXyFromTheByte)
+{
+    Z80nFixture f;
+    f.T80Persona();
+    f.Program({0xED, 0xA1});
+    f.bus.memory[0x9000] = 0x28;
+    f.Set(Z80nCpuRegHl, 0x9000);
+    f.Set(Z80nCpuRegBc, 5);
+    f.SetA(0x00);                           // the Zilog die: F5/F3 from A - byte - H
+    f.SetF(0x00);
+    f.Step();
+    EXPECT_EQ(f.F() & (kX | kY), kX | kY);
+}
+
+TEST(Z80nOpcodes_Test, T80BlockIoFlagsAreSubB1)
+{
+    // the microcode runs B = B - 1 through the ALU's SUB: the flags are those of SUB B,1 whatever the byte and C are
+    struct Case { uint8_t b, f; };
+    for (Case c : {Case{0x01, 0x42}, Case{0x00, 0xBB}, Case{0x80, 0x3E}, Case{0x10, 0x1A}, Case{0x02, 0x02}})
+    {
+        Z80nFixture f;                      // INI: B 1 -> 0 gives Z N ; B 0 -> #FF gives S Y H X N C
+        f.T80Persona();
+        f.Program({0xED, 0xA2});
+        f.Set(Z80nCpuRegBc, static_cast<uint16_t>(c.b << 8 | 0x55));
+        f.Set(Z80nCpuRegHl, 0x9000);
+        f.SetF(0xFF);
+        f.Step();
+        EXPECT_EQ(f.F(), c.f) << "INI B=" << std::hex << int(c.b);
+    }
+    Z80nFixture r;                          // OTIR iterates with the same flags and no F5/F3 from PC
+    r.T80Persona();
+    r.Program({0xED, 0xB3});
+    r.Set(Z80nCpuRegBc, 0x0300);
+    r.Set(Z80nCpuRegHl, 0x9000);
+    r.SetF(0x00);
+    r.Step();
+    EXPECT_EQ(r.Reg(Z80nCpuRegPc), 0x8000) << "repeats";
+    EXPECT_EQ(r.F(), 0x02) << "B 3 -> 2: N only";
+}
+
+TEST(Z80nOpcodes_Test, T80PersonaLeavesTheZ80nInstructionsAlone)
+{
+    // PIXELDN / LDWS / LDPIRX follow the VHDL in both personas
+    for (bool persona : {false, true})
+    {
+        Z80nFixture f;
+        if (persona)
+            f.T80Persona();
+        f.Program({0xED, 0x93});
+        f.Set(Z80nCpuRegHl, 0x5FFF);
+        f.Step();
+        EXPECT_EQ(f.Reg(Z80nCpuRegHl), 0x401F);
+    }
 }

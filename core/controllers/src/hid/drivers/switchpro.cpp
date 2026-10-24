@@ -102,6 +102,10 @@ enum Slot : size_t
     kP2,
     kP3,
     kP4,
+    kMisc1,
+    kMisc2,
+    kMisc3,
+    kMisc4,
     kSlotCount,
 };
 
@@ -109,7 +113,7 @@ const char* const kSlotNames[kSlotCount] = {
     "south",     "east",      "west",      "north",    "dpad.up",      "dpad.down",    "dpad.left", "dpad.right",
     "lb",        "rb",        "lt",        "rt",       "view",         "menu",         "lstick.click",
     "rstick.click", "guide",  "share",     "lstick.x", "lstick.y",     "rstick.x",     "rstick.y",  "paddle.p1",
-    "paddle.p2", "paddle.p3", "paddle.p4",
+    "paddle.p2", "paddle.p3", "paddle.p4", "misc.1",       "misc.2",       "misc.3",    "misc.4",
 };
 
 /// One button bit of the report: byte 3 (right), 4 (shared) or 5 (left), its mask, the slot it gives
@@ -153,6 +157,32 @@ constexpr ButtonBit kPairRightBits[] = {
     {4, 0x10, kGuide},
 };
 
+/// The Nintendo Switch Online pads (HandleFullControllerState's bits, Linux's hid-nintendo maps; the names the POC 033
+/// pictures give). NES: A east, B south as on the pad
+constexpr ButtonBit kNesBits[] = {
+    {3, 0x08, kEast}, {3, 0x04, kSouth}, {5, 0x02, kDpadUp},   {5, 0x01, kDpadDown}, {5, 0x08, kDpadLeft},
+    {5, 0x04, kDpadRight}, {5, 0x40, kLb}, {3, 0x40, kRb},     {4, 0x01, kView},     {4, 0x02, kMenu},
+};
+/// SNES: the Pro's diamond (A east, B south, X north, Y west)
+constexpr ButtonBit kSnesBits[] = {
+    {3, 0x04, kSouth},     {3, 0x08, kEast}, {3, 0x01, kWest}, {3, 0x02, kNorth}, {5, 0x02, kDpadUp},
+    {5, 0x01, kDpadDown},  {5, 0x08, kDpadLeft}, {5, 0x04, kDpadRight}, {5, 0x40, kLb}, {3, 0x40, kRb},
+    {5, 0x80, kLt},        {3, 0x80, kRt},   {4, 0x01, kView}, {4, 0x02, kMenu},
+};
+/// N64: A south, B west, Z lt, ZR rt; C-Up / Down / Left / Right misc.1-4 (the Pro's Y, ZR, X, minus)
+constexpr ButtonBit kN64Bits[] = {
+    {3, 0x08, kSouth},    {3, 0x04, kWest},      {5, 0x80, kLt},       {4, 0x08, kRt},      {5, 0x40, kLb},
+    {3, 0x40, kRb},       {4, 0x02, kMenu},      {3, 0x01, kMisc1},    {3, 0x80, kMisc2},   {3, 0x02, kMisc3},
+    {4, 0x01, kMisc4},    {4, 0x10, kGuide},     {4, 0x20, kShare},    {5, 0x02, kDpadUp},  {5, 0x01, kDpadDown},
+    {5, 0x08, kDpadLeft}, {5, 0x04, kDpadRight},
+};
+/// Genesis: A south, B east, C rb on the bottom row; X west, Y north, Z lb on the top one (six-button pads); Mode view
+constexpr ButtonBit kGenesisBits[] = {
+    {3, 0x08, kSouth},    {3, 0x04, kEast},      {3, 0x40, kRb},       {3, 0x02, kWest},    {3, 0x01, kNorth},
+    {5, 0x40, kLb},       {3, 0x80, kView},      {4, 0x02, kMenu},     {4, 0x10, kGuide},   {4, 0x20, kShare},
+    {5, 0x02, kDpadUp},   {5, 0x01, kDpadDown},  {5, 0x08, kDpadLeft}, {5, 0x04, kDpadRight},
+};
+
 struct LayoutBits
 {
     const ButtonBit* bits;
@@ -173,6 +203,10 @@ LayoutBits BitsFor(SwitchLayout layout)
         case SwitchLayout::JoyConRight: return BitsOf(kJoyConRightBits);
         case SwitchLayout::PairLeft: return BitsOf(kPairLeftBits);
         case SwitchLayout::PairRight: return BitsOf(kPairRightBits);
+        case SwitchLayout::Nes: return BitsOf(kNesBits);
+        case SwitchLayout::Snes: return BitsOf(kSnesBits);
+        case SwitchLayout::N64: return BitsOf(kN64Bits);
+        case SwitchLayout::Genesis: return BitsOf(kGenesisBits);
         case SwitchLayout::Pro: break;
     }
     return BitsOf(kProBits);
@@ -182,7 +216,8 @@ LayoutBits BitsFor(SwitchLayout layout)
 bool HasLeftStick(SwitchLayout layout)
 {
     return layout == SwitchLayout::Pro || layout == SwitchLayout::PairLeft || layout == SwitchLayout::JoyConLeft ||
-           layout == SwitchLayout::JoyConRight;  // a Joy-Con alone: its stick is the left one
+           layout == SwitchLayout::JoyConRight ||  // a Joy-Con alone: its stick is the left one
+           layout == SwitchLayout::N64;
 }
 bool HasRightStick(SwitchLayout layout)
 {
@@ -280,7 +315,7 @@ SwitchStickCalibration SwitchStickCalibration::Parse(const uint8_t* left, const 
 
 /// region <SwitchProPad>
 
-std::optional<SwitchLayout> SwitchProPad::LayoutFor(uint16_t vendor, uint16_t product)
+std::optional<SwitchLayout> SwitchProPad::LayoutFor(uint16_t vendor, uint16_t product, const std::string& name)
 {
     if (vendor != kNintendo)
         return std::nullopt;
@@ -288,7 +323,14 @@ std::optional<SwitchLayout> SwitchProPad::LayoutFor(uint16_t vendor, uint16_t pr
     {
         case kProController: return SwitchLayout::Pro;
         case kJoyConLeft: return SwitchLayout::JoyConLeft;
-        case kJoyConRight: return SwitchLayout::JoyConRight;
+        case kJoyConRight:
+            // SDL's HIDAPI_DriverNintendoClassic_IsSupportedDevice: the NES pads are right Joy-Cons by product id
+            if (name.rfind("NES Controller", 0) == 0 || name.rfind("HVC Controller", 0) == 0)
+                return SwitchLayout::Nes;
+            return SwitchLayout::JoyConRight;
+        case kSnesController: return SwitchLayout::Snes;
+        case kN64Controller: return SwitchLayout::N64;
+        case kGenesisController: return SwitchLayout::Genesis;
         default: return std::nullopt;
     }
 }

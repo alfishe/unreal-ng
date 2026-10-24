@@ -166,6 +166,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Assembler and source-listing commands
                         {"assemble", &CLIProcessor::HandleAssemble},  // Assemble Z80 text into memory
                         {"asm", &CLIProcessor::HandleAsm},           // Assembler sources (asm decode ...), else assemble
+                        {"signature", &CLIProcessor::HandleSignature},  // Media signatures (file, media, compare)
                         {"listing", &CLIProcessor::HandleListing},    // Source-listing navigation
 
                         // Analysis commands (screen digest, beam, frame cost, analyzers)
@@ -845,6 +846,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  controllers plug <connector|auto> <device> [opt=val ..] | unplug <connector>" << NEWLINE;
     oss << "  controllers input <connector> press=up+fire | release=fire | set=none" << NEWLINE;
     oss << "  controllers help       - All verbs and flags" << NEWLINE;
+    oss << "  signature <file> [--details] [--external] - Media signatures: exact, tape content, TR-DOS file set, memory" << NEWLINE;
+    oss << "  signature media | compare <known> <candidate> - Of the loaded media; how two files relate" << NEWLINE;
     oss << "  action [list]          - Host actions (run control, time travel, machine) and whether they can run" << NEWLINE;
     oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
     oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;

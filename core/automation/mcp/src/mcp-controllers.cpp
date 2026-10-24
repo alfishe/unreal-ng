@@ -57,8 +57,10 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"database_delete", {"id"}},
         {"database_import", {"text", "save"}},
         // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)
+        {"haptics_probe", {"kind", "address", "page", "port_mask", "play"}},
         {"aliases", {}},
         {"unalias", {"id"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
     };
     return actions;
 }
@@ -128,6 +130,35 @@ namespace
                 out << " " << id.asString();
             for (const Json::Value& warning : reply["warnings"])
                 out << "\nwarning: " << warning.asString();
+            // The signature hook (D7, H-3): an agent may see only the text
+            if (reply.isMember("signatures"))
+            {
+                out << "\nsignatures:";
+                for (const Json::Value& signature : reply["signatures"])
+                    out << " " << signature.asString();
+                if (reply["signatures"].empty())
+                    out << " none (no program loaded from a file)";
+                out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files";
+                out << "\ngame matches:";
+                for (const Json::Value& match : reply["game_matches"])
+                    out << " " << match["id"].asString() << " (" << match["how"].asString() << ")";
+                if (reply["game_matches"].empty())
+                    out << " none";
+                out << "\nhaptics: " << reply["haptics_reason"].asString();
+            }
+            return out.str();
+        }
+        if (action == "match")
+        {
+            out << reply["message"].asString() << "\nsignatures:";
+            for (const Json::Value& signature : reply["signatures"])
+                out << " " << signature.asString();
+            out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files\nmatches:";
+            for (const Json::Value& match : reply["matches"])
+                out << "\n  " << match["id"].asString() << " (" << match["how"].asString() << ")";
+            if (reply["matches"].empty())
+                out << " none";
+            out << "\nnext: " << reply["next"].asString() << "\nhaptics: " << reply["haptics_reason"].asString();
             return out.str();
         }
         if (action == "profiles")
@@ -415,7 +446,16 @@ void RegisterControllers(ToolRegistry& registry)
         schema["properties"][option]["description"] =
             "input: the controls ('up+fire'; right, left, down, up, fire, fire2, fire3, fire4; set 'none' = nothing held)";
     schema["properties"]["set"]["description"] = "profiles: all (default), play, debug, scheme, game";
-    schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
+    schema["properties"]["machine"]["description"] =
+        "profiles: only those of a machine model (next, pentagon); match: the machine to match for (default the bound one)";
+    schema["properties"]["path"]["description"] =
+        "match: a host file whose signatures to match (tape, disk, snapshot); without path / signatures: the loaded program";
+    schema["properties"]["signatures"]["description"] =
+        "match: signatures, comma-separated (file:sha256:.., tape:sha256:.., trdset:sha256:.., mem:sha256:..: "
+        "signature_info gives them)";
+    schema["properties"]["file_sha256"]["description"] = "match: file SHA-256 hashes, comma-separated";
+    schema["properties"]["file_set"]["description"] =
+        "match: a TR-DOS file set (c:<16 hex> code, d:<16 hex> data tokens), comma-separated: the fuzzy rule";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
         "database_delete: the devices.user.json entry; unalias: the old device id of an alias (aliases lists them); "
@@ -451,6 +491,14 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["version"]["description"] = "database: the version (4 hex digits, a firmware range)";
     schema["properties"]["save"]["description"] =
         "database_import: false = parse and show only; default: write a user family into devices.user.json";
+    schema["properties"]["kind"]["description"] = "haptics_probe: exec, read, write, port-in or port-out";
+    schema["properties"]["address"]["description"] =
+        "haptics_probe: the address (exec, read, write) or port (port-in, port-out), 0x5C3A or decimal";
+    schema["properties"]["page"]["description"] = "haptics_probe: a RAM page (the address is the offset in it)";
+    schema["properties"]["port_mask"]["description"] = "haptics_probe: the port's decoded bits (0x00FF; all by default)";
+    schema["properties"]["play"]["description"] =
+        "haptics_probe: the library effect its rule plays (hit by default; tick, knock, thump, explosion, engine, "
+        "heartbeat, life-lost, pickup, shot, rumble-strip)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -488,7 +536,10 @@ void RegisterControllers(ToolRegistry& registry)
         "user device, a new name, a photo's image set), database_import (a gamecontrollerdb line or a RetroArch "
         "autoconfig file as a user family with its control map; the learn wizard is on REST, CLI and Python: it needs "
         "a person), aliases (old device id -> new: a controller first seen through GameController alone (gc:...) and "
-        "later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = the old id). "
+        "later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = the old id), haptics_probe (a "
+        "non-breaking breakpoint as a haptic source of the loaded game's user profile, with a rule; the debugger's "
+        "Add as Haptic Probe), match (the game profiles a program's signatures choose: exact, file SHA-256, then the "
+        "TR-DOS file set's fuzzy rule; context shows them for the loaded program with where the haptics come from). "
         "Options per action:" +
             perVerb,
         std::move(schema),
@@ -506,8 +557,9 @@ void RegisterControllers(ToolRegistry& registry)
                     (*body)["spec"] = Compact((*body)["spec"]);
                 if (action == "player" && !connector.empty())
                     (*body)["connector"] = connector;  // here the host pad's connector, not the machine target
-                static const std::set<std::string> reads = {"devices", "context",  "profiles", "profile", "bindings",
-                                                            "haptics", "database", "probe",    "reports", "aliases"};
+                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile",
+                                                            "bindings", "haptics", "database", "probe",
+                                                            "reports", "aliases", "match"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

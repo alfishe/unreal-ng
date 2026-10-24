@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "controllers/learnwizard.h"
+
 namespace actions
 {
 class ActionRegistry;
@@ -31,7 +33,6 @@ class ControllerPicture;
 class DeviceTestPanel;
 class PatchCordOverlay;
 class HostControllers;
-class LearnWizard;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -118,6 +119,7 @@ private:
     QComboBox* _gameProfile = nullptr;  ///< ProfileContext::manual: by the loaded file, or one chosen here
     QCheckBox* _advanced = nullptr;
     QCheckBox* _soundHaptics = nullptr;
+    QCheckBox* _soundHapticsDsp = nullptr;  ///< the Haptics panel: lowband / onset of the mix in the sound haptics
     QCheckBox* _globalShortcuts = nullptr;
     DeviceDragList* _devices = nullptr;
     QLabel* _probeLabel = nullptr;

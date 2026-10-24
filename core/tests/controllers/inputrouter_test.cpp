@@ -857,3 +857,24 @@ TEST(HostInputService_Test, PromotionsAreKeptForTheProfileStore)
     EXPECT_EQ(promotions[0].second, "bt:057e:2009:1");
     EXPECT_TRUE(service.TakePromotions().empty()) << "each once";
 }
+
+/// A switch trigger (ZL / ZR): a pad sends `lt` at full travel, an older layout or a driver `lt.click` alone; a
+/// binding to either name fires for both
+TEST_F(InputRouter_Test, Trigger_SwitchTriggersDriveLtAndLtClick)
+{
+    _router.OnDeviceAdded(kPad);
+    _router.OnDeviceAdded(kPad2);
+    SetBindings({Bind({"lt.click"}, "kempston:fire"), Bind({"rt"}, "kempston:fire2")});
+
+    Set("fake:1", "lt", 1);
+    EXPECT_EQ(Kempston(), kFire) << "a digital ZL as `lt` at full travel clicks `lt.click`";
+    Set("fake:1", "lt", 0);
+    EXPECT_EQ(Kempston(), 0);
+
+    Set("fake:2", "lt.click", 1);
+    Set("fake:2", "rt.click", 1);
+    EXPECT_EQ(Kempston(), kFire | kFire2) << "a device sending only `lt.click` / `rt.click` drives both names";
+    Set("fake:2", "lt.click", 0);
+    Set("fake:2", "rt.click", 0);
+    EXPECT_EQ(Kempston(), 0);
+}

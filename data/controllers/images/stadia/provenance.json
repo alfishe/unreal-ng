@@ -1,0 +1,38 @@
+{
+  "family": "stadia",
+  "images": [
+    {
+      "view": "front",
+      "title": "Google Stadia controller, Clearly White",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 163 x 105 x 65 mm (Google's figure)",
+          "source": "https://www.ifixit.com/Device/Google_Stadia_Controller (and retail listings)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "near top-down photo of the white controller: the outline (the lit left half mirrored), the D-pad, sticks, face buttons, the four small keys and the Stadia button",
+          "source": "https://commons.wikimedia.org/wiki/File:Stadia-controller-and-Chromecast-Ultra-from-Premiere-Edition.jpg",
+          "author": "Y2kcrazyjoker4",
+          "licence": "CC BY-SA 4.0",
+          "use": "measured geometry only (trace.py outline, positions on a 5 mm grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "exploded view: the top cover's openings, the check of the button sizes",
+          "source": "https://commons.wikimedia.org/wiki/File:Exploded-view-drawing_Google_Stadia_Controller_(transparent_bg).png",
+          "author": "zerforschung / Ubahnverleih",
+          "licence": "CC0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "the bumpers' and triggers' extent above the shell is read on the photo (about 1 mm)"
+        }
+      ]
+    }
+  ]
+}

@@ -373,7 +373,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(addr);
+        uint16_t breakpointID = brk.HandlePortOut(addr, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -417,7 +417,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(port);
+        uint16_t breakpointID = brk.HandlePortOut(port, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction

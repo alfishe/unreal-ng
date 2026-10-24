@@ -192,6 +192,7 @@ set(COMMON_SOURCES
     src/api/media_api.cpp
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
+    src/api/signature_api.cpp
     src/api/actions_api.cpp
     src/api/surfaces_api.cpp
     src/api/streamdeck_api.cpp
@@ -403,6 +404,11 @@ endif()
 # The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
 if (TARGET unrealng::controllers)
     target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+endif()
+
+# The media signatures (SignatureControl in core/swsignature): the define, the headers and the link order
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
 endif()
 
 

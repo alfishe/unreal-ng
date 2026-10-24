@@ -76,6 +76,22 @@ protected:
     std::atomic<size_t> _frameAudioTapCount{0};
     uint64_t _nextFrameAudioTapId = 1;
 
+    /// The haptic feed's sample streams (setHapticTaps): per source the last frame in mono at kHapticTapRate. The
+    /// emulation thread only
+    struct HapticTap
+    {
+        AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
+        uint32_t phase = 0;  ///< the decimator's position, carried over frames
+        int32_t sum = 0;
+        uint32_t summed = 0;
+        size_t count = 0;
+        std::array<int16_t, 256> samples{};
+    };
+    std::vector<HapticTap> _hapticTaps;
+    void captureHapticTaps(size_t samplesThisFrame);
+
     // Runtime core-rate pin (automation 'audio_rate': CLI setting, WebAPI
     // settings, Lua/Python set_audio_rate). Explicit intent for THIS run
     // only - never written to CONFIG/ini, so it cannot lock a UI client's
@@ -836,6 +852,30 @@ public:
     /// Returns once a call in progress has finished: the tap's state may go away after it
     void removeFrameAudioTap(uint64_t id);
     bool hasFrameAudioTaps() const { return _frameAudioTapCount.load(std::memory_order_acquire) > 0; }
+
+    /// region <Haptic taps (controller manager haptics.md §4)>
+    /// The sources the haptic feed's DSP filters read: at every frame end each one's frame, mono, decimated to
+    /// kHapticTapRate by a box average in integers (the same samples on every compiler), taken where the recording
+    /// takes the mix (before the mixer's volume and the user's mute). The Next's DAC part (NextDac, and COVOX on a
+    /// machine whose own DAC is a part) is rendered alone for it. Empty: no work. The emulation thread only (the
+    /// controller manager sets them at a frame boundary)
+    static constexpr uint32_t kHapticTapRate = 8000;
+    /// One tap: a source's buffer; `also` a second one summed into it (the Moonsound's FM and PCM); `dacChannel` 0..3
+    /// one channel of the Covox / Soundrive alone (Covox::SetChannelTap) instead of `source`
+    struct HapticTapSource
+    {
+        AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
+    };
+    void setHapticTaps(const std::vector<HapticTapSource>& sources);
+    void setHapticTaps(const std::vector<AudioSourceType>& sources);
+    size_t hapticTapCount() const { return _hapticTaps.size(); }
+    /// The last frame's samples of tap @p index (count 0: the source is not fitted or rendered nothing); a second
+    /// call for the same frame returns 0 (takeHapticTaps marks them read)
+    const int16_t* hapticTap(size_t index, size_t& count) const;
+    void takeHapticTaps();
+    /// endregion </Haptic taps>
 
     // DRC telemetry (tests / diagnostics)
     double getDrcRatio() const { return _drcResampler.getRatio(); }

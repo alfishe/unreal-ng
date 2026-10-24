@@ -40,12 +40,43 @@
 #include "hostcontrols.h"
 #include "profiles/json.h"
 #include "router/inputrouter.h"
+#ifdef ENABLE_SWSIGNATURE
+#include "swsignature.h"
+#endif
 
 using namespace controllers;
 
 namespace
 {
 constexpr const char* kKeyboard = "kbd:system";
+
+/// The signature hook (C6, D7): the program's signatures (exact, tape content / TR-DOS file set / memory) and its
+/// TR-DOS file set into @p context; without the signature library the file's SHA-256 alone
+bool ProgramSignatures(const std::string& path, ProfileContext& context, std::string& error)
+{
+    context.signatures.clear();
+    context.fileSha256.clear();
+    context.fileSet.clear();
+#ifdef ENABLE_SWSIGNATURE
+    unrealng::swsignature::Signatures signatures;
+    if (!unrealng::swsignature::ComputeFile(path, signatures, error))
+        return false;
+    context.signatures = signatures.Keys();
+    context.fileSha256 = {signatures.sha256};
+    context.fileSet = signatures.FileSet();
+    return true;
+#else
+    QFile file(QString::fromStdString(path));
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly) || !hash.addData(&file))
+    {
+        error = "cannot read '" + path + "'";
+        return false;
+    }
+    context.fileSha256 = {hash.result().toHex().toStdString()};
+    return true;
+#endif
+}
 
 /// HostInputControl's view of the Qt client's host input
 class ControlOwner : public IHostInputOwner
@@ -99,6 +130,10 @@ public:
     {
         return _host.PlayerChoice(device);
     }
+    bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
+    {
+        return ProgramSignatures(path, context, error);
+    }
 
 private:
     HostControllers& _host;
@@ -110,6 +145,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 {
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
+    _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
     _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
@@ -124,6 +160,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _service = std::make_unique<HostInputService>();
     // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
     _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
+    _service->SetHapticsDspDefaults(_soundHapticsDsp);
     _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
@@ -201,6 +238,19 @@ HostControllers::~HostControllers()
     releaseWheelMenu();
     _service->Router().SetActionSink(nullptr);
     _service->Stop();
+#endif
+}
+
+void HostControllers::SetSoundHapticsDsp(bool on)
+{
+    if (on == _soundHapticsDsp)
+        return;
+    _soundHapticsDsp = on;
+    QSettings().setValue("Controllers/SoundHapticsDsp", on);
+#ifdef ENABLE_CONTROLLERS
+    _service->SetHapticsDspDefaults(on);
+    if (_attached)
+        attachHaptics();  // the key below names the filters: the sound feed is made again
 #endif
 }
 
@@ -665,8 +715,9 @@ void HostControllers::Reapply()
             context.machine = model->ShortName ? model->ShortName : "";
     std::transform(context.machine.begin(), context.machine.end(), context.machine.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (!_fileSha256.empty())
-        context.fileSha256 = {_fileSha256};
+    context.signatures = _program.signatures;
+    context.fileSha256 = _program.fileSha256;
+    context.fileSet = _program.fileSet;
     if (!_manualProfile.empty())
         context.manual = {_manualProfile};
     context.debugLayer = _debugLayer || _debugFocus;
@@ -727,7 +778,8 @@ void HostControllers::attachHaptics()
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
     const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string("sound") : std::string());
+                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                  : std::string());
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -927,17 +979,28 @@ bool HostControllers::saveUserProfile(Profile profile, QString& error)
 
 bool HostControllers::KeepAutoDecision(QString& error)
 {
-    if (_fileSha256.empty() || _autoConnector.empty())
+    if (_program.fileSha256.empty() || _autoConnector.empty())
     {
         error = tr("Nothing to keep: no program loaded from a file, or no automatic choice");
         return false;
     }
+    // Keyed by the signatures (D7): the content one finds the program re-packed or renamed, the file set after saves,
+    // the file hash as before (and as the profiles of older versions did)
+    std::string content;
+    for (const std::string& signature : _program.signatures)
+        if (signature.rfind("file:", 0) != 0)
+            content = signature;
+    const std::string& sha = _program.fileSha256.front();
+    const std::string key = content.empty() ? sha : content.substr(content.rfind(':') + 1);
     Profile profile;
     profile.kind = ProfileKind::Play;
     profile.scope = ProfileScope::User;
-    profile.id = "user/game-" + _fileSha256.substr(0, 16);
+    profile.id = "user/game-" + key.substr(0, 16);
     profile.label = _fileName.toStdString();
-    profile.fileSha256 = {_fileSha256};
+    profile.fileSha256 = {sha};
+    if (!content.empty())
+        profile.signatures = {content};
+    profile.fileSet = _program.fileSet;
     profile.options = JsonValue::Object();
     ConnectorPlan plan;
     plan.device = _decision.device;
@@ -947,6 +1010,29 @@ bool HostControllers::KeepAutoDecision(QString& error)
     profile.connectors[_autoConnector] = plan;
     profile.players = {{"auto:1", _autoConnector}};
     return saveUserProfile(std::move(profile), error);
+}
+
+bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+{
+    // The surfaces' haptics_probe verb, so the menu and an agent write the same profile
+    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
+    HostRequest request;
+    request.verb = "haptics_probe";
+    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
+    request.options["address"] = std::to_string(probe.address);
+    if (probe.page != 0xFFFF)
+        request.options["page"] = std::to_string(probe.page);
+    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
+        request.options["port_mask"] = std::to_string(probe.portMask);
+    const HostReply reply = Host(request);
+    if (!reply.Ok())
+    {
+        error = QString::fromStdString(reply.message);
+        return false;
+    }
+    const JsonValue* source = reply.body.Find("source");
+    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
+    return true;
 }
 
 void HostControllers::updateHapticsGate()
@@ -977,15 +1063,10 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     Emulator* emulator = _binding->emulator();
     if (emulator == nullptr || QString::fromStdString(emulator->GetId()) != emulatorId)
         return;
-    _fileSha256.clear();
     _fileName = QFileInfo(path).fileName();
-    QFile file(path);
-    if (QFileInfo(path).isFile() && file.open(QIODevice::ReadOnly))
-    {
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (hash.addData(&file))
-            _fileSha256 = hash.result().toHex().toStdString();
-    }
+    std::string error;
+    if (!ProgramSignatures(path.toStdString(), _program, error))
+        qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _autoConnector.clear();
     _decision = {};

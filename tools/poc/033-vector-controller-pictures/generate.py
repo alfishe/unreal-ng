@@ -52,6 +52,23 @@ SETS = {
 }
 
 
+def _more_sets():
+    """The sets of the device modules added after the first round: a module under devices/ that defines SETS (set
+    name -> function returning a Picture) registers them; the modules load in name order"""
+    import importlib
+    for path in sorted((HERE / "devices").glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+        module = importlib.import_module(f"devices.{path.stem}")
+        for name, make in getattr(module, "SETS", {}).items():
+            if name in SETS:
+                raise SystemExit(f"{name}: drawn by two modules")
+            SETS[name] = make
+
+
+_more_sets()
+
+
 def committed(path):
     """The file as the last commit has it (the set this generator replaces), or None"""
     rel = path.relative_to(ROOT)
@@ -95,7 +112,8 @@ def problems(name, pic, written):
     if len(ids) != len(set(ids)):
         found.append(f"{name}: an element id twice: {sorted(i for i in set(ids) if ids.count(i) > 1)}")
     old = committed(OUT / name / "front.hotspots.json")
-    if old:
+    # A set may rename its controls on purpose before it ships (`pic.renames`: the reason), never silently
+    if old and not getattr(pic, "renames", None):
         lost = {c["control"] for c in json.loads(old)["controls"]} - set(names)
         if lost:
             found.append(f"{name}: controls of the previous set missing: {sorted(lost)}")
