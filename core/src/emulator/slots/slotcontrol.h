@@ -69,7 +69,8 @@ struct SlotControlRequest
     /// network: the settings, key = value as NetworkManager::ParseChange takes them ("card" = "zxnetusb,zxwifi",
     /// "hosts" = "a=10.0.2.7", ...)
     std::vector<std::pair<std::string, std::string>> settings;
-    /// Start the restarted machine when the old one ran (every automation surface); the Qt window starts it itself
+    /// Give the restarted machine the old one's run state (running, or started and paused: ModelSwitch::StartAsBefore) on
+    /// every automation surface; the Qt window does it itself
     bool startWhenRunning = true;
     /// Called with the old machine stopped, before it is destroyed (a GUI unbinds its views here)
     std::function<void(Emulator& old)> beforeRelease;
@@ -85,7 +86,7 @@ struct SlotControlReply
     /// Verb-specific fields, merged into the envelope: the report (list), cards (catalog), tables (matrix), plan /
     /// restart / media (changes)
     StateNode body = StateNode::Object();
-    /// Applied: the restarted machine (created; started when the old one ran and startWhenRunning)
+    /// Applied: the restarted machine (created; with startWhenRunning running or started paused as the old one)
     std::shared_ptr<Emulator> emulator;
 
     bool Ok() const

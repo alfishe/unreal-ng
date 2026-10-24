@@ -13,13 +13,13 @@ constexpr std::array<std::string_view, 7> kBase = {"ttd.position", "run.state", 
                                                    "media.disk",   "audio.mute", "debug.mode"};
 
 // readouts.h's table, in its order (toggle.<id> and audio.source.<key> are prefixes)
-constexpr std::array<std::string_view, 27> kKnown = {
+constexpr std::array<std::string_view, 29> kKnown = {
     "ttd.position",    "run.state",         "machine",          "media.tape",       "media.disk",
     "audio.mute",      "debug.mode",        "audio.mixer",      "host.stats",       "host.clients",
     "emulator.stats",  "debug.breakpoints", "media.slots",      "recording.state",  "debug.labels",
     "ttd.status",      "debug.analyzers",   "controllers.state", "video.window",    "video.crt_params",
     "video.viewport",  "machine.previous",  "machine.switches", "media.recent",     "media.rzx",
-    "input.connectors", "cap.record"};
+    "input.connectors", "cap.record",       "actions.unavailable", "debug.buffers"};
 
 // The known name a path starts with, the longest ("machine.previous.model" -> machine.previous); "" = none
 std::string_view KnownName(std::string_view path)
@@ -48,6 +48,12 @@ bool Scrubs(const Dial& d)
 
 void Collect(const Node& n, std::set<std::string>& readouts, std::set<std::string>& paths, bool& timeline)
 {
+    if (n.action.kind == "action")
+    {
+        // which of the catalogue's actions cannot run now: their keys grey out, a press says why
+        paths.insert("actions.unavailable");
+        readouts.insert("actions.unavailable");
+    }
     if (!n.state.empty())
     {
         paths.insert(n.state);

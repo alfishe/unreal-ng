@@ -157,6 +157,10 @@ signals:
     /// emulator's debug instrumentation on only while the window is visible.
     void visibilityChanged(bool visible);
 
+    /// The breakpoint list's "Add as Haptic Probe" (BreakpointDialog::hapticProbeRequested); MainWindow hands it to
+    /// the host controllers
+    void hapticProbeRequested(int kind, int address, int page, int portMask);
+
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;

@@ -395,6 +395,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
     // The debugger closed: a debug.* context the GUI set returns to the default
     connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
+    // The breakpoint list's "Add as Haptic Probe": a source of the loaded game's user profile (haptics.md §7)
+    connect(debuggerWindow, &DebuggerWindow::hapticProbeRequested, this,
+            [this](int kind, int address, int page, int portMask) {
+#ifdef ENABLE_CONTROLLERS
+                controllers::HapticProbe probe;
+                probe.kind = static_cast<controllers::HapticProbeKind>(kind);
+                probe.address = probe.end = static_cast<uint16_t>(address);
+                probe.page = page < 0 ? 0xFFFF : static_cast<uint16_t>(page);
+                probe.portMask = static_cast<uint16_t>(portMask);
+                QString name, error;
+                statusBar()->showMessage(_hostControllers->AddHapticProbe(probe, name, error)
+                                             ? tr("Haptic probe %1 added to this game's profile (rule: hit)").arg(name)
+                                             : error,
+                                         5000);
+#else
+                (void)kind, (void)address, (void)page, (void)portMask;
+#endif
+            });
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
         _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
@@ -424,10 +442,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Slot changes (ZX-bus slots, Q1 / Q6): every change restarts the machine; the window follows the new one
     SlotChangeController::Hooks slotHooks;
     slotHooks.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
-    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, bool start) {
+    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, const ModelSwitch::RunStateBefore& before) {
         adoptEmulator(emulator, EmulatorOrigin::CreatedByGui);
-        if (start)
-            emulator->StartAsync();
+        ModelSwitch::StartAsBefore(*emulator, before, [&emulator]() { emulator->StartAsync(); });
     };
     slotHooks.restarting = [this](bool on) { _switchingModel = on; };
     _slotChangeController = new SlotChangeController(std::move(slotHooks), this);

@@ -6,6 +6,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/inifile.h"
@@ -90,7 +91,7 @@ bool FeatureManager::isTtdRecordingActive() const
 bool FeatureManager::debugModeInEffect() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (_replayDebugHold)
+    if (_replayDebugHold || _probeDebugHold)
         return true;
     auto debugIt = _features.find(Features::kDebugMode);
     return debugIt != _features.end() && debugIt->second.enabled;
@@ -105,6 +106,23 @@ void FeatureManager::OnModeChanged(const coordinator::ModeState& /*from*/, const
         _replayDebugHold = to.replaying;
     }
     applyDebugMode();
+}
+
+void FeatureManager::setProbeDebugHold(bool on)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_probeDebugHold == on)
+            return;
+        _probeDebugHold = on;
+    }
+    applyDebugMode();
+}
+
+bool FeatureManager::probeDebugHold() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _probeDebugHold;
 }
 
 void FeatureManager::applyDebugMode()
@@ -721,6 +739,13 @@ void FeatureManager::saveToFile(const std::string& path) const
 /// @param changedFeatureId The canonical ID of the feature that changed, or empty for bulk reload.
 void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
 {
+    // The machine caches below (memory interface, contention, Z80 / screen / port decoder caches) are read by the
+    // emulation thread without locks: refresh them with the CPU held. Free when the machine is not running or the
+    // caller already holds the CPU (the loop thread, a nested hold); TSan, the GUI toggling a feature mid-frame
+    std::optional<Emulator::CpuHold> hold;
+    if (_context && _context->pEmulator)
+        hold.emplace(*_context->pEmulator, "feature change");
+
     // Update the feature cache in Memory class if it exists
     if (_context && _context->pCore && _context->pCore->GetMemory())
     {
@@ -786,6 +811,7 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     {
         _context->pPortDecoder->UpdateFeatureCache();
     }
+    hold.reset();
 
     // General turbo (max speed) mode: push the desired state into Core when the
     // 'turbomode' feature itself changes, or when TTD recording starts/stops

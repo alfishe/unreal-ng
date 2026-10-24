@@ -168,6 +168,13 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _connectors->verticalHeader()->hide();
     rightLayout->addWidget(_connectors, 1);
     rightLayout->addWidget(new QLabel(tr("<b>Haptics</b>"), right));
+    _soundHapticsDsp = new QCheckBox(tr("DSP filters on the sound"), right);
+    _soundHapticsDsp->setToolTip(
+        tr("With \"Haptics from the sound\": the bass of the whole mix on the low motor and a short tick on the "
+           "high motor at each sharp onset, besides the AY and beeper filters"));
+    _soundHapticsDsp->setChecked(_host->SoundHapticsDsp());
+    _soundHapticsDsp->setEnabled(_host->SoundHaptics());
+    rightLayout->addWidget(_soundHapticsDsp);
     _hapticsLabel = new QLabel(right);
     _hapticsLabel->setWordWrap(true);
     _hapticsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -200,6 +207,8 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
         _host->SetDebugLayer(on);
     });
     connect(_soundHaptics, &QCheckBox::toggled, _host, &HostControllers::SetSoundHaptics);
+    connect(_soundHaptics, &QCheckBox::toggled, _soundHapticsDsp, &QCheckBox::setEnabled);
+    connect(_soundHapticsDsp, &QCheckBox::toggled, _host, &HostControllers::SetSoundHapticsDsp);
     connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
     rebuild();
 }

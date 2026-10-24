@@ -719,10 +719,20 @@ for device in emu.controllers_host("devices")["devices"]:
         emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
 ```
 
+Media signatures and the game profile they choose ([command-interface.md §18](./command-interface.md#18-media-signatures)):
+
+```python
+sig = emu.signature("/games/elite.tzx", details=True)["signature"]   # kind, format, sha256, content, keys, file_set
+emu.signature_media()["media"]                           # the loaded tapes and disks: slot, source, dirty, signature
+emu.signature_compare("elite.tap", "elite.tzx")["match"]["level"]    # exact | content | fuzzy | memory | none
+emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}], profile, next, haptics_reason}
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_aliases()` (`{aliases: [{from, to, connected, name}]}`:
-a pad first seen as `gc:...` and later matched to its HID device keeps its profiles) and `controllers_unalias(id)`;
-`controllers_host("devices")` lists each device's `role`, `layers`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
+play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_aliases()` (`{aliases: [{from,
+to, connected, name}]}`: a pad first seen as `gc:...` and later matched to its HID device keeps its profiles) and
+`controllers_unalias(id)`; `controllers_host("devices")` lists each device's `role`, `layers`,
 `context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
@@ -845,7 +855,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2" | "amx"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```

@@ -2048,7 +2048,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 
     uint16_t result = BRK_INVALID;
     if (!_cpuHeads[kind].empty())
-        result = WalkCandidates(_cpuHeads[kind][address], -1, result);
+        result = WalkCandidates(_cpuHeads[kind][address], -1, result, address);
 
     // Physical breakpoints: the page the slot shows now, from the memory model (no remap tracking needed:
     // the filter does not depend on the mapping, design §5.2)
@@ -2059,7 +2059,8 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
         {
             const size_t pageId = (static_cast<size_t>(where.mode) << 8) | where.page;
             if (pageId < kPageIds && _pageSlices[kind][pageId])
-                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result);
+                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result,
+                                        address);
         }
     }
 
@@ -2096,13 +2097,13 @@ uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bo
     return result;
 }
 
-uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port)
+uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port, int value)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
     if (_portHeads[direction].empty())
         return BRK_INVALID;
-    const uint16_t result = WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID);
+    const uint16_t result = WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID, port, value);
     if (result != BRK_INVALID)
         _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
     return result;
@@ -2238,7 +2239,7 @@ uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t v
     return result;
 }
 
-uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first)
+uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, uint16_t address, int value)
 {
     if (set == 0 || set >= _candidateSets.size())
         return first;
@@ -2247,6 +2248,14 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
             continue;
+        // A probe notifies the feed and never stops (haptics.md §5)
+        if (bp->probe != BRK_NO_PROBE)
+        {
+            ++bp->hitCount;
+            if (_probeSink != nullptr)
+                _probeSink->OnProbeHit(bp->probe, address, value);
+            continue;
+        }
         // Every matching access counts; the policy decides whether it stops
         const uint32_t n = ++bp->hitCount;
         bool stop = true;
@@ -2309,13 +2318,15 @@ uint16_t BreakpointManager::GenerateNewBreakpointID()
 
 /// A single-address breakpoint without range, slot filter or hit policy: adding the same one again returns
 /// the existing id (the key maps). Anything richer is its own breakpoint
+/// A plain breakpoint shares its address with an equal one; a probe is always its own (it must not adopt a user's
+/// breakpoint, nor a user's adopt it)
 static bool IsPlainMemory(const BreakpointDescriptor& d)
 {
-    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS;
+    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.probe == BRK_NO_PROBE;
 }
 static bool IsPlainPort(const BreakpointDescriptor& d)
 {
-    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS;
+    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.probe == BRK_NO_PROBE;
 }
 
 uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor)

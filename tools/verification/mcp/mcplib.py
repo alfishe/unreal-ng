@@ -89,6 +89,7 @@ class Session:
         """tools/call; with ok=True a tool error fails the test"""
         args = dict(args or {})
         machineless = tool in ('search_api', 'asm_source', 'streamdeck') or (
+            tool == 'signature_info' and args.get('action') != 'media') or (
             tool == 'emulator_manage' and args.get('action') in ('list', 'create', 'list_models', 'server'))
         if not machineless:
             args.setdefault('target', 'auto')

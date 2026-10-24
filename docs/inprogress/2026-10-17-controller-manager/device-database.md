@@ -108,6 +108,13 @@ Rules:
   `hat.<n>`); for backends that already name controls (GameController, GameInput, evdev key codes) it maps their names.
 - **`outputs` lists the actuators**: `rumble`, `trigger-rumble`, `hd-haptics`, `adaptive-triggers`, `light`
   ([haptics.md §2](haptics.md#2-actuators)); the backend confirms them at run time.
+- **`hid` corrects the layout for the HID paths** (IOKit HID, Raw Input, hidraw), per family or per `match` entry
+  (a match's map replaces the family's, for a pad whose USB and Bluetooth reports differ):
+  `buttons` (button usage n from 1 to a control, `""` keeps `button.<n-1>`), `rxRyTriggers`, `dpadAxes` (the cross on
+  X / Y), `hat` (the control the first hat is: `lstick` on a single Joy-Con), `consumer` (`{"0223": "guide"}`) and
+  `bits` (`{"report": 1, "byte": 9, "bit": 4, "control": "misc.2"}`: a vendor bit outside the descriptor, the byte
+  counted after the report id). The maps of the shipped families are read off SDL_GameControllerDB's Mac OS X lines
+  ([POC 033 inventory §4](../../../tools/poc/033-vector-controller-pictures/inventory.md#4-how-the-button-maps-were-read)).
 - **`controls` lists what the device has.** The dialog draws only those controls, and a profile binding to a control
   the device lacks is shown greyed out ([research-other-emulators.md X-8](research-other-emulators.md#5-pitfalls)).
 
@@ -163,9 +170,12 @@ Rules:
 
 ## 6. Images: the house style
 
-Per D5, images start as manufacturer photos or openly licensed photos and are retouched into one house style.
-Vectorization is a separate study (Q-1). Until that study ends, the canonical asset is a retouched raster with a hotspot
-map.
+Q-1 is answered (owner, 2026-10-23): the pictures are vector art. Each device is drawn from a data model in millimetres
+by a generator, not traced: [POC 033](../../../tools/poc/033-vector-controller-pictures/README.md) writes
+`front.svg` (SVG Tiny 1.2 for QSvgRenderer, named layers, one `control-<name>` group per control) with its
+`front.hotspots.json` from the same geometry and a `provenance.json`. Photos (the sources below) are references for
+sizes and layout only, nothing is copied; platform logos are left out (D5). A user may still add a photo with its own
+hotspot map: the format is the same for SVG and raster.
 
 **Sources, in order of preference:**
 
@@ -300,39 +310,17 @@ The keyboard images double as the target picker for "bind to a ZX key": a click 
 
 ## 11. Seed families
 
-The first `devices.json`, from [research-host-apis.md §5](research-host-apis.md#5-other-controllers). Image status:
-`own` = we photograph it, `find` = a source to find, `generic` = the family fallback until then.
+The shipped `devices.json` has 74 families: the first-party pads of Microsoft, Sony, Nintendo, Valve, Google, Amazon
+and Logitech, 8BitDo per model, the retro adapters, and the licensed / compatible families generated from SDL3's
+`controller_list.h` (Xbox 360 / One compatible, PlayStation compatible, Switch wired and Switch Pro compatible, arcade
+sticks and fight pads per protocol). The full list with the ids per bus, the path on macOS, Windows and Linux and the
+picture of each is the [POC 033 inventory](../../../tools/poc/033-vector-controller-pictures/inventory.md); the
+generator script of the compatible families is kept with the all-pads task's scratch files, the families themselves
+are plain data.
 
-| # | Family id | VID | PIDs | Layout | Images |
-|:--|:--|:--|:--|:--|:--|
-| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | own |
-| 2 | `xbox-elite-1` | 045E | 02E3 | xbox | find |
-| 3 | `xbox-360` | 045E | 028E (real wired; not the macOS synthetic) | xbox | find |
-| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | find |
-| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | find |
-| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | find |
-| 7 | `xbox-adaptive` | 045E | 0B0A, 0B0C, 0B21 | xbox | find |
-| 8 | `xbox-wireless-adapter` | 045E | 02E6, 02FE (pads behind it report their own families) | — | — |
-| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | find |
-| 10 | `dualsense` | 054C | 0CE6 | playstation | find |
-| 11 | `dualsense-edge` | 054C | 0DF2 | playstation | find |
-| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | find |
-| 13 | `joy-con` | 057E | 2006, 2007, 200E | nintendo-positional | find |
-| 14 | `nso-snes` / `nso-n64` / `nso-megadrive` | 057E | 2017 / 2019 / 201E | snes / n64 / megadrive | find |
-| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | find |
-| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | find |
-| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | find |
-| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | find |
-| 19 | `megadrive-mini` | 0CA3 | 0024 (6B), 0025 (3B) | megadrive | find |
-| 20 | `atari-vcs` | 3250 | 1001 (Classic), 1002 (Modern) | atari / xbox | find |
-| 21 | `atari-cx` | 0E6A | 4011 | atari | find |
-| 22 | `thec64-joystick` / `thegamepad` | 1C59 | 0024 / 0026 | c64-stick / snes | find |
-| 23 | `thejoystick-spectrum` | 1C59 | unverified (Q-8) | c64-stick | own when available |
-| 24 | `retrobit-adapter` | 1292 | 4745, 4643, 5346 | megadrive / nes / snes | find |
-| 25 | `generic-db9-adapter` | 0E8F, 16C0, 0079 | 3013; 05E1; 0006 | raw → wizard | generic |
-| 26 | `generic-snes-usb` | 0810, 0079 | E501; 0011 | snes | generic |
-| 27 | `arcade-stick` | 0F30, 0079, 0738 | 1100-1116; 1830, 181A, 181B; 8180 | arcade | generic |
-| 28 | `macos-synthetic-xbox` | 045E | 028E version 0, IOClass `AppleGCResource` | — | ignored |
+Image status: every family has an own POC 033 vector set or a look-alike's (Xbox One S on Xbox One, Elite 1 on
+Elite 2, Ultimate 2C on Ultimate 2, Switch 2 Pro on Switch Pro, the compatible families on the generic pads, the
+retro adapters on the NSO pads). THEJOYSTICK (row 23 of the first seed) is still unverified (Q-8).
 
 The Stream Deck (0FD9) is not a host device here. It is a companion client through the WebAPI
 ([debug-and-ttd.md](debug-and-ttd.md), [research-host-apis.md §6](research-host-apis.md#6-stream-deck)).
@@ -341,6 +329,6 @@ The Stream Deck (0FD9) is not a host device here. It is a companion client throu
 
 | # | Question |
 |:--|:--|
-| Q-1 | Vectorization: trace the retouched photos into SVG (themeable, small, crisp at any size, Mesen2-style), or keep rasters? A separate study: tools, cost per device, the look next to the photos, dark / light themes. Until then the raster + hotspot map is canonical, and the map format does not change if the image becomes SVG. |
+| Q-1 | Answered (owner, 2026-10-23): vector pictures drawn by a generator from per-device data, POC 033 ([§6](#6-images-the-house-style)). |
 | Q-8 | Retro Games Ltd THEJOYSTICK / THESPECTRUM pad VID/PIDs: read them from ioreg when a device is available. |
 | Q-9 | Manufacturer press-kit terms. **Answered** (D5): allowed with the source and terms recorded per image, platform logos removed in the retouch; where a vendor forbids it, CC images or our own photos. |

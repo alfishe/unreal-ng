@@ -1,5 +1,6 @@
 #include "card.h"
 
+#include "emulator/slots/cards/amx/amxmousecard.h"
 #include "emulator/slots/cards/fuller/fullerboxcard.h"
 #include "emulator/slots/cards/multisound/multisoundslotcard.h"
 
@@ -14,10 +15,14 @@ constexpr ttd::TTDDeviceType kMultiSoundTtdTypes[] = { ttd::TTDDeviceType::Multi
 /// The Fuller Box: one blob, its time base and AY
 constexpr ttd::TTDDeviceType kFullerBoxTtdTypes[] = { ttd::TTDDeviceType::FullerBox };
 
+/// The AMX mouse: one blob, its PIO and pending motion
+constexpr ttd::TTDDeviceType kAmxMouseTtdTypes[] = { ttd::TTDDeviceType::AmxMouse };
+
 /// One entry per card the slots build themselves (the others keep their legacy owners, slotmanager.h)
 constexpr CardType kCardTypes[] = {
     { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdTypes },
     { FullerBoxCard::kCardId, &FullerBoxCard::Create, kFullerBoxTtdTypes },
+    { AmxMouseCard::kCardId, &AmxMouseCard::Create, kAmxMouseTtdTypes },
 };
 
 } // namespace

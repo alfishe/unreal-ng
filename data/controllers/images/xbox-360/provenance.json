@@ -1,0 +1,51 @@
+{
+  "family": "xbox-360",
+  "images": [
+    {
+      "view": "front",
+      "title": "Xbox 360 Controller (wired and wireless), white",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 152 x 107 x 54 mm (5.98 x 4.21 x 2.13 in)",
+          "source": "Microsoft Xbox 360 Controller for Windows spec sheet (XBX0008), as neweggbusiness.com lists it",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "FIG. 2, top plan view: the outline (trace.py, the dashed line filled, the right half mirrored, 104.7 mm deep at 152 mm against 107 mm with the triggers), the grey lower shell's edge, the bumpers, the creases, every control's position and size",
+          "source": "https://patents.google.com/patent/USD521015S1/en",
+          "author": "Microsoft Corporation (inventors J. A. Hayes, M. Baseflug)",
+          "licence": "US design patent drawing (public record)",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "colours: white top shell, light grey lower shell, grey sticks and D-pad, the jewel face buttons, the ring of light and its numbers, the BACK / START legends",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_360_controller_top_(3455250267).jpg",
+          "author": "I G",
+          "licence": "CC0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the wired and the wireless controller share this shell (the wireless one's battery pack is underneath, its connect button on the top edge between the bumpers, not seen from above)",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox-360-Wireless-Controller-White.png",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the triggers' rise behind the bumpers (2.3 mm, the spec's depth less the drawing's)",
+          "source": "this POC",
+          "note": "an estimate",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

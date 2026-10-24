@@ -229,22 +229,25 @@ TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
 ///        "Profi-DOS" entry to "SP-DOS Shell by Michael Markowsky" (hi-res, CPU at 3 MHz)
 TEST_F(Profi3Boot_Test, SpDosBootsToItsShell)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    // An integration test: the BIOS and SP-DOS boot from a floppy, until the shell is in memory
     EmulatorContext* context = _emulator->GetContext();
-    _emulator->RunNFrames(600, true);   // the Kramis menu, settled
+    _emulator->EnableTurboMode();  // asserts on emulated state (VRAM, RAM) only
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
+    _emulator->RunNFrames(25, true);   // settled
     ASSERT_TRUE(KramisMenuOnScreen(context));
     std::string error;
     ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0"), 0,
                                     &error))
         << error;
     TapKeys("ENT");   // the first entry: Profi-DOS
-    _emulator->RunNFrames(1500, true);
-
-    std::string ram;
-    for (uint32_t a = 0; a < 0x10000; a++)
-        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
-    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
-        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    auto shellLoaded = [&] {
+        std::string ram;
+        for (uint32_t a = 0; a < 0x10000; a++)
+            ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+        return ram.find("SP-DOS Shell by Michael Markowsky") != std::string::npos;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), shellLoaded, 1500, 25);
+    EXPECT_TRUE(shellLoaded()) << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
     EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
 }
 

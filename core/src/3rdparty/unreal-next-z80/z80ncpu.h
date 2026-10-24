@@ -8,8 +8,7 @@
 //    accessors, zero-copy register file
 //  - full undocumented behavior: MEMPTR (WZ), Q (Zilog SCF/CCF), IXH/IXL/IYH/IYL, SLL, IN (C), X/Y flags (F3/F5)
 //  - NMOS baseline: OUT (C),0 writes 0 (Z80nCpuSetOutC0Value), LD A,I / LD A,R followed by an accepted INT clears
-//    P/V (Z80nCpuSetLdAirQuirk); which quirks the Next's T80-based core shows is an open question, found with
-//    the Next's test programs
+//    P/V (Z80nCpuSetLdAirQuirk); the Next's own T80-based flags are the T80N persona (Z80nCpuSetT80Persona)
 //  - only the callback bus: every memory and port cycle reaches the host, which owns paging, contention and the
 //    28 MHz wait state
 //  - the memory read callback gets the bus-cycle kind (opcode fetch, operand fetch, data read)
@@ -366,6 +365,13 @@ void Z80nCpuSetOutC0Value(Z80nCPU* cpu, uint8_t value);
 
 // NMOS (default 1): an INT accepted right after LD A,I / LD A,R clears P/V; 0 = CMOS behavior.
 void Z80nCpuSetLdAirQuirk(Z80nCPU* cpu, int enabled);
+
+// T80N persona (default 0): the flag behavior of the ZX Next's own CPU, the T80 of the official FPGA core (3.02.03),
+// instead of the Zilog NMOS die's. The T80 never copied the die's undocumented flag research: SCF/CCF take F5/F3 from A
+// alone, BIT n,(HL) / BIT n,(IX+d) clear them, IN r,(C) and LD A,I / LD A,R leave them, CPI/CPD take them from the byte,
+// a repeating block instruction keeps the flags of one iteration (no F5/F3 from PC), INI/IND/OUTI/OUTD flag as SUB B,1,
+// and an INT after LD A,I / LD A,R does not clear P/V. Z80N instructions are not affected: they always follow the VHDL.
+void Z80nCpuSetT80Persona(Z80nCPU* cpu, int enabled);
 
 // ---- Z80N additions ----
 

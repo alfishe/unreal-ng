@@ -257,12 +257,25 @@ protected:
         EXPECT_GT(devices, 0u) << where;
 
         // Memory: every region, the pieces the session had seen by then
-        const ttd::TimeTravelEngine* previous = idx > 0 && !allRam ? &engine : nullptr;
         for (uint32_t r = 0; r < engine.Regions().size(); r++)
         {
             const ttd::TTDRegionDesc& region = engine.Regions()[r];
             if (!region.memory)
                 continue;
+            if (idx > 0 && !allRam)
+            {
+                // Only the pieces with a new version here, decoded one by one (a whole region is megabytes)
+                uint8_t piece[ttd::kTTDPieceSize];
+                for (const auto& [p, version] : engine.ChangesAt(index, r))
+                {
+                    ASSERT_TRUE(engine.PieceStore().Decode(version, piece)) << where << ": " << region.name << " piece " << p;
+                    const size_t offset = size_t(p) * ttd::kTTDPieceSize;
+                    const size_t length = std::min<size_t>(ttd::kTTDPieceSize, region.bytes - offset);
+                    ASSERT_EQ(std::memcmp(region.memory + offset, piece, length), 0)
+                        << where << ": " << region.name << " piece " << p;
+                }
+                continue;
+            }
             std::vector<uint8_t> recorded(size_t(region.pieces) * ttd::kTTDPieceSize);
             std::vector<uint8_t> present;
             const ttd::TTDRestoreResult restored = engine.RestoreRegion(index, r, recorded.data(), &present);
@@ -270,8 +283,6 @@ protected:
             for (uint32_t p = 0; p < region.pieces; p++)
             {
                 if (p < present.size() && !present[p])
-                    continue;
-                if (previous && engine.VersionAt(index, r, p) == engine.VersionAt(index - 1, r, p))
                     continue;
                 const size_t offset = size_t(p) * ttd::kTTDPieceSize;
                 const size_t length = std::min<size_t>(ttd::kTTDPieceSize, region.bytes - offset);

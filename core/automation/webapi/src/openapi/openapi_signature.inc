@@ -1,0 +1,51 @@
+// Media signatures through SignatureControl (core/swsignature/src/signaturecontrol.h): every surface answers with the same fields
+
+paths["/api/v1/signature"]["get"]["summary"] = "Signatures of a file";
+paths["/api/v1/signature"]["get"]["description"] = "The signatures that recognise a title after a re-pack, a rename or a save: the exact SHA-256 (file:sha256:), the tape content over the data payloads (tape:sha256:, TAP = TZX), the TR-DOS file set (trdset:sha256:, TRD = SCL = FDI = UDI = TD0, with file_set for the fuzzy rule) or the snapshot memory (mem:sha256:). keys is what a game profile's match.signatures holds.";
+paths["/api/v1/signature"]["get"]["tags"].append("Signatures");
+paths["/api/v1/signature"]["get"]["parameters"][0]["name"] = "path";
+paths["/api/v1/signature"]["get"]["parameters"][0]["in"] = "query";
+paths["/api/v1/signature"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/signature"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/signature"]["get"]["parameters"][0]["description"] = "A host file";
+paths["/api/v1/signature"]["get"]["parameters"][1]["name"] = "details";
+paths["/api/v1/signature"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/signature"]["get"]["parameters"][1]["required"] = false;
+paths["/api/v1/signature"]["get"]["parameters"][1]["schema"]["type"] = "boolean";
+paths["/api/v1/signature"]["get"]["parameters"][1]["description"] = "The tape blocks / disk files with their hashes too";
+paths["/api/v1/signature"]["get"]["parameters"][2]["name"] = "external";
+paths["/api/v1/signature"]["get"]["parameters"][2]["in"] = "query";
+paths["/api/v1/signature"]["get"]["parameters"][2]["required"] = false;
+paths["/api/v1/signature"]["get"]["parameters"][2]["schema"]["type"] = "boolean";
+paths["/api/v1/signature"]["get"]["parameters"][2]["description"] = "SHA-1 and MD5 of the file too (catalogue lookups)";
+paths["/api/v1/signature"]["get"]["responses"]["200"]["description"] = "{ok, path, signature: {name, kind, format, size, sha256, content, keys, file_set, machine_hint?, memory_pages?, blocks?, files?, warnings?}}";
+paths["/api/v1/signature"]["get"]["responses"]["404"]["description"] = "No such file";
+paths["/api/v1/signature"]["get"]["responses"]["503"]["description"] = "Built without the signature library";
+
+paths["/api/v1/signature/compare"]["get"]["summary"] = "Compare two files by signature";
+paths["/api/v1/signature/compare"]["get"]["description"] = "A known title (path) against a candidate (with): level exact, content, fuzzy (TR-DOS file sets: Jaccard >= 0.8 and no code file of the title missing), memory (snapshots: >= 90 % equal RAM pages) or none, with the score and the reason.";
+paths["/api/v1/signature/compare"]["get"]["tags"].append("Signatures");
+paths["/api/v1/signature/compare"]["get"]["parameters"][0]["name"] = "path";
+paths["/api/v1/signature/compare"]["get"]["parameters"][0]["in"] = "query";
+paths["/api/v1/signature/compare"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/signature/compare"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/signature/compare"]["get"]["parameters"][1]["name"] = "with";
+paths["/api/v1/signature/compare"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/signature/compare"]["get"]["parameters"][1]["required"] = true;
+paths["/api/v1/signature/compare"]["get"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/signature/compare"]["get"]["responses"]["200"]["description"] = "{ok, path, with, match: {level, matches, score, reason}}";
+paths["/api/v1/signature/compare"]["get"]["responses"]["404"]["description"] = "A file cannot be read";
+
+paths["/api/v1/emulator/{id}/signature"]["get"]["summary"] = "Signatures of the loaded media";
+paths["/api/v1/emulator/{id}/signature"]["get"]["description"] = "The signatures of every medium in the machine's tape and floppy slots, from their source files (dirty: written since it was inserted).";
+paths["/api/v1/emulator/{id}/signature"]["get"]["tags"].append("Signatures");
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][1]["name"] = "details";
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][1]["required"] = false;
+paths["/api/v1/emulator/{id}/signature"]["get"]["parameters"][1]["schema"]["type"] = "boolean";
+paths["/api/v1/emulator/{id}/signature"]["get"]["responses"]["200"]["description"] = "{ok, media: [{slot, source, dirty, signature | error}]}";
+paths["/api/v1/emulator/{id}/signature"]["get"]["responses"]["404"]["description"] = "Emulator not found";

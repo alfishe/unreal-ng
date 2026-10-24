@@ -92,6 +92,16 @@ public:
     /// The generic sound haptics of one instance (haptics.md §4) for its ControllerManager::SetHapticFeed: they
     /// play on the devices with motors that drive the instance
     std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance);
+    /// The DSP defaults of haptics.md §4 (`lowband(mix)`, `onset(mix)`) in the generic feeds made from now on (Advanced,
+    /// off by default)
+    void SetHapticsDspDefaults(bool on)
+    {
+        _hapticsDsp = on;
+    }
+    bool HapticsDspDefaults() const
+    {
+        return _hapticsDsp;
+    }
     /// RumbleActuator bits of @p device (0: no motors)
     uint8_t RumbleActuators(const HostDeviceId& device) const;
     /// A game profile's haptics (haptics.md §7) for @p instance: its sources and rules instead of the generic filters
@@ -162,6 +172,7 @@ private:
     MarkLimiter _marks;  ///< under _marksMutex
     /// Last member: destroyed first, while the backends it writes to still exist
     std::unique_ptr<HapticMixer> _haptics;
+    std::atomic<bool> _hapticsDsp{false};
 };
 
 }  // namespace controllers

@@ -45,6 +45,7 @@
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/controllers/controllermanager.h"
 
 // Pull in the actual struct definitions for the capture call sites.
 #include "3rdparty/message-center/messagecenter.h"
@@ -628,6 +629,8 @@ void TimeTravelController::SetState(TTDSessionState next)
         ReleaseRecordingLock();
     SyncJournalSegment();   // a recording starts or ends a journal segment (D40)
     ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();   // into history or back to live: the haptics follow at once
 }
 
 bool TimeTravelController::JournalLive() const
@@ -747,9 +750,16 @@ void TimeTravelController::ReleaseRecordingLock()
 
     if (_context->pCore && _savedHostSpeedMultiplier != 1)
     {
-        _context->pCore->SetSpeedMultiplier(_savedHostSpeedMultiplier);
-        MLOGINFO("TimeTravelController — recording lock released: host speed back to %ux",
-                 static_cast<unsigned>(_savedHostSpeedMultiplier));
+        if (!HasHistory())
+        {
+            _context->pCore->SetSpeedMultiplier(_savedHostSpeedMultiplier);
+            MLOGINFO("TimeTravelController — recording lock released: host speed back to %ux",
+                     static_cast<unsigned>(_savedHostSpeedMultiplier));
+        }
+        else
+            MLOGINFO("TimeTravelController — recording lock released: host speed stays 1x while the history is kept "
+                     "(%ux before the recording)",
+                     static_cast<unsigned>(_savedHostSpeedMultiplier));
     }
     _savedHostSpeedMultiplier = 1;
 }
@@ -1438,6 +1448,17 @@ void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
     _restartPending = false;
 }
 
+std::string TimeTravelController::SpeedLock() const
+{
+    if (_backgroundSession)
+        return {};  // the black box stops before an acceleration and starts again after it (D29)
+    if (IsRecording() || _recordingPaused)
+        return "TTD records at 1x: the speed stays until the recording stops";
+    if (HasHistory())
+        return "TTD holds a history recorded at 1x: discard it to change the speed";
+    return {};
+}
+
 bool TimeTravelController::AccelerationActive() const
 {
     if (!_context)
@@ -1902,6 +1923,9 @@ void TimeTravelController::EnterReplayMode()
     // debug mode, holds it on while the machine replays (the coordinator's
     // mode broadcast, M4); the feature settings stay untouched
     ttd::NoteSessionChange(_context);
+    // The game's rumble stops now, not at the host's next gate poll (haptics.md §8)
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelController::EnterReplayMode — replay mode engaged (host audio output held)");
 }
@@ -1932,6 +1956,8 @@ void TimeTravelController::ExitReplayMode()
     SyncMediaReadJournal();
 
     ttd::NoteSessionChange(_context);   // debug mode back to the feature's
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelController::ExitReplayMode — replay mode disengaged (host audio output released)");
 }

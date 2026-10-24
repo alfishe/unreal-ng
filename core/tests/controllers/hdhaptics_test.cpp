@@ -75,7 +75,8 @@ TEST(HdHaptics_Test, Haptics_Fallback)
     feed.OnHapticFrame(frame);
     frame.watched[0] = 2;
     feed.OnHapticFrame(frame);
-    EXPECT_EQ(mixer.Written("xinput"), (RumbleLevels{0.0f, 1.0f, 0.0f, 0.0f})) << "handle.high without triggers";
+    EXPECT_EQ(mixer.Written("xinput"), (RumbleLevels{0.0f, 1.0f, 0.0f, 0.0f, 0, 160}))
+        << "handle.high without triggers, at life-lost's high-band frequency";
     EXPECT_EQ(mixer.Written("elite"), (RumbleLevels{0.0f, 0.0f, 0.0f, 1.0f})) << "the right trigger where it is";
 }
 
@@ -109,4 +110,66 @@ TEST(HdHaptics_Test, DualSenseOutputReport)
     // zlib.crc32(b"\xa2" + report[:74]) for these levels
     const uint32_t crc = bt[74] | (bt[75] << 8) | (bt[76] << 16) | (static_cast<uint32_t>(bt[77]) << 24);
     EXPECT_EQ(crc, 0xCA573445u);
+}
+
+TEST(HdHaptics_Test, FrequencyOfTheLoudestEffectPerBand)
+{
+    // The mixer: each band's frequency is the one of the effect loudest in it, 0 while the band is silent
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    HapticEffect deep({0.9f, 0.2f, 0.0f, 0.0f, 50, 120}, 60000);
+    HapticEffect bright({0.3f, 0.7f, 0.0f, 0.0f, 150, 300}, 60000);
+    mixer.Play("pad", deep);
+    EXPECT_EQ(mixer.Written("pad"), (RumbleLevels{0.9f, 0.2f, 0.0f, 0.0f, 50, 120}));
+    mixer.Play("pad", bright);
+    EXPECT_EQ(mixer.Written("pad"), (RumbleLevels{0.9f, 0.7f, 0.0f, 0.0f, 50, 300})) << "low from deep, high from bright";
+    mixer.StopAll();
+    HapticEffect trigger({0.0f, 0.0f, 0.0f, 1.0f, 50, 120}, 60000);
+    mixer.Play("pad", trigger);
+    EXPECT_EQ(mixer.Written("pad"), (RumbleLevels{0.0f, 0.0f, 0.0f, 1.0f, 0, 0})) << "silent bands carry no frequency";
+    mixer.StopAll();
+
+    // The library's defaults, and a rule's `hd` over them
+    HapticEffect explosion;
+    ASSERT_TRUE(BuiltinHapticEffect("explosion", explosion));
+    EXPECT_EQ(explosion.levels.lowHz, 50);
+    EXPECT_EQ(explosion.levels.highHz, 120);
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {"boom": {"probe": "exec", "address": "0x8000"}},
+                              "rules": [{"on": "boom", "play": "explosion", "hd": {"frequency_hz": 70, "high_hz": 200}},
+                                        {"on": "boom", "play": "tick", "target": "handle.low"}]})",
+                          section, error))
+        << error;
+    HapticProfile profile;
+    ASSERT_TRUE(ParseHapticProfile(section, profile, error)) << error;
+    EXPECT_EQ(profile.rules[0].lowHz, 70) << "frequency_hz: both bands";
+    EXPECT_EQ(profile.rules[0].highHz, 200) << "high_hz over it";
+    ProfileHaptics feed(profile, "hd", mixer, [] { return std::vector<HostDeviceId>{"pad"}; });
+    HapticFrame frame;
+    frame.probeCount = 1;
+    frame.probeHits[0] = 1;
+    feed.OnHapticFrame(frame);
+    mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));
+    const RumbleLevels written = mixer.Written("pad");
+    EXPECT_GT(written.low, 0.0f);
+    EXPECT_EQ(written.lowHz, 70) << "the explosion is the louder low; the rule's frequency";
+    EXPECT_EQ(written.highHz, 200);
+
+    // A tick moved to the low band takes its high-band frequency with it
+    HapticEffect tick;
+    ASSERT_TRUE(BuiltinHapticEffect("tick", tick));
+    const RumbleLevels moved = RetargetLevels(tick.levels, kHandleLow);
+    EXPECT_GT(moved.low, 0.0f);
+    EXPECT_EQ(moved.lowHz, 320);
+    EXPECT_EQ(moved.highHz, 0);
+
+    for (const char* bad : {R"({"frequency_hz": 0})", R"({"frequency_hz": 5000})", R"({"waveform": "sine"})", "7"})
+    {
+        JsonValue rule;
+        ASSERT_TRUE(ParseJson(std::string(R"({"sources": {"s": {"probe": "exec", "address": 1}},
+                                              "rules": [{"on": "s", "play": "tick", "hd": )") + bad + "}]}",
+                              rule, error))
+            << error;
+        EXPECT_FALSE(ParseHapticProfile(rule, profile, error)) << bad;
+    }
 }

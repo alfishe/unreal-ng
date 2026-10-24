@@ -27,6 +27,7 @@
 #include "mcp-router.h"
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
+#include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
@@ -842,6 +843,69 @@ std::string ExtractFilename(const std::string& path)
     return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+/// Tape autostart, as the media.open action does it: LOAD "" typed into the ROM editor (POST /basic/run leaves a
+/// 128K menu for 128 BASIC first; the ROM loader then takes the tape, which is already playing). Typing needs a running
+/// machine: a paused or a not yet started one runs for the typing and is paused again, so the agent's run_frames go
+/// on from where they were. `loaded` is the text of the load step
+void AutostartTape(IApiCaller& caller, const std::string& id, const std::string& loaded, ToolCallback done)
+{
+    caller.Call("GET", Endpoint(id), nullptr, [&caller, id, loaded, done](int status, Json::Value info) {
+        if (status < 200 || status >= 300)
+        {
+            done(ToolResult::Error(loaded + "; autostart: the machine's state is unknown (HTTP " +
+                                   std::to_string(status) + "): " + DescribeErrorBody(info)));
+            return;
+        }
+        const bool running = info.get("is_running", false).asBool();
+        const bool paused = info.get("is_paused", false).asBool();
+        const bool holdAfter = !running || paused;  // still before the typing: still after it
+        const std::string wake = !running ? "/start" : paused ? "/resume" : "";
+
+        auto finish = [&caller, id, loaded, holdAfter, done](int typedStatus, Json::Value typed) {
+            const bool ok = typedStatus >= 200 && typedStatus < 300;
+            auto report = [ok, typedStatus, loaded, done, typed = std::move(typed)](int, Json::Value) mutable {
+                if (ok)
+                {
+                    done(ToolResult::Ok(loaded + ", LOAD \"\" typed (" + typed.get("editor", "BASIC").asString() +
+                                            ")",
+                                        std::move(typed)));
+                    return;
+                }
+                done(ToolResult::Error(loaded + "; autostart: LOAD \"\" was not typed (HTTP " +
+                                       std::to_string(typedStatus) + "): " + DescribeErrorBody(typed)));
+            };
+            if (holdAfter)
+                caller.Call("POST", Endpoint(id, "/pause"), nullptr, std::move(report));
+            else
+                report(200, Json::Value());
+        };
+        auto type = [&caller, id, finish]() {
+            Json::Value command;
+            command["command"] = "LOAD \"\"";
+            caller.Call("POST", Endpoint(id, "/basic/run"), &command, finish);
+        };
+        if (wake.empty())
+        {
+            type();
+            return;
+        }
+        caller.Call("POST", Endpoint(id, wake), nullptr, [&caller, id, running, type, finish](int wakeStatus, Json::Value body) {
+            if (wakeStatus < 200 || wakeStatus >= 300)
+            {
+                finish(wakeStatus, std::move(body));
+                return;
+            }
+            if (running)
+            {
+                type();
+                return;
+            }
+            // A machine that ran frames before its start keeps the pause those direct runs left: it starts paused
+            caller.Call("POST", Endpoint(id, "/resume"), nullptr, [type](int, Json::Value) { type(); });
+        });
+    });
+}
+
 void RegisterLoadSoftware(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -859,8 +923,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["autostart"]["type"] = "boolean";
     schema["properties"]["autostart"]["default"] = false;
     schema["properties"]["autostart"]["description"] =
-        "Disk images only, drive A only: quick-reset into TR-DOS and run the disk, same as the Qt UI's "
-        "drag-and-drop autostart. Ignored for snapshots/tapes and for drives other than A.";
+        "Run the software after loading it. Disk images, drive A only: quick-reset into TR-DOS and run the disk, "
+        "same as the Qt UI's drag-and-drop autostart (ignored for other drives). Tapes: playback starts and "
+        "LOAD \"\" is typed (a 128K menu is left for 128 BASIC first), as the media.open action; a paused machine "
+        "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots.";
     schema["properties"]["commit"]["type"] = "string";
     schema["properties"]["commit"]["description"] =
         "Snapshots only: who writes the machine. Omitted = the plan decides (the machine's own policy, else the legacy "
@@ -995,7 +1061,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
                 if (isTape)
                 {
-                    auto loadDone = [&caller, id, path, filename, play, done, isLocalFile](int status, Json::Value response) {
+                    auto loadDone = [&caller, id, path, filename, play, autostart, done, isLocalFile](int status, Json::Value response) {
                         if (status < 200 || status >= 300)
                         {
                             done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
@@ -1003,13 +1069,29 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                             return;
                         }
                         std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
-                        if (!play)
+                        if (!play && !autostart)
                         {
                             done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
                             return;
                         }
-                        ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller,
-                                    "Loaded tape " + loadedName + " and started playback on " + id, done);
+                        const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
+                        if (!autostart)
+                        {
+                            ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
+                            return;
+                        }
+                        // Autostart plays the tape as well: LOAD "" waits for it
+                        caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
+                                    [&caller, id, played, done](int playStatus, Json::Value playBody) {
+                                        if (playStatus < 200 || playStatus >= 300)
+                                        {
+                                            done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
+                                                                   std::to_string(playStatus) + "): " +
+                                                                   DescribeErrorBody(playBody)));
+                                            return;
+                                        }
+                                        AutostartTape(caller, id, played, done);
+                                    });
                     };
 
                     if (isLocalFile)
@@ -4391,7 +4473,8 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
-        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
+        "status: report this device of the machine (kempston, sprinter, evo-ps2, amx - the AMX mouse card); default the "
+        "first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -4606,7 +4689,8 @@ void RegisterJoystickInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston joystick (reads at IN #1F on ATM3 / Scorpion / TS-Conf). 'press' holds buttons, 'release' lets them go, "
+        "Kempston joystick (reads at IN #1F on the machines whose board decodes it: Pentagon, Scorpion, Profi, ZX-Evo "
+        "BaseConf, TS-Conf, Sprinter, Next; not the 48K / 128K / +2 / +2A / +3 or the ATM Turbo 2+). 'press' holds buttons, 'release' lets them go, "
         "'set' makes exactly the given buttons (or state byte) held, 'tap' presses for N frames then releases. Input is "
         "applied immediately; call control_execution run_frames to let the program react.";
     schema["properties"]["target"]["type"] = "string";
@@ -6312,6 +6396,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);
     RegisterAsmSource(*registry);
+    RegisterSignatureInfo(*registry);
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);

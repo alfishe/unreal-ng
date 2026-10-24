@@ -24,6 +24,13 @@ race_top:testwaithelper.h
 # the CPU is stamped while it runs. The entry is shown by the status calls only
 race_top:CoordinatorPorts::Now
 
+# D. Feature flag caches: a component copies a feature's bool when it changes (on the thread that changed it), the
+# emulation thread reads its copy per instruction or per draw. The worst case is one draw or step with the old value.
+# Pointers are not here: Core::SelectMemoryInterface swaps the memory interface and stays reported
+race_top:Screen::UpdateFeatureCache
+race_top:Z80::UpdateFeatureCache
+race_top:FeatureManager::onFeatureChanged
+
 # Not a race: concurrent output to the synchronized standard streams is allowed ([iostream.objects]);
 # TSan sees libc++ resetting the field width inside the stream. Anchored on the global, not on a function
 race:^std::__1::cout$

@@ -1,10 +1,12 @@
 #include "profiles/profile.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 #include "haptics/hapticprofile.h"
 #include "haptics/surfacehaptics.h"
+#include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -450,6 +452,21 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
                 if (!Strings(&value, profile.fileSha256, "match.file_sha256", error))
                     return false;
             }
+            else if (field == "file_set")
+            {
+                if (!Strings(&value, profile.fileSet, "match.file_set", error))
+                    return false;
+                for (std::string& token : profile.fileSet)
+                {
+                    std::transform(token.begin(), token.end(), token.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (!unrealng::swsignature::IsFileSetToken(token))
+                    {
+                        error = "match.file_set: '" + token + "' is not a file-set token (n:, c: or d: and 16 hex)";
+                        return false;
+                    }
+                }
+            }
             else if (field == "title")
             {
                 if (!value.IsString())
@@ -461,7 +478,7 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
             }
             else if (field != "zxdb_id")
             {
-                error = "unknown field 'match." + field + "' (known: machines, signatures, file_sha256, title, zxdb_id)";
+                error = "unknown field 'match." + field + "' (known: machines, signatures, file_sha256, file_set, title, zxdb_id)";
                 return false;
             }
         }

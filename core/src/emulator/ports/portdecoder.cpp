@@ -373,7 +373,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(addr);
+        uint16_t breakpointID = brk.HandlePortOut(addr, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -417,7 +417,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(port);
+        uint16_t breakpointID = brk.HandlePortOut(port, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -480,7 +480,7 @@ void PortDecoder::UpdateFeatureCache()
     }
     if (enabled && !_portTraceFeatureCache.load(std::memory_order_relaxed))
     {
-        _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
+        _activitySummaryResetPending.store(true, std::memory_order_relaxed);
     }
     else if (!enabled && _portTrace && _portTraceFeatureCache.load(std::memory_order_relaxed))
     {
@@ -501,6 +501,9 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     uint32_t frame = static_cast<uint32_t>(_state->frame_counter);
 
     // Frame-scoped counters update even without an active capture session
+    if (_activitySummaryResetPending.load(std::memory_order_relaxed) &&
+        _activitySummaryResetPending.exchange(false, std::memory_order_relaxed))
+        _activitySummary.reset(frame);
     _activitySummary.onEvent(frame, isOut, disp);
 
     if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())

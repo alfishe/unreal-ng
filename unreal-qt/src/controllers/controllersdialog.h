@@ -65,6 +65,7 @@ private:
     QComboBox* _gameProfile = nullptr;  ///< ProfileContext::manual: by the loaded file, or one chosen here
     QCheckBox* _advanced = nullptr;
     QCheckBox* _soundHaptics = nullptr;
+    QCheckBox* _soundHapticsDsp = nullptr;  ///< the Haptics panel: lowband / onset of the mix in the sound haptics
     QCheckBox* _globalShortcuts = nullptr;
     QListWidget* _devices = nullptr;
     QLabel* _probeLabel = nullptr;

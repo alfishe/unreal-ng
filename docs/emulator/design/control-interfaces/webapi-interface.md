@@ -1443,7 +1443,7 @@ own (unchanged JSON); `ports` are what the machine's ports return; the machine's
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 | `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
-| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`, `amx`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`, `amx-pio`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`), the AMX mouse `pio` (`a` / `b`: `mode`, `vector`, `data`, `interrupt_enabled`, `interrupt_pending`, `under_service`; `pending` {`dx`,`dy`} mickeys not yet strobed, `buttons_port` = `IN #DF`, `strobes`). |
 | `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
 | `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
@@ -1679,10 +1679,21 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
-                                                         | aliases
+                                                         | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | unalias
+                                                         | light | haptics-probe | unalias
+GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
+GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
+GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
 ```
+
+`GET /api/v1/controllers/match?path=game.trd` (or `signatures=a,b`, `file_sha256=`, `file_set=` comma lists,
+`machine=`; none: the loaded program) answers the game profiles the signatures choose, `matches` [{`id`, `how`}]
+strongest first, `profile` and `next` (`game-profile` or `port-reads`), `haptics_reason`; `context` carries the loaded
+program's `signatures`, `file_set`, `game_matches` and `haptics_reason`. The signature routes
+([command-interface.md section 18](./command-interface.md#18-media-signatures); OpenAPI tag `Signatures`) answer
+`{ok, path, signature: {...}}`, `{ok, media: [...]}` and `{ok, path, with, match: {level, matches, score, reason}}`;
+`404` for a file that is missing, `503` for a build without the library.
 
 The machine routes are ControllerControl, the host routes HostInputControl
 ([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
@@ -1691,6 +1702,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/haptics-probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
+a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
+game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
+`unavailable` without a program loaded from a file.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or

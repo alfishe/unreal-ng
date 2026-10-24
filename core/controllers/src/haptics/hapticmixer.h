@@ -84,6 +84,9 @@ public:
     bool GateOpen() const;
     /// The master strength 0..1 (H-6)
     void SetStrength(float strength);
+    /// The instance a device follows started replaying (IHapticFeed::OnHapticHold): its game effects stop at once,
+    /// feedback stays; the gate of the other instances is not touched
+    void StopGameEffects(const HostDeviceId& device);
     /// The device went away: its effects are dropped without a write
     void Forget(const HostDeviceId& device);
     /// Stop every motor (exit)

@@ -12,7 +12,7 @@
 #include "emulator/sound/covox.h"
 
 // Binary export writes raw PortTraceEvent structs; pin the layout the Python
-// converter (utilities/porttrace/porttrace_convert.py, struct "<QIHHHBBBBH") depends on
+// converter (tools/porttrace/porttrace_convert.py, struct "<QIHHHBBBBH") depends on
 static_assert(sizeof(PortTraceEvent) == 24, "PortTraceEvent must stay 24 bytes (binary trace format)");
 static_assert(offsetof(PortTraceEvent, timestamp) == 0 && offsetof(PortTraceEvent, frameNumber) == 8 &&
                   offsetof(PortTraceEvent, rawPort) == 12 && offsetof(PortTraceEvent, decodedPort) == 14 &&
@@ -514,7 +514,7 @@ std::string PortDiagnosticRecorder::describeFilter() const
 /// Timestamps dominate the raw stream's entropy; their deltas are
 /// near-constant instruction spacings, so the transform + one zstd frame
 /// compresses real traces 50-100x (vs ~9x for zstd on the raw stream).
-/// The Python reader (utilities/porttrace/porttrace_convert.py) mirrors this.
+/// The Python reader (tools/porttrace/porttrace_convert.py) mirrors this.
 
 namespace
 {

@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "devicedatabase.h"
+#include "haptics/hapticprofile.h"
 #include "haptics/testeffects.h"
 #include "hostinputservice.h"
 #include "profiles/yaml.h"
@@ -53,6 +54,36 @@ JsonValue Strings(const std::vector<std::string>& values)
     std::vector<JsonValue> items;
     for (const std::string& value : values)
         items.push_back(JsonValue::String(value));
+    return JsonValue::Array(std::move(items));
+}
+
+/// "a,b, c" -> {a, b, c}; empty items dropped
+std::vector<std::string> SplitList(const std::string& text)
+{
+    std::vector<std::string> items;
+    std::string item;
+    for (size_t i = 0; i <= text.size(); i++)
+    {
+        if (i == text.size() || text[i] == ',')
+        {
+            const size_t first = item.find_first_not_of(" \t");
+            const size_t last = item.find_last_not_of(" \t");
+            if (first != std::string::npos)
+                items.push_back(item.substr(first, last - first + 1));
+            item.clear();
+        }
+        else
+            item.push_back(text[i]);
+    }
+    return items;
+}
+
+/// [{id, how}]
+JsonValue MatchesValue(const std::vector<std::pair<std::string, std::string>>& matches)
+{
+    std::vector<JsonValue> items;
+    for (const auto& [id, how] : matches)
+        items.push_back(JsonValue::Object({{"id", JsonValue::String(id)}, {"how", JsonValue::String(how)}}));
     return JsonValue::Array(std::move(items));
 }
 
@@ -226,7 +257,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
                                                    "scheme",  "haptics", "rumble",   "output",  "light",
-                                                   "aliases", "unalias"};
+                                                   "haptics-probe", "aliases", "unalias", "match"};
     return verbs;
 }
 
@@ -246,10 +277,12 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"scheme", {"id", "family", "device", "profile"}},
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
+        {"haptics-probe", {"kind", "address", "page", "port_mask", "play"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
         {"aliases", {}},
         {"unalias", {"id"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -330,6 +363,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Haptics(request);
     if (verb == "rumble")
         return Rumble(request);
+    if (verb == "haptics-probe")
+        return HapticsProbe(request);
     if (verb == "output")
         return Output(request);
     if (verb == "light")
@@ -338,6 +373,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Aliases();
     if (verb == "unalias")
         return Unalias(request);
+    if (verb == "match")
+        return Match(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -422,6 +459,85 @@ HostReply HostInputControl::Haptics(const HostRequest& request)
                                           {"effects", JsonValue::Array(std::move(effects))}}));
     }
     reply.body.Set("devices", JsonValue::Array(std::move(list)));
+    return reply;
+}
+
+HostReply HostInputControl::HapticsProbe(const HostRequest& request)
+{
+    static const std::pair<const char*, HapticProbeKind> kKinds[] = {{"exec", HapticProbeKind::Exec},
+                                                                     {"read", HapticProbeKind::Read},
+                                                                     {"write", HapticProbeKind::Write},
+                                                                     {"port-in", HapticProbeKind::PortIn},
+                                                                     {"port-out", HapticProbeKind::PortOut}};
+    const std::string kind = Option(request, "kind");
+    HapticProbe probe;
+    bool known = false;
+    for (const auto& [name, value] : kKinds)
+        if (kind == name)
+        {
+            probe.kind = value;
+            known = true;
+        }
+    if (!known)
+        return Fail("bad-request", "haptics-probe needs kind= exec, read, write, port-in or port-out");
+    auto number = [&request](const char* field, unsigned long limit, unsigned long& out) {
+        const std::string text = Option(request, field);
+        if (text.empty())
+            return true;
+        char* end = nullptr;
+        out = std::strtoul(text.c_str(), &end, text.rfind("0x", 0) == 0 || text.rfind("0X", 0) == 0 ? 16 : 10);
+        return end != nullptr && *end == '\0' && out <= limit;
+    };
+    unsigned long address = 0x10000, page = 0xFFFF, mask = 0xFFFF;
+    if (!number("address", 0xFFFF, address) || address > 0xFFFF)
+        return Fail("bad-request", "haptics-probe needs address= (#0000-#FFFF; a port for port-in / port-out)");
+    if (!number("page", 255, page) || !number("port_mask", 0xFFFF, mask))
+        return Fail("bad-request", "page= is a RAM page 0-255, port_mask= a 16-bit mask");
+    probe.address = probe.end = static_cast<uint16_t>(address);
+    probe.page = static_cast<uint16_t>(page);
+    probe.portMask = static_cast<uint16_t>(mask);
+
+    const ProfileContext context = _owner.Context();
+    if (context.fileSha256.empty() || context.fileSha256.front().empty())
+        return Fail("unavailable", "no program loaded from a file: a probe belongs to a game profile");
+    const std::string& sha = context.fileSha256.front();
+    const std::string id = "user/game-" + sha.substr(0, 16);
+    ProfileStore& store = _owner.Profiles();
+    Profile profile;
+    if (const Profile* existing = store.Find(id))
+        profile = *existing;
+    else
+    {
+        profile.kind = ProfileKind::Play;
+        profile.id = id;
+        profile.label = id;
+        profile.fileSha256 = {sha};
+        profile.options = JsonValue::Object();
+        // From the haptics that play now: the probe adds to the game's profile rather than replacing it
+        const std::string& playing = _owner.Resolved().hapticsProfile;
+        if (const Profile* game = playing.empty() ? nullptr : store.Find(playing))
+            profile.haptics = game->haptics;
+    }
+    profile.scope = ProfileScope::User;
+    std::string source, error;
+    if (!AddHapticProbeSource(profile.haptics, probe, Option(request, "play", "hit"), source, error))
+        return Fail("bad-request", error);
+    Profile checked;
+    if (!ParseProfile(ProfileStore::Dump(profile), checked, error))
+        return Fail("bad-request", error);
+    checked.scope = ProfileScope::User;
+    if (!ProfileStore::Save(checked, _owner.UserProfileDir(), error))
+        return Fail("bad-request", error);
+    checked.path = ProfileStore::SavePath(checked, _owner.UserProfileDir());
+    const std::string path = checked.path;
+    if (!store.Add(std::move(checked), error))
+        return Fail("bad-request", error);
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = "haptic probe " + source + " (" + kind + ") added to " + id;
+    reply.body.Set("id", JsonValue::String(id));
+    reply.body.Set("source", JsonValue::String(source));
+    reply.body.Set("path", JsonValue::String(path));
     return reply;
 }
 
@@ -634,11 +750,58 @@ HostReply HostInputControl::Context()
     HostReply reply;
     reply.body.Set("machine", JsonValue::String(context.machine));
     reply.body.Set("file_sha256", Strings(context.fileSha256));
+    reply.body.Set("signatures", Strings(context.signatures));
+    reply.body.Set("file_set", Strings(context.fileSet));
+    reply.body.Set("game_matches", MatchesValue(resolved.gameMatches));
+    reply.body.Set("haptics_reason", JsonValue::String(resolved.hapticsReason));
     reply.body.Set("manual", JsonValue::String(_owner.ManualProfile()));
     reply.body.Set("applied", Strings(resolved.applied));
     reply.body.Set("warnings", Strings(resolved.warnings));
     reply.body.Set("debug_layer", JsonValue::Bool(context.debugLayer));
     reply.body.Set("user_dir", JsonValue::String(_owner.UserProfileDir()));
+    return reply;
+}
+
+HostReply HostInputControl::Match(const HostRequest& request)
+{
+    // The context to match: the loaded program's, or the signatures given; the devices stay the connected ones
+    ProfileContext context = _owner.Context();
+    context.manual.clear();
+    const bool given = request.options.count("path") != 0 || request.options.count("signatures") != 0 ||
+                       request.options.count("file_sha256") != 0 || request.options.count("file_set") != 0;
+    if (given)
+    {
+        context.signatures = SplitList(Option(request, "signatures"));
+        context.fileSha256 = SplitList(Option(request, "file_sha256"));
+        context.fileSet = SplitList(Option(request, "file_set"));
+    }
+    if (request.options.count("machine") != 0)
+        context.machine = Option(request, "machine");
+    const std::string path = Option(request, "path");
+    if (!path.empty())
+    {
+        std::string error;
+        if (!_owner.SignaturesOf(path, context, error))
+            return Fail(error.rfind("no signature library", 0) == 0 ? "unavailable" : "bad-request", error);
+    }
+    ProfileStore& store = _owner.Profiles();
+    std::vector<std::string> errors;
+    store.LoadGamesFor(context, errors);
+    const ResolvedProfiles resolved = store.Resolve(context);
+    HostReply reply;
+    reply.body.Set("machine", JsonValue::String(context.machine));
+    reply.body.Set("signatures", Strings(context.signatures));
+    reply.body.Set("file_sha256", Strings(context.fileSha256));
+    reply.body.Set("file_set", Strings(context.fileSet));
+    reply.body.Set("matches", MatchesValue(resolved.gameMatches));
+    const std::string chosen = resolved.gameMatches.empty() ? std::string() : resolved.gameMatches.front().first;
+    reply.body.Set("profile", JsonValue::String(chosen));
+    // D7: a signature first, then the port-read heuristic, then a manual choice
+    reply.body.Set("next", JsonValue::String(chosen.empty() ? "port-reads" : "game-profile"));
+    reply.body.Set("haptics_reason", JsonValue::String(resolved.hapticsReason));
+    reply.body.Set("errors", Strings(errors));
+    reply.message = chosen.empty() ? "no game profile matches: the port-read heuristic decides"
+                                   : chosen + " (" + resolved.gameMatches.front().second + ")";
     return reply;
 }
 

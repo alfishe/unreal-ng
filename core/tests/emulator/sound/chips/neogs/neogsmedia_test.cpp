@@ -21,6 +21,7 @@
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
@@ -232,15 +233,18 @@ TEST_F(NeoGSMedia_Test, FromAnotherThreadCarriedOutByTheLoop)
 /// The race this path exists for: the card boots from its SD card (the
 /// loader reads the FAT and 32 KB of NEOGS.ROM) while another thread ejects
 /// and inserts the card as fast as it can. Every change lands at a frame
-/// boundary (the media manager): no crash, no torn state (run under ASan in CI)
+/// boundary (the media manager): no crash, no torn state (run under ASan in CI). One change a frame, unpaced (turbo):
+/// 40 frames, 200 in the long tier
 TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
 {
     fitNeoGS();
+    _emulator->EnableTurboMode();
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }));
+    const int requests = TestTier::Pick(40, 200);
     int accepted = 0;
     int queued = 0;
-    for (int i = 0; i < 200; i++)
+    for (int i = 0; i < requests; i++)
     {
         const NeoGSMediaResult r = (i & 1) ? NeoGSRequestSdInsert(_ctx, (i & 2) ? _image->path() : _other->path())
                                            : NeoGSRequestSdEject(_ctx);
@@ -248,14 +252,15 @@ TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
         queued += r == NeoGSMediaResult::Queued ? 1 : 0;
         // Restart the loader so it reads the card again (also on the machine thread)
         _ctx->pTimeTravelController->SubmitMachineTask([this] { card()->resetCard(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        const uint64_t frame = _ctx->emulatorState.frame_counter;
+        ASSERT_TRUE(TestWait::For([&] { return _ctx->emulatorState.frame_counter > frame; })) << "request " << i;
     }
     ASSERT_TRUE(TestWait::For([this] { return !_ctx->HasStepWork(EmulatorContext::kStepWorkTtdInput); }));
     ASSERT_TRUE(_ctx->pMediaManager->WaitApplied(SoundChip_NeoGS::SD_SLOT_ID, 2000));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
-    EXPECT_EQ(accepted, 200);
-    EXPECT_EQ(queued, 200) << "the loop was running: every request goes through the queue";
+    EXPECT_EQ(accepted, requests);
+    EXPECT_EQ(queued, requests) << "the loop was running: every request goes through the queue";
     EXPECT_TRUE(card()->sdCardPresent()) << "the last request was an insert";
     _emulator->Stop();
 }

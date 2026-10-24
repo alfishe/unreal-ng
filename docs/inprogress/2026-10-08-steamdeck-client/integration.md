@@ -46,11 +46,13 @@ unreal-deck/
 
 core/frontend/                      NEW: front-end-neutral libraries (no SDL, no Qt)
 ├── input/                          ControlEvent, InputRouter, profile model + JSON, ZxInputSink
-├── swsignature/                    media signatures (tape payload, TR-DOS file set, fuzzy, memory)
 └── hud/                            HudModel (from the HUD-layer design), when that design lands
 
 data/deck/profiles/                 community control profiles (JSON, reviewed by PR)
 core/tests/frontend/                unit tests for core/frontend/*
+
+core/swsignature/                   media signatures (tape payload, TR-DOS file set, fuzzy, memory): exists, shared
+                                    with the controller manager (C6); tests in core/tests/swsignature
 ```
 
 ## 2. Core APIs used
@@ -82,7 +84,7 @@ All of these exist today. The Deck front-end needs nothing from `unreal-qt`.
 | Library | Target | Content | Also used by |
 |---|---|---|---|
 | input | `unrealng::frontend-input` | `ControlEvent`, layers, bindings, modifiers (dead-zone, ways, turbo, chords, ballistics), profile JSON (de)serialization and merge, `ZxInputSink` → core | `unreal-qt`, for host gamepad support (it has none today) |
-| swsignature | `unrealng::swsignature` | tape payload, TR-DOS file set, fuzzy set, memory signatures; uses the core's loaders to parse | library scanners, metadata manager, zx-meta-db, `unreal-qt` "identify" |
+| swsignature (`core/swsignature`, exists) | `unrealng::swsignature` | tape payload, TR-DOS file set, fuzzy set, memory signatures; uses the core's loaders to parse; `SignatureControl` serves the planes (CLI `signature`, `GET /api/v1/signature`, MCP `signature_info`, Python `signature`) | library scanners, metadata manager, zx-meta-db, the controller manager's game profiles (`unreal-qt`) |
 | hud | `unrealng::hud` | `HudModel` + `HudSnapshot` ([HUD layer design](../2026-09-07-hud-layer/design.md)) | `unreal-qt`, TUI |
 
 These libraries are tested in `core-tests` (`core/tests/frontend/`) with fixtures from `testdata/`.

@@ -77,12 +77,47 @@
    "state": null,
    "title": "BASIC"
   },
+  "bay": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bay"
+  },
+  "bcalls": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bcalls"
+  },
+  "bcover": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bcover"
+  },
   "bframe": {
    "glyph": "ttd.step_back_frame",
    "glyph_on": null,
    "hold": false,
    "state": null,
    "title": "Back one frame"
+  },
+  "bgs": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bgs"
+  },
+  "bhot": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bhot"
   },
   "blank": {
    "glyph": "media.create",
@@ -140,6 +175,13 @@
    "state": null,
    "title": "Back one instruction"
   },
+  "bopcode": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bopcode"
+  },
   "bp7ffd": {
    "glyph": "dbg.bp_add",
    "glyph_on": null,
@@ -154,7 +196,14 @@
    "state": null,
    "title": "Toggle breakpoints"
   },
-  "bpclear": {
+  "bpchist": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bpchist"
+  },
+  "bpclr": {
    "glyph": "dbg.breakpoints_clear",
    "glyph_on": null,
    "hold": false,
@@ -175,12 +224,12 @@
    "state": null,
    "title": "Add a breakpoint"
   },
-  "bphits": {
-   "glyph": "dbg.breakpoint_hits_reset",
+  "bports": {
+   "glyph": null,
    "glyph_on": null,
-   "hold": false,
+   "hold": null,
    "state": null,
-   "title": "Reset hit counts"
+   "title": "bports"
   },
   "bppc": {
    "glyph": "dbg.breakpoint_toggle_pc",
@@ -203,12 +252,47 @@
    "state": null,
    "title": "Key"
   },
+  "bttdc": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdc"
+  },
+  "bttdh": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdh"
+  },
+  "bttdj": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdj"
+  },
+  "bttdm": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdm"
+  },
   "budget": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
    "title": "budget"
+  },
+  "buffers": {
+   "glyph": "prof.toggle.on",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Trace buffers"
   },
   "calls": {
    "glyph": null,
@@ -335,13 +419,6 @@
    "hold": false,
    "state": null,
    "title": "Joystick type"
-  },
-  "dbgmode": {
-   "glyph": "dbg.mode",
-   "glyph_on": "dbg.mode.on",
-   "hold": false,
-   "state": "debug.mode.enabled",
-   "title": "Debug mode"
   },
   "dbgopen": {
    "glyph": "debug.menu",
@@ -1184,7 +1261,7 @@
    "title": "model"
   },
   "monitor": {
-   "glyph": "nav.folder",
+   "glyph": "analyzer.toggle.on",
    "glyph_on": null,
    "hold": null,
    "state": null,
@@ -1485,7 +1562,7 @@
    "title": "Full screen"
   },
   "picture": {
-   "glyph": "nav.folder",
+   "glyph": "video.menu",
    "glyph_on": null,
    "hold": null,
    "state": null,
@@ -1539,20 +1616,6 @@
    "hold": false,
    "state": "toggle.profiler.opcode",
    "title": "Profiler / trace on / off"
-  },
-  "profall": {
-   "glyph": "prof.toggle",
-   "glyph_on": "prof.toggle.on",
-   "hold": false,
-   "state": "toggle.profiler.all",
-   "title": "Profiler / trace on / off"
-  },
-  "profclr": {
-   "glyph": "prof.clear",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Profiler / trace clear"
   },
   "pstep": {
    "glyph": "run.pace_step",
@@ -2638,6 +2701,7 @@
    "glyph": "audio.sound",
    "in": "sound",
    "kind": "menu",
+   "label": "AY CHANS",
    "title": "AY channels",
    "uc": [
     "C8.3"
@@ -2732,9 +2796,58 @@
    "glyph": "basic.menu",
    "in": "home",
    "kind": "menu",
+   "label": "BASIC",
    "title": "BASIC",
    "uc": [
     "U4"
+   ]
+  },
+  "bay": {
+   "at": [
+    1,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "AY LOG",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.aylog"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bcalls": {
+   "at": [
+    0,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CALLS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.calltrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bcover": {
+   "at": [
+    0,
+    5
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "COVERAGE",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{percent:.0f}%",
+    "readout": "debug.buffers.coverage"
+   },
+   "uc": [
+    "C10.8"
    ]
   },
   "bframe": {
@@ -2745,8 +2858,41 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "-FRAME",
    "uc": [
     "D3.3"
+   ]
+  },
+  "bgs": {
+   "at": [
+    1,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "GS PORTS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.gsporttrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bhot": {
+   "at": [
+    0,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CALLS HOT",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.calltrace_hot"
+   },
+   "uc": [
+    "C10.8"
    ]
   },
   "blank": {
@@ -2757,7 +2903,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "A",
+   "label": "NEW A",
    "uc": [
     "C5.3"
    ],
@@ -2774,6 +2920,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "BLEND",
    "uc": [
     "C9.5"
    ]
@@ -2786,6 +2933,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "-LINE",
    "uc": [
     "D3.3"
    ]
@@ -2798,6 +2946,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "MARK",
    "uc": [
     "D3.7"
    ]
@@ -2810,6 +2959,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "MARKS",
    "uc": [
     "D3.7"
    ]
@@ -2822,6 +2972,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "MARK >",
    "uc": [
     "D3.7"
    ]
@@ -2834,6 +2985,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "MARK <",
    "uc": [
     "D3.7"
    ]
@@ -2846,8 +2998,25 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "-OP",
    "uc": [
     "D3.3"
+   ]
+  },
+  "bopcode": {
+   "at": [
+    0,
+    1
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "OPCODES",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.opcode"
+   },
+   "uc": [
+    "C10.8"
    ]
   },
   "bp7ffd": {
@@ -2875,18 +3044,36 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "BPS ON",
    "uc": [
     "D4.3"
    ]
   },
-  "bpclear": {
+  "bpchist": {
+   "at": [
+    0,
+    4
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "PC HIST",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.pchist"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bpclr": {
    "action": "dbg.breakpoints_clear",
    "at": [
-    2,
-    0
+    3,
+    5
    ],
-   "in": "monitor",
+   "in": "home",
    "kind": "key",
+   "label": "CLEAR BP",
    "uc": [
     "D4.3"
    ]
@@ -2899,6 +3086,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "BP CUR",
    "uc": [
     "D4.1"
    ]
@@ -2920,16 +3108,20 @@
     "preset": "fe"
    }
   },
-  "bphits": {
-   "action": "dbg.breakpoint_hits_reset",
+  "bports": {
    "at": [
-    2,
+    1,
     1
    ],
-   "in": "monitor",
+   "in": "buffers",
    "kind": "key",
+   "label": "PORTS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.porttrace"
+   },
    "uc": [
-    "D4.3"
+    "C10.8"
    ]
   },
   "bppc": {
@@ -2940,6 +3132,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "BP PC",
    "uc": [
     "D4.1"
    ]
@@ -2978,6 +3171,70 @@
     "key": "caps+space"
    }
   },
+  "bttdc": {
+   "at": [
+    2,
+    4
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CHECKPTS",
+   "show": {
+    "format": "{}",
+    "readout": "debug.buffers.ttd.checkpoints"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdh": {
+   "at": [
+    2,
+    1
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "TTD HIST",
+   "show": {
+    "format": "{:b}",
+    "readout": "debug.buffers.ttd.history_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdj": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "JOURNAL",
+   "show": {
+    "format": "{write_journal_records:k}\n{write_journal_bytes:b}",
+    "readout": "debug.buffers.ttd"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdm": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "TTD MEM",
+   "show": {
+    "format": "{:b}",
+    "readout": "debug.buffers.ttd.memory_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
   "budget": {
    "at": [
     1,
@@ -2994,6 +3251,20 @@
    },
    "uc": [
     "C10.3"
+   ]
+  },
+  "buffers": {
+   "at": [
+    3,
+    0
+   ],
+   "glyph": "prof.toggle.on",
+   "in": "monitor",
+   "kind": "menu",
+   "label": "BUFFERS",
+   "title": "Trace buffers",
+   "uc": [
+    "C10.8"
    ]
   },
   "calls": {
@@ -3109,6 +3380,7 @@
    ],
    "in": "machine",
    "kind": "key",
+   "label": "COLD RST",
    "uc": [
     "C1.2"
    ]
@@ -3121,7 +3393,7 @@
    ],
    "in": "debug",
    "kind": "key",
-   "label": "COVER",
+   "label": "COVERAGE",
    "uc": [
     "D10.1"
    ],
@@ -3183,6 +3455,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "CRT",
    "uc": [
     "C9.4"
    ]
@@ -3215,6 +3488,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "CRT PREV",
    "uc": [
     "C9.4"
    ],
@@ -3230,6 +3504,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "CRT RST",
    "uc": [
     "C9.4"
    ]
@@ -3262,18 +3537,6 @@
     "kind": "cursor"
    }
   },
-  "dbgmode": {
-   "action": "dbg.mode_toggle",
-   "at": [
-    3,
-    5
-   ],
-   "in": "home",
-   "kind": "key",
-   "uc": [
-    "D4.4"
-   ]
-  },
   "dbgopen": {
    "action": "dbg.open",
    "at": [
@@ -3282,6 +3545,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "DEBUGGER",
    "uc": [
     "D6.1"
    ]
@@ -3310,6 +3574,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "CLEAR BP",
    "uc": [
     "D4.3"
    ]
@@ -3322,6 +3587,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "HITS 0",
    "uc": [
     "D4.3"
    ]
@@ -3334,6 +3600,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "BP PC",
    "uc": [
     "D4.1"
    ]
@@ -3346,6 +3613,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "TO CURSOR",
    "uc": [
     "D2.6"
    ]
@@ -3358,6 +3626,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "DEBUG MODE",
    "uc": [
     "D4.4"
    ]
@@ -3370,6 +3639,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "FRAME",
    "uc": [
     "D2.3"
    ]
@@ -3382,6 +3652,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "STEP IN",
    "uc": [
     "D2.1"
    ]
@@ -3394,6 +3665,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "STEP OUT",
    "uc": [
     "D2.1"
    ]
@@ -3406,6 +3678,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "STEP OVER",
    "uc": [
     "D2.1"
    ]
@@ -3453,6 +3726,7 @@
    "glyph": "dbg.mode",
    "in": "home",
    "kind": "menu",
+   "label": "DEBUG",
    "title": "Debugger",
    "uc": [
     "D2",
@@ -3470,7 +3744,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "A",
+   "label": "DISCARD A",
    "uc": [
     "C5.5"
    ],
@@ -3486,7 +3760,7 @@
    ],
    "in": "state",
    "kind": "key",
-   "label": "A",
+   "label": "SAVE A",
    "uc": [
     "C6.3"
    ],
@@ -3502,7 +3776,7 @@
    ],
    "in": "state",
    "kind": "key",
-   "label": "B",
+   "label": "SAVE B",
    "uc": [
     "C6.3"
    ],
@@ -3518,7 +3792,7 @@
    ],
    "in": "state",
    "kind": "key",
-   "label": "C",
+   "label": "SAVE C",
    "uc": [
     "C6.3"
    ],
@@ -3534,7 +3808,7 @@
    ],
    "in": "state",
    "kind": "key",
-   "label": "D",
+   "label": "SAVE D",
    "uc": [
     "C6.3"
    ],
@@ -3550,6 +3824,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "TEMPORAL",
    "uc": [
     "C9.5"
    ]
@@ -3722,7 +3997,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "DISK",
+   "label": "FAST DISK",
    "uc": [
     "C2.4"
    ],
@@ -3738,6 +4013,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "+FRAME",
    "uc": [
     "D3.3"
    ]
@@ -3750,6 +4026,7 @@
    ],
    "in": "state",
    "kind": "key",
+   "label": "SAVE SZX",
    "uc": [
     "C6.2"
    ],
@@ -3799,6 +4076,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "+LINE",
    "uc": [
     "D3.3"
    ]
@@ -3811,6 +4089,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "FOLLOW",
    "uc": [
     "D6.4"
    ]
@@ -3823,6 +4102,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "+OP",
    "uc": [
     "D3.3"
    ]
@@ -3867,6 +4147,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "FRAME",
    "uc": [
     "D2.3"
    ]
@@ -3879,7 +4160,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "TAPE",
+   "label": "FAST TAPE",
    "uc": [
     "C2.4"
    ],
@@ -3941,6 +4222,7 @@
    "glyph": "input.joystick",
    "in": "home",
    "kind": "menu",
+   "label": "GAME",
    "title": "Game",
    "uc": [
     "U1"
@@ -3987,6 +4269,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "GPU",
    "uc": [
     "C9.2"
    ]
@@ -3999,6 +4282,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "HOLD",
    "uc": [
     "C2.2"
    ]
@@ -4007,6 +4291,21 @@
    "context": "play",
    "dials": {
     "0": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.jog_frames",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "1": {
      "label": "TIME",
      "press": {
       "action": "run.pause_toggle"
@@ -4026,22 +4325,22 @@
       "D3.2"
      ]
     },
-    "1": {
-     "label": "VOLUME",
+    "2": {
+     "label": "OPS",
      "press": {
-      "action": "audio.mute_toggle"
+      "action": "ttd.resume_live"
      },
      "turn": {
-      "action": "audio.volume_by",
+      "action": "ttd.jog_instructions",
       "value": {
        "d": "$ticks"
       }
      },
      "uc": [
-      "C8.2"
+      "D3.3"
      ]
     },
-    "2": {
+    "3": {
      "label": "PACE",
      "press": {
       "action": "run.pace_toggle"
@@ -4056,7 +4355,7 @@
       "D1.1"
      ]
     },
-    "3": {
+    "4": {
      "label": "STEP",
      "press": {
       "action": "run.step_in"
@@ -4072,34 +4371,19 @@
       "D2.2"
      ]
     },
-    "4": {
-     "label": "FRAMES",
-     "press": {
-      "action": "ttd.bookmark_add"
-     },
-     "turn": {
-      "action": "ttd.jog_frames",
-      "value": {
-       "d": "$ticks"
-      }
-     },
-     "uc": [
-      "D3.3"
-     ]
-    },
     "5": {
-     "label": "OPS",
+     "label": "VOLUME",
      "press": {
-      "action": "ttd.resume_live"
+      "action": "audio.mute_toggle"
      },
      "turn": {
-      "action": "ttd.jog_instructions",
+      "action": "audio.volume_by",
       "value": {
        "d": "$ticks"
       }
      },
      "uc": [
-      "D3.3"
+      "C8.2"
      ]
     }
    },
@@ -4119,6 +4403,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "HUD",
    "uc": [
     "C9.6"
    ]
@@ -4131,6 +4416,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "HUD LOOK",
    "uc": [
     "C9.6"
    ],
@@ -4161,6 +4447,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "TO INT",
    "uc": [
     "D2.3"
    ]
@@ -4482,6 +4769,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "LABELS",
    "uc": [
     "D6.4"
    ]
@@ -4542,6 +4830,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "WRITE",
    "uc": [
     "D5.1"
    ]
@@ -4588,6 +4877,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "LINE",
    "uc": [
     "D2.7"
    ]
@@ -4600,6 +4890,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "LIVE",
    "uc": [
     "U2.3",
     "D3.6"
@@ -4807,6 +5098,7 @@
    "glyph": "mach.start",
    "in": "home",
    "kind": "menu",
+   "label": "MODEL",
    "title": "Machine",
    "uc": [
     "C3"
@@ -4820,6 +5112,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "MARK",
    "uc": [
     "D3.7"
    ]
@@ -4977,6 +5270,7 @@
    "glyph": "media.open",
    "in": "home",
    "kind": "menu",
+   "label": "MEDIA",
    "title": "Media",
    "uc": [
     "C4",
@@ -5007,6 +5301,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "MEM PC",
    "uc": [
     "D6.3"
    ]
@@ -5257,8 +5552,10 @@
     1,
     8
    ],
+   "glyph": "analyzer.toggle.on",
    "in": "home",
    "kind": "menu",
+   "label": "MONITOR",
    "strip": {
     "content": "title",
     "status": "ttd",
@@ -5667,6 +5964,7 @@
    ],
    "in": "basic",
    "kind": "key",
+   "label": "NEW",
    "uc": [
     "U4.2"
    ]
@@ -5679,6 +5977,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "NMI",
    "uc": [
     "C1.3"
    ]
@@ -5722,6 +6021,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "SHOW DEBUG",
    "uc": [
     "D6.1"
    ]
@@ -5734,6 +6034,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "KEYBOARD",
    "uc": [
     "C9.7"
    ]
@@ -5746,6 +6047,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "KB LOOK",
    "uc": [
     "C9.7"
    ],
@@ -5761,6 +6063,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "BORDER",
    "uc": [
     "C9.3"
    ]
@@ -5945,8 +6248,10 @@
      ]
     }
    },
+   "glyph": "video.menu",
    "in": "home",
    "kind": "menu",
+   "label": "VIDEO",
    "title": "Picture",
    "uc": [
     "C9"
@@ -5960,6 +6265,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "TO PIXEL",
    "uc": [
     "D2.4"
    ]
@@ -5988,6 +6294,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "PANE >",
    "uc": [
     "D6.1"
    ]
@@ -6016,6 +6323,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "PANE <",
    "uc": [
     "D6.1"
    ]
@@ -6045,44 +6353,12 @@
    ],
    "in": "debug",
    "kind": "key",
-   "label": "OPS",
+   "label": "PROF OPS",
    "uc": [
     "D10.1"
    ],
    "value": {
     "name": "opcode"
-   }
-  },
-  "profall": {
-   "action": "prof.toggle",
-   "at": [
-    3,
-    0
-   ],
-   "in": "monitor",
-   "kind": "key",
-   "label": "ALL",
-   "uc": [
-    "D10.1"
-   ],
-   "value": {
-    "name": "all"
-   }
-  },
-  "profclr": {
-   "action": "prof.clear",
-   "at": [
-    3,
-    1
-   ],
-   "in": "monitor",
-   "kind": "key",
-   "label": "ALL",
-   "uc": [
-    "D10.1"
-   ],
-   "value": {
-    "name": "all"
    }
   },
   "pstep": {
@@ -6110,6 +6386,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "STOP",
    "uc": [
     "D1.2"
    ]
@@ -6252,6 +6529,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "REV RUN",
    "uc": [
     "D3.5"
    ]
@@ -6281,7 +6559,7 @@
    ],
    "in": "home",
    "kind": "key",
-   "label": "LAST",
+   "label": "LAST FILE",
    "uc": [
     "C4.3"
    ],
@@ -6297,6 +6575,7 @@
    "glyph": "cap.record",
    "in": "home",
    "kind": "menu",
+   "label": "REC",
    "title": "Record",
    "uc": [
     "C7"
@@ -6338,6 +6617,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "SAVE TTD",
    "uc": [
     "C7.1"
    ],
@@ -6369,6 +6649,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "LOAD TTD",
    "uc": [
     "C7.1"
    ],
@@ -6384,6 +6665,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "STOP",
    "uc": [
     "C7.1"
    ]
@@ -6396,6 +6678,7 @@
    ],
    "in": "game",
    "kind": "key",
+   "label": "RELEASE",
    "uc": [
     "U1.4"
    ]
@@ -6438,6 +6721,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "REV STEP",
    "uc": [
     "D3.5"
    ]
@@ -6495,6 +6779,7 @@
    ],
    "in": "media",
    "kind": "key",
+   "label": "STOP RZX",
    "uc": [
     "C4.4"
    ]
@@ -6948,6 +7233,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "SCALE",
    "uc": [
     "C9.1"
    ],
@@ -6963,7 +7249,7 @@
    ],
    "in": "state",
    "kind": "key",
-   "label": "A SCL",
+   "label": "A > SCL",
    "uc": [
     "C6.4"
    ],
@@ -7260,6 +7546,7 @@
    "glyph": "audio.sound",
    "in": "home",
    "kind": "menu",
+   "label": "SOUND",
    "title": "Sound",
    "uc": [
     "C8"
@@ -7330,6 +7617,7 @@
    "glyph": "snapshot.save",
    "in": "home",
    "kind": "menu",
+   "label": "STATE",
    "title": "Save state",
    "uc": [
     "C6"
@@ -7343,6 +7631,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "STATUS",
    "uc": [
     "C9.8"
    ]
@@ -7355,6 +7644,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "STEP IN",
    "uc": [
     "D2.1"
    ]
@@ -7367,6 +7657,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "STEP OUT",
    "uc": [
     "D2.1"
    ]
@@ -7379,6 +7670,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "STEP OVER",
    "uc": [
     "D2.1"
    ]
@@ -7425,6 +7717,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "LIVE SYM",
    "uc": [
     "D8.2"
    ]
@@ -7437,6 +7730,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "LOAD SYM",
    "uc": [
     "D8.2"
    ],
@@ -7452,6 +7746,7 @@
    ],
    "in": "debug",
    "kind": "key",
+   "label": "SAVE SYM",
    "uc": [
     "D8.2"
    ],
@@ -7487,6 +7782,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "EXPORT",
    "uc": [
     "C7.3"
    ],
@@ -7502,6 +7798,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "DROP",
    "uc": [
     "C7.1"
    ]
@@ -7514,6 +7811,7 @@
    ],
    "in": "state",
    "kind": "key",
+   "label": "SAVE TTD",
    "uc": [
     "C7.1",
     "D12.1"
@@ -7575,9 +7873,24 @@
    ],
    "dials": {
     "0": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.jog_frames",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "1": {
      "label": "SCRUB",
      "press": {
-      "action": "ttd.resume_live"
+      "action": "run.pause_toggle"
      },
      "turn": {
       "action": "ttd.seek_by",
@@ -7588,21 +7901,6 @@
      },
      "uc": [
       "D3.2"
-     ]
-    },
-    "1": {
-     "label": "PACE",
-     "press": {
-      "action": "run.pace_toggle"
-     },
-     "turn": {
-      "action": "run.pace_by",
-      "value": {
-       "d": "$ticks"
-      }
-     },
-     "uc": [
-      "D1.1"
      ]
     },
     "2": {
@@ -7636,11 +7934,27 @@
      "uc": [
       "D2.5"
      ]
+    },
+    "4": {
+     "label": "PACE",
+     "press": {
+      "action": "run.pace_toggle"
+     },
+     "turn": {
+      "action": "run.pace_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D1.1"
+     ]
     }
    },
    "glyph": "ttd.menu",
    "in": "home",
    "kind": "menu",
+   "label": "TIME",
    "strip": {
     "content": "title",
     "status": "ttd",
@@ -7660,6 +7974,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "LIVE",
    "uc": [
     "D3.6"
    ]
@@ -7672,6 +7987,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "TTD REC",
    "uc": [
     "C7.1"
    ]
@@ -7684,6 +8000,7 @@
    ],
    "in": "state",
    "kind": "key",
+   "label": "LOAD TTD",
    "uc": [
     "C7.1"
    ],
@@ -7699,6 +8016,7 @@
    ],
    "in": "picture",
    "kind": "key",
+   "label": "TOOLBAR",
    "uc": [
     "C9.8"
    ]
@@ -7778,7 +8096,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "TRAPS",
+   "label": "TR-DOS",
    "uc": [
     "U4.4"
    ],
@@ -7809,6 +8127,7 @@
    ],
    "in": "record",
    "kind": "key",
+   "label": "START",
    "uc": [
     "C7.1"
    ]
@@ -7836,7 +8155,7 @@
    ],
    "in": "media",
    "kind": "key",
-   "label": "TURBO",
+   "label": "TURBO TAPE",
    "uc": [
     "C2.4"
    ],
@@ -7884,6 +8203,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "TTD REC",
    "uc": [
     "C7.1"
    ]
@@ -7913,6 +8233,7 @@
    ],
    "in": "home",
    "kind": "key",
+   "label": "TURBO",
    "uc": [
     "C2.2"
    ]
@@ -7925,6 +8246,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "BACK",
    "uc": [
     "D3.3"
    ]
@@ -7937,6 +8259,7 @@
    ],
    "in": "time",
    "kind": "key",
+   "label": "FORWARD",
    "uc": [
     "D3.3"
    ]
@@ -8192,7 +8515,7 @@
    ],
    "in": "home",
    "kind": "key",
-   "label": "SPEED",
+   "label": "X1",
    "show": {
     "format": "X{}",
     "readout": "run.state.speed"
@@ -8200,7 +8523,9 @@
    "uc": [
     "C2.5"
    ],
-   "value": 1
+   "value": {
+    "value": 1
+   }
   }
  }
 }

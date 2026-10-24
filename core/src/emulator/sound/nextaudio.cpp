@@ -163,6 +163,7 @@ void NextAudio::WriteDac(unsigned channel, uint8_t value)
 void NextAudio::Tick()
 {
     double left = 0, right = 0;
+    std::array<int32_t, kChips> chipMono{};
     for (unsigned i = 0; i < kChips; i++)
     {
         SoundChip_AY8910& chip = *_chips[i];
@@ -183,6 +184,10 @@ void NextAudio::Tick()
             l = a + b;
             r = b + c;
         }
+        if (_chipTaps)
+            // The chip's mono at the scale of the other machines' chip taps (a level of 1 is INT16_MAX), so one
+            // profile's thresholds fit ay:<n> on every model: (l + r) / 2 over the 255 of a channel
+            chipMono[i] = static_cast<int32_t>((l + r) * (32767.0 / 510.0));
         {
             // The part's meter (before its gain)
             double* m = &_meter[i * 4];
@@ -220,6 +225,26 @@ void NextAudio::Tick()
     right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.push_back(static_cast<float>(left / 32768.0));
     _tickRight.push_back(static_cast<float>(right / 32768.0));
+    if (_dacTap)
+        _tickDac.push_back(_dacEnabled ? DacMono() : 0);
+    if (_chipTaps)
+        PushChipTaps(chipMono, 1);
+}
+
+void NextAudio::PushChipTaps(const std::array<int32_t, kChips>& mono, size_t ticks)
+{
+    for (unsigned i = 0; i < kChips; i++)
+    {
+        if (!_partTap[i])
+            continue;
+        // The unsigned sum's DC out, in integers: a slow one-pole (1/1024 a tick) on the level x 64
+        int64_t& dc = _chipTapDc[i];
+        const int64_t x = static_cast<int64_t>(mono[i]) * 64;
+        const auto out = static_cast<int32_t>((x - dc) / 64);
+        if (ticks == 1)
+            dc += (x - dc) / 1024;
+        _tickChip[i].insert(_tickChip[i].end(), ticks, out);
+    }
 }
 
 bool NextAudio::QuietTicks(size_t ticks)
@@ -251,6 +276,10 @@ bool NextAudio::QuietTicks(size_t ticks)
     right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.insert(_tickLeft.end(), ticks, static_cast<float>(left / 32768.0));
     _tickRight.insert(_tickRight.end(), ticks, static_cast<float>(right / 32768.0));
+    if (_dacTap)
+        _tickDac.insert(_tickDac.end(), ticks, _dacEnabled ? DacMono() : 0);
+    if (_chipTaps)
+        PushChipTaps({}, ticks);  // silent at rest: every chip's level is 0
     for (const auto& chip : _chips)
         chip->advanceSilent(static_cast<uint32_t>(ticks));
     _quietTicks += ticks;
@@ -299,6 +328,9 @@ void NextAudio::AudioFrameStart(bool synthesisSuppressed)
     }
     _tickLeft.clear();
     _tickRight.clear();
+    _tickDac.clear();
+    for (auto& ticks : _tickChip)
+        ticks.clear();
     ResetMeters();
 }
 
@@ -334,6 +366,25 @@ void NextAudio::AudioFrameEnd(size_t samples)
         _buffer[k * 2 + 1] = static_cast<int16_t>(std::clamp(r * 32767.0, -32768.0, 32767.0));
     }
     _hadSound = peak > 0.002f;
+    // The tapped parts alone: the same tick-to-sample mapping as the mix above, in integers
+    const auto toSamples = [samples](const std::vector<int32_t>& perTick, int16_t* out) {
+        const size_t ticks = perTick.size();
+        for (size_t k = 0; k < samples; k++)
+        {
+            const size_t from = ticks * k / samples, to = std::max(from + 1, ticks * (k + 1) / samples);
+            int64_t sum = 0;
+            size_t count = 0;
+            for (size_t i = from; i < to && i < ticks; i++, count++)
+                sum += perTick[i];
+            out[k] = static_cast<int16_t>(
+                std::clamp<int64_t>(count ? sum / static_cast<int64_t>(count) : 0, -32768, 32767));
+        }
+    };
+    if (_dacTap)
+        toSamples(_tickDac, _dacTapBuffer.data());
+    for (unsigned i = 0; i < kChips; i++)
+        if (_partTap[i])
+            toSamples(_tickChip[i], _chipTapBuffer[i].data());
 
     // The parts' meters: each chip's swing (half the largest side's peak-to-peak), the DAC's largest side, in the
     // 13-bit PCM x 4 of Tick, as a share of full scale
@@ -366,6 +417,29 @@ double NextAudio::DacSide(bool right) const
     if (!_dacGainActive)
         return ((_dac[a] - 128) + (_dac[a + 1] - 128)) * 16.0;
     return ((_dac[a] - 128) * _dacGain[a] + (_dac[a + 1] - 128) * _dacGain[a + 1]) * 16.0;
+}
+
+void NextAudio::SetAudioPartTap(size_t part, bool on)
+{
+    if (part == kChips)
+    {
+        _dacTap = on;
+        _tickDac.clear();
+        return;
+    }
+    if (part >= kChips)
+        return;
+    _partTap[part] = on;
+    _tickChip[part].clear();
+    _chipTapDc[part] = 0;
+    _chipTaps = _partTap[0] || _partTap[1] || _partTap[2];
+}
+
+const int16_t* NextAudio::AudioPartTap(size_t part) const
+{
+    if (part == kChips)
+        return _dacTap ? _dacTapBuffer.data() : nullptr;
+    return part < kChips && _partTap[part] ? _chipTapBuffer[part].data() : nullptr;
 }
 
 void NextAudio::UpdateDacGains()

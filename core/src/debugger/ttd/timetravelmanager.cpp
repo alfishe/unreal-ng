@@ -609,6 +609,8 @@ void TimeTravelManager::SetState(TTDSessionState next)
         ReleaseRecordingLock();
     SyncJournalSegment();   // a recording starts or ends a journal segment (D40)
     ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();   // into history or back to live: the haptics follow at once
 }
 
 bool TimeTravelManager::JournalLive() const
@@ -2045,6 +2047,9 @@ void TimeTravelManager::EnterReplayMode()
     // debug mode, holds it on while the machine replays (the coordinator's
     // mode broadcast, M4); the feature settings stay untouched
     ttd::NoteSessionChange(_context);
+    // The game's rumble stops now, not at the host's next gate poll (haptics.md §8)
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (host audio output held)");
 }
@@ -2073,6 +2078,8 @@ void TimeTravelManager::ExitReplayMode()
     SyncMediaReadJournal();
 
     ttd::NoteSessionChange(_context);   // debug mode back to the feature's
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (host audio output released)");
 }

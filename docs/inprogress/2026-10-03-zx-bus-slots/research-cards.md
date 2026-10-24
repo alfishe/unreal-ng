@@ -782,7 +782,7 @@ Read only; D0-D4 = right, left, down, up, fire, active high; D5-D7 = 0 in MAME /
 | ZX-Evo | `#DF` full + A8 / A10, also in DOS | | | porthit |
 | unreal-ng | MiSTer: A5-A0 = `011111`, A9 = 1, A8 / A10 | | | `portdecoder.cpp:1256-1274` |
 
-Buttons D0-D2 = L, R, M active low; D3 = 1; D4-D7 = wheel (`1111` when absent). Functions `kempston-mouse`.
+Buttons active low, D2 = M; D0 / D1 per board (D0 = R on the Kondratyev schematic, Next, Karabas-Pro, ZEsarUX, ProfROM; D0 = L on ZX-Evo, Sprinter: controller manager `research-retro-hardware.md` §0); D3 = 1; D4-D7 = wheel (`1111` when absent). Functions `kempston-mouse`.
 Conflicts: Kempston joystick overlap; Beta `#FF` decode `1xxxxx11` matches `#DF` in DOS [DER]; ZX-Evo / TS-Conf (card
 dead, board mouse answers); Scorpion ProfROM (ZX_BUS_Mouse v1.1 without A15 breaks the ROM disk).
 

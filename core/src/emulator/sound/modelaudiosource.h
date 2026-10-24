@@ -63,6 +63,18 @@ public:
         (void)part;
         return {};
     }
+    /// The part rendered alone for the haptic feed (SoundManager::setHapticTaps): mono int16 at the core rate, the
+    /// frame's `samples` after AudioFrameEnd, before the part's gain; nullptr when the device cannot. Off: no work
+    virtual void SetAudioPartTap(size_t part, bool on)
+    {
+        (void)part;
+        (void)on;
+    }
+    virtual const int16_t* AudioPartTap(size_t part) const
+    {
+        (void)part;
+        return nullptr;
+    }
     /// The part's gain in the device's mix (0 = silent, 1 = as the hardware mixes it); frame boundary
     virtual void SetAudioPartGain(size_t part, float gain)
     {

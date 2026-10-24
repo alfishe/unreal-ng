@@ -73,9 +73,10 @@ struct SlotChangeResult
     SlotChangeStatus status = SlotChangeStatus::NoMachine;
     std::string message;                        ///< the refusal or the error; "" when applied / a dry run
     SlotManager::ChangePlan plan;               ///< the plan (also for a refusal: what it would remove, why)
-    std::shared_ptr<Emulator> emulator;         ///< Applied: the restarted machine, created and not started
+    std::shared_ptr<Emulator> emulator;         ///< Applied: the restarted machine, created and not started (ModelSwitch::StartAsBefore)
     std::string previousEmulatorId;
     bool wasRunning = false;                    ///< the old machine ran: the caller starts the new one
+    bool wasPaused = false;                     ///< the old machine was started and paused: the caller starts the new one paused
     MediaTransferReport media;                  ///< where the media went (Applied)
     std::vector<SlotInfo> stranded;             ///< dirty media of removed cards (Failed: no disposition given)
 

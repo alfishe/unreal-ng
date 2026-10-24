@@ -93,7 +93,7 @@
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, aliases";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, aliases, match";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -102,8 +102,13 @@
             "(percent, absent when the OS gives none), coarse (a step, not a measurement), charging, wired), light "
             "({available}, else the reason: whether light can set its colour) and notice (what the device cannot do "
             "here and how to fix it, such as the udev rule for its hidraw node; absent when nothing is missing). "
-            "context: the machine, the loaded file's SHA-256, the manual game "
-            "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
+            "context: the machine, the loaded program's signatures (file_sha256, signatures: file / tape content / "
+            "TR-DOS file set / snapshot memory, file_set: the TR-DOS file tokens), the game profiles they match "
+            "(game_matches: [{id, how}]), where the haptics come from (haptics_reason), the manual game "
+            "profile, the applied profiles and the warnings. match (?path= | signatures=&file_sha256=&file_set= "
+            "comma lists, machine=; none: the loaded program): the game profiles the signatures choose (D7: exact "
+            "signature, file SHA-256, then the TR-DOS file set's fuzzy rule), the one chosen (profile, empty: next "
+            "is port-reads, the heuristic decides) and haptics_reason. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
             "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
@@ -114,7 +119,7 @@
             "later matched to its HID device goes on under the new id, and the profiles naming the old one apply to "
             "it (kept in aliases.yaml)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "aliases"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "aliases", "match"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
@@ -138,12 +143,16 @@
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
             "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
             "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
-            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. unalias {id}: "
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. haptics-probe "
+            "{kind, address, page?, port_mask?, play?}: a probe (exec, read, write, port-in, port-out: a breakpoint that "
+            "never stops, haptics.md §5) at an address or port as a source of the loaded game's user profile "
+            "(user/game-<sha>, started from the haptics that play now), with a rule that plays the effect (hit by "
+            "default); answers id, source and path; unavailable without a program loaded from a file. unalias {id}: "
             "forget a device alias (id = the old id; unknown-alias when there is none), saved and applied at once; "
             "answers from and to";
         post["tags"].append("Controllers");
-        verbParameter(post,
-                      {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "unalias"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light",
+                             "haptics-probe", "unalias"});
         replies(post);
     }
 

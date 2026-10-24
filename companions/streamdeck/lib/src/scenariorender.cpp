@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <string>
 #include <tuple>
+#include <vector>
 
 #include "sdb/datadir.h"
 #include "sdb/format.h"
@@ -242,13 +244,29 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     // a label with a picture (a slot number, a speed, a drive): the picture smaller at the top, the label under it,
     // both inside the part the bezel leaves visible
     const int inset = std::max(0, safePad);
-    const int imgSc = std::min(g.Font(3), FitScale(label, s - 2 * inset, g.Font(3)));
-    const int labelBand = hasLabel ? 7 * imgSc + g(12) : 0;
+    int imgSc = std::min(g.Font(4), FitScale(label, s - 2 * inset, g.Font(4)));
+    // two words too long for one line at the full size: a line each (the space that splits them most evenly)
+    std::vector<std::string> lines{label};
+    if (imgSc < g.Font(4))
+        for (std::size_t at = label.find(' '); at != std::string::npos; at = label.find(' ', at + 1))
+        {
+            const std::string a = label.substr(0, at), b = label.substr(at + 1);
+            const int sc = std::min({g.Font(4), FitScale(a, s - 2 * inset, g.Font(4)),
+                                     FitScale(b, s - 2 * inset, g.Font(4))});
+            if (sc > imgSc)
+                imgSc = sc, lines = {a, b};
+        }
+    const int lineGap = g(3);
+    const int textH = static_cast<int>(lines.size()) * 7 * imgSc + (static_cast<int>(lines.size()) - 1) * lineGap;
+    const int labelBand = hasLabel ? textH + g(12) : 0;
     const int side = hasLabel ? std::max(8, s - labelBand - inset) : s;
+    draw::Color labelFg = f.fg;  // a pack's label: dark on a light background, white on a dark one
     if (glyph)
     {
         // drawn at its own size from the pack (whole pixel factors for pixel art), on the pack's background
         const draw::Color bg = packs::Background(pack, f.glyph);
+        const int luma = (299 * bg.r + 587 * bg.g + 114 * bg.b) / 1000;
+        labelFg = luma > 128 ? draw::Color{16, 16, 16} : draw::Color{255, 255, 255};
         im = Rgb(s, s, bg.r, bg.g, bg.b);
         if (const auto src = packs::Glyph(pack, f.glyph, side))
             Place(im, *src, (s - side) / 2, hasLabel ? inset / 2 : 0);
@@ -278,8 +296,10 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
                 DrawIcon(im, *ic, (s - sz) / 2, g(hasLabel ? 8 : 16), sz, f.fg, {255, 215, 0});
     }
     if (hasLabel && picture)
-        draw::Text(im, std::max(inset, (s - draw::TextWidth(label, imgSc)) / 2), s - inset - 7 * imgSc - g(4), label,
-                   imgSc, f.fg);
+        for (std::size_t i = 0; i < lines.size(); ++i)
+            draw::Text(im, std::max(inset, (s - draw::TextWidth(lines[i], imgSc)) / 2),
+                       s - inset - textH - g(4) + static_cast<int>(i) * (7 * imgSc + lineGap), lines[i], imgSc,
+                       labelFg);
     if (hasLabel && !picture)
     {
         const bool alone = f.icon.empty() && f.svg.empty();
@@ -405,7 +425,11 @@ long long Num(const json& j, const char* key)
     return it != j.end() && it->is_number() ? it->get<long long>() : 0;
 }
 
-// The TTD timeline over [x0, x1) of the strip's area (height areaH); the counters end before `rightEnd`
+// The TTD timeline over [x0, x1) of the strip's area (height areaH); the counters end before `rightEnd`.
+// A header (TTD, its state, the frame counter, the time code), then the history as a capsule: a dark track with a
+// notch per ruler step, the part up to the position in a blue-to-cyan gradient lit from the top, the marks in their
+// colours (bookmarks amber, barriers violet, edges cyan), the position as a light pill (red while recording), and the
+// times of the ruler's main steps under it in cyan.
 void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks)
 {
     const long long first = Num(t, "first"), end = std::max(first, Num(t, "end"));
@@ -413,11 +437,10 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
     const std::string state = t.value("state", "");
     const bool history = t.value("history", end > first);
     const double fps = t.contains("fps") && t["fps"].is_number() ? t["fps"].get<double>() : 50.0;
-    const int top = areaH >= 90 ? 12 : 6;
-    const int track = areaH - 24;
+    const bool tall = areaH >= 90;
+    const int top = tall ? 8 : 4;
+    int hs = tall ? 3 : 2;  // the header's scale
 
-    // the header: TTD, its state, then the frame counter and the time code at the right
-    int x = x0 + draw::Text(im, x0, top, "TTD", 2, kLiveText) + 14;
     std::string word = "NO HISTORY";
     draw::Color wordColor = kLiveFaint;
     if (t.contains("available") && !t.value("available", true))
@@ -426,44 +449,102 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
         word = "REC", wordColor = kLiveRec;
     else if (state == "detached")
         word = "REPLAY", wordColor = kLiveCounter;
-    else if (history)
+    else if (history && end > first)
         word = t.value("paused", false) ? "PAUSED" : "AT END", wordColor = kLiveDim;
-    draw::Text(im, x, top, word, 2, wordColor);
     const long long at = frame - first, len = end - first;
-    if (history)
+    const std::string frames = sdb::Format("{:06} / {:06}", at, len);
+    const std::string code = TimeCode(at, fps) + " / " + TimeCode(len, fps);
+    const int right = std::min(rightEnd, x1);
+    auto headerW = [&](int sc) {
+        return draw::TextWidth("TTD", sc) + draw::TextWidth(word, sc) + draw::TextWidth(frames, sc) +
+               draw::TextWidth(code, sc) + 18 * sc;
+    };
+    if (history && headerW(hs) > right - x0)
+        hs = 2;
+    int x = x0 + draw::Text(im, x0, top, "TTD", hs, kLiveText) + 5 * hs;
+    if (state == "recording")  // a red dot before REC
+        draw::RoundRect(im, static_cast<float>(x), static_cast<float>(top + hs), static_cast<float>(5 * hs),
+                        static_cast<float>(5 * hs), 2.5f * hs, kLiveRec),
+            x += 7 * hs;
+    draw::Text(im, x, top, word, hs, wordColor);
+    if (history && headerW(hs) <= right - x0)
     {
-        const std::string frames = sdb::Format("{:06} / {:06}", at, len);
-        const std::string code = TimeCode(at, fps) + " / " + TimeCode(len, fps);
-        const int codeW = draw::TextWidth(code, 2), framesW = draw::TextWidth(frames, 2);
-        const int right = std::min(rightEnd, x1);
-        if (right - codeW - framesW - 28 > x + draw::TextWidth(word, 2) + 20)
-        {
-            draw::Text(im, right - codeW, top, code, 2, kLiveDim);
-            draw::Text(im, right - codeW - 28 - framesW, top, frames, 2, kLiveCounter);
-        }
+        const int codeW = draw::TextWidth(code, hs), framesW = draw::TextWidth(frames, hs);
+        draw::Text(im, right - codeW, top, code, hs, kLiveAmber);
+        draw::Text(im, right - codeW - 8 * hs - framesW, top, frames, hs, kLiveCounter);
     }
 
-    // the track: the recorded span, a ruler of seconds under it, the played part, the marks, the position
+    // the capsule
+    const int barH = tall ? 16 : 10;
+    const int barY = top + 7 * hs + (tall ? 12 : 6);
     const int span = std::max(1, x1 - x0);
-    draw::FillRect(im, x0, track, span, 1, kLiveTrack);
+    const double radius = barH / 2.0;
+    auto inset = [&](int r) {  // the capsule's round ends: the columns a row leaves out at each end
+        const double dy = radius - (r + 0.5);
+        return static_cast<int>(std::ceil(radius - std::sqrt(std::max(0.0, radius * radius - dy * dy))));
+    };
+    const draw::Color trackTop{40, 45, 68}, trackBottom{20, 22, 34};
+    for (int r = 0; r < barH; ++r)
+    {
+        const int in = inset(r);
+        draw::FillRect(im, x0 + in, barY + r, span - 2 * in, 1,
+                       draw::Mix(trackTop, trackBottom, static_cast<float>(r) / static_cast<float>(barH - 1)));
+    }
     if (!history || len <= 0)
         return;
     auto xOf = [&](long long f) {
         return x0 + static_cast<int>(static_cast<double>(span - 1) * static_cast<double>(f - first) / len);
     };
+    const int px = std::clamp(xOf(frame), x0, x1 - 1);
+    const draw::Color playFrom{0, 60, 150}, playTo{40, 175, 235};
+    for (int r = 0; r < barH; ++r)
+    {
+        const int in = inset(r);
+        const float light = 0.32f * (1.f - static_cast<float>(r) / static_cast<float>(barH - 1));
+        for (int cx = x0 + in; cx <= std::min(px, x1 - 1 - in); ++cx)
+        {
+            const draw::Color c = draw::Mix(playFrom, playTo, static_cast<float>(cx - x0) / static_cast<float>(span));
+            draw::FillRect(im, cx, barY + r, 1, 1, draw::Mix(c, {255, 255, 255}, light));
+        }
+    }
+    // the ruler: a notch per step in the capsule, the main steps' times under it (at least 110 px apart)
     const double seconds = len / fps;
     const double steps[] = {1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600};
-    double step = steps[0];
+    double step = steps[0], major = steps[0];
     for (double candidate : steps)
         if (step = candidate; seconds / candidate <= 40)
             break;
+    for (double candidate : steps)
+        if (major = candidate; candidate >= step && span * candidate / std::max(seconds, 1e-9) >= 110)
+            break;
     for (double sec = step; sec < seconds; sec += step)
-        draw::FillRect(im, xOf(first + static_cast<long long>(sec * fps)), track + 4, 1, 3, kLiveFaint);
-    draw::Text(im, x0, track + 10, TimeCode(0, fps).substr(0, 5), 1, kLiveFaint);
-    const std::string last = TimeCode(len, fps).substr(0, 5);
-    draw::Text(im, x1 - draw::TextWidth(last, 1), track + 10, last, 1, kLiveFaint);
-    const int px = std::clamp(xOf(frame), x0, x1 - 2);
-    draw::FillRect(im, x0, track, px - x0, 2, kLivePlayed);
+    {
+        const int nx = xOf(first + static_cast<long long>(sec * fps));
+        for (int r = 3; r < barH - 3; ++r)
+        {
+            auto* p = im.At(nx, barY + r);
+            draw::FillRect(im, nx, barY + r, 1, 1, draw::Mix({p[0], p[1], p[2]}, {0, 0, 0}, 0.4f));
+        }
+    }
+    const int labelY = barY + barH + (tall ? 9 : 4);
+    const int ls = tall ? 2 : 1;
+    const draw::Color tickColor{70, 150, 200};
+    const std::string firstLabel = TimeCode(0, fps).substr(0, 5), lastLabel = TimeCode(len, fps).substr(0, 5);
+    const int firstEnd = x0 + draw::TextWidth(firstLabel, ls) + 12;
+    const int lastStart = x1 - draw::TextWidth(lastLabel, ls) - 12;
+    draw::Text(im, x0, labelY, firstLabel, ls, kLiveDim);
+    draw::Text(im, x1 - draw::TextWidth(lastLabel, ls), labelY, lastLabel, ls, kLiveDim);
+    for (double sec = major; sec < seconds; sec += major)
+    {
+        const int mx = xOf(first + static_cast<long long>(sec * fps));
+        const int whole = static_cast<int>(std::lround(sec));  // the step's own seconds (frames would round down)
+        const std::string label = sdb::Format("{:02}:{:02}", whole / 60, whole % 60);
+        const int lw = draw::TextWidth(label, ls);
+        draw::FillRect(im, mx, barY + barH + 1, 1, tall ? 5 : 3, tickColor);
+        if (mx - lw / 2 > firstEnd && mx + lw / 2 < lastStart)
+            draw::Text(im, mx - lw / 2, labelY, label, ls, tickColor);
+    }
+    // the marks of the last seek, each kind in its colour
     if (marks && marks->is_array())
         for (const auto& m : *marks)
         {
@@ -473,10 +554,28 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
             if (f < first || f > end)
                 continue;
             const std::string kind = m.value("kind", "");
-            const bool strong = kind == "bookmark" || kind == "barrier" || kind == "edge";
-            draw::FillRect(im, xOf(f), track - (strong ? 7 : 5), 1, strong ? 6 : 4, strong ? kLiveMark : kLiveDim);
+            const int mx = xOf(f);
+            const draw::Color c = kind == "bookmark"  ? kLiveMark
+                                  : kind == "barrier" ? draw::Color{190, 110, 230}
+                                  : kind == "edge"    ? kLiveCounter
+                                                      : draw::Color{150, 156, 180};
+            if (kind == "bookmark" || kind == "barrier" || kind == "edge")
+            {
+                draw::FillRect(im, mx, barY - 2, 1, barH + 4, c);
+                for (int r = 0; r < 4; ++r)  // a small diamond above the capsule
+                    draw::FillRect(im, mx - r, barY - 9 + r, 2 * r + 1, 1, c),
+                        draw::FillRect(im, mx - r, barY - 2 - r, 2 * r + 1, 1, c);
+            }
+            else
+                draw::FillRect(im, mx, barY + 2, 1, barH - 4, c);
         }
-    draw::FillRect(im, px, track - 9, 2, 13, state == "recording" ? kLiveRec : kLivePos);
+    // the position: a light pill over the capsule, a soft glow round it
+    const draw::Color head = state == "recording" ? kLiveRec : kLivePos;
+    const int ph = barH + (tall ? 14 : 8);
+    draw::RoundRect(im, static_cast<float>(px - 5), static_cast<float>(barY + barH / 2 - ph / 2 - 2), 11.f,
+                    static_cast<float>(ph + 4), 5.f, draw::Mix({8, 8, 14}, head, 0.25f));
+    draw::RoundRect(im, static_cast<float>(px - 3), static_cast<float>(barY + barH / 2 - ph / 2), 7.f,
+                    static_cast<float>(ph), 3.5f, head);
 }
 
 // run.state as status words
@@ -531,13 +630,33 @@ std::string TargetLine(const json& target)
 
 std::string StripLive::Key() const
 {
-    std::string k = std::to_string(static_cast<int>(link)) + (showTarget ? "t" : "-") + notice + "|" + activity;
+    std::string k = std::to_string(static_cast<int>(link)) + (showTarget ? "t" : "-") + notice + "|" + activity + "|" +
+                    std::to_string(dialHint) + (bannerInfo ? "i" : "e");
     if (target)
         k += target->dump();
     if (readouts)
         for (const auto& [name, value] : *readouts)
             k += name + value.dump();
     return k;
+}
+
+bool PageScrubsTime(const Page& page)
+{
+    return (page.strip && page.strip->status == "ttd") ||
+           std::any_of(page.dials.begin(), page.dials.end(), [](const Dial* d) {
+               return d && d->turn &&
+                      (d->turn->kind == "ttd_seek" ||
+                       (d->turn->kind == "action" && d->turn->spec.value("id", "") == "ttd.seek_by"));
+           });
+}
+
+std::pair<int, int> TimelineSpan(const Page& page, int w)
+{
+    int x0 = 12;
+    if (page.crumbs == Crumbs::Strip)
+        if (const auto segs = CrumbSegments(page.path, w); !segs.empty())
+            x0 = segs.back().x1 + kCrumbGap;
+    return {x0, w - 12};
 }
 
 Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner, double autoExitLeft,
@@ -547,12 +666,16 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     int contentX = 12;
     const bool dialLabels =
         std::any_of(page.dials.begin(), page.dials.end(), [](const Dial* d) { return d && !d->label.empty(); });
-    const int bandH = dialLabels ? 22 : 0;
+    // a timeline takes the whole height: the dials' labels come up over it while one turns (and as the page opens)
+    const bool timelineOn = live && live->link == StripLive::Link::Live && live->readouts &&
+                            live->readouts->count("ttd.position") && PageScrubsTime(page);
+    const int bandH = dialLabels && !timelineOn ? 22 : 0;
     const int areaH = h - bandH;
     if (page.crumbs == Crumbs::Strip)
     {
         const auto segs = CrumbSegments(page.path, w);
-        const int ch = 7 * kCrumbScale + 16, cy = (areaH - ch) / 2;
+        // over a timeline the chips line up with its header (the bottom is for the dials' labels)
+        const int ch = 7 * kCrumbScale + 16, cy = timelineOn ? 4 : (areaH - ch) / 2;
         for (size_t i = 0; i < segs.size(); ++i)
         {
             const auto& s = segs[i];
@@ -607,7 +730,7 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     if (timeline && banner.empty())
     {
         auto marks = live->readouts->find("ttd.marks");
-        DrawTimeline(im, contentX, w - 12, areaH, w - 12 - targetW, *ttdPosition,
+        DrawTimeline(im, TimelineSpan(page, w).first, TimelineSpan(page, w).second, areaH, w - 12 - targetW, *ttdPosition,
                      marks != live->readouts->end() ? &marks->second : nullptr);
     }
     else if (!words.empty() && banner.empty())
@@ -667,9 +790,12 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
         const std::string t = DisplayText(banner);
         const int bw = w - contentX - 12;  // the whole area after the crumbs, whatever else the strip shows
         const int sc = FitScale(t, bw, 5);
-        draw::FillRect(im, contentX - 6, 0, w - contentX + 6, areaH, {120, 10, 20});
+        const bool info = live && live->bannerInfo;
+        draw::FillRect(im, contentX - 6, 0, w - contentX + 6, areaH, info ? draw::Color{16, 24, 46} : draw::Color{120, 10, 20});
+        if (info)
+            draw::FillRect(im, contentX - 6, areaH - 3, w - contentX + 6, 3, kLiveAmber);
         draw::Text(im, contentX + std::max(0, (bw - draw::TextWidth(t, sc)) / 2), (areaH - 7 * sc) / 2, t, sc,
-                   {255, 255, 255});
+                   info ? draw::Color{240, 215, 150} : draw::Color{255, 255, 255});
     }
     else if (page.strip && cw > 40)
     {
@@ -746,7 +872,28 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
         draw::Text(im, contentX + std::max(0, (bw - draw::TextWidth(t, sc)) / 2), (areaH - 7 * sc) / 2, t, sc,
                    notice ? draw::Color{235, 215, 205} : kLiveText);
     }
-    if (dialLabels)
+    if (dialLabels && timelineOn && live->dialHint >= 0 && banner.empty())  // a message wins over the labels
+    {
+        // over the timeline, each at its dial, all of them (as the page opens, or while one turns: that one lit)
+        for (size_t i = 0; i < page.dials.size(); ++i)
+        {
+            const Dial* d = page.dials[i];
+            if (!d || d->label.empty())
+                continue;
+            const bool active = live->dialHint == static_cast<int>(i);
+            const std::string t = DisplayText(d->label);
+            const int sc = std::min(3, FitScale(t, dialTileW - 36, 3));
+            const int cw = draw::TextWidth(t, sc) + 28, ch = 7 * sc + 16;
+            const int cx = static_cast<int>(i) * dialTileW + (dialTileW - cw) / 2, cy = h - ch - 4;
+            draw::RoundRect(im, static_cast<float>(cx - 2), static_cast<float>(cy - 2), static_cast<float>(cw + 4),
+                            static_cast<float>(ch + 4), 12.f,
+                            active ? draw::Color{110, 170, 255} : draw::Color{52, 64, 100});
+            draw::RoundRect(im, static_cast<float>(cx), static_cast<float>(cy), static_cast<float>(cw),
+                            static_cast<float>(ch), 10.f, active ? draw::Color{24, 50, 104} : draw::Color{16, 20, 36});
+            draw::Text(im, cx + 14, cy + 8, t, sc, active ? draw::Color{240, 246, 255} : draw::Color{150, 165, 200});
+        }
+    }
+    else if (dialLabels && !timelineOn)
     {
         for (size_t i = 0; i < page.dials.size(); ++i)
         {

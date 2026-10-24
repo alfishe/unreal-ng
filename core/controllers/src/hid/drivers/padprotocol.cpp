@@ -20,11 +20,13 @@
 namespace controllers
 {
 
-PadPump::PadPump(std::unique_ptr<IPadProtocol> protocol, Write write, GetFeature getFeature, Clock clock)
+PadPump::PadPump(std::unique_ptr<IPadProtocol> protocol, Write write, GetFeature getFeature, Clock clock,
+                 Write setFeature)
     : _protocol(std::move(protocol)),
       _write(std::move(write)),
       _getFeature(std::move(getFeature)),
       _clock(std::move(clock)),
+      _setFeature(std::move(setFeature)),
       _thread([this] { Run(); })
 {
 }
@@ -45,6 +47,8 @@ PadPump::~PadPump()
     // A device already gone refuses it at once
     if (last && last->kind == PadOutReport::Kind::Output && _write)
         _write(last->bytes);
+    else if (last && last->kind == PadOutReport::Kind::SetFeature && _setFeature)
+        _setFeature(last->bytes);
 }
 
 uint64_t PadPump::Now() const
@@ -138,11 +142,13 @@ void PadPump::Run()
         std::vector<uint8_t> data;
         if (next->kind == PadOutReport::Kind::Output)
             ok = _write && _write(next->bytes);
+        else if (next->kind == PadOutReport::Kind::SetFeature)
+            ok = _setFeature && _setFeature(next->bytes);
         else
             ok = _getFeature && _getFeature(next->featureId, next->featureSize, data);
         lock.lock();
         ++(ok ? _written : _failed);
-        if (next->kind == PadOutReport::Kind::Output)
+        if (next->kind != PadOutReport::Kind::GetFeature)
             _protocol->OnWritten(ok, Now());
         else
         {

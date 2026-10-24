@@ -48,6 +48,7 @@ enum class Function : uint8_t
     FdcUpd765,          ///< "fdc.upd765": +3 floppy controller
     FullerAy,           ///< "fuller-ay": the Fuller Box / DK'tronics AY on #3F / #5F (not the AY socket's role)
     FullerJoystick,     ///< "fuller-joystick": the Fuller stick on #7F
+    AmxMouse,           ///< "amx-mouse": the AMX mouse's Z80 PIO on #1F / #3F / #5F / #7F and its buttons on #DF
     Count
 };
 

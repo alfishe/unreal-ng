@@ -86,5 +86,5 @@ Work only when bytes move (no per-instruction or per-port cost); a copy into a b
   as its comment.
 - Q3. Live stream: a TCP port Wireshark reads (`-i TCP@127.0.0.1:port`) or an extcap plugin? **Owner, 2026-10-04:
   both** - the TCP port with a pcapng stream is the base (nothing to install, every OS; one port per emulator); an
-  extcap script (`plugins/wireshark/unreal-ng-extcap.py`) on top lists the running emulators and their adapters in
+  extcap script (`tools/wireshark/unreal-ng-extcap.py`) on top lists the running emulators and their adapters in
   Wireshark's interface list and reads the same stream.

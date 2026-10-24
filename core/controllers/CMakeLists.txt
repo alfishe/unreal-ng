@@ -85,6 +85,7 @@ add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
     ${ROOT_DIR}/core/src/           # the core's controller types (emulator/io/controllers/*.h, header-only use)
+    ${ROOT_DIR}/core/swsignature/src/  # match.h: the signature match rules, header-only (the library needs the core)
 )
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_CONTROLLERS)

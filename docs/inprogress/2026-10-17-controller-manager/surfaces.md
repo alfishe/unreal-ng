@@ -64,6 +64,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
+| `haptics-probe` | Built: a haptic probe (`kind`: `exec`, `read`, `write`, `port-in`, `port-out`; `address`, `page`, `port_mask`) with a rule that plays `play` (`hit` by default) in the loaded game's user profile; the debugger's Add as Haptic Probe ([haptics.md §7](haptics.md#7-haptic-profiles)). |
 | `aliases` | Built: the device aliases (`from`, `to`, `connected`, `name`): a `gc:` device promoted to its IOHID id keeps its profiles ([architecture.md §5](architecture.md)); `unalias` (`id` = the old id) forgets one, saved to `aliases.yaml` and applied at once (`unknown-alias` 404 when there is none). Lua reaches them through `controllers_host` only. |
 | `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
 
@@ -164,6 +165,7 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | rumble {device, effect?}
                                              | output {device, pattern | steps, clicks | marks}
                                              | light {device, color}
+                                             | haptics-probe {kind, address, page?, port_mask?, play?}
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
 GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
@@ -200,7 +202,8 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
   `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`.
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
-  that really answer (it names ATM3 / Scorpion / TS-Conf only today, but Pentagon, Profi, Sprinter and Next answer too).
+  that really answer: Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next (fixed 2026-10-23, E-4; it named
+  ATM3 / Scorpion / TS-Conf only).
 - The `content[]` text states the decision in one line ("Kempston on `kempston` (port-read evidence: #1F read in 50 of
   50 frames)"), because an agent may see only the text.
 - Debug actions stay in `control_execution` and `time_travel`; the controller tool does not duplicate them.

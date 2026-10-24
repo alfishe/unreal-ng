@@ -1,0 +1,43 @@
+{
+  "family": "xbox-elite-2",
+  "images": [
+    {
+      "view": "front",
+      "title": "Xbox Elite Wireless Controller Series 2, front and back",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "plan 153 x 102 mm, height 61 mm (6.02 x 4.01 x 2.40 in)",
+          "source": "retail listings of the Xbox Wireless Controller (pcrichard.com QAU-00090, nfm.com 64696412)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "front: the cross D-pad on its dish with ticks, metal stick collars, the profile button under View / Menu, three profile lights right of the D-pad, rubber grips, metal bumpers",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Wireless_Controller_Series_2_(Model_1797).jpg",
+          "author": "mliu92",
+          "licence": "CC BY-SA 2.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "back: the four paddles P1-P4 (P1 / P2 on the right hand, upper / lower), the trigger stops",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Wireless_Controller_Series_2_(Model_1797)_-_underside.jpg",
+          "author": "mliu92",
+          "licence": "CC BY-SA 2.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23",
+          "note": "drawn as the pad turned over towards the viewer (triggers at the bottom), so the right hand's paddles stay on the right; positions estimated to about 2 mm"
+        },
+        {
+          "what": "weight 345 g with the four paddles",
+          "source": "retail listings (abt.com 141809)",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

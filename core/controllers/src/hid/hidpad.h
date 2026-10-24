@@ -10,12 +10,25 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hid/hiddescriptor.h"
 
 namespace controllers
 {
+
+struct DeviceMatch;
+
+/// A control the descriptor leaves out: one bit of an input report (the DualSense Edge's back buttons and Fn keys sit
+/// in the vendor bits after the 15 buttons the descriptor names)
+struct HidBit
+{
+    uint8_t report = 0;  ///< the report id; ignored when the descriptor has none
+    uint32_t byte = 0;   ///< from the first byte after the report id
+    uint8_t bit = 0;     ///< 0..7
+    std::string control;
+};
 
 /// How a family's HID pad names its controls
 struct HidLayout
@@ -25,10 +38,20 @@ struct HidLayout
     std::vector<std::string> buttons;
     /// Rx / Ry are the triggers (PlayStation), not a second stick
     bool rxRyTriggers = false;
+    /// X / Y are a D-pad (the SNES-style USB pads report their cross as the two axes, no stick)
+    bool dpadAxes = false;
+    /// The control the first hat is ("dpad"; "lstick" on a Joy-Con, whose stick is a hat in its simple report)
+    std::string hat = "dpad";
+    /// Consumer-page usages -> controls (AC Home 0x223, AC Back 0x224, Record 0xB2 on the Luna over Bluetooth)
+    std::vector<std::pair<uint16_t, std::string>> consumer;
+    std::vector<HidBit> bits;
 };
 
 /// A device database layout (`xbox`, `playstation`, `nintendo`); anything else is `generic`
 HidLayout HidLayoutFor(const std::string& layout);
+/// The layout of @p match with the family's own `hid` map on top (devices.json: `buttons`, `rxRyTriggers`,
+/// `dpadAxes`, `hat`, `consumer`, `bits`; device-database.md §2)
+HidLayout HidLayoutFor(const DeviceMatch& match);
 
 using ControlSink = std::function<void(const std::string& control, float value)>;
 
@@ -56,6 +79,7 @@ private:
     {
         Button,
         Axis,
+        AxisDpad,  ///< an axis read as two D-pad directions (dpadAxes)
         Trigger,
         Hat,
         Paddles,  ///< Xbox Bluetooth: P1-P4 bits

@@ -519,6 +519,7 @@ Z80NOPCODE opl_45(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 0,l
 Z80NOPCODE opl_46(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 0,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 0);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
 }
@@ -560,6 +561,7 @@ Z80NOPCODE opl_4D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 1,l
 Z80NOPCODE opl_4E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 1,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 1);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
 }
@@ -602,6 +604,7 @@ Z80NOPCODE opl_55(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 2,l
 Z80NOPCODE opl_56(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 2,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 2);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
 
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
@@ -645,6 +648,7 @@ Z80NOPCODE opl_5D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 3,l
 Z80NOPCODE opl_5E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 3,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 3);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
 }
@@ -687,6 +691,7 @@ Z80NOPCODE opl_65(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 4,l
 Z80NOPCODE opl_66(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 4,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 4);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
 
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
@@ -730,6 +735,7 @@ Z80NOPCODE opl_6D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 5,l
 Z80NOPCODE opl_6E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 5,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 5);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
 
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
@@ -773,6 +779,7 @@ Z80NOPCODE opl_75(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 6,l
 Z80NOPCODE opl_76(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 6,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 6);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
 
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);
@@ -816,6 +823,7 @@ Z80NOPCODE opl_7D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 7,l
 Z80NOPCODE opl_7E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // bit 7,(hl)
    Z80N_T_BEGIN(cpu);
    bitmem(rf, Z80nRd(cpu, rf->hl), 7);
+   if (cpu->t80Persona) rf->f &= ~(F3 | F5);  // T80N: BIT n,(HL) has no F5/F3
 
    cpuidle(rf->hl, 1);
    Z80N_RETURN_Q(0x28, tact_);

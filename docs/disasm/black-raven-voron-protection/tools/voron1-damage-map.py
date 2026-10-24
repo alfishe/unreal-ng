@@ -14,7 +14,7 @@ root = Path(__file__).resolve().parent
 while not (root / "CMakeLists.txt").exists() and root.parent != root:
     root = root.parent
 
-sys.path.insert(0, str(root / "utilities" / "diskconverter"))
+sys.path.insert(0, str(root / "tools" / "diskconverter"))
 from diskconverter import formats  # noqa: E402
 
 fdi = sys.argv[1] if len(sys.argv) > 1 else "testdata/loaders/fdi/VORON1.FDI"

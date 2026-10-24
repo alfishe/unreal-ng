@@ -134,9 +134,9 @@ TEST(SonyPad_Test, DualSenseBluetoothReportNeedsItsCrc)
     Events events;
     ASSERT_TRUE(pad.Decode(report.data(), report.size(), Collect(events)));
     EXPECT_TRUE(pad.Extended());
-    EXPECT_FLOAT_EQ(events.at("paddle.p1"), 1.0f);
+    EXPECT_FLOAT_EQ(events.at("paddle.p3"), 1.0f) << "the left back button is the Elite's upper left";
     EXPECT_FLOAT_EQ(events.at("misc.2"), 1.0f);
-    EXPECT_EQ(events.count("paddle.p2"), 0u);
+    EXPECT_EQ(events.count("paddle.p1"), 0u);
 
     events.clear();
     report[3] = 0x00;  // a change, the CRC not updated

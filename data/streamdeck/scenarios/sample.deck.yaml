@@ -108,7 +108,8 @@ root:
       do:
         id: set.speed
         kind: action
-        value: 1
+        value:
+          value: 1
       face:
         glyph: set.speed
         label: X1

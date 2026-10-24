@@ -298,6 +298,7 @@ pause.
 | `media.rzx` | `{loaded, active, name, state, frame, total_frames, progress, desyncs}` | on change |
 | `input.connectors` | `{connectors: [{id, kind, device, fixed, port?}]}` | on change |
 | `cap.record` | `{available, recording, paused, frames, seconds, bytes, output}` | on change |
+| `actions.unavailable` | `{id: reason}` of the catalogue's actions the user's hands could not run now (the dry run of the gates, as a host device acting for the user: published state only, no session opened); a deck greys their keys out and says the reason on a press (`set.speed`: `TTD holds a history recorded at 1x: discard it to change the speed`) | on change |
 
 `media.disk` also carries each drive's `dirty` (unsaved writes). The context is not a readout: it is the `ctx` message ([protocol.md §3](protocol.md#3-messages)).
 

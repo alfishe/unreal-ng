@@ -266,11 +266,18 @@ TEST_F(EmulatorLifetime_Test, StuckEmulationThreadIsNeverFreed)
                                  EmulatorManager::kShutdownFreeTimeout);
     auto emulator = Create("stuck");
     ASSERT_NE(emulator, nullptr);
-    std::atomic<bool> release{false};
-    std::atomic<bool> inHook{false};
-    emulator->SetThreadExitHookForTest([&]() {
-        inHook = true;
-        TestWait::For([&] { return release.load(); }, std::chrono::seconds(10));
+    // Owned by the hook too: the thread outlives the test body (an early ASSERT returns while it waits)
+    struct Hook
+    {
+        std::atomic<bool> release{false};
+        std::atomic<bool> inHook{false};
+        std::atomic<bool> left{false};
+    };
+    const auto hook = std::make_shared<Hook>();
+    emulator->SetThreadExitHookForTest([hook]() {
+        hook->inHook = true;
+        TestWait::For([&] { return hook->release.load(); }, std::chrono::seconds(10));
+        hook->left = true;
     });
     emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRunning(); }));
@@ -278,13 +285,14 @@ TEST_F(EmulatorLifetime_Test, StuckEmulationThreadIsNeverFreed)
     const auto started = std::chrono::steady_clock::now();
     ASSERT_TRUE(_manager->RemoveEmulator(emulator->GetId()));
     EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(2));
-    EXPECT_TRUE(inHook.load());
+    EXPECT_TRUE(hook->inHook.load());
     EXPECT_TRUE(emulator->IsRetired());
 
     const std::weak_ptr<Emulator> watch = emulator;
     emulator.reset();
     EXPECT_FALSE(watch.expired()) << "a stuck instance is kept by the manager";
-    release = true;
+    hook->release = true;
+    EXPECT_TRUE(TestWait::For([&] { return hook->left.load(); })) << "the thread leaves the hook";
 }
 
 TEST_F(EmulatorLifetime_Test, RetiredAliveWatchdogWarns)

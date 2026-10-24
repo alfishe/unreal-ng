@@ -2841,7 +2841,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting audio_rate <value>` | | `<rate>` or `auto` | Pin the core audio sample rate for this run — one of `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, or `auto` to follow the resolution chain (connected device rate > `[SOUND] CoreRate` > 44100). Runtime only, never persisted to the ini. Applied at the next frame boundary; deferred while a recording is in progress. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading (feature `fastdisk`, on by default). When enabled, floppy controller timing is shortened and the TR-DOS ROM read loops are trapped, so disk access is almost instant. Refused while TTD holds it off (recording, replaying history, or sitting in history). | ✅ Implemented |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
-| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. | ✅ Implemented |
+| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. While a history the user recorded is kept (stopped, paused, loaded) the speed is refused too, with the reason (`TTD holds a history recorded at 1x: discard it to change the speed`): frame timing is part of the recording, so the control is refused rather than the history dropped; after a recording the speed stays 1x while its history is kept (it comes back only once there is none). A black box refuses nothing (it stops before the machine runs faster). Re-selecting the current speed changes nothing. The `set.speed` action is unavailable meanwhile (the `actions.unavailable` readout names it). | ✅ Implemented |
 | `setting turbo_audio <on\|off>` | | `on` or `off` | Keep generating audio (at a raised pitch) while turbo mode runs. Off (the default) mutes audio in turbo mode. Applied at once if turbo is running. | ✅ Implemented |
 | `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
 | `setting reset` | | | Reset all settings to default values | 🔮 Planned |
@@ -3202,7 +3202,6 @@ Only a recording you started (`ttd start` without `black_box`, the TTD panel's R
 | Disk load, disk create | New media. |
 | ROM reload | The machine's code changed under the history. |
 | General Sound card type switch | The device set changed under the history (`gs-card-switch`); a seek could not put the other card type back. |
-| Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
 | A device TTD cannot follow | None today: the ZX-Evo / ATM3 Z-Controller SD card is recorded (the card's state, the guest's sector writes), so SD card activity no longer ends a recording. Such a device would end the recording (history dropped) at the next frame boundary, and `last_drop_reason` would say so. |
 
@@ -3481,6 +3480,7 @@ to the **machine's own mouse**, whatever it is (design:
 | ATM Turbo 2 (`ATM710`, `ATM450`) | Kempston card on the ZX-bus (`kempston`), with wheel | the same ports |
 | ZX-Evo (`ATM3`), TS-Conf (`TSL`, `TSL-VDAC2`) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR's registers at the same ports |
 | Sprinter | the board mouse (`sprinter`): Microsoft serial mouse on SIO B + the PLD's Kempston view | DSS 1.71: 3-byte packets at 1 200 baud; DSS 1.62.9x: the ports |
+| 48K, 128K, +2, +2A, +3 with the slot card `amx-mouse` | AMX mouse (`amx`, kind `amx-pio`) | one IM 2 interrupt per mickey from a Z80 PIO (`#1F` X, `#3F` Y, bit 0 the direction), buttons `#DF` (D7 left, D6 middle, D5 right, active low); status `pio` |
 
 **How the device works, in one paragraph.** Every one of these mice is a *relative* device: it
 does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
@@ -3634,8 +3634,10 @@ a held button is a 1 bit. The program running on the machine reads it with `IN #
 tests the bits. Worked example: up and fire held reads `0x18` (up = bit 3 = 8, fire = bit 4 =
 16). Unlike the mouse it is not relative: the byte is the state, so `joystick set 0x18`
 means "exactly up and fire are held now". Machines that decode the port: ZX-Evo (ATM3, `IN #1F`
-outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`).
-Other machines accept the input with a warning, because the program cannot see it.
+outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`), Pentagon (`#1F`
+outside a TR-DOS session), Profi (`#1F` in the normal port set), Sprinter (`#1F` outside TR-DOS, `#FF` in it) and the
+Next (its left DB9 connector). The 48K, 128K, +2, +2A, +3 and the ATM Turbo 2+ (no Kempston on the board) accept
+the input with a warning, because the program cannot see it ([.recipe/input/joystick.md](../../../../.recipe/input/joystick.md)).
 
 **Buttons and limits** (same in every interface):
 
@@ -3794,7 +3796,8 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
 | `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
 | `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`), `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`), `battery` (`known`, `text`; when known `level`, `coarse`, `charging`, `wired`), `light` (`available`, else the `reason`) and `notice` (what is missing and how to fix it, such as the udev rule; absent when nothing is) | ✅ Implemented |
-| `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
+| `controllers context` | | Machine, the loaded program's `file_sha256`, `signatures` (§18) and `file_set`, the game profiles they match (`game_matches` [{`id`, `how`}], strongest first), where the haptics come from (`haptics_reason`), the manual game profile, the applied profiles, warnings | ✅ Implemented |
+| `controllers match` | `[path] [signatures=a,b] [file_sha256=..] [file_set=..] [machine=..]` | The game profiles a program's signatures choose (D7: signature, file SHA-256, then the TR-DOS file set's fuzzy rule): `matches` [{`id`, `how`}], `profile` (the one chosen, empty: `next` is `port-reads`, the heuristic decides), `haptics_reason`. A `path` is a host file whose signatures the Qt client computes; without options, the loaded program | ✅ Implemented |
 | `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
 | `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
 | `controllers save` / `delete` / `apply` | `<file>` / `<id>` / `<id\|none>` | Save a profile file into the user's profiles; delete a user profile; choose the game profile by hand | ✅ Implemented |
@@ -3804,6 +3807,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
+| `controllers haptics-probe` | `<exec\|read\|write\|port-in\|port-out> <address> [page=N] [port_mask=M] [play=hit]` | A haptic probe (a breakpoint that never stops) at an address or port as a source of the loaded game's user profile (`user/game-<sha16>`, started from the haptics that play now), with a rule that plays the effect; answers `id`, `source`, `path`; `unavailable` without a program loaded from a file. The debugger's **Add as Haptic Probe** runs it ([haptics.md §5, §7](../../../inprogress/2026-10-17-controller-manager/haptics.md#5-sources-game-events)) | ✅ Implemented |
 | `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
 | `controllers aliases` | | The device aliases, old id -> new id (`from`, `to`, `connected`, `name` when connected): a pad first seen through GameController alone (`gc:...`) and later matched to its HID device goes on under the HID id, and the profiles and player pins naming the old id apply to the new one; kept in `aliases.yaml` next to the user profiles ([architecture.md §5](../../../inprogress/2026-10-17-controller-manager/architecture.md)) | ✅ Implemented |
 | `controllers unalias` | `<old id>` | Forget an alias: the profiles naming the old id stop applying to the new one; saved and applied at once. `unknown-alias` (404) when there is none | ✅ Implemented |
@@ -4131,6 +4135,7 @@ by its manager's revision.
 | `monitor debug.labels` | `[instance=]` | `total` labels, `sets` [{`id`, `title`, `enabled`, `symbols`}] (recounted on `NC_LABEL_CHANGED`, at most every 2 s) | ✅ Implemented |
 | `monitor ttd.status` | `[instance=]` | From the published cursor: `state`, `recording`, `history`, `frame`, `first`, `end`, `frames`; from the published session summary (refreshed every 2 s at most, never the live session): `checkpoints`, `memory_bytes`, `history_bytes`, `page_store_bytes`, `bookmarks`, `write_journal_records`, `input_events`, `evicted_checkpoints` | ✅ Implemented |
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
+| `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
 
 `instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
@@ -4147,6 +4152,45 @@ by its manager's revision.
 
 `run.state`'s `speed` (topic, readout, `GET /api/v1/surfaces/readouts`) is the host setting (1..16) everywhere; the
 composed clock multiplier with the machine's own turbo is `emulator.stats` `cpu.multiplier`.
+
+### 18. Media Signatures
+
+Signatures that recognise a title after a re-pack (TAP ↔ TZX, TRD ↔ SCL ↔ FDI ↔ UDI ↔ TD0), a rename or a save:
+`core/swsignature` (`unrealng::swsignature`, option `ENABLE_SWSIGNATURE`), through `SignatureControl` on every plane.
+Design: [Steam Deck input-and-profiles.md §4](../../../inprogress/2026-10-08-steamdeck-client/input-and-profiles.md#4-signatures);
+the game profiles they choose: §15 `controllers match`
+([mapping-and-profiles.md §6.1](../../../inprogress/2026-10-17-controller-manager/mapping-and-profiles.md#61-order-dt-2-d7));
+measured by [POC 034](../../../../tools/poc/034-media-signatures/README.md).
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `signature` | `<file> [--details] [--external]` | `signature`: `name`, `kind` (`tape`, `disk`, `snapshot`, `unknown`), `format`, `size`, `sha256`, `content` (`tape:sha256:` over the data payloads, `trdset:sha256:` over the TR-DOS entry hashes, `mem:sha256:` over the RAM pages; empty when the medium has none), `keys` (`file:sha256:<hex>` and the content signature: what a game profile's `match.signatures` holds), `file_set` (`n:` entry and `c:` / `d:` content tokens for `match.file_set`), `machine_hint` and `memory_pages` (snapshots), `warnings`; `--details` adds `blocks` / `files`, `--external` `sha1` and `md5` | ✅ Implemented |
+| `signature media` | `[--details]` | The same for each medium in the machine's tape and floppy slots, from its source file: `media` [{`slot`, `source`, `dirty`, `signature` \| `error`}] | ✅ Implemented |
+| `signature compare` | `<known> <candidate>` | `match`: `level` (`exact`, `content`, `fuzzy`: the catalog rule - every TR-DOS entry of the known title kept, at most one file with other data, at most max(2, n) entries added; Jaccard ≥ 0.8 and no code file missing for a set without entry tokens, `memory`: ≥ 90 % of ≥ 16 common RAM pages equal, `none`), `matches`, `score`, `reason` | ✅ Implemented |
+
+Errors: `bad-request` (no path), `not-found` (404: no such file), `unavailable` (503: built without the library, or
+`media` without a machine).
+
+| Surface | File | Loaded media | Compare |
+| :--- | :--- | :--- | :--- |
+| CLI | `signature <file> [--details] [--external] [--json]` | `signature media` | `signature compare <known> <candidate>` |
+| WebAPI | `GET /api/v1/signature?path=&details=&external=` | `GET /api/v1/emulator/{id}/signature?details=` | `GET /api/v1/signature/compare?path=&with=` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/signature?path=..."}` (every route is a call) | the same `call` | the same `call` |
+| MCP | `signature_info` action `file` (`path`, `details`, `external`) | action `media` (`target`) | action `compare` (`path`, `with`) |
+| Python | `emu.signature(path, details=True)` | `emu.signature_media()` | `emu.signature_compare(path, candidate)` |
+| Lua | not provided (Lua is P3) | | |
+
+No topic: a signature changes only when a medium is inserted, which `media.slots` pushes already.
+
+```
+signature eyeache2.scl
+# eyeache2.scl  disk scl, 41216 bytes
+#   sha256   5d0c...
+#   content  trdset:sha256:9b41...
+#   file set c:0b8e... c:5a77... d:e019...
+controllers match eyeache2.trd
+# OK: user/game-9b41... (signature trdset:sha256:9b41...)
+```
 
 ## Future Capabilities
 

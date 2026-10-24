@@ -160,10 +160,10 @@ The `#7FFD` case is the most instructive: we intentionally added an **extra bit*
 
 ```bash
 # Find all unmapped port accesses and test them against relaxed masks
-python utilities/porttrace/porttrace_convert.py trace.json --filter-unmapped --to text
+python tools/porttrace/porttrace_convert.py trace.json --filter-unmapped --to text
 
 # Future enhancement: --analyze-strictness flag
-python utilities/porttrace/porttrace_convert.py trace.json --analyze-strictness
+python tools/porttrace/porttrace_convert.py trace.json --analyze-strictness
 ```
 
 Output:

@@ -9,6 +9,7 @@ This code is written by kerukuro and released into public domain.
 #include "../../detail/absorb_data.hpp"
 #include "constants/md5_constants.hpp"
 #include <array>
+#include <cstring>
 
 namespace digestpp
 {
@@ -102,9 +103,11 @@ public:
 private:
 	inline void transform(const unsigned char* data, size_t num_blks)
 	{
-		const uint32_t* M = reinterpret_cast<const uint32_t*>(data);
-		for (uint64_t blk = 0; blk < num_blks; blk++, M += 16)
+		for (uint64_t blk = 0; blk < num_blks; blk++)
 		{
+			// Copied out: the input may sit at any address (a uint32_t load from it is unaligned)
+			uint32_t M[16];
+			std::memcpy(M, data + blk * 64, sizeof M);
 			uint32_t a = H[0];
 			uint32_t b = H[1];
 			uint32_t c = H[2];

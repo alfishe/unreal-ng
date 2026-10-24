@@ -282,6 +282,7 @@ public:
     void UpdateFeatureCache() override;
     void StopForFeatureChange(const char* feature) override;
     bool LocksAcceleration() const override { return !_blackBox; }
+    std::string SpeedLock() const override;
     void OnAccelerationChanging(bool accelerating) override;
 
     /// @brief The black box (Phase 5, Step 3; D29): a recording that keeps the
