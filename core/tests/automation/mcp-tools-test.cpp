@@ -608,6 +608,76 @@ TEST_F(McpTools_Test, LoadSoftware_TapeWithPlay_LoadsThenPlays)
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/tape/play"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_TapeAutostart_PlaysTypesLoadAndKeepsAPausedMachinePaused)
+{
+    Json::Value state(Json::objectValue);
+    state["is_running"] = true;
+    state["is_paused"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1"] = {200, state};
+    Json::Value typed(Json::objectValue);
+    typed["success"] = true;
+    typed["editor"] = "48 BASIC";
+    _caller->routes["POST /api/v1/emulator/emu-1/basic/run"] = {200, typed};
+
+    Json::Value args;
+    args["path"] = "game.tap";
+    args["autostart"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("LOAD \"\" typed (48 BASIC)"), std::string::npos) << result.text;
+    // The order: load, play, wake the paused machine, type, pause it again
+    std::vector<std::string> sequence;
+    for (const auto& call : _caller->calls)
+        if (call.method == "POST")
+            sequence.push_back(call.path.substr(std::string("/api/v1/emulator/emu-1").size()));
+    const std::vector<std::string> expected = {"/tape/load", "/tape/play", "/resume", "/basic/run", "/pause"};
+    EXPECT_EQ(sequence, expected);
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/basic/run")->body["command"].asString(), "LOAD \"\"");
+}
+
+TEST_F(McpTools_Test, LoadSoftware_TapeAutostart_StartsAMachineNotYetStartedAndPausesIt)
+{
+    // A slot change restarts a paused machine without starting it; run_frames on it leave a pause behind
+    Json::Value state(Json::objectValue);
+    state["is_running"] = false;
+    state["is_paused"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1"] = {200, state};
+
+    Json::Value args;
+    args["path"] = "game.tap";
+    args["autostart"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    std::vector<std::string> sequence;
+    for (const auto& call : _caller->calls)
+        if (call.method == "POST")
+            sequence.push_back(call.path.substr(std::string("/api/v1/emulator/emu-1").size()));
+    const std::vector<std::string> expected = {"/tape/load", "/tape/play", "/start", "/resume", "/basic/run", "/pause"};
+    EXPECT_EQ(sequence, expected);
+}
+
+TEST_F(McpTools_Test, LoadSoftware_TapeAutostart_ANotTypedLoadIsAnError)
+{
+    Json::Value state(Json::objectValue);
+    state["is_running"] = true;
+    state["is_paused"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1"] = {200, state};
+    Json::Value busy(Json::objectValue);
+    busy["message"] = "a program is running";
+    _caller->routes["POST /api/v1/emulator/emu-1/basic/run"] = {409, busy};
+
+    Json::Value args;
+    args["path"] = "game.tap";
+    args["autostart"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("a program is running"), std::string::npos) << result.text;
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/pause")) << "a running machine is left running";
+}
+
 TEST_F(McpTools_Test, LoadSoftware_Disk_UsesDriveParameter)
 {
     _caller->routes["POST /api/v1/emulator/emu-1/disk/B/insert"] = {200, Json::Value(Json::objectValue)};
