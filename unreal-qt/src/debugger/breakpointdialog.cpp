@@ -690,6 +690,30 @@ void BreakpointDialog::showContextMenu(const QPoint& pos)
     QAction* toggleAction = contextMenu.addAction(isActive ? "Disable" : "Enable");
     connect(toggleAction, &QAction::triggered, this, &BreakpointDialog::toggleBreakpoint);
 
+    // A breakpoint as a game's haptic source: the probe hits without stopping (haptics.md §5, §7)
+    BreakpointSnapshot breakpoint = _emulator->GetBreakpointManager()->GetBreakpointById(id);
+    if (breakpoint && isSignalConnected(QMetaMethod::fromSignal(&BreakpointDialog::hapticProbeRequested)))
+    {
+        int kind = -1;
+        if (breakpoint->type == BRK_MEMORY)
+            kind = (breakpoint->memoryType & BRK_MEM_EXECUTE) ? 0 : (breakpoint->memoryType & BRK_MEM_WRITE) ? 2 : 1;
+        else if (breakpoint->type == BRK_IO)
+            kind = (breakpoint->ioType & BRK_IO_OUT) ? 4 : 3;
+        const int page = breakpoint->matchType == BRK_MATCH_BANK_ADDR && breakpoint->pageType == BANK_RAM
+                             ? static_cast<int>(breakpoint->page)
+                             : -1;
+        if (kind >= 0)
+        {
+            contextMenu.addSeparator();
+            QAction* probeAction = contextMenu.addAction("Add as Haptic Probe");
+            probeAction->setToolTip("A source of this game's haptics profile that fires without stopping");
+            const int address = breakpoint->z80address;
+            const int portMask = breakpoint->portMask;
+            connect(probeAction, &QAction::triggered, this,
+                    [this, kind, address, page, portMask]() { emit hapticProbeRequested(kind, address, page, portMask); });
+        }
+    }
+
     contextMenu.addSeparator();
 
     QAction* deleteAction = contextMenu.addAction("Delete");

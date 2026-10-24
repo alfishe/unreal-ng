@@ -199,4 +199,15 @@ void DiffGameInputPad(const GameInputPadState& was, const GameInputPadState& now
     axis("rstick.y", -was.rightY, -now.rightY);
 }
 
+void GameInputSystemButtonsDiff(uint32_t was, uint32_t now, const ControlSink& sink)
+{
+    constexpr PadButton kSystemButtons[] = {{0x00000001, "guide"}, {0x00000002, "share"}};
+    for (const PadButton& button : kSystemButtons)
+    {
+        const bool held = (now & button.mask) != 0;
+        if (held != ((was & button.mask) != 0))
+            sink(button.control, held ? 1.0f : 0.0f);
+    }
+}
+
 }  // namespace controllers

@@ -38,6 +38,12 @@ constexpr uint32_t kKindGamepad = 0x00040000;
 constexpr uint32_t kStatusConnected = 0x00000001;
 constexpr uint32_t kAsyncEnumeration = 1;
 constexpr uint32_t kEnableBackgroundInput = 0x00000040;
+/// GameInputFocusPolicy: the Guide and Share buttons need their own background flags (the input's does not cover them)
+constexpr uint32_t kEnableBackgroundGuideButton = 0x00000080;
+constexpr uint32_t kEnableBackgroundShareButton = 0x00000100;
+/// GameInputSystemButtons
+constexpr uint32_t kSystemButtonGuide = 0x00000001;
+constexpr uint32_t kSystemButtonShare = 0x00000002;
 
 struct Version
 {
@@ -125,6 +131,9 @@ struct IReading : public IUnknown
 
 using DeviceCallback = void(CALLBACK*)(uint64_t token, void* context, IDevice* device, uint64_t timestamp,
                                        uint32_t currentStatus, uint32_t previousStatus);
+/// GameInputSystemButtonCallback: the Guide / Share state now and before
+using SystemButtonCallback = void(CALLBACK*)(uint64_t token, void* context, IDevice* device, uint64_t timestamp,
+                                             uint32_t currentButtons, uint32_t previousButtons);
 
 struct IGameInput : public IUnknown
 {
@@ -140,7 +149,8 @@ struct IGameInput : public IUnknown
                                                              uint32_t enumeration, void* context,
                                                              DeviceCallback callback, uint64_t* token) = 0;
     virtual HRESULT STDMETHODCALLTYPE RegisterSystemButtonCallback(IDevice* device, uint32_t filter, void* context,
-                                                                   void* callback, uint64_t* token) = 0;
+                                                                   SystemButtonCallback callback,
+                                                                   uint64_t* token) = 0;
     virtual HRESULT STDMETHODCALLTYPE RegisterKeyboardLayoutCallback(IDevice* device, void* context, void* callback,
                                                                      uint64_t* token) = 0;
     virtual void STDMETHODCALLTYPE StopCallback(uint64_t token) = 0;
@@ -214,8 +224,10 @@ public:
             return false;
         _sink = &sink;
         _stopping = false;
-        // The router gates what reaches a machine (focus, the debug layer); the pads read like the IOHID ones
-        _input->SetFocusPolicy(gi::kEnableBackgroundInput);
+        // The router gates what reaches a machine (focus, the debug layer); the pads read like the IOHID ones. Guide and
+        // Share too: no exclusive flag, so the Game Bar and other overlays keep seeing them
+        _input->SetFocusPolicy(gi::kEnableBackgroundInput | gi::kEnableBackgroundGuideButton |
+                               gi::kEnableBackgroundShareButton);
         // Asynchronous: the pads present now come through the callback like later arrivals; Start does not wait
         const HRESULT registered =
             _input->RegisterDeviceCallback(nullptr, gi::kKindGamepad, gi::kStatusConnected, gi::kAsyncEnumeration,
@@ -226,6 +238,17 @@ public:
             _sink = nullptr;
             return false;
         }
+        // Guide and Share come through their own callback (not in the gamepad reading); without it they are missing,
+        // the rest works
+        const HRESULT buttons = _input->RegisterSystemButtonCallback(
+            nullptr, gi::kSystemButtonGuide | gi::kSystemButtonShare, this, &GameInputBackend::OnSystemButton,
+            &_systemToken);
+        {
+            std::lock_guard lock(_mutex);
+            _systemButtonsError = SUCCEEDED(buttons) ? std::string() : Hresult(buttons);
+        }
+        if (FAILED(buttons))
+            _systemToken = 0;
         if (_xboxServed)
             *_xboxServed = true;
         _thread = std::thread([this] { Run(); });
@@ -237,6 +260,12 @@ public:
         if (!_thread.joinable())
             return;
         // No callback after this: the runtime waits for one in flight
+        if (_systemToken != 0)
+        {
+            _input->StopCallback(_systemToken);
+            _input->UnregisterCallback(_systemToken);
+            _systemToken = 0;
+        }
         _input->StopCallback(_token);
         _input->UnregisterCallback(_token);
         _token = 0;
@@ -258,6 +287,19 @@ public:
     {
         std::lock_guard lock(_mutex);
         return _devices.size();
+    }
+
+    /// Guide / Share missing: the runtime refused their callback
+    std::string DeviceNotice(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        if (_systemButtonsError.empty())
+            return {};
+        for (const Device& known : _devices)
+            if (known.id == device && known.systemButtons != 0)
+                return "Guide and Share do not reach the emulator: this GameInput runtime refused their callback (" +
+                       _systemButtonsError + ")";
+        return {};
     }
 
     bool HasRumble(const HostDeviceId& device) const override
@@ -311,6 +353,7 @@ private:
         uint64_t timestamp = 0;  ///< of the last reading decoded
         GameInputPadState last;
         bool seen = false;
+        uint32_t systemButtons = 0;  ///< GameInputSystemButtons the device has (Guide, Share)
     };
     struct Change
     {
@@ -370,6 +413,25 @@ private:
             self->_changes.push_back({device, now});
         }
         self->_wake.notify_all();
+    }
+
+    /// On the runtime's thread: the Guide / Share edges as their controls (GameInputSystemButtonsDiff)
+    static void CALLBACK OnSystemButton(uint64_t, void* context, gi::IDevice* device, uint64_t, uint32_t current,
+                                        uint32_t previous)
+    {
+        auto* self = static_cast<GameInputBackend*>(context);
+        HostDeviceId id;
+        {
+            std::lock_guard lock(self->_mutex);
+            const auto it = std::find_if(self->_devices.begin(), self->_devices.end(),
+                                         [device](const Device& known) { return known.device == device; });
+            if (it == self->_devices.end())
+                return;  // not one of ours (a HID pad Raw Input reads), or not added yet
+            id = it->id;
+        }
+        GameInputSystemButtonsDiff(previous, current, [self, &id](const std::string& control, float value) {
+            self->_sink->OnControl({id, control, value, 0});
+        });
     }
 
     void Run()
@@ -437,7 +499,7 @@ private:
         identity.version = info->revisionNumber;
         identity.name = info->displayName != nullptr ? info->displayName : "";
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         if (match.ignore)
         {
             change.device->Release();
@@ -458,6 +520,7 @@ private:
         Device device;
         device.device = change.device;  // the change's reference moves here
         device.motors = info->supportedRumbleMotors;
+        device.systemButtons = info->supportedSystemButtons;
         HostDeviceInfo host;
         host.name = match.name.empty() ? identity.name : match.name;
         host.family = match.family;
@@ -507,6 +570,8 @@ private:
     HMODULE _dll = nullptr;
     gi::IGameInput* _input = nullptr;
     uint64_t _token = 0;
+    uint64_t _systemToken = 0;        ///< the Guide / Share callback's; 0 when the runtime refused it
+    std::string _systemButtonsError;  ///< under _mutex: its HRESULT then
     IBackendSink* _sink = nullptr;
     std::thread _thread;
     mutable std::mutex _mutex;

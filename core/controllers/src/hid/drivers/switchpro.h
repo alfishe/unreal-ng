@@ -33,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -86,6 +87,12 @@ enum class SwitchLayout : uint8_t
     JoyConRight,  ///< a right Joy-Con alone, sideways
     PairLeft,     ///< the left half of a Joy-Con pair
     PairRight,    ///< the right half
+    // The Nintendo Switch Online pads talk the Pro Controller's protocol with their own buttons on its bits (SDL's
+    // HIDAPI_DriverNintendoClassic, Linux's hid-nintendo nescon / snescon / gencon / n64con_button_mappings)
+    Nes,      ///< NES / Famicom: B A on the Pro's B A, Select / Start, L / R (no sticks)
+    Snes,     ///< SNES: the Pro's faces, L R ZL ZR, Select / Start (no sticks)
+    N64,      ///< N64: A B, Z on ZL, ZR on the left stick click, C-Up / Down / Left / Right on Y / ZR / X / minus
+    Genesis,  ///< Sega Genesis / Mega Drive: A B C on A B R, X Y Z on X Y L, Mode on ZR (no sticks)
 };
 
 /// Reads 0x30 / 0x21 into controls
@@ -103,16 +110,26 @@ public:
     {
         return vendor == kNintendo && product == kChargingGrip;
     }
-    static bool Handles(uint16_t vendor, uint16_t product)
+    static constexpr uint16_t kSnesController = 0x2017;
+    static constexpr uint16_t kN64Controller = 0x2019;
+    static constexpr uint16_t kGenesisController = 0x201E;
+    static bool Handles(uint16_t vendor, uint16_t product, const std::string& name = {})
     {
-        return LayoutFor(vendor, product).has_value();
+        return LayoutFor(vendor, product, name).has_value();
     }
-    /// The Pro Controller, a Joy-Con (alone until the backend pairs it); nullopt for anything else (a half of the
-    /// charging grip 057E:200E included: its side comes from the device info)
-    static std::optional<SwitchLayout> LayoutFor(uint16_t vendor, uint16_t product);
+    /// The Pro Controller, a Joy-Con (alone until the backend pairs it), a Nintendo Switch Online pad; nullopt for
+    /// anything else (a half of the charging grip 057E:200E included: its side comes from the device info). The NES
+    /// pads come as right Joy-Cons: their product name tells them apart (SDL: "NES Controller", "HVC Controller")
+    static std::optional<SwitchLayout> LayoutFor(uint16_t vendor, uint16_t product, const std::string& name = {});
     static bool IsJoyCon(SwitchLayout layout)
     {
-        return layout != SwitchLayout::Pro;
+        return layout == SwitchLayout::JoyConLeft || layout == SwitchLayout::JoyConRight ||
+               layout == SwitchLayout::PairLeft || layout == SwitchLayout::PairRight;
+    }
+    /// The NES, SNES and Genesis pads have no motors; the N64 one and the rest rumble
+    static bool HasRumble(SwitchLayout layout)
+    {
+        return layout != SwitchLayout::Nes && layout != SwitchLayout::Snes && layout != SwitchLayout::Genesis;
     }
     /// The layout of a Joy-Con alone (@p paired false) or as a pair's half
     static SwitchLayout JoyConLayout(bool left, bool paired);
@@ -189,6 +206,11 @@ public:
     SwitchProtocol(bool bluetooth, CalibrationSink onCalibration, uint64_t startDelayMs = kStartDelayMs,
                    TypeSink onType = nullptr);
 
+    /// A pad a kernel driver has set up (Linux hid-nintendo: handshake, calibration, the full report, vibration on and
+    /// its own player lights): no setup, only the HD rumble as the 0x10 report under the same pacing; SetPlayer does
+    /// nothing (the driver's player lights stay)
+    static std::unique_ptr<SwitchProtocol> RumbleOnly(bool bluetooth);
+
     std::optional<PadOutReport> Next(uint64_t nowMs, uint64_t& wakeMs) override;
     void OnInput(const uint8_t* report, size_t size, uint64_t nowMs) override;
     void SetRumble(const RumbleLevels& levels) override;
@@ -229,6 +251,7 @@ private:
     void Calibrated();
 
     bool _bluetooth;
+    bool _rumbleOnly = false;  ///< RumbleOnly: the kernel driver owns the setup and the player lights
     CalibrationSink _onCalibration;
     TypeSink _onType;
     std::vector<Step> _steps;

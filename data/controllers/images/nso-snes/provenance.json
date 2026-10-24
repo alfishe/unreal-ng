@@ -1,0 +1,37 @@
+{
+  "family": "nso-snes",
+  "images": [
+    {
+      "view": "front",
+      "title": "Super Nintendo Entertainment System controller for Nintendo Switch Online",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 144 mm (an estimate of dimensions.com for the SNES controller); the depth follows from the traced front view, 57.8 mm without the shoulder buttons",
+          "source": "https://www.dimensions.com/element/snes-controller",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "front view: the outline, the control positions and sizes, the L / ZL / ZR / R keys on the top edge",
+          "source": "https://assets.nintendo.com/image/upload/ncom/en_US/products/accessories/nintendo-switch/controllers/other-controllers/super-nintendo-entertainment-system-controller/110756-switch-nso-super-nintendo-entertainment-system-controller-front-1200x675",
+          "author": "Nintendo",
+          "licence": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid and by colour); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the SNES pad the NSO version copies: the dish under the four buttons, the two tilted recesses",
+          "source": "https://commons.wikimedia.org/wiki/File:SNES-Controller-Flat.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

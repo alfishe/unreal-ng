@@ -91,7 +91,7 @@ bool FeatureManager::isTtdRecordingActive() const
 bool FeatureManager::debugModeInEffect() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (_replayDebugHold)
+    if (_replayDebugHold || _probeDebugHold)
         return true;
     auto debugIt = _features.find(Features::kDebugMode);
     return debugIt != _features.end() && debugIt->second.enabled;
@@ -108,10 +108,33 @@ void FeatureManager::OnModeChanged(const coordinator::ModeState& /*from*/, const
     applyDebugMode();
 }
 
+void FeatureManager::setProbeDebugHold(bool on)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_probeDebugHold == on)
+            return;
+        _probeDebugHold = on;
+    }
+    applyDebugMode();
+}
+
+bool FeatureManager::probeDebugHold() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _probeDebugHold;
+}
+
 void FeatureManager::applyDebugMode()
 {
     if (!_context || !_context->pCore)
         return;
+    // As onFeatureChanged: the emulation thread reads the debug flag, the memory interface and the tracker's buffers
+    // without locks, so switch them with the CPU held (the tracker frees its counters when the debug mode goes off).
+    // Free on the loop thread (the haptic probes arm at a frame end) and under a hold (a TTD replay's operation)
+    std::optional<Emulator::CpuHold> hold;
+    if (_context->pEmulator)
+        hold.emplace(*_context->pEmulator, "debug mode");
     _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
     _context->pCore->SelectMemoryInterface();  // the debug path, contended where the machine is
     if (Memory* memory = _context->pCore->GetMemory())

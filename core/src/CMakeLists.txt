@@ -412,3 +412,10 @@ if (WIN32 AND MSVC)
     # psapi: GetProcessMemoryInfo (common/processstats.cpp, the monitoring planes)
     target_link_libraries(${PROJECT_NAME} PRIVATE shlwapi shell32 ws2_32 iphlpapi psapi)
 endif()
+
+# Media signatures (core/swsignature, controller manager D16): a library on top of the core (it uses the core's
+# loaders), so core does not link it; automation, unreal-qt and core-tests do. Added here for the warning flags above
+option(ENABLE_SWSIGNATURE "Enable the media signature library" ON)
+if (ENABLE_SWSIGNATURE AND NOT TARGET unrealng::swsignature)
+    add_subdirectory("${ROOT_DIR}/core/swsignature" "${CMAKE_CURRENT_BINARY_DIR}/swsignature")
+endif()

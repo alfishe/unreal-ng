@@ -67,6 +67,9 @@ struct Profile
     std::vector<std::string> machines;
     std::vector<std::string> signatures;
     std::vector<std::string> fileSha256;
+    /// match.file_set: the TR-DOS file set as swsignature tokens (`c:<16 hex>` code, `d:<16 hex>` other), matched by
+    /// the fuzzy rule (core/swsignature/src/match.h: Jaccard >= 0.8, no code file missing)
+    std::vector<std::string> fileSet;
     std::string title;
     /// applies_to
     std::vector<std::string> families;
@@ -83,7 +86,7 @@ struct Profile
     Specificity GetSpecificity() const;
     bool IsGame() const
     {
-        return !signatures.empty() || !fileSha256.empty();
+        return !signatures.empty() || !fileSha256.empty() || !fileSet.empty();
     }
 };
 

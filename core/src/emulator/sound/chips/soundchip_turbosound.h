@@ -194,6 +194,10 @@ public:
 
     // Chip access for monitoring purposes
     int getSelectedChip() const override { return _currentChip == _chip1 ? 1 : 0; }
+    int getBusReadRegister() const override
+    {
+        return _currentChip != nullptr ? _currentChip->getCurrentRegisterIndex() : -1;
+    }
 
     SoundChip_AY8910* getChip(int index) const override
     {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <sstream>
 
 #include "devicedatabase.h"
+#include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/yaml.h"
 #include "router/inputrouter.h"
 
@@ -82,7 +84,7 @@ bool RemoteByNature(const Profile& profile)
     return profile.devices.empty() && !profile.families.empty() &&
            std::all_of(profile.families.begin(), profile.families.end(), [](const std::string& family) {
                return family == "keyboard" ||
-                      DeviceDatabase::Builtin().ForFamily(family).role == DeviceRole::DebuggerRemote;
+                      DeviceDatabase::Active()->ForFamily(family).role == DeviceRole::DebuggerRemote;
            });
 }
 
@@ -100,10 +102,7 @@ bool Selected(const Profile& profile, const ProfileContext& context)
         return true;
     if (!profile.IsGame())
         return true;
-    const auto any = [](const std::vector<std::string>& wanted, const std::vector<std::string>& have) {
-        return std::any_of(wanted.begin(), wanted.end(), [&have](const std::string& w) { return Contains(have, w); });
-    };
-    return any(profile.signatures, context.signatures) || any(profile.fileSha256, context.fileSha256);
+    return !GameMatch(profile, context).empty();
 }
 
 /// The rank of a selected profile: specificity (a manual choice ranks as a game), then scope
@@ -113,6 +112,18 @@ std::pair<int, int> Rank(const Profile& profile, const ProfileContext& context)
     if (profile.kind == ProfileKind::Play && Contains(context.manual, profile.id))
         specificity = Specificity::Game;
     return {static_cast<int>(specificity), static_cast<int>(profile.scope)};
+}
+
+/// GameMatch's levels, strongest first: the order gameMatches lists them in
+int MatchStrength(const std::string& how)
+{
+    if (how == "manual")
+        return 0;
+    if (how.rfind("signature", 0) == 0)
+        return 1;
+    if (how.rfind("file sha256", 0) == 0)
+        return 2;
+    return 3;
 }
 
 using Layers = std::vector<std::pair<std::string, JsonValue::Members>>;
@@ -343,6 +354,29 @@ size_t ProfileStore::LoadDirectory(const std::string& root, ProfileScope scope, 
     return kept;
 }
 
+std::string GameMatch(const Profile& profile, const ProfileContext& context)
+{
+    if (profile.kind == ProfileKind::Play && Contains(context.manual, profile.id))
+        return "manual";
+    if (!profile.IsGame())
+        return {};
+    for (const std::string& signature : profile.signatures)
+        if (Contains(context.signatures, signature))
+            return "signature " + Lower(signature);
+    for (const std::string& sha : profile.fileSha256)
+        if (Contains(context.fileSha256, sha) ||
+            Contains(context.signatures, std::string(unrealng::swsignature::kFilePrefix) + sha))
+            return "file sha256 " + Lower(sha);
+    if (!profile.fileSet.empty() && !context.fileSet.empty())
+    {
+        const unrealng::swsignature::FileSetScore score =
+            unrealng::swsignature::CompareFileSets(profile.fileSet, context.fileSet);
+        if (score.matches)
+            return "file set: " + score.Reason();
+    }
+    return {};
+}
+
 bool ProfileStore::OpenGames(const std::string& gamesDir, std::vector<std::string>& errors)
 {
     return _games.Open(gamesDir, errors);
@@ -354,10 +388,19 @@ size_t ProfileStore::LoadGamesFor(const ProfileContext& context, std::vector<std
     for (const std::string& sha : context.fileSha256)
         keys.push_back("sha256:" + sha);
     for (const std::string& signature : context.signatures)
+    {
         keys.push_back("sig:" + signature);
+        // An older profile names the file by match.file_sha256 only
+        const std::string prefix = unrealng::swsignature::kFilePrefix;
+        if (signature.rfind(prefix, 0) == 0)
+            keys.push_back("sha256:" + signature.substr(prefix.size()));
+    }
     std::vector<std::string> ids;
     for (const GameEntry* entry : _games.Lookup(keys))
         ids.push_back(entry->id);
+    for (const GameEntry* entry : _games.LookupFileSet(context.fileSet))
+        if (std::find(ids.begin(), ids.end(), entry->id) == ids.end())
+            ids.push_back(entry->id);
     for (const std::string& id : context.manual)
         if (_games.FindId(id) != nullptr)
             ids.push_back(id);
@@ -405,6 +448,15 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
             selected.push_back(&profile);
     std::stable_sort(selected.begin(), selected.end(), [&context](const Profile* a, const Profile* b) {
         return Rank(*a, context) < Rank(*b, context);
+    });
+    for (const Profile* profile : selected)
+    {
+        const std::string how = GameMatch(*profile, context);
+        if (!how.empty())
+            resolved.gameMatches.emplace_back(profile->id, how);
+    }
+    std::stable_sort(resolved.gameMatches.begin(), resolved.gameMatches.end(), [](const auto& a, const auto& b) {
+        return MatchStrength(a.second) < MatchStrength(b.second);
     });
 
     // §7.6: the schemes a profile extends merge just below it, in order, a scheme's own schemes below that scheme
@@ -455,6 +507,12 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
             {
                 resolved.haptics = profile.haptics;
                 resolved.hapticsProfile = profile.id;
+                // H-3: a game profile by its match (signature, file, file set, manual), else the default it is
+                const std::string how = GameMatch(profile, context);
+                resolved.hapticsReason = !how.empty() ? "game profile " + profile.id + " (" + how + ")"
+                                                      : profile.id + " (" +
+                                                            (profile.machines.empty() ? "default" : "machine default") +
+                                                            ")";
             }
         };
         for (const Profile* profile : selected)
@@ -581,6 +639,7 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
     DumpStrings(match, "machines", profile.machines);
     DumpStrings(match, "signatures", profile.signatures);
     DumpStrings(match, "file_sha256", profile.fileSha256);
+    DumpStrings(match, "file_set", profile.fileSet);
     if (!profile.title.empty())
         match.Set("title", JsonValue::String(profile.title));
     if (!match.GetMembers().empty())

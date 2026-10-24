@@ -244,6 +244,7 @@ Counted classes (one `u16` counter each, reset per frame, folded into a 50-frame
 | `row.<half-row>` | `#FE` reads by high byte, eight counters; plus `rows.multi` for reads with several address lines low |
 | `row-bits.<half-row>` | which bits of a half-row the code tests after the read (sampled: the next `AND n` / `BIT n` within 8 instructions, when cheap; optional) |
 | `ay.r14` | `IN` from the AY data port with R14 selected |
+| `nr.b2` | a read of Next register #B2 (the MD pads' X Z Y MODE bits) through `#253B` |
 
 Output, per instance, read by the library's heuristic ([mapping-and-profiles.md](mapping-and-profiles.md)):
 
@@ -254,6 +255,33 @@ PortReadEvidence { framesObserved, window: 50, perClass: { class → framesWithR
 
 The watch starts at the end of loading (media `NC_MEDIA_*` and tape stop) and runs until a decision is decisive or for
 30 s of play; the cost target is one table increment per `IN`, zero when off.
+
+Built (C6):
+
+- **Row bits.** For a single half-row `#FE` read the watch reads the code after the `IN` (no execution:
+  `TestedBitsAfterIn` over `Memory::DirectReadFromZ80Memory`, set by `ControllerManager` while the watch runs) and
+  follows the value: `IN A,(n)` or `IN r,(C)`, then up to 8 instructions of `AND n`, `BIT b,r`, `RRA` / `RRCA` /
+  `RRC A` / `RR A` / `SRL A` (each shift moves the tested bit), `LD A,r` from the held register, a carry test right after a
+  shift (`JR C`, `JP NC`, `CALL C`, `RET NC`, ...), until a jump, a call, a return, a reload of the register or an ALU
+  op that replaces A (`CP` keeps it). The bits are cached per half-row by the code address, so a polling loop costs
+  one scan; `PortReadEvidence::RowBits(row)` holds the window's union, `auto` shows them as `evidence.row_bits`
+  (`{"row.ef": [0, 1, 2, 3, 4]}`).
+- **`ay.r14`** (an IN of the AY's data port, `#FFFD` as the 128K family decodes it, with R14 selected) and
+  **`nr.b2`** (an IN of the Next's `#253B` with register #B2 selected) are counted by the watch itself, on the same
+  IN-hook path as the ports: `PortReadWatch::OnRead` asks a register probe `ControllerManager` sets while the watch
+  runs (`ITurboSoundDevice::getBusReadRegister`: the selected chip's register, -1 for the TSFM status byte or an FM
+  address; `NextBoard::SelectedRegister`). The chips and the port decoder carry no hook: nothing while the watch is
+  off (the unarmed R14 read benchmarks within noise of the code without the watch).
+- **`DecideFromPortReads`**: `nr.b2` every frame comes before the dedicated ports: an MD 6-button pad on
+  `next.left`, on `next.right` when `#37` is read every frame too. `#EFFE` and `#F7FE` with bits 0-3 of `#F7FE` tested
+  (keys 1-4: Sinclair 2's) is Sinclair 1 (two players), with only bit 4 (key 5) it stays Cursor; the reasons name the
+  tested bits. `ay.r14` every frame with nothing else decided gives a `hint` (a Timex joystick, the 128 keypad or an
+  AY mouse: none of them exists here yet), not a decision. Tests: `AutoDecision_Test` (`RowBits_*`,
+  `Watch_RowBitsAndRegisterReads`, `Decide_NextB2RowBitsAndAyR14`) and `HostInputMachine_Test.PortReadWatchRowBitsAndAyR14`
+  / `PortReadWatchNextB2` on a Pentagon and a Next.
+- Not done: the Next's board ports are `next.left` / `next.right`, so a `#1F` decision (`kempston`) on a Next names a
+  connector the Next lacks and the Qt client ignores it (`applyAuto`); a mapping of `kempston` to `next.left` there is
+  left.
 
 ## 7. What the core must add
 

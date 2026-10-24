@@ -1679,10 +1679,25 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
-                                                         | aliases
+                                                         | probe | database | reports | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | unalias
+                                                         | light | haptics_probe | role | pin | identify | player
+                                                         | database_save | database_delete | database_import | learn
+                                                         | unalias
+POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
+POST /api/v1/controllers/host/{device}/{verb}            role | pin | identify | learn, the device from the path
+GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
+GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
+GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
 ```
+
+`GET /api/v1/controllers/match?path=game.trd` (or `signatures=a,b`, `file_sha256=`, `file_set=` comma lists,
+`machine=`; none: the loaded program) answers the game profiles the signatures choose, `matches` [{`id`, `how`}]
+strongest first, `profile` and `next` (`game-profile` or `port-reads`), `haptics_reason`; `context` carries the loaded
+program's `signatures`, `file_set`, `game_matches` and `haptics_reason`. The signature routes
+([command-interface.md section 18](./command-interface.md#18-media-signatures); OpenAPI tag `Signatures`) answer
+`{ok, path, signature: {...}}`, `{ok, media: [...]}` and `{ok, path, with, match: {level, matches, score, reason}}`;
+`404` for a file that is missing, `503` for a build without the library.
 
 The machine routes are ControllerControl, the host routes HostInputControl
 ([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
@@ -1691,6 +1706,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/haptics_probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
+a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
+game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
+`unavailable` without a program loaded from a file.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
@@ -1701,11 +1721,25 @@ when known also `level` (absent without one), `coarse`, `charging`, `wired`), `l
 `reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
 `POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
 query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
-reason where the OS does not let the emulator set it. `GET /api/v1/controllers/aliases` lists the device aliases
-(`{aliases: [{from, to, connected, name}]}`: a pad first seen through GameController alone, `gc:...`, and later
-matched to its HID device keeps its profiles under the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}`
-forgets one (`200` with `from`, `to`; `404` `unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every
-route.
+reason where the OS does not let the emulator set it.
+
+`POST /api/v1/controllers/role {"device", "role": "player|debugger-remote|disabled"}` and `POST
+/api/v1/controllers/pin {"device", "pin": "follow-focus|all|pinned:<emulator id>"}` set what a host device is for and
+which instance it drives (`devices` shows both: `role`, `pin`). `POST /api/v1/controllers/identify {"device"}` rumbles
+it for 300 ms and blinks its light where it has them (`rumble`, `light`, `ms`; `503` when it has neither).
+`GET /api/v1/controllers/probe` lists the backends (`running`, else `reason`) with the devices each found (`match`
+`{step, score}`, `notice`) and `user_devices`. `GET /api/v1/controllers/database?vidpid=045e:0b00` (or `guid=<SDL
+GUID>`, `device=<id>`; `name=`, `version=`) answers what the device database says (`query`, `match`).
+`POST /api/v1/controllers/database/import {"text": "<gamecontrollerdb line or RetroArch .cfg>", "save": true}` imports
+a mapping (`source`, `name`, `device`, `map`, `skipped`, `gamecontrollerdb`; saved as the user family `family` in
+`path`, and a connected device of that VID / PID takes it at once). `POST /api/v1/controllers/learn {"device", "step":
+"start|status|sample|skip|back|finish|cancel", ...}` runs the learn wizard of an unknown device: `start` (`controls`: a
+comma list) takes the device, whose presses then answer the prompts (`control`, `prompt`, `index`, `count`,
+`waiting_for_release`, `map`); `sample {control, value}` feeds a raw control from a script; `finish` (`name`, `save`)
+saves the map. `GET /api/v1/controllers/aliases` lists the device aliases (`{aliases: [{from, to, connected, name}]}`:
+a pad first seen through GameController alone, `gc:...`, and later matched to its HID device keeps its profiles under
+the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}` forgets one (`200` with `from`, `to`; `404`
+`unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every route.
 
 ### Host Actions
 

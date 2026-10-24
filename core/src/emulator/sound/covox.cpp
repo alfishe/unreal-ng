@@ -159,6 +159,15 @@ void Covox::handleFrameEnd(size_t expectedSamples)
     }
     samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
 
+    if (_channelTap)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            FillChannelTap(i, static_cast<size_t>(samplesThisFrame));
+            _channelTapFilled[static_cast<size_t>(i)] = 0;
+        }
+    }
+
     // Read out band-limited samples into the interleaved stereo buffer
     int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
     int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
@@ -302,6 +311,9 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 
     // Update the DAC value for this channel
     Channel ch = portToChannel(port);
+    if (_channelTap)
+        FillChannelTap(static_cast<int>(ch), static_cast<size_t>(static_cast<uint64_t>(currentTState) * _sampleRate /
+                                                                  CPU_CLOCK_RATE));
     _dacValue[static_cast<int>(ch)] = value;
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
@@ -328,6 +340,21 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     // Update tracked state
     _lastL = newL;
     _lastR = newR;
+}
+
+void Covox::SetChannelTap(bool on)
+{
+    _channelTap = on;
+    _channelTapFilled = {};
+}
+
+void Covox::FillChannelTap(int channel, size_t upTo)
+{
+    const auto index = static_cast<size_t>(channel);
+    upTo = std::min<size_t>(upTo, MAX_SAMPLES_PER_FRAME);
+    const auto level = static_cast<int16_t>((static_cast<int32_t>(_dacValue[index]) - 128) * 128);
+    for (size_t& k = _channelTapFilled[index]; k < upTo; k++)
+        _channelTapBuffer[index][k] = level;
 }
 
 void Covox::decayStaleChannel(Channel ch)

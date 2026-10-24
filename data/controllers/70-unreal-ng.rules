@@ -1,5 +1,5 @@
 # unreal-ng: access for the logged-in user to the raw HID (hidraw) nodes of the controllers the emulator reads or
-# writes beyond what evdev gives (docs/inprogress/2026-10-17-controller-manager/research-host-apis.md §3.3), and to
+# writes beyond what evdev gives (the kernel drivers are preferred: hidraw only where they have no path) (docs/inprogress/2026-10-17-controller-manager/research-host-apis.md §3.3), and to
 # the light bars' LED class files.
 #
 # Install:
@@ -36,8 +36,42 @@ KERNEL=="hidraw*", KERNELS=="*045E:0B21*", MODE="0660", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*045E:091B*", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="045e", ATTRS{id/product}=="091b", MODE="0660", TAG+="uaccess"
 
-# DualSense / DualSense Edge (hid-playstation: one multicolor LED "<hid>:rgb:indicator") and DualShock 4 (hid-sony:
-# "<hid>:red", ":green", ":blue"): write access to the light bar's LED class files for the `light` verb. Attributes in
-# sysfs take no ACL, so uaccess does not reach them: their mode is opened instead (a light bar's colour is all they set).
+# PlayStation pads: DualSense (054C:0CE6), DualSense Edge (0DF2), DualShock 4 (05C4, 09CC, the wireless adapter 0BA0).
+# Write access for what hid-playstation does not drive: a DualSense's adaptive triggers (output report 2 / 0x31 with
+# only the trigger flags; the kernel keeps the motors, the light bar and the player LEDs). Read access for the Edge's
+# paddles and Fn buttons on kernels before 7.2, whose hid-playstation does not report them. Under hid-generic (no
+# hid-playstation: an old kernel, the module not loaded) the emulator talks the pad's whole protocol through the node,
+# as on macOS.
+KERNEL=="hidraw*", KERNELS=="*054C:0CE6*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*054C:0DF2*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*054C:05C4*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*054C:09CC*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*054C:0BA0*", MODE="0660", TAG+="uaccess"
+
+# Nintendo Switch Pro controller (057E:2009), Joy-Con (L) / (R) (2006, 2007), the charging grip (200E): write access
+# for the HD rumble (report 0x10 at the effect's frequencies) beside hid-nintendo, whose FF_RUMBLE plays fixed
+# 160 / 320 Hz. Under hid-generic the whole protocol, as for the PlayStation pads. joycond (if installed) takes the
+# Joy-Cons' evdev nodes for its combined device: the emulator then reads that one.
+KERNEL=="hidraw*", KERNELS=="*057E:2009*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*057E:2006*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*057E:2007*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*057E:200E*", MODE="0660", TAG+="uaccess"
+# Nintendo Switch Online SNES / N64 / Sega Genesis controllers (057E:2017, 2019, 201E): hid-nintendo serves them from
+# Linux 6.8 (the N64 pad's HD rumble through hidraw); before 6.8 hid-generic binds them and the whole protocol goes
+# through hidraw, as for the Pro controller.
+KERNEL=="hidraw*", KERNELS=="*057E:2017*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*057E:2019*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*057E:201E*", MODE="0660", TAG+="uaccess"
+# Nintendo GameCube Controller Adapter for Wii U / Switch (057E:0337): no kernel driver gives it an input device (its
+# reports are on the Game Controls page); the emulator writes its start report 0x13 and reads the four ports' report
+# 0x21 through hidraw.
+KERNEL=="hidraw*", KERNELS=="*057E:0337*", MODE="0660", TAG+="uaccess"
+
+
+# DualSense / DualSense Edge (hid-playstation: one multicolor LED "<input>:rgb:indicator") and DualShock 4
+# (hid-playstation since Linux 6.2, hid-sony before: "<prefix>:red", ":green", ":blue"): write access to the light
+# bar's LED class files for the `light` verb. Attributes in sysfs take no ACL, so uaccess does not reach them: their
+# mode is opened instead (a light bar's colour is all they set). The player LEDs stay the kernel's.
 SUBSYSTEM=="leds", DRIVERS=="playstation", KERNEL=="*:rgb:indicator", RUN+="/bin/chmod 0666 /sys%p/brightness /sys%p/multi_intensity"
+SUBSYSTEM=="leds", DRIVERS=="playstation", KERNEL=="*:red|*:green|*:blue", RUN+="/bin/chmod 0666 /sys%p/brightness"
 SUBSYSTEM=="leds", DRIVERS=="sony", KERNEL=="*:red|*:green|*:blue", RUN+="/bin/chmod 0666 /sys%p/brightness"

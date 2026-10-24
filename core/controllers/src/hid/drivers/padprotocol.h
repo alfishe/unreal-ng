@@ -30,6 +30,7 @@ struct PadOutReport
     {
         Output,      ///< write @p bytes as an output report (bytes[0] the report id)
         GetFeature,  ///< read feature report @p featureId, @p featureSize bytes with the id
+        SetFeature,  ///< write @p bytes as a feature report (bytes[0] the report id, 0 for a device without ids)
     };
     Kind kind = Kind::Output;
     std::vector<uint8_t> bytes;
@@ -91,8 +92,10 @@ public:
     using GetFeature = std::function<bool(uint8_t id, size_t size, std::vector<uint8_t>& data)>;
     using Clock = std::function<uint64_t()>;
 
-    /// @p clock: steady milliseconds (the default the steady clock)
-    PadPump(std::unique_ptr<IPadProtocol> protocol, Write write, GetFeature getFeature, Clock clock = {});
+    /// @p clock: steady milliseconds (the default the steady clock); @p setFeature writes a SetFeature report (as
+    /// @p write: bytes[0] the report id)
+    PadPump(std::unique_ptr<IPadProtocol> protocol, Write write, GetFeature getFeature, Clock clock = {},
+            Write setFeature = {});
     /// What is queued is dropped, a write in flight finishes; then the protocol's Final is written
     ~PadPump();
     PadPump(const PadPump&) = delete;
@@ -116,6 +119,7 @@ private:
     Write _write;
     GetFeature _getFeature;
     Clock _clock;
+    Write _setFeature;
     mutable std::mutex _mutex;
     std::condition_variable _wake;
     uint64_t _written = 0;

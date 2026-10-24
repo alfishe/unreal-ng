@@ -8,7 +8,7 @@ readouts (full, then changed only) and the hub topics (run.state, surfaces.conte
 socket's view: hello, emulator, snapshot) and the debug.* topics (DebugEventHub's events, the same numbering as
 /api/v1/websocket), and 50 Hz readout subscribers beside a running machine measured: the same frames per second. A
 client that stops reading is closed as a slow consumer (backpressure; mcplib.launch sets a small high-water mark and
-limit). Last: revoking the companion closes its socket.
+limit; host.clients ws.dropped counts the close, so the test waits for it, not for the clock). Last: revoking the companion closes its socket.
 
 Uses the `surface` companion mcplib.launch provisions (UNREAL_COMPANION_TOKENS); stdlib only."""
 
@@ -357,10 +357,22 @@ def test_debug_topics_carry_the_debugger_events_with_the_old_sockets_numbering(s
     ws.close()
 
 
+def ws_dropped(s):
+    """host.clients ws.dropped: the /api/v1/ws connections the server closed for reading too slowly"""
+    status, body = http(s, 'GET', '/api/v1/monitor/host.clients')
+    expect(status == 200, 'GET /api/v1/monitor/host.clients', body)
+    clients = body.get('host.clients', body.get('clients', body))
+    return clients['ws']['dropped']
+
+
 def test_a_client_that_stops_reading_is_closed_as_a_slow_consumer(s):
-    """Backpressure: a socket that reads nothing while it asks for the whole instances view again and again. Above the high-water mark the hub sends no more views; past the limit it sends `slow_consumer`
-    and closes. Another client meanwhile is served"""
+    """Backpressure: a socket that reads nothing while it asks for the whole instances view again and again. Above the
+    high-water mark the hub sends no more views; past the limit it queues `slow_consumer` and closes (host.clients
+    ws.dropped counts it). Another client meanwhile is served. No race with the clock: the socket reads nothing until
+    the server counted the close, then everything it still gets: the views sent below the mark, then the close (with
+    the error before it when the socket drained within the close's grace, else the server drops what it queued)"""
     limit = int(os.environ.get('UNREAL_WS_SLOW_CONSUMER_MS', '10000')) / 1000
+    before = ws_dropped(s)
     slow = WebSocket(port(s), token=TOKEN, rcvbuf=4096)
     other = connect(s)
     other.send({'op': 'subscribe', 'topics': ['run.state']})
@@ -374,28 +386,32 @@ def test_a_client_that_stops_reading_is_closed_as_a_slow_consumer(s):
         slow.send({'op': 'snapshot'})
         asked += 1
         time.sleep(0.001)
-    # Reads nothing: the queue stays above the mark. The limit runs from when it filled (within the sending above);
-    # read before the close's grace (2 s after slow_consumer) drops the connection with what it still queued
-    time.sleep(max(0.0, started + limit + 0.6 - time.time()))
+    # Reads nothing until the server closed it as a slow consumer: congested for `limit`, however loaded the host
+    deadline = time.time() + limit + 30
+    while ws_dropped(s) == before and time.time() < deadline:
+        time.sleep(0.05)
+    expect(ws_dropped(s) == before + 1, f'the server closes it as a slow consumer within {limit + 30:.0f} s',
+           (before, asked))
     other.send({'op': 'unsubscribe', 'topics': ['run.state']})
     other.until(lambda m: m.get('op') == 'unsubscribed', 'the other client is served meanwhile')
     seen = 0
     error = None
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        message = slow.recv(2)
+    while True:
+        message = slow.recv(10)
         if message is None:
             break
         seen += 1
         if message.get('op') == 'error':
             error = message
-    expect(error is not None and error['error'] == 'slow_consumer' and error['t'] == 'ws', 'slow_consumer',
-           (seen, error))
     expect(slow.closed, 'and the socket is closed', seen)
-    snapshots = seen - 2  # subscribed, the error
+    if error is not None:
+        expect(error['error'] == 'slow_consumer' and error['t'] == 'ws', 'the error before the close is slow_consumer',
+               error)
+    snapshots = seen - 1 - (error is not None)  # subscribed, the error
     expect(snapshots < asked, f'fewer views than asked for ({snapshots} of {asked}): none sent above the mark',
            snapshots)
-    print(f'        a slow consumer: {snapshots} views sent of {asked} asked for, then slow_consumer')
+    print(f'        a slow consumer: {snapshots} views sent of {asked} asked for, then '
+          f'{"slow_consumer and " if error else ""}the close')
     slow.close()
     other.close()
 

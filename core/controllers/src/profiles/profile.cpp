@@ -1,10 +1,12 @@
 #include "profiles/profile.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 #include "haptics/hapticprofile.h"
 #include "haptics/surfacehaptics.h"
+#include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -15,7 +17,7 @@ namespace
 constexpr int kSchema = 1;
 
 const char* const kTargetFields[] = {"retro", "key", "keys", "macro", "mouse", "scale", "action", "layer", "mode", "none"};
-/// Known and kept, not acted on yet (TODO.md C2c): `invert`, `repeat`
+/// Known and kept, not acted on yet (TODO.md C2c): `invert`
 const char* const kOptionFields[] = {"turbo",        "on",           "off",   "count",    "press",
                                      "frames",       "label",        "consume", "ways",   "deadzone",
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
@@ -215,7 +217,27 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         options.level = true;
         return true;
     }
-    return true;  // invert, repeat: known, not acted on yet
+    if (field == "repeat")
+    {
+        // {delay, rate} in frames (mapping-and-profiles.md §1.3); `repeat: none` / false: no repeat
+        if ((value.IsString() && value.AsString() == "none") || (value.IsBool() && !value.AsBool()))
+        {
+            options.repeatDelay = options.repeatRate = 0;
+            return true;
+        }
+        const JsonValue* delay = value.IsObject() ? value.Find("delay") : nullptr;
+        const JsonValue* rate = value.IsObject() ? value.Find("rate") : nullptr;
+        if (delay == nullptr || rate == nullptr || value.GetMembers().size() != 2 ||
+            !Unsigned(*delay, options.repeatDelay, "repeat.delay", error) ||
+            !Unsigned(*rate, options.repeatRate, "repeat.rate", error) || options.repeatDelay < 1 ||
+            options.repeatDelay > 500 || options.repeatRate < 1 || options.repeatRate > 500)
+        {
+            error = "'repeat' is {delay, rate}: frames (1..500) before the first repeat and between repeats";
+            return false;
+        }
+        return true;
+    }
+    return true;  // invert: known, not acted on yet
 }
 
 bool StringField(const JsonValue& spec, const char* field, std::string& out, std::string& error)
@@ -450,6 +472,21 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
                 if (!Strings(&value, profile.fileSha256, "match.file_sha256", error))
                     return false;
             }
+            else if (field == "file_set")
+            {
+                if (!Strings(&value, profile.fileSet, "match.file_set", error))
+                    return false;
+                for (std::string& token : profile.fileSet)
+                {
+                    std::transform(token.begin(), token.end(), token.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (!unrealng::swsignature::IsFileSetToken(token))
+                    {
+                        error = "match.file_set: '" + token + "' is not a file-set token (n:, c: or d: and 16 hex)";
+                        return false;
+                    }
+                }
+            }
             else if (field == "title")
             {
                 if (!value.IsString())
@@ -461,7 +498,7 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
             }
             else if (field != "zxdb_id")
             {
-                error = "unknown field 'match." + field + "' (known: machines, signatures, file_sha256, title, zxdb_id)";
+                error = "unknown field 'match." + field + "' (known: machines, signatures, file_sha256, file_set, title, zxdb_id)";
                 return false;
             }
         }

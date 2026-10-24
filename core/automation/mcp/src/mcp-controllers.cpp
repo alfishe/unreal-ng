@@ -1,5 +1,6 @@
 #include "mcp-controllers.h"
 
+#include <algorithm>
 #include <cctype>
 #include <memory>
 #include <set>
@@ -45,8 +46,21 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
+        {"haptics_probe", {"kind", "address", "page", "port_mask", "play"}},
+        {"role", {"device", "role"}},
+        {"pin", {"device", "pin"}},
+        {"identify", {"device"}},
+        {"player", {"device", "connector"}},
+        {"probe", {"device"}},
+        {"reports", {"device"}},
+        {"database", {"vidpid", "guid", "device", "bus", "name", "version", "family"}},
+        {"database_save", {"text"}},
+        {"database_delete", {"id"}},
+        {"database_import", {"text", "save"}},
+        // learn is not here: the wizard needs a person pressing the controls (surfaces.md §5)
         {"aliases", {}},
         {"unalias", {"id"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
     };
     return actions;
 }
@@ -80,8 +94,10 @@ namespace
                 // A control surface's role, the layers up and its context, the feel of its top layer
                 if (device.isMember("role"))
                 {
-                    out << " - role " << device["role"].asString() << (device["role_set"].asBool() ? "" : " (default)")
-                        << ", layers";
+                    out << " - role " << device["role"].asString() << (device["role_set"].asBool() ? "" : " (default)");
+                    if (device.isMember("pin") && device["pin"].asString() != "follow-focus")
+                        out << ", pin " << device["pin"].asString();
+                    out << ", layers";
                     for (const Json::Value& layer : device["layers"])
                         out << " " << layer.asString();
                     if (!device["context"].asString().empty())
@@ -93,6 +109,8 @@ namespace
                 if (device.isMember("battery"))
                     out << ", battery " << device["battery"]["text"].asString() << ", light "
                         << (device["light"]["available"].asBool() ? "settable" : "none");
+                if (device.isMember("map"))
+                    out << ", mapped " << Compact(device["map"]);
                 if (device.isMember("notice"))
                     out << "\n  notice: " << device["notice"].asString();
                 out << "\n";
@@ -112,6 +130,35 @@ namespace
                 out << " " << id.asString();
             for (const Json::Value& warning : reply["warnings"])
                 out << "\nwarning: " << warning.asString();
+            // The signature hook (D7, H-3): an agent may see only the text
+            if (reply.isMember("signatures"))
+            {
+                out << "\nsignatures:";
+                for (const Json::Value& signature : reply["signatures"])
+                    out << " " << signature.asString();
+                if (reply["signatures"].empty())
+                    out << " none (no program loaded from a file)";
+                out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files";
+                out << "\ngame matches:";
+                for (const Json::Value& match : reply["game_matches"])
+                    out << " " << match["id"].asString() << " (" << match["how"].asString() << ")";
+                if (reply["game_matches"].empty())
+                    out << " none";
+                out << "\nhaptics: " << reply["haptics_reason"].asString();
+            }
+            return out.str();
+        }
+        if (action == "match")
+        {
+            out << reply["message"].asString() << "\nsignatures:";
+            for (const Json::Value& signature : reply["signatures"])
+                out << " " << signature.asString();
+            out << "\nfile set: " << reply["file_set"].size() << " TR-DOS files\nmatches:";
+            for (const Json::Value& match : reply["matches"])
+                out << "\n  " << match["id"].asString() << " (" << match["how"].asString() << ")";
+            if (reply["matches"].empty())
+                out << " none";
+            out << "\nnext: " << reply["next"].asString() << "\nhaptics: " << reply["haptics_reason"].asString();
             return out.str();
         }
         if (action == "profiles")
@@ -143,6 +190,86 @@ namespace
             }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "probe")
+        {
+            for (const Json::Value& backend : reply["backends"])
+            {
+                out << backend["name"].asString() << ": "
+                    << (backend["running"].asBool() ? "running" : "not running: " + backend["reason"].asString()) << ", "
+                    << backend["devices"].asUInt() << " device(s)\n";
+                for (const Json::Value& device : backend["found"])
+                {
+                    out << "  " << device["id"].asString() << ": " << device["name"].asString() << " ("
+                        << device["family"].asString() << ", database " << device["match"]["step"].asString() << " "
+                        << device["match"]["score"].asInt() << ")";
+                    if (device.isMember("notice"))
+                        out << " - notice: " << device["notice"].asString();
+                    out << "\n";
+                }
+            }
+            if (reply["backends"].empty())
+                out << "no backends\n";
+            out << "user devices: " << reply["user_devices"].asString();
+            for (const Json::Value& endpoint : reply["endpoints"])
+            {
+                out << "endpoint " << endpoint["backend"].asString() << " (" << endpoint["role"].asString() << "): "
+                    << endpoint["name"].asString() << ", " << endpoint["controls"].asInt() << " controls via "
+                    << endpoint["driver"].asString();
+                for (const char* cap : {"rumble", "light", "battery"})
+                    if (endpoint[cap].asBool())
+                        out << ", " << cap;
+                if (!endpoint["detail"].asString().empty())
+                    out << ", " << endpoint["detail"].asString();
+                out << "\n";
+            }
+            return out.str();
+        }
+        if (action == "reports")
+        {
+            out << reply["message"].asString() << "\n";
+            for (const Json::Value& report : reply["reports"])
+                out << report["hex"].asString() << " (" << report["size"].asInt() << " B)\n";
+            return out.str();
+        }
+        if (action == "database_import")
+        {
+            out << reply.get("message", "").asString() << "\nmap " << Compact(reply["map"]);
+            if (reply["skipped"].size() > 0)
+                out << "\nskipped " << Compact(reply["skipped"]);
+            out << "\ngamecontrollerdb: " << reply["gamecontrollerdb"].asString();
+            return out.str();
+        }
+        if (action == "database")
+        {
+            // The match in one line (an agent may see only the text), then the user entries
+            if (reply.isMember("match"))
+            {
+                const Json::Value& match = reply["match"];
+                out << reply.get("message", "").asString() << "\n" << match["family"].asString() << ": "
+                    << match["name"].asString() << " (layout " << match["layout"].asString() << ", images "
+                    << match["images"].asString();
+                if (!match["role"].asString().empty())
+                    out << ", role " << match["role"].asString();
+                if (match.isMember("step"))
+                    out << ", " << match["step"].asString() << " match, score " << match["score"].asInt();
+                if (match["user"].asBool())
+                    out << ", from devices.user.json";
+                out << ")";
+                if (match["controls"].size() > 0)
+                    out << "\ncontrols " << Compact(match["controls"]);
+                if (match.isMember("map"))
+                    out << "\nmap " << Compact(match["map"]);
+                if (reply.isMember("query"))
+                    out << "\nquery " << Compact(reply["query"]);
+                out << "\n";
+            }
+            out << reply["families"].asInt() << " families; devices.user.json:";
+            for (const Json::Value& id : reply["user"])
+                out << " " << id.asString();
+            if (reply["user"].empty())
+                out << " no entries";
             return out.str();
         }
         if (action == "aliases")
@@ -243,6 +370,8 @@ namespace
                 out << "the program reads the whole keyboard (" << decision["reason"].asString() << ")";
             else
                 out << "no decision yet";
+            if (decision["hint"].isString())
+                out << " (" << decision["hint"].asString() << ")";
             out << "; watch " << (evidence["active"].asBool() ? "running" : "stopped") << ", "
                 << evidence["frames_observed"].asUInt64() << " frames observed";
             return out.str();
@@ -277,12 +406,13 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["connector"]["type"] = "string";
     schema["properties"]["connector"]["description"] =
         "Connector selector: id (kempston, sinclair-1, keyjoy.1, next.left, fuller), alias (left, right), kind:index "
-        "(keyboard-joystick:0); 'auto' for plug (the first free connector that takes the device)";
+        "(keyboard-joystick:0); 'auto' for plug (the first free connector that takes the device); player: the "
+        "connector the host pad's auto: targets drive ('auto' = the automatic choice)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light: a host device id (devices "
-        "lists them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light / role / pin / identify "
+        "/ player / probe / reports / database: a host device id (devices lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -316,12 +446,30 @@ void RegisterControllers(ToolRegistry& registry)
         schema["properties"][option]["description"] =
             "input: the controls ('up+fire'; right, left, down, up, fire, fire2, fire3, fire4; set 'none' = nothing held)";
     schema["properties"]["set"]["description"] = "profiles: all (default), play, debug, scheme, game";
-    schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
+    schema["properties"]["machine"]["description"] =
+        "profiles: only those of a machine model (next, pentagon); match: the machine to match for (default the bound one)";
+    schema["properties"]["path"]["description"] =
+        "match: a host file whose signatures to match (tape, disk, snapshot); without path / signatures: the loaded program";
+    schema["properties"]["signatures"]["description"] =
+        "match: signatures, comma-separated (file:sha256:.., tape:sha256:.., trdset:sha256:.., mem:sha256:..: "
+        "signature_info gives them)";
+    schema["properties"]["file_sha256"]["description"] = "match: file SHA-256 hashes, comma-separated";
+    schema["properties"]["file_set"]["description"] =
+        "match: a TR-DOS file set (c:<16 hex> code, d:<16 hex> data tokens), comma-separated: the fuzzy rule";
     schema["properties"]["id"]["description"] =
         "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
-        "unalias: the old device id of an alias (aliases lists them); scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
+        "database_delete: the devices.user.json entry; unalias: the old device id of an alias (aliases lists them); "
+        "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
-    schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
+    schema["properties"]["text"]["description"] =
+        "save: the whole profile, YAML or JSON (schema 1); database_save: one devices.user.json entry as JSON "
+        "({\"id\": \"xbox-elite-2\", \"images\": \"my-elite\"}: a known family changes the fields it names; a new "
+        "one needs its match list) or a file's {\"families\": [...]}; database_import: a gamecontrollerdb.txt line "
+        "or a RetroArch joypad autoconfig .cfg";
+    schema["properties"]["save"]["description"] = "database_import: false = only answer the family, do not save it";
+    schema["properties"]["vidpid"]["description"] = "database: look a device up by its USB ids (045e:0b00)";
+    schema["properties"]["bus"]["description"] = "database: with vidpid, usb or bt (some families match per bus)";
+    schema["properties"]["name"]["description"] = "database: the device's product name (the name templates)";
     schema["properties"]["effect"]["description"] =
         "rumble: the test effect (identify by default; low, high, clicks, left-trigger, right-trigger, swell: haptics "
         "lists a device's)";
@@ -333,6 +481,24 @@ void RegisterControllers(ToolRegistry& registry)
         "output: a seek's marks, strongest first (second, ten_seconds, bookmark, edge, barrier): the pattern the "
         "device's top layer plays for them";
     schema["properties"]["color"]["description"] = "light: #RRGGBB, r,g,b (0..255 each) or off";
+    schema["properties"]["role"]["description"] =
+        "role: player, debugger-remote (its debug bindings only, never a connector) or disabled";
+    schema["properties"]["pin"]["description"] =
+        "pin: follow-focus (the focused emulator window), all (every instance) or pinned:<emulator id>";
+    schema["properties"]["vidpid"]["description"] = "database: <vid>:<pid> in hex (045e:0b00)";
+    schema["properties"]["guid"]["description"] = "database: an SDL GUID (32 hex digits, as gamecontrollerdb.txt)";
+    schema["properties"]["name"]["description"] = "database: the device name (the name heuristics)";
+    schema["properties"]["version"]["description"] = "database: the version (4 hex digits, a firmware range)";
+    schema["properties"]["save"]["description"] =
+        "database_import: false = parse and show only; default: write a user family into devices.user.json";
+    schema["properties"]["kind"]["description"] = "haptics_probe: exec, read, write, port-in or port-out";
+    schema["properties"]["address"]["description"] =
+        "haptics_probe: the address (exec, read, write) or port (port-in, port-out), 0x5C3A or decimal";
+    schema["properties"]["page"]["description"] = "haptics_probe: a RAM page (the address is the offset in it)";
+    schema["properties"]["port_mask"]["description"] = "haptics_probe: the port's decoded bits (0x00FF; all by default)";
+    schema["properties"]["play"]["description"] =
+        "haptics_probe: the library effect its rule plays (hit by default; tick, knock, thump, explosion, engine, "
+        "heartbeat, life-lost, pickup, shot, rumble-strip)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -340,7 +506,7 @@ void RegisterControllers(ToolRegistry& registry)
         "{\"none\": true}; plus label, turbo, ...)";
     schema["properties"]["layer"]["description"] = "bindings / bind / unbind: play (default), debug, a shift layer";
     schema["properties"]["family"]["description"] =
-        "bind / unbind / scheme: into user/<family> (xbox-elite-2, dualsense)";
+        "bind / unbind / scheme: into user/<family> (xbox-elite-2, dualsense); database: look a family up";
     schema["properties"]["profile"]["description"] =
         "bind / unbind: into this profile (a shipped one is copied into the user's); default user/global";
     schema["required"].append("action");
@@ -359,9 +525,22 @@ void RegisterControllers(ToolRegistry& registry)
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), aliases (old device id -> new: a "
-        "controller first seen through GameController alone (gc:...) and later matched to its HID device keeps its "
-        "profiles under the new id), unalias (forget one, id = the old id). Options per action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar), role "
+        "(player, debugger-remote, disabled), pin (follow-focus, all, pinned:<emulator id>), identify (a 300 ms rumble "
+        "and a light blink, to tell two pads apart), player (the connector a host pad's auto: targets drive; "
+        "connector=auto: back to the automatic choice, connector=none: no connector), probe (the backends, running or "
+        "why not, and the devices each found; with device its endpoints: IOHID interfaces, a GameController companion, "
+        "what each gives), reports (a device's newest raw HID input reports in hex; the tap runs while they are read), "
+        "database (look up a VID:PID, an SDL GUID, a connected device or a family: its family, layout, image set, map, "
+        "match step; the devices.user.json entries), database_save / database_delete (an entry of devices.user.json: a "
+        "user device, a new name, a photo's image set), database_import (a gamecontrollerdb line or a RetroArch "
+        "autoconfig file as a user family with its control map; the learn wizard is on REST, CLI and Python: it needs "
+        "a person), aliases (old device id -> new: a controller first seen through GameController alone (gc:...) and "
+        "later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = the old id), haptics_probe (a "
+        "non-breaking breakpoint as a haptic source of the loaded game's user profile, with a rule; the debugger's "
+        "Add as Haptic Probe), match (the game profiles a program's signatures choose: exact, file SHA-256, then the "
+        "TR-DOS file set's fuzzy rule; context shows them for the loaded program with where the haptics come from). "
+        "Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -376,8 +555,11 @@ void RegisterControllers(ToolRegistry& registry)
             {
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
-                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                            "haptics", "aliases"};
+                if (action == "player" && !connector.empty())
+                    (*body)["connector"] = connector;  // here the host pad's connector, not the machine target
+                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile",
+                                                            "bindings", "haptics", "database", "probe",
+                                                            "reports", "aliases", "match"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)
@@ -407,6 +589,19 @@ void RegisterControllers(ToolRegistry& registry)
                                 const std::string text = HostSummary(action, reply);
                                 done(ToolResult::Ok(text, std::move(reply)));
                             });
+                return;
+            }
+
+            const auto& machineActions = ControllerToolActions();
+            if (std::none_of(machineActions.begin(), machineActions.end(),
+                             [&action](const auto& entry) { return entry.first == action; }))
+            {
+                done(ToolResult::Error(
+                    "controllers: unknown action '" + action + "'" +
+                    (action == "learn" ? std::string(" (the learn wizard needs a person pressing the controls: REST "
+                                                     "POST /api/v1/controllers/learn, CLI controllers learn, Python "
+                                                     "controllers_learn)")
+                                       : std::string())));
                 return;
             }
 

@@ -52,18 +52,22 @@ connector verbs keep working (keyboard joystick, automation input).
 | Verb | Does |
 |:--|:--|
 | `devices` | Host devices: id, name, VID:PID, version, transport, family, role, instance pin, battery, capabilities, live state on request. Built: id, name, family, layout, backend, controls; with the Qt client role, layers, context, outputs, feel, `battery`, `light` and `notice` (below). |
-| `device` | One device; `identify` blinks the LED and rumbles. |
-| `role` | Set `player`, `debugger-remote`, `disabled`. |
-| `pin` | Set `follow-focus`, `pinned:<instance>`, `all`. |
+| `device` | One device: `devices` carries every field; the per-device verbs are `role`, `pin`, `identify`, `learn` (also as `POST /controllers/host/{device}/{verb}`). |
+| `identify` | Built: a 300 ms rumble (two clicks on a clicker) and a white blink of the light, back to its colour after 300 ms (`HostInputService::Identify`); `rumble`, `light`, `ms`; `unavailable` with both reasons when the device has neither. |
+| `role` | Built: set `player`, `debugger-remote`, `disabled` (`InputRouter::SetRole`, kept by id across a replug while the process runs). |
+| `pin` | Built: set `follow-focus`, `pinned:<instance>`, `all` (`InputRouter::SetInstanceMode`); `devices` shows `pin`. The instance id is not checked against the running ones. |
 | `bindings` | Read the effective bindings of a device per layer, with the profile each one came from. |
 | `bind` / `unbind` | Change one binding in the user layer of a profile. |
 | `scheme` | The scheme a user profile extends (how the pad works: Kempston, Sinclair 1, QAOP + Space), or none. |
 | `profiles` | List profiles (play and debug sets, scopes, match rules); `apply`, `save`, `delete`, `export`, `import`. |
-| `probe` | The backend report: loaded, why not, endpoints found, permissions. |
-| `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. |
-| `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
+| `probe` | The backend report: loaded, why not, endpoints found, permissions. Built: `probe` (GET) answers `backends` (`name`, `running`, `devices`, `reason`, and the devices each `found`: `match {step, score}`, `notice`), `user_devices` (the `devices.user.json` path); with `device` also its `endpoints` (`backend`, `name`, `role`: `input` / `outputs` / `none`, `controls`, `driver`, `rumble`, `light`, `battery`, `detail`), the IOHID interface and the GameController companion as two on macOS. |
+| `reports` | Built: a device's newest raw HID input reports (`ms`, `size`, `hex`, oldest first, at most 16 of up to 64 bytes). The read arms the backend's tap, which disarms itself 3 s after the last read; a backend without one answers `unavailable` with the reason. The test panel's raw line. |
+| `player` | Built: the connector a player pad's `auto:` targets drive (`device`, `connector`: an id, `auto` back to the automatic choice, `none` no connector); the answer `connector`, `chosen`, `drives`. The dialog's drag and drop, Swap joystick ports and Reset bindings to default go through it; a choice lasts the session. |
+| `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. Built: `database` (GET) answers the families count, the user file's path and the ids it holds, and with `vidpid` (+ `bus`, `name`, `version`) the match a device of those ids gets, or with `family` that family (`family`, `name`, `layout`, `images`, `glyphs`, `controls`, `map`, `player`, `role`, `ignore`, `step`, `score`, `user`: the entry comes from devices.user.json); `database_save` (POST `text`: one family as JSON) adds or replaces an entry of devices.user.json, field by field over a built-in family of the same id, validated against the compiled-in database and written atomically; `database_delete` (POST `id`) removes one. The active database is swapped at once (holders of the old one keep their snapshot); a name or match change applies when the device connects again. The hotspot editor saves through `database_save`. `database_import` (POST `text`, `save`: false only answers) takes a gamecontrollerdb.txt line or a RetroArch autoconfig .cfg and saves it as the user entry `user-<vid><pid>` (`source`, `entry`, `skipped`; [device-database.md §3](device-database.md#3-lookup-order)). `database` also takes `guid=` (SDL) or `device=` (a connected device; with `name=`, `version=`) and answers `query` too; a family with a `map` gives a connected device of its VID / PID that control map at once (`devicemapping.h`). |
+| `learn` | Built: the learn wizard as data (`LearnSession`, `HostInputService::StartLearn`): `step` = `start` (`controls`), `status`, `sample` (`control`, `value`: a scripted press), `skip`, `back`, `finish` (`name`, `save`: the map, its `gamecontrollerdb` line, the user family), `cancel`. While it runs the device's events answer the prompts and reach nothing else. Not on MCP. |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
+| `haptics_probe` | Built: a haptic probe (`kind`: `exec`, `read`, `write`, `port-in`, `port-out`; `address`, `page`, `port_mask`) with a rule that plays `play` (`hit` by default) in the loaded game's user profile; the debugger's Add as Haptic Probe ([haptics.md §7](haptics.md#7-haptic-profiles)). |
 | `aliases` | Built: the device aliases (`from`, `to`, `connected`, `name`): a `gc:` device promoted to its IOHID id keeps its profiles ([architecture.md §5](architecture.md)); `unalias` (`id` = the old id) forgets one, saved to `aliases.yaml` and applied at once (`unknown-alias` 404 when there is none). Lua reaches them through `controllers_host` only. |
 | `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
 
@@ -86,8 +90,8 @@ Where they come from:
 | OS | Battery | Light |
 |:--|:--|:--|
 | macOS | The pad's own report where its driver reads one: a DualSense / DualShock 4 full report (status byte, tens of percent, charging, full; hid-playstation's rules) and a Switch Pro controller's or a Joy-Con's 0x30 (coarse, 0-8 in steps of 2; a Joy-Con pair the lower of the two), [haptics.md §9](haptics.md#9-backends). Otherwise GameController's `GCDeviceBattery` of the matched `GCController` (D18) or of a `gc:` device. An Xbox Elite 2 reports state unknown and level 0 on both transports, so it stays `unknown` (`system_profiler` knows it from the Bluetooth stack, [research-host-apis.md §2.3c](research-host-apis.md)) | a DualSense (USB report 2, Bluetooth 0x31) and a DualShock 4 (USB 0x05, Bluetooth 0x11) through their output report, queued on the pad's pump thread; otherwise `GCDeviceLight` of the matched `GCController` (after a press confirms the match) or of a `gc:` device. The Switch Pro controller and the Joy-Cons have player lights only (set by connection order; a pair shows its left half's number on both) |
-| Windows | XInput: `XInputGetBatteryInformation` (wired, or four coarse levels). GameInput (v3) has no battery API, Raw Input reads none: `unknown` | a DualSense over USB (Raw Input) through the same output report; nothing else |
-| Linux | the HID device's power supply class (`<hid>/power_supply/<name>`: hid-playstation, hid-sony, hid-nintendo, xpadneo, hid-input): `status`, `capacity`, `capacity_level`. xpad (an Xbox pad over USB) registers none | the HID device's LED class: one multicolor LED (`multi_index` / `multi_intensity`, hid-playstation) or `:red` / `:green` / `:blue` LEDs (hid-sony). Writing needs the LED rules of `data/controllers/70-unreal-ng.rules` (sysfs takes no ACL, so they open the mode) |
+| Windows | The pad's own report for the pads Raw Input reads with a protocol (`ProtocolPads`, the same decoders and rules as macOS): DualSense / Edge and DualShock 4 full reports, the Switch Pro controller's and Joy-Cons' 0x30 (a pair the lower of the two). XInput: `XInputGetBatteryInformation` (wired, or four coarse levels). GameInput (v3) has no battery API: an Xbox pad through GameInput stays `unknown` | a DualSense / Edge (USB report 2, Bluetooth 0x31 with its CRC) and a DualShock 4 (USB 0x05, Bluetooth 0x11) through their output report on the pad's pump thread (Raw Input's handle, overlapped `WriteFile`); the Switch pads have player lights only; nothing for Xbox pads (GameInput v3 has no light call) |
+| Linux | the HID device's power supply class (`<hid>/power_supply/<name>`: hid-playstation, hid-sony, hid-nintendo, xpadneo, hid-input): `status`, `capacity`, `capacity_level`. xpad (an Xbox pad over USB) registers none. A pad under hid-generic: its own reports (`SonyPad` / `SwitchProPad`); a Joy-Con pair the lower of its halves; joycond's combined device none yet | the HID device's LED class: one multicolor LED (`multi_index` / `multi_intensity`, hid-playstation's DualSense) or `:red` / `:green` / `:blue` LEDs (hid-sony; hid-playstation's DualShock 4, whose `:global` LED stays on); a PlayStation pad under hid-generic through its own output report (the backend's protocol pump); a Joy-Con pair none (the kernel's player LEDs). Writing needs the LED rules of `data/controllers/70-unreal-ng.rules` (sysfs takes no ACL, so they open the mode) |
 
 | Plane | Read (in `devices`) | Set the light |
 |:--|:--|:--|
@@ -135,11 +139,13 @@ connectors apply at the next frame boundary and wait up to 5 s unless `async`. T
 | plug / unplug / targets | yes | yes | yes | yes | yes | drag cords |
 | auto explain / apply | yes | yes | yes | yes | yes | profile bar, toast |
 | retro input press / release / set / tap / status | yes | `joystick_input` (extended) | `joystick` (extended) | yes | yes | test panel |
-| host devices, roles, pins, identify | yes | `controllers` | yes | yes | yes | left pane |
+| host devices, roles, pins, identify | yes (built) | `controllers` (built) | yes (built) | `controllers_host` | yes (built) | left pane; the device row: Role, Drives, Identify |
 | bindings / bind / unbind | yes | yes | yes | yes | yes | picture callouts |
 | profiles | yes | yes | yes | yes | yes | profile bar |
-| probe report | yes | yes | yes | yes | yes | Advanced |
-| learn wizard | yes | no (needs a human) | yes | yes | yes | wizard |
+| probe report, endpoints, raw reports | `probe`, `reports` | `controllers` | `controllers probe [device]`, `reports <device>` | no (P3) | `controllers_probe`, `controllers_reports` | test panel |
+| a pad's player connector | `player` | `controllers` | `controllers player <device> [connector\|auto\|none]` | no (P3) | `controllers_player` | drag and drop, Machine > Controllers |
+| device database lookup / user entries | `database`, `database_save`, `database_delete`, `database_import` | `controllers` | `controllers database [vid:pid\|guid\|device\|family]`, `database_save <file>`, `database_delete <id>`, `database_import <file>` | no (P3) | `controllers_database`, `controllers_database_save`, `controllers_database_delete`, `controllers_database_import` | hotspot editor (Picture…), Import mapping… |
+| learn wizard | `learn` | no (needs a human) | `controllers learn <device> [step]` | no (P3) | `controllers_learn` | LearnWizard (Learn…, the learn toast, the `ctl.learn` action) |
 | haptics mode / strength / play / stop | yes | `controllers` (`haptics_state`, `haptics_play`, `haptics_stop`) | yes | yes | yes | device card, Haptics tab |
 | debug actions | `POST /controllers/actions/{id}` | `control_execution`, `time_travel` (existing) | existing | existing | existing | debug layer |
 
@@ -164,11 +170,17 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | rumble {device, effect?}
                                              | output {device, pattern | steps, clicks | marks}
                                              | light {device, color}
+                                             | database_save {text} | database_delete {id}
+                                             | database_import {text, save?} | player {device, connector?}
+                                             | role {device, role} | pin {device, pin} | identify {device}
+                                             | learn {device, step, ...} | unalias {id}
+                                             | haptics_probe {kind, address, page?, port_mask?, play?}
+GET    /api/v1/controllers/{verb}            probe?device=.. | reports?device=.. | aliases | match?path=..
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
-POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
-GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
-POST   /api/v1/controllers/database/import                   gamecontrollerdb line or RetroArch .cfg
-GET    /api/v1/controllers/probe
+POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (built)
+GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=... | device=... | family=...   (built)
+POST   /api/v1/controllers/database/import                   gamecontrollerdb line or RetroArch .cfg (built)
+GET    /api/v1/controllers/probe                             (built)
 
 GET    /api/v1/controllers/actions                       the action registry: ids, enabled state, reason
 POST   /api/v1/controllers/actions/{id}                  run an action (debug-and-ttd.md §3)
@@ -187,7 +199,10 @@ MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
 `controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`, `controllers_haptics`,
-`controllers_rumble`, `controllers_output`, `controllers_light`) and Lua `controllers_host(verb, opts)` (with
+`controllers_rumble`, `controllers_output`, `controllers_light`, `controllers_database`, `controllers_database_save`,
+`controllers_database_delete`, `controllers_database_import`, `controllers_role`, `controllers_pin`,
+`controllers_identify`, `controllers_learn`, `controllers_aliases`, `controllers_unalias`, `controllers_player`, `controllers_probe`,
+`controllers_reports`) and Lua `controllers_host(verb, opts)` (with
 `controllers_haptics`, `controllers_rumble`, `controllers_output`, `controllers_light`) all
 build a `HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and
 `controllers_host`. Lua reaches the connectors through `controllers(verb, connector, device, opts)`.
@@ -198,7 +213,14 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 ## 7. MCP
 
 - One tool `controllers` with `action` (as `media`): `list`, `get`, `plug`, `unplug`, `targets`, `auto`, `devices`,
-  `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`.
+  `device`, `role`, `pin`, `bindings`, `bind`, `unbind`, `profiles`, `probe`, `database`. Built: every host verb but
+  `learn` (`McpControllers_Test` keeps the table equal to `HostInputControl::Verbs()` without `learn`); `learn`
+  answers an error that names the REST, CLI and Python spellings. The text of `database` names the match in one
+  line: "xbox-elite-2: Xbox Elite Wireless Controller Series 2 (layout xbox, images my-elite, exact match, score 100,
+  from devices.user.json)", with its map; `player` keeps its `connector` (the host pad's) in the body; `probe` gives
+  one line per backend, per device it found and per endpoint ("endpoint iohid (input): Xbox Wireless Controller, 18
+  controls via xbox gip, rumble, battery"); `reports` one line per report ("01 00 80 (3 B)"); `devices` a non-default
+  pin and a learned map.
 - `joystick_input` keeps its name and gains a `connector` argument (default `auto`); its description lists the models
   that really answer: Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next (fixed 2026-10-23, E-4; it named
   ATM3 / Scorpion / TS-Conf only).
@@ -209,7 +231,11 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 ## 8. CLI, Lua, Python
 
 - CLI: `controllers list|get|plug|unplug|targets|auto|devices|role|pin|bindings|bind|unbind|profiles|probe|haptics`, next to
-  `joystick` (`cli-processor.cpp:269`), which gains `--connector`.
+  `joystick` (`cli-processor.cpp:269`), which gains `--connector`. Built: `controllers role <device> <role>`, `pin
+  <device> <pin>`, `identify <device>`, `probe`, `database <vid:pid|guid|device>`, `database_import <file>`, `learn
+  <device> <step> [control] [value]`; Python `controllers_role`, `controllers_pin`, `controllers_identify`,
+  `controllers_probe`, `controllers_database`, `controllers_database_import`, `controllers_learn`; Lua through
+  `controllers_host(verb, opts)` only (P3).
 - Lua: `controllers_*` functions next to `joystick_*` (`lua_emulator.h:681-783`).
 - Python: the same names as methods (`python_emulator.h:690+`).
 

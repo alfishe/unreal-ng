@@ -1,0 +1,46 @@
+{
+  "family": "nso-n64",
+  "images": [
+    {
+      "view": "front",
+      "title": "Nintendo 64 controller for Nintendo Switch Online",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 160 x 152.6 x 66.7 mm (the N64 controller the NSO pad copies)",
+          "source": "https://www.dimensions.com/element/nintendo-64-controller",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "front view: the outline, the control positions and sizes",
+          "source": "https://assets.nintendo.com/image/upload/ncom/en_US/products/accessories/nintendo-switch/controllers/other-controllers/n64-controller/128577-switch-nso-n64-controller-front-view-1200x675",
+          "author": "Nintendo",
+          "licence": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid and by colour); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the keys on the top edge of the centre prong (Capture, Home, ZR)",
+          "source": "https://assets.nintendo.com/image/upload/ncom/en_US/products/accessories/nintendo-switch/controllers/other-controllers/n64-controller/128577-switch-nso-n64-controller-front-view-angle-1200x675",
+          "author": "Nintendo",
+          "licence": "product photo",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "positions read on a tilted view, about 1.5 mm"
+        },
+        {
+          "what": "the Z trigger under the centre prong (drawn as a dashed outline where it lies)",
+          "source": "https://commons.wikimedia.org/wiki/File:N64-controller-annotated.jpg",
+          "author": "public domain",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

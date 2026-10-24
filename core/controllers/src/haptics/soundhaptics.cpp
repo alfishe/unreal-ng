@@ -15,13 +15,34 @@ bool Decays(uint8_t shape)
 }
 }  // namespace
 
-SoundHaptics::SoundHaptics(HapticMixer& mixer, std::function<std::vector<HostDeviceId>()> targets)
-    : _mixer(mixer), _targets(std::move(targets))
+SoundHaptics::SoundHaptics(HapticMixer& mixer, std::function<std::vector<HostDeviceId>()> targets, bool dspDefaults)
+    : _mixer(mixer), _targets(std::move(targets)), _dsp(dspDefaults)
 {
+    _lowband.Configure(20.0, 150.0, 5.0, 80.0, HapticStreamFrame::kRate);
+    _onset.Configure(12.0, 30.0, 0.05, 50.0, HapticStreamFrame::kRate);
+}
+
+std::vector<HapticStream> SoundHaptics::Streams() const
+{
+    if (!_dsp)
+        return {};
+    return {HapticStream::Mix};
+}
+
+void SoundHaptics::OnHapticHold(bool held)
+{
+    _held.store(held, std::memory_order_release);
+    if (!held)
+        return;
+    for (const HostDeviceId& device : _targets())
+        _mixer.StopGameEffects(device);
+    _last = {};
 }
 
 void SoundHaptics::OnHapticFrame(const HapticFrame& frame)
 {
+    if (_held.load(std::memory_order_acquire))
+        return;
     constexpr float kRelease = 0.7f;      // per frame: about 100 ms to fall away
     constexpr float kEnvelopeVolume = 0.8f;
     constexpr float kNoiseToMotor = 0.6f;
@@ -50,8 +71,18 @@ void SoundHaptics::OnHapticFrame(const HapticFrame& frame)
             high = std::min(1.0f, rate / kBeeperFull);
     }
 
-    _last = {_noise * kNoiseToMotor, high, 0.0f, 0.0f};
-    if (_last.low == 0 && _last.high == 0 && !thump)
+    float band = 0;
+    bool tick = false;
+    if (_dsp && frame.streamCount > 0)
+    {
+        const HapticStreamFrame& mix = frame.streams[0];
+        const size_t count = std::min<size_t>(mix.count, HapticStreamFrame::kMaxSamples);
+        band = std::min(1.0f, _lowband.Process(mix.samples.data(), count) * kLowbandToMotor);
+        tick = _onset.Process(mix.samples.data(), count);
+    }
+
+    _last = {std::max(_noise * kNoiseToMotor, band), high, 0.0f, 0.0f};
+    if (_last.low == 0 && _last.high == 0 && !thump && !tick)
         return;
     for (const HostDeviceId& device : _targets())
     {
@@ -59,6 +90,8 @@ void SoundHaptics::OnHapticFrame(const HapticFrame& frame)
             _mixer.Play(device, {_last, kContinuousMs, false});
         if (thump)
             _mixer.Play(device, {{1.0f, 0.4f, 0.0f, 0.0f}, kThumpMs, false});
+        if (tick)
+            _mixer.Play(device, {{0.0f, 0.7f, 0.0f, 0.0f}, kTickMs, false});
     }
     if (thump)
         _last.low = 1.0f;
