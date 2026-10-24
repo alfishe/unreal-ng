@@ -17,6 +17,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/media/recentfiles.h"
+#include "emulator/monitoring/clientstats.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
@@ -1004,9 +1005,12 @@ TEST_F(WsHub_Test, AConnectionCongestedLongerThanTheLimitIsClosedAsASlowConsumer
     Advance(499);
     _hub->Tick();
     EXPECT_FALSE(slow.Closed());
+    const uint64_t dropped = monitoring::ClientStats::Instance().Read(monitoring::ClientPlane::Ws).dropped;
     Advance(1);
     _hub->Tick();
     EXPECT_TRUE(slow.Closed());
+    EXPECT_EQ(monitoring::ClientStats::Instance().Read(monitoring::ClientPlane::Ws).dropped, dropped + 1)
+        << "host.clients ws.dropped counts it (a client that never reads sees only the close)";
     const Json::Value error = slow.Last();
     EXPECT_EQ(error["op"].asString(), "error");
     EXPECT_EQ(error["t"].asString(), "ws");

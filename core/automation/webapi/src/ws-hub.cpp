@@ -17,6 +17,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/monitoring/clientstats.h"
 #include "emulator/monitoring/monitoringapi.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -721,6 +722,7 @@ void WsHub::Tick()
                                   " bytes queued, above the high-water mark for " +
                                   std::to_string(_slowAfter.count()) + " ms");
                     out.Close(*connection);
+                    monitoring::ClientStats::Instance().Dropped(monitoring::ClientPlane::Ws);
                     continue;
                 }
                 if (connection->probe)
