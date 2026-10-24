@@ -146,16 +146,32 @@ macOS, XInput on Windows, xpad on Linux. D-input, Switch (the pad reports as 057
 
 ### 3.2 Windows (for ctl-win)
 
+Status 2026-10-24 (ctl-win; built, unit-tested with fake writers, no pad on the Windows host): the Raw Input backend
+hands the pads with a protocol to `ProtocolPads` (`core/controllers/src/protocolpads`, the drivers macOS uses).
+
 | Gap | Note |
 |:--|:--|
-| The `hid` maps of `devices.json` | `rawinputbackend.cpp` still calls `HidLayoutFor(match.layout)`; switching to `HidLayoutFor(match)` gives the Raw Input path every map of this inventory |
-| DualShock 3 | no Microsoft driver: needs DsHidMini (or the 0xF4 enable once a HID handle exists); BT needs BthPS3 |
-| Switch Pro / grip / NSO over USB | the 0x80 handshake as on macOS |
-| GameCube adapter, Switch 2 controllers | WinUSB (Zadig) + init: not Raw Input |
-| Steam Controllers | vendor reports as on macOS |
-| DualShock 4 / DualSense over BT | the extended report as on macOS |
-| Wii Remote / Wii U Pro | the Wiimote protocol as on macOS |
-| Xbox Elite paddles, Xbox share button | GameInput (XInput has neither) |
+| The `hid` maps of `devices.json` | **done**: `HidLayoutFor(match)` |
+| DualShock 3 | **done as far as Windows allows**: the 0xF4 enable on the cable (`HidD_SetFeature`), and a notice until its first report ("install DsHidMini, BthPS3 for Bluetooth") |
+| Switch Pro / grip / NSO over USB | **done**: `SwitchProtocol` (the 0x80 handshake, 0x30 mode) over WriteFile; the NSO layouts by product id and name, no rumble on NES / SNES / Genesis |
+| GameCube adapter | ProtocolPads reads it (ports as `<id>:p1`..`:p4`) and Raw Input registers the Game Controls page for it; SDL opens it through libusb, so it probably needs WinUSB (Zadig) on Windows: the Raw Input path is *unverified*. Proposal below |
+| Switch 2 controllers | proposal below (WinUSB bulk init) |
+| Steam Controllers | **done**: the vendor page (0xFF00) registered, lizard mode off through `IOCTL_HID_SET_FEATURE`, the 0 report id Windows puts first dropped, dongle slots |
+| DualShock 4 / DualSense over BT | **done**: the extended reports and outputs (CRC), reports cut from Windows' padded length |
+| Wii Remote / Wii U Pro | proposal below |
+| Xbox Elite paddles, Xbox share button | **done**: GameInput (paddles in the reading; Guide and Share through `RegisterSystemButtonCallback`) |
+
+Proposals (not built):
+
+- **WinUSB backend** (GameCube adapter if Raw Input gets nothing, Switch 2 Pro / Joy-Con 2 / NSO GameCube 2): devices the
+  user gave the WinUSB driver (Zadig) are found with SetupDi on their interface GUID, opened with `WinUsb_Initialize`,
+  read and written with overlapped `WinUsb_ReadPipe` / `WinUsb_WritePipe` on the interrupt or bulk endpoints, and fed to
+  the same OS-neutral protocols (`GameCubeProtocol`; a `Switch2Protocol` after SDL's `SDL_hidapi_switch2.c` bulk init).
+  The WinUSB driver takes the device from HID, so it is opt-in and the notice names Zadig.
+- **Wiimote**: an OS-neutral `WiimoteProtocol` (status 0x15, report mode 0x12 to 0x31 / 0x35, extension init by
+  register writes 0x16 to 0xA400F0 = 0x55 and 0xA400FB = 0x00, Wii U Pro on 0x3D), run by ProtocolPads. Dolphin's
+  Windows writer (IOWin.cpp) switches between `WriteFile` and `HidD_SetOutputReport` by Bluetooth stack and model,
+  so the Windows writer likely needs that fallback (*unverified*, from memory of Dolphin's sources).
 
 ### 3.3 Linux (for ctl-linux)
 

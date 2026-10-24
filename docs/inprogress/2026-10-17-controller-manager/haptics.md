@@ -412,6 +412,13 @@ Windows host has no pads):
   answering never holds its pump. The handle is opened shared for reading and writing; when Windows refuses it (another
   program holds the pad alone: Steam Input, DS4Windows, HidHide), the pad still reads its descriptor's reports and the
   notice says why rumble and light are off. ProtocolPads can serve Linux hidraw and IOHID the same way later.
+- **More pads through it** (after ctl-allpads): the Steam Controllers on their vendor-page collection (Raw Input
+  registers page 0xFF00 page-only; `SteamProtocol`'s feature reports through `IOCTL_HID_SET_FEATURE`; the report id 0
+  Windows puts before the 2015 pad's reports dropped, `Endpoint::zeroReportIdFirst`; a dongle's slot shown while a pad
+  is on it), the GameCube adapter (page 0x05 page-only, start report 0x13, each port with a controller a device
+  `<adapter id>:p1`..`:p4`; SDL opens it through libusb, so on Windows it may need WinUSB: unverified), the NSO pads
+  (`SwitchProPad::LayoutFor` with the product string: an NES pad is no right Joy-Con; NES / SNES / Genesis without
+  motors). None of them rumbles yet.
 - **Report sizes**: Raw Input pads every report to `InputReportByteLength`, the longest input report (547 bytes for a
   PlayStation pad over Bluetooth). `ProtocolPads::ReportSize` cuts a Sony full report to 64 bytes (USB 0x01) or 78
   (Bluetooth 0x31 / 0x11, CRC over those 78) before `SonyPad::Decode`; a Switch 0x21 / 0x30 is taken as it comes.
