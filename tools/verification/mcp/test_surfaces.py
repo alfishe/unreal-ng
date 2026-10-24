@@ -319,5 +319,47 @@ def test_host_devices_show_role_layers_context_and_the_output_verb_checks(s):
     expect('tick on' in r.text, 'a tick on the Dial', r.text)
 
 
+def test_host_devices_show_battery_light_and_notice_and_the_light_verb_checks(s):
+    """Every device in devices carries its battery ({known, text}: unknown when the OS says nothing), whether its light
+    can be set and, when something is missing, a notice; MCP's text names them; the light verb refuses a keyboard, a
+    colour it cannot read and a GET, and sets a pad's light when one has it"""
+    status, rest = http(s, 'GET', '/api/v1/controllers/devices')
+    if status == 503:
+        return  # a process without the Qt client: no host input
+    expect(status == 200 and rest['ok'], 'the host devices', rest)
+    for device in rest['devices']:
+        battery = device.get('battery')
+        expect(battery is not None and isinstance(battery.get('text'), str) and 'known' in battery,
+               'a battery on every device', device)
+        expect(battery['known'] or (battery['text'] == 'unknown' and 'level' not in battery), 'unknown is honest',
+               battery)
+        expect('available' in device.get('light', {}), 'the light on every device', device)
+        expect(device['light']['available'] or device['light'].get('reason'), 'no light says why', device)
+        expect(device.get('notice', 'x') != '', 'a notice is absent or says something', device)
+    keyboard = next((d for d in rest['devices'] if d['id'] == 'kbd:system'), None)
+    expect(keyboard is not None and not keyboard['battery']['known'] and not keyboard['light']['available'],
+           'the window keyboard: no battery known, no light', keyboard)
+    r = s.call('controllers', {'action': 'devices'})
+    expect('battery unknown, light none' in r.text, 'MCP names the battery and the light in its text', r.text)
+
+    status, body = http(s, 'POST', '/api/v1/controllers/light', {'device': 'kbd:system', 'color': '#ff0000'})
+    expect(status == 503 and body['error'] == 'unavailable' and 'keyboards' in body['message'],
+           'a keyboard has no light the emulator sets', body)
+    status, body = http(s, 'POST', '/api/v1/controllers/light', {'device': 'kbd:system', 'color': 'orange'})
+    expect(status == 400 and body['error'] == 'bad-request', 'not a colour', body)
+    status, body = http(s, 'GET', '/api/v1/controllers/light?device=kbd:system&color=off')
+    expect(status == 405, 'light is a POST', body)
+    socket = ws_calls(s, [('POST', '/api/v1/controllers/light', {'device': 'kbd:system', 'color': 'off'})])
+    expect(socket[1]['status'] == 503, 'the socket call answers as REST', socket)
+    r = s.call('controllers', {'action': 'light', 'device': 'nope', 'color': 'off'}, ok=False)
+    expect(r.is_error and 'unknown-device' in r.text, 'MCP: an unknown device', r.text)
+
+    pad = next((d for d in rest['devices'] if d['light']['available']), None)
+    if pad is None:
+        return  # no pad with a settable light on this host: the rest is the owner's
+    r = s.call('controllers', {'action': 'light', 'device': pad['id'], 'color': '#0040ff'})
+    expect('light #0040ff on' in r.text, 'the pad takes the colour', r.text)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

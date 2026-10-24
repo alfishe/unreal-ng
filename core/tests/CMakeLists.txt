@@ -52,6 +52,12 @@ endif ()
 if (ENABLE_GDB_AUTOMATION AND NOT TARGET automation_gdb)
     set(ENABLE_GDB_AUTOMATION OFF)
 endif ()
+# Lua interpreter tests link the automation_lua library: only when it was built
+if (TARGET automation_lua)
+    set(LUA_AUTOMATION_TESTS ON)
+else ()
+    set(LUA_AUTOMATION_TESTS OFF)
+endif ()
 
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
@@ -140,6 +146,10 @@ endif()
 # Exclude GDB tests if GDB automation is disabled
 if (NOT ENABLE_GDB_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/gdb/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
+if (NOT LUA_AUTOMATION_TESTS)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/lua/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
 # DZRP (DeZog) unit tests: the suite files are globbed in via TEST_CPP_FILES.
@@ -282,12 +292,14 @@ if (NOT TARGET ${PROJECT_NAME})
     # into this binary, not taken from the core archive — they need opl4's
     # include path and symbols here. The UNREALNG_HAVE_OPL4 gate arrives via
     # core's PUBLIC compile definition. sam2695 likewise: the MIDI line (core/src/emulator/sound/midi)
-    # and its tests include the library's public header.
+    # and its tests include the library's public header. The automation libraries come before core: automation_gdb
+    # links core itself, placed after core it repeats core and its libraries ("ld: warning: ignoring duplicate libraries").
     target_link_libraries(${PROJECT_NAME}
         ${common_libraries}
+        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
+        $<$<BOOL:${LUA_AUTOMATION_TESTS}>:automation_lua>
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
-        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
         opl4
         sam2695
         $<$<BOOL:${ENABLE_VDAC2}>:eve::emu>

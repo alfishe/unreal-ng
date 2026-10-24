@@ -486,7 +486,8 @@ public:
     /// sample every few frames for the rest of the session
     /// The machine state was restored (TTD checkpoint, return to the live state): the host-side post-processing of
     /// every row (character chains, AY / SSG voicing) restarts on the next frame with audio, so no filter history,
-    /// delay line or envelope from the timeline that was left leaks into the restored one. Any thread
+    /// delay line or envelope from the timeline that was left leaks into the restored one. Called by the restore,
+    /// with the machine held: the beeper and Covox drop their unread deltas at once
     void onStateRestored();
 
     void adoptSamplePhase(uint64_t tstateRatePhase)

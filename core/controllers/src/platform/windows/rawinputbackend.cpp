@@ -313,6 +313,45 @@ public:
     }
     /// endregion </Haptics>
 
+    /// region <Light: a DualSense over USB, through the output report its rumble writes>
+    bool HasLight(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const Pad* pad = PadLocked(device);
+        return pad != nullptr && pad->dualSenseUsb;
+    }
+
+    std::string LightUnavailable(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const Pad* pad = PadLocked(device);
+        if (pad == nullptr)
+            return WriterLocked(device) != nullptr ? "The Surface Dial has no light" : "The device is not connected";
+        return pad->dualSenseUsb ? std::string()
+                                 : "On Windows the emulator sets the light of a DualSense over the USB cable only";
+    }
+
+    bool SetLight(const HostDeviceId& device, const LightColor& color) override
+    {
+        std::lock_guard lock(_mutex);
+        Pad* pad = PadLocked(device);
+        if (pad == nullptr || !pad->dualSenseUsb)
+            return false;
+        if (!pad->writer)
+            pad->writer = std::make_shared<WinHandle>(OpenHid(pad->path, GENERIC_READ | GENERIC_WRITE));
+        if (!pad->writer->Valid())
+            return false;
+        const std::vector<uint8_t> report =
+            PadHidReport(DualSenseOutput::UsbLightReport(color, !pad->lightReleased), pad->outputLength);
+        DWORD written = 0;
+        const bool ok =
+            WriteFile(pad->writer->handle, report.data(), static_cast<DWORD>(report.size()), &written, nullptr) &&
+            written == report.size();
+        pad->lightReleased = pad->lightReleased || ok;
+        return ok;
+    }
+    /// endregion </Light>
+
     /// region <Surface outputs: the Dial's patterns and steps, through its writer thread>
     uint8_t Outputs(const HostDeviceId& device) const override
     {
@@ -352,7 +391,8 @@ private:
         std::unique_ptr<HidPad> hid;
         bool dualSenseUsb = false;
         size_t outputLength = 0;
-        std::shared_ptr<WinHandle> writer;  ///< opened at the first rumble
+        std::shared_ptr<WinHandle> writer;  ///< opened at the first rumble or light
+        bool lightReleased = false;         ///< dualSenseUsb: the firmware's light bar was released (the first light)
         std::string rumbleUnavailable;
     };
     struct Dial

@@ -85,7 +85,7 @@ constexpr size_t kTtdYmOffset = kTtdLatchesOffset + 11 + 4 * 2;
 /// region <Construction>
 
 MultiSoundCard::MultiSoundCard(EmulatorContext* context, const MultiSoundCardConfig& config)
-    : _config(config), _context(context), _logic(config.options)
+    : _config(config), _logic(config.options)
 {
     // YM2203 pair on the card's own 3.5 MHz, a true ratio on hosts that are not 3.5 MHz (architecture.md §2)
     Ym2203PairConfig ymConfig;

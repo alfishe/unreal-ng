@@ -26,6 +26,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
+#include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
 #include "debugger/ttd/timetravelhooks.h"
@@ -171,6 +172,7 @@ HostControllers::~HostControllers()
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
+    releaseWheelMenu();
     _service->Router().SetActionSink(nullptr);
     _service->Stop();
 #endif
@@ -484,6 +486,7 @@ void HostControllers::poll()
     checkAuto();
     updateHapticsGate();
     followContext();
+    updateWheelMenu();  // a window may have got its native handle
     if (_service->Revision() == _revision && machine == _machineRevision)
         return;
     _revision = _service->Revision();
@@ -496,6 +499,8 @@ void HostControllers::poll()
     _known.clear();
     for (const HostDeviceInfo& device : devices)
         _known.push_back(device.id);
+    _wheelConnected = WheelClaim::AnyWheel(devices, DeviceDatabase::Builtin());
+    updateWheelMenu();
     Reapply();
 #endif
 }
@@ -527,6 +532,34 @@ void HostControllers::Reapply()
 }
 
 #ifdef ENABLE_CONTROLLERS
+void HostControllers::updateWheelMenu()
+{
+#ifdef Q_OS_WIN
+    // Only the Windows platform's window ids are HWNDs (offscreen hands out its own); a window without a native
+    // handle yet is skipped (internalWinId does not create one) and taken once it has one
+    std::vector<WheelClaim::Window> windows;
+    if (QGuiApplication::platformName() == QLatin1String("windows"))
+        for (QWidget* widget : {_mainWindow, _debuggerWindow})
+            if (widget != nullptr)
+                windows.push_back(static_cast<WheelClaim::Window>(widget->window()->internalWinId()));
+    const WheelClaim::Changes changes = _wheelClaim.Update(_wheelConnected, windows);
+    for (WheelClaim::Window window : changes.release)
+    {
+        WheelMenuWindows::Release(_wheelHolds[window]);
+        _wheelHolds.erase(window);
+    }
+    for (WheelClaim::Window window : changes.take)
+        _wheelHolds[window] = WheelMenuWindows::Take(reinterpret_cast<void*>(window));
+#endif
+}
+
+void HostControllers::releaseWheelMenu()
+{
+    for (WheelClaim::Window window : _wheelClaim.ReleaseAll().release)
+        WheelMenuWindows::Release(_wheelHolds[window]);
+    _wheelHolds.clear();
+}
+
 void HostControllers::attachHaptics()
 {
     if (!_attached)

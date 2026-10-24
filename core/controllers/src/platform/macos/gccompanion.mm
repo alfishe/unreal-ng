@@ -7,7 +7,10 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <set>
 #include <vector>
+
+#include "devicestatus.h"
 
 #if !__has_feature(objc_arc)
 #error "gccompanion.mm is built with -fobjc-arc"
@@ -199,6 +202,17 @@ NSArray<GCControllerButtonInput*>* MatchButtons(GCExtendedGamepad* gamepad)
     return buttons;
 }
 
+BatteryState BatteryOf(GCController* controller)
+{
+    GCDeviceBattery* battery = controller.battery;
+    if (battery == nil)
+        return {};
+    return BatteryFromGameController(battery.batteryLevel, static_cast<int>(battery.batteryState));
+}
+
+/// The battery is read again this often: it changes slowly, and the read stays on the queue
+constexpr int64_t kBatteryRefreshNs = 30LL * 1000 * 1000 * 1000;
+
 std::string StringOf(NSString* text)
 {
     return text != nil ? std::string([text UTF8String]) : std::string();
@@ -213,6 +227,9 @@ struct GcCompanion::State
     std::map<void*, Entry> pads;  ///< on the queue only; keyed by the controller
     std::mutex mutex;
     std::map<std::string, uint8_t> actuators;  ///< under mutex: the pads with haptics, for SetRumble without waiting
+    std::map<std::string, BatteryState> batteries;  ///< under mutex: every pad's, as last read on the queue
+    std::set<std::string> lights;                    ///< under mutex: the pads with a light
+    dispatch_source_t batteryTimer = nil;            ///< on the queue: reads the batteries again
     int next = 1;
     bool running = false;  ///< on the queue only
 };
@@ -253,6 +270,7 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
         pad.key = entry.key;
         pad.vendorName = StringOf(controller.vendorName);
         pad.actuators = ActuatorsOf(entry.motors);
+        pad.light = controller.light != nil;
         // The presses reach the queue directly, not through the main thread: their times stay close to IOHID's
         controller.handlerQueue = s->queue;
         GCExtendedGamepad* gamepad = controller.extendedGamepad;
@@ -265,10 +283,13 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
         };
         for (GCControllerButtonInput* button in MatchButtons(gamepad))
             button.pressedChangedHandler = handler;
-        if (pad.actuators != 0)
         {
             std::lock_guard<std::mutex> lock(s->mutex);
-            s->actuators[pad.key] = pad.actuators;
+            if (pad.actuators != 0)
+                s->actuators[pad.key] = pad.actuators;
+            if (pad.light)
+                s->lights.insert(pad.key);
+            s->batteries[pad.key] = BatteryOf(controller);
         }
         if (s->callbacks.added)
             s->callbacks.added(pad);
@@ -284,6 +305,8 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
         {
             std::lock_guard<std::mutex> lock(s->mutex);
             s->actuators.erase(key);
+            s->lights.erase(key);
+            s->batteries.erase(key);
         }
         if (s->callbacks.removed)
             s->callbacks.removed(key);
@@ -292,6 +315,24 @@ bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
     dispatch_sync(state->queue, ^{
       state->running = true;
     });
+    // The batteries, read again on the queue every 30 s: Battery never waits for GameController
+    state->batteryTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, state->queue);
+    {
+        std::weak_ptr<State> weakState = state;
+        dispatch_source_set_event_handler(state->batteryTimer, ^{
+          const std::shared_ptr<State> s = weakState.lock();
+          if (!s || !s->running)
+              return;
+          std::map<std::string, BatteryState> read;
+          for (const auto& [handle, entry] : s->pads)
+              read[entry.key] = BatteryOf(entry.controller);
+          std::lock_guard<std::mutex> lock(s->mutex);
+          s->batteries.swap(read);
+        });
+    }
+    dispatch_source_set_timer(state->batteryTimer, dispatch_time(DISPATCH_TIME_NOW, kBatteryRefreshNs),
+                              static_cast<uint64_t>(kBatteryRefreshNs), static_cast<uint64_t>(kBatteryRefreshNs / 10));
+    dispatch_resume(state->batteryTimer);
     std::weak_ptr<State> weak = state;
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
     [state->observers addObject:[center addObserverForName:GCControllerDidConnectNotification
@@ -331,6 +372,7 @@ void GcCompanion::Stop()
     for (id observer in state->observers)
         [[NSNotificationCenter defaultCenter] removeObserver:observer];
     [state->observers removeAllObjects];
+    dispatch_source_cancel(state->batteryTimer);
     dispatch_sync(state->queue, ^{
       state->running = false;
       for (auto& [handle, entry] : state->pads)
@@ -344,6 +386,8 @@ void GcCompanion::Stop()
       state->callbacks = {};
       std::lock_guard<std::mutex> lock(state->mutex);
       state->actuators.clear();
+      state->lights.clear();
+      state->batteries.clear();
     });
 }
 
@@ -363,6 +407,37 @@ bool GcCompanion::SetRumble(const std::string& key, const RumbleLevels& levels)
           if (entry.key == key)
               for (Motor& motor : entry.motors)
                   Apply(entry.controller, motor, LevelFor(motor.source, copy));
+    });
+    return true;
+}
+
+BatteryState GcCompanion::Battery(const std::string& key) const
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return {};
+    std::lock_guard<std::mutex> lock(state->mutex);
+    const auto found = state->batteries.find(key);
+    return found == state->batteries.end() ? BatteryState{} : found->second;
+}
+
+bool GcCompanion::SetLight(const std::string& key, const LightColor& color)
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->lights.count(key) == 0)
+            return false;
+    }
+    const LightColor copy = color;
+    dispatch_async(state->queue, ^{
+      for (auto& [handle, entry] : state->pads)
+          if (entry.key == key && entry.controller.light != nil)
+              entry.controller.light.color = [[GCColor alloc] initWithRed:copy.red / 255.0f
+                                                                    green:copy.green / 255.0f
+                                                                     blue:copy.blue / 255.0f];
     });
     return true;
 }

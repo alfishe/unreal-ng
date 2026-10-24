@@ -280,6 +280,12 @@ LEDs through the device's capabilities, rate-limited to 30 Hz, and stops every m
 and exit. Outputs are never journaled. Defaults are off for players except the breakpoint pulse in the debug layer
 ([debug-and-ttd.md §7](debug-and-ttd.md)). Game haptics (audio filters, game-event probes, per-game effects): [haptics.md](haptics.md).
 
+The light colour and the battery are `IBackend` calls (`SetLight`, `Battery`; defaulted, built 2026-10-22): the
+pure parts (GameController's and XInput's values, the Linux power supply and LED classes, the DualSense light report)
+in `devicestatus.{h,cpp}` and `DualSenseOutput::UsbLightReport`, the sources per OS in
+[surfaces.md §2](surfaces.md#battery-light-and-notice-built). A battery read never waits for a device: each backend
+refreshes a copy on its own thread.
+
 ## 11. Threads
 
 | Thread | Work |

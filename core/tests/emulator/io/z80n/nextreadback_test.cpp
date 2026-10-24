@@ -144,7 +144,7 @@ TEST_F(NextReadBack_Test, TheVideoBitsAreTheOnesTheLastFrameSyncTookAndNr81HasIt
     EXPECT_EQ(board.Read(0x09) & 0x03, 0x03);
 
     board.WriteNextReg(0x81, 0xFF);
-    EXPECT_EQ(board.Read(0x81), 0xF8) << "bit 7 the idle ROMCS_n, bits 6:3 stored, bit 2 and the speed 00";
+    EXPECT_EQ(board.Read(0x81), 0x78) << "bit 7 ROMCS_n of an empty bus (0 on the real board), bits 6:3 stored, bit 2 and the speed 00";
     board.WriteNextReg(0x81, 0x00);
-    EXPECT_EQ(board.Read(0x81), 0x80);
+    EXPECT_EQ(board.Read(0x81), 0x00) << "the board's NextReg_defaults: #81 reads #00";
 }

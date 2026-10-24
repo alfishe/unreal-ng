@@ -23,6 +23,7 @@
 #include "endpointmerge.h"
 #include "hid/drivers/dualsenseoutput.h"
 #include "hid/drivers/surfacedial.h"
+#include "hid/drivers/xboxbluetoothoutput.h"
 #include "hid/drivers/xboxgip.h"
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
@@ -282,8 +283,8 @@ public:
     }
     /// endregion </Surface outputs>
 
-    /// The Xbox Bluetooth rumble report (as SDL's HIDAPI Xbox One driver sends it): 03, enable 0F, left trigger,
-    /// right trigger, low motor, high motor (0..100), duration FF, delay 00, repeat EB
+    /// The Xbox Bluetooth rumble report 3 with the impulse triggers (XboxBluetoothOutput::RumbleReport), the
+    /// DualSense's report 2 over USB
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         std::lock_guard lock(_mutex);
@@ -296,25 +297,65 @@ public:
                 return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
                                             static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
             }
-            auto percent = [](float level) {
-                return static_cast<uint8_t>((level < 0 ? 0 : level > 1 ? 1 : level) * 100.0f + 0.5f);
-            };
-            const uint8_t report[] = {0x03,
-                                      0x0F,
-                                      percent(levels.leftTrigger),
-                                      percent(levels.rightTrigger),
-                                      percent(levels.low),
-                                      percent(levels.high),
-                                      0xFF,
-                                      0x00,
-                                      0xEB};
-            return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report, sizeof(report)) ==
-                   kIOReturnSuccess;
+            const std::vector<uint8_t> report = XboxBluetoothOutput::RumbleReport(levels);
+            return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
+                                        static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
         }
         // GameController's haptics: queued on its own thread, never blocks
         return CompanionActuatorsLocked(device) != 0 && _companion &&
                _companion->SetRumble(_merge.CompanionOf(device), levels);
     }
+
+    /// region <Battery and light>
+    /// GameController's battery of the matched GCController (IOHID reads no battery); unknown before the match and
+    /// for pads GameController reports none for (the Elite 2: state unknown, level 0)
+    BatteryState Battery(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const std::string companion = _merge.CompanionOf(device);
+        return companion.empty() || !_companion ? BatteryState{} : _companion->Battery(companion);
+    }
+
+    /// A DualSense over USB through its output report, else GCDeviceLight once the GCController is matched
+    bool HasLight(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        return NativeLightLocked(device) != nullptr || CompanionLightLocked(device);
+    }
+
+    std::string LightUnavailable(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        if (EndpointsLocked(device).empty())
+            return "The device is not connected";
+        if (NativeLightLocked(device) != nullptr || CompanionLightLocked(device))
+            return {};
+        const bool waitingWithLight =
+            std::any_of(_companionPads.begin(), _companionPads.end(), [this](const auto& entry) {
+                return entry.second.light && _merge.DeviceOf(entry.first).empty();
+            });
+        if (waitingWithLight && _merge.StateOf(device) == EndpointMerge::MatchState::Tentative)
+            return "Press a button on the pad: macOS sets its light through GameController once the emulator has "
+                   "matched the two";
+        return "macOS gives the emulator no light of this device (GameController sets the light of a DualSense and a "
+               "DualShock 4)";
+    }
+
+    bool SetLight(const HostDeviceId& device, const LightColor& color) override
+    {
+        std::lock_guard lock(_mutex);
+        if (Device* known = NativeLightLocked(device))
+        {
+            const std::vector<uint8_t> report = DualSenseOutput::UsbLightReport(color, !known->lightReleased);
+            const bool written = IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
+                                                      static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
+            known->lightReleased = known->lightReleased || written;
+            return written;
+        }
+        // GCDeviceLight: queued on the companion's thread, never blocks
+        return CompanionLightLocked(device) && _companion && _companion->SetLight(_merge.CompanionOf(device), color);
+    }
+    /// endregion </Battery and light>
 
     /// Logical devices: the endpoints of one physical device count once
     size_t DeviceCount() const override
@@ -342,6 +383,7 @@ private:
         IOHIDDeviceRef ref = nullptr;
         bool xboxBluetooth = false;  ///< rumble through output report 3 (an Xbox One / Series pad over Bluetooth)
         bool dualSenseUsb = false;   ///< rumble and trigger resistance through output report 2
+        bool lightReleased = false;  ///< dualSenseUsb: the firmware's light bar was released (the first light report)
         /// An Xbox pad over USB: GameController lists its haptics and drives no motor (haptics.md §9), so the companion
         /// does not take its rumble either
         bool xboxUsb = false;
@@ -451,6 +493,25 @@ private:
         return nullptr;
     }
 
+    /// The endpoint of @p device that takes the DualSense light report; nullptr when none does
+    Device* NativeLightLocked(const HostDeviceId& device) const
+    {
+        for (Device* known : EndpointsLocked(device))
+            if (known->dualSenseUsb)
+                return known;
+        return nullptr;
+    }
+
+    /// The matched GCController of @p device has a light
+    bool CompanionLightLocked(const HostDeviceId& device) const
+    {
+        const std::string companion = _merge.CompanionOf(device);
+        if (companion.empty())
+            return false;
+        const auto found = _companionPads.find(companion);
+        return found != _companionPads.end() && found->second.light;
+    }
+
     /// The actuators GameController drives for @p device: its matched GCController's, none for an Xbox pad over USB
     uint8_t CompanionActuatorsLocked(const HostDeviceId& device) const
     {
@@ -530,8 +591,7 @@ private:
         // A USB GIP pad gets no rumble on macOS: its dext takes no rumble report, and GameController accepts the
         // haptics of a pad over USB but drives no motor (haptics.md §9, SDL issue #14800)
         constexpr uint16_t kMicrosoft = 0x045E;
-        device->xboxBluetooth = bluetooth && vendor == kMicrosoft && match.layout == "xbox" &&
-                                match.family != "xbox-360";
+        device->xboxBluetooth = XboxBluetoothOutput::Handles(bluetooth, vendor, match.layout, match.family);
         device->dualSenseUsb = !bluetooth && DualSenseOutput::Handles(vendor, product);
         device->xboxUsb = !bluetooth && vendor == kMicrosoft && match.layout == "xbox";
         auto rumbleUnavailable = [&]() -> std::string {

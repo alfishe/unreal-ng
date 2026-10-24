@@ -34,7 +34,8 @@ namespace
         "controllers targets <device>               - The connectors that take a device, the default first\n"
         "controllers auto [apply]                   - The port-read evidence and the joystick it points to\n"
         "Host (profiles and bindings of the host's pads, keyboard and mouse):\n"
-        "controllers devices                        - The connected host devices: role, layers up, context, outputs, feel\n"
+        "controllers devices                        - The connected host devices: role, layers up, context, outputs, feel,\n"
+        "                                             battery, light, what is missing (notice)\n"
         "controllers context                        - Machine, file hashes, manual game profile, devices\n"
         "controllers profiles [set=game|play|debug|scheme] [machine=next] - Every profile\n"
         "controllers profile <id>                   - One profile as YAML\n"
@@ -52,6 +53,7 @@ namespace
         "controllers output <device> <tick|double|buzz> - A control surface's haptic pattern (the Surface Dial)\n"
         "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
         "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
+        "controllers light <device> <#RRGGBB|r,g,b|off> - A pad's light colour (a DualSense / DualShock 4 light bar)\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -92,7 +94,7 @@ namespace
 
 #ifdef ENABLE_CONTROLLERS
     /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
-    /// rumble, then its effect; output, then its pattern); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// rumble, then its effect; output, then its pattern; light, then its colour); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
@@ -113,13 +115,15 @@ namespace
         {
             if (verb == "bind" || verb == "unbind")
                 request.options["control"] = words[1];
-            else if (verb == "haptics" || verb == "rumble" || verb == "output")
+            else if (verb == "haptics" || verb == "rumble" || verb == "output" || verb == "light")
             {
                 request.options["device"] = words[1];
                 if (verb == "rumble" && words.size() > 2)
                     request.options["effect"] = words[2];
                 if (verb == "output" && words.size() > 2)
                     request.options["pattern"] = words[2];
+                if (verb == "light" && words.size() > 2)
+                    request.options["color"] = words[2];
             }
             else if (verb == "save")
             {
@@ -192,6 +196,14 @@ namespace
                 }
                 if (const JsonValue* feel = device.Find("feel"))
                     text += "    feel " + feel->Dump() + "\n";
+                if (const JsonValue* battery = device.Find("battery"))
+                {
+                    const JsonValue* light = device.Find("light");
+                    text += "    battery " + battery->Find("text")->AsString() + "; light " +
+                            (light != nullptr && light->Find("available")->AsBool() ? "settable" : "none") + "\n";
+                }
+                if (const JsonValue* notice = device.Find("notice"))
+                    text += "    notice: " + notice->AsString() + "\n";
             }
             return "Host devices:\n" + (text.empty() ? "  none\n" : text);
         }

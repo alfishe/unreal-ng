@@ -69,6 +69,7 @@ private:
     QListWidget* _devices = nullptr;
     QLabel* _probeLabel = nullptr;
     QLabel* _deviceTitle = nullptr;
+    QLabel* _battery = nullptr;  ///< next to the title: the selected device's battery
     ControllerPicture* _picture = nullptr;
     QString _pictureSet;
     BindingTable* _table = nullptr;

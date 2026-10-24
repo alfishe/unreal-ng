@@ -271,7 +271,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllCBOpCodes)
                 break;
         }
 
-        std::string result = _disasm->disassembleSingleCommand(command, sizeof(command));
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
         
         if (result != referenceResult)
         {

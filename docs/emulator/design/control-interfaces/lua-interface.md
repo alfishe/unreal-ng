@@ -239,9 +239,13 @@ A control surface's outputs (the Surface Dial; [command-interface.md §15](./com
 `controllers_output(dial, "buzz")`, `controllers_output(dial, {steps = 36, clicks = "off"})`,
 `controllers_output(dial, {marks = "second,edge"})`.
 
+Battery, light and notice: `controllers_host("devices").devices[i]` has `battery` (`text` is `unknown` when the OS
+says nothing), `light.available` and `notice`; `controllers_light(device, "#ff8000")` (or `"255,128,0"`, `"off"`) sets
+the light.
+
 `controllers(verb, [connector], [device], [opts])`, `controllers_host(verb, [opts])`, `controllers_haptics([device])`,
 `controllers_rumble(device, [effect])` (`identify` by default), `controllers_output(device, pattern | {steps, clicks,
-marks})`. Each returns the reply table: `ok`, `error`, `message`
+marks})`, `controllers_light(device, color)`. Each returns the reply table: `ok`, `error`, `message`
 and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
 
 ### Host Actions
@@ -1362,7 +1366,8 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   blending_decay (0.1..0.9), emulator (the instance the window shows),
                                      --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
                                      --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
-                                     --   osd_keyboard_picture, osd_keyboard_pictures, next_layers, next_layers_mode,
+                                     --   osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style,
+                                     --   osd_keyboard_styles, next_layers, next_layers_mode,
                                      --   next_layers_shown = {ula, layer2, tilemap, sprites} }; headless
                                      --   { ok = false, error, kind = "no-window" }
 emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending, fullscreen,
@@ -1371,7 +1376,8 @@ emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
                                      --   than none switches CRT on), blending_frames, blending_weights,
                                      --   blending_decay (0.3), scale (1..4), hud_theme, hud_notices = {["ram-page"]
-                                     --   = false}, osd_keyboard_picture, next_layers_mode ("layers" / "composed" /
+                                     --   = false}, osd_keyboard_picture, osd_keyboard_style ("photo" / "schematic" /
+                                     --   "hybrid"), next_layers_mode ("layers" / "composed" /
                                      --   "winner"), next_layers_shown = {sprites = false}; applied the way the View
                                      --   menu does. Returns the settings after the change, or
                                      --   { ok = false, error, kind = "bad-parameter" / "no-window" / "unavailable" }

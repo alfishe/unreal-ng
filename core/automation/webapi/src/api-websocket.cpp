@@ -272,6 +272,10 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
     const Json::Value& body = request["body"];
     drogon::HttpRequestPtr call =
         body.isNull() ? drogon::HttpRequest::newHttpRequest() : drogon::HttpRequest::newHttpJsonRequest(body);
+    // newHttpJsonRequest sets the content type code but no header: getParameters() would then read the JSON body as
+    // a form (its whole text one parameter name), which the routes that take options from both reject
+    if (!body.isNull())
+        call->addHeader("content-type", "application/json");
     call->setMethod(method);
     call->setPath(drogon::utils::urlDecode(target));
     for (size_t start = 0; start < query.size();)

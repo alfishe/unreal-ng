@@ -19,6 +19,7 @@
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "_helpers/cdtestdisc.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/testtier.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "ttdsprintermachine.h"
@@ -96,7 +97,8 @@ protected:
         ASSERT_GE(_ttd->GetCheckpointCount(), static_cast<size_t>(frames));
         const size_t last = _ttd->GetCheckpointCount() - 1;
         ExpectExactReplay(0, last, what + ", from the start");
-        ExpectExactReplay(last / 2, last - last / 2, what + ", from the middle");
+        if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+            ExpectExactReplay(last / 2, last - last / 2, what + ", from the middle");
     }
 
     std::string _image;
@@ -127,7 +129,8 @@ TEST_F(TTDSprinterCoverage_Test, DontBlink_TheAcceleratorAndTheCovoxBlasterFedFr
     EXPECT_GT(after.ticks - before.ticks, 0u) << "and plays";
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "dontBlink, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "dontBlink, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "dontBlink, from the middle");
 }
 
 /// ACCTEST.EXE (testdata/machines/sprinter/software): copies its 64 x 64 picture into the video RAM with the accelerator's
@@ -143,7 +146,8 @@ TEST_F(TTDSprinterCoverage_Test, AccTest_TheAcceleratorCopiesThePicture)
     EXPECT_GE(_decoder->GetAccelerator()->State().operations - before, 128u) << "64 block reads and 64 block writes";
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "ACCTEST, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "ACCTEST, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "ACCTEST, from the middle");
 }
 
 /// The Spectrum mode (BIOS 3.04 with DSS 1.62's SPECTRUM.EXE: the Pentagon 128 launcher from the floppy), recorded from
@@ -231,34 +235,38 @@ TEST_F(TTDSprinterZxMode_Test, TrDosListsAndLoadsFromATrd)
     ASSERT_TRUE(SpectrumHas("Title: AMD4ever")) << ScreenOCR::ocrScreen(_emulator->GetId());
     Tap(ZXKEY_Y);
     RecordUntil("mem_t.ba", 200);
-    Record(50);
-    // LOAD "smReadMe" CODE
-    Tap(ZXKEY_J);
-    Chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
-    for (ZXKeysEnum key : {ZXKEY_S, ZXKEY_M})
-        Tap(key);
-    Chord(ZXKEY_CAPS_SHIFT, ZXKEY_R);
-    for (ZXKeysEnum key : {ZXKEY_E, ZXKEY_A, ZXKEY_D})
-        Tap(key);
-    Chord(ZXKEY_CAPS_SHIFT, ZXKEY_M);
-    Tap(ZXKEY_E);
-    Chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
-    Press(ZXKEY_CAPS_SHIFT);  // E mode, then I = CODE
-    Press(ZXKEY_SYM_SHIFT);
-    Record(4);
-    Release(ZXKEY_SYM_SHIFT);
-    Release(ZXKEY_CAPS_SHIFT);
-    Record(4);
-    Tap(ZXKEY_I);
-    Tap(ZXKEY_ENTER);
-    RecordUntil("O.K.", 400);
-    ASSERT_TRUE(SpectrumHas("O.K.")) << ScreenOCR::ocrScreen(_emulator->GetId());
-    Record(10);
+    Record(TestTier::Pick(10, 50));
+    if (TestTier::Long())   // the catalog read the disk under the recording; LOAD runs a file's sectors too
+    {
+        // LOAD "smReadMe" CODE
+        Tap(ZXKEY_J);
+        Chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
+        for (ZXKeysEnum key : {ZXKEY_S, ZXKEY_M})
+            Tap(key);
+        Chord(ZXKEY_CAPS_SHIFT, ZXKEY_R);
+        for (ZXKeysEnum key : {ZXKEY_E, ZXKEY_A, ZXKEY_D})
+            Tap(key);
+        Chord(ZXKEY_CAPS_SHIFT, ZXKEY_M);
+        Tap(ZXKEY_E);
+        Chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
+        Press(ZXKEY_CAPS_SHIFT);  // E mode, then I = CODE
+        Press(ZXKEY_SYM_SHIFT);
+        Record(4);
+        Release(ZXKEY_SYM_SHIFT);
+        Release(ZXKEY_CAPS_SHIFT);
+        Record(4);
+        Tap(ZXKEY_I);
+        Tap(ZXKEY_ENTER);
+        RecordUntil("O.K.", 400);
+        ASSERT_TRUE(SpectrumHas("O.K.")) << ScreenOCR::ocrScreen(_emulator->GetId());
+        Record(10);
+    }
     _ttd->StopRecording();
 
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "TR-DOS in the Spectrum mode, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "TR-DOS in the Spectrum mode, from the middle");
+    if (TestTier::Long())
+        ExpectExactReplay(last / 2, last - last / 2, "TR-DOS in the Spectrum mode, from the middle");
     for (const std::string& copy : copies)
         std::remove(copy.c_str());
 }
@@ -323,7 +331,8 @@ TEST_P(TTDSprinterGs_Test, TheMailboxBetweenBothCpus)
     EXPECT_GT(_context->pMemory->DirectReadFromZ80Memory(0x9000), 0) << "the card's firmware took commands";
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "the GS mailbox, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "the GS mailbox, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "the GS mailbox, from the middle");
 }
 
 INSTANTIATE_TEST_SUITE_P(Cards, TTDSprinterGs_Test, ::testing::Values(GSTypeKind::NGS, GSTypeKind::Z80),
@@ -397,7 +406,8 @@ TEST_F(TTDSprinterShipped_Test, CdDrive_PlaysAudioThroughAnAtapiPacket)
     EXPECT_GT(cd->Audio().HeadLba(), 100u) << "the head moved on from 00:02:00 (LBA 0), about 75 sectors a second";
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "CD audio, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "CD audio, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "CD audio, from the middle");
 }
 
 /// The AY (1.75 MHz, ABC stereo) under a recording: a host program walks all its registers through #FFFD / #BFFD in a
@@ -445,7 +455,8 @@ TEST_F(TTDSprinterShipped_Test, Ay_EveryRegisterChangingInsideFrames)
         << _context->pSoundManager->getAYChipCount();
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "the AY, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "the AY, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "the AY, from the middle");
 }
 
 /// The Covox-Blaster (the Sprinter's 16-bit stereo DAC with its 256-entry ring) under a recording: a host program turns
@@ -490,7 +501,8 @@ TEST_F(TTDSprinterShipped_Test, CovoxBlaster_TheRingPlaysWhileTheHostRefillsIt)
     EXPECT_GT(after.ticks - before.ticks, 40u * 100u) << "and played: 7.8 kHz is about 160 ticks a frame";
     const size_t last = _ttd->GetCheckpointCount() - 1;
     ExpectExactReplay(0, last, "the Covox-Blaster, from the start");
-    ExpectExactReplay(last / 2, last - last / 2, "the Covox-Blaster, from the middle");
+    if (TestTier::Long())   // the replay from the start covers the frames; this one restores mid-session
+        ExpectExactReplay(last / 2, last - last / 2, "the Covox-Blaster, from the middle");
 }
 
 /// "Who wrote this byte" in the Sprinter's own memories (2026-10-08): find-last with space vram names a byte of the

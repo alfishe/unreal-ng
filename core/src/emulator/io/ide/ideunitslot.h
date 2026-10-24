@@ -38,7 +38,6 @@ public:
     void SetWriteProtectSwitch(bool on) override;
 
 private:
-    EmulatorContext* _context = nullptr;
     SlotDescriptor _descriptor;
     AtaDevice& _device;
     DriveConfig _config;

@@ -108,9 +108,6 @@ protected:
     static constexpr int CPU_BASE_FREQUENCY = 3.5 * 1'000'000;
     static constexpr int CPU_CYCLES_PER_SAMPLE = CPU_BASE_FREQUENCY / AY_SAMPLING_RATE;
 
-
-    // How many AY cycles in each audio sample (at selected sampling rate / frequency)
-    static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
 public:
     static const char* AYRegisterNames[16];
 

@@ -710,8 +710,18 @@ emu.controllers_output(dial, steps=36, clicks="off")     # its feel until the co
 emu.controllers_output(dial, marks="ten_seconds,second") # what its layer plays for a seek's marks
 ```
 
+Battery, light and notice:
+
+```python
+for device in emu.controllers_host("devices")["devices"]:
+    print(device["name"], device["battery"]["text"], device.get("notice", ""))   # "unknown" when the OS says nothing
+    if device["light"]["available"]:
+        emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`; `controllers_host("devices")` lists each device's `role`, `layers`, `context`, `outputs` and `feel`. The
+**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+`context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
 
@@ -1718,6 +1728,7 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   window shows), 'fullscreen', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},
                                      #   'osd_keyboard', 'osd_keyboard_picture', 'osd_keyboard_pictures',
+                                     #   'osd_keyboard_style', 'osd_keyboard_styles',
                                      #   'next_layers', 'next_layers_mode', 'next_layers_shown'}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
 emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=, blending=, fullscreen=,
@@ -1726,7 +1737,8 @@ emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other
                                      #   than none switches CRT on), blending_frames=, blending_weights=,
                                      #   blending_decay= (0.3), scale= (1..4), hud_theme=, hud_notices=
-                                     #   {'ram-page': False}, osd_keyboard_picture=, next_layers_mode=,
+                                     #   {'ram-page': False}, osd_keyboard_picture=, osd_keyboard_style=
+                                     #   ('photo' / 'schematic' / 'hybrid'), next_layers_mode=,
                                      #   next_layers_shown={'sprites': False}; applied the way the View menu does.
                                      #   Returns the settings after the change, or
                                      #   {'ok': False, 'error', 'kind': 'bad-parameter' / 'no-window' / 'unavailable'}

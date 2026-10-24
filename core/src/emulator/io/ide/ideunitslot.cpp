@@ -13,7 +13,7 @@ namespace
 }
 
 IdeUnitSlot::IdeUnitSlot(EmulatorContext* context, std::string id, AtaDevice& device, const DriveConfig& config)
-    : _context(context), _device(device), _config(config)
+    : _device(device), _config(config)
 {
     const bool cd = device.Kind() == AtaDeviceKind::Cdrom;
     _descriptor.id = std::move(id);

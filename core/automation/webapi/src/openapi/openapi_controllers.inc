@@ -98,7 +98,11 @@
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
             "layer such as @ttd), the context of the instance it acts on, its outputs (haptic, steps) and the feel of "
-            "its top layer (steps, clicks, marks, min_interval_ms). context: the machine, the loaded file's SHA-256, the manual game "
+            "its top layer (steps, clicks, marks, min_interval_ms), the battery ({known, text}; when known also level "
+            "(percent, absent when the OS gives none), coarse (a step, not a measurement), charging, wired), light "
+            "({available}, else the reason: whether light can set its colour) and notice (what the device cannot do "
+            "here and how to fix it, such as the udev rule for its hidraw node; absent when nothing is missing). "
+            "context: the machine, the loaded file's SHA-256, the manual game "
             "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
@@ -113,7 +117,7 @@
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
             "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
-            "output";
+            "output; light";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -129,9 +133,11 @@
             "surface's outputs (the Surface Dial): play a pattern (tick, double, buzz); set its steps per turn "
             "(1..3600) and clicks (on: a click at each step, off: a free wheel) until its context or layers change; "
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
-            "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason)";
+            "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
+            "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light"});
         replies(post);
     }
 

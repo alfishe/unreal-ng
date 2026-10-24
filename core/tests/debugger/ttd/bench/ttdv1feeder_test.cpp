@@ -26,6 +26,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/ttdmultisoundsessions.h"
 #include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
@@ -60,6 +61,13 @@ std::vector<fs::path> CorpusFiles()
     for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
         files.push_back(recorded);
     return files;
+}
+
+/// One session of each kind (a 128K recording, a port journal of a tape load, a slot card); the whole corpus in the
+/// long tier
+std::vector<fs::path> CorpusSample()
+{
+    return TestTier::Sample(CorpusFiles(), {"idle_session.ttd", "greenberet-load.ttd", "multisound-zxevo-v1.ttd"});
 }
 }  // namespace
 
@@ -112,8 +120,8 @@ protected:
 
 TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
 {
-    const auto files = CorpusFiles();
-    ASSERT_GE(files.size(), 5u) << "testdata/ttd/ should hold the recorded corpus";
+    const auto files = CorpusSample();
+    ASSERT_GE(files.size(), 3u) << "testdata/ttd/ should hold the recorded corpus";
 
     for (const fs::path& file : files)
     {
@@ -132,8 +140,12 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
         std::vector<uint8_t> v1Present;
         std::vector<uint8_t> engineRam;
         std::vector<uint8_t> enginePresent;
+        // Whole memory decodes (both recorders rebuild it from their history): the ends and about ten checkpoints
+        // between them, every one in the long tier. The rest is compared at every checkpoint
+        const size_t memoryStride = TestTier::Long() ? 1 : std::max<size_t>(1, count / 10);
         for (size_t i = 0; i < count; ++i)
         {
+            const bool memory = i % memoryStride == 0 || i + 1 == count;
             const ttd::TTDCheckpoint* want = _v1->GetCheckpoint(i);
             const ttd::TTDEngineCheckpoint* got = engine.Checkpoint(i);
             ASSERT_NE(got, nullptr);
@@ -163,6 +175,8 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
                 std::vector<uint8_t> fixed, gsRam, engineGsRam, present;
                 ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(blob, fixed, gsRam));
                 EXPECT_EQ(state, fixed) << "General Sound registers at checkpoint " << i;
+                if (!memory)
+                    continue;
                 ASSERT_EQ(engine.Regions()[1].name, "gs.ram");
                 engineGsRam.assign(gsRam.size(), 0);
                 ASSERT_TRUE(engine.RestoreRegion(i, 1, engineGsRam.data(), &present).Ok());
@@ -170,6 +184,8 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
             }
 
             // Memory, byte for byte, and the same set of pieces the session knows
+            if (!memory)
+                continue;
             ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, i, v1Ram, v1Present, err)) << err;
             engineRam.assign(v1Ram.size(), 0);
             const ttd::TTDRestoreResult r = engine.RestoreRegion(i, 0, engineRam.data(), &enginePresent);
@@ -228,7 +244,7 @@ TEST_F(TTDV1Feeder_Test, FeedsOnlyRealChanges)
 TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
 {
     size_t total = 0, markers = 0, net = 0, busRecords = 0;
-    for (const fs::path& file : CorpusFiles())
+    for (const fs::path& file : CorpusSample())
     {
         SCOPED_TRACE(file.filename().string());
         ASSERT_NO_FATAL_FAILURE(LoadIntoV1(file));
@@ -259,7 +275,7 @@ TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
 TEST_F(TTDV1Feeder_Test, EveryWriteJournalOfTheCorpusImportsIntoTheEngine)
 {
     size_t withJournal = 0;
-    for (const fs::path& file : CorpusFiles())
+    for (const fs::path& file : CorpusSample())
     {
         SCOPED_TRACE(file.filename().string());
         ASSERT_NO_FATAL_FAILURE(LoadIntoV1(file));

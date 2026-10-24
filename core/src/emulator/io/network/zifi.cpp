@@ -26,8 +26,7 @@ uint8_t Capped(uint32_t count)
 
 ZiFi::ZiFi(EmulatorContext* context, Uart16550& rs, std::unique_ptr<ISerialPeer> peer,
            std::function<void()> raiseInterrupt)
-    : _context(context),
-      _rs(rs),
+    : _rs(rs),
       _line(context, LineUart(), std::move(peer), [](uint16_t port) { return static_cast<int>(port & 0x07); }),
       _raiseInterrupt(std::move(raiseInterrupt))
 {

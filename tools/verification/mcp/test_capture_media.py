@@ -85,6 +85,20 @@ def test_window_display_hud_keyboard_and_blending_decay(s):
     s.call('capture_media', {'action': 'window_display_set', 'display': restore})
 
 
+
+def test_window_display_keyboard_style(s):
+    before = s.call('capture_media', {'action': 'window_display'})
+    expect(before.structured['osd_keyboard_styles'] == ['photo', 'schematic', 'hybrid'], 'the styles offered',
+           before.structured)
+    expect('osd_keyboard_styles: photo schematic hybrid' in before.text, 'the styles in the text', before.text)
+    changed = s.call('capture_media', {'action': 'window_display_set', 'display': {'osd_keyboard_style': 'hybrid'}})
+    expect(changed.structured['osd_keyboard_style'] == 'hybrid', 'the style set', changed.structured)
+    bad = s.call('capture_media', {'action': 'window_display_set', 'display': {'osd_keyboard_style': 'sketch'}},
+                 ok=False)
+    expect('HTTP 400' in bad.text and 'schematic' in bad.text, 'an unknown style lists the offered ones', bad.text)
+    s.call('capture_media', {'action': 'window_display_set',
+                             'display': {'osd_keyboard_style': before.structured['osd_keyboard_style']}})
+
 def test_crt_params_of_basic(s):
     before = s.call('capture_media', {'action': 'window_display'}).structured
     s.call('capture_media', {'action': 'window_display_set', 'display': {'crt_profile': 'basic'}})

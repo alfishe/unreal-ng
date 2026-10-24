@@ -44,6 +44,14 @@ public:
     std::vector<BackendProbe> Probe() const;
     /// What the device cannot do here and how to fix it (IBackend::DeviceNotice); "" when nothing is missing
     std::string DeviceNotice(const HostDeviceId& device) const;
+    /// The battery as the device's backend last saw it (IBackend::Battery); unknown for a device not connected
+    BatteryState Battery(const HostDeviceId& device) const;
+    /// The device has a light its backend can set
+    bool HasLight(const HostDeviceId& device) const;
+    /// Why the device's light cannot be set ("" when it can)
+    std::string LightUnavailable(const HostDeviceId& device) const;
+    /// Set the light's colour; never blocks. False when it has no light here
+    bool SetLight(const HostDeviceId& device, const LightColor& color);
     /// Stop every backend: their devices are removed
     void Stop();
 

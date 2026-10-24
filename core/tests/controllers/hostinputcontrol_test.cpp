@@ -275,3 +275,81 @@ TEST(HostInputControl_Test, HapticsListsTheEffectsAndRumblePlaysThem)
     EXPECT_EQ(control.Execute({"haptics", {{"effect", "low"}}}).error, "bad-request") << "effect is rumble's";
     service.Stop();
 }
+
+/// devices carries what the backend says on every surface: the notice (absent when nothing is missing), the battery
+/// ({known, text}, the level only when there is one) and whether the light can be set; light sets the colour through
+/// the backend, or says why not
+TEST(HostInputControl_Test, DevicesShowNoticeBatteryAndLight_LightSetsTheColour)
+{
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-devinfo"));
+    HostInputControl control(owner);
+    const HostDeviceInfo pad{"fake:1", "Pad", "dualsense", "playstation", "fake"};
+    const HostDeviceInfo plain{"fake:2", "Plain", "generic", "generic", "fake"};
+    const HostDeviceInfo keyboard{"fake:kbd", "Keyboard", "keyboard", "keyboard", "fake"};
+    owner.SetDevices({pad, plain, keyboard});
+    EXPECT_EQ(control.Execute({"light", {{"device", "fake:1"}, {"color", "#ff0000"}}}).error, "unavailable")
+        << "no host output without a service";
+
+    HostInputService service;
+    auto owned = std::make_unique<FakeBackend>();
+    FakeBackend* fake = owned.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(owned), reason)) << reason;
+    fake->SetNotice("fake:1", "Install the udev rule");
+    fake->SetBattery("fake:1", {true, 80, false, false, false});
+    fake->SetHasLight("fake:1", true);
+    ASSERT_TRUE(fake->Connect(pad));
+    ASSERT_TRUE(fake->Connect(plain));
+    ASSERT_TRUE(fake->Connect(keyboard));
+    owner.input = &service;
+
+    HostReply reply = control.Execute({"devices", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const JsonValue* first = FindItem(*reply.body.Find("devices"), "id", "fake:1");
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->Find("notice")->AsString(), "Install the udev rule");
+    EXPECT_EQ(first->Find("battery")->Dump(),
+              R"({"known":true,"level":80,"coarse":false,"charging":false,"wired":false,"text":"80 %"})");
+    EXPECT_EQ(first->Find("light")->Dump(), R"({"available":true})");
+    const JsonValue* second = FindItem(*reply.body.Find("devices"), "id", "fake:2");
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second->Find("notice"), nullptr) << "no notice when nothing is missing";
+    EXPECT_EQ(second->Find("battery")->Dump(), R"({"known":false,"text":"unknown"})") << "honest: unknown";
+    EXPECT_FALSE(second->Find("light")->Find("available")->AsBool());
+    EXPECT_EQ(second->Find("light")->Find("reason")->AsString(), "The fake device has no light");
+    const JsonValue* keys = FindItem(*reply.body.Find("devices"), "id", "fake:kbd");
+    ASSERT_NE(keys, nullptr);
+    EXPECT_EQ(keys->Find("light")->Find("reason")->AsString(), "The emulator sets no light on keyboards and mice");
+
+    // A changed battery shows at the next read: the backend's copy, no device round trip
+    fake->SetBattery("fake:1", {true, -1, false, true, true});
+    reply = control.Execute({"devices", {}});
+    EXPECT_EQ(FindItem(*reply.body.Find("devices"), "id", "fake:1")->Find("battery")->Find("text")->AsString(),
+              "charging");
+
+    reply = control.Execute({"light", {{"device", "fake:1"}, {"color", "#FF8000"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("color")->AsString(), "#ff8000");
+    EXPECT_EQ(reply.message, "light #ff8000 on Pad");
+    reply = control.Execute({"light", {{"device", "fake:1"}, {"color", "0,0,255"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    reply = control.Execute({"light", {{"device", "fake:1"}, {"color", "off"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.message, "light off on Pad");
+    const std::vector<LightColor> lights = fake->Lights("fake:1");
+    ASSERT_EQ(lights.size(), 3u);
+    EXPECT_EQ(lights[0], (LightColor{255, 128, 0}));
+    EXPECT_EQ(lights[1], (LightColor{0, 0, 255}));
+    EXPECT_EQ(lights[2], LightColor{});
+
+    reply = control.Execute({"light", {{"device", "fake:2"}, {"color", "#ff0000"}}});
+    EXPECT_EQ(reply.error, "unavailable");
+    EXPECT_EQ(reply.message, "Plain: The fake device has no light");
+    EXPECT_EQ(control.Execute({"light", {{"device", "fake:1"}, {"color", "orange"}}}).error, "bad-request");
+    EXPECT_EQ(control.Execute({"light", {{"color", "off"}}}).error, "bad-request") << "light needs a device";
+    EXPECT_EQ(control.Execute({"light", {{"device", "fake:9"}, {"color", "off"}}}).error, "unknown-device");
+    EXPECT_EQ(control.Execute({"light", {{"device", "fake:1"}, {"effect", "x"}}}).error, "bad-request")
+        << "an option light does not take";
+    EXPECT_EQ(fake->Lights("fake:1").size(), 3u) << "nothing reached the pad on a refusal";
+    service.Stop();
+}

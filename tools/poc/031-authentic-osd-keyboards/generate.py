@@ -31,7 +31,7 @@ SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
 KEYBOARDS = ["zx48k", "zxplus", "forum", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "profilatin", "pcat", "pcxt", "pcps2", "zxmatrix", "zxnext", "zxnextwhite"]
-STYLES = ["photo"]
+STYLES = ["photo", "schematic", "hybrid"]
 
 
 def check(keyboard, model):
@@ -128,15 +128,17 @@ def gallery(built):
 def index():
     """The keyboards per model for the app (index.json): each model's pictures in KEYBOARDS order, the first its
     default; each picture's name, matrix kind ("zx" presses the ZX matrix, "pc" the machine's PC keyboard controller),
-    size in mm and files"""
+    size in mm and files (`pictures`: one SVG per style; `picture` the photo, for a reader of schema 1); the styles,
+    the first the default"""
     keyboards, models = {}, {}
     for name in KEYBOARDS:
         keyboard = importlib.import_module(f"keyboards.{name}").KEYBOARD
         keyboards[name] = {"name": keyboard["name"], "matrix": keyboard["matrix"], "size": keyboard["size"],
-                           "picture": f"{name}.photo.svg", "keys": f"{name}.keys.json"}
+                           "picture": f"{name}.photo.svg",
+                           "pictures": {style: f"{name}.{style}.svg" for style in STYLES}, "keys": f"{name}.keys.json"}
         for model in keyboard["models"]:
             models.setdefault(model, []).append(name)
-    return {"schema": 1, "models": models, "keyboards": keyboards}
+    return {"schema": 1, "styles": STYLES, "models": models, "keyboards": keyboards}
 
 
 def main():

@@ -2100,7 +2100,7 @@ public:
             return StateNodeToLua(s, monitoring::Call(name, args).body);
         });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
-        // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)
+        // (devices, profiles, bindings, haptics, rumble, light; HostInputControl, the process's, not the machine's)
         auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
 #ifdef ENABLE_CONTROLLERS
             controllers::HostRequest request;
@@ -2160,6 +2160,15 @@ public:
                 opts["pattern"] = what.as<std::string>();
             opts["device"] = device;
             return hostControllersCall(s, "output", opts);
+        });
+        // controllers_light(device, color) -> a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4
+        // light bar)
+        lua.set_function("controllers_light", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                    const std::string& color) {
+            sol::table opts = sol::state_view(s).create_table();
+            opts["device"] = device;
+            opts["color"] = color;
+            return hostControllersCall(s, "light", opts);
         });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {

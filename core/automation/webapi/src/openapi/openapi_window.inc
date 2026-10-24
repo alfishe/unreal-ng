@@ -30,7 +30,7 @@
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
             "blending_weights, blending_decay, the emulator the window shows, fullscreen, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
-            "osd_keyboard_picture, osd_keyboard_pictures) and the ZX Next layers window (next_layers, "
+            "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
             "next_layers_mode, next_layers_shown). The settings are the window's, whichever instance it shows, and "
             "persist across sessions. Screenshot source=window shows their effect.";
         idParam(get);
@@ -71,6 +71,7 @@
             body["properties"]["hud_notices"]["additionalProperties"]["type"] = "boolean";
             field("osd_keyboard", "boolean", "The on-screen keyboard window");
             field("osd_keyboard_picture", "string", "One of osd_keyboard_pictures (the shown machine's keyboard pictures)");
+            field("osd_keyboard_style", "string", "One of osd_keyboard_styles: photo, schematic, hybrid");
             field("next_layers", "boolean", "The ZX Next layers window");
             field("next_layers_mode", "string", "layers, composed or winner");
             field("next_layers_shown", "object", "{ula|layer2|tilemap|sprites: bool}; also next_layer.<name>: bool");

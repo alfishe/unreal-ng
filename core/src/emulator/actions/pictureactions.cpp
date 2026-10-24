@@ -463,6 +463,22 @@ std::vector<RegistrationHandle> RegisterPictureActions(ActionRegistry& registry)
             return FromWindow(WindowDisplay::Set(change), "Keyboard picture " + *change.osdKeyboardPicture);
         },
         WindowRules());
+    add(
+        "osd.keyboard_style", "Keyboard style", "Capture and machine", ValueKind::Press,
+        "style? (one of osd_keyboard_styles: photo, schematic, hybrid; next, prev; next)",
+        "Draw the on-screen keyboard as a photo, a flat schematic, or the hybrid with the hints (what a combination "
+        "key presses), or the next of them.",
+        [](const ActionCall& call) {
+            ActionResult failure;
+            const std::optional<WindowDisplaySettings> now = Current(failure);
+            if (!now)
+                return failure;
+            Change change;
+            change.osdKeyboardStyle = Cycle(now->osdKeyboardStyles, now->osdKeyboardStyle,
+                                            TextParam(call.value, "style").value_or(""));
+            return FromWindow(WindowDisplay::Set(change), "Keyboard style " + *change.osdKeyboardStyle);
+        },
+        WindowRules());
     // endregion </HUD and the on-screen keyboard>
     return handles;
 }

@@ -34,6 +34,19 @@ public:
     void SetNotice(const HostDeviceId& device, const std::string& notice);
     std::string DeviceNotice(const HostDeviceId& device) const override;
 
+    /// region <Battery and light>
+    /// The battery @p device reports (Battery); the default is unknown
+    void SetBattery(const HostDeviceId& device, const BatteryState& battery);
+    BatteryState Battery(const HostDeviceId& device) const override;
+    /// Give @p device a light (before or after it connects); false takes it away
+    void SetHasLight(const HostDeviceId& device, bool light);
+    bool HasLight(const HostDeviceId& device) const override;
+    std::string LightUnavailable(const HostDeviceId& device) const override;
+    bool SetLight(const HostDeviceId& device, const LightColor& color) override;
+    /// The colours SetLight was given, in order
+    std::vector<LightColor> Lights(const HostDeviceId& device) const;
+    /// endregion </Battery and light>
+
     /// region <Surface outputs: a fake Surface Dial>
     /// Give @p device these OutputKind bits (before or after it connects)
     void SetOutputs(const HostDeviceId& device, uint8_t outputs);
@@ -65,6 +78,9 @@ private:
     std::set<HostDeviceId> _devices;
     std::map<HostDeviceId, RumbleLevels> _rumble;
     std::map<HostDeviceId, std::string> _notices;
+    std::map<HostDeviceId, BatteryState> _batteries;
+    std::set<HostDeviceId> _lightable;
+    std::map<HostDeviceId, std::vector<LightColor>> _lights;
     /// Its own lock: a device's arrival reports from under _mutex, and the router asks for its outputs at once
     mutable std::mutex _outputMutex;
     std::map<HostDeviceId, uint8_t> _outputs;

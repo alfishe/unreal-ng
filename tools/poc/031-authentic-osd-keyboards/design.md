@@ -12,13 +12,24 @@ styles/<style>.py  draw(keyboard, Model) -> SVG   how it looks
   legends by role and placement, and what each presses (`zx`: the matrix keys, `["CS", "1"]` for EDIT; `pc`: the PC
   key).
 - **Style**: draws each part kind and cap material its own way. `photo` lights materials with gradients and
-  stacked-opacity shadows; `schematic` draws flat fills and outlines from the same data. A style may leave out a
-  role (the schematic may drop the keyword legends in a sparse variant).
+  stacked-opacity shadows; `schematic` draws flat fills in the real colours and one outline per part and key (a
+  lighter line on a dark part, a darker one on a light part; the photo's top face as a second, fainter line where
+  the cap has one; the textures thinned to a diagram: every other fin and slot, the mesh as its plate, moulded words
+  flat with a contour); `hybrid` puts the photo's caps and highlights on the schematic's case and fills `hints`. The
+  legends are the same in every style, placed on the photo's cap faces (the schematic asks the photo for them), so a
+  key reads the same in all three.
 - **Layers**: every SVG has `<g id="case">`, `caps`, `highlights`, `legends`, `hints`. The specular
   highlights (the sheen on glossy tops, the rubber dome) are their own semi-transparent layer, not part of a cap's
   material: the SVG draws it at the keyboard's opacity (0.5 by default; the approved Next at 1.0), an app can turn it
   down or draw the picture without it (owner 2026-10-19: highlights baked into the caps looked kitsch). The hybrid of phase 3 composes layers of
   different styles; Qt draws one by id.
+- **Roles**: inside `legends`, each role is a group of its own (`legends-main`, `legends-keyword`, `legends-symbol`,
+  `legends-extend`, `legends-extend-shift`, `legends-graphic`, `legends-cyrillic`, `legends-pc`...), so an app can
+  draw or dim one role alone (the mode legends that matter now: the symbols while Symbol Shift is held).
+- **Hints** (the hybrid): a tag on the top right corner of each key that presses something other than its own
+  matrix or PC key: the combination (`CS+1` on EDIT, `CS+SS` on EXTEND MODE, `SS+O` on the 128's `;`) or `JOY` on a
+  key wired to a joystick line (the Profi+ cursor keys and `*`). Amber with dark text, 1.9 mm: readable at the
+  overlay's size, clear of the legends.
 - **Keys JSON** (`<id>.keys.json`): the rectangles and what each key presses, the same for every style: the overlay's
   cursor and pressed state come from it.
 

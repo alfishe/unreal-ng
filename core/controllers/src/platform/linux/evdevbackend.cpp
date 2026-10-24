@@ -21,7 +21,9 @@
 #include <vector>
 
 #include "devicedatabase.h"
+#include "devicestatus.h"
 #include "hid/drivers/surfacedial.h"
+#include "hid/drivers/xboxbluetoothoutput.h"
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
 #include "hid/hidrawnode.h"
@@ -197,10 +199,16 @@ struct Device
     std::map<unsigned, input_absinfo> abs;
     int hatX = 0;
     int hatY = 0;
-    bool rumble = false;  ///< opened for writing and FF_RUMBLE is offered
+    bool rumble = false;  ///< LinuxRumble::Evdev: opened for writing and FF_RUMBLE is offered
     std::string rumbleUnavailable;  ///< why not: the Test haptics button's tooltip
     int effect = -1;      ///< the uploaded FF_RUMBLE effect, -1 before the first
     std::string notice;   ///< DeviceNotice: what is missing and how to fix it
+
+    /// region <Battery and light (devicestatus.h): the HID device's power supply and LED classes>
+    std::string powerSupply;  ///< its battery's sysfs directory; "" when the driver registers none
+    BatteryState battery;     ///< under the backend's mutex: as last read on the backend's thread
+    SysfsLight light;         ///< its colour light, found once at open
+    /// endregion </Battery and light>
 
     /// region <hidraw (hidrawnode.h): the same HID device's raw reports>
     std::string event;    ///< "event7": the sysfs name of the evdev node
@@ -214,6 +222,9 @@ struct Device
     HidrawSourceMerge merge;          ///< one device from both: the hidraw reports while they are read, evdev otherwise
     std::shared_ptr<HidrawHandle> hidrawOut;    ///< HidrawUse::Output
     std::unique_ptr<SurfaceDialWriter> writer;  ///< HidrawUse::Output: the Dial's feature and output reports
+    /// HidrawUse::Rumble (LinuxRumble::Hidraw): report 3 written on its own thread to a write-only descriptor of the
+    /// node; it stops the motors when it ends (device removal, Stop)
+    std::unique_ptr<RumbleWriter> rumbleWriter;
     /// endregion </hidraw>
 };
 
@@ -291,8 +302,64 @@ public:
     {
         std::lock_guard lock(_mutex);
         const Device* known = Find(device);
-        return known != nullptr && known->rumble;
+        return known != nullptr && (known->rumble || known->rumbleWriter);
     }
+
+    /// region <Battery and light>
+    /// The power supply as the backend's thread last read it (at open, then every 30 s): hid-input asks the device
+    /// for a feature report on a read, which must not hold the caller
+    BatteryState Battery(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const Device* known = Find(device);
+        return known != nullptr ? known->battery : BatteryState{};
+    }
+
+    /// The LED class light, while this user may write its files (the udev rule; they can change at run time)
+    bool HasLight(const HostDeviceId& device) const override
+    {
+        return LightUnavailable(device).empty();
+    }
+
+    std::string LightUnavailable(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const Device* known = Find(device);
+        if (known == nullptr)
+            return "The device is not connected";
+        if (known->light.kind == SysfsLight::Kind::None)
+            return SysfsLightUnavailable(known->light, {});
+        for (const std::string& file : known->light.Files())
+            if (access(file.c_str(), W_OK) != 0)
+                return SysfsLightUnavailable(known->light, file);
+        return {};
+    }
+
+    /// The LED class's files, written in order (the LED core applies them without waiting for the device)
+    bool SetLight(const HostDeviceId& device, const LightColor& color) override
+    {
+        SysfsLight light;
+        {
+            std::lock_guard lock(_mutex);
+            const Device* known = Find(device);
+            if (known == nullptr)
+                return false;
+            light = known->light;
+        }
+        const auto writes = LightWrites(light, color);
+        for (const auto& [file, text] : writes)
+        {
+            const int fd = open(file.c_str(), O_WRONLY | O_CLOEXEC);
+            if (fd < 0)
+                return false;
+            const bool written = write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
+            close(fd);
+            if (!written)
+                return false;
+        }
+        return !writes.empty();
+    }
+    /// endregion </Battery and light>
 
     uint8_t RumbleActuators(const HostDeviceId& device) const override
     {
@@ -302,6 +369,8 @@ public:
             return 0;
         if (known->writer)
             return kHapticClicker;
+        if (known->rumbleWriter)
+            return kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
         return known->rumble ? static_cast<uint8_t>(kRumbleLow | kRumbleHigh) : 0;
     }
 
@@ -312,12 +381,18 @@ public:
         return known != nullptr ? known->rumbleUnavailable : "The device is not connected";
     }
 
-    /// FF_RUMBLE: strong = the low-frequency motor, weak = the high one; one effect per device, updated in place and
-    /// played without an end (length 0) until the levels go to zero
+    /// LinuxRumble::Hidraw: report 3 with the triggers, queued for the device's RumbleWriter (never blocks).
+    /// LinuxRumble::Evdev: FF_RUMBLE, strong = the low-frequency motor, weak = the high one; one effect per device,
+    /// updated in place and played without an end (length 0) until the levels go to zero
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         std::lock_guard lock(_mutex);
         Device* known = Find(device);
+        if (known != nullptr && known->rumbleWriter)
+        {
+            known->rumbleWriter->Set(levels);
+            return true;
+        }
         if (known == nullptr || !known->rumble)
             return false;
         auto magnitude = [](float level) {
@@ -486,6 +561,7 @@ private:
         device->pad = pad;
         device->dial = dial;
         device->rumble = writable && TestBit(Bits(fd, EV_FF, FF_MAX), FF_RUMBLE);
+        // Without FF_RUMBLE an Xbox pad over Bluetooth gets report 3 through hidraw (AttachHidraw says why not)
         if (!device->rumble)
             device->rumbleUnavailable = writable ? "The device offers no rumble (FF_RUMBLE) to Linux"
                                                  : "No write access to " + node + ": a udev rule that gives the user "
@@ -518,9 +594,17 @@ private:
         // outputs and controls are right from the first moment
         device->vendor = ident.vendor;
         device->product = ident.product;
-        device->use = HidrawUseFor(bluetooth, ident.vendor, ident.product, match.family);
+        device->use = HidrawUseFor(bluetooth, ident.vendor, ident.product, match.family, match.layout, device->rumble);
         if (device->use != HidrawUse::None)
             AttachHidraw(*device);
+        // The HID device's battery and light (a USB xpad pad has no HID device: neither)
+        const std::string hidDir = HidDeviceDir(kSysDir, event);
+        if (!hidDir.empty())
+        {
+            device->powerSupply = FindPowerSupply(hidDir);
+            device->battery = ReadPowerSupply(device->powerSupply);
+            device->light = FindLight(hidDir);
+        }
 
         HostDeviceInfo announced;
         {
@@ -538,40 +622,87 @@ private:
         _sink->OnDeviceAdded(announced);
     }
 
-    /// Open the hidraw node of @p device's HID device for its use; on failure the notice (Input) or the Test haptics
-    /// reason (Output) says why and what to install. On the backend's thread (or in Start), before or after the
-    /// device is announced; the hidraw input side (hidrawFd, hid, merge) is only touched there
+    /// Open the hidraw node of @p device's HID device for each of its uses not open yet; on failure the notice
+    /// (Input) or the Test haptics reason (Output, Rumble) says why and what to install. On the backend's thread (or
+    /// in Start), before or after the device is announced; the hidraw input side (hidrawFd, hid, merge) is only
+    /// touched there
     void AttachHidraw(Device& device)
     {
         HidrawNode found;
         if (!FindHidrawNode(kSysDir, kDevDir, device.event, device.vendor, device.product, found))
         {
-            Unavailable(device, HidrawUnavailable(device.use, {}, 0, {}));
+            for (const HidrawUse use : {HidrawUse::Output, HidrawUse::Rumble, HidrawUse::Input})
+                if (HasUse(device.use, use))
+                    Unavailable(device, use, HidrawUnavailable(use, {}, 0, {}));
             return;
         }
         device.hidrawNode = found.node;
-        if (device.use == HidrawUse::Output)
-        {
-            int fd = open(found.node.c_str(), O_RDWR | O_CLOEXEC);
-            if (fd < 0 && (errno == EACCES || errno == EPERM))
-                fd = open(found.node.c_str(), O_WRONLY | O_CLOEXEC);
-            if (fd < 0)
-            {
-                const int error = errno;
-                Unavailable(device, HidrawUnavailable(device.use, found.node, error, std::strerror(error)));
-                return;
-            }
-            std::lock_guard lock(_mutex);  // the writer is what Outputs and PlayClicks look for
-            device.hidrawOut = std::make_shared<HidrawHandle>(fd);
-            device.writer = MakeDialWriter(device.hidrawOut);
-            device.rumbleUnavailable.clear();  // no motors, but its clicks play (PlayClicks)
-            return;
-        }
-        const int fd = open(found.node.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (HasUse(device.use, HidrawUse::Output) && !device.writer)
+            AttachDialWriter(device, found.node);
+        if (HasUse(device.use, HidrawUse::Rumble) && !device.rumbleWriter)
+            AttachRumble(device, found.node);
+        if (HasUse(device.use, HidrawUse::Input) && device.hidrawFd < 0)
+            AttachInput(device, found.node);
+    }
+
+    /// A descriptor of @p node for writing only; -1 with errno set
+    static int OpenForWriting(const std::string& node, bool readToo)
+    {
+        int fd = readToo ? open(node.c_str(), O_RDWR | O_CLOEXEC) : -1;
+        if (fd < 0 && (!readToo || errno == EACCES || errno == EPERM))
+            fd = open(node.c_str(), O_WRONLY | O_CLOEXEC);
+        return fd;
+    }
+
+    /// HidrawUse::Output: the Dial's writer (it reads feature report 1 back, so read-write where it may)
+    void AttachDialWriter(Device& device, const std::string& node)
+    {
+        const int fd = OpenForWriting(node, true);
         if (fd < 0)
         {
             const int error = errno;
-            Unavailable(device, HidrawUnavailable(device.use, found.node, error, std::strerror(error)));
+            Unavailable(device, HidrawUse::Output, HidrawUnavailable(HidrawUse::Output, node, error,
+                                                                     std::strerror(error)));
+            return;
+        }
+        std::lock_guard lock(_mutex);  // the writer is what Outputs and PlayClicks look for
+        device.hidrawOut = std::make_shared<HidrawHandle>(fd);
+        device.writer = MakeDialWriter(device.hidrawOut);
+        device.rumbleUnavailable.clear();  // no motors, but its clicks play (PlayClicks)
+    }
+
+    /// HidrawUse::Rumble: report 3 (XboxBluetoothOutput::RumbleReport) through its own write-only descriptor, so
+    /// nothing queues input reports on it; the Elite's input reads a descriptor of its own (AttachInput)
+    void AttachRumble(Device& device, const std::string& node)
+    {
+        const int fd = OpenForWriting(node, false);
+        if (fd < 0)
+        {
+            const int error = errno;
+            Unavailable(device, HidrawUse::Rumble, HidrawUnavailable(HidrawUse::Rumble, node, error,
+                                                                     std::strerror(error)));
+            return;
+        }
+        auto handle = std::make_shared<HidrawHandle>(fd);
+        auto writer = std::make_unique<RumbleWriter>([handle](const RumbleLevels& levels) {
+            // The first byte is the report id, as hidraw takes it for numbered reports
+            const std::vector<uint8_t> report = XboxBluetoothOutput::RumbleReport(levels);
+            return write(handle->fd, report.data(), report.size()) == static_cast<ssize_t>(report.size());
+        });
+        std::lock_guard lock(_mutex);  // the writer is what HasRumble and SetRumble look for
+        device.rumbleWriter = std::move(writer);
+        device.rumbleUnavailable.clear();
+    }
+
+    /// HidrawUse::Input: the Elite's reports, paddles and profile included, read on the backend's thread
+    void AttachInput(Device& device, const std::string& node)
+    {
+        const int fd = open(node.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0)
+        {
+            const int error = errno;
+            Unavailable(device, HidrawUse::Input, HidrawUnavailable(HidrawUse::Input, node, error,
+                                                                    std::strerror(error)));
             return;
         }
         int size = 0;
@@ -584,17 +715,17 @@ private:
         if (!described || !ParseHidDescriptor(descriptor.value, descriptor.size, parsed, error))
         {
             close(fd);
-            Unavailable(device, "The report descriptor of " + found.node + " could not be read" +
-                                    (error.empty() ? std::string() : " (" + error + ")") +
-                                    ": the paddles and the onboard profile are not seen");
+            Unavailable(device, HidrawUse::Input, "The report descriptor of " + node + " could not be read" +
+                                                      (error.empty() ? std::string() : " (" + error + ")") +
+                                                      ": the paddles and the onboard profile are not seen");
             return;
         }
         auto hid = std::make_unique<HidPad>(parsed, HidLayoutFor(device.layout));
         if (hid->Empty())
         {
             close(fd);
-            Unavailable(device, found.node + " describes no pad controls: the paddles and the onboard profile are not "
-                                             "seen");
+            Unavailable(device, HidrawUse::Input,
+                        node + " describes no pad controls: the paddles and the onboard profile are not seen");
             return;
         }
         device.hid = std::move(hid);
@@ -608,34 +739,50 @@ private:
         device.merge.Switch(HidrawSourceMerge::Source::Hidraw, Emitter(device));
     }
 
-    void Unavailable(Device& device, const std::string& why)
+    void Unavailable(Device& device, HidrawUse use, const std::string& why)
     {
         std::lock_guard lock(_mutex);
-        if (device.use == HidrawUse::Output)
-            device.rumbleUnavailable = why;
-        else
+        if (use == HidrawUse::Input)
             device.notice = why;
+        else
+            device.rumbleUnavailable = why;
+    }
+
+    /// Under _mutex: the uses of @p device whose hidraw side is not open
+    static HidrawUse MissingLocked(const Device& device)
+    {
+        HidrawUse missing = HidrawUse::None;
+        if (HasUse(device.use, HidrawUse::Input) && device.hidrawFd < 0)
+            missing = missing | HidrawUse::Input;
+        if (HasUse(device.use, HidrawUse::Output) && !device.writer)
+            missing = missing | HidrawUse::Output;
+        if (HasUse(device.use, HidrawUse::Rumble) && !device.rumbleWriter)
+            missing = missing | HidrawUse::Rumble;
+        return missing;
     }
 
     /// The devices whose hidraw node did not open: udev may have given access since (a hidraw node's ACL arrives
-    /// after its evdev node's). One that opens now is announced again, so the router sees its outputs and the dialog
-    /// its controls
+    /// after its evdev node's). One that opens a use now is announced again, so the router sees its outputs and the
+    /// dialog its controls
     void RetryHidraw()
     {
-        std::vector<Device*> waiting;
+        std::vector<std::pair<Device*, HidrawUse>> waiting;
         {
             std::lock_guard lock(_mutex);
             for (auto& [node, device] : _devices)
-                if ((device->use == HidrawUse::Input && device->hidrawFd < 0) ||
-                    (device->use == HidrawUse::Output && !device->writer))
-                    waiting.push_back(device.get());  // only this thread erases
+                if (const HidrawUse missing = MissingLocked(*device); missing != HidrawUse::None)
+                    waiting.emplace_back(device.get(), missing);  // only this thread erases
         }
-        for (Device* device : waiting)
+        for (const auto& [device, before] : waiting)
         {
             const std::string id = device->info.id;
             AttachHidraw(*device);
-            const bool attached = device->hidrawFd >= 0 || device->writer;
-            if (!attached)
+            HidrawUse after = HidrawUse::None;
+            {
+                std::lock_guard lock(_mutex);
+                after = MissingLocked(*device);
+            }
+            if (after == before)
                 continue;
             _sink->OnDeviceRemoved(id);
             {
@@ -710,11 +857,13 @@ private:
                     dials = dials || device->dial;
                 }
             }
-            // A Surface Dial's inferred touch ends on time between its events (DialTouch): wake 10 times a second
-            const int timeout = dials ? 100 : -1;
+            // A Surface Dial's inferred touch ends on time between its events (DialTouch): wake 10 times a second.
+            // The batteries are read again every 30 s
+            const int timeout = dials ? 100 : static_cast<int>(kBatteryRefreshMs);
             if (poll(fds.data(), fds.size(), timeout) < 0 && errno != EINTR)
                 return;
             ExpireDials();
+            RefreshBatteries();
             if (fds[0].revents != 0)
                 return;  // Stop
             size_t first = 1;
@@ -774,6 +923,28 @@ private:
         std::lock_guard lock(_mutex);
         auto it = _devices.find(node);
         return it == _devices.end() ? nullptr : it->second.get();
+    }
+
+    /// Every kBatteryRefreshMs: each power supply read outside the lock (a read may wait for the device), then kept
+    void RefreshBatteries()
+    {
+        const uint64_t now = DialNowMs();
+        if (now - _batteryReadMs < kBatteryRefreshMs)
+            return;
+        _batteryReadMs = now;
+        std::vector<std::pair<Device*, std::string>> supplies;
+        {
+            std::lock_guard lock(_mutex);
+            for (auto& [node, device] : _devices)
+                if (!device->powerSupply.empty())
+                    supplies.emplace_back(device.get(), device->powerSupply);  // only this thread erases
+        }
+        for (const auto& [device, dir] : supplies)
+        {
+            const BatteryState battery = ReadPowerSupply(dir);
+            std::lock_guard lock(_mutex);
+            device->battery = battery;
+        }
     }
 
     void ExpireDials()
@@ -931,6 +1102,8 @@ private:
     mutable std::mutex _mutex;
     std::map<std::string, std::unique_ptr<Device>> _devices;
     std::map<HostDeviceId, StepsOut> _dialSteps;  ///< under _mutex: each Dial's last steps, kept across a reconnect
+    static constexpr uint64_t kBatteryRefreshMs = 30000;
+    uint64_t _batteryReadMs = 0;  ///< the backend's thread only: when RefreshBatteries last read them
 };
 }  // namespace
 

@@ -586,13 +586,17 @@ std::vector<std::string> LabelManager::ApplyBundles(const std::string& folder, c
     const std::vector<BundleHit> hits = MatchBundles(manifest, pageSha256);
     const std::vector<SymbolSet> before = _store->Sets();
     bool changed = false;
+    // The new bundles go in at once: every store change copies all sets and builds a new index (several per ROM
+    // page made each machine's start O(bundles^2))
+    std::vector<SymbolSet> added;
     for (const SymbolSet& set : before)
         if (set.origin.kind == "bundle" &&
             std::none_of(hits.begin(), hits.end(), [&](const BundleHit& hit) { return hit.set == set.id; }))
             changed = _store->Drop(set.id) || changed;
     for (const BundleHit& hit : hits)
     {
-        if (std::any_of(before.begin(), before.end(), [&](const SymbolSet& set) { return set.id == hit.set; }))
+        const auto same = [&](const SymbolSet& set) { return set.id == hit.set; };
+        if (std::any_of(before.begin(), before.end(), same) || std::any_of(added.begin(), added.end(), same))
         {
             applied.push_back(hit.set);
             continue;
@@ -624,12 +628,23 @@ std::vector<std::string> LabelManager::ApplyBundles(const std::string& folder, c
         AddressSpace space;
         if (!hit.space.empty() && AddressSpace::Parse(hit.space, space))
             options.space = space;
-        const ImportReport report = _store->Import(std::move(records), options);
-        _store->SetPriority(hit.set, BUNDLE_PRIORITY);
+        // What SymbolStore::Import does for a set it does not hold yet
+        SymbolSet set;
+        set.id = hit.set;
+        set.title = options.title;
+        set.origin = options.origin;
+        set.priority = BUNDLE_PRIORITY;
+        ImportReport report;
+        const std::vector<Symbol> normalized = Normalize(std::move(records), options, report.diagnostics);
+        if (!Merge(set, normalized, options.policy, report))
+            continue;
         LOGDEBUG("Symbol bundle %s: %zu symbols as %s", hit.bundle->id.c_str(), report.added, hit.set.c_str());
+        added.push_back(std::move(set));
         applied.push_back(hit.set);
         changed = true;
     }
+    if (!added.empty())
+        _store->PutSets(std::move(added));
     if (changed)
     {
         Rebuild();

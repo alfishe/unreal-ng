@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <thread>
 #include <mutex>
 #include <queue>
@@ -14,7 +15,7 @@ class AutomationLua
     /// region <Fields>
 protected:
     std::thread* _thread = nullptr;
-    volatile bool _stopThread = false;
+    std::atomic<bool> _stopThread = false;
 
     sol::state* _lua = nullptr;
     LuaEmulator* _luaEmulator = nullptr;

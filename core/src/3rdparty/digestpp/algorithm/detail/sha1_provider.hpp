@@ -9,6 +9,7 @@ This code is written by kerukuro and released into public domain.
 #include "../../detail/absorb_data.hpp"
 #include "constants/sha1_constants.hpp"
 #include <array>
+#include <cstring>
 
 namespace digestpp
 {
@@ -98,8 +99,9 @@ private:
 		for (uint64_t blk = 0; blk < num_blks; blk++)
 		{
 			uint32_t M[16];
+			std::memcpy(M, data + blk * 64, sizeof M);   // the input may sit at any address
 			for (uint32_t i = 0; i < 64 / 4; i++)
-				M[i] = byteswap((reinterpret_cast<const uint32_t*>(data)[blk * 16 + i]));
+				M[i] = byteswap(M[i]);
 
 			uint32_t W[80];
 			for (int t = 0; t <= 15; t++)

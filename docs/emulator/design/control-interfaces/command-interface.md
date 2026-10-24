@@ -1684,7 +1684,7 @@ and its viewport do not: they are the machine's, off on every new Pentagon.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
@@ -1694,7 +1694,9 @@ screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
 Notifications: `ram-page`, `rom-page`, `screen-page`, `audio-beeper`, ..., `breakpoints`, `file-loading`),
 `osd_keyboard`, `osd_keyboard_picture`, `osd_keyboard_pictures` (the shown machine's: Pentagon `pentagon` /
-`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `next_layers`, `next_layers_mode`,
+`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `osd_keyboard_style`, `osd_keyboard_styles`
+(`photo`, `schematic`: flat and outlined, `hybrid`: the photo's keys on a flat case with a tag on each combination
+key, EDIT `CS+1`; one style for every model), `next_layers`, `next_layers_mode`,
 `next_layers_shown` ({ula, layer2, tilemap, sprites}). CRT parameters: `profile`, `kind` (`preset` / `profile` /
 `none`), `parameters` [{`name`, `description`, `value`, `initial`, `minimum`, `maximum`, `step`}]. Errors:
 `bad-parameter` (an unknown key or value; an unknown profile, theme, notice, picture or parameter lists the offered
@@ -1705,7 +1707,7 @@ without one, a parameter of a profile without parameters), `no-window`. The same
 `POST /video/window/crt_params/reset`, the WebSocket `call` of them, Lua and Python `window_display()` /
 `window_display_set(...)` / `window_crt_params()` / `window_crt_params_set(...)`, MCP `capture_media`
 `window_display` / `window_display_set` / `window_crt_params` / `window_crt_params_set`. The catalogue's
-`video.*`, `view.*`, `hud.*` and `osd.keyboard_picture` actions (§16) change the same settings; the readouts
+`video.*`, `view.*`, `hud.*`, `osd.keyboard_picture` and `osd.keyboard_style` actions (§16) change the same settings; the readouts
 `video.window` and `video.crt_params` show what the window published.
 
 #### GUI window recording
@@ -3790,7 +3792,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers options` | `<connector> opt=val ...` | Change the options of the device a connector holds | ✅ Implemented |
 | `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
 | `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
-| `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`) and `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`) | ✅ Implemented |
+| `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`), `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`), `battery` (`known`, `text`; when known `level`, `coarse`, `charging`, `wired`), `light` (`available`, else the `reason`) and `notice` (what is missing and how to fix it, such as the udev rule; absent when nothing is) | ✅ Implemented |
 | `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
 | `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
 | `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
@@ -3801,6 +3803,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
 | `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
+| `controllers light` | `<device> <#RRGGBB\|r,g,b\|off>` | Set a pad's light colour (a DualSense / DualShock 4 light bar) where the OS lets the emulator set it: macOS a DualSense over USB, else GameController's light once the pad is matched; Windows a DualSense over USB; Linux the LED class with the udev rule. `unavailable` with the reason elsewhere | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3808,6 +3811,25 @@ emulator cannot drive answers `rumble` with `unavailable` and the reason, the sa
 keyboards and mice have no motors; a DualSense rumbles over USB only for now; on macOS an Xbox pad rumbles over
 Bluetooth only (over USB neither its driver nor GameController moves a motor, haptics.md §9); on Linux the event
 device needs write access (a udev rule). An unknown effect is `bad-request` with the effects the device has.
+
+**Battery and light.** `devices` shows each device's battery as the OS reports it, and `unknown` when it does not:
+GameController gives no level for an Xbox Elite 2 (macOS), GameInput has no battery API (Windows; XInput pads report
+wired or four coarse steps), a Linux pad has one where its driver registers a power supply. The values are the
+backends' copies, refreshed on their own threads, so a read never waits for a device. Design:
+[surfaces.md §2](../../../inprogress/2026-10-17-controller-manager/surfaces.md#battery-light-and-notice-built).
+
+```
+controllers devices
+# Host devices:
+#   bt:054c:0ce6:1f2e3d4c  DualSense Wireless Controller (dualsense)
+#     role player (default); layers play
+#     battery charging, 40 %; light settable
+#   bt:045e:0b22:c6928f45  Xbox Elite Wireless Controller Series 2 (xbox-elite-2)
+#     role player (default); layers play
+#     battery unknown; light none
+controllers light bt:054c:0ce6:1f2e3d4c #ff8000
+# OK: light #ff8000 on DualSense Wireless Controller
+```
 
 ```
 controllers haptics
@@ -3842,12 +3864,12 @@ Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
 | :--- | :--- | :--- | :--- |
-| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...` |
-| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}` |
-| WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}` |
-| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`) |
-| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)` |
-| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})` |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...`, `controllers light <device> <color>` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}`, `POST /api/v1/controllers/light {device, color}` |
+| WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}`, the same for `/light` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`), `light` (`device`, `color`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)`, `controllers_light(device, color)` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})`, `controllers_light(device, color)` |
 
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
@@ -3912,6 +3934,7 @@ companion scope (their routes change nothing).
 | `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
 | `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
 | `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
+| `osd.keyboard_style` | press | `style?` (`photo`, `schematic`, `hybrid`, `next`, `prev`) | How the on-screen keyboard is drawn | |
 
 Readouts: `video.window` (the published WindowDisplay report, `available`), `video.crt_params` (`profile`, `kind`,
 `values` {name: value}), `video.viewport` (the VideoViewport report).

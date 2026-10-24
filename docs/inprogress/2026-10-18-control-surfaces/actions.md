@@ -168,7 +168,7 @@ window published (`WindowView::Publish`). The table with params:
 | `view.fullscreen`, `view.toolbar`, `view.status_bar`, `view.next_layers` | P | `on?` | `fullscreen`, `toolbar`, `status_bar`, `next_layers` |
 | `view.scale`, `view.next_layers_mode` | P | `scale?` 1..4 / `mode?` (name, next, prev) | `scale`, `next_layers_mode` |
 | `view.next_layer`, `hud.notice` | P | `name`, `on?` | `next_layer.<name>`, `hud_notice.<id>` (toggles `toggle.view.next_layer.<name>`, `toggle.hud.notice.<id>`) |
-| `hud.toggle`, `hud.theme`, `osd.keyboard_picture` | P | `on?` / `theme?` / `picture?` | `hud`, `hud_theme`, `osd_keyboard_picture` |
+| `hud.toggle`, `hud.theme`, `osd.keyboard_picture`, `osd.keyboard_style` | P | `on?` / `theme?` / `picture?` / `style?` | `hud`, `hud_theme`, `osd_keyboard_picture`, `osd_keyboard_style` |
 
 ### 1.3 Run, step and time-travel units (2026-10-21)
 

@@ -89,6 +89,9 @@ public:
     /// region <Methods>
 public:
     void reset();
+    /// Drop the deltas no frame end has read (synthesis resuming, a restored machine: a search replays one frame
+    /// many times) and restart the buffers at the level the circuit holds, so later deltas stay relative to it
+    void discardPending();
 
     /// A level change (port #FE or tape) landed in the last finished frame
     bool hadSoundLastFrame() const { return _hadSoundLastFrame; }

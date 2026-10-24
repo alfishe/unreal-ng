@@ -11,6 +11,9 @@ constexpr uint8_t kFlag0HapticsSelect = 0x02;
 constexpr uint8_t kFlag0RightTrigger = 0x04;
 constexpr uint8_t kFlag0LeftTrigger = 0x08;
 constexpr uint8_t kFlag2CompatibleVibration2 = 0x04;
+constexpr uint8_t kFlag1LightbarControl = 0x04;
+constexpr uint8_t kFlag2LightbarSetup = 0x02;
+constexpr uint8_t kLightbarSetupLightOut = 0x02;
 constexpr uint8_t kTriggerOff = 0x00;
 constexpr uint8_t kTriggerResistance = 0x01;  // start position, force
 
@@ -52,6 +55,23 @@ std::vector<uint8_t> DualSenseOutput::UsbReport(const RumbleLevels& levels)
     std::vector<uint8_t> report(48, 0);
     report[0] = 0x02;
     Common(levels, report.data() + 1);
+    return report;
+}
+
+std::vector<uint8_t> DualSenseOutput::UsbLightReport(const LightColor& color, bool release)
+{
+    std::vector<uint8_t> report(48, 0);
+    report[0] = 0x02;
+    uint8_t* common = report.data() + 1;
+    common[1] = kFlag1LightbarControl;
+    if (release)
+    {
+        common[38] = kFlag2LightbarSetup;
+        common[41] = kLightbarSetupLightOut;
+    }
+    common[44] = color.red;
+    common[45] = color.green;
+    common[46] = color.blue;
     return report;
 }
 
