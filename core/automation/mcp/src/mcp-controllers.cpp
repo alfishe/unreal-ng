@@ -45,10 +45,10 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
-        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
         {"haptics-probe", {"kind", "address", "page", "port_mask", "play"}},
         {"aliases", {}},
         {"unalias", {"id"}},
+        {"match", {"path", "signatures", "file_sha256", "file_set", "machine"}},
     };
     return actions;
 }
