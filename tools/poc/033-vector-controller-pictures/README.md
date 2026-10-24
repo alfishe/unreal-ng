@@ -57,7 +57,8 @@ first set.
   `ControllerPicture` paints it, the hotspot map; an overview sheet shows every set. The owner judges each picture as
   authentic or names what is wrong.
 - Expected: 6 host pictures (Series, One, Elite 2, DualSense, Switch Pro, generic pad in its four glyph variants) and
-  the DB9 sticks (generic, Kempston, Sinclair, Cursor) from one stick drawing.
+  the DB9 sticks (generic, Kempston, Sinclair, Cursor) from one stick drawing. Added after the owner's first review:
+  DualShock 4 and nine 8BitDo sets.
 
 ## Files
 
@@ -67,7 +68,7 @@ first set.
 | `svgkit.py` | gradients, shades, text outlines, path helpers |
 | `style.py` | the house style: body, wells, sticks, buttons, D-pads, bumpers, triggers, paddles |
 | `model.py` | the canvas, the scale (8.6 px per mm), views, layers, hotspots in mm converted to canvas px |
-| `devices/` | one module per device: geometry in mm, colours, controls, sources |
+| `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`) |
 | `render.py` | Qt (PySide6 `QSvgRenderer`) and rsvg renders, the Qt-vs-rsvg numbers, the per-device sheets with every control highlighted as `ControllerPicture` paints it, the overview |
 | [`measurements-2026-10-23-render-check.md`](measurements-2026-10-23-render-check.md) | Qt vs rsvg, sizes, render cost |
 | [`analysis.md`](analysis.md) | what the numbers and the galleries show |
@@ -76,7 +77,10 @@ first set.
 
 ## Results
 
-13 image sets drawn; Qt vs rsvg mean 0.016-0.085 of 255, no pixel off by more than 32; `--check` passes. The owner's
-judgement of the pictures is pending. Details in [conclusions.md](conclusions.md).
+23 image sets drawn; Qt vs rsvg mean 0.016-0.085 of 255, no pixel off by more than 32; `--check` passes.
+Owner review 1 (2026-10-23): the generic PlayStation pad did not look like one; it is redrawn on the DualShock shape
+(measured on a DS4 top view), a dualshock-4 set is added, and the most popular 8BitDo pads got their own sets
+(Ultimate, Pro 2, SN30 Pro+, SN30 Pro / SF30 Pro, SN30 / SF30, M30, Zero 2). Each was checked side by side with its
+reference photo (`scratch/2026-10-23-poc-033/compare-<set>.png`). Details in [conclusions.md](conclusions.md).
 
 Run: `python3 generate.py [--check] [--only <set>]`, then `python3 render.py [<set> ...]` (PySide6, rsvg-convert).

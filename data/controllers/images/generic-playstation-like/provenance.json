@@ -11,8 +11,16 @@
       "retouch": "none; platform logos left out (D5)",
       "references": [
         {
-          "what": "a neutral pad of the 150 x 100 mm class: no maker's shape, the layout of the family template",
-          "source": "own design after the common layout of the C5 pads (xbox-series, dualsense, switch-pro in this set)",
+          "what": "the silhouette and layout the DualShock 3 and 4 share: long grips, D-pad keys in a cross, the sticks side by side low in the centre; DS3 about 157 x 95 x 55 mm, DS4 about 162 x 98 x 52 mm",
+          "source": "the dualshock-4 set of this POC, measured on https://commons.wikimedia.org/wiki/File:Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg (CC BY-SA 4.0)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the DualShock 3 layout (Select / Start between the dishes, no touchpad)",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock_3.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
           "retrieved": "2026-10-23"
         }
       ]

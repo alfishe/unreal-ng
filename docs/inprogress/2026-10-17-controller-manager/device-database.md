@@ -307,16 +307,16 @@ the family fallback (the POC 033 generic pad or DB9 stick) until then.
 | 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | vector |
 | 7 | `xbox-adaptive` | 045E | 0B0A, 0B0C, 0B21 | xbox | find |
 | 8 | `xbox-wireless-adapter` | 045E | 02E6, 02FE (pads behind it report their own families) | — | — |
-| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | find |
+| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | vector |
 | 10 | `dualsense` | 054C | 0CE6 | playstation | vector |
 | 11 | `dualsense-edge` | 054C | 0DF2 | playstation | find |
 | 12 | `switch-pro` | 057E | 2009 | nintendo-positional | vector |
 | 13 | `joy-con` | 057E | 2006, 2007, 200E | nintendo-positional | find |
 | 14 | `nso-snes` / `nso-n64` / `nso-megadrive` | 057E | 2017 / 2019 / 201E | snes / n64 / megadrive | find |
-| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | find |
-| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | find |
-| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | find |
-| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | find |
+| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | vector |
+| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | vector |
+| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | vector |
+| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | vector |
 | 19 | `megadrive-mini` | 0CA3 | 0024 (6B), 0025 (3B) | megadrive | find |
 | 20 | `atari-vcs` | 3250 | 1001 (Classic), 1002 (Modern) | atari / xbox | find |
 | 21 | `atari-cx` | 0E6A | 4011 | atari | find |
@@ -327,6 +327,14 @@ the family fallback (the POC 033 generic pad or DB9 stick) until then.
 | 26 | `generic-snes-usb` | 0810, 0079 | E501; 0011 | snes | generic |
 | 27 | `arcade-stick` | 0F30, 0079, 0738 | 1100-1116; 1830, 181A, 181B; 8180 | arcade | generic |
 | 28 | `macos-synthetic-xbox` | 045E | 028E version 0, IOClass `AppleGCResource` | — | ignored |
+| 29 | `8bitdo-sn30-pro-plus` | 2DC8 | 6002, 6102 | nintendo-positional | vector |
+| 30 | `8bitdo-sn30` / `8bitdo-sf30` | 2DC8 | 2840, 5103, AB20 / 3001, 2830, AB21 | nintendo-positional | vector |
+| 31 | `8bitdo-m30` | 2DC8 | 5001, 5006, 5101 | megadrive | vector |
+| 32 | `8bitdo-zero-2` | 2DC8 | 3230, 9018 | nintendo-positional | vector |
+
+Rows 29-32 and the extra PIDs of rows 17 (3010, 6103) and 18 (3011, 3012, 3013, 6007, 310B) come from
+SDL_GameControllerDB (the 2DC8 GUIDs, product in bytes 8-9 little-endian, 2026-10-23); SDL3's `usb_ids.h` and
+`controller_list.h` confirm rows 15-18. A PID listed under two names there (2862, 9012, 3810) is left out.
 
 The Stream Deck (0FD9) is not a host device here. It is a companion client through the WebAPI
 ([debug-and-ttd.md](debug-and-ttd.md), [research-host-apis.md §6](research-host-apis.md#6-stream-deck)).

@@ -5,7 +5,8 @@
 - macOS 15 (Darwin 24.6), Apple Silicon, the machine shared with other sessions (loaded).
 - Qt: PySide6 6.8.3 `QSvgRenderer`, offscreen platform (the app links Qt 6.9.3, same SVG module).
 - rsvg: `rsvg-convert` (librsvg from Homebrew).
-- Pictures: `python3 generate.py` at the commit of this file, 13 image sets.
+- Pictures: `python3 generate.py` at the commit of this file, 23 image sets (the second round added dualshock-4
+  and the nine 8BitDo sets and redrew generic-playstation-like).
 
 ## Method
 
@@ -26,13 +27,23 @@
 | dualsense | 21 | 14 785 | 0.063 | 0.064 | 0.0 % |
 | switch-pro | 20 | 13 128 | 0.066 | 0.066 | 0.0 % |
 | generic-xbox-like | 23 | 15 702 | 0.071 | 0.073 | 0.0 % |
-| generic-playstation-like | 19 | 10 735 | 0.068 | 0.069 | 0.0 % |
+| generic-playstation-like | 19 | 11 462 | 0.065 | 0.066 | 0.0 % |
 | generic-nintendo-like | 19 | 10 887 | 0.067 | 0.069 | 0.0 % |
 | generic-unknown | 19 | 11 438 | 0.068 | 0.069 | 0.0 % |
 | generic-db9-stick | 5 | 5 932 | 0.016 | 0.018 | 0.0 % |
 | kempston-joystick | 6 | 5 898 | 0.016 | 0.018 | 0.0 % |
 | sinclair-joystick | 5 | 5 902 | 0.016 | 0.018 | 0.0 % |
 | cursor-joystick | 5 | 5 902 | 0.016 | 0.018 | 0.0 % |
+| dualshock-4 | 20 | 13 774 | 0.064 | 0.065 | 0.0 % |
+| 8bitdo-ultimate | 22 | 14 966 | 0.072 | 0.073 | 0.0001 % |
+| 8bitdo-pro-2 | 23 | 15 431 | 0.049 | 0.05 | 0.0 % |
+| 8bitdo-sn30-pro-plus | 21 | 13 199 | 0.048 | 0.049 | 0.0 % |
+| 8bitdo-sn30-pro | 20 | 12 354 | 0.031 | 0.032 | 0.0001 % |
+| 8bitdo-sf30-pro | 20 | 12 667 | 0.031 | 0.032 | 0.0001 % |
+| 8bitdo-sn30 | 13 | 8 042 | 0.022 | 0.023 | 0.0 % |
+| 8bitdo-sf30 | 13 | 8 352 | 0.022 | 0.023 | 0.0 % |
+| 8bitdo-m30 | 16 | 8 927 | 0.066 | 0.067 | 0.0 % |
+| 8bitdo-zero-2 | 12 | 6 700 | 0.029 | 0.034 | 0.0 % |
 
 The previous line drawings were 0.9-2.7 KB per set.
 
@@ -46,6 +57,8 @@ The previous line drawings were 0.9-2.7 KB per set.
 | dualsense | 9.0 | generic-unknown | 4.1 |
 | switch-pro | 6.8 | DB9 sticks | 2.5-6.9 |
 | md6-pad (old line drawing) | 0.4 | surface-dial (old) | 0.4 |
+
+Render cost was measured in the first round (13 sets); the new sets are of the same kind and size.
 
 The numbers scatter by about 2x between runs under the load; the order of magnitude is the result.
 

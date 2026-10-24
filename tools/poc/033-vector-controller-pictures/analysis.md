@@ -30,3 +30,16 @@ positions (about 2 mm), the Switch Pro's positions (three-quarter photo correcte
 and heights (no maker's drawing found). The Sinclair and the Cursor sets use the same Competition Pro-type stick: no
 usable reference of the Sinclair SJS-1 was found. The Kempston set shows Fire 2 on the second button, although on the
 real stick both buttons are wired in parallel.
+
+**Second round (owner review 1).** The generic PlayStation pad was a generic outline with PlayStation legends and did
+not read as a PlayStation pad. It now uses the DualShock silhouette measured on a DS4 top view (the wings narrow at
+the dishes, about ±72 mm, the grips widening to ±79 mm and ending round near (±60, 56) mm, the dishes r 19.5 mm), with
+the D-pad as four separate keys and both sticks low in the centre, and a plain centre with DS3-style Select / Start
+instead of the touchpad. The DS4 set adds the touchpad, Share / Options, the light bar and muted symbol colours.
+
+The 8BitDo sets follow 8BitDo's own sizes. Their estimates: the Ultimate's outline is the Xbox shell of this POC
+scaled to 147 x 104 mm; the SN30 Pro+ has no 8BitDo page left and is drawn as the Pro 2 without its back buttons;
+SF30 Pro and SF30 are colourways of the SN30 Pro and SN30; the Zero 2 is drawn at twice the scale (73 mm wide, it
+would be a thumbnail at the pads' scale). The M30's six buttons sit on the canonical names as SDL_GameControllerDB maps
+them (Z and C on the bumpers, L / R on the triggers) and the 8BitDo back buttons on paddle.p3 (left) / paddle.p1
+(right); core has no 8BitDo-specific mapping yet, so both are assumptions to check on a real pad.

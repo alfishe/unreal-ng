@@ -1,0 +1,51 @@
+{
+  "family": "8bitdo-ultimate",
+  "images": [
+    {
+      "view": "front",
+      "title": "8BitDo Ultimate Bluetooth / 2.4G controller, black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 147 x 104 x 61.5 mm",
+          "source": "https://www.8bitdo.com/ultimate-bluetooth-controller/",
+          "author": "8BitDo",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "layout and letters (mapping view), the back buttons",
+          "source": "https://www.8bitdo.com/images/2022/ultimate-bluetooth-controller/mapping.png",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "reference only, not traced, not shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the pad from above",
+          "source": "https://www.8bitdo.com/images/2022/ultimate-bluetooth-controller/01-l.jpg",
+          "author": "8BitDo",
+          "terms": "product photo",
+          "use": "reference only, not traced, not shipped",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the shell of the family (Ultimate 2C, same body)",
+          "source": "https://commons.wikimedia.org/wiki/File:8BitDo_Ultimate_2C_gamepad_HS_DSC_2699.jpg",
+          "author": "Hayden Schiff",
+          "licence": "CC BY 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "outline: the Xbox Series shell of this POC scaled to 147 x 104 mm (the Ultimate follows that shape); an estimate",
+          "source": "devices/xbox.py",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

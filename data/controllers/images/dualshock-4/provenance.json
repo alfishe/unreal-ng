@@ -1,0 +1,45 @@
+{
+  "family": "dualshock-4",
+  "images": [
+    {
+      "view": "front",
+      "title": "DualShock 4 wireless controller (PS4), Jet Black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size about 162 x 98 x 52 mm (W x D x H)",
+          "source": "Sony DualShock 4 specifications as quoted by retail listings and dimensions.com (dualshock-4)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "top view: outline, control positions and sizes (measured at 4.81 px per mm, about 1 mm)",
+          "source": "https://commons.wikimedia.org/wiki/File:Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_top_view.jpg",
+          "author": "ITEagle Europe - Sebastiaan Broekhoven",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the light bar on the top edge, the shoulders",
+          "source": "https://commons.wikimedia.org/wiki/File:Sony_DualShock_4_wireless_controller_for_PlayStation_4_(black)_-_rear_view.jpg",
+          "author": "ITEagle Europe - Sebastiaan Broekhoven",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "three-quarter view, the face button symbols' colours",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock_4.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

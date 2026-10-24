@@ -18,7 +18,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from devices import db9, generic, playstation, switchpro, xbox  # noqa: E402
+from devices import db9, dualshock, eightbitdo, generic, playstation, switchpro, xbox  # noqa: E402
 from model import H, W  # noqa: E402
 
 ROOT = HERE.parents[2]
@@ -30,9 +30,19 @@ SETS = {
     "xbox-one": xbox.one,
     "xbox-elite-2": xbox.elite2,
     "dualsense": lambda: playstation.dualsense(),
+    "dualshock-4": lambda: dualshock.dualshock4(),
+    "8bitdo-ultimate": lambda: eightbitdo.ultimate(),
+    "8bitdo-pro-2": lambda: eightbitdo.pro2(),
+    "8bitdo-sn30-pro-plus": lambda: eightbitdo.sn30proplus(),
+    "8bitdo-sn30-pro": lambda: eightbitdo.sn30pro("sn"),
+    "8bitdo-sf30-pro": lambda: eightbitdo.sn30pro("sf"),
+    "8bitdo-sn30": lambda: eightbitdo.sn30("sn"),
+    "8bitdo-sf30": lambda: eightbitdo.sn30("sf"),
+    "8bitdo-m30": lambda: eightbitdo.m30(),
+    "8bitdo-zero-2": lambda: eightbitdo.zero2(),
     "switch-pro": lambda: switchpro.pro(),
     "generic-xbox-like": lambda: generic.pad("generic-xbox-like", "xbox"),
-    "generic-playstation-like": lambda: generic.pad("generic-playstation-like", "playstation"),
+    "generic-playstation-like": lambda: dualshock.generic_like(),
     "generic-nintendo-like": lambda: generic.pad("generic-nintendo-like", "nintendo"),
     "generic-unknown": lambda: generic.pad("generic-unknown", "unknown"),
     "generic-db9-stick": lambda: db9.stick("generic-db9-stick", "dpad.", ["Fire"]),

@@ -1,13 +1,13 @@
 """The generic pad: no maker's shape, the fallback for a family without a picture of its own.
 
-A neutral twin-stick pad of the common 150 x 100 mm class in a mid grey, drawn in four variants that differ only in
+A neutral twin-stick pad of the common 150 x 100 mm class in a mid grey, drawn in three variants that differ only in
 the layout and the legends of the family template (devices.json `templates`, `glyphs`): Xbox-like (offset sticks,
-A B X Y, with the four back buttons of the pads that have them), PlayStation-like (symmetric, the four shapes),
-Nintendo-like (offset, positional B A Y X) and unknown (offset, the raw button numbers).
+A B X Y, with the four back buttons of the pads that have them), Nintendo-like (offset, positional B A Y X) and unknown (offset, the raw button numbers). The PlayStation-like pad
+has the DualShock shape (devices/dualshock.py).
 """
 
 import style
-from devices import common, playstation
+from devices import common
 from model import Picture
 from svgkit import mirrored_d, num, rounded_d, shade
 
@@ -23,8 +23,6 @@ SHELL = [("M", (0, TOP)),
 VARIANTS = {
     "xbox": {"faces": {"south": "A", "east": "B", "west": "X", "north": "Y"}, "system": ("View", "Guide", "Menu"),
              "shoulders": ("LB", "RB", "LT", "RT"), "layout": "offset", "paddles": True},
-    "playstation": {"faces": None, "system": ("Create", "PS", "Options"), "shoulders": ("L1", "R1", "L2", "R2"),
-                    "layout": "symmetric", "paddles": False},
     "nintendo": {"faces": {"south": "B", "east": "A", "west": "Y", "north": "X"}, "system": ("-", "Home", "+"),
                  "shoulders": ("L", "R", "ZL", "ZR"), "layout": "offset", "paddles": False},
     "unknown": {"faces": {"south": "1", "east": "2", "west": "3", "north": "4"}, "system": ("9", "13", "10"),
@@ -52,8 +50,7 @@ def shoulders(view, names):
 
 def pad(family, variant):
     spec = VARIANTS[variant]
-    titles = {"xbox": "Xbox-like", "playstation": "PlayStation-like", "nintendo": "Nintendo-like",
-              "unknown": "unknown"}
+    titles = {"xbox": "Xbox-like", "nintendo": "Nintendo-like", "unknown": "unknown"}
     pic = Picture(family, f"Generic pad ({titles[variant]} layout)")
     pic.sources = [{"what": "a neutral pad of the 150 x 100 mm class: no maker's shape, the layout of the family "
                             "template", "source": "own design after the common layout of the C5 pads "
@@ -82,14 +79,8 @@ def pad(family, variant):
         style.glyph(view, style.arrow_d(cx + dx * 8.2, cy + dy * 8.2, 1.8, direction), COLORS["glyph"], "dpad",
                     fill=True, opacity=0.6)
     common.dpad_spots(view, cx, cy, span, arm, "left", prefix="dpad.")
-    if spec["faces"]:
-        labels = {c: {"cap": COLORS["button"], "text": t, "name": t, "ink": COLORS["letter"]}
-                  for c, t in spec["faces"].items()}
-    else:
-        labels = {c: {"cap": COLORS["button"], "name": n, "draw": (lambda s: (lambda v, x, y, r, ctl: playstation.symbols(
-            s)(v, x, y, r, ctl, COLORS["letter"])))(s)} for c, n, s in (
-            ("north", "Triangle", "triangle"), ("east", "Circle", "circle"), ("south", "Cross", "cross"),
-            ("west", "Square", "square"))}
+    labels = {c: {"cap": COLORS["button"], "text": t, "name": t, "ink": COLORS["letter"]}
+              for c, t in spec["faces"].items()}
     common.face_diamond(view, *face, 10.0, 5.2, labels)
     view_label, guide_label, menu_label = spec["system"]
     sy = -24 if spec["layout"] == "offset" else -26

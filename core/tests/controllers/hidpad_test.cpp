@@ -87,6 +87,9 @@ TEST(HidPad_Test, DeviceDatabase_LookupStepsAndTheSyntheticPad)
     EXPECT_EQ(db.Lookup({"usb", 0x1234, 0x5678, -1, "Thing", ""}).step, "unknown");
     EXPECT_EQ(db.ForFamily("dualsense").images, "dualsense");
     EXPECT_EQ(db.ForFamily("dualsense-edge").images, "generic-playstation-like");
+    EXPECT_EQ(db.ForFamily("dualshock-4").images, "dualshock-4");
+    EXPECT_EQ(db.ForFamily("8bitdo-m30").images, "8bitdo-m30");
+    EXPECT_EQ(db.Lookup({"usb", 0x2DC8, 0x6002, -1, "SN30 Pro+", ""}).family, "8bitdo-sn30-pro-plus");
     EXPECT_EQ(db.ForFamily("fake-pad", "nintendo").images, "generic-nintendo-like");
     EXPECT_EQ(db.ForFamily("fake-pad").images, "generic-unknown");
 
