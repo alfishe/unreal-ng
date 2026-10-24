@@ -105,9 +105,12 @@ The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the 
   the schematic's case with the hints layer (design.md). All 63 SVGs (21 keyboards x 3 styles) pass the check:
   every key mapped, Qt's QSvgRenderer and rsvg alike (the largest mean difference 1.67 of 255, the 128's schematic:
   its many hairlines; no pixel far off).
-- The legends layer is grouped by role in every style. Dimming the roles that do not matter now (the symbols
-  only while Symbol Shift is held, the keywords in K mode) is the app's part and not built: which role a held shift
-  brings forward differs per keyboard (the 48K's red words below the key need Extend Mode, the 128's need none).
+- The legends layer is grouped by role in every style. The app dims the roles that do not matter now: while Symbol
+  Shift alone is held, every mode legend but the symbols (`keyword`, `extend`, `extend-shift`, `graphic`, `colour`,
+  `cyrillic`) is drawn at 30 % (`OsdKeyboardView::setDimmed`). Not built: dimming by the ROM's mode (keywords in
+  K mode, the extend legends in E mode): the mode lives in the guest's system variables, which a game may reuse, and
+  which role it brings forward differs per keyboard (the 48K's red words below the key need Extend Mode, the 128's
+  need none).
 
 ## Progress
 
