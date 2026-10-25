@@ -311,9 +311,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/symbols/import" -H 'Content-Type: applic
   index (`phys_page`) or the memory profiler.
 - **Coverage records only while the machine runs**: `coverage_start` on a paused machine that is then stepped by
   hand, or zero ranges with `active: false`, means "not recording", not "nothing ran".
-- **The Kempston joystick is not decoded everywhere**: 48K, 128K, +2, +2A, +3, ATM450 and ATM710 accept
-  `joystick_input` and warn; on a Pentagon `#1F` is the joystick only outside TR-DOS
-  ([joystick.md](../input/joystick.md)). Use the program's keys there.
+- **Fit a Kempston interface on a 48K / 128K / +2 / +3**: these boards have no Kempston decode, so
+  `joystick_input` warns and the guest sees nothing until the interface is plugged in, as on the real machine:
+  `emulator_manage {"action":"slots_plug","slot":"edge.next","card":"kempston"}` (the machine restarts; ATM450 /
+  ATM710 need the override). The warning carries the exact command. On a Pentagon `#1F` is the joystick only
+  outside TR-DOS ([joystick.md](../input/joystick.md)).
 - **Host script and MCP on one machine: take control once, share the id**: one session holds run control at a
   time. A WebAPI call that changes the machine without a session opens an implicit one (a 15 s lease), and an MCP
   run call then answers 409 `held_by_other`, and the other way round; the refusal names the holder, whether it is
