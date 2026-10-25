@@ -39,7 +39,7 @@ void ScreenNext::DetectRaster()
     // One mode: the family of NR #03 only changes the beam (GetTimingDescriptor), which SetVideoMode reads again
     if (_mode != M_NEXT)
         SetVideoMode(M_NEXT);
-    else if (_state && _lastTimingClass != _state->ula_timing_class)
+    else if (_state && (_lastTimingClass != _state->ula_timing_class || _lastSixty != _state->ula_sixty_hz))
         SetVideoMode(M_NEXT);
 }
 
@@ -113,6 +113,7 @@ void ScreenNext::SetVideoMode([[maybe_unused]] VideoModeEnum mode)
 {
     Screen::SetVideoMode(M_NEXT);
     _lastTimingClass = _state ? _state->ula_timing_class : 2;
+    _lastSixty = _state ? _state->ula_sixty_hz : 0;
     if (_copperBound)
         UpdateCopperGeometry();  // the raster of the new family
 }
@@ -122,11 +123,16 @@ bool ScreenNext::FramebufferReady() const
     return _framebuffer.memoryBuffer && _framebuffer.width == NextVideoRenderer::kWidth && _framebuffer.height == 2 * NextVideoRenderer::kHeight;
 }
 
+uint32_t ScreenNext::GridFirstT() const
+{
+    // Visible line 0 is 16 lines below the ZX window's first (its 48-line border keeps 32 here). The 60 Hz frame is cut to the grid:
+    // its first line after the blank ones is the grid's
+    return _rasterState.topBorderAreaStart + (_lastSixty && _lastTimingClass != 4 ? 0 : 16) * static_cast<uint32_t>(_rasterState.tstatesPerLine);
+}
+
 uint32_t ScreenNext::LineEndT(unsigned y) const
 {
-    // Visible line 0 is 16 lines below the ZX window's first (its 48-line border keeps 32 here)
-    const uint32_t perLine = _rasterState.tstatesPerLine;
-    return _rasterState.topBorderAreaStart + (16 + y + 1) * perLine;
+    return GridFirstT() + (y + 1) * _rasterState.tstatesPerLine;
 }
 
 uint64_t ScreenNext::CopperClock(uint32_t tstate) const
@@ -161,7 +167,7 @@ int64_t ScreenNext::SpriteFillEnd(unsigned y)
         // paper row y is filled during row y - 1, from about raw hc -21 of it (28 MHz clocks 1 a sprite, 17 more for a drawn one); raw hc 0
         // is 16 T-states before the grid's x = 0
         const int64_t perLine = _rasterState.tstatesPerLine;
-        const int64_t first = static_cast<int64_t>(_rasterState.topBorderAreaStart) + 16 * perLine;
+        const int64_t first = static_cast<int64_t>(GridFirstT());
         const int64_t gridX0 = first + (static_cast<int64_t>(y) - 1) * perLine + static_cast<int64_t>(_rasterState.screenLineAreaStart) - 16;
         const int64_t clocks = sprites.FillClocks(y);
         _fillNextEnd = gridX0 - 16 + (clocks - 84) / 8;
@@ -345,7 +351,7 @@ void ScreenNext::RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t va
     const uint32_t at = t - static_cast<uint32_t>(behind / kClocksPerTState);
     SpriteStateWillChange(at);  // a MOVE of a sprite register: the rows filled before it keep the old state
     const uint32_t perLine = _rasterState.tstatesPerLine;
-    const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
+    const uint32_t first = GridFirstT();
     if (at < first)
         return;  // the vertical blank before the first visible line
     const unsigned line = (at - first) / perLine;
@@ -475,7 +481,7 @@ void ScreenNext::UpdateScreen()
     // lines whose end the beam has passed
     unsigned done = 0;
     const uint32_t perLine = _rasterState.tstatesPerLine;
-    const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
+    const uint32_t first = GridFirstT();
     if (now > first)
         done = (now - first) / perLine;
     RenderLinesUpTo(done);
@@ -485,7 +491,7 @@ void ScreenNext::DrawRange(uint32_t fromTstate, uint32_t toTstate)
 {
     (void)fromTstate;
     const uint32_t perLine = _rasterState.tstatesPerLine;
-    const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
+    const uint32_t first = GridFirstT();
     unsigned done = 0;
     if (toTstate + 1 > first)
         done = (toTstate + 1 - first) / perLine;

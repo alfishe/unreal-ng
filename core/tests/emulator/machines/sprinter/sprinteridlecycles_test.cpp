@@ -165,6 +165,9 @@ protected:
         if (HasFatalFailure())
             return;
         Reset(run);
+        // The adaptive render decimation follows the wall clock: under load two machines would skip different turbo
+        // frames and the pictures of their first checkpoint would differ
+        run.emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
         run.emulator->EnableTurboMode();
         EmulatorTestHelper::RunFramesFast(run.emulator.get(), 200);
         // The BIOS tried the floppy: its controller sleeps about 120 frames later (it runs per step until then)

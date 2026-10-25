@@ -566,9 +566,11 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
         ASSERT_NE(net, nullptr);
         ASSERT_EQ(net->payloadLength, frame.size());
         if (!journaled)
+        {
             EXPECT_EQ(std::vector<uint8_t>(ttm->GetInputJournal().PayloadOf(*net),
                                            ttm->GetInputJournal().PayloadOf(*net) + net->payloadLength),
                       frame);
+        }
         journaled = true;
     }
     EXPECT_TRUE(journaled) << "a frame from the LAN is an outside input";

@@ -245,7 +245,9 @@ TEST_F(ProfiBoot_Test, DISABLED_ProbeBootScreen)
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
     if (const char* disk = std::getenv("PROFI_PROBE_DISK"))
+    {
         ASSERT_TRUE(_emulator->LoadDisk(disk));
+    }
     _emulator->RunNFrames(900, true);
 
     for (int i = 0; i < 6; i++)

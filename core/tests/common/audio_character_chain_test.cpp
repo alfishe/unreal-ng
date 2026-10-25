@@ -231,7 +231,9 @@ TEST(AudioCharacterChain_Test, SwitchingRampsWithoutStep)
             // after the switch on the output is the steady "to" output sample for sample (the punch envelope
             // started from rest, it converges instead)
             if (!c.punchFrom && !c.punchTo)
+            {
                 EXPECT_EQ(frameOf(out, switchFrame + 1), frameOf(toOut, switchFrame + 1)) << c.name;
+            }
         }
     }
 }

@@ -868,7 +868,9 @@ TEST_P(CtProbeLoad_Test, ReportsAllValuesAsExpected)
     _context->pFeatureManager->setFeature(Features::kFastTape, true);
     const std::string path = ProbePath(l.file);
     if (std::string(l.file).find(".tap") != std::string::npos)
+    {
         ASSERT_TRUE(_emulator->LoadTape(path));
+    }
     else
         ASSERT_TRUE(_emulator->LoadDisk(path));
 

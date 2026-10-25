@@ -182,8 +182,10 @@ TEST_F(LoaderZXPGroup_Test, TheGroupIsPlannedThenEachModuleIsCommittedFromItsIma
         for (uint8_t page = 0; page < 8; page++)
         {
             if (module.pageUsed[page])
+            {
                 EXPECT_EQ(0, std::memcmp(contexts[m]->pMemory->RAMPageAddress(page), module.pages.data() + page * PAGE_SIZE, PAGE_SIZE))
                     << "module " << m << " page " << int(page);
+            }
         }
     }
 }
@@ -205,7 +207,9 @@ TEST_F(LoaderZXPGroup_Test, OneRefusingModuleStopsTheWholeLoadBeforeAnythingIsWr
     for (size_t m = 0; m < contexts.size(); m++)
     {
         if (m != 2)
+        {
             EXPECT_EQ(RamHash(contexts[m]), before[m]) << "module " << m << " was not touched";
+        }
     }
     EXPECT_EQ(contexts[0]->pCore->GetZ80()->pc, pc0) << "no CPU was written either";
 }

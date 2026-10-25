@@ -232,7 +232,7 @@ TEST_F(NextDivMmc_Test, ADisabledDivMmcPortIsNotDecodedAndUnmapsTheMemory)
 TEST_F(NextDivMmc_Test, Nr0aBitsSevenToFiveAreConfigModeOnly)
 {
     Board().Write(0x0A, 0xFF);
-    EXPECT_EQ(Board().Stored(0x0A), 0x1F) << "bits 7:5 keep their value (0) outside config mode";
+    EXPECT_EQ(Board().Stored(0x0A), 0x1B) << "bits 7:5 keep their value (0) outside config mode; bit 2 is not stored (zxnext.vhd)";
     EXPECT_FALSE(Board().SdSwap());
     _memory->SetConfigMode(true);
     Board().Write(0x0A, 0xE0);
@@ -241,4 +241,5 @@ TEST_F(NextDivMmc_Test, Nr0aBitsSevenToFiveAreConfigModeOnly)
     _memory->SetConfigMode(false);
     Board().Write(0x0A, 0x10);
     EXPECT_EQ(Board().Stored(0x0A), 0xF0) << "bits 7:5 stay as the config mode left them";
+    EXPECT_EQ(Board().Read(0x0A), 0xF0 & 0xFB);
 }

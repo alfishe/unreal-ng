@@ -179,7 +179,9 @@ IDLE    JR IDLE
         sawProgrammedInArrayMode = sawProgrammedInArrayMode || (m.programmed == value && m.arrayMode);
         EXPECT_EQ(m.erased, sectorByte) << "checkpoint " << i << ": the erase never finished";
         if (m.programmed == original)
+        {
             EXPECT_TRUE(m.arrayMode) << "checkpoint " << i << ": nothing started before the program";
+        }
         EXPECT_EQ(decoder->GetFlash().IsInstalled(), !m.arrayMode || decoder->GetFlash().WriteWindows() != 0);
     }
     EXPECT_TRUE(sawOriginal) << "a checkpoint before the program";

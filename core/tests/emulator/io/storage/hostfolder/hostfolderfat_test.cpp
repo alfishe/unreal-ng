@@ -114,11 +114,17 @@ TEST(HostFolderFat_Test, Fat16RoundTripThroughAnIndependentReader)
     for (const auto& e : root)
     {
         if (e.name == ".profile")
+        {
             EXPECT_TRUE(e.attributes & 0x02) << "dot-files are hidden";
+        }
         if (e.name == "Длинное имя.txt")
+        {
             EXPECT_EQ(e.shortName, "ДЛИННО~1.TXT");
+        }
         if (e.name == "LongFileName2.txt")
+        {
             EXPECT_EQ(e.shortName, "LONGFI~2.TXT");
+        }
         EXPECT_EQ(e.date, ((2026 - 1980) << 9) | (1 << 5) | 1) << e.name;
         EXPECT_EQ(e.time, 12 << 11) << e.name;
     }

@@ -185,7 +185,9 @@ TEST_F(SoundChipTurboSound_Test, TonePitchFollowsTheClock)
             device->setHQEnabled(hq);
             _z80->t = 0;
             if (i == 1)
+            {
                 ASSERT_TRUE(device->SetPsgClock(kHiresClock));
+            }
             ProgramChannelA(device, 60);  // 1823 Hz at 1.75 MHz, 1563 Hz at 1.5 MHz
             RenderFrames(device, 4);  // the output DC blocker settles from the level step at the start
             const std::vector<int16_t> stream = RenderFrames(device, 12);
@@ -257,7 +259,9 @@ TEST_F(SoundChipTurboSound_Test, SwitchLandsOnItsTStateWithoutAClick)
         StartFrame(device);
         _z80->t = 30000;
         if (device == switched)
+        {
             ASSERT_TRUE(device->SetPsgClock(kHiresClock));
+        }
         StepTo(device, 20000);
         EXPECT_EQ(device->GetPsgClock(), PSG_CLOCK_RATE) << "rendering has not reached T 30000";
         StepTo(device, 30000);
@@ -756,7 +760,9 @@ TEST_P(SoundChipTurboSoundEvents_Test, ToneAndSamplePhaseSurviveEvent)
     m.Frames(1, false, where);
     m.Frames(3, true, where + " (settle)");
     if (event == Event::CoreRate)
+    {
         ASSERT_EQ(m.Rate(), 48000.0) << where;
+    }
 
     ExpectTone(m, reference, where);
     m.Frames(10, true, where + " (after)");
@@ -826,7 +832,9 @@ TEST(SoundChipTurboSoundEventsTtd_Test, SeekAndReplayKeepTheSamplePhaseAndTheTon
                 if (f > 11)
                     m.Frame(true, where);
                 if (f > 11)
+                {
                     EXPECT_EQ(m.Context()->pSoundManager->lastTurboSoundPhase(), livePhase[f - 1]) << where << ", frame " << f;
+                }
             }
             ASSERT_EQ(frame, captureFrame) << where;
             const std::vector<double> replay = m.Capture(lastChip, 0.1, where);

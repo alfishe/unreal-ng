@@ -73,7 +73,9 @@ Written Write(bool finalize, bool tail = false)
     if (tail)
         add(1, Bytes(2000, 5, true), true);   // a part with no end: a crash mid-part
     if (finalize)
+    {
         EXPECT_TRUE(writer.Finalize({42, 43}));
+    }
     w.file = std::move(sink.bytes);
     return w;
 }

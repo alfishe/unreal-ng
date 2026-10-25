@@ -277,7 +277,9 @@ TEST_F(DiskAutostart_Test, Plan_UnsupportedMachine)
     std::string reason;
     EXPECT_EQ(_context->pMemory->base_dos_rom == nullptr, !_context->pDiskAutostart->IsTrdosCapable(&reason));
     if (_context->pMemory->base_dos_rom == nullptr)
+    {
         EXPECT_FALSE(reason.empty());
+    }
 }
 
 /// End-to-end: real TR-DOS ROM boots the disk after AutostartDisk()

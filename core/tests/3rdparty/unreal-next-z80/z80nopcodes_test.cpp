@@ -105,7 +105,9 @@ TEST(Z80nOpcodes_Test, SizesAndTStatesFollowTheInstructionTable)
             EXPECT_EQ(f.Step(), c.tLast) << c.name << ": the last element";
         }
         if (c.name != std::string("jp (c)"))
+        {
             EXPECT_EQ(f.Reg(Z80nCpuRegPc), 0x8000 + c.size) << c.name;
+        }
     }
 }
 

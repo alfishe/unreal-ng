@@ -111,7 +111,9 @@ public:
             _tsfm->setQuietTicksEnabled(gate);  // the full way renders every tick: no quiet runs either
         }
         if (speed != 1)
+        {
             EXPECT_TRUE(_emulator->SetSpeedMultiplier(speed));
+        }
         _context->pAudioCallback.store(&Capture, std::memory_order_release);
         _context->pAudioManagerObj.store(&_sound, std::memory_order_release);
 
@@ -173,7 +175,9 @@ void Lockstep(TurboSoundKind kind, bool hq, uint8_t speed, bool sparse, int fram
     }
     EXPECT_EQ(gated.State(), full.State()) << "the device state at the end";
     if (beeps)
+    {
         EXPECT_GT(gated.QuietTicks(), 0u) << "the device never slept";
+    }
 }
 }  // namespace
 

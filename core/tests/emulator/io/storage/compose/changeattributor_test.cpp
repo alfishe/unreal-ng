@@ -133,7 +133,9 @@ TEST_P(ChangeAttributor_Test, CreateModifyAppendTruncateDelete)
     EXPECT_TRUE(set.warnings.empty()) << set.warnings.front();
     EXPECT_FALSE(set.fullScan);
     if (_spill.Active())
+    {
         EXPECT_TRUE(_spill.Spilled()) << "attributed from a spill file";
+    }
     const auto elite = std::find_if(set.changes.begin(), set.changes.end(), [](const FileChange& c) { return c.path == "/GAMES/ELITE.TRD"; });
     EXPECT_EQ(elite->sizeBefore, 5000u);
     EXPECT_EQ(elite->sizeAfter, 9000u);

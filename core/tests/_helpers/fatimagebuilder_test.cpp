@@ -157,7 +157,9 @@ TEST(FatImageBuilder, NeoGSCardsHoldTheirFilesAndValidLayouts)
 
         const FatImageLayout& layout = image->layout();
         if (spec.fat == 16)
+        {
             EXPECT_TRUE(layout.clusters >= 4085 && layout.clusters < 65525);
+        }
         else
             EXPECT_GE(layout.clusters, 65525u);
         EXPECT_EQ(layout.volumeStartSector, spec.mbr ? 2048u : 0u);
@@ -165,7 +167,9 @@ TEST(FatImageBuilder, NeoGSCardsHoldTheirFilesAndValidLayouts)
         EXPECT_EQ(img[bs + 510], 0x55);
         EXPECT_EQ(img[bs + 511], 0xAA);
         if (spec.mbr)
+        {
             EXPECT_EQ(img[450], spec.fat == 32 ? 0x0C : 0x06);
+        }
 
         ASSERT_EQ(spec.files.size(), 4u);
         EXPECT_EQ(readBack(img, "NEOGS   ROM"), spec.files[0].data);

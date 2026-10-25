@@ -595,7 +595,9 @@ void PlayAllFiveSources(const std::string& folder, const std::string& builtInSta
     for (size_t i = 0; i < std::size(kMsRows); i++)
     {
         if (kMsRows[i] == AudioSourceType::MultiSoundSsg2 || kMsRows[i] == AudioSourceType::MultiSoundFm2)
+        {
             EXPECT_LT(sound->device(kMsRows[i])->peak, 0.001f) << folder << " " << kMsRowNames[i];
+        }
         else
             EXPECT_GT(sound->device(kMsRows[i])->peak, 0.005f) << folder << " " << kMsRowNames[i];
     }

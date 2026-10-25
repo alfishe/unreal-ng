@@ -486,7 +486,9 @@ TEST_F(WD1793_Ports_Test, SectorRegisterWrittenDuringSeekIsUsedByTheRetriedRead)
         _fdc->portDeviceOutMethod(WD1793::PORT_5F, r.sec);  // #2F1B: OUT (#5F),A
         EXPECT_EQ(_fdc->getSectorRegister(), r.sec) << where << ": the sector register is latched even while busy";
         if (r.cyl == 1 && r.sec == 1)
+        {
             EXPECT_TRUE(busyAtSectorWrite) << "the step case must hit the busy controller";
+        }
 
         // #2F1B: READ SECTOR, INI loop at #3FE5 (INTRQ ends it before DRQ), up to 20 attempts
         std::vector<uint8_t> got;

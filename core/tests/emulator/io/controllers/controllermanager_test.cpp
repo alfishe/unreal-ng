@@ -450,7 +450,9 @@ TEST_F(ControllerManager_Test, Recording_JournalsPlugsAndConnectorState)
             EXPECT_EQ(_manager->At(Index("keyjoy.2")).device, RetroDeviceKind::None) << "not before the boundary";
         }
         if (step == 4)
+        {
             ASSERT_TRUE(_manager->Unplug(Index("keyjoy.2")).Ok());
+        }
         source->held = {{"keyjoy.1", masks[step]}};
         _emulator->RunNFrames(1);
         EXPECT_FALSE(_manager->HasPending()) << "landed at step " << step;

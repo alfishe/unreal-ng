@@ -60,7 +60,9 @@ TEST_F(PortDecoder_ATM450_Test, WriteGroupsAreDisjointOnA15A9)
                          (((port & 0x8202) == 0x8200) ? 1 : 0);  // AY group
 
         if ((port & 0x0002) == 0)
+        {
             ASSERT_EQ(hits, 1) << "port #" << std::hex << port << " must hit exactly one A1 = 0 group";
+        }
         else
             ASSERT_EQ(hits, 0) << "port #" << std::hex << port << " has A1 = 1";
     }
