@@ -866,9 +866,10 @@ void AutostartTape(IApiCaller& caller, const std::string& id, const std::string&
             auto report = [ok, typedStatus, loaded, done, typed = std::move(typed)](int, Json::Value) mutable {
                 if (ok)
                 {
-                    done(ToolResult::Ok(loaded + ", LOAD \"\" typed (" + typed.get("editor", "BASIC").asString() +
-                                            ")",
-                                        std::move(typed)));
+                    // Read the editor before the move: the order of evaluation of the arguments is unspecified (gcc
+                    // moves `typed` first, MSVC / clang last)
+                    const std::string editor = typed.get("editor", "BASIC").asString();
+                    done(ToolResult::Ok(loaded + ", LOAD \"\" typed (" + editor + ")", std::move(typed)));
                     return;
                 }
                 done(ToolResult::Error(loaded + "; autostart: LOAD \"\" was not typed (HTTP " +
