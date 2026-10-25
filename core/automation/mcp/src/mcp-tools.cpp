@@ -4775,7 +4775,8 @@ void RegisterJoystickInput(ToolRegistry& registry)
         "joystick_input",
         "Send Kempston joystick input to the emulator: press / release buttons, set the exact held set or state byte, tap "
         "for N frames, status (device byte, fitted / wired, host keys). Values are forwarded as-is; the WebAPI validates "
-        "names and ranges and warns when the machine does not decode the joystick.",
+        "names and ranges and warns when the machine has no Kempston interface (48K, 128K, +2, +2A, +3, ATM): the warning "
+        "names the slot card `kempston` and the emulator_manage slots_plug call that fits it.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();

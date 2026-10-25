@@ -1621,7 +1621,8 @@ inject, `run_frames N`, then `GET /joystick`.
 `button` is accepted as an alias of `buttons`. A successful POST returns `success`, `message`,
 an echo of the input (`buttons`, `frames`, `requested_state`), the resulting `state` object and,
 when the guest cannot see the buttons, a `warning`. The state object (also the body of the GET, plus
-`emulator_id`): `available`, `present`, `wired` (this machine's port decoder answers the joystick),
+`emulator_id`): `available`, `present`, `wired` (this machine answers the joystick: its board, or the slot card
+`kempston`), `fit` (when not wired: the plug command that fits the `kempston` card here; `""` when wired or nothing fits),
 `state` (the byte), `port_value` (what `IN #1F` returns now), `buttons` (a boolean per name),
 `pressed` (the names), `button_names`, `keys` (host key bindings), `pending_tap`
 (`{mask, frames_left}` or `null`).

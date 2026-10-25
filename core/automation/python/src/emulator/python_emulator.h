@@ -1080,6 +1080,7 @@ namespace PythonBindings
         d["available"] = state.available;
         d["present"] = state.present;
         d["wired"] = state.wired;
+        d["fit"] = state.fit;
         d["state"] = static_cast<int>(state.state);
         d["port_value"] = static_cast<int>(state.portValue);
         d["buttons"] = buttons;

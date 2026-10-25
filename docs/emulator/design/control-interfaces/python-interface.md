@@ -978,7 +978,7 @@ emu.joystick_button_names()             # ["up", "down", "left", "right", "fire"
 ```
 
 Every changing method returns the resulting **state dict**, with the keys of the WebAPI state object:
-`available`, `present`, `wired`, `state` (the byte), `port_value` (what `IN #1F` returns),
+`available`, `present`, `wired`, `fit` (`""` when wired, else how to fit the slot card `kempston`), `state` (the byte), `port_value` (what `IN #1F` returns),
 `buttons` (a bool per name), `pressed`, `button_names`, `keys`, `pending_tap` (`None` or
 `{'mask', 'frames_left'}`), plus `warning` when the guest cannot see the buttons.
 

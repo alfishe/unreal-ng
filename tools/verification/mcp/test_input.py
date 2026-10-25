@@ -46,5 +46,25 @@ def test_joystick(s):
     expect(r.is_error and 'buttons' in r.text, 'press needs buttons', r.text)
 
 
+def test_kempston_card_on_48k(s):
+    """Last: the plug restarts the machine. The 48K decodes no #1F; the answer names the card, plugging it wires the
+    stick, and BASIC's IN 31 reads it"""
+    r = s.call('joystick_input', {'action': 'status'})
+    expect('slots_plug slot=edge.1 card=kempston' in r.text, 'the unwired answer names the slot card', r.text)
+    s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'})
+    s.call('control_execution', {'action': 'resume'})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 150})
+    r = s.call('joystick_input', {'action': 'press', 'buttons': 'fire'})
+    expect('no Kempston joystick interface' not in r.text, 'wired after the plug', r.text)
+    s.call('control_execution', {'action': 'resume'})  # tokenized typing needs a running machine
+    s.call('type_input', {'action': 'type', 'text': 'PRINT IN 31', 'tokenized': True})
+    s.call('type_input', {'action': 'tap', 'key': 'enter'})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 150})
+    r = s.call('inspect_state', {'aspects': ['screen_ocr']})
+    lines = [line.strip() for line in (r.structured or {}).get('screen_ocr', {}).get('lines', []) if line.strip()]
+    expect(lines[:1] == ['16'], 'IN 31 reads fire (16)', lines)
+    s.call('joystick_input', {'action': 'release', 'buttons': 'fire'})
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

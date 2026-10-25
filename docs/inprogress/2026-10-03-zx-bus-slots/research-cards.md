@@ -768,6 +768,15 @@ Read only; D0-D4 = right, left, down, up, fire, active high; D5-D7 = 0 in MAME /
 - **Functions:** `kempston-joystick`. **Conflicts:** Beta `#1F` (and `#5F` for A5-only) in DOS unless gated;
   Multiface 1 (`#1F`); Kempston mouse (`#DF`: A5 = 0, A0 = 1 is inside A5- / A0-only decodes); PoS TurboSound `#1F`;
   no conflict with the ULA `#FE` (A5 = 1). SounDrive `#1F` is write-only (no clash).
+- **Built (2026-10-24):** card `kempston` on the Sinclair edge (`slots/cards/kempston/kempstoncard.{h,cpp}`) for the
+  machines without a board decode (48K, 128K, +2, +2A, +3; ATM Turbo 2 / 2+ only `unrealistic`). Option `decode` =
+  `a7a6a5` (default: issue 4, 1989, zxsp `KempstonJoy.cpp`: a 74LS138 on A7-A5 = `000` with /RD and /M1 = 1, D0-D4
+  through a 74LS366, D5 the sixth driver tied low, D6 / D7 diodes to 0; MAME `kempjoy` the same) or `a5` (the early
+  boards: Sinc Times 1988 "only one address line (A5) is decoded"; their INTA leak is the `kempston` connector's
+  `im2-leak` option). Claims gated `NonDos`: MAME `beta128.cpp` passes /IORQ to the through connector only with the
+  TR-DOS ROM paged out, so behind a Beta 128 the interface never sees a DOS cycle (as the Pentagon built-in). The stick
+  is the machine's joystick device; the card's TTD blob (type 69) only records that it was fitted. The Next's machine
+  entry now lists its board Kempston (`#1F` / `#37`), so the card is refused there.
 
 ### 8.2 Kempston mouse
 

@@ -99,7 +99,7 @@ public:
     uint8_t TtdClockUnits() const override { return 4; }
 
     /// #1F outside DOS answers Joystick::Read()
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     /// #xxEF belongs to the AVR (its 16550 and ZiFi): a ZX-WiFi card does not fit
     bool ReservesLowByte(uint8_t lowByte) const override { return lowByte == 0xEF; }

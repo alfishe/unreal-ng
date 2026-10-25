@@ -3668,15 +3668,17 @@ N-th emulated frame. (The Kempston mouse queues the same way.)
 | `joystick set` | | `<state\|buttons\|none>` | Exactly these buttons are held: a byte (`0x18`, `24`), a list, or `none`. Cancels a pending tap. | ✅ Implemented |
 | `joystick tap` | | `<buttons> [frames]` | Press, hold `frames` (default 2), release on its own. A new tap replaces a pending one. | ✅ Implemented |
 | `joystick clear` | `joystick release_all` | — | Release everything, cancel a pending tap. | ✅ Implemented |
-| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port, host key bindings, pending tap. | ✅ Implemented |
+| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port (and, when not, how to fit the `kempston` card), host key bindings, pending tap. | ✅ Implemented |
 | `joystick list` | | — | The button names and their bits. | ✅ Implemented |
 | `joystick help` | | — | Subcommand help. | ✅ Implemented |
 
 **Warnings (the command still succeeds):**
 - *Not fitted* (`[INPUT] Joystick=NONE`, or feature `kempstonjoystick` off): `joystick not
   present: the guest reads 0x00 on the joystick port`.
-- *Machine does not decode the port* (Pentagon, 48K, ...): `this machine does not decode a
-  Kempston joystick port: the guest cannot see the buttons`.
+- *No Kempston interface on the machine* (48K, 128K, +2, +2A, +3, ATM Turbo 2 / 2+ without the slot card
+  `kempston`): `no Kempston joystick interface on this machine: the guest cannot see the buttons; fit the `kempston`
+  card: slots plug edge.1 kempston (...)` - the plug command for this machine
+  ([slots.md](../../../features/slots.md#the-kempston-joystick-interface)); `joystick status` adds it as `Fit:`.
 
 **Errors:** no joystick device: `Joystick device not available`; TTD replay in progress
 (the journal owns the input): `TTD replay in progress (recorded input drives the machine); live
