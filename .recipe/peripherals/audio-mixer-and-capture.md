@@ -59,6 +59,7 @@ audio_mixer {"action":"set","source":"ay1","muted":true}
 audio_mixer {"action":"set","source":"covox","gain_db":-6}
 audio_mixer {"action":"set","source":"ay1.b","solo":true}          # only channel B of AY 1
 audio_mixer {"action":"set","source":"master","muted":false}
+audio_mixer {"action":"mute"}                                      # the master (or "source"); "unmute" undoes it
 audio_mixer {"action":"get","source":"moonsound_fm"}               # a row and its channels (peaks)
 audio_mixer {"action":"levels"}                                     # every row's and channel's level and mute / solo
 audio_mixer {"action":"set_setting","name":"ay_stereo","value":"acb"}

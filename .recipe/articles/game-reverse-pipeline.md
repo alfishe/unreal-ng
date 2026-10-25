@@ -321,9 +321,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/symbols/import" -H 'Content-Type: applic
   .../control/session` does not show it): send it on the host script's next calls, or end it with `DELETE
   .../control/session` and that header. Better: take control explicitly once (`take_control`) and send its id from
   the host scripts too, or drive a phase from one plane.
-- **Pause, load, poke, run**: `load_software` on a running machine starts the snapshot at once. To poke before its
-  first frame (lives, a cavern number, a cheat flag), `control_execution pause`, load, `memory_access write`
-  (`address` + `hex`), then `resume` / `run_frames`.
+- **Load paused, poke, run**: `load_software` on a running machine starts the program at once. To poke before its
+  first frame (lives, a cavern number, a cheat flag), `load_software {"path":...,"paused":true}`, then
+  `memory_access write` (`address` + `hex`), then `resume` / `run_frames`.
 - **Hold keys for the program's loop, not for a frame**: a game whose main loop takes several frames misses a 2-4
   frame press. Measure the loop (frames between two passes of its input routine) and hold a key at least that long;
   Manic Miner wanted 10 frames for movement and ~40 for ENTER at the title.

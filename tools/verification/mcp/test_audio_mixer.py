@@ -55,6 +55,16 @@ def test_a_row_shows_its_channels_and_a_channel_takes_solo(s):
     expect(r.is_error and 'a, b, c' in r.text, 'an unknown channel names the ones there are', r.text)
 
 
+def test_mute_and_unmute_shortcuts(s):
+    r = s.call('audio_mixer', {'action': 'unmute'})
+    expect(not r.is_error, 'unmute the master', r.text)
+    r = s.call('audio_mixer')
+    expect('master: muted' not in r.text, 'unmute reached the master', r.text)
+    r = s.call('audio_mixer', {'action': 'mute'})
+    r = s.call('audio_mixer')
+    expect('master: muted' in r.text, 'mute without a source mutes the master', r.text)
+
+
 def test_levels_and_settings(s):
     r = s.call('audio_mixer', {'action': 'levels'})
     expect('fm1.1' in r.text or 'ay1.c' in r.text, 'every channel in the levels', r.text)

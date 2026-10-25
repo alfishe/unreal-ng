@@ -940,6 +940,11 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "Snapshots only: do not load, report what loading would do on this machine (the file's contents - format, "
         "banks, CPU, paging, extensions - and the plan: who would commit it, or the refusal and its reason). Nothing "
         "is written";
+    schema["properties"]["paused"]["type"] = "boolean";
+    schema["properties"]["paused"]["default"] = false;
+    schema["properties"]["paused"]["description"] =
+        "Pause the machine before loading, so the program has not run a single instruction when the call "
+        "returns: poke it (memory_access write), set breakpoints or start coverage, then resume / run_frames";
     schema["required"].append("path");
 
     registry.Register(
@@ -985,6 +990,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             bool play = args.isMember("play") && args["play"].asBool();
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
             const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
+            const bool pausedFirst = args.isMember("paused") && args["paused"].asBool();
             std::string commit = args.isMember("commit") && args["commit"].isString() ? args["commit"].asString() : "";
             // A policy name is an identifier: it goes into a query string as is
             if (commit.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos)
@@ -1001,7 +1007,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -1009,122 +1015,139 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                     return;
                 }
                 const std::string& id = idOrError;
+                // paused: the pause lands first, so the load leaves a machine that has not run the program yet
+                auto load = [=, &caller]() {
 
-                // Build headers for raw upload
-                std::map<std::string, std::string> headers;
-                headers["X-Filename"] = filename;
-                if (autostart && isDisk)
-                {
-                    headers["X-Autostart"] = "true";
-                }
+                    // Build headers for raw upload
+                    std::map<std::string, std::string> headers;
+                    headers["X-Filename"] = filename;
+                    if (autostart && isDisk)
+                    {
+                        headers["X-Autostart"] = "true";
+                    }
 
-                // An RZX recording plays on the model it needs (the model
-                // switches when this machine is another one: a new target id)
-                if (ext == "rzx")
-                {
+                    // An RZX recording plays on the model it needs (the model
+                    // switches when this machine is another one: a new target id)
+                    if (ext == "rzx")
+                    {
+                        if (isLocalFile)
+                        {
+                            ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                                           "Playing RZX " + filename + " (uploaded) from " + id, done);
+                        }
+                        else
+                        {
+                            Json::Value body;
+                            body["path"] = path;
+                            ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
+                                        done);
+                        }
+                        return;
+                    }
+
+                    if (isSnapshot)
+                    {
+                        // inspect = what a load would do (nothing written); the commit choice rides on a query for an upload
+                        const std::string action = inspect ? "/snapshot/inspect" : "/snapshot/load";
+                        const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
+                        if (isLocalFile)
+                        {
+                            const std::string endpoint =
+                                Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
+                            ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
+                                           verb + filename + " (uploaded) on " + id, done);
+                        }
+                        else
+                        {
+                            Json::Value body;
+                            body["path"] = path;
+                            if (!commit.empty())
+                                body["commit"] = commit;
+                            ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
+                        }
+                        return;
+                    }
+
+                    if (isTape)
+                    {
+                        auto loadDone = [&caller, id, path, filename, play, autostart, done, isLocalFile](int status, Json::Value response) {
+                            if (status < 200 || status >= 300)
+                            {
+                                done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
+                                                       DescribeErrorBody(response)));
+                                return;
+                            }
+                            std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
+                            if (!play && !autostart)
+                            {
+                                done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
+                                return;
+                            }
+                            const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
+                            if (!autostart)
+                            {
+                                ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
+                                return;
+                            }
+                            // Autostart plays the tape as well: LOAD "" waits for it
+                            caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
+                                        [&caller, id, played, done](int playStatus, Json::Value playBody) {
+                                            if (playStatus < 200 || playStatus >= 300)
+                                            {
+                                                done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
+                                                                       std::to_string(playStatus) + "): " +
+                                                                       DescribeErrorBody(playBody)));
+                                                return;
+                                            }
+                                            AutostartTape(caller, id, played, done);
+                                        });
+                        };
+
+                        if (isLocalFile)
+                        {
+                            caller.CallRaw("POST", Endpoint(id, "/tape/load"), *fileContent, headers, loadDone);
+                        }
+                        else
+                        {
+                            Json::Value body;
+                            body["path"] = path;
+                            caller.Call("POST", Endpoint(id, "/tape/load"), &body, loadDone);
+                        }
+                        return;
+                    }
+
+                    // Disk
                     if (isLocalFile)
                     {
-                        ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
-                                       "Playing RZX " + filename + " (uploaded) from " + id, done);
+                        ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
+                                       "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
                     }
                     else
                     {
                         Json::Value body;
                         body["path"] = path;
-                        ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
-                                    done);
+                        if (autostart)
+                        {
+                            body["autostart"] = true;
+                        }
+                        ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
+                                    "Inserted disk " + path + " into drive " + drive + " of " + id, done);
                     }
+                };
+                if (!pausedFirst)
+                {
+                    load();
                     return;
                 }
-
-                if (isSnapshot)
-                {
-                    // inspect = what a load would do (nothing written); the commit choice rides on a query for an upload
-                    const std::string action = inspect ? "/snapshot/inspect" : "/snapshot/load";
-                    const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
-                    if (isLocalFile)
+                caller.Call("POST", Endpoint(id, "/pause"), nullptr, [load, done](int status, Json::Value response) {
+                    if (status < 200 || status >= 300)
                     {
-                        const std::string endpoint =
-                            Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
-                        ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
-                                       verb + filename + " (uploaded) on " + id, done);
+                        done(ToolResult::Error("Pause before the load failed (HTTP " + std::to_string(status) + "): " +
+                                               DescribeErrorBody(response)));
+                        return;
                     }
-                    else
-                    {
-                        Json::Value body;
-                        body["path"] = path;
-                        if (!commit.empty())
-                            body["commit"] = commit;
-                        ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
-                    }
-                    return;
-                }
-
-                if (isTape)
-                {
-                    auto loadDone = [&caller, id, path, filename, play, autostart, done, isLocalFile](int status, Json::Value response) {
-                        if (status < 200 || status >= 300)
-                        {
-                            done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
-                                                   DescribeErrorBody(response)));
-                            return;
-                        }
-                        std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
-                        if (!play && !autostart)
-                        {
-                            done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
-                            return;
-                        }
-                        const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
-                        if (!autostart)
-                        {
-                            ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
-                            return;
-                        }
-                        // Autostart plays the tape as well: LOAD "" waits for it
-                        caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
-                                    [&caller, id, played, done](int playStatus, Json::Value playBody) {
-                                        if (playStatus < 200 || playStatus >= 300)
-                                        {
-                                            done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
-                                                                   std::to_string(playStatus) + "): " +
-                                                                   DescribeErrorBody(playBody)));
-                                            return;
-                                        }
-                                        AutostartTape(caller, id, played, done);
-                                    });
-                    };
-
-                    if (isLocalFile)
-                    {
-                        caller.CallRaw("POST", Endpoint(id, "/tape/load"), *fileContent, headers, loadDone);
-                    }
-                    else
-                    {
-                        Json::Value body;
-                        body["path"] = path;
-                        caller.Call("POST", Endpoint(id, "/tape/load"), &body, loadDone);
-                    }
-                    return;
-                }
-
-                // Disk
-                if (isLocalFile)
-                {
-                    ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
-                                   "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
-                }
-                else
-                {
-                    Json::Value body;
-                    body["path"] = path;
-                    if (autostart)
-                    {
-                        body["autostart"] = true;
-                    }
-                    ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
-                                "Inserted disk " + path + " into drive " + drive + " of " + id, done);
-                }
+                    load();
+                });
             });
         });
 }
@@ -4731,6 +4754,9 @@ void RegisterJoystickInput(ToolRegistry& registry)
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
+            // 'get' reads like the other tools' read action: the status
+            if (action == "get")
+                action = "status";
 
             if (args.isMember("connector"))
             {
@@ -4793,7 +4819,7 @@ void RegisterJoystickInput(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "'"));
+            done(ToolResult::Error("Unknown action '" + action + "' (press, release, set, tap, status)"));
         });
 }
 

@@ -39,6 +39,8 @@ def test_joystick(s):
     s.call('joystick_input', {'action': 'press', 'buttons': 'up+fire'})
     r = s.call('joystick_input', {'action': 'status'})
     expect('=' in r.text, 'joystick fields in the text', r.text)
+    r = s.call('joystick_input', {'action': 'get'})
+    expect(not r.is_error and '=' in r.text, 'get reads the status too', r.text)
     s.call('joystick_input', {'action': 'release', 'buttons': 'up+fire'})
     r = s.call('joystick_input', {'action': 'press'}, ok=False)
     expect(r.is_error and 'buttons' in r.text, 'press needs buttons', r.text)
