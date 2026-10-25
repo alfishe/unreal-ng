@@ -316,9 +316,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/symbols/import" -H 'Content-Type: applic
   ([joystick.md](../input/joystick.md)). Use the program's keys there.
 - **One plane per phase, or an explicit session**: a WebAPI call that changes the machine opens an implicit control
   session (a 15 s lease), and MCP run calls in that window answer 409 `held_by_other` ("Run control is held by
-  webapi (...)"), and the other way round. Its id is not handed out, so it cannot be released: drive a phase from one
-  plane, or take control explicitly (`take_control`) and send the returned id in `X-Unreal-Session` from the host
-  scripts too.
+  webapi (...)"), and the other way round: one surface holds run control at a time, by design. The implicit
+  session's id comes back in that reply (header `X-Unreal-Session`, JSON `automation_session.id`; `GET
+  .../control/session` does not show it): send it on the host script's next calls, or end it with `DELETE
+  .../control/session` and that header. Better: take control explicitly once (`take_control`) and send its id from
+  the host scripts too, or drive a phase from one plane.
 - **Pause, load, poke, run**: `load_software` on a running machine starts the snapshot at once. To poke before its
   first frame (lives, a cavern number, a cheat flag), `control_execution pause`, load, `memory_access write`
   (`address` + `hex`), then `resume` / `run_frames`.
