@@ -537,9 +537,10 @@ GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette f
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/execution     Execution arbiter: phase, intent and who set it, main loop, the command holding the CPU, queue, claim, counters, driver_violations
-POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); 409 held_by_other / revoked_cooldown (retry: false)
-GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from), since when, clients in a re-take cooldown
-DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session
+POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); takes over another client's implicit session (took_over names it), never an explicit one; 409 held_by_other {holder} / revoked_cooldown (retry: false)
+GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from, implicit, lease_seconds_left, holder), since when, clients in a re-take cooldown; yours, and session (the id) only for the asker's own implicit session
+DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session; without it (or with one that holds nothing) the asker's own implicit session; released: false + message (who holds it) otherwise
+     (a change refused by the automation gate: 409 held_by_other {message: who holds it and how to resolve it, holder: {surface, client, peer, implicit, lease_seconds_left}}; an implicit holder is taken over by an explicit take; a session header that does not hold the instance is no pass, the gate applies)
      (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
      Companion clients (a paired device acting as the user's hands, docs/inprogress/2026-10-16-companion-client/protocol.md):
      with Authorization: Bearer <token> a change opens no session (no remote control at the GUI, no lock); any action

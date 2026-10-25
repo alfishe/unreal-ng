@@ -314,13 +314,14 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/symbols/import" -H 'Content-Type: applic
 - **The Kempston joystick is not decoded everywhere**: 48K, 128K, +2, +2A, +3, ATM450 and ATM710 accept
   `joystick_input` and warn; on a Pentagon `#1F` is the joystick only outside TR-DOS
   ([joystick.md](../input/joystick.md)). Use the program's keys there.
-- **One plane per phase, or an explicit session**: a WebAPI call that changes the machine opens an implicit control
-  session (a 15 s lease), and MCP run calls in that window answer 409 `held_by_other` ("Run control is held by
-  webapi (...)"), and the other way round: one surface holds run control at a time, by design. The implicit
-  session's id comes back in that reply (header `X-Unreal-Session`, JSON `automation_session.id`; `GET
-  .../control/session` does not show it): send it on the host script's next calls, or end it with `DELETE
-  .../control/session` and that header. Better: take control explicitly once (`take_control`) and send its id from
-  the host scripts too, or drive a phase from one plane.
+- **Host script and MCP on one machine: take control once, share the id**: one session holds run control at a
+  time. A WebAPI call that changes the machine without a session opens an implicit one (a 15 s lease), and an MCP
+  run call then answers 409 `held_by_other`, and the other way round; the refusal names the holder, whether it is
+  implicit and the seconds left of its lease. Do not wait it out: `control_execution take_control` takes over
+  another client's implicit session (never an explicit one), and its reply carries the session id; send it from the
+  host script as `X-Unreal-Session` (take it on the MCP side: the MCP server cannot adopt a script's id).
+  `release_control` (or `DELETE .../control/session` without a header) ends your own implicit session; `GET
+  .../control/session` shows its id to the client that holds it.
 - **Pause, load, poke, run**: `load_software` on a running machine starts the snapshot at once. To poke before its
   first frame (lives, a cavern number, a cheat flag), `control_execution pause`, load, `memory_access write`
   (`address` + `hex`), then `resume` / `run_frames`.

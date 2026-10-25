@@ -154,13 +154,14 @@ bool EmulatorContext::TakeRunControlAs(const unreal::UUID& owner, const std::str
 
     bool taken = false;
     bool refusedCooldown = false;
+    std::string supersededLabel, supersededClient, supersededOwner;
     {
         std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
 
         // The user took control back from this client a short while ago: it does not take it again by itself
         // (owner decision 2026-10-09: clients do not rush back; the user allows it at the GUI or the cooldown ends)
         const std::string key = ClientKey(surfaceLabel, client);
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = RunControlNow();
         auto& cooldowns = _runControlClaim.cooldowns;
         cooldowns.erase(std::remove_if(cooldowns.begin(), cooldowns.end(),
                                        [&](const auto& c) { return c.second <= now; }),
@@ -176,6 +177,24 @@ bool EmulatorContext::TakeRunControlAs(const unreal::UUID& owner, const std::str
 
         if (!refusedCooldown)
         {
+            RunControlClaim& c = _runControlClaim;
+            // An explicit take takes over another client's implicit session (owner 2026-10-24: an implicit session
+            // makes an un-sessioned client visible and revocable, it reserves nothing; the gate's advice is "take
+            // control explicitly"). A command of it under way finishes; its next change meets the explicit holder
+            if (!c.owner.isNil() && c.owner != owner && !c.implicitIdentity.empty() && implicitIdentity.empty())
+            {
+                supersededLabel = c.surfaceLabel;
+                supersededClient = c.client;
+                supersededOwner = c.owner.toString();
+                if (pEmulator)
+                    pEmulator->GetArbiter().ReleaseClaim(
+                        execution::Requester{execution::OriginFromName(supersededLabel), supersededOwner});
+                c.owner.clear();
+                c.surfaceLabel.clear();
+                c.client.clear();
+                c.peer.clear();
+                c.implicitIdentity.clear();
+            }
             const unreal::UUID& current = _runControlClaim.owner;
             if (current.isNil())
             {
@@ -206,9 +225,16 @@ bool EmulatorContext::TakeRunControlAs(const unreal::UUID& owner, const std::str
             }
             else if (errorReason)
             {
-                *errorReason = "Run-control claim held by another surface ('" + _runControlClaim.surfaceLabel + "')";
+                *errorReason = DescribeHolder(RunControlStateLocked());
             }
         }
+    }
+    if (!supersededOwner.empty())
+    {
+        LOGINFO("Run control: %s %s took over the implicit session of %s %s", surfaceLabel.c_str(), client.c_str(),
+                supersededLabel.c_str(), supersededClient.c_str());
+        PostRunControlChanged("superseded", supersededLabel, supersededClient, supersededOwner,
+                              surfaceLabel + (client.empty() ? std::string() : " " + client));
     }
     if (taken)
         PostRunControlChanged("taken", surfaceLabel, client, owner.toString());
@@ -256,7 +282,7 @@ bool EmulatorContext::RevokeRunControl(const std::string& by)
         _runControlClaim.revokedOwners.push_back(ownerText);
         _runControlClaim.cooldowns.emplace_back(
             ClientKey(label, client),
-            std::chrono::steady_clock::now() + std::chrono::seconds(_runControlClaim.retakeCooldownSeconds));
+            RunControlNow() + std::chrono::seconds(_runControlClaim.retakeCooldownSeconds));
         _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
         _runControlClaim.client.clear();
@@ -282,7 +308,7 @@ void EmulatorContext::TouchRunControl(const unreal::UUID& owner)
 {
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     if (_runControlClaim.owner == owner)
-        _runControlClaim.lastActivity = std::chrono::steady_clock::now();
+        _runControlClaim.lastActivity = RunControlNow();
 }
 
 void EmulatorContext::AllowRunControlRetake(const std::string& clientKey)
@@ -314,7 +340,7 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
     {
         std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
         RunControlClaim& c = _runControlClaim;
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = RunControlNow();
         if (!c.owner.isNil())
         {
             // Its own implicit session goes on; anybody else's session refuses it
@@ -326,8 +352,8 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
                 return result;
             }
             result.error = "held_by_other";
-            result.message = "Run control is held by " + c.surfaceLabel + (c.client.empty() ? "" : " (" + c.client + ")") +
-                             ": wait until it is free, or ask the user";
+            result.holder = RunControlStateLocked();
+            result.message = DescribeHolder(result.holder);
             return result;
         }
         // The user took control back from this client a short while ago: it stops, it does not drive on implicitly
@@ -347,6 +373,12 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
     {
         result.error = reason.rfind("revoked_cooldown", 0) == 0 ? "revoked_by_user" : "held_by_other";
         result.message = reason;
+        if (result.error == "held_by_other")
+        {
+            std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+            result.holder = RunControlStateLocked();
+            result.message = DescribeHolder(result.holder);
+        }
         return result;
     }
     LOGINFO("Run control taken implicitly by %s %s (it drove the machine without taking control)", surfaceLabel.c_str(),
@@ -357,17 +389,62 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
     return result;
 }
 
-void EmulatorContext::ReleaseImplicitRunControl(const std::string& identity)
+bool EmulatorContext::ReleaseImplicitRunControl(const std::string& identity)
 {
-    unreal::UUID owner;
-    {
-        std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
-        if (_runControlClaim.owner.isNil() || _runControlClaim.implicitIdentity.empty() ||
-            _runControlClaim.implicitIdentity != identity)
-            return;
-        owner = _runControlClaim.owner;
-    }
+    const unreal::UUID owner = ImplicitRunControlOwner(identity);
+    if (owner.isNil())
+        return false;
     ReleaseRunControl(owner);
+    return true;
+}
+
+unreal::UUID EmulatorContext::ImplicitRunControlOwner(const std::string& identity) const
+{
+    ExpireIdleRunControl();
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    if (_runControlClaim.owner.isNil() || _runControlClaim.implicitIdentity.empty() ||
+        _runControlClaim.implicitIdentity != identity)
+        return unreal::UUID();
+    return _runControlClaim.owner;
+}
+
+void EmulatorContext::SetRunControlClock(std::function<std::chrono::steady_clock::time_point()> clock)
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    _runControlClaim.clock = std::move(clock);
+}
+
+std::chrono::steady_clock::time_point EmulatorContext::RunControlNow() const
+{
+    return _runControlClaim.clock ? _runControlClaim.clock() : std::chrono::steady_clock::now();
+}
+
+std::string EmulatorContext::DescribeHolder(const RunControlState& holder)
+{
+    if (!holder.claimed)
+        return "Run control is free";
+    std::string text = "Run control is held by " + holder.surfaceLabel +
+                       (holder.client.empty() ? std::string() : " (" + holder.client + ")") +
+                       (holder.peer.empty() ? std::string() : " from " + holder.peer);
+    const std::string leaseLeft =
+        holder.leaseMs ? std::to_string((holder.leaseLeftMs + 999) / 1000) + " s" : std::string();
+    if (holder.implicit)
+    {
+        text += " in an implicit session (opened because it changed the machine without taking control";
+        text += leaseLeft.empty() ? std::string(")") : "; it ends after " + leaseLeft + " more without a call of it)";
+        text += ". Take control explicitly - POST /control/session, MCP control_execution take_control, CLI session "
+                "take, take_control() - which takes over an implicit session; then send the session id from every "
+                "client that drives this emulator (header X-Unreal-Session). Or wait until it ends";
+    }
+    else
+    {
+        text += " in an explicit session";
+        if (!leaseLeft.empty())
+            text += " (it ends after " + leaseLeft + " more without a call of it)";
+        text += ". Wait until it releases control, use its session id if it is yours, or ask the user (Take back "
+                "control at the GUI)";
+    }
+    return text;
 }
 
 void EmulatorContext::ExpireIdleRunControl() const
@@ -376,7 +453,7 @@ void EmulatorContext::ExpireIdleRunControl() const
     {
         std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
         const RunControlClaim& c = _runControlClaim;
-        if (c.owner.isNil() || c.lease.count() == 0 || std::chrono::steady_clock::now() - c.lastActivity < c.lease)
+        if (c.owner.isNil() || c.lease.count() == 0 || RunControlNow() - c.lastActivity < c.lease)
             return;
         ownerText = c.owner.toString();
         label = c.surfaceLabel;
@@ -421,7 +498,11 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
 {
     ExpireIdleRunControl();
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    return RunControlStateLocked();
+}
 
+EmulatorContext::RunControlState EmulatorContext::RunControlStateLocked() const
+{
     RunControlState state;
     const bool claimed = !_runControlClaim.owner.isNil();
     state.claimed = claimed;
@@ -434,8 +515,14 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
         state.sinceMs = _runControlClaim.sinceMs;
         state.leaseMs = static_cast<uint32_t>(_runControlClaim.lease.count());
         state.implicit = !_runControlClaim.implicitIdentity.empty();
+        if (_runControlClaim.lease.count() > 0)
+        {
+            const auto left = _runControlClaim.lease - std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                           RunControlNow() - _runControlClaim.lastActivity);
+            state.leaseLeftMs = left.count() > 0 ? static_cast<uint32_t>(left.count()) : 0u;
+        }
     }
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = RunControlNow();
     for (const auto& c : _runControlClaim.cooldowns)
         if (c.second > now)
             state.cooldowns.emplace_back(c.first,
