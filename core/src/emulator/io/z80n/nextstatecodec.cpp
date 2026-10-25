@@ -31,10 +31,15 @@ constexpr uint8_t kImageVersion = 12;  // 12: + the membrane's extended keys; 11
 class Writer
 {
 public:
+    /// A padded type writes its undefined padding bytes: the image (and its compressed size) changes from build to build
+    template <typename T>
+    static constexpr bool kNoPadding = std::has_unique_object_representations_v<T> || std::is_floating_point_v<T>;
+
     template <typename T>
     void Put(const T& value)
     {
         static_assert(std::is_trivially_copyable_v<T>, "plain values only");
+        static_assert(kNoPadding<T>, "a padded struct: write its fields");
         const auto* bytes = reinterpret_cast<const uint8_t*>(&value);
         _out.insert(_out.end(), bytes, bytes + sizeof(T));
     }
@@ -42,6 +47,7 @@ public:
     void PutArray(const T (&array)[N])
     {
         static_assert(std::is_trivially_copyable_v<T>, "plain values only");
+        static_assert(kNoPadding<T>, "a padded struct: write its fields");
         const auto* bytes = reinterpret_cast<const uint8_t*>(array);
         _out.insert(_out.end(), bytes, bytes + sizeof(array));
     }
@@ -49,6 +55,7 @@ public:
     void PutArray(const std::array<T, N>& array)
     {
         static_assert(std::is_trivially_copyable_v<T>, "plain values only");
+        static_assert(kNoPadding<T>, "a padded struct: write its fields");
         const auto* bytes = reinterpret_cast<const uint8_t*>(array.data());
         _out.insert(_out.end(), bytes, bytes + sizeof(T) * N);
     }
