@@ -17,7 +17,8 @@ it, so reloading the file keeps the edit, and switching `user` off shows the fil
 
 Formats: `formats` lists them. The current list has the unreal-ng map and `.l` formats, simple `.sym`, VICE, sjasm
 EQU, z88dk (DEFC, `.map`, `-g` / `-s`), sjasmplus `.sym` / `.sld` / `.lst`, pasmo, CSpect, IDA (IDC / Python),
-Ghidra, MAME and the lossless native `*.usym.json`.
+Ghidra, MAME, SkoolKit control (`skoolkit-ctl`, `.ctl`) and skool (`skoolkit-skool`, `.skool`) files
+([below](#skoolkit-control-and-skool-files)), and the lossless native `*.usym.json`.
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use [WebAPI](#webapi) inside host-side pipelines,
 > [CLI](#cli) on the telnet console, [Lua / Python](#lua--python) inside scripts. Every surface goes through one layer
@@ -101,7 +102,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 | Option | Verb | Meaning |
 |--------|------|---------|
 | `data`, `name` | import | The file itself as base64 instead of `path` (a client on another host); `name` gives its extension (the format) and the set `upload:<name>`. |
-| `format` | import, export | A codec id from `formats`. Import default: by the extension (`.map .sym .vice .s .asm .z88` as `symbols load` always did), unless detection is sure the content is another format (a z80asm `.map` goes to `z88dk-map`, an sjasmplus `--sym` `.sym` to `sjasmplus-sym`); other extensions: detected. Export default: by the extension. |
+| `format` | import, export | A codec id from `formats`. Import default: by the extension (`.map .sym .vice .s .asm .z88` as `symbols load` always did), unless detection is sure the content is another format (a z80asm `.map` goes to `z88dk-map`, an sjasmplus `--sym` `.sym` to `sjasmplus-sym`); other extensions (`.ctl`, `.skool`, ...): detected, the extension a hint. Export default: by the extension. |
 | `set` | import | Merge into this set (made when missing) instead of the file's own set. |
 | `space` | import | Records without a page of their own go here: `cpu:main` (default), `rom0`, `ram3`, `cache0`, `const`, `port`; another CPU's: `gs.rom0`. |
 | `base` | import | Added to every offset (decimal, `0x`, `#`, `$`, `h`). |
@@ -125,6 +126,47 @@ range and name checks, and duplicates inside the file (the first wins). Then the
 - Where labels of several pages share a CPU address (ROM 0 and ROM 1 at `#0000`), the address shows the label of the
   page mapped at that window now. A CPU-view label placed later wins over every page. With no label of the mapped
   page, the last placed label shows, as at every other address.
+
+## SkoolKit: control and skool files
+
+[SkoolKit](https://skoolkit.ca) disassemblies (and the zx-reaper harness, which keeps `re/game.ctl`, `re/ctl/*.ctl`
+and `re/skool/*.skool`) exchange labels, entry titles and the code / data split with the emulator through two codecs:
+
+| Codec | Reads | Writes |
+|-------|-------|--------|
+| `skoolkit-ctl` (`.ctl`) | block directives `c b t w g s u i` with their titles, `@ $HHHH label=NAME`, `@ $HHHH equ=NAME=VALUE`, sub-block (`B C S T W`) and `N` comments; hex `$HHHH` and decimal addresses | a control file for `sna2skool.py -c`: `c $HHHH Title` per block, `@ $HHHH label=NAME`, `N $HHHH comment` for a label inside a block, constants and ROM labels as `@ <first block> equ=NAME=$HHHH` |
+| `skoolkit-skool` (`.skool`) | entries: the title (the first comment paragraph), the block type of the first instruction (`c$6C00`, `b24576`), `@label=NAME` over an instruction, `@equ=NAME=VALUE` | a `head.skool`: `@start` and one `@equ=NAME=$HHHH` per label (a skool file needs the instructions; zx-reaper's `zxq.py equs --consolidate` turns the ones inside the disassembly into `@label` lines) |
+
+How a SkoolKit file maps onto symbols:
+
+- An entry (block) is a symbol at its address: kind `code` for `c`, `data` for the others, the size up to the next
+  block, the title as its comment (sna2skool's default titles such as `Routine at 6C00` are dropped). The block letter
+  is kept as the trait `skoolkit:<letter>`, so `t`, `w`, `s` ... come back as they were.
+- An entry without a label gets SkoolKit's default label `L<HHHH>` (trait `skoolkit:auto`). It shows in the
+  disassembler, but it is not written back as a label.
+- A label inside an entry (an entry point, a loop) is a symbol of the entry's kind with the instruction comment (in a
+  control file: the sub-block or `N` comment at its address).
+- `i` blocks are not symbols. They end the block before them, and the control file writes them back after a block read
+  with a size.
+- Dropped on import, with a diagnostic that counts them: `D` descriptions, `R` registers, `E` end comments, `M`, `L`,
+  `>` lines, the other ASM directives (`@start`, `@org`, `@isub`, ...), sub-block types and lengths, the instructions.
+- A control file holds one label per address: a second name there is skipped with a warning. Page symbols are written
+  at their CPU address (SkoolKit has no pages). The skool export writes no comments.
+
+```text
+manage_symbols {"action":"import","path":"/abs/game/re/game.ctl"}                    # blocks: code / data
+manage_symbols {"action":"import","path":"/abs/game/re/skool/6C00.skool"}             # labels and titles
+manage_symbols {"action":"export","path":"/abs/game/re/labels.ctl","from":"0x6000","to":"0xFFFF"}
+manage_symbols {"action":"export","path":"/abs/game/re/skool/head.skool","format":"skoolkit-skool","from":"0x6000"}
+```
+
+```bash
+sna2skool.py -H -c labels.ctl image.z80 > game.skool    # SkoolKit: our labels and titles in its disassembly
+```
+
+Export over the program's range (`from` / `to`). Without it every label of the machine (the ROM bundles, the system
+variables) becomes a block or an `@equ`. The coverage of a run goes to SkoolKit as a code execution map
+(`coverage_export`, [code-coverage-and-analyzers.md](code-coverage-and-analyzers.md#skoolkit-code-execution-map)).
 
 ## Labels from a source
 

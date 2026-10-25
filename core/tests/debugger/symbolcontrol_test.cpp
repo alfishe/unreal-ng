@@ -269,6 +269,43 @@ TEST_F(SymbolControl_Test, DetectRanksTheCodecs)
     EXPECT_FALSE(reply.body.find("candidates")->items.empty());
 }
 
+/// SkoolKit files (zx-reaper's control and skool files) by their extension: blocks and labels show as labels, and the
+/// labels go back out as a control file sna2skool.py reads, within the CPU range asked for
+TEST_F(SymbolControl_Test, SkoolkitControlAndSkoolFilesRoundTrip)
+{
+    const std::string ctl = Write("frag.ctl", "b $6A17 Unused code bytes\nB $6A17,7,7\nc $6A1E Leave the maze\n@ $6A1E label=ExitMaze\ni $6A22\n");
+    SymbolReply reply = Run("import", {{"path", ctl}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("format")->s, "skoolkit-ctl");
+    EXPECT_EQ(reply.body.find("records")->i, 2);
+    ASSERT_NE(_labels->GetLabelByName("ExitMaze"), nullptr);
+    EXPECT_EQ(_labels->GetLabelByName("ExitMaze")->address, 0x6A1E);
+    EXPECT_EQ(_labels->GetLabelByName("ExitMaze")->type, "code");
+    EXPECT_EQ(_labels->GetLabelByName("ExitMaze")->comment, "Leave the maze");
+    EXPECT_EQ(_labels->GetLabelByName("L6A17")->type, "data");
+
+    const std::string skool = Write("entry.skool", "@start\n@equ=SCREEN=$4000\n\n; Draw it\n@label=Draw\nc$7000 LD HL,$4000 ; screen\n@label=Draw_Loop\n"
+                                                   " $7003 INC HL\n $7004 JR $7003\n");
+    reply = Run("import", {{"path", skool}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("format")->s, "skoolkit-skool");
+    EXPECT_EQ(reply.body.find("records")->i, 3);
+    EXPECT_EQ(_labels->GetLabelByName("Draw_Loop")->address, 0x7003);
+    EXPECT_EQ(_labels->GetLabelByName("SCREEN")->address, 0x4000);
+
+    // Out as a control file over the game's range: the blocks, their labels, the ignored end; SCREEN outside the range
+    const std::string out = Scratch("out.ctl");
+    reply = Run("export", {{"path", out}, {"from", "0x6000"}, {"to", "0xFFFF"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("format")->s, "skoolkit-ctl");
+    std::ifstream in(out, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_NE(text.find("b $6A17 Unused code bytes\nc $6A1E Leave the maze\n@ $6A1E label=ExitMaze\ni $6A22\n"), std::string::npos) << text;
+    EXPECT_NE(text.find("c $7000 Draw it\n@ $7000 label=Draw\n@ $7003 label=Draw_Loop\n"), std::string::npos) << text;
+    EXPECT_EQ(text.find("L6A17"), std::string::npos) << text;
+    EXPECT_EQ(text.find("SCREEN"), std::string::npos) << text;
+}
+
 TEST_F(SymbolControl_Test, AliasesShowAsLabels)
 {
     // A merge gives a second name for a place as an alias: both names resolve, the first shows at the address

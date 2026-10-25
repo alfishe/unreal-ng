@@ -28,6 +28,7 @@ analyze_performance {"action":"coverage_start","clear":true}
 analyze_performance {"action":"coverage_read","max_ranges":512}
 analyze_performance {"action":"coverage_gaps","start":"0x4000","end":"0xFFFF","max_gaps":256}
 analyze_performance {"action":"coverage_stop"}      # recording off, data kept
+analyze_performance {"action":"coverage_export","path":"/abs/re/maps/run.map","start":"0x6000"}   # SkoolKit map
 analyze_performance {"action":"coverage_clear"}
 
 # --- analyzer framework: via invoke_api ---
@@ -45,7 +46,9 @@ invoke_api {"method":"DELETE","path":"/api/v1/emulator/{id}/analyzer/trdos/event
 `coverage_start` accepts `clear` (default `true`: the recorded set is reset
 first). `coverage_read` takes `max_ranges` (default 512, `0` = unlimited).
 `coverage_gaps` takes `start` / `end` as an integer or a `"0x…"` string
-(defaults `0x4000` / `0xFFFF`) and `max_gaps` (default 256). The tool forwards
+(defaults `0x4000` / `0xFFFF`) and `max_gaps` (default 256). `coverage_export`
+takes `format` (`skoolkit-map`, the default), `start` / `end` (default the whole
+64K), `path` and `merge` ([below](#skoolkit-code-execution-map)). The tool forwards
 to the same handlers as the WebAPI, so the response fields are identical.
 
 ## WebAPI
@@ -64,10 +67,45 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/coverage/clear" | jq .
 ```
 
 The coverage set is over the 64 KiB Z80 address space (`total_addresses` is
-always 65536), keyed by the address of each executed instruction byte as the
-CPU saw it - not by physical page. A bank-switched routine is therefore
+always 65536), keyed by the address of each executed instruction's first byte
+(its start, a prefix included: `DD CB d op` is one address) as the CPU saw it -
+not by physical page. A bank-switched routine is therefore
 counted at its Z80 address; for the true bank use the memory profiler in
 [memory-counters.md](memory-counters.md).
+
+### SkoolKit code execution map
+
+`POST coverage/export` writes the coverage as SkoolKit's code execution map: one
+`$HHHH` line per executed instruction start, ascending. It is the plain form that
+`sna2ctl.py -m` and `sna2skool.py -m` read (the one `rzxplay.py --map` and
+zx-reaper's `zxrun.py --map` write), so a run in the emulator classifies code and
+data for a SkoolKit disassembly. The analyzer records the PC at the start of every
+instruction, never the operand bytes, so the map needs no filtering.
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/coverage/export" -H 'Content-Type: application/json' \
+     -d '{"format":"skoolkit-map","start":"0x6000","end":"0xFFFF","path":"/abs/re/maps/run.map"}' | jq .
+#   → {"format":"skoolkit-map","start":"0x6000","end":"0xFFFF","count":5147,"path":...,"merged":0,...}
+curl -s -X POST "$BASE/emulator/$EMU_ID/coverage/export" -d '{"start":"0x6000"}' | jq -r .map | head -3
+#   $6000
+#   $6003
+#   $6006
+# then, in SkoolKit:
+sna2ctl.py -h -m run.map -s 0x6000 image.z80 > game.ctl
+```
+
+| Body member | Meaning |
+|:--|:--|
+| `format` | `skoolkit-map` (default; the only one) |
+| `start`, `end` | the window, integer or `"0x…"` / `"$…"` string (default `0x0000`-`0xFFFF`) |
+| `path` | write the file there (on the emulator's host); without it the map comes back in `map` |
+| `merge` | `true`: add the addresses of the map already at `path` (any `$HHHH` / `0xHHHH` line), so several runs build one map, as `zxrun.py --map` does |
+
+The same verb on the other planes: CLI `coverage export [<path>] [--start A]
+[--end B] [--merge]` (no path: the map is printed), Lua
+`coverage_export("/abs/run.map", {start = 0x6000})`, Python
+`emu.coverage_export("/abs/run.map", start=0x6000)`, MCP `coverage_export`,
+WebSocket `{"op":"call","method":"POST","path":"/api/v1/emulator/{id}/coverage/export","body":{...}}`.
 
 ### Analyzer framework: list, switch, read
 
@@ -116,6 +154,7 @@ number. Which index is which name: not confirmed here, read the header.
 | `coverage/start` | `success`, `active`, `recording`, `cleared` |
 | `coverage/stop` | `success`, `active`, `recording`, `executed_count`, `instructions` |
 | `coverage/clear` | `success`, `executed_count` (0) |
+| `coverage/export` | `success`, `format`, `start`, `end`, `count`; `map` (no `path`) or `path` + `merged` |
 | `GET coverage` | `active`, `recording`, `executed_count`, `total_addresses`, `coverage_percent`, `instructions`, `ranges[]` (`start` / `end` as `"0x%04X"`, `size`), `range_count`, `truncated` |
 | `coverage/gaps` | `window` (`start`, `end`, `size`), `executed_in_window`, `coverage_percent` (of the window), `gaps[]` (same shape as ranges), `gap_count`, `truncated` |
 | `GET analyzers` | `analyzers[]` of `id`, `enabled` |
@@ -174,6 +213,7 @@ modes was not checked here.
 |:--|:--|
 | Did my patched routine ever execute? | `coverage_start`, run, `coverage_read`; look for its range |
 | Which part of a loaded program is never reached (data, dead code)? | `coverage_gaps` over the program's window |
+| Code / data split for a SkoolKit disassembly | `coverage_export` to a map, then `sna2ctl.py -m` |
 | What did TR-DOS do during this command? | `trdos` analyzer session + `events` |
 | Is the loader driving the FDC itself? | `trdos` `raw/fdc` (PC of each FDC access); see [nonstandard-loader.md](nonstandard-loader.md) |
 | In which recorded frame did this address first run? | `ttd/coverage/scan` (`first_match`), then seek |

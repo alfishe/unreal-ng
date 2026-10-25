@@ -1829,6 +1829,8 @@ emu.coverage_start()                 # start clean; keep=True retains old data
 emu.coverage_stop()
 emu.coverage_status(max_ranges=100)  # executed count + first ranges
 emu.coverage_gaps()                  # executed ranges and gaps (start=0x4000, end=0xFFFF)
+emu.coverage_export()                # SkoolKit map: {success, format, start, end, count, map, message}
+emu.coverage_export("/abs/run.map", start=0x6000, merge=True)   # written: {..., path, merged}
 
 # AY register log
 emu.ay_log_start()                   # default capacity; capacity=8192 to override

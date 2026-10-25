@@ -1560,6 +1560,7 @@ ranges and gaps.
 | `coverage clear` | | Clear all collected coverage data. |
 | `coverage gaps [start] [end]` | `[<from> <to>]` | List executed ranges and unexecuted gaps within a window (default 0x0000-0xFFFF). |
 | `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
+| `coverage export [path]` | `[<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]` | Write the executed instruction starts as SkoolKit's code execution map (`$HHHH` lines, for `sna2ctl.py -m` / `sna2skool.py -m`); no path: the map is returned. `--merge` adds the addresses of the map already at the path. REST/WebSocket `POST /coverage/export`, MCP `analyze_performance` `coverage_export`, Lua / Python `coverage_export`. Recipe: [SkoolKit code execution map](../../../../.recipe/analysis/code-coverage-and-analyzers.md#skoolkit-code-execution-map). |
 
 #### 5.6 AY Register Log
 

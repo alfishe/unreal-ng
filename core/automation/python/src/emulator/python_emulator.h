@@ -80,6 +80,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
@@ -6411,6 +6412,38 @@ namespace PythonBindings
             return d;
         }, "Unexecuted address gaps within [start, end]",
            py::arg("start") = 0x4000, py::arg("end") = 0xFFFF, py::arg("max") = 100)
+
+        .def("coverage_export", [](Emulator& self, py::object path, const std::string& format, uint16_t start, uint16_t end,
+                                   bool merge) -> py::dict {
+            py::dict d;
+            coverageexport::Options options = {{"format", format}, {"start", std::to_string(start)},
+                                               {"end", std::to_string(end)}, {"merge", merge ? "true" : "false"}};
+            if (!path.is_none())
+                options["path"] = py::str(path).cast<std::string>();
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            const coverageexport::Result r =
+                coverageexport::Export(manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr, options);
+            if (!r.Ok()) { d["error"] = r.message; return d; }
+            d["success"] = true;
+            d["format"] = r.format;
+            d["start"] = r.start;
+            d["end"] = r.end;
+            d["count"] = r.count;
+            if (r.path.empty())
+                d["map"] = r.text;
+            else
+            {
+                d["path"] = r.path;
+                d["merged"] = r.merged;
+            }
+            d["message"] = r.message;
+            return d;
+        }, "The coverage as SkoolKit's code execution map (one $HHHH line per executed instruction start); written to "
+           "path, else returned in map",
+           py::arg("path") = py::none(), py::arg("format") = "skoolkit-map", py::arg("start") = 0, py::arg("end") = 0xFFFF,
+           py::arg("merge") = false)
 
         .def("ay_log_start", [](Emulator& self, unsigned capacity) -> py::dict {
             py::dict d;

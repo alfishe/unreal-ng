@@ -591,7 +591,7 @@ reference: [command-interface.md](./command-interface.md).
 | `video viewport [status \| full \| symmetric \| standard \| screen_only \| next \| prev]` | The Pentagon overscan frame's crop (overscan itself: `feature overscan on`); a crop other than `full` needs overscan on ([command-interface.md](./command-interface.md#overscan-viewport)). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
-| `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
+| `coverage <start\|stop\|clear\|gaps\|status\|export>` | Executed-address coverage analysis; `export [<path>] [--start A] [--end B] [--merge]` writes the SkoolKit code execution map. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
 | `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
 | `recent [kind] [--json]` / `recent clear [kind]` | The files opened lately, newest first, with each one's index (`kind`: all, snapshot, tape, disk, rzx, image, cd); open one with `action run media.open_recent index=N [kind=K]` ([media.md → Recent files](../../../features/media.md#recent-files)). |

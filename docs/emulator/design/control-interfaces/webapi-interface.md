@@ -662,6 +662,7 @@ POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
 POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
 GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
 GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/coverage/export     SkoolKit code execution map (body: {"format": "skoolkit-map", "start", "end", "path", "merge"})
 POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
 GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})

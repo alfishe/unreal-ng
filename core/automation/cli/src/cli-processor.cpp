@@ -812,6 +812,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  video temporal [status|list|off|<name>] - ZX DLSS de-flicker: status, algorithms, switch" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
+    oss << "  coverage export [<path>] [--start A] [--end B] [--merge] - SkoolKit code execution map ($HHHH lines)" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;

@@ -11,6 +11,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/debugmanager.h>
 #include <emulator/config.h>
 #include <emulator/cpu/z80.h>
@@ -729,7 +730,7 @@ void CLIProcessor::HandleFrameCost(const ClientSession& session, const std::vect
 }
 
 // HandleCoverage — code coverage analyzer control and queries. Mirrors
-// POST /coverage/{start,stop,clear} and GET /coverage[,/gaps].
+// POST /coverage/{start,stop,clear,export} and GET /coverage[,/gaps].
 void CLIProcessor::HandleCoverage(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -783,6 +784,36 @@ void CLIProcessor::HandleCoverage(const ClientSession& session, const std::vecto
     {
         coverage->clear();
         session.SendResponse("Coverage data cleared.");
+        return;
+    }
+
+    if (subcommand == "export")
+    {
+        // coverage export [<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]
+        coverageexport::Options options;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            const std::string& arg = args[i];
+            if (arg == "--merge")
+                options["merge"] = "true";
+            else if ((arg == "--format" || arg == "--start" || arg == "--end") && i + 1 < args.size())
+                options[arg.substr(2)] = args[++i];
+            else if (arg.rfind("--", 0) == 0 || options.count("path"))
+            {
+                session.SendResponse("Usage: coverage export [<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]");
+                return;
+            }
+            else
+                options["path"] = arg;
+        }
+        const coverageexport::Result result = coverageexport::Export(coverage, options);
+        if (!result.Ok())
+        {
+            session.SendResponse("Error: " + result.message);
+            return;
+        }
+        // Without a path the map itself (one $HHHH line per instruction start)
+        session.SendResponse(result.path.empty() ? result.text + result.message : result.message);
         return;
     }
 
