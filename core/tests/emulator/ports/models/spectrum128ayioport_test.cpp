@@ -115,7 +115,9 @@ TEST_P(Spectrum128AyIoPort_Test, TheSocketChipCarriesTheBoardWiring)
     ASSERT_NE(m.Wiring(), nullptr);
     EXPECT_EQ(m.Chip(0)->ioPortInput(), m.Wiring());
     if (SoundChip_AY8910* second = m.Chip(1))
+    {
         EXPECT_EQ(second->ioPortInput(), nullptr) << "the second chip's I/O pins are not on the socket";
+    }
 }
 
 /// Nothing plugged in: the 1489 receiver outputs are high and the 1488 driver inputs do not pull, so every pin is high

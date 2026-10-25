@@ -229,11 +229,11 @@ void DezogDebugAdapter::pause()
     if (!emulator)
         return;
 
+    // The break reports the PC: read it parked. A pause behind a command (a direct run) applies when it ends, and a
+    // pause somebody else asked for may not be confirmed yet
     if (!emulator->IsPaused())
-    {
-        // Pause() blocks until the Z80 thread has parked (WaitForPauseConfirmation)
-        emulator->Pause(sessionRequester(), "dezog");
-    }
+        emulator->PauseAndWait(sessionRequester(), std::chrono::seconds(5), "dezog");
+    emulator->WaitForPauseConfirmation();
 
     leaveHistory(*emulator);
 

@@ -107,8 +107,10 @@ inline std::string FormatStatus(const JoystickStateSnapshot& state, const std::s
     text += "  Port: IN #1F=" + Hex2(state.portValue) + newline;
     text += std::string("  Routing: ") +
             (state.wired ? "this machine decodes the Kempston joystick port"
-                         : "this machine does not decode a Kempston joystick port") +
+                         : "no Kempston joystick interface on this machine") +
             newline;
+    if (!state.wired && !state.fit.empty())
+        text += "  Fit: " + state.fit + newline;
     text += "  Host keys: " + (state.keys.empty() ? std::string("none") : state.keys) + newline;
     if (state.hasPads)
     {
@@ -153,7 +155,9 @@ inline std::string Help(const std::string& newline)
     text += "  status                   - Show state, port value, routing, host keys, pending tap" + newline;
     text += "  list                     - List the button names" + newline + newline;
     text += "Kempston joystick: active-high byte read at IN #1F (right=1 left=2 down=4 up=8 fire=0x10)." + newline;
-    text += "Only machines that decode the port (ATM3, Scorpion, TS-Conf) let the guest see it; others get a warning." + newline;
+    text += "Only machines that decode the port (Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next) let the guest see it;" + newline;
+    text += "others (48K, 128K, +2, +2A, +3, ATM Turbo 2 / 2+) need the slot card 'kempston' ('slots plug edge.next kempston');" + newline;
+    text += "without it the input is accepted with a warning that says how to fit it." + newline;
     text += "For reproducible results: pause, inject, then 'run_frames N'." + newline + newline;
     text += "Examples:" + newline;
     text += "  joystick press up+fire   - Hold up and fire" + newline;

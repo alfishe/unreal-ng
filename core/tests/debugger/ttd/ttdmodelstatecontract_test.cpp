@@ -375,7 +375,9 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
         {
             for (const SlotManager::Slot& entry : context->pSlotManager->Current().entries)
                 if (entry.entry.slot == slot)
+                {
                     EXPECT_FALSE(entry.entry.disabledReason.empty());
+                }
             continue;
         }
         fitted.push_back(model);

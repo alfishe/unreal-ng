@@ -408,7 +408,9 @@ class Emulator:
     def take_control(self, client: str = "python") -> None:
         """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
         control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control
-        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown)"""
+        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown).
+        Takes over another client's implicit session (a WebAPI or MCP client that drove without one), never an
+        explicit one: RuntimeError held_by_other names the holder"""
 
     def release_control(self) -> None:
         """End the automation session"""
@@ -719,11 +721,67 @@ for device in emu.controllers_host("devices")["devices"]:
         emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
 ```
 
+The device database and the user's entries over it (devices.user.json):
+
+```python
+match = emu.controllers_database(vidpid="045e:0b22", bus="bt")["match"]
+print(match["family"], match["images"], match["step"], match["score"], match["user"])
+emu.controllers_database_save('{"id": "xbox-elite-2", "images": "user-xbox-elite-2"}')
+emu.controllers_database_delete("xbox-elite-2")   # back to the built-in entry
+```
+
+A pad the database does not know, from a gamecontrollerdb.txt line or a RetroArch autoconfig; the connector a pad
+drives; what its endpoints give and the raw reports it sends:
+
+```python
+line = "03000000c82d00000161000000000000,8BitDo SN30 Pro,a:b1,b:b0,x:b4,y:b3,platform:Mac OS X,"
+print(emu.controllers_database_import(line)["entry"]["id"])        # user-2dc86101, saved into devices.user.json
+emu.controllers_player("usb:2dc8:6101:1", "sinclair-1")         # "auto" back to the automatic choice, "none" none
+for endpoint in emu.controllers_probe(device="usb:2dc8:6101:1")["endpoints"]:
+    print(endpoint["backend"], endpoint["role"], endpoint["driver"], endpoint["rumble"])
+for report in emu.controllers_reports("usb:2dc8:6101:1")["reports"]:
+    print(report["ms"], report["hex"])
+```
+
+Media signatures and the game profile they choose ([command-interface.md §18](./command-interface.md#18-media-signatures)):
+
+```python
+sig = emu.signature("/games/elite.tzx", details=True)["signature"]   # kind, format, sha256, content, keys, file_set
+emu.signature_media()["media"]                           # the loaded tapes and disks: slot, source, dirty, signature
+emu.signature_compare("elite.tap", "elite.tzx")["match"]["level"]    # exact | content | fuzzy | memory | none
+emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}], profile, next, haptics_reason}
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
-`context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
+**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
+play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+`controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
+`controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
+`controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,
+step="status", **options)`, `controllers_aliases()` (`{aliases: [{from, to, connected, name}]}`: a pad first seen as
+`gc:...` and later matched to its HID device keeps its profiles) and `controllers_unalias(id)`;
+`controllers_host("devices")` lists each device's `role`, `layers`, `context`, `outputs`, `feel`, `battery`, `light`,
+`notice`, `pin` and (an unknown device's) `map`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
+
+Roles, pins, the device database and the learn wizard of an unknown device:
+
+```python
+emu.controllers_role(pad, "debugger-remote")          # player, debugger-remote, disabled
+emu.controllers_pin(pad, "pinned:" + emu_id)          # follow-focus, all, pinned:<emulator id>
+emu.controllers_identify(pad)                         # 300 ms rumble and a light blink
+emu.controllers_probe()["backends"]                   # running or why not, the devices each found
+emu.controllers_database(vidpid="045e:0b00")["match"] # family, step, score, controls, map
+emu.controllers_database_import(open("pad.cfg").read())   # a gamecontrollerdb line or a RetroArch .cfg
+
+emu.controllers_learn(pad, "start", controls="dpad.up,dpad.down,south,east")
+emu.controllers_learn(pad, "sample", control="lstick.y", value=-1)   # or press it on the pad
+emu.controllers_learn(pad, "sample", control="lstick.y", value=0)
+emu.controllers_learn(pad, "skip")
+r = emu.controllers_learn(pad, "finish")              # saved in devices.user.json
+print(r["map"], r["gamecontrollerdb"])
+```
 
 ### Host Actions
 
@@ -843,7 +901,7 @@ emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
 emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
 emu.mouse_release_all()                 # also cancels a pending click
 emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
-emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2"
+emu.mouse_status(device="")             # state dict (below); device: "kempston" | "sprinter" | "evo-ps2" | "amx"
 emu.mouse_click_pending()               # True while a click is still holding its button
 emu.mouse_button_names()                # ["left", "right", "middle"]
 ```
@@ -920,7 +978,7 @@ emu.joystick_button_names()             # ["up", "down", "left", "right", "fire"
 ```
 
 Every changing method returns the resulting **state dict**, with the keys of the WebAPI state object:
-`available`, `present`, `wired`, `state` (the byte), `port_value` (what `IN #1F` returns),
+`available`, `present`, `wired`, `fit` (`""` when wired, else how to fit the slot card `kempston`), `state` (the byte), `port_value` (what `IN #1F` returns),
 `buttons` (a bool per name), `pressed`, `button_names`, `keys`, `pending_tap` (`None` or
 `{'mask', 'frames_left'}`), plus `warning` when the guest cannot see the buttons.
 
@@ -1773,6 +1831,8 @@ emu.coverage_start()                 # start clean; keep=True retains old data
 emu.coverage_stop()
 emu.coverage_status(max_ranges=100)  # executed count + first ranges
 emu.coverage_gaps()                  # executed ranges and gaps (start=0x4000, end=0xFFFF)
+emu.coverage_export()                # SkoolKit map: {success, format, start, end, count, map, message}
+emu.coverage_export("/abs/run.map", start=0x6000, merge=True)   # written: {..., path, merged}
 
 # AY register log
 emu.ay_log_start()                   # default capacity; capacity=8192 to override

@@ -24,6 +24,7 @@ void NextBoard::Reset(bool hard)
     // A soft reset keeps the machine type (and with it config mode or not); a hard one is the power-on state
     // the bare personality (no boot ROM) is a 128K machine from the start
     const uint8_t type = hard ? (_memory->HasBootRom() ? 0 : 2) : MachineType();
+    const uint8_t dtLock = hard ? 0 : static_cast<uint8_t>(_regs[kRegMachineType] & 0x08);  // the dt lock survives a soft reset
     if (hard)
     {
         // NR #02 bit 1 loads the FPGA configuration again (zxnext_top_issue5.vhd 1095, flashboot of core 1): every signal takes its
@@ -82,6 +83,9 @@ void NextBoard::Reset(bool hard)
         _timing = type;
     else if (hard)
         _timing = 2;
+    _regs[kRegMachineType] = static_cast<uint8_t>((_timing << 4) | dtLock | type);  // NR #03 reads timing, lock and type
+    if (_timing == 4)
+        _regs[0x05] &= static_cast<uint8_t>(~0x04);  // the Pentagon is always 50 Hz
     if (_machine)
     {
         _machine->SetCpuSpeed(1);
@@ -128,8 +132,16 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _memory->AltRomRegister();
         case kRegMemoryMapping:
             return _machine ? _machine->ReadMemoryMapping() : _regs[reg];
+        case kRegConfigMapping:
+            return 0;  // zxnext.vhd has no read case for NR #04: the multiplexer's default
+        case kRegPeripheral3:
+            return static_cast<uint8_t>(_regs[reg] & 0xFB);  // {mf type, sd swap, automap, mouse reverse, 0, mouse dpi}
+        case kRegMachineType:
+            // zxnext.vhd: nr_palette_sub_idx & machine timing & dt lock & machine type
+            return static_cast<uint8_t>((_regs[reg] & 0x7F) | (_video.PaletteSubIndex() ? 0x80 : 0));
         case kRegCpuSpeed:
-            return static_cast<uint8_t>((_regs[reg] & 3) | ((_regs[reg] & 3) << 4));  // programmed | actual
+            // zxnext.vhd: "00" & cpu_speed & "00" & nr_07_cpu_speed - bits 5:4 the speed in force, 1:0 the one programmed
+            return static_cast<uint8_t>((_regs[reg] & 3) | (ActiveCpuSpeed() << 4));
         case 0xB0:
         case 0xB1:
         case 0xB2:
@@ -482,25 +494,34 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case kRegMachineType:
         {
-            // Any write switches the boot ROM off; only config mode takes the machine type
+            // zxnext.vhd 5121-5151, verbatim: a write switches the boot ROM off; bits 6:4 pick the timing only with bit 7, an open
+            // lock and bit 3 = 0 (000 -> 001, 101-111 -> 011); bit 3 toggles the lock; the type (1-4 only) is taken in config mode;
+            // 111 enters config mode, any other non-zero value leaves it
             _memory->SetBootRomEnabled(false);
-            if (_memory->InConfigMode())
+            uint8_t lock = _regs[reg] & 0x08;
+            if ((value & 0x80) && !lock && !(value & 0x08))
             {
-                _regs[reg] = value;
-                if ((value & 7) != 0)
-                    _memory->SetConfigMode(false);
+                static constexpr uint8_t kTimingRemap[8] = {1, 1, 2, 3, 4, 3, 3, 3};
+                const uint8_t wanted = kTimingRemap[(value >> 4) & 7];
+                if (wanted != _timing)
+                {
+                    _timing = wanted;
+                    if (_machine)
+                        _machine->SetMachineTiming(_timing);
+                }
             }
-            else
-                _regs[reg] = static_cast<uint8_t>((_regs[reg] & 0x07) | (value & 0xF8));
-            _memory->SetMachineType(MachineType() == 0 ? 2 : MachineType());
-            // The timing: bits 6:4 when bit 7 allows, else the machine type chosen in config mode
-            const uint8_t wanted = (value & 0x80) ? static_cast<uint8_t>((value >> 4) & 7) : static_cast<uint8_t>(_regs[reg] & 7);
-            if (wanted >= 1 && wanted <= 4 && wanted != _timing)
-            {
-                _timing = wanted;
-                if (_machine)
-                    _machine->SetMachineTiming(_timing);
-            }
+            lock ^= value & 0x08;
+            if (_timing == 4)
+                _regs[0x05] &= static_cast<uint8_t>(~0x04);
+            uint8_t type = _regs[reg] & 7;
+            if (_memory->InConfigMode() && (value & 7) >= 1 && (value & 7) <= 4)
+                type = value & 7;
+            if ((value & 7) == 7)
+                _memory->SetConfigMode(true);
+            else if ((value & 7) != 0)
+                _memory->SetConfigMode(false);
+            _regs[reg] = static_cast<uint8_t>((_timing << 4) | lock | type);
+            _memory->SetMachineType(type == 0 ? 2 : type);
             return;
         }
         case kRegPeripheral4:
@@ -513,7 +534,7 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
         case kRegPeripheral3:
             // zxnext.vhd 5192-5198: the Multiface type (bits 7:6) and the SD card swap (bit 5) are written in config mode only; the DivMMC
             // automap enable (bit 4) is the automap_reset input (4112)
-            _regs[reg] = _memory->InConfigMode() ? value : static_cast<uint8_t>((value & 0x1F) | (_regs[reg] & 0xE0));
+            _regs[reg] = _memory->InConfigMode() ? static_cast<uint8_t>(value & 0xFB) : static_cast<uint8_t>((value & 0x1B) | (_regs[reg] & 0xE0));
             if (_machine)
                 _machine->DivMmcEnableChanged();
             return;
@@ -536,19 +557,36 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             if (_machine)
                 _machine->SetContentionDisabled((value & 0x40) != 0);
             return;
+        case 0x05:  // the Pentagon is always 50 Hz (zxnext.vhd nr_05_5060): bit 2 does not stay set under its timing
+            _regs[reg] = _timing == 4 ? static_cast<uint8_t>(value & ~0x04) : value;
+            return;
         case kRegCpuSpeed:
             _regs[reg] = value & 0x03;
-            if (_machine)
-                _machine->SetCpuSpeed(static_cast<uint8_t>(1u << (value & 3)));
+            ApplyCpuSpeed();
+            return;
+        case 0x80:  // the expansion bus enable: while it is on, the CPU runs at the bus speed, hard-wired to 3.5 MHz (expbus_speed)
+            _regs[reg] = value;
+            ApplyCpuSpeed();
             return;
         case kRegConfigMapping:
-            _regs[reg] = value & 0x3F;
+            _regs[reg] = value;  // Issue 5 PCB (zxnext.vhd gen_romram_5): all 8 bits; the older boards keep 7
             _memory->SetConfigBank(value);
             return;
         default:
             _regs[reg] = value;
             return;
     }
+}
+
+uint8_t NextBoard::ActiveCpuSpeed() const
+{
+    return (_regs[0x80] & 0x80) ? 0 : static_cast<uint8_t>(_regs[kRegCpuSpeed] & 3);
+}
+
+void NextBoard::ApplyCpuSpeed()
+{
+    if (_machine)
+        _machine->SetCpuSpeed(static_cast<uint8_t>(1u << ActiveCpuSpeed()));
 }
 
 void NextBoard::RefreshLayer2Mapping()

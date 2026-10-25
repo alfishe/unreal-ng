@@ -255,6 +255,23 @@ TEST(WindowsDevices_Test, GameInputGamepadStateAsCanonicalControls)
     EXPECT_EQ(Find(events, "lstick.y"), 0.0f);
 }
 
+TEST(WindowsDevices_Test, GameInputSystemButtonsAsGuideAndShare)
+{
+    Events events;
+    GameInputSystemButtonsDiff(0, 0x1, Collect(events));
+    EXPECT_EQ(events.size(), 1u);
+    EXPECT_EQ(Find(events, "guide"), 1.0f);
+    events.clear();
+    GameInputSystemButtonsDiff(0x1, 0x2, Collect(events));
+    EXPECT_EQ(Find(events, "guide"), 0.0f);
+    EXPECT_EQ(Find(events, "share"), 1.0f);
+    events.clear();
+    GameInputSystemButtonsDiff(0x2, 0x2 | 0x80, Collect(events));
+    EXPECT_TRUE(events.empty()) << "an unknown bit is no control";
+    for (const char* control : {"guide", "share"})
+        EXPECT_NE(std::find(KnownControls().begin(), KnownControls().end(), control), KnownControls().end());
+}
+
 #if defined(_WIN32)
 /// The factory's backends on this host: Raw Input always runs, GameInput or XInput serves the Xbox pads, never both.
 /// Boot-free but bound by the backends' start (loading GameInput, the Raw Input window): no 50 ms promise
@@ -278,7 +295,9 @@ TEST(WindowsDevices_Test, NativeBackendsServeXboxPadsOnce)
     EXPECT_TRUE(probes["rawinput"].running) << probes["rawinput"].reason;
     EXPECT_FALSE(probes["gameinput"].running && probes["xinput"].running) << "one device once";
     if (probes["gameinput"].running)
+    {
         EXPECT_EQ(probes["xinput"].reason, "GameInput serves the Xbox pads");
+    }
     else
         EXPECT_FALSE(probes["gameinput"].reason.empty());
 }

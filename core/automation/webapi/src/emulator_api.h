@@ -96,10 +96,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getController, "/api/v1/emulator/{id}/controllers/{connector}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postControllerVerb, "/api/v1/emulator/{id}/controllers/{connector}/{verb}",
                   drogon::Post);
-    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics (GET);
-    // save, delete, apply, bind, unbind, scheme, rumble, output, light (POST)
+    // The host side, for the process (HostInputControl): devices, context, profiles, profile, bindings, haptics, probe,
+    // database, aliases (GET); save, delete, apply, bind, unbind, scheme, rumble, output, light, role, pin, identify,
+    // database_import, learn, unalias (POST)
     ADD_METHOD_TO(EmulatorAPI::getHostControllers, "/api/v1/controllers/{verb}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postHostControllers, "/api/v1/controllers/{verb}", drogon::Post);
+    // The same verbs in the spec's paths: database/import, and a device's role / pin / identify / learn
+    ADD_METHOD_TO(EmulatorAPI::postHostDatabaseImport, "/api/v1/controllers/database/import", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHostDeviceVerb, "/api/v1/controllers/host/{device}/{verb}", drogon::Post);
     // Host actions (core ActionRegistry; implementation: api/actions_api.cpp; control surfaces actions.md §6). GET
     // /api/v1/controllers/actions is the {verb} route above ("actions"), handled there before the host input verbs
     ADD_METHOD_TO(EmulatorAPI::postAction, "/api/v1/controllers/actions/{action}", drogon::Post);
@@ -243,6 +247,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::clearCoverage, "/api/v1/emulator/{id}/coverage/clear", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getCoverage, "/api/v1/emulator/{id}/coverage", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getCoverageGaps, "/api/v1/emulator/{id}/coverage/gaps", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::exportCoverage, "/api/v1/emulator/{id}/coverage/export", drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -727,6 +732,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::symbolImportLive, "/api/v1/emulator/{id}/symbols/import/live", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::symbolImportSource, "/api/v1/emulator/{id}/symbols/import/source", drogon::Post);
     // Assembler sources through AsmControl (implementation: api/asm_api.cpp)
+    // Media signatures through SignatureControl (implementation: api/signature_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::signatureFile, "/api/v1/signature", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::signatureCompare, "/api/v1/signature/compare", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::signatureMedia, "/api/v1/emulator/{id}/signature", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmFormats, "/api/v1/asm/formats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmDialects, "/api/v1/asm/dialects", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmFiles, "/api/v1/emulator/{id}/asm/files", drogon::Get);
@@ -914,6 +923,13 @@ public:
     void postHostControllers(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& verb) const;
+    /// POST /api/v1/controllers/database/import {text, save?}: the database_import verb
+    void postHostDatabaseImport(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// POST /api/v1/controllers/host/{device}/{verb}: role, pin, identify, learn with device= from the path
+    void postHostDeviceVerb(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& device,
+                            const std::string& verb) const;
     // endregion Controllers
 
     // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -1123,6 +1139,10 @@ public:
     /// @brief GET /api/v1/emulator/{id}/coverage/gaps?start=0x4000&end=0xFFFF&max_gaps=256
     void getCoverageGaps(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief POST /api/v1/emulator/{id}/coverage/export - body: {"format":"skoolkit-map","start","end","path","merge"}
+    void exportCoverage(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,
@@ -1845,6 +1865,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           const std::string& id) const;
     void symbolImportSource(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    // Media signatures (api/signature_api.cpp)
+    void signatureFile(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void signatureCompare(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void signatureMedia(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     // Assembler sources (api/asm_api.cpp)
     void asmFormats(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void asmDialects(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;

@@ -41,7 +41,8 @@ As implemented:
   query string; `body` any JSON (sent as the JSON body). The sockets themselves (`/api/v1/ws`, `/api/v1/websocket`,
   `/api/v1/companions/events`) are not calls.
 - `"session": "<id>"` carries an automation session (the `X-Unreal-Session` header). When the automation gate opens
-  the implicit session for a call, the `result` carries it as `session`, for the next calls.
+  the implicit session for a call, the `result` carries it as `session`, for the next calls. A `session` that does not
+  hold the instance the call changes is no pass: the gate applies as for a call without one.
 - The call passes the checks every HTTP request passes before routing (CORS, companion token and scopes, session
   revocation, the automation gate), then drogon runs the route's handler; the socket's peer is the call's peer, so the
   implicit session of a socket client is the client's own.

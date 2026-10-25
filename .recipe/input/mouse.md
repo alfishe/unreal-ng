@@ -26,6 +26,7 @@ Which mouse each machine has (status `device.id`; design:
 | 48K, 128K, +2, +2A, +3, Pentagon, Scorpion, Profi, ZX-Poly | Kempston interface (`kempston`) | `[INPUT] Mouse=KEMPSTON|NONE`, feature `kempstonmouse`; power-on X = 31, Y = 85 |
 | `ATM710`, `ATM450` | Kempston card on the ZX-bus (`kempston`) | the boards have none; the configs fit the card with a wheel (`Wheel=KEMPSTON`) |
 | `ATM3` (ZX-Evo), `TSL`, `TSL-VDAC2` (TS-Conf) | PS/2 wheel mouse on the AVR (`evo-ps2`) | the AVR keeps the registers ([evoavrmouse.h](../../core/src/emulator/memory/atm/evoavrmouse.h)): found X = 0, Y = 1; `Mouse=NONE` = no mouse plugged in, all three read `#FF`; the wheel nibble goes **down** when the wheel rolls away; resolution 1-8 counts/mm with keypad `+` / `-` / `*` while left and right are held (default 1 = one count per pixel) |
+| 48K, 128K, +2, +2A, +3 with the slot card `amx-mouse` (`[SLOTS] edge.1=amx-mouse`) | AMX mouse (`amx`, kind `amx-pio`) | a Z80 PIO interface: one IM 2 interrupt per mickey (port A = X, `#1F`; port B = Y, `#3F`; bit 0 = direction), buttons `IN #DF` D7 left, D6 middle, D5 right, active low; at most 32 interrupts per frame and axis, the rest waits (status `device.pio`: `pending`, the ports' `interrupt_enabled` / `interrupt_pending` / `under_service`); the Kempston interface of `Mouse=KEMPSTON` stays fitted beside it (both get the motion, and both answer `#xxDF`: its `#FADF` / `#FBDF` / `#FFDF` bytes are wired-ANDed into an AMX button read with that high byte; `Mouse=NONE` takes it out, as on a real machine with one mouse) |
 | `SPRINTER` | the board mouse (`sprinter`): a Microsoft serial mouse on SIO B and the PLD's Kempston view (port code `#58`) of the same counters | always fitted; `Mouse=NONE` removes only the optional Kempston interface, which no Sprinter program reads. DSS 1.71 reads 3-byte packets at 1 200 baud (status `device.serial`), DSS 1.62.9x the ports; two buttons on the serial line (left, right), three in the port view; no wheel |
 
 A machine with **no mouse fitted** (`Mouse=NONE` on a Kempston or ZX-Evo / TS-Conf machine)
@@ -63,7 +64,7 @@ an automation press stays held while the user clicks, and the other way round.
 `dx` / `dy` are -127..127 per `move`; for longer moves use **`glide`** (below);
 the wheel takes -7..7 steps, `+` = away from you; `click` takes an optional
 `frames` (default 2). `status` takes an optional `device` (`kempston`,
-`sprinter`, `evo-ps2`).
+`sprinter`, `evo-ps2`, `amx`).
 
 ```json
 {"tool": "mouse_input", "arguments": {"action": "glide", "dx": -1000, "dy": 1000}}

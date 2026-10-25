@@ -3110,6 +3110,16 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
             t_directRunRefused = true;
         }
     }
+    // Stopping: Stop() clears the running flag first, then wakes the loop and joins it. Until the loop has left
+    // (phase Stopped) its thread may still finish a frame: nothing drives the Z80 next to it (TSan, a pacer's step
+    // while the instance was removed)
+    else if (const execution::Phase phase = _emulator._arbiter.CurrentPhase();
+             phase == execution::Phase::Running || phase == execution::Phase::Stopping)
+    {
+        LOGWARNING("Emulator - a direct run '%s' refused: the machine is stopping", tag);
+        _refused = true;
+        t_directRunRefused = true;
+    }
     _driver = _refused ? false : !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
     // The outermost run with the CPU of its own lends it between frames (ExecuteStep)
     if (_hold.Valid() && !_hold.inlined && !_emulator._lendingHold)
@@ -3128,7 +3138,7 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
     if (_emulator._context && _emulator._context->pSoundManager)
         _hostHold = SoundManager::HostOutputHold(_emulator._context->pSoundManager,
                                                  SoundManager::HostHoldReason::DirectRun);
-    if (firstIn)
+    if (firstIn && !_refused)
     {
         _emulator.NoteRunStart();
         // A new direct run: no breakpoint stop yet; its first instruction may leave the execution
@@ -3176,7 +3186,8 @@ Emulator::DirectStepScope::~DirectStepScope()
         }
     } endHold{*this};
     _hostHold.Release();
-    if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
+    // A refused run touched nothing: no stop, no picture, no refresh to report
+    if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1 && !_refused)
     {
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);

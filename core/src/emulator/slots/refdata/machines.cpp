@@ -115,6 +115,17 @@ constexpr BuiltInDef kSpectrum128BuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kAy128Claims },
     { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
 };
+// The Next board's own Kempston decode: the low byte #1F (and #37 for the right connector, NR #05; zxnext.vhd)
+constexpr PortClaim kNextKempstonClaims[] = {
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .port = 0x001F },
+    { .mask = 0x00FF, .match = 0x0037, .dir = Dir::In, .port = 0x0037 },
+};
+constexpr BuiltInDef kNextBuiltIns[] = {
+    { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kAy128Claims },
+    { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
+    { .id = "kempston-joystick", .name = "Kempston joystick (two connectors, `#1F` / `#37`)",
+      .functions = kKempstonFunctions, .claims = kNextKempstonClaims },
+};
 constexpr Src kSpectrum128Sources[] = { Src::SinclairWiki128Edge, Src::Spectrum128ServiceManual, Src::Wos128kFaq };
 constexpr Src kPlus2Sources[] = { Src::SinclairWiki128Edge, Src::SinclairWikiPlus2, Src::Wos128kFaq };
 
@@ -501,9 +512,10 @@ constexpr MachineDef kMachines[] = {
       .sources = kProfiSources },
     { .model = MM_PROFI3, .name = "PROFI3", .variant = "Profi v3.2", .buses = kProfiBuses, .builtIns = kProfi3BuiltIns,
       .sources = kProfi3Sources },
-    // The bare personality (N2): the 128K board's buses and built-ins until the Next's own devices exist
+    // The bare personality (N2): the 128K board's buses and built-ins until the Next's own devices exist, plus its
+    // Kempston decode (PortDecoder_Next answers #1F / #37: a Kempston card there would double it)
     { .model = MM_NEXT, .name = "NEXT", .variant = "ZX Spectrum Next (bare personality: 128K board)",
-      .buses = kSpectrum128Buses, .builtIns = kSpectrum128BuiltIns, .sources = kSpectrum128Sources },
+      .buses = kSpectrum128Buses, .builtIns = kNextBuiltIns, .sources = kSpectrum128Sources },
     { .model = MM_SPRINTER, .name = "SPRINTER", .variant = "Peters Plus Sprinter Sp2000", .buses = kSprinterBuses,
       .builtIns = kSprinterBuiltIns, .sources = kSprinterSources },
 };

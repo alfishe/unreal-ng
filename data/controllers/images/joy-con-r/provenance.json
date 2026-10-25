@@ -1,0 +1,29 @@
+{
+  "family": "joy-con-r",
+  "images": [
+    {
+      "view": "front",
+      "title": "Nintendo Switch Joy-Con (R), grey",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 102 x 35.9 x 28.4 mm per Joy-Con",
+          "source": "nintendo.com Joy-Con product page and retail listings (Nintendo Switch tech specs: 102 x 239 x 13.9 mm with the Joy-Cons attached)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "front view of the grey pair: the outline, the rail, the control positions and sizes",
+          "source": "https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Joy-Con_Controllers.png",
+          "author": "Owen1962",
+          "licence": "public domain",
+          "use": "measured geometry only (outline traced, positions of the controls read as blobs); no pixels shipped",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

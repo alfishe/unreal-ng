@@ -273,7 +273,9 @@ protected:
         end = _rec.Observe();
         _rec.ttd->StopRecording();
         if (!rowScan)
+        {
             ASSERT_GE(_rec.LogEntries(), 4u) << "the poller never saw the keys";
+        }
     }
 };
 
@@ -566,7 +568,9 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, EarSearchFindsEveryEdgeTheProgram
     {
         EXPECT_EQ(r.hits[i].record.pc, 0x800D) << "hit " << i;
         if (i > 0)
+        {
             EXPECT_NE(r.hits[i].record.value & 0x40, r.hits[i - 1].record.value & 0x40) << "hit " << i;
+        }
     }
 }
 

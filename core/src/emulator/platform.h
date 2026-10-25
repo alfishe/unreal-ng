@@ -42,7 +42,7 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
-constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
+constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, an explicit take took over an implicit one, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
 constexpr char const* NC_RUN_PACE = "RUN_PACE";                                   // An instance's paced run changed: preset, interval, started, stopped (execution::RunPacer) - payload: RunPacePayload
 constexpr char const* NC_SURFACE_CONTEXT = "SURFACE_CONTEXT";                  // An instance's control-surface context changed (ctx.set: play, ttd, ttd.timecode, debug.*) - payload: SurfaceContextPayload
 constexpr char const* NC_ACTION_CATALOGUE = "ACTION_CATALOGUE";                   // An action was registered or dropped (the Qt client's GUI actions) - payload: ActionCatalogueChangedPayload (the registry's revision, the protocol's catalogue_rev; process-wide)
@@ -1214,6 +1214,8 @@ struct EmulatorState
                                                 // ratio above). Read through ClockDen()
     uint8_t hw_contention_disabled;             // A board that switches the video memory contention off at run time (the Next
                                                 // above 3.5 MHz, NR #08 bit 6): 1 = off whatever the video mode says
+    uint8_t ula_sixty_hz;                       // The Next's 60 Hz frame (NR #05 bit 2 as latched at the frame sync, never with the
+                                                // Pentagon): the 264-line raster of the family in ula_timing_class
     uint8_t ula_timing_class;                   // A board that switches its frame timing at run time says which family
                                                 // the video logic follows: 0 = the model's own, 1 = 48K, 2 = 128K / +2,
                                                 // 3 = +2A / +3 (the frame of the 128K), 4 = Pentagon. Read by the

@@ -1269,7 +1269,9 @@ TEST_F(DezogHistory_test, StateRestoreRestartsHistory)
     // A browse entry (if history already has one) is coherent; resume returns to present
     auto e = _adapter->getHistoryEntry(0);
     if (e.has_value())
+    {
         EXPECT_TRUE(isProgramPc(e->regs.pc));
+    }
     _adapter->resume();
     EXPECT_EQ(_adapter->getHistoryCursor(), -1);
 }

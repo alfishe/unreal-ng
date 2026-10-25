@@ -5,10 +5,14 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <vector>
 
+#include "hid/drivers/dualsenseoutput.h"
+#include "hid/drivers/sonypad.h"
 #include "hid/drivers/surfacedial.h"
+#include "hid/drivers/switchpro.h"
 #include "hid/drivers/xboxbluetoothoutput.h"
 
 namespace controllers
@@ -34,19 +38,96 @@ LinuxRumble LinuxRumbleFor(bool evdevRumble, bool xboxBluetooth)
     return xboxBluetooth ? LinuxRumble::Hidraw : LinuxRumble::None;
 }
 
-HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family,
-                       const std::string& layout, bool evdevRumble)
+LinuxHidDriver LinuxHidDriverOf(const std::string& driver)
 {
-    if (SurfaceDial::Handles(vendor, product))
+    if (driver.empty())
+        return LinuxHidDriver::Unknown;
+    if (driver == "hid-generic")
+        return LinuxHidDriver::Generic;
+    if (driver == "playstation")
+        return LinuxHidDriver::PlayStation;
+    if (driver == "sony")
+        return LinuxHidDriver::Sony;
+    if (driver == "nintendo")
+        return LinuxHidDriver::Nintendo;
+    if (driver == "microsoft")
+        return LinuxHidDriver::Microsoft;
+    if (driver == "stadia")
+        return LinuxHidDriver::Stadia;
+    if (driver == "hid-steam")
+        return LinuxHidDriver::Steam;
+    return LinuxHidDriver::Other;
+}
+
+bool LinuxHidUsageNamed(LinuxHidDriver driver)
+{
+    return driver == LinuxHidDriver::Generic || driver == LinuxHidDriver::Microsoft ||
+           driver == LinuxHidDriver::Stadia;
+}
+
+HidrawUse HidrawUseFor(const LinuxPadFacts& facts)
+{
+    if (SurfaceDial::Handles(facts.vendor, facts.product))
         return HidrawUse::Output;
     HidrawUse use = HidrawUse::None;
     // Over USB the Elite is xpad's (a USB driver, no HID device, no hidraw node): its paddles are evdev buttons
-    if (bluetooth && family == "xbox-elite-2")
+    if (facts.bluetooth && facts.family == "xbox-elite-2")
         use = use | HidrawUse::Input;
-    if (LinuxRumbleFor(evdevRumble, XboxBluetoothOutput::Handles(bluetooth, vendor, layout, family)) ==
+    if (LinuxRumbleFor(facts.evdevRumble,
+                       XboxBluetoothOutput::Handles(facts.bluetooth, facts.vendor, facts.layout, facts.family)) ==
         LinuxRumble::Hidraw)
         use = use | HidrawUse::Rumble;
+
+    const bool sony = SonyPad::ModelOf(facts.vendor, facts.product).has_value();
+    const bool nintendo = SwitchProPad::Handles(facts.vendor, facts.product) ||
+                          SwitchProPad::IsChargingGrip(facts.vendor, facts.product);
+    if (!sony && !nintendo)
+    {
+        // The HID map's vendor bits (no usage, so no evdev key) come only in the reports
+        if (facts.hidExtras && LinuxHidUsageNamed(facts.driver))
+            use = use | HidrawUse::Input;
+        return use;
+    }
+    // No driver of its own: the pad's protocol through hidraw, as macOS reads it
+    if (facts.driver == LinuxHidDriver::Generic)
+        return use | HidrawUse::Protocol;
+    if (sony && DualSenseOutput::Handles(facts.vendor, facts.product))
+    {
+        // hid-playstation drives the motors (compatible vibration), never the trigger effects
+        use = use | HidrawUse::Triggers;
+        // Its Fn buttons and paddles came to hid-playstation in 7.2 (BTN_TRIGGER_HAPPY1-4); before, the full report
+        if (facts.product == 0x0DF2 && !facts.edgeButtons)
+            use = use | HidrawUse::Input;
+    }
+    // hid-nintendo's FF_RUMBLE plays its fixed frequencies; the effect's own need the 0x10 report. The NSO NES, SNES
+    // and Genesis pads have no motors
+    const std::optional<SwitchLayout> layout = SwitchProPad::LayoutFor(facts.vendor, facts.product, facts.name);
+    if (nintendo && (!layout || SwitchProPad::HasRumble(*layout)))
+        use = use | HidrawUse::SwitchRumble;
     return use;
+}
+
+HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family,
+                       const std::string& layout, bool evdevRumble)
+{
+    LinuxPadFacts facts;
+    facts.bluetooth = bluetooth;
+    facts.vendor = vendor;
+    facts.product = product;
+    facts.family = family;
+    facts.layout = layout;
+    facts.evdevRumble = evdevRumble;
+    return HidrawUseFor(facts);
+}
+
+bool HidrawUseReads(HidrawUse use)
+{
+    return HasUse(use, HidrawUse::Input) || HasUse(use, HidrawUse::Protocol);
+}
+
+bool HidrawUseWrites(HidrawUse use)
+{
+    return !HasUse(use, HidrawUse::Input) || HasUse(use, HidrawUse::Protocol);
 }
 
 bool ParseHidUevent(const std::string& text, HidUevent& out)
@@ -89,6 +170,8 @@ bool ParseHidUevent(const std::string& text, HidUevent& out)
             parsed.phys = value;
         else if (key == "HID_UNIQ")
             parsed.uniq = value;
+        else if (key == "DRIVER")
+            parsed.driver = value;
     }
     if (!haveId)
         return false;
@@ -133,28 +216,67 @@ const char* const kHidrawRulesHint =
     "Install the udev rule: sudo cp data/controllers/70-unreal-ng.rules /etc/udev/rules.d/ && "
     "sudo udevadm control --reload && sudo udevadm trigger, then reconnect the device";
 
-std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText)
+std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText,
+                              const std::string& family)
 {
-    std::string what = "The Surface Dial's clicks and detents";
+    std::string what = "The Surface Dial's clicks and detents need";
     std::string without;
-    if (HasUse(use, HidrawUse::Input))
+    if (HasUse(use, HidrawUse::Protocol) && family == "gamecube-adapter")
     {
-        what = "The paddles and the onboard profile";
+        what = "The GameCube adapter's controllers need";
+        without = " No kernel driver serves the adapter (it has no input device): until then its controllers are not "
+                  "seen.";
+    }
+    else if (HasUse(use, HidrawUse::Protocol))
+    {
+        what = "The pad's own reports need";
+        without = " No kernel driver of its own serves it (hid-generic: hid-playstation or hid-nintendo is not loaded, "
+                  "or the kernel predates it). Until then it works from hid-generic's evdev node: the buttons may be "
+                  "misnamed and it has no rumble, light or battery.";
+    }
+    else if (HasUse(use, HidrawUse::Input) && family == "dualsense-edge")
+    {
+        what = "The Edge's paddles and Fn buttons need";
+        without = " Until then they are not seen (hid-playstation reports them through evdev from Linux 7.2).";
+    }
+    else if (HasUse(use, HidrawUse::Input) && !family.empty() && family != "xbox-elite-2")
+    {
+        what = "The pad's vendor-defined buttons need";
+        without = " Until then they are not seen: hid-input gives bits without a usage no key.";
+    }
+    else if (HasUse(use, HidrawUse::Input))
+    {
+        what = "The paddles and the onboard profile need";
         without = " Until then the paddles are not seen (on onboard profiles 1-3 they arrive as the buttons the "
                   "profile assigns).";
     }
     else if (HasUse(use, HidrawUse::Rumble))
     {
-        what = "The motors and the impulse triggers";
+        what = "The motors and the impulse triggers need";
         without = " Until then the pad does not rumble: its kernel driver offers no FF_RUMBLE (hid-microsoft or "
                   "xpadneo would).";
     }
+    else if (HasUse(use, HidrawUse::Triggers))
+    {
+        what = "The adaptive triggers need";
+        without = " Until then the motors play through hid-playstation (FF_RUMBLE) and the triggers do not resist.";
+    }
+    else if (HasUse(use, HidrawUse::SwitchRumble))
+    {
+        what = "The HD rumble (the effects' own frequencies) needs";
+        without = " Until then the motors play through hid-nintendo's FF_RUMBLE at its fixed 160 / 320 Hz.";
+    }
     if (node.empty())
-        return what + " need the device's hidraw node, which was not found (is the hidraw module loaded?)." + without;
+        return what + " the device's hidraw node, which was not found (is the hidraw module loaded?)." + without;
     if (error == EACCES || error == EPERM)
-        return what + " need " + (HasUse(use, HidrawUse::Input) ? "read" : "write") + " access to " + node +
-               ", which this user does not have. " + kHidrawRulesHint + "." + without;
-    return what + " need " + node + ", which did not open (" + errorText + ")." + without;
+    {
+        const char* access = HasUse(use, HidrawUse::Protocol) ? "read and write"
+                             : HidrawUseReads(use)            ? "read"
+                                                              : "write";
+        return what + " " + access + " access to " + node + ", which this user does not have. " + kHidrawRulesHint +
+               "." + without;
+    }
+    return what + " " + node + ", which did not open (" + errorText + ")." + without;
 }
 
 std::string XpadPaddlesNotice()

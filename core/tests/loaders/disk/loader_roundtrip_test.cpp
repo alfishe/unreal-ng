@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <vector>
 
 #include <common/filehelper.h>
@@ -319,6 +320,45 @@ TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_SkipsDeletedFiles)
 
     delete exported;
     delete image;
+}
+
+/// The catalog ends at the first 0x00 entry, not at the volume sector's file count: TR-DOS CAT and FIND_NAME walk
+/// every slot up to the marker. Entries past the count (a file, a 0-sector catalog text line) are exported
+TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_ExportsEntriesPastTheFileCount)
+{
+    std::string source = TestPathHelper::GetTestDataPath("loaders/scl/insult.scl");
+    std::string targetPath = TestPathHelper::GetTestScratchPath("past-count.scl");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
+
+    LoaderSCL loader(_context, source);
+    ASSERT_TRUE(loader.loadImage());
+    std::unique_ptr<DiskImage> image(loader.getImage());
+
+    DiskImage::Track* track0 = image->getTrack(0);
+    DiskImage::Sector* volumeSector = track0->getSector(TRD_VOLUME_SECTOR);
+    TRDVolumeInfo* volume = (TRDVolumeInfo*)volumeSector->data;
+    const uint8_t originalCount = volume->fileCount;
+    ASSERT_GE(originalCount, 2);
+    ASSERT_LT(originalCount, 15) << "the text line goes into the first catalog sector";
+
+    // The count says one file; the others stay in the catalog, and a text line follows them
+    DiskImage::Sector* catalog = track0->getSector(0);
+    TRDOSDirectoryEntry* entries = (TRDOSDirectoryEntry*)catalog->data;
+    TRDOSDirectoryEntry& text = entries[originalCount];
+    std::memcpy(text.Name, "--TEXT--", 8);
+    text.Type = ' ';
+    text.SizeInSectors = 0;
+    catalog->recalculateDataCRC();
+    volume->fileCount = 1;
+    volumeSector->recalculateDataCRC();
+
+    ASSERT_TRUE(loader.writeImage(target));
+    std::vector<uint8_t> out = readFile(target);
+    ASSERT_GT(out.size(), 9u + (originalCount + 1u) * sizeof(TRDOSDirectoryEntryBase));
+    EXPECT_EQ(out[8], originalCount + 1) << "every entry up to the end marker";
+    const size_t lastHeader = 9 + originalCount * sizeof(TRDOSDirectoryEntryBase);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(out.data() + lastHeader), 8), "--TEXT--");
 }
 
 /// SCL export needs a TR-DOS track 0

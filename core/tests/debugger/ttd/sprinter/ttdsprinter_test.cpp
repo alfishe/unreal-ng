@@ -632,8 +632,10 @@ TEST_F(TTDSprinterMachine_Test, AReplayAfterASeekReadsTheRecordedSectorsNotTheIm
     ASSERT_TRUE(_ttd->ResumeRecordingFrom({_ttd->GetCheckpoint(10)->time.frame, 0}));
     for (const ttd::TimeTravelEngine* engine : {_ttd->GetReplaySource(), &_ttd->GetEngine()})
         if (engine)
+        {
             EXPECT_NE(engine->MediaReads().GetMode(), ttd::TTDMediaJournal::Mode::Play)
                 << "the new branch reads the disk, not the old recording's sectors";
+        }
     _ttd->StopRecording();
     std::remove(path.c_str());
 }

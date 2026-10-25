@@ -59,7 +59,9 @@ inline void ExpectEventsEqualV1(const ttd::TimeTravelEngine& engine, const ttd::
             const std::vector<uint8_t>& bytes = engine.Payloads().Bytes(got.payload);
             ASSERT_EQ(bytes.size(), net->payloadLength);
             if (net->payloadLength)
+            {
                 ASSERT_EQ(std::memcmp(bytes.data(), input.PayloadOf(*net), net->payloadLength), 0) << "input " << i;
+            }
         }
     }
     for (size_t i = 0; i < markers.size(); ++i)

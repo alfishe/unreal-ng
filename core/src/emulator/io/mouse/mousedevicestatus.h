@@ -22,11 +22,12 @@ enum class MouseDeviceKind : uint8_t
     Kempston,         ///< the Kempston interface: counters at #FADF / #FBDF / #FFDF
     SerialMicrosoft,  ///< a Microsoft serial mouse on a UART (Sprinter: SIO B), plus the board's Kempston view
     Ps2Avr,           ///< a PS/2 mouse read by the ZX-Evo AVR, which shows Kempston registers
+    AmxPio,           ///< the AMX mouse: quadrature strobes into a Z80 PIO, one IM 2 interrupt per mickey
 };
 
 struct MouseDeviceStatus
 {
-    std::string id;           ///< stable name automation selects it by: "kempston", "sprinter", "evo-ps2"
+    std::string id;           ///< stable name automation selects it by: "kempston", "sprinter", "evo-ps2", "amx"
     std::string name;         ///< one line for people
     MouseDeviceKind kind = MouseDeviceKind::Kempston;
     /// The machine's ports read this device. A Kempston interface object on a machine whose ports read
@@ -77,6 +78,25 @@ struct MouseDeviceStatus
         uint8_t resolution = 0;   ///< 0..3 = 1, 2, 4, 8 counts per mm (AVR RTC cell #FD)
     } ps2;
 
+    /// AMX mouse: the interface's Z80 PIO (port A = X on #1F, port B = Y on #3F) and the motion not yet strobed
+    bool hasPio = false;
+    struct Pio
+    {
+        struct Port
+        {
+            uint8_t mode = 1;     ///< 0 output, 1 input, 2 bidirectional, 3 bit control
+            uint8_t vector = 0;   ///< the IM 2 vector the port drives
+            uint8_t data = 0;     ///< what IN of its data port returns now (bit 0 = the direction)
+            bool ie = false;      ///< interrupts enabled
+            bool ip = false;      ///< an interrupt pending
+            bool ius = false;     ///< an interrupt under service (until RETI)
+        } port[2];
+        int pendingDx = 0;        ///< mickeys not yet strobed (+ right)
+        int pendingDy = 0;        ///< (+ up)
+        uint8_t buttonsPort = 0xFF;   ///< IN #DF: D7 left, D6 middle, D5 right, active low (released bits: #FF here)
+        uint64_t strobes = 0;     ///< mickeys strobed since the card was built (statistics, not machine state)
+    } pio;
+
     static const char* KindName(MouseDeviceKind kind)
     {
         switch (kind)
@@ -87,6 +107,8 @@ struct MouseDeviceStatus
                 return "serial-microsoft";
             case MouseDeviceKind::Ps2Avr:
                 return "ps2-avr";
+            case MouseDeviceKind::AmxPio:
+                return "amx-pio";
         }
         return "unknown";
     }

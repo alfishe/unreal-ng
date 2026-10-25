@@ -308,7 +308,9 @@ protected:
         const Frame* answer = RunUntil(0xA5);
         EXPECT_NE(answer, nullptr);
         if (answer)
+        {
             EXPECT_EQ(answer->data, Bytes({1}));
+        }
         const Frame* r = RunUntil(ZiFiWcUpdater::kEventState, static_cast<int>(ZiFiWcUpdater::Phase::Ready));
         EXPECT_NE(r, nullptr) << "no Ready state";
         if (ready)

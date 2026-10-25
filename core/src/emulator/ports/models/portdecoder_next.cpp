@@ -207,6 +207,7 @@ void PortDecoder_Next::reset()
     state.pFE = 0xFF;
     state.border_attr = 0x07;
 
+    state.ula_sixty_hz = 0;
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
     InsertConfiguredCard();
@@ -278,6 +279,36 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
         return;
     Mem().SetExtendedBank(value);
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
+}
+
+void PortDecoder_Next::BeforeRelease()
+{
+    if (UlaContention* ula = _context->pUlaContention)
+        ula->SetOddPortRule(nullptr, nullptr);  // the contention object may outlive this decoder
+}
+
+/// zxnext.vhd port_contend = not A0 | port_7ffd_active | port_bf3b | port_ff3b: the odd ports that wait like the ULA port. #7FFD (only under
+/// the 128K timing: the +3 has no I/O contention at all) is any A15 = 0, A1:0 = 01 port that is not the #1FFD decode and is enabled
+/// (NR #82 bit 1); the ULA+ pair needs NR #85 bit 0
+bool PortDecoder_Next::OddPortContended(uint16_t port) const
+{
+    const bool xffd = (port & 0xC003) == 0x0001;
+    const bool p1ffd = xffd && (port & 0x3000) == 0x1000 && PortEnabled(3);
+    if (_state->ula_timing_class == 2 && (port & 0x8003) == 0x0001 && !p1ffd && PortEnabled(1))
+        return true;
+    return ((port & 0xFFFF) == 0xBF3B || (port & 0xFFFF) == 0xFF3B) && PortEnabled(24);
+}
+
+bool PortDecoder_Next::FloatingBusDrives(uint16_t port) const
+{
+    switch (_state->ula_timing_class)
+    {
+        case 0:
+        case 1:
+        case 2: return (port & 0x00FF) == 0x00FF;
+        case 3: return (port & 0xF003) == 0x0001 && PortEnabled(4);
+        default: return false;  // the Pentagon timing: #FF everywhere
+    }
 }
 
 bool PortDecoder_Next::PortEnabled(unsigned bit) const
@@ -1403,7 +1434,8 @@ void PortDecoder_Next::WriteMemoryMapping(uint8_t value)
     if (value & 0x08)
     {
         state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0x07) | ((value >> 4) & 0x07));
-        Mem().SetExtendedBank(static_cast<uint8_t>((Mem().GetExtendedBank() & ~0x01) | (value >> 7)));
+        // zxnext.vhd: bit 3 of #DFFD is cleared (the Profi mapping is hard-wired off) and bits 2:0 become 00 & NR #8E bit 7
+        Mem().SetExtendedBank(static_cast<uint8_t>(value >> 7));
     }
     uint8_t p1ffd = static_cast<uint8_t>(state.p1FFD & ~0x07);
     if (value & 0x04)
@@ -1412,7 +1444,7 @@ void PortDecoder_Next::WriteMemoryMapping(uint8_t value)
     }
     else
     {
-        p1ffd = static_cast<uint8_t>(p1ffd | ((value & 0x02) << 1));
+        p1ffd = static_cast<uint8_t>(p1ffd | ((value & 0x02) << 1) | ((value & 0x01) << 1));  // #1FFD bit 1 = d0 here too (no effect on the map)
         state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0x10) | ((value & 0x01) << 4));
     }
     state.p1FFD = p1ffd;
@@ -1446,6 +1478,7 @@ void PortDecoder_Next::UpdateContention()
     {
         ula->SetContentionEnabled(family && !off);
         ula->SetGateArray(timing == 3);
+        ula->SetOddPortRule([](const void* self, uint16_t port) { return static_cast<const PortDecoder_Next*>(self)->OddPortContended(port); }, this);
     }
     if (Core* core = _context->pCore)
         core->SelectMemoryInterface();
@@ -1455,14 +1488,22 @@ void PortDecoder_Next::OnFrameEnd()
 {
     _board->LatchVideoFrameSync();  // video_frame_sync: eff_nr_05_5060, eff_nr_05_scandouble_en, eff_nr_09_scanlines
     _board->Copper().Sync();  // a frame no line was drawn for (turbo) still runs the copper
-    if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
-        ApplyTiming(_pendingTiming);
+    // changes to the video timing take place at the frame sync: the family of NR #03 and the 50 / 60 Hz bit of NR #05
+    const uint8_t timing = _pendingTiming ? _pendingTiming : _state->ula_timing_class;
+    if (timing && (timing != _state->ula_timing_class || SixtyHzWanted(timing) != (_state->ula_sixty_hz != 0)))
+        ApplyTiming(timing);
+}
+
+bool PortDecoder_Next::SixtyHzWanted(uint8_t timing) const
+{
+    return timing != 4 && _board->EffectiveSixtyHz();  // the Pentagon is always 50 Hz
 }
 
 void PortDecoder_Next::ApplyTiming(uint8_t timing)
 {
     NextTiming t;
-    if (!NextTimingFor(timing, t))
+    const bool sixty = SixtyHzWanted(timing);
+    if (!NextTimingFor(timing, sixty, t))
         return;
     CONFIG& config = _context->config;
     config.frame = t.frame;
@@ -1471,6 +1512,7 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
     config.intlen = t.intLength;
     config.frame_duration_us = CalculateFrameDurationUs(t.frame);
     _state->ula_timing_class = timing;
+    _state->ula_sixty_hz = t.sixty ? 1 : 0;
     _interrupts->SetGeometry(t);
     _pendingTiming = 0;
     UpdateContention();

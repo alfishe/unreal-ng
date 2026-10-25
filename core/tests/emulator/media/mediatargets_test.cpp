@@ -152,7 +152,9 @@ TEST_F(MediaTargets_Test, ClassifyByContentThenExtension)
         EXPECT_EQ(file.kinds, c.kinds) << c.path;
         EXPECT_EQ(file.format, c.format) << c.path;
         if (!c.kinds.empty())
+        {
             EXPECT_FALSE(file.evidence.empty()) << c.path;
+        }
     }
 }
 

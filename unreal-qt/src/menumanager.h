@@ -26,6 +26,12 @@ public:
     explicit MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* parent = nullptr);
     virtual ~MenuManager();
 
+    /// Machine > Controllers: empty until it opens (the owner fills it on aboutToShow)
+    QMenu* machineControllersMenu() const
+    {
+        return _machineControllersMenu;
+    }
+
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
@@ -293,6 +299,7 @@ private:
     QAction* _controllersAction = nullptr;
     QAction* _networkWindowAction = nullptr;
     QAction* _slotsWindowAction = nullptr;
+    QMenu* _machineControllersMenu = nullptr;
     QAction* _nextLayersAction = nullptr;
     QAction* _osdKeyboardAction = nullptr;
     QAction* _midiActivityAction = nullptr;

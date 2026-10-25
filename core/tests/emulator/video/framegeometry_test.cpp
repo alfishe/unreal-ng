@@ -136,7 +136,9 @@ TEST_F(FrameGeometry_Test, WorkingWindowIsWherePaperIsDrawn)
             _screen->UpdateFeatureCache();
             ASSERT_EQ(_screen->IsScreenHQEnabled(), perTState);
             if (c.overscan)
+            {
                 ASSERT_TRUE(_emulator->SetOverscanMode(true));
+            }
             PaintAndFreeze();
 
             FrameSnapshot snap;
@@ -230,7 +232,9 @@ TEST_F(FrameGeometry_Test, SnapshotStaysCoherentAcrossAModeSwitch)
     // and a stale 352x288 one is never served with a 384x304 geometry
     FrameSnapshot between;
     if (_screen->SnapshotPresented(between))
+    {
         EXPECT_EQ(between.pixels.size(), static_cast<size_t>(between.geometry.stride) * between.geometry.height);
+    }
     PaintAndFreeze();
     FrameSnapshot after;
     ASSERT_TRUE(_screen->SnapshotPresented(after));

@@ -347,7 +347,7 @@ TEST_F(Core_Test, SwitchingFromTwoThreadsNeverLeavesAWrongInterface)
                 std::this_thread::yield();
             for (int i = 0; i < 10000; i++)
             {
-                _z80->isDebugMode = (i & 1) != 0;
+                std::atomic_ref<bool>(_z80->isDebugMode).store((i & 1) != 0, std::memory_order_relaxed);
                 _core->SelectMemoryInterface();
             }
         });

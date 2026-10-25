@@ -87,13 +87,14 @@
         auto replies = [](Json::Value& operation) {
             operation["responses"]["200"]["description"] = "The envelope: ok, error, message, then the verb's fields";
             operation["responses"]["400"]["description"] = "bad-request, invalid-binding";
-            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device";
+            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device, unknown-family, unknown-alias";
             operation["responses"]["409"]["description"] = "read-only (a built-in profile cannot be deleted)";
             operation["responses"]["503"]["description"] = "unavailable: no host input in this process";
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics, database, probe, "
+                         "reports, aliases, match";
         get["description"] =
             "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
             "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
@@ -102,22 +103,44 @@
             "(percent, absent when the OS gives none), coarse (a step, not a measurement), charging, wired), light "
             "({available}, else the reason: whether light can set its colour) and notice (what the device cannot do "
             "here and how to fix it, such as the udev rule for its hidraw node; absent when nothing is missing). "
-            "context: the machine, the loaded file's SHA-256, the manual game "
-            "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
+            "context: the machine, the loaded program's signatures (file_sha256, signatures: file / tape content / "
+            "TR-DOS file set / snapshot memory, file_set: the TR-DOS file tokens), the game profiles they match "
+            "(game_matches: [{id, how}]), where the haptics come from (haptics_reason), the manual game "
+            "profile, the applied profiles and the warnings. match (?path= | signatures=&file_sha256=&file_set= "
+            "comma lists, machine=; none: the loaded program): the game profiles the signatures choose (D7: exact "
+            "signature, file SHA-256, then the TR-DOS file set's fuzzy rule), the one chosen (profile, empty: next "
+            "is port-reads, the heuristic decides) and haptics_reason. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
             "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
             "(?device=): per device whether the emulator can drive its motors (available, else the reason: no "
             "motors, an Xbox pad over USB on macOS, no write access on Linux), its actuators (low, high, "
-            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms)";
+            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms). devices also carries pin "
+            "(follow-focus, pinned:<instance>, all) and map (an unknown device's learned or imported control map, "
+            "canonical -> raw). database (?vidpid=045e:0b00&bus=usb|bt&name=&version= | guid=<SDL GUID> | "
+            "device=<id> | family=): the device database with the user's devices.user.json on top: families (count), "
+            "user (the ids of the user entries), user_file, and with a query the match (family, name, vendor, layout, "
+            "images, glyphs, controls, buttons, map, player, role, ignore, mode, step: exact | vid-pid | name | unknown, "
+            "score, user: whether a user entry shaped it) and the query (vid, pid, bus, version, name, sdl_guid). "
+            "probe (?device=): the backends (name, running, devices, reason) with the devices each found (id, name, "
+            "family, match {step, score}, notice), user_devices (the devices.user.json path), and with a device its "
+            "endpoints (backend, name, role input / outputs / none, controls, driver, rumble, light, battery, detail: "
+            "the IOHID interfaces of one pad, a GameController companion). reports (?device=): the device's newest raw "
+            "input reports (ms, size, hex: at most 64 bytes each, 16 reports); reading starts the backend's tap, which "
+            "stops 3 s after the last read (macOS IOHID; elsewhere unavailable). aliases: the device aliases, {from, "
+            "to, connected, name}: a controller first seen through GameController alone (gc:...) and later matched to "
+            "its HID device goes on under the new id, and the profiles naming the old one apply to it (kept in "
+            "aliases.yaml)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics", "database", "probe",
+                            "reports", "aliases", "match"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
             "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
-            "output; light";
+            "output; light; role, pin, identify, player of a device; the user's device entries; import a mapping; learn "
+            "an unknown device; unalias";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -135,10 +158,65 @@
             "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
             "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason). light {device, "
             "color}: a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4 light bar), where the OS "
-            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color";
+            "lets the emulator set it (unavailable with the reason elsewhere); answers device and color. role {device, "
+            "role}: player, debugger-remote (its debug bindings only) or disabled. pin {device, pin}: follow-focus, "
+            "all or pinned:<emulator id>. identify {device}: a 300 ms rumble and a blink of the light where the device "
+            "has them (rumble, light, ms; unavailable when it has neither). player {device, connector}: the connector "
+            "a host pad's auto: targets drive (auto or empty: the automatic choice again); answers connector, chosen, "
+            "drives. database_save {text}: one devices.user.json entry as JSON ({id: xbox-elite-2, images: my-elite}: "
+            "an entry of a known family changes the fields it names and keeps the others; a new family needs its "
+            "match list) or a file's {families: [...]}; checked against the built-in database, written, applied at "
+            "once (a connected device takes a new map at once, a new name or match when it reconnects). "
+            "database_delete {id}: removes the user entry (the built-in family comes back); both answer user and "
+            "user_file. database_import {text, save?}: a gamecontrollerdb.txt line or a RetroArch autoconfig file; "
+            "answers source, name, device, map, skipped and the gamecontrollerdb line, and unless save=false puts the "
+            "user family user-<vid><pid> (entry: matched by its VID:PID, its control map) into devices.user.json, "
+            "over a user entry of that id, whose map the device gets at once (family, path). learn {device, step, "
+            "...}: the learn wizard for an unknown device. step=start (controls=: a comma list, default the D-pad, "
+            "face buttons, shoulders, triggers, View, Menu) takes the device: its controls answer the prompts and "
+            "reach nothing else; status; sample {control, value} feeds a raw control as the device would; skip; back; "
+            "finish {name?, save?} maps and saves (map, gamecontrollerdb, saved, family, path); cancel. Each answers "
+            "learning, index, count, control, prompt, waiting_for_release, map. unalias {id}: forget a device alias "
+            "(id = the old id; unknown-alias when there is none), saved and applied at once; answers from and to. "
+            "haptics_probe "
+            "{kind, address, page?, port_mask?, play?}: a probe (exec, read, write, port-in, port-out: a breakpoint that "
+            "never stops, haptics.md §5) at an address or port as a source of the loaded game's user profile "
+            "(user/game-<sha>, started from the haptics that play now), with a rule that plays the effect (hit by "
+            "default); answers id, source and path; unavailable without a program loaded from a file.";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "role",
+                             "pin", "identify", "player", "database_save", "database_delete", "database_import",
+                             "learn", "haptics_probe", "unalias"});
         replies(post);
+
+        Json::Value& import = paths["/api/v1/controllers/database/import"]["post"];
+        import["summary"] = "Import a gamecontrollerdb line or a RetroArch autoconfig file into the user's device database";
+        import["description"] = "Body {text, save?}: the database_import verb of POST /api/v1/controllers/{verb}";
+        import["tags"].append("Controllers");
+        replies(import);
+
+        Json::Value& device = paths["/api/v1/controllers/host/{device}/{verb}"]["post"];
+        device["summary"] = "One host device: role, pin, identify, learn";
+        device["description"] =
+            "The verbs of POST /api/v1/controllers/{verb} with device= from the path: role {role}, pin {pin}, "
+            "identify, learn {step, controls, control, value, name, save}";
+        device["tags"].append("Controllers");
+        Json::Value deviceParameter;
+        deviceParameter["name"] = "device";
+        deviceParameter["in"] = "path";
+        deviceParameter["required"] = true;
+        deviceParameter["description"] = "The host device id (GET /api/v1/controllers/devices lists them)";
+        deviceParameter["schema"]["type"] = "string";
+        device["parameters"].append(deviceParameter);
+        Json::Value verb;
+        verb["name"] = "verb";
+        verb["in"] = "path";
+        verb["required"] = true;
+        verb["schema"]["type"] = "string";
+        for (const char* name : {"role", "pin", "identify", "learn"})
+            verb["schema"]["enum"].append(name);
+        device["parameters"].append(verb);
+        replies(device);
     }
 
     // The host actions (core ActionRegistry, control surfaces actions.md §1, §6): the same ids a pad, the Surface Dial,

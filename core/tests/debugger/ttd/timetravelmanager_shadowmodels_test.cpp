@@ -101,7 +101,9 @@ protected:
             order.push_back(static_cast<uint16_t>(table.Entries()[i].descriptor.legacyId));
         EXPECT_TRUE(std::is_sorted(order.begin(), order.end())) << "the same order as v1 (ascending ids)";
         if (table.Find({ttd::TTDDeviceType::BetaDisk, "betadisk"}))
+        {
             EXPECT_NE(table.Find({ttd::TTDDeviceType::Wd1793Context, "betadisk.context"}), nullptr);
+        }
         EXPECT_EQ(_engine.Regions()[0].pieces, _v1->GetCheckpoint(0)->ramPages.size() * 4)
             << "region 0 covers the model's whole RAM";
 

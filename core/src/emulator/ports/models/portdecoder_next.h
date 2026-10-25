@@ -72,7 +72,7 @@ public:
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
     bool RequestBoardNmi() override;
     bool GenerateDriveNmi() override;
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
     bool PagingLocked() const override { return IsPagingLocked(); }  // #7FFD bit 5 (zxnext.vhd port_7ffd_locked)
     bool ShadowScreen() const override { return (_context->emulatorState.p7FFD & 0x08) != 0; }
     void SetShadowScreen(bool on) override
@@ -172,6 +172,13 @@ public:
     /// The TTD state of the Next (PeripheralId::NextState, nextstatecodec.h)
     std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
+    /// zxnext.vhd: the ULA byte reaches the bus only on port #xxFF under the 48K / 128K timing (port_ff_dat_ula), and on the
+    /// +3 port (A15:12 = 0, A1:0 = 01) under the +3 timing with NR #82 bit 4; every other undecoded port reads #FF
+    bool FloatingBusDrives(uint16_t port) const override;
+    bool OddPortContended(uint16_t port) const;
+    bool SixtyHzWanted(uint8_t timing) const;
+    void BeforeRelease() override;
 
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)

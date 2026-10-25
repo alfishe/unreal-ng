@@ -786,7 +786,9 @@ TEST_F(EthernetGateway_Test, Bridge_FramesGoToTheLanAndComeBackForTheCard)
         lanOut += (f.lan && !f.toCard) ? 1 : 0;
         lanIn += (f.lan && f.toCard) ? 1 : 0;
         if (f.lan && f.toCard)
+        {
             EXPECT_EQ(f.port, "lan");
+        }
     }
     EXPECT_EQ(lanOut, 2);
     EXPECT_EQ(lanIn, 3);

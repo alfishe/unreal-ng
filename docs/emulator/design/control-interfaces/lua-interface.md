@@ -376,7 +376,7 @@ mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
 mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
 mouse_release_all()                --> state | nil, err
 mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
-mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2")
+mouse_status([device])             --> state | nil, err    (device: "kempston" | "sprinter" | "evo-ps2" | "amx")
 mouse_click_pending()              --> true while a click is still holding its button
 mouse_button_names()               --> {"left","right","middle"}
 ```
@@ -439,8 +439,8 @@ joystick_tap_pending()             --> true while a tap is still holding its but
 joystick_button_names()            --> {"up","down","left","right","fire","b5","b6","b7"}
 ```
 
-`state` has the same key names as the WebAPI state object: `available`, `present`, `wired`,
-`state` (the byte), `port_value` (what `IN #1F` returns), `buttons = {up=..., ...}`, `pressed`
+`state` has the same key names as the WebAPI state object: `available`, `present`, `wired`, `fit`
+(`""` when wired, else how to fit the slot card `kempston`), `state` (the byte), `port_value` (what `IN #1F` returns), `buttons = {up=..., ...}`, `pressed`
 (array of names), `button_names`, `keys`, `pending_tap` (`{mask, frames_left}`, or **absent**),
 plus `warning` when the guest cannot see the buttons.
 
@@ -582,7 +582,7 @@ lv = audio_levels()                           -- every row's and channel's peak,
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
-take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry
+take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one
 release_control()
 c = companions()            -- companion clients (devices acting as the user's hands): {companions = {...}, pairings = {...}, approval_available}
 n = companion_revoke("Desk panel")   -- revoke by id or name ("all": every one); the number revoked. A script never pairs or acts as a companion
@@ -1414,6 +1414,8 @@ emu.coverage_stop()
 emu.coverage_status()                -- executed count + first ranges
 emu.coverage_gaps()                  -- executed ranges and gaps over the full 64K
 emu.coverage_gaps(0x8000, 0xFFFF, 10)
+emu.coverage_export()                -- SkoolKit map text: { success, format, start, end, count, map, message }
+emu.coverage_export("/abs/run.map", {start = 0x6000, merge = true})   -- written: { ..., path, merged }
 
 -- AY register log
 emu.ay_log_start()                   -- default capacity; emu.ay_log_start(8192) to override

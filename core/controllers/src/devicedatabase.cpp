@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <mutex>
 
 #include "profiles/json.h"
 
@@ -36,6 +37,61 @@ std::string Text(const JsonValue& object, const char* field)
     return value != nullptr && value->IsString() ? value->AsString() : std::string{};
 }
 
+/// A `hid` object (device-database.md §2); false with the reason for a malformed one
+bool ReadHid(const JsonValue& hid, DeviceMatch::HidMap& out, std::string& error)
+{
+    if (!hid.IsObject())
+    {
+        error = "'hid' is an object";
+        return false;
+    }
+    if (const JsonValue* buttons = hid.Find("buttons"); buttons != nullptr)
+    {
+        if (!buttons->IsArray())
+        {
+            error = "'hid.buttons' is a list of control names";
+            return false;
+        }
+        for (const JsonValue& button : buttons->Items())
+            out.buttons.push_back(button.IsString() ? button.AsString() : std::string{});
+    }
+    if (const JsonValue* triggers = hid.Find("rxRyTriggers"); triggers != nullptr && triggers->IsBool())
+        out.rxRyTriggers = triggers->AsBool() ? 1 : 0;
+    if (const JsonValue* dpad = hid.Find("dpadAxes"); dpad != nullptr && dpad->IsBool())
+        out.dpadAxes = dpad->AsBool();
+    out.hat = Text(hid, "hat");
+    if (const JsonValue* consumer = hid.Find("consumer"); consumer != nullptr && consumer->IsObject())
+        for (const auto& [usage, control] : consumer->GetMembers())
+        {
+            JsonValue key = JsonValue::String(usage);
+            uint16_t code = 0;
+            if (!Hex(&key, code) || !control.IsString())
+            {
+                error = "'hid.consumer' maps a hex usage to a control name";
+                return false;
+            }
+            out.consumer.emplace_back(code, control.AsString());
+        }
+    if (const JsonValue* bits = hid.Find("bits"); bits != nullptr && bits->IsArray())
+        for (const JsonValue& entry : bits->Items())
+        {
+            const JsonValue* report = entry.Find("report");
+            const JsonValue* byte = entry.Find("byte");
+            const JsonValue* bit = entry.Find("bit");
+            const std::string control = Text(entry, "control");
+            if (report == nullptr || byte == nullptr || bit == nullptr || !report->IsNumber() || !byte->IsNumber() ||
+                !bit->IsNumber() || bit->AsNumber() < 0 || bit->AsNumber() > 7 || byte->AsNumber() < 0 ||
+                byte->AsNumber() > 1024 || report->AsNumber() < 0 || report->AsNumber() > 255 || control.empty())
+            {
+                error = "a 'hid.bits' entry is {report, byte, bit 0-7, control}";
+                return false;
+            }
+            out.bits.push_back({static_cast<uint8_t>(report->AsNumber()), static_cast<uint32_t>(byte->AsNumber()),
+                                static_cast<uint8_t>(bit->AsNumber()), control});
+        }
+    return true;
+}
+
 void Info(const JsonValue& entry, DeviceMatch& info)
 {
     for (const auto& [field, target] : {std::pair<const char*, std::string*>{"name", &info.name},
@@ -53,9 +109,58 @@ void Info(const JsonValue& entry, DeviceMatch& info)
     if (const JsonValue* role = entry.Find("role"); role != nullptr && role->IsString())
         DeviceRoleFromName(role->AsString(), info.role);  // an unknown name keeps the player role
     if (const JsonValue* controls = entry.Find("controls"); controls != nullptr && controls->IsArray())
+    {
+        info.controls.clear();  // a user entry's list replaces the built-in one
         for (const JsonValue& control : controls->Items())
             if (control.IsString())
                 info.controls.push_back(control.AsString());
+    }
+    if (const JsonValue* map = entry.Find("map"); map != nullptr && map->IsObject())
+    {
+        info.map.clear();  // as the controls: a user entry's map replaces the one it had
+        for (const auto& [canonical, raw] : map->GetMembers())
+            if (raw.IsString())
+                info.map[canonical] = raw.AsString();
+    }
+    if (const JsonValue* ignore = entry.Find("ignore"); ignore != nullptr && ignore->IsString())
+        info.ignore = !ignore->AsString().empty();
+}
+
+std::mutex& ActiveMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+struct ActiveState
+{
+    std::shared_ptr<const DeviceDatabase> database;
+    std::string userText;
+};
+
+ActiveState& ActiveSlot()
+{
+    static ActiveState state;
+    return state;
+}
+
+/// A devices.user.json text as its root object: an empty text is an empty database
+bool UserRoot(const std::string& text, JsonValue& root, std::string& error)
+{
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos)
+    {
+        root = JsonValue::Object({{"schema", JsonValue::Number(1)}, {"families", JsonValue::Array()}});
+        return true;
+    }
+    if (!ParseJson(text, root, error))
+        return false;
+    const JsonValue* schema = root.Find("schema");
+    if (!root.IsObject() || schema == nullptr || !schema->IsNumber() || schema->AsNumber() != 1)
+    {
+        error = "a device database is an object with 'schema': 1";
+        return false;
+    }
+    return true;
 }
 }  // namespace
 
@@ -88,26 +193,47 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
     {
         for (const JsonValue& entry : list->Items())
         {
-            Family family;
-            family.info.family = Text(entry, "id");
-            if (family.info.family.empty())
+            const std::string id = Text(entry, "id");
+            if (id.empty())
             {
                 error = "a family without an 'id'";
                 return false;
             }
+            auto same = std::find_if(families.begin(), families.end(),
+                                     [&id](const Family& f) { return f.info.family == id; });
+            // A user entry for a known family changes the fields it names (a photo, a name) and keeps the rest
+            Family family = merge && same != families.end() ? *same : Family{};
+            family.user = family.user || (merge && same == families.end());
+            family.info.family = id;
             Info(entry, family.info);
-            family.info.ignore = !Text(entry, "ignore").empty();
+            if (const JsonValue* hid = entry.Find("hid"); hid != nullptr && !ReadHid(*hid, family.info.hid, error))
+            {
+                error = "family '" + family.info.family + "': " + error;
+                return false;
+            }
             const JsonValue* matches = entry.Find("match");
-            if (matches == nullptr || !matches->IsArray())
+            if (matches != nullptr && matches->IsArray())
+                family.matches.clear();
+            else if (same == families.end() || !merge)
             {
                 error = "family '" + family.info.family + "': no 'match' list";
                 return false;
             }
-            for (const JsonValue& m : matches->Items())
+            static const std::vector<JsonValue> kNone;
+            for (const JsonValue& m : matches != nullptr && matches->IsArray() ? matches->Items() : kNone)
             {
                 Match match;
                 match.bus = Text(m, "bus");
                 match.backend = Text(m, "backend");
+                if (const JsonValue* hid = m.Find("hid"); hid != nullptr)
+                {
+                    if (!ReadHid(*hid, match.hid, error))
+                    {
+                        error = "family '" + family.info.family + "': " + error;
+                        return false;
+                    }
+                    match.hasHid = true;
+                }
                 uint16_t version = 0;
                 if (Hex(m.Find("version"), version))
                     match.version = version;
@@ -137,8 +263,6 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
                     if (Hex(&key, product) && mode.IsString())
                         family.modes[product] = mode.AsString();
                 }
-            auto same = std::find_if(families.begin(), families.end(),
-                                     [&family](const Family& f) { return f.info.family == family.info.family; });
             if (same != families.end())
                 *same = std::move(family);
             else
@@ -171,6 +295,7 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
 DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
 {
     const Family* best = nullptr;
+    const Match* bestMatch = nullptr;
     int bestScore = 0;
     for (const Family& family : _families)
     {
@@ -187,9 +312,11 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
                 continue;
             // A version or a bus that had to match makes the entry more specific (§3: exact before VID + PID)
             const int score = match.version >= 0 || !match.bus.empty() ? 100 : 80;
-            if (score > bestScore)
+            // On a tie the user's own family wins over a built-in one of the same VID:PID (an import, a learned map)
+            if (score > bestScore || (score == bestScore && best != nullptr && family.user && !best->user))
             {
                 best = &family;
+                bestMatch = &match;
                 bestScore = score;
             }
         }
@@ -200,6 +327,8 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
         result = best->info;
         result.score = bestScore;
         result.step = bestScore == 100 ? "exact" : "vid-pid";
+        if (bestMatch->hasHid)
+            result.hid = bestMatch->hid;
         if (auto mode = best->modes.find(device.product); mode != best->modes.end())
             result.mode = mode->second;
     }
@@ -251,6 +380,118 @@ std::string DeviceDatabase::Glyph(const std::string& glyphs, const std::string& 
         if (auto label = set->second.find(control); label != set->second.end())
             return label->second;
     return control;
+}
+
+std::vector<std::string> DeviceDatabase::FamilyIds() const
+{
+    std::vector<std::string> ids;
+    for (const Family& family : _families)
+        ids.push_back(family.info.family);
+    return ids;
+}
+
+std::shared_ptr<const DeviceDatabase> DeviceDatabase::Active()
+{
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    ActiveState& state = ActiveSlot();
+    if (!state.database)
+        state.database = std::make_shared<const DeviceDatabase>(Builtin());
+    return state.database;
+}
+
+bool DeviceDatabase::SetUser(const std::string& text, std::string& error)
+{
+    auto database = std::make_shared<DeviceDatabase>(Builtin());
+    JsonValue root;
+    if (!UserRoot(text, root, error) || !database->Merge(root.Dump(), error))
+        return false;
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    ActiveState& state = ActiveSlot();
+    state.database = std::move(database);
+    state.userText = text;
+    return true;
+}
+
+std::string DeviceDatabase::UserText()
+{
+    std::lock_guard<std::mutex> lock(ActiveMutex());
+    return ActiveSlot().userText;
+}
+
+std::vector<std::string> DeviceDatabase::UserFamilies(const std::string& text)
+{
+    std::vector<std::string> ids;
+    JsonValue root;
+    std::string error;
+    if (!UserRoot(text, root, error))
+        return ids;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+            if (const std::string id = Text(entry, "id"); !id.empty())
+                ids.push_back(id);
+    return ids;
+}
+
+bool DeviceDatabase::PutUserFamily(const std::string& text, const JsonValue& family, std::string& out,
+                                   std::string& error)
+{
+    const std::string id = family.IsObject() ? Text(family, "id") : std::string{};
+    if (id.empty())
+    {
+        error = "a device entry is an object with an 'id' (the family it adds or changes)";
+        return false;
+    }
+    JsonValue root;
+    if (!UserRoot(text, root, error))
+        return false;
+    std::vector<JsonValue> families;
+    bool replaced = false;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+        {
+            if (Text(entry, "id") == id)
+            {
+                families.push_back(family);
+                replaced = true;
+            }
+            else
+                families.push_back(entry);
+        }
+    if (!replaced)
+        families.push_back(family);
+    root.Set("families", JsonValue::Array(std::move(families)));
+    // The result must layer over the built-in database (a new family needs its 'match' list)
+    DeviceDatabase check = Builtin();
+    if (!check.Merge(root.Dump(), error))
+        return false;
+    out = root.Dump(2);
+    return true;
+}
+
+bool DeviceDatabase::RemoveUserFamily(const std::string& text, const std::string& id, std::string& out,
+                                      std::string& error)
+{
+    JsonValue root;
+    if (!UserRoot(text, root, error))
+        return false;
+    std::vector<JsonValue> families;
+    bool found = false;
+    if (const JsonValue* list = root.Find("families"); list != nullptr && list->IsArray())
+        for (const JsonValue& entry : list->Items())
+        {
+            if (Text(entry, "id") == id)
+                found = true;
+            else
+                families.push_back(entry);
+        }
+    if (!found)
+    {
+        error = "devices.user.json has no entry '" + id + "'";
+        return false;
+    }
+    root.Set("families", JsonValue::Array(std::move(families)));
+    out = root.Dump(2);
+    return true;
 }
 
 const DeviceDatabase& DeviceDatabase::Builtin()

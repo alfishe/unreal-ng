@@ -11,6 +11,7 @@
 #include <dbt.h>
 #include <hidsdi.h>
 #include <setupapi.h>
+#include <winioctl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -26,12 +27,21 @@
 #include <vector>
 
 #include "devicedatabase.h"
-#include "hid/drivers/dualsenseoutput.h"
 #include "hid/drivers/surfacedial.h"
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
 #include "platform/windows/winthread.h"
 #include "platform/windowsdevices.h"
+#include "protocolpads.h"
+
+// hidclass.h (the WDK's; MinGW ships it under ddk/): what HidD_GetFeature sends, but with the length that came back
+#ifndef IOCTL_HID_GET_FEATURE
+#define IOCTL_HID_GET_FEATURE CTL_CODE(FILE_DEVICE_KEYBOARD, 100, METHOD_OUT_DIRECT, FILE_ANY_ACCESS)
+#endif
+// What HidD_SetFeature sends (hidapi writes it overlapped the same way)
+#ifndef IOCTL_HID_SET_FEATURE
+#define IOCTL_HID_SET_FEATURE CTL_CODE(FILE_DEVICE_KEYBOARD, 100, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
+#endif
 
 namespace controllers
 {
@@ -96,6 +106,110 @@ HANDLE OpenHid(const std::wstring& path, DWORD access, DWORD flags = 0)
     return CreateFileW(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, flags,
                        nullptr);
 }
+
+/// The writes of a pad with a protocol (ProtocolPads), on its pump's thread: output reports through WriteFile (the
+/// interrupt OUT pipe over USB, the HID channel over Bluetooth, as hidapi's hid_write) and feature reads through
+/// IOCTL_HID_GET_FEATURE. Overlapped with a time limit, so a pad that stops answering never holds the pump (or its
+/// final report at the device's removal) for long. One call at a time: the pump's thread, then its destructor after
+/// the join
+class PadIo
+{
+public:
+    static constexpr DWORD kTimeoutMs = 1000;
+
+    PadIo(HANDLE handle, size_t outputLength, size_t featureLength)
+        : _handle(handle), _event(CreateEventW(nullptr, TRUE, FALSE, nullptr)), _outputLength(outputLength),
+          _featureLength(featureLength)
+    {
+    }
+    ~PadIo()
+    {
+        if (_event != nullptr)
+            CloseHandle(_event);
+    }
+    PadIo(const PadIo&) = delete;
+    PadIo& operator=(const PadIo&) = delete;
+
+    bool Valid() const
+    {
+        return _handle.Valid() && _event != nullptr;
+    }
+
+    /// Windows takes an output report at the collection's longest output length (hidapi: "Windows expects the number
+    /// of bytes which are in the _longest_ report"), zero-padded
+    bool Write(const std::vector<uint8_t>& report)
+    {
+        std::vector<uint8_t> padded = PadHidReport(report, _outputLength);
+        DWORD done = 0;
+        return Transfer(
+                   [&](OVERLAPPED* overlapped) {
+                       return WriteFile(_handle.handle, padded.data(), static_cast<DWORD>(padded.size()), nullptr,
+                                        overlapped) != FALSE;
+                   },
+                   done) &&
+               done == padded.size();
+    }
+
+    /// Windows wants a buffer of the collection's longest feature report and may fill all of it; the protocol knows
+    /// its report's own size (@p size), so a longer answer is cut to it
+    bool GetFeature(uint8_t id, size_t size, std::vector<uint8_t>& data)
+    {
+        data.assign(std::max(size, _featureLength), 0);
+        data[0] = id;
+        const auto length = static_cast<DWORD>(data.size());
+        DWORD done = 0;
+        if (!Transfer(
+                [&](OVERLAPPED* overlapped) {
+                    return DeviceIoControl(_handle.handle, IOCTL_HID_GET_FEATURE, data.data(), length, data.data(),
+                                           length, nullptr, overlapped) != FALSE;
+                },
+                done) ||
+            done == 0)
+            return false;
+        data.resize(std::min<size_t>(done, size));
+        return data[0] == id;
+    }
+
+    /// A feature report (bytes[0] the report id, 0 for a collection without ids), zero-padded to the collection's
+    /// longest feature report as HidD_SetFeature wants it
+    bool SetFeature(const std::vector<uint8_t>& report)
+    {
+        std::vector<uint8_t> padded = PadHidReport(report, _featureLength);
+        DWORD done = 0;
+        return Transfer(
+            [&](OVERLAPPED* overlapped) {
+                return DeviceIoControl(_handle.handle, IOCTL_HID_SET_FEATURE, padded.data(),
+                                       static_cast<DWORD>(padded.size()), nullptr, 0, nullptr, overlapped) != FALSE;
+            },
+            done);
+    }
+
+private:
+    template <typename Start>
+    bool Transfer(Start start, DWORD& done)
+    {
+        OVERLAPPED overlapped{};
+        overlapped.hEvent = _event;
+        ResetEvent(_event);
+        if (!start(&overlapped))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+                return false;
+            if (WaitForSingleObject(_event, kTimeoutMs) != WAIT_OBJECT_0)
+            {
+                CancelIoEx(_handle.handle, &overlapped);
+                GetOverlappedResult(_handle.handle, &overlapped, &done, TRUE);
+                return false;
+            }
+        }
+        return GetOverlappedResult(_handle.handle, &overlapped, &done, FALSE) != FALSE;
+    }
+
+    WinHandle _handle;
+    HANDLE _event;
+    size_t _outputLength;
+    size_t _featureLength;
+};
 
 /// The input fields of a top-level collection, from its preparsed data (Windows gives no report descriptor): each
 /// variable usage is written all zeros and all ones into a report HidP_InitializeReportForID made, and the bits that
@@ -218,6 +332,13 @@ public:
             return true;
         _sink = &sink;
         _stopping = false;
+        // Made while the thread does not run (a restart's is empty: Run cleared it); kept until the backend goes, so a
+        // late output call finds no device rather than a gone object
+        if (!_protocol || _protocolSink != &sink)
+        {
+            _protocol = std::make_unique<ProtocolPads>(sink);
+            _protocolSink = &sink;
+        }
         _stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (_stopEvent == nullptr)
         {
@@ -255,27 +376,27 @@ public:
     size_t DeviceCount() const override
     {
         std::lock_guard lock(_mutex);
-        return _pads.size() + _dials.size();
+        return _pads.size() + _dials.size() + (_protocol ? _protocol->DeviceCount() : 0);
     }
 
-    /// region <Haptics: a DualSense over USB, the Dial's clicks>
+    /// region <Haptics: the pads with a protocol (ProtocolPads), the Dial's clicks>
     bool HasRumble(const HostDeviceId& device) const override
     {
-        std::lock_guard lock(_mutex);
-        const Pad* pad = PadLocked(device);
-        return pad != nullptr && pad->dualSenseUsb;
+        return (RumbleActuators(device) & (kRumbleLow | kRumbleHigh)) != 0;
     }
 
     uint8_t RumbleActuators(const HostDeviceId& device) const override
     {
+        if (ProtocolPads* protocol = ProtocolOf(device))
+            return protocol->RumbleActuators(device);
         std::lock_guard lock(_mutex);
-        if (const Pad* pad = PadLocked(device); pad != nullptr && pad->dualSenseUsb)
-            return kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
         return WriterLocked(device) != nullptr ? static_cast<uint8_t>(kHapticClicker) : 0;
     }
 
     std::string RumbleUnavailable(const HostDeviceId& device) const override
     {
+        if (ProtocolPads* protocol = ProtocolOf(device))
+            return protocol->RumbleUnavailable(device);
         std::lock_guard lock(_mutex);
         if (const Pad* pad = PadLocked(device))
             return pad->rumbleUnavailable;
@@ -284,21 +405,12 @@ public:
         return "The device is not connected";
     }
 
+    /// Queued for the pad's pump, never blocks: a DualSense's trigger levels become their resistance (haptics.md
+    /// §6.4), a Switch pad plays the levels' HD frequencies, a Joy-Con pair splits them by side
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
-        std::lock_guard lock(_mutex);
-        Pad* pad = PadLocked(device);
-        if (pad == nullptr || !pad->dualSenseUsb)
-            return false;
-        if (!pad->writer)
-            pad->writer = std::make_shared<WinHandle>(OpenHid(pad->path, GENERIC_READ | GENERIC_WRITE));
-        if (!pad->writer->Valid())
-            return false;
-        // The triggers' levels become their resistance (haptics.md §6.4); zero turns it off
-        const std::vector<uint8_t> report = PadHidReport(DualSenseOutput::UsbReport(levels), pad->outputLength);
-        DWORD written = 0;
-        return WriteFile(pad->writer->handle, report.data(), static_cast<DWORD>(report.size()), &written, nullptr) &&
-               written == report.size();
+        ProtocolPads* protocol = ProtocolOf(device);
+        return protocol != nullptr && protocol->SetRumble(device, levels);
     }
 
     bool PlayClicks(const HostDeviceId& device, const HapticClicks& clicks) override
@@ -313,44 +425,44 @@ public:
     }
     /// endregion </Haptics>
 
-    /// region <Light: a DualSense over USB, through the output report its rumble writes>
-    bool HasLight(const HostDeviceId& device) const override
+    std::string DeviceNotice(const HostDeviceId& device) const override
     {
         std::lock_guard lock(_mutex);
         const Pad* pad = PadLocked(device);
-        return pad != nullptr && pad->dualSenseUsb;
+        return pad != nullptr && !pad->heard ? pad->notice : std::string();
+    }
+
+    /// region <Battery and light: the pads with a protocol, from their own reports and through their pumps>
+    /// A DualSense / DualShock 4 from its full report, a Switch pad from its 0x30, a Joy-Con pair the lower half's
+    BatteryState Battery(const HostDeviceId& device) const override
+    {
+        ProtocolPads* protocol = ProtocolOf(device);
+        return protocol != nullptr ? protocol->Battery(device) : BatteryState{};
+    }
+
+    bool HasLight(const HostDeviceId& device) const override
+    {
+        ProtocolPads* protocol = ProtocolOf(device);
+        return protocol != nullptr && protocol->HasLight(device);
     }
 
     std::string LightUnavailable(const HostDeviceId& device) const override
     {
+        if (ProtocolPads* protocol = ProtocolOf(device))
+            return protocol->LightUnavailable(device);
         std::lock_guard lock(_mutex);
-        const Pad* pad = PadLocked(device);
-        if (pad == nullptr)
-            return WriterLocked(device) != nullptr ? "The Surface Dial has no light" : "The device is not connected";
-        return pad->dualSenseUsb ? std::string()
-                                 : "On Windows the emulator sets the light of a DualSense over the USB cable only";
+        if (PadLocked(device) != nullptr)
+            return "This device has no light the emulator can set";
+        return WriterLocked(device) != nullptr ? "The Surface Dial has no light" : "The device is not connected";
     }
 
+    /// USB and Bluetooth (the Bluetooth report with its CRC); a DualSense's first colour releases the firmware's light
     bool SetLight(const HostDeviceId& device, const LightColor& color) override
     {
-        std::lock_guard lock(_mutex);
-        Pad* pad = PadLocked(device);
-        if (pad == nullptr || !pad->dualSenseUsb)
-            return false;
-        if (!pad->writer)
-            pad->writer = std::make_shared<WinHandle>(OpenHid(pad->path, GENERIC_READ | GENERIC_WRITE));
-        if (!pad->writer->Valid())
-            return false;
-        const std::vector<uint8_t> report =
-            PadHidReport(DualSenseOutput::UsbLightReport(color, !pad->lightReleased), pad->outputLength);
-        DWORD written = 0;
-        const bool ok =
-            WriteFile(pad->writer->handle, report.data(), static_cast<DWORD>(report.size()), &written, nullptr) &&
-            written == report.size();
-        pad->lightReleased = pad->lightReleased || ok;
-        return ok;
+        ProtocolPads* protocol = ProtocolOf(device);
+        return protocol != nullptr && protocol->SetLight(device, color);
     }
-    /// endregion </Light>
+    /// endregion </Battery and light>
 
     /// region <Surface outputs: the Dial's patterns and steps, through its writer thread>
     uint8_t Outputs(const HostDeviceId& device) const override
@@ -389,12 +501,11 @@ private:
         HostDeviceId id;
         std::wstring path;
         std::unique_ptr<HidPad> hid;
-        bool dualSenseUsb = false;
-        size_t outputLength = 0;
-        std::shared_ptr<WinHandle> writer;  ///< opened at the first rumble or light
-        bool lightReleased = false;         ///< dualSenseUsb: the firmware's light bar was released (the first light)
         std::string rumbleUnavailable;
+        std::string notice;               ///< until its first report (a DualShock 3 without its driver)
+        std::atomic<bool> heard{false};  ///< a report came (backend thread; read under _mutex)
     };
+    static constexpr UINT kRegistrations = 5;
     struct Dial
     {
         HostDeviceId id;
@@ -431,12 +542,16 @@ private:
         }
         SetWindowLongPtrW(_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
-        // Joystick, game pad, multi-axis controller: in the background too, with arrivals and removals
-        RAWINPUTDEVICE devices[3] = {};
+        // Joystick, game pad, multi-axis controller: in the background too, with arrivals and removals. Then whole
+        // pages for the pads with a protocol whose collection is not one of those: the vendor page (a Steam
+        // Controller's pad interface) and Game Controls (the GameCube adapter); AddPad keeps only those of them
+        RAWINPUTDEVICE devices[kRegistrations] = {};
         const USHORT usages[3] = {0x04, 0x05, 0x08};
         for (int i = 0; i < 3; ++i)
             devices[i] = {0x01, usages[i], RIDEV_INPUTSINK | RIDEV_DEVNOTIFY, _window};
-        if (!RegisterRawInputDevices(devices, 3, sizeof(RAWINPUTDEVICE)))
+        devices[3] = {0xFF00, 0, RIDEV_PAGEONLY | RIDEV_INPUTSINK | RIDEV_DEVNOTIFY, _window};
+        devices[4] = {0x05, 0, RIDEV_PAGEONLY | RIDEV_INPUTSINK | RIDEV_DEVNOTIFY, _window};
+        if (!RegisterRawInputDevices(devices, kRegistrations, sizeof(RAWINPUTDEVICE)))
         {
             const DWORD error = GetLastError();
             DestroyWindow(_window);
@@ -462,10 +577,10 @@ private:
             UnregisterDeviceNotification(notify);
         for (RAWINPUTDEVICE& device : devices)
         {
-            device.dwFlags = RIDEV_REMOVE;
+            device.dwFlags = RIDEV_REMOVE | (device.usUsage == 0 ? RIDEV_PAGEONLY : 0);
             device.hwndTarget = nullptr;
         }
-        RegisterRawInputDevices(devices, 3, sizeof(RAWINPUTDEVICE));
+        RegisterRawInputDevices(devices, kRegistrations, sizeof(RAWINPUTDEVICE));
         DestroyWindow(_window);
         _window = nullptr;
 
@@ -481,6 +596,8 @@ private:
             dials.swap(_dials);
         }
         _ignored.clear();
+        _protocolKeys.clear();
+        _protocol->Clear();  // its pumps stop their motors, its devices are reported gone
         for (auto& dial : dials)
             CloseDial(*dial);
         for (const HostDeviceId& id : gone)
@@ -595,7 +712,12 @@ private:
             return;
         const std::wstring path = RawDeviceName(raw);
         const std::string path8 = Utf8(path);
-        if (WinRawInputRole(info.hid.usUsagePage, info.hid.usUsage, path8) != WinHidRole::Pad)
+        const auto vendor = static_cast<uint16_t>(info.hid.dwVendorId);
+        const auto product = static_cast<uint16_t>(info.hid.dwProductId);
+        // A pad's collection, or a protocol's on another page (the Steam vendor page, the GameCube adapter's); its
+        // product string tells the NES pads from right Joy-Cons further down
+        const bool pad = WinRawInputRole(info.hid.usUsagePage, info.hid.usUsage, path8) == WinHidRole::Pad;
+        if (!pad && !ProtocolPads::TakesCollection(vendor, product, info.hid.usUsagePage))
             return;
         UINT preparsedSize = 0;
         if (GetRawInputDeviceInfoW(raw, RIDI_PREPARSEDDATA, nullptr, &preparsedSize) != 0 || preparsedSize == 0)
@@ -605,12 +727,11 @@ private:
             return;
         HidDescriptor descriptor;
         HIDP_CAPS caps{};
-        if (!DescriptorFromPreparsed(reinterpret_cast<PHIDP_PREPARSED_DATA>(preparsed.data()), info.hid.usUsage,
-                                     descriptor, caps))
+        const bool described = DescriptorFromPreparsed(reinterpret_cast<PHIDP_PREPARSED_DATA>(preparsed.data()),
+                                                       info.hid.usUsage, descriptor, caps);
+        if (!described && HidP_GetCaps(reinterpret_cast<PHIDP_PREPARSED_DATA>(preparsed.data()), &caps) !=
+                              HIDP_STATUS_SUCCESS)
             return;
-
-        const auto vendor = static_cast<uint16_t>(info.hid.dwVendorId);
-        const auto product = static_cast<uint16_t>(info.hid.dwProductId);
         const auto version = static_cast<uint16_t>(info.hid.dwVersionNumber);
         const WinHidPath where = ParseWinHidPath(path8);
         std::string name;
@@ -631,42 +752,125 @@ private:
         identity.version = version;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         if (match.ignore)
             return;
-
-        auto pad = std::make_unique<Pad>();
-        pad->path = path;
-        pad->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match.layout));
-        if (pad->hid->Empty())
+        // A pad with a protocol of its own reads its full report even when the collection declares vendor data only
+        const bool protocol = ProtocolPads::TakesCollection(vendor, product, info.hid.usUsagePage, name);
+        if (!described && !protocol)
             return;
-        pad->dualSenseUsb = where.bus == "usb" && DualSenseOutput::Handles(vendor, product);
-        pad->outputLength = caps.OutputReportByteLength;
-        if (DualSenseOutput::Handles(vendor, product) && !pad->dualSenseUsb)
-            pad->rumbleUnavailable = "A DualSense rumbles over the USB cable only for now";
-        else if (!pad->dualSenseUsb)
-            pad->rumbleUnavailable = "On Windows rumble works for Xbox pads (GameInput, XInput) and a DualSense over "
-                                     "USB; this device has no motors the emulator can drive";
+
+        auto hid = described ? std::make_unique<HidPad>(descriptor, HidLayoutFor(match)) : nullptr;
+        if (hid && hid->Empty())
+            hid.reset();
+        if (!hid && !protocol)
+            return;
 
         const std::string id = WinDeviceId(where.bus, vendor, product, version, serial, path8);
         HostDeviceInfo host;
-        host.name = match.name.empty() ? name : match.name;
+        // A Joy-Con names its side ("Joy-Con (L)"); the database's name is the family's
+        const bool joyCon = SwitchProPad::IsJoyCon(SwitchProPad::LayoutFor(vendor, product, name).value_or(SwitchLayout::Pro));
+        host.name = (joyCon && !name.empty()) || match.name.empty() ? name : match.name;
         host.family = match.family;
         host.layout = match.layout;
         host.backend = Name();
+        if (protocol)
+        {
+            AddProtocolPad(raw, path, id, host, vendor, product, where.bus == "bt", name, std::move(hid), caps);
+            return;
+        }
+
+        auto added = std::make_unique<Pad>();
+        added->path = path;
+        added->hid = std::move(hid);
+        added->rumbleUnavailable = "On Windows rumble works for Xbox pads (GameInput, XInput), the DualSense, the "
+                                   "DualShock 4, the Switch Pro controller and the Joy-Cons; this device has no motors "
+                                   "the emulator can drive";
+        if (vendor == kSony && product == kDualShock3)
+            added->notice = EnableDualShock3(path, where.bus == "bt", caps);
         {
             std::lock_guard lock(_mutex);
-            pad->id = UniqueLocked(id);
-            host.id = pad->id;
-            _pads[raw] = std::move(pad);
+            added->id = UniqueLocked(id);
+            host.id = added->id;
+            _pads[raw] = std::move(added);
         }
         _ignored.erase(raw);
         _sink->OnDeviceAdded(host);
     }
 
+    static constexpr uint16_t kSony = 0x054C;
+    static constexpr uint16_t kDualShock3 = 0x0268;
+
+    /// A DualShock 3 on the cable sends no input report until feature report 0xF4 enables them (what a PS3 sends; the
+    /// IOHID backend does the same). Windows has no driver of its own for it: without DsHidMini (BthPS3 over
+    /// Bluetooth) the pad may stay silent. The notice says so until its first report
+    static std::string EnableDualShock3(const std::wstring& path, bool bluetooth, const HIDP_CAPS& caps)
+    {
+        if (!bluetooth && caps.FeatureReportByteLength > 0)
+        {
+            WinHandle writer(OpenHid(path, GENERIC_READ | GENERIC_WRITE));
+            if (writer.Valid())
+            {
+                std::vector<uint8_t> enable =
+                    PadHidReport({0xF4, 0x42, 0x0C, 0x00, 0x00}, caps.FeatureReportByteLength);
+                HidD_SetFeature(writer.handle, enable.data(), static_cast<ULONG>(enable.size()));
+            }
+        }
+        return "No input from this DualShock 3 yet: Windows has no driver for it; install DsHidMini (and BthPS3 for "
+               "Bluetooth), then connect it again";
+    }
+
+    /// A DualSense / DualShock 4 / Switch pad: ProtocolPads decodes it and drives its outputs through a handle opened
+    /// for writing (shared: Windows and other programs keep theirs)
+    void AddProtocolPad(HANDLE raw, const std::wstring& path, const std::string& id, HostDeviceInfo host,
+                        uint16_t vendor, uint16_t product, bool bluetooth, const std::string& productName,
+                        std::unique_ptr<HidPad> hid, const HIDP_CAPS& caps)
+    {
+        ProtocolPads::Endpoint endpoint;
+        endpoint.key = std::to_string(reinterpret_cast<uintptr_t>(raw));
+        endpoint.vendor = vendor;
+        endpoint.product = product;
+        endpoint.bluetooth = bluetooth;
+        endpoint.productName = productName;
+        endpoint.zeroReportIdFirst = true;  // RAWHID: a collection without ids gets report id 0 first
+        endpoint.hid = std::move(hid);
+        const HANDLE handle = OpenHid(path, GENERIC_READ | GENERIC_WRITE, FILE_FLAG_OVERLAPPED);
+        const DWORD openError = handle == INVALID_HANDLE_VALUE ? GetLastError() : 0;
+        auto io = std::make_shared<PadIo>(handle, caps.OutputReportByteLength, caps.FeatureReportByteLength);
+        if (io->Valid() && caps.OutputReportByteLength > 0)
+            endpoint.write = [io](const std::vector<uint8_t>& report) { return io->Write(report); };
+        if (io->Valid() && caps.FeatureReportByteLength > 0)
+        {
+            endpoint.getFeature = [io](uint8_t featureId, size_t size, std::vector<uint8_t>& data) {
+                return io->GetFeature(featureId, size, data);
+            };
+            endpoint.setFeature = [io](const std::vector<uint8_t>& report) { return io->SetFeature(report); };
+        }
+        if (!io->Valid())
+            endpoint.outputsUnavailable = "Windows did not open the pad for writing (" +
+                                          std::to_string(openError) +
+                                          "): another program may hold it alone (Steam Input, DS4Windows)";
+        {
+            std::lock_guard lock(_mutex);
+            host.id = UniqueLocked(id);
+        }
+        endpoint.info = host;
+        const std::string key = endpoint.key;
+        if (!_protocol->Add(std::move(endpoint)))
+            return;  // a grip half without writes: its side stays unknown
+        _protocolKeys[raw] = key;
+        _ignored.erase(raw);
+    }
+
     void RemovePad(HANDLE raw)
     {
         _ignored.erase(raw);
+        if (const auto key = _protocolKeys.find(raw); key != _protocolKeys.end())
+        {
+            _protocol->Remove(key->second);
+            _protocolKeys.erase(key);
+            return;
+        }
         std::unique_ptr<Pad> pad;
         {
             std::lock_guard lock(_mutex);
@@ -690,6 +894,14 @@ private:
         const auto* raw = reinterpret_cast<const RAWINPUT*>(_input.data());
         if (raw->header.dwType != RIM_TYPEHID)
             return;
+        if (const auto key = _protocolKeys.find(raw->header.hDevice); key != _protocolKeys.end())
+        {
+            // Each report padded to the collection's longest input report: ProtocolPads cuts the full ones to size
+            const RAWHID& hid = raw->data.hid;
+            for (DWORD i = 0; i < hid.dwCount; ++i)
+                _protocol->Input(key->second, hid.bRawData + static_cast<size_t>(i) * hid.dwSizeHid, hid.dwSizeHid);
+            return;
+        }
         Pad* pad = nullptr;
         {
             std::lock_guard lock(_mutex);
@@ -699,6 +911,7 @@ private:
         }
         if (pad == nullptr)
             return;
+        pad->heard = true;
         const RAWHID& hid = raw->data.hid;
         const HostDeviceId& id = pad->id;
         const auto sink = [this, &id](const std::string& control, float value) {
@@ -706,6 +919,12 @@ private:
         };
         for (DWORD i = 0; i < hid.dwCount; ++i)
             pad->hid->Decode(hid.bRawData + static_cast<size_t>(i) * hid.dwSizeHid, hid.dwSizeHid, sink);
+    }
+
+    /// ProtocolPads when it has @p device (it locks on its own)
+    ProtocolPads* ProtocolOf(const HostDeviceId& device) const
+    {
+        return _protocol && _protocol->Has(device) ? _protocol.get() : nullptr;
     }
 
     Pad* PadLocked(const HostDeviceId& device) const
@@ -847,7 +1066,7 @@ private:
         identity.version = attributes.VersionNumber;
         identity.name = name;
         identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         const std::string id = WinDeviceId(where.bus, attributes.VendorID, attributes.ProductID,
                                            attributes.VersionNumber, serial, Utf8(path));
         HostDeviceInfo host;
@@ -975,7 +1194,7 @@ private:
             for (const auto& dial : _dials)
                 if (dial->id == candidate)
                     return true;
-            return false;
+            return _protocol && _protocol->IdTaken(candidate);
         };
         std::string unique = id;
         for (int n = 2; taken(unique); ++n)
@@ -993,6 +1212,10 @@ private:
     std::vector<std::unique_ptr<Dial>> _dials;     ///< the same
     std::map<HostDeviceId, StepsOut> _dialSteps;   ///< under _mutex: each Dial's last steps, kept across a reconnect
     std::set<HANDLE> _ignored;                     ///< backend thread: Raw Input devices that are not pads
+    /// The pads with a protocol (DualSense, DualShock 4, Switch); made at Start, kept to the end
+    std::unique_ptr<ProtocolPads> _protocol;
+    IBackendSink* _protocolSink = nullptr;
+    std::map<HANDLE, std::string> _protocolKeys;  ///< backend thread: their Raw Input handles -> ProtocolPads keys
     std::vector<uint64_t> _input;                  ///< backend thread: the WM_INPUT buffer, aligned
 };
 }  // namespace

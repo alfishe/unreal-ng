@@ -164,7 +164,9 @@ TEST_F(SprinterZxMode_Test, LauncherModes_ReportAndJournal)
         const bool record = std::string(mode.file) == "sp.zx";
         DeviceState::SprinterJournalControl(_context, 1, true);
         if (record)
+        {
             ASSERT_TRUE(ttd->StartRecording());
+        }
         ASSERT_NO_FATAL_FAILURE(Launch(std::string(mode.file) + " atarin.trd"));
         if (record)
             ttd->StopRecording();

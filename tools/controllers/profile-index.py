@@ -3,9 +3,9 @@
 
 Reads every game file and bundle under games/ (one YAML document per profile, `---` between them) and lists each
 profile with its id, label, machines, file, byte offset and length, and the keys it is found by (`sha256:<hex>`,
-`sig:<signature>`, `zxdb:<id>`). The emulator reads only the index at start and parses a profile when a key of the
-loaded program names it; it rebuilds the index in memory when this file is missing or older than a profile, so the
-tool is for the committed copy.
+`sig:<signature>`, `zxdb:<id>`) with its TR-DOS file set (`file_set`, for the catalog rule). The emulator reads only the
+index at start and parses a profile when a key of the loaded program names it; it rebuilds the index in memory when
+this file is missing or older than a profile, so the tool is for the committed copy.
 
     tools/controllers/profile-index.py            # write the index
     tools/controllers/profile-index.py --check    # exit 1 when the committed index is not what the files say
@@ -69,8 +69,9 @@ def build(errors):
                 continue
             match = profile.get("match", {}) if isinstance(profile, dict) else {}
             if (not isinstance(profile, dict) or profile.get("kind") != "play" or
-                    not (match.get("file_sha256") or match.get("signatures"))):
-                errors.append(f"{where}: not a game profile (a play profile with match.file_sha256 or signatures)")
+                    not (match.get("file_sha256") or match.get("signatures") or match.get("file_set"))):
+                errors.append(f"{where}: not a game profile (a play profile with match.file_sha256, signatures or "
+                              "file_set)")
                 continue
             pid = str(profile.get("id", ""))
             if pid in ids:
@@ -85,7 +86,8 @@ def build(errors):
                 continue
             owners.update({k: pid for k in keys})
             entries.append({"id": pid, "label": profile.get("label"), "machines": match.get("machines", []),
-                            "file": relative, "offset": offset, "length": length, "keys": keys})
+                            "file": relative, "offset": offset, "length": length, "keys": keys,
+                            "file_set": [str(t).lower() for t in match.get("file_set", [])]})
     return entries
 
 
@@ -108,6 +110,8 @@ def dump(entries):
             fields.append("machines: [" + ", ".join(scalar(m) for m in e["machines"]) + "]")
         fields += [f"file: {scalar(e['file'])}", f"offset: {e['offset']}", f"length: {e['length']}",
                    "keys: [" + ", ".join(scalar(k) for k in e["keys"]) + "]"]
+        if e["file_set"]:
+            fields.append("file_set: [" + ", ".join(scalar(t) for t in e["file_set"]) + "]")
         lines.append("  - { " + ", ".join(fields) + " }")
     if not entries:
         lines[-1] = "profiles: []"

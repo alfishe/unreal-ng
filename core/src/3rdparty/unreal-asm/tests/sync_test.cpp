@@ -1346,9 +1346,13 @@ TEST(SyncInject_Test, TheNewRulesWriteATextThatReadsBack)
         // the second end word (seen in unreal-ng: LOAD sets it; a line typed into the new text moved memory up to the
         // old one: 3.0 crashed, 2.x moved its own code)
         if (d->id == "zasm-3.0")
+        {
             EXPECT_EQ(dump.machine.Word(0x61CA), dump.machine.Word(0x61C8));
+        }
         if (d->id.rfind("zasm-2.", 0) == 0)
+        {
             EXPECT_EQ(dump.machine.Word(static_cast<uint16_t>(d->linear.startAt + 4)), dump.machine.Word(d->linear.endAt));
+        }
         if (d->id.rfind("zasm-2.", 0) == 0)
         {
             std::vector<uint8_t> line;

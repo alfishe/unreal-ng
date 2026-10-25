@@ -24,8 +24,11 @@ class InputRouter;
 struct ProfileContext
 {
     std::string machine;                  ///< the model (`pentagon`, `next`); empty = any
-    std::vector<std::string> signatures;  ///< the loaded program's (none until the signature library exists)
+    /// The loaded program's signatures (swsignature Signatures::Keys: `file:sha256:...`, `tape:sha256:...`,
+    /// `trdset:sha256:...`, `mem:sha256:...`)
+    std::vector<std::string> signatures;
     std::vector<std::string> fileSha256;  ///< the loaded media files
+    std::vector<std::string> fileSet;     ///< the loaded disk's TR-DOS file set (swsignature tokens), for the fuzzy rule
     std::vector<std::string> manual;      ///< play profiles chosen by hand: they rank as game profiles
     std::vector<HostDeviceInfo> devices;  ///< the connected devices, in connection order
     /// The debug profiles take part (debug-and-ttd.md §1.6: the Qt client turns them on with Advanced > Debug layer)
@@ -58,7 +61,16 @@ struct ResolvedProfiles
     /// Per router scope (as `scopes`), the surface haptics of the most specific debug profile that has a `haptics`
     /// section (control surfaces profiles.md §1: per layer, whole, not merged); a scope without one is absent
     std::vector<std::pair<std::string, JsonValue>> surfaceHaptics;
+    /// The game profiles selected, each with how (D7: "manual", "signature tape:sha256:...", "file sha256 ...",
+    /// "file set: Jaccard 0.83"), strongest first
+    std::vector<std::pair<std::string, std::string>> gameMatches;
+    /// Why `haptics` came from where it did (H-3): "game profile <id> (<how>)", "<id> (machine default)", empty
+    std::string hapticsReason;
 };
+
+/// How a game profile matches @p context (D7: manual, then signature, then file hash, then the fuzzy file set); empty
+/// when it does not, or is not a game profile
+std::string GameMatch(const Profile& profile, const ProfileContext& context);
 
 /// One shipped game profile as the index lists it (mapping-and-profiles.md §7.5)
 struct GameEntry
@@ -70,6 +82,7 @@ struct GameEntry
     size_t offset = 0;  ///< the profile's YAML document in the file (a bundle holds many)
     size_t length = 0;
     std::vector<std::string> keys;  ///< `sha256:<hex>`, `sig:<signature>`, `zxdb:<id>`; lower case
+    std::vector<std::string> fileSet;  ///< match.file_set (swsignature tokens), for the fuzzy lookup
 };
 
 /// The shipped game profiles: the index read at start, a profile parsed when a key of the program or a manual choice
@@ -87,6 +100,8 @@ public:
     const GameEntry* FindId(const std::string& id) const;
     /// The entries a program's keys name (`sha256:<hex>` and so on), each once
     std::vector<const GameEntry*> Lookup(const std::vector<std::string>& keys) const;
+    /// The entries whose file set matches @p fileSet by the fuzzy rule (swsignature match.h), each once
+    std::vector<const GameEntry*> LookupFileSet(const std::vector<std::string>& fileSet) const;
     /// Parse one entry: its slice of the file, which must hold the profile the index names (else the index is rebuilt
     /// once: a checkout that changed the line ends moves the offsets)
     bool Load(const std::string& id, Profile& out, std::string& error);
@@ -104,6 +119,7 @@ private:
     std::string _dir;
     std::vector<GameEntry> _entries;
     std::multimap<std::string, size_t> _byKey;
+    std::multimap<std::string, size_t> _byToken;  ///< file-set token -> entry
     std::map<std::string, size_t> _byId;
 };
 
@@ -150,8 +166,31 @@ public:
     /// The file Save writes
     static std::string SavePath(const Profile& profile, const std::string& root);
 
+    /// region <Aliases>
+    /// A promoted device (architecture.md §5): a `gc:` device GameController alone saw, later matched to its IOHID
+    /// endpoint, goes on under the IOHID id; the old id becomes an alias of the new one, so the profiles and player
+    /// pins naming the old id apply to the new id (Resolve, Apply). An alias of @p from moves to @p to as well
+    void AddAlias(const HostDeviceId& from, const HostDeviceId& to);
+    /// Forget the alias @p from (an old id): the profiles naming it no longer apply to its new id. False: no such alias
+    bool RemoveAlias(const HostDeviceId& from);
+    /// The old ids of @p device
+    std::vector<HostDeviceId> AliasesOf(const HostDeviceId& device) const;
+    /// Old id -> new id
+    const std::map<HostDeviceId, HostDeviceId>& Aliases() const
+    {
+        return _aliases;
+    }
+    /// `<root>/aliases.yaml`, kept across restarts: LoadAliases adds the file's (a missing file is no error)
+    bool LoadAliases(const std::string& root, std::string& error);
+    bool SaveAliases(const std::string& root, std::string& error) const;
+    static std::string AliasesPath(const std::string& root);
+    static std::string DumpAliases(const std::map<HostDeviceId, HostDeviceId>& aliases);
+    static bool ParseAliases(const std::string& text, std::map<HostDeviceId, HostDeviceId>& out, std::string& error);
+    /// endregion </Aliases>
+
 private:
     std::vector<Profile> _profiles;
+    std::map<HostDeviceId, HostDeviceId> _aliases;  ///< old id -> new id
     std::vector<std::string> _appliedScopes;
     std::vector<std::string> _hapticScopes;  ///< the scopes Apply gave surface haptics
     GameLibrary _games;

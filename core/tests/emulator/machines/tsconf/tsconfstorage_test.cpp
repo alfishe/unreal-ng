@@ -83,7 +83,9 @@ TEST_F(TsConfStorage_Test, SD0_ReadsASectorThroughThePorts)
     {
         const uint8_t b = In(0x0057);
         if (i == 0 || i == 300 || i == 511)
+        {
             EXPECT_EQ(b, static_cast<uint8_t>(5 + (5 * 512 + i) % 7)) << i;
+        }
     }
 }
 

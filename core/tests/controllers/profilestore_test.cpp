@@ -343,6 +343,40 @@ TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
     EXPECT_EQ(actions, (std::vector<std::string>{"run.frame_step", "run.step_out"}));
 }
 
+/// C7: `repeat: {delay, rate}` is acted on (the shipped debug pad's step keys), and a malformed one says why
+TEST(ProfileStore_Test, Repeat_ParsedAndChecked)
+{
+    ProfileStore store;
+    ProfileContext context;
+    context.machine = "pentagon";
+    context.debugLayer = true;
+    context.devices = {{"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"}};
+    const ResolvedProfiles resolved = store.Resolve(context);
+    const Binding* step = nullptr;
+    for (const auto& [scope, bindings] : resolved.scopes)
+        for (const Binding& binding : bindings)
+            if (binding.layer == "debug" && binding.sources == std::vector<std::string>{"dpad.right"})
+                step = &binding;
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->options.repeatDelay, 15u);
+    EXPECT_EQ(step->options.repeatRate, 4u);
+
+    Profile profile;
+    std::string error;
+    ASSERT_TRUE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 20, "rate": 3}})"),
+                             profile, error))
+        << error;
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 20}})"), profile, error));
+    EXPECT_NE(error.find("{delay, rate}"), std::string::npos) << error;
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": {"delay": 0, "rate": 3}})"),
+                              profile, error));
+    EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"retro": "kempston:fire", "turbo": "classic", "repeat": {"delay": 5, "rate": 3}})"),
+                              profile, error));
+    EXPECT_NE(error.find("not with turbo"), std::string::npos) << error;
+    ASSERT_TRUE(ParseProfile(Play("x", "", R"("south": {"key": "SPACE", "repeat": "none"})"), profile, error))
+        << error;
+}
+
 TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
 {
     namespace fs = std::filesystem;
@@ -375,4 +409,163 @@ TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
     EXPECT_EQ(ProfileStore::Dump(*loaded), ProfileStore::Dump(profile));
     EXPECT_EQ(loaded->connectors.at("kempston").device, "kempston-joystick");
     fs::remove_all(root);
+}
+
+/// C6, D7, H-3: a game profile found by its signatures. The content signature (a re-pack or a rename) and the file
+/// hash pick it exactly; the TR-DOS file set picks it after the game saved to its disk (the catalog rule: every entry
+/// kept, at most one file changed, a few added; the Jaccard rule for a set without entry tokens); each with how,
+/// strongest first, and where the haptics come from
+TEST(ProfileStore_Test, Signatures_ExactContentAndFuzzyFileSet)
+{
+    // Five files: the loader, three code blocks, a data file the game rewrites; an entry token (n:) and a content
+    // token (c: / d:) each
+    const std::string game = "schema: 1\nkind: play\nid: user/game-signed\nmatch:\n"
+                             "  signatures: [\"trdset:sha256:5e1c\"]\n"
+                             "  file_set: [\"n:00000000000000e1\", \"n:00000000000000e2\", \"n:00000000000000e3\", "
+                             "\"n:00000000000000e4\", \"n:00000000000000e5\", \"c:00000000000000a1\", \"c:00000000000000a2\", "
+                             "\"c:00000000000000a3\", \"c:00000000000000a4\", \"d:00000000000000d1\"]\n"
+                             "haptics:\n  sources:\n    boom: { filter: ay-envelope, source: \"ay:0\" }\n"
+                             "  rules:\n    - { on: boom, play: explosion }\n"
+                             "layers:\n  play:\n    west: { key: X }\n";
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText(game, ProfileScope::User, error)) << error;
+    const Profile* profile = store.Find("user/game-signed");
+    ASSERT_NE(profile, nullptr);
+    EXPECT_EQ(profile->fileSet.size(), 10u);
+    EXPECT_TRUE(profile->IsGame());
+
+    ProfileContext context;
+    EXPECT_TRUE(store.Resolve(context).gameMatches.empty()) << "nothing loaded";
+
+    context.signatures = {"file:sha256:ffff", "TRDSET:SHA256:5E1C"};
+    ResolvedProfiles resolved = store.Resolve(context);
+    ASSERT_EQ(resolved.gameMatches.size(), 1u);
+    EXPECT_EQ(resolved.gameMatches[0].second, "signature trdset:sha256:5e1c") << "keys compare in any case";
+    EXPECT_EQ(resolved.hapticsReason, "game profile user/game-signed (signature trdset:sha256:5e1c)");
+    EXPECT_EQ(resolved.applied.back(), "user/game-signed");
+
+    // Saved to: the data file rewritten in place matches (its entry kept, its data other); a high-score file added too
+    const std::vector<std::string> entries = {"n:00000000000000e1", "n:00000000000000e2", "n:00000000000000e3",
+                                              "n:00000000000000e4", "n:00000000000000e5"};
+    auto with = [&entries](std::vector<std::string> tokens) {
+        tokens.insert(tokens.end(), entries.begin(), entries.end());
+        return tokens;
+    };
+    context.signatures = {"file:sha256:eeee", "trdset:sha256:0bad"};
+    context.fileSet = with({"c:00000000000000a1", "c:00000000000000a2", "c:00000000000000a3", "c:00000000000000a4",
+                            "d:00000000000000d2"});
+    resolved = store.Resolve(context);
+    ASSERT_EQ(resolved.gameMatches.size(), 1u);
+    EXPECT_EQ(resolved.gameMatches[0].second, "file set: every entry kept, 1 of 5 files changed, 0 added");
+    const std::vector<std::string> saved = with({"n:00000000000000e6", "c:00000000000000a1", "c:00000000000000a2",
+                                                 "c:00000000000000a3", "c:00000000000000a4", "d:00000000000000d1",
+                                                 "d:00000000000000f1"});
+    context.fileSet = saved;
+    resolved = store.Resolve(context);
+    ASSERT_EQ(resolved.gameMatches.size(), 1u);
+    EXPECT_EQ(resolved.gameMatches[0].second, "file set: every entry kept, 0 of 5 files changed, 1 added");
+    EXPECT_EQ(Find(resolved, "", "", "west")->target.kind, TargetKind::Keys);
+    context.fileSet = with({"c:00000000000000a1", "c:00000000000000a2", "c:00000000000000b3", "c:00000000000000a4",
+                            "d:00000000000000d2"});
+    EXPECT_TRUE(store.Resolve(context).gameMatches.empty()) << "two files changed: another program";
+    context.fileSet = {"n:00000000000000e1", "n:00000000000000e2", "n:00000000000000e3", "n:00000000000000e5",
+                       "c:00000000000000a1", "c:00000000000000a2", "c:00000000000000a3", "d:00000000000000d1"};
+    EXPECT_TRUE(store.Resolve(context).gameMatches.empty()) << "an entry missing";
+
+    // A file hash only (an older user profile) and a manual choice rank above the fuzzy one
+    ASSERT_TRUE(store.AddText("schema: 1\nkind: play\nid: user/game-old\nmatch: { file_sha256: [\"EEEE\"] }\n"
+                              "layers:\n  play:\n    west: { key: Y }\n",
+                              ProfileScope::User, error))
+        << error;
+    context.fileSet = saved;
+    resolved = store.Resolve(context);
+    ASSERT_EQ(resolved.gameMatches.size(), 2u);
+    EXPECT_EQ(resolved.gameMatches[0].first, "user/game-old") << "file:sha256: in the signatures names the file";
+    EXPECT_EQ(resolved.gameMatches[0].second, "file sha256 eeee");
+    EXPECT_EQ(resolved.gameMatches[1].first, "user/game-signed");
+    context.manual = {"user/game-signed"};
+    EXPECT_EQ(store.Resolve(context).gameMatches[0].second, "manual");
+
+    // A bad token is refused with the reason
+    EXPECT_FALSE(store.AddText("schema: 1\nkind: play\nid: user/bad\nmatch: { file_set: [\"x:12\"] }\n", ProfileScope::User,
+                               error));
+    EXPECT_NE(error.find("file_set"), std::string::npos) << error;
+}
+
+/// The shipped games: the index holds a profile's file set, the lookup finds it by the fuzzy rule without parsing
+/// every profile
+TEST(ProfileStore_Test, Signatures_GameIndexFindsByFileSet)
+{
+    namespace fs = std::filesystem;
+    const fs::path root = TestPathHelper::GetUniqueTestScratchPath("games");
+    fs::create_directories(root);
+    std::ofstream(root / "signed.yaml")
+        << "schema: 1\nkind: play\nid: builtin/game/signed\nmatch:\n"
+           "  file_set: [\"c:00000000000000a1\", \"c:00000000000000a2\", \"c:00000000000000a3\", \"c:00000000000000a4\", "
+           "\"d:00000000000000d1\"]\nlayers:\n  play:\n    west: { key: X }\n";
+    std::ofstream(root / "other.yaml") << "schema: 1\nkind: play\nid: builtin/game/other\nmatch:\n"
+                                          "  file_set: [\"c:00000000000000a1\", \"c:00000000000000b2\"]\nlayers:\n  play:\n"
+                                          "    west: { key: Z }\n";
+    std::vector<GameEntry> entries;
+    std::vector<std::string> errors;
+    ASSERT_TRUE(GameLibrary::Build(root.string(), entries, errors)) << (errors.empty() ? "" : errors.front());
+    ASSERT_EQ(entries.size(), 2u);
+    std::vector<GameEntry> parsed;
+    std::string error;
+    ASSERT_TRUE(GameLibrary::ParseIndex(GameLibrary::DumpIndex(entries), parsed, error)) << error;
+    ASSERT_EQ(parsed.size(), 2u);
+    EXPECT_EQ(parsed[0].fileSet, entries[0].fileSet) << "file_set survives the index";
+
+    ProfileStore store;
+    ASSERT_TRUE(store.OpenGames(root.string(), errors));
+    ProfileContext context;
+    context.fileSet = {"c:00000000000000a1", "c:00000000000000a2", "c:00000000000000a3", "c:00000000000000a4",
+                       "d:00000000000000d1", "d:00000000000000e1"};
+    EXPECT_EQ(store.LoadGamesFor(context, errors), 1u) << (errors.empty() ? "" : errors.front());
+    EXPECT_NE(store.Find("builtin/game/signed"), nullptr);
+    EXPECT_EQ(store.Find("builtin/game/other"), nullptr) << "a shared token alone is no match";
+    EXPECT_EQ(store.Resolve(context).applied.back(), "builtin/game/signed");
+    fs::remove_all(root);
+}
+
+TEST(ProfileStore_Test, Aliases_APromotedDeviceKeepsItsProfilesAcrossRestarts)
+{
+    // architecture.md §5: a `gc:` device promoted to its IOHID id; the profiles naming the old id follow it
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText(Play("user/my-pad", R"(, "applies_to": {"devices": ["gc:dualsense-wireless-controller#1"]})",
+                                   R"("north": {"key": "ENTER"})"),
+                              ProfileScope::User, error))
+        << error;
+    const HostDeviceId gc = "gc:dualsense-wireless-controller#1";
+    const HostDeviceId bt = "bt:054c:0ce6:5a5a";
+    ProfileContext context;
+    context.devices = {{bt, "DualSense Wireless Controller", "dualsense", "playstation", "fake"}};
+    EXPECT_EQ(Find(store.Resolve(context), bt, "", "north"), nullptr) << "no alias yet";
+
+    store.AddAlias(gc, bt);
+    EXPECT_EQ(store.AliasesOf(bt), std::vector<HostDeviceId>{gc});
+    const Binding* north = Find(store.Resolve(context), bt, "", "north");
+    ASSERT_NE(north, nullptr) << "the device scope under the new id";
+    EXPECT_EQ(north->target.kind, TargetKind::Keys);
+
+    // Promoted once more: the oldest id follows to the newest
+    store.AddAlias(bt, "usb:054c:0ce6:7");
+    EXPECT_EQ(store.Aliases().at(gc), "usb:054c:0ce6:7");
+    EXPECT_EQ(store.AliasesOf("usb:054c:0ce6:7").size(), 2u);
+
+    // Kept across a restart
+    const std::filesystem::path root = TestPathHelper::GetUniqueTestScratchPath("aliases");
+    ASSERT_TRUE(store.SaveAliases(root.string(), error)) << error;
+    ProfileStore restarted;
+    ASSERT_TRUE(restarted.LoadAliases(root.string(), error)) << error;
+    EXPECT_EQ(restarted.Aliases(), store.Aliases());
+    ProfileStore fresh;
+    EXPECT_TRUE(fresh.LoadAliases((root / "none").string(), error)) << "no file: no aliases, no error";
+    EXPECT_TRUE(fresh.Aliases().empty());
+
+    std::map<HostDeviceId, HostDeviceId> parsed;
+    EXPECT_FALSE(ProfileStore::ParseAliases("aliases:\n  - from: x\n", parsed, error));
+    std::filesystem::remove_all(root);
 }

@@ -138,6 +138,11 @@ if (NOT ENABLE_CONTROLLERS)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/controllers/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# The signature library's tests follow its option
+if (NOT TARGET unrealng::swsignature)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/swsignature/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 # CLI tests (header-only CLI helpers) follow the CLI module
 if (NOT ENABLE_CLI_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/cli-" FALSE OUTVAR TEST_CPP_FILES)
@@ -240,6 +245,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-signature.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
@@ -298,6 +304,7 @@ if (NOT TARGET ${PROJECT_NAME})
         ${common_libraries}
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
         $<$<BOOL:${LUA_AUTOMATION_TESTS}>:automation_lua>
+        $<$<TARGET_EXISTS:swsignature>:swsignature>
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
         opl4

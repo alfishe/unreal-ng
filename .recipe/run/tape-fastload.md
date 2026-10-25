@@ -23,7 +23,10 @@ inspect_state     {"aspects":["screen_ocr","screen_digest"]}   # loaded? intro r
 
 If `LOAD ""` has not been entered yet, type it before (or right after)
 `load_software {"play":true}` — playback alone does nothing without the
-loading command (see pitfalls).
+loading command (see pitfalls). `load_software {"path":...,"autostart":true}`
+does both: it plays the tape and types `LOAD ""` (leaving a 128K menu for
+128 BASIC first); a paused machine runs for the typing and is paused again,
+so `run_frames` go on with the load.
 
 ## WebAPI
 

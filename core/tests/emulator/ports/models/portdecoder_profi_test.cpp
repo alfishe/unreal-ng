@@ -413,7 +413,9 @@ TEST_F(ProfiPortDecoder_Test, FramebufferStaysValidAcrossHiResSwitches)
         // accepted (a memory-safe copy; at worst one garbled frame until the re-attach). Exact size always works.
         std::vector<uint8_t>& right = hiRes ? hiResSized : standardSized;
         if (hiRes)
+        {
             EXPECT_FALSE(screen->CopyPresentedFramebuffer(standardSized.data(), standardSized.size())) << "switch " << i;
+        }
         EXPECT_TRUE(screen->CopyPresentedFramebuffer(right.data(), right.size())) << "switch " << i;
     }
 }

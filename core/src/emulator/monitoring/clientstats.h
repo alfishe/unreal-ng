@@ -33,6 +33,7 @@ struct ClientCounts
     int64_t connections = 0;  ///< open now
     uint64_t opened = 0;      ///< since start
     uint64_t requests = 0;    ///< since start
+    uint64_t dropped = 0;     ///< closed by the server for reading too slowly (/api/v1/ws `slow_consumer`)
 };
 
 class ClientStats
@@ -43,6 +44,8 @@ public:
     void Opened(ClientPlane plane);
     void Closed(ClientPlane plane);
     void Request(ClientPlane plane);
+    /// The server closes a connection that reads too slowly (counted besides Closed, which the close itself counts)
+    void Dropped(ClientPlane plane);
 
     ClientCounts Read(ClientPlane plane) const;
     /// Tests: every counter to 0
@@ -54,6 +57,7 @@ private:
         std::atomic<int64_t> connections{0};
         std::atomic<uint64_t> opened{0};
         std::atomic<uint64_t> requests{0};
+        std::atomic<uint64_t> dropped{0};
     };
     std::array<Counters, static_cast<size_t>(ClientPlane::Count)> _counters;
 };

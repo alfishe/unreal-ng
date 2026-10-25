@@ -40,12 +40,43 @@
 #include "hostcontrols.h"
 #include "profiles/json.h"
 #include "router/inputrouter.h"
+#ifdef ENABLE_SWSIGNATURE
+#include "swsignature.h"
+#endif
 
 using namespace controllers;
 
 namespace
 {
 constexpr const char* kKeyboard = "kbd:system";
+
+/// The signature hook (C6, D7): the program's signatures (exact, tape content / TR-DOS file set / memory) and its
+/// TR-DOS file set into @p context; without the signature library the file's SHA-256 alone
+bool ProgramSignatures(const std::string& path, ProfileContext& context, std::string& error)
+{
+    context.signatures.clear();
+    context.fileSha256.clear();
+    context.fileSet.clear();
+#ifdef ENABLE_SWSIGNATURE
+    unrealng::swsignature::Signatures signatures;
+    if (!unrealng::swsignature::ComputeFile(path, signatures, error))
+        return false;
+    context.signatures = signatures.Keys();
+    context.fileSha256 = {signatures.sha256};
+    context.fileSet = signatures.FileSet();
+    return true;
+#else
+    QFile file(QString::fromStdString(path));
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly) || !hash.addData(&file))
+    {
+        error = "cannot read '" + path + "'";
+        return false;
+    }
+    context.fileSha256 = {hash.result().toHex().toStdString()};
+    return true;
+#endif
+}
 
 /// HostInputControl's view of the Qt client's host input
 class ControlOwner : public IHostInputOwner
@@ -70,6 +101,10 @@ public:
     {
         return HostControllers::UserProfileDir().toStdString();
     }
+    std::string UserControllersDir() const override
+    {
+        return HostControllers::UserControllersDir().toStdString();
+    }
     std::string ManualProfile() const override
     {
         return _host.ManualProfile();
@@ -86,6 +121,19 @@ public:
     {
         return &_host.Service();
     }
+    std::string ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                      std::string& message) override
+    {
+        return _host.ChoosePlayerConnector(device, connector, message);
+    }
+    std::string PlayerChoice(const std::string& device) const override
+    {
+        return _host.PlayerChoice(device);
+    }
+    bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
+    {
+        return ProgramSignatures(path, context, error);
+    }
 
 private:
     HostControllers& _host;
@@ -97,14 +145,29 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 {
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
+    _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
+    _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
+    // The user's device entries over the compiled-in database (device-database.md §7), before a device is matched
+    {
+        QFile user(QDir(UserControllersDir()).filePath("devices.user.json"));
+        std::string error;
+        if (user.exists() && user.open(QIODevice::ReadOnly) &&
+            !DeviceDatabase::SetUser(user.readAll().toStdString(), error))
+            qWarning("controllers: %s: %s", qPrintable(user.fileName()), error.c_str());
+    }
     _service = std::make_unique<HostInputService>();
     // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
     _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
+    _service->SetHapticsDspDefaults(_soundHapticsDsp);
     _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
+    // The promoted devices' old ids (architecture.md §5): profiles naming a `gc:` id follow its IOHID id
+    std::string aliasError;
+    if (!_profiles.LoadAliases(UserProfileDir().toStdString(), aliasError))
+        errors.push_back(aliasError);
     // The shipped game profiles: the index now, a profile when a loaded file or a manual choice names it
     _profiles.OpenGames(FileHelper::GetResourcesPath() + "/controllers/profiles/games", errors);
     for (const std::string& error : errors)
@@ -178,6 +241,19 @@ HostControllers::~HostControllers()
 #endif
 }
 
+void HostControllers::SetSoundHapticsDsp(bool on)
+{
+    if (on == _soundHapticsDsp)
+        return;
+    _soundHapticsDsp = on;
+    QSettings().setValue("Controllers/SoundHapticsDsp", on);
+#ifdef ENABLE_CONTROLLERS
+    _service->SetHapticsDspDefaults(on);
+    if (_attached)
+        attachHaptics();  // the key below names the filters: the sound feed is made again
+#endif
+}
+
 void HostControllers::SetSoundHaptics(bool on)
 {
     if (on == _soundHaptics)
@@ -188,6 +264,12 @@ void HostControllers::SetSoundHaptics(bool on)
     if (_attached)
         attachHaptics();
 #endif
+}
+
+void HostControllers::SetPauseOnDisconnect(bool on)
+{
+    _pauseOnDisconnect = on;
+    QSettings().setValue("Controllers/PauseOnDisconnect", on);
 }
 
 void HostControllers::SetGlobalShortcuts(bool on)
@@ -491,18 +573,136 @@ void HostControllers::poll()
         return;
     _revision = _service->Revision();
     _machineRevision = machine;
+    const auto promotions = _service->TakePromotions();
+    for (const auto& [from, to] : promotions)
+        _profiles.AddAlias(from, to);
+    if (!promotions.empty())
+    {
+        std::string error;
+        if (!_profiles.SaveAliases(UserProfileDir().toStdString(), error))
+            qWarning("controllers: %s", error.c_str());
+    }
 
     const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    std::vector<HostDeviceInfo> arrived;
     for (const HostDeviceInfo& device : devices)
         if (device.id != kKeyboard && std::find(_known.begin(), _known.end(), device.id) == _known.end())
-            emit notice(tr("%1 connected").arg(QString::fromStdString(device.name)));
+            arrived.push_back(device);
+    std::vector<std::pair<std::string, bool>> gone;  // name, a player
+    for (const HostDeviceId& id : _known)
+        if (std::none_of(devices.begin(), devices.end(), [&id](const HostDeviceInfo& device) { return device.id == id; }))
+        {
+            const auto it = _knownNames.find(id);
+            if (it != _knownNames.end())
+                gone.push_back(it->second);
+        }
     _known.clear();
+    _knownNames.clear();
+    const auto player = [](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               DeviceDatabase::Active()->ForFamily(device.family, device.layout).player;
+    };
     for (const HostDeviceInfo& device : devices)
+    {
         _known.push_back(device.id);
-    _wheelConnected = WheelClaim::AnyWheel(devices, DeviceDatabase::Builtin());
+        _knownNames[device.id] = {device.name, player(device)};
+    }
+    _wheelConnected = WheelClaim::AnyWheel(devices, *DeviceDatabase::Active());
     updateWheelMenu();
-    Reapply();
+    Reapply();  // the arrived pads have their player connectors now
+
+    // ui-ux.md §8: the first connection of a pad on this computer gets the toast, a known one the status line
+    QStringList seen = QSettings().value("Controllers/SeenDevices").toStringList();
+    for (const HostDeviceInfo& device : arrived)
+    {
+        const QString name = QString::fromStdString(device.name);
+        if (!player(device))
+        {
+            emit notice(tr("%1 connected").arg(name));
+            continue;
+        }
+        // Seen by family and name, not by id: a Bluetooth pad gets a new id on another adapter
+        const QString key = QString::fromStdString(device.family + "|" + device.name);
+        const bool first = !seen.contains(key);
+        if (first)
+            seen << key;
+        QString connector;
+        const std::string plugged = _service->Router().PlayerConnector(device.id);
+        if (EmulatorContext* context = _binding->context(); context != nullptr && !plugged.empty() &&
+                                                           context->pControllerManager != nullptr)
+        {
+            const int index = context->pControllerManager->Find(plugged);
+            if (index >= 0)
+                connector = connectorview::DisplayName(context->pControllerManager->At(static_cast<size_t>(index)));
+        }
+        // A pad the database does not know and nobody taught yet: the toast offers the learn wizard
+        const bool unknown = device.family == "generic" && _service->ControlMap(device.id).empty();
+        if (first && unknown)
+            emit unknownDeviceConnected(name, QString::fromStdString(device.id));
+        emit deviceConnected(name, connector, first && !unknown);
+        emit notice(connector.isEmpty() ? tr("%1 connected").arg(name) : tr("%1 connected → %2").arg(name, connector));
+    }
+    if (!arrived.empty())
+        QSettings().setValue("Controllers/SeenDevices", seen);
+
+    // A pad gone while the machine runs: said at once, and the machine paused when the option asks for it
+    Emulator* emulator = _binding->emulator();
+    for (const auto& [name, isPlayer] : gone)
+    {
+        if (!isPlayer)
+            continue;
+        const bool running = emulator != nullptr && !emulator->IsPaused();
+        bool paused = false;
+        if (running && _pauseOnDisconnect)
+        {
+            // Applied, or queued behind a running command (it applies when that ends)
+            const execution::Outcome outcome =
+                emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "controller disconnected").outcome;
+            paused = outcome == execution::Outcome::Applied || outcome == execution::Outcome::Pending;
+        }
+        if (running)
+            emit deviceDisconnected(QString::fromStdString(name), paused);
+        emit notice(tr("%1 disconnected").arg(QString::fromStdString(name)));
+    }
 #endif
+}
+
+connectorview::Led HostControllers::ConnectorLed() const
+{
+#ifdef ENABLE_CONTROLLERS
+    EmulatorContext* context = _binding->context();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+        return {};
+    const std::vector<Connector> connectors = manager->Connectors();
+    std::vector<uint16_t> states;
+    for (size_t i = 0; i < connectors.size(); ++i)
+        states.push_back(manager->State(i));
+    std::map<std::string, QStringList> drivers;
+    for (const HostDeviceInfo& device : _service->Router().Devices())
+        for (const std::string& connector : _service->Router().Connectors(device.id))
+            drivers[connector] << QString::fromStdString(device.name);
+    return connectorview::DescribeLed(connectors, states, drivers);
+#else
+    return {};
+#endif
+}
+
+bool HostControllers::DebugLayerHeld() const
+{
+#ifdef ENABLE_CONTROLLERS
+    if (_debugFocus)
+        return false;  // the debugger window has the pads: no key is held for it
+    for (const HostDeviceInfo& device : _service->Router().Devices())
+    {
+        if (device.id == kKeyboard || _service->Router().Role(device.id) != DeviceRole::Player)
+            continue;
+        const std::vector<std::string> layers = _service->Router().Layers(device.id);
+        if (std::find(layers.begin(), layers.end(), "debug") != layers.end())
+            return true;
+    }
+#endif
+    return false;
 }
 
 void HostControllers::Reapply()
@@ -515,13 +715,18 @@ void HostControllers::Reapply()
             context.machine = model->ShortName ? model->ShortName : "";
     std::transform(context.machine.begin(), context.machine.end(), context.machine.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (!_fileSha256.empty())
-        context.fileSha256 = {_fileSha256};
+    context.signatures = _program.signatures;
+    context.fileSha256 = _program.fileSha256;
+    context.fileSet = _program.fileSet;
     if (!_manualProfile.empty())
         context.manual = {_manualProfile};
     context.debugLayer = _debugLayer || _debugFocus;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
+    for (const HostDeviceInfo& device : context.devices)
+        if (const auto choice = _playerChoice.find(device.id); choice != _playerChoice.end())
+            _service->Router().SetPlayerConnector(device.id, choice->second);
     _context = context;
     applyConnectorPlans();
     attachHaptics();
@@ -573,7 +778,8 @@ void HostControllers::attachHaptics()
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
     const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string("sound") : std::string());
+                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                  : std::string());
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -616,6 +822,12 @@ QString HostControllers::HapticsStatus(const std::string& device) const
     return text;
 }
 
+QString HostControllers::UserControllersDir()
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
+        .filePath("unreal-ng/controllers");
+}
+
 QString HostControllers::UserProfileDir()
 {
     return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
@@ -648,7 +860,7 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     // no player connector
     const auto player = [](const HostDeviceInfo& device) {
         return device.family != "keyboard" && device.family != "mouse" &&
-               DeviceDatabase::Builtin().ForFamily(device.family, device.layout).player;
+               DeviceDatabase::Active()->ForFamily(device.family, device.layout).player;
     };
     const size_t pads = static_cast<size_t>(std::count_if(devices.begin(), devices.end(), player));
     if (order.empty() && pads > 0)
@@ -669,6 +881,74 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});
         ++n;
     }
+}
+
+std::string HostControllers::ChoosePlayerConnector(const std::string& device, const std::string& connector,
+                                                   std::string& message)
+{
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const auto info = std::find_if(devices.begin(), devices.end(),
+                                   [&device](const HostDeviceInfo& known) { return known.id == device; });
+    if (info == devices.end())
+    {
+        message = "no connected host device '" + device + "' (devices lists them)";
+        return "unknown-device";
+    }
+    if (info->family == "keyboard" || info->family == "mouse" ||
+        !DeviceDatabase::Active()->ForFamily(info->family, info->layout).player)
+    {
+        message = info->name + " takes no player connector: its bindings name their targets";
+        return "bad-request";
+    }
+    if (connector.empty())
+    {
+        _playerChoice.erase(device);
+        Reapply();
+        return {};
+    }
+    if (connector == "none")
+    {
+        // Unplugged by hand (a cord dragged off its connector): the device drives no player connector
+        _playerChoice[device].clear();
+        Reapply();
+        return {};
+    }
+    EmulatorContext* context = _binding->context();
+    ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
+    if (manager == nullptr)
+    {
+        message = "no machine is bound: start one first";
+        return "unavailable";
+    }
+    const int index = manager->Find(connector);
+    if (index < 0)
+    {
+        message = "no connector '" + connector + "' on this machine (list names them)";
+        return "bad-request";
+    }
+    const Connector found = manager->At(static_cast<size_t>(index));
+    if (found.device == RetroDeviceKind::None)
+    {
+        message = found.id + " holds no device: plug one first (plug " + found.id + " kempston-joystick)";
+        return "bad-request";
+    }
+    _playerChoice[device] = found.id;
+    Reapply();
+    return {};
+}
+
+void HostControllers::ResetPlayerChoices()
+{
+    _playerChoice.clear();
+    Reapply();
+}
+
+std::string HostControllers::PlayerChoice(const std::string& device) const
+{
+    const auto it = _playerChoice.find(device);
+    if (it == _playerChoice.end())
+        return {};
+    return it->second.empty() ? std::string("none") : it->second;
 }
 
 HostReply HostControllers::Host(const HostRequest& request)
@@ -699,17 +979,28 @@ bool HostControllers::saveUserProfile(Profile profile, QString& error)
 
 bool HostControllers::KeepAutoDecision(QString& error)
 {
-    if (_fileSha256.empty() || _autoConnector.empty())
+    if (_program.fileSha256.empty() || _autoConnector.empty())
     {
         error = tr("Nothing to keep: no program loaded from a file, or no automatic choice");
         return false;
     }
+    // Keyed by the signatures (D7): the content one finds the program re-packed or renamed, the file set after saves,
+    // the file hash as before (and as the profiles of older versions did)
+    std::string content;
+    for (const std::string& signature : _program.signatures)
+        if (signature.rfind("file:", 0) != 0)
+            content = signature;
+    const std::string& sha = _program.fileSha256.front();
+    const std::string key = content.empty() ? sha : content.substr(content.rfind(':') + 1);
     Profile profile;
     profile.kind = ProfileKind::Play;
     profile.scope = ProfileScope::User;
-    profile.id = "user/game-" + _fileSha256.substr(0, 16);
+    profile.id = "user/game-" + key.substr(0, 16);
     profile.label = _fileName.toStdString();
-    profile.fileSha256 = {_fileSha256};
+    profile.fileSha256 = {sha};
+    if (!content.empty())
+        profile.signatures = {content};
+    profile.fileSet = _program.fileSet;
     profile.options = JsonValue::Object();
     ConnectorPlan plan;
     plan.device = _decision.device;
@@ -719,6 +1010,29 @@ bool HostControllers::KeepAutoDecision(QString& error)
     profile.connectors[_autoConnector] = plan;
     profile.players = {{"auto:1", _autoConnector}};
     return saveUserProfile(std::move(profile), error);
+}
+
+bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+{
+    // The surfaces' haptics_probe verb, so the menu and an agent write the same profile
+    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
+    HostRequest request;
+    request.verb = "haptics_probe";
+    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
+    request.options["address"] = std::to_string(probe.address);
+    if (probe.page != 0xFFFF)
+        request.options["page"] = std::to_string(probe.page);
+    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
+        request.options["port_mask"] = std::to_string(probe.portMask);
+    const HostReply reply = Host(request);
+    if (!reply.Ok())
+    {
+        error = QString::fromStdString(reply.message);
+        return false;
+    }
+    const JsonValue* source = reply.body.Find("source");
+    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
+    return true;
 }
 
 void HostControllers::updateHapticsGate()
@@ -749,15 +1063,10 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     Emulator* emulator = _binding->emulator();
     if (emulator == nullptr || QString::fromStdString(emulator->GetId()) != emulatorId)
         return;
-    _fileSha256.clear();
     _fileName = QFileInfo(path).fileName();
-    QFile file(path);
-    if (QFileInfo(path).isFile() && file.open(QIODevice::ReadOnly))
-    {
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (hash.addData(&file))
-            _fileSha256 = hash.result().toHex().toStdString();
-    }
+    std::string error;
+    if (!ProgramSignatures(path.toStdString(), _program, error))
+        qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _autoConnector.clear();
     _decision = {};

@@ -6,6 +6,7 @@
 #include <set>
 #include <sstream>
 
+#include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/profilestore.h"
 #include "profiles/yaml.h"
 
@@ -140,7 +141,7 @@ bool GameLibrary::Build(const std::string& gamesDir, std::vector<GameEntry>& out
             }
             if (profile.kind != ProfileKind::Play || profile.scheme || !profile.IsGame())
             {
-                errors.push_back(where + ": not a game profile (a play profile with match.file_sha256 or signatures)");
+                errors.push_back(where + ": not a game profile (a play profile with match.file_sha256, signatures or file_set)");
                 continue;
             }
             if (!ids.emplace(profile.id, where).second)
@@ -156,6 +157,7 @@ bool GameLibrary::Build(const std::string& gamesDir, std::vector<GameEntry>& out
             entry.offset = offset;
             entry.length = length;
             entry.keys = Keys(profile, root);
+            entry.fileSet = profile.fileSet;
             bool duplicate = false;
             for (const std::string& key : entry.keys)
             {
@@ -187,6 +189,8 @@ std::string GameLibrary::DumpIndex(const std::vector<GameEntry>& entries)
         item.Set("offset", JsonValue::Number(static_cast<double>(entry.offset)));
         item.Set("length", JsonValue::Number(static_cast<double>(entry.length)));
         item.Set("keys", Strings(entry.keys));
+        if (!entry.fileSet.empty())
+            item.Set("file_set", Strings(entry.fileSet));
         profiles.push_back(std::move(item));
     }
     const JsonValue root = JsonValue::Object(
@@ -217,9 +221,10 @@ bool GameLibrary::ParseIndex(const std::string& text, std::vector<GameEntry>& ou
         if (id == nullptr || !id->IsString() || file == nullptr || !file->IsString() ||
             (label != nullptr && !label->IsString()) || !ReadSize(item.Find("offset"), entry.offset) ||
             !ReadSize(item.Find("length"), entry.length) || !ReadStrings(item.Find("machines"), entry.machines) ||
-            !ReadStrings(item.Find("keys"), entry.keys))
+            !ReadStrings(item.Find("keys"), entry.keys) || !ReadStrings(item.Find("file_set"), entry.fileSet))
         {
-            error = "profiles[" + std::to_string(out.size()) + "]: {id, label, machines, file, offset, length, keys}";
+            error = "profiles[" + std::to_string(out.size()) +
+                    "]: {id, label, machines, file, offset, length, keys, file_set}";
             return false;
         }
         entry.id = id->AsString();
@@ -263,12 +268,15 @@ bool GameLibrary::Open(const std::string& gamesDir, std::vector<std::string>& er
 void GameLibrary::Reindex()
 {
     _byKey.clear();
+    _byToken.clear();
     _byId.clear();
     for (size_t i = 0; i < _entries.size(); i++)
     {
         _byId.emplace(_entries[i].id, i);
         for (const std::string& key : _entries[i].keys)
             _byKey.emplace(Lower(key), i);
+        for (const std::string& token : _entries[i].fileSet)
+            _byToken.emplace(Lower(token), i);
     }
 }
 
@@ -290,6 +298,23 @@ std::vector<const GameEntry*> GameLibrary::Lookup(const std::vector<std::string>
     std::vector<const GameEntry*> out;
     for (size_t i : found)
         out.push_back(&_entries[i]);
+    return out;
+}
+
+std::vector<const GameEntry*> GameLibrary::LookupFileSet(const std::vector<std::string>& fileSet) const
+{
+    // The candidates share a token; the rule decides
+    std::set<size_t> candidates;
+    for (const std::string& token : fileSet)
+    {
+        const auto [first, last] = _byToken.equal_range(Lower(token));
+        for (auto it = first; it != last; ++it)
+            candidates.insert(it->second);
+    }
+    std::vector<const GameEntry*> out;
+    for (size_t i : candidates)
+        if (unrealng::swsignature::CompareFileSets(_entries[i].fileSet, fileSet).matches)
+            out.push_back(&_entries[i]);
     return out;
 }
 

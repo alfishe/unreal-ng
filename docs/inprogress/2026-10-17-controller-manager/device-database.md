@@ -108,6 +108,13 @@ Rules:
   `hat.<n>`); for backends that already name controls (GameController, GameInput, evdev key codes) it maps their names.
 - **`outputs` lists the actuators**: `rumble`, `trigger-rumble`, `hd-haptics`, `adaptive-triggers`, `light`
   ([haptics.md §2](haptics.md#2-actuators)); the backend confirms them at run time.
+- **`hid` corrects the layout for the HID paths** (IOKit HID, Raw Input, hidraw), per family or per `match` entry
+  (a match's map replaces the family's, for a pad whose USB and Bluetooth reports differ):
+  `buttons` (button usage n from 1 to a control, `""` keeps `button.<n-1>`), `rxRyTriggers`, `dpadAxes` (the cross on
+  X / Y), `hat` (the control the first hat is: `lstick` on a single Joy-Con), `consumer` (`{"0223": "guide"}`) and
+  `bits` (`{"report": 1, "byte": 9, "bit": 4, "control": "misc.2"}`: a vendor bit outside the descriptor, the byte
+  counted after the report id). The maps of the shipped families are read off SDL_GameControllerDB's Mac OS X lines
+  ([POC 033 inventory §4](../../../tools/poc/033-vector-controller-pictures/inventory.md#4-how-the-button-maps-were-read)).
 - **`controls` lists what the device has.** The dialog draws only those controls, and a profile binding to a control
   the device lacks is shown greyed out ([research-other-emulators.md X-8](research-other-emulators.md#5-pitfalls)).
 
@@ -128,6 +135,35 @@ Rules:
   match can be explained.
 - The wizard's result is saved as a user entry in the gamecontrollerdb line format plus our family fields. It can then
   be shared as a pull request to `data/controllers/`.
+- A `gc:` device (a pad only GameController sees, [architecture.md §5](architecture.md#5-device-identity-and-merging))
+  has no VID / PID: its family comes from step 5 on GameController's vendor name ("DualSense Wireless Controller" ->
+  the PlayStation family, "Xbox Wireless Controller" -> the Xbox one), else step 6.
+- The PlayStation pads (DualShock 4 054C:05C4 / 09CC / 0BA0, DualSense 054C:0CE6, DualSense Edge 054C:0DF2) and the
+  Switch Pro controller (057E:2009) are read by their own drivers on macOS (`SonyPad`, `SwitchProPad`, by VID / PID,
+  [haptics.md §9](haptics.md#9-backends)), whatever entry matched them; the entry gives the name, family, layout and
+  images as for any pad. So are the Joy-Cons (057E:2006, 2007; the `joy-con` entry, the OS's product name "Joy-Con
+  (L)" / "(R)"), alone or a left and a right one as one pad "Joy-Con (L/R)". The charging grip (200E) shows each Joy-Con in it
+  as an interface of its own: the side of each comes from the device info (below the USB handshake, subcommand 0x02),
+  then it is a Joy-Con as any and pairs the same way; an empty slot (no answer) stays hidden.
+
+**As built (2026-10-23): steps 3 and 4 as an import.** No gamecontrollerdb.txt is bundled and no RetroArch profile is
+read at match time; the user imports a mapping for one pad instead (`database_import`, `ImportDevice` in
+`core/controllers/src/deviceimport.*`), and it becomes a devices.user.json entry that steps 1-2 then match:
+- a gamecontrollerdb.txt line: the GUID's little-endian words give bus (word 0: 3 = `usb`, 5 = `bt`), VID (word 2) and
+  PID (word 4); a GUID whose words 3 and 5 are not 0 carries no USB ids and is refused. SDL names map to the
+  vocabulary (`a` south, `b` east, `x` west, `y` north, `back` view, `start` menu, `guide`, shoulders `lb` / `rb`,
+  triggers `lt` / `rt`, stick clicks, `dp*` the D-pad, `misc1` share, `paddle1-4`, `touchpad`), axes add `lstick.*` /
+  `rstick.*`;
+- a RetroArch autoconfig .cfg: `input_vendor_id` / `input_product_id` in decimal, the RetroPad names (`b` south, `a`
+  east, `y` west, `x` north, `l` / `r` / `l2` / `r2` / `l3` / `r3`, `select` view, `start` menu, `menu_toggle` guide,
+  the D-pad).
+The entry is `{"id": "user-<vid><pid>", "name", "layout": "generic", "match": [{vid, pid, bus}], "map", "controls",
+"source"}`; `map` turns the raw controls into the canonical ones (`b3` → `button.3`), on IOHID and Raw Input alike
+(a HID pad's own button names are the family's `hid.buttons`, read by `HidLayoutFor(match)`). The user's family wins
+over a built-in one of the same VID:PID. An existing user entry of the same id keeps the members the import does not
+set (a photo's `images`). What the import cannot take over is listed
+(`skipped`: `platform`, an axis bound to a button). The Qt dialog's **Import mapping…** picks the line of a whole
+gamecontrollerdb.txt by the selected device's VID:PID.
 
 ## 4. User overrides
 
@@ -139,6 +175,25 @@ Rules:
 - It changes a quirk, for example forcing the raw HID path for a pad.
 
 `gamecontrollerdb.user.txt` in the same folder is read after the bundled database.
+
+**As built (2026-10-23).** `DeviceDatabase::Active()` is the database every reader uses (the backends, the router's
+service, the profile store, the Qt dialog): the compiled-in families with devices.user.json merged over them
+(`DeviceDatabase::SetUser`), an immutable snapshot swapped under a mutex, so a reader holding the old one keeps it.
+The Qt client reads the file at start, before the backends match a device. An entry whose `id` names a built-in
+family is merged field by field (only the fields it names change; `controls` and `match` replace the list; `match`
+may be left out); an entry with a new id is a family of its own and needs `match`. A file that does not parse or
+does not validate leaves the active database as it was and is reported. The host verbs `database`, `database_save`
+and `database_delete` ([surfaces.md §2](surfaces.md#2-verbs)) read and edit the file on every plane; the hotspot
+editor writes through them; `database_import` adds an entry from a gamecontrollerdb line or a RetroArch autoconfig
+(§3). Not built: `gamecontrollerdb.user.txt` read as a file (an import of its line instead).
+
+A user family may carry a `map` (canonical control -> raw control: `button.2`, `lstick.y-` for one half of an axis,
+`hat.1.up`), and a connected device that matches it by VID + PID takes the map at once (`devicemapping.h`,
+`HostInputService::RefreshUserMaps`): each raw control also reports as its canonical one. The learn wizard (`learn
+finish`) and an import (`database_import`: a `gamecontrollerdb.txt` line or a RetroArch autoconfig file, RetroPad B =
+`south`) write such a family, `user-<vid><pid>`, with `source` and its `gamecontrollerdb` line (bN, ±aN, hN.M; SDL's
+a0..a3 are the HID X Y Z Rz, our sticks), ready to export. `database` also looks a device up by its SDL GUID
+(`guid=`) or a connected device (`device=`).
 
 ## 5. Licences of the sources
 
@@ -153,9 +208,12 @@ Rules:
 
 ## 6. Images: the house style
 
-Per D5, images start as manufacturer photos or openly licensed photos and are retouched into one house style.
-Vectorization is a separate study (Q-1). Until that study ends, the canonical asset is a retouched raster with a hotspot
-map.
+Q-1 is answered (owner, 2026-10-23): the pictures are vector art. Each device is drawn from a data model in millimetres
+by a generator, not traced: [POC 033](../../../tools/poc/033-vector-controller-pictures/README.md) writes
+`front.svg` (SVG Tiny 1.2 for QSvgRenderer, named layers, one `control-<name>` group per control) with its
+`front.hotspots.json` from the same geometry and a `provenance.json`. Photos (the sources below) are references for
+sizes and layout only, nothing is copied; platform logos are left out (D5). A user may still add a photo with its own
+hotspot map: the format is the same for SVG and raster.
 
 **Sources, in order of preference:**
 
@@ -270,6 +328,19 @@ For a device with no image, or when the user prefers a photo of their own pad:
 
 The editor is the same widget the project uses to make built-in maps, so built-in and user maps cannot drift.
 
+**As built (2026-10-23).** `HotspotEditor` (unreal-qt `controllers/hotspoteditor.*`; ui-ux.md §3.6): per view (front,
+back, top) a file (EXIF rotation applied) or a paste, turned by quarter turns, straightened by up to ±15° and cropped
+(applied to the photo as picked, not stacked); the result is kept as it is (scaled down only past 4096 × 3072) and
+letterboxed into the design canvas, by the editor and by `ControllerPicture` alike. Every shape of §8: circle,
+ellipse, rectangle, polygon (drawn corner by corner; drag-to-size is a Size and a Height box instead). The set is
+saved as `images/<device id>/<view>.png` + `<view>.hotspots.json` for each view with a photo and a spot (the front
+is required), where the device id is the database entry's (`xbox-elite-2`, `user-2dc8abcd`), the entry as
+`{"id": <family>, "images": <device id>}`; a device the database does not know gets a family `user-<vid><pid>`
+with its name, its USB ids as `match` and its controls. `ControllerPicture` looks in the user's `images/` before the
+shipped ones, draws `<view>.png` / `.jpg` as well as `<view>.svg`, and lists a set's views (`Views`). Share… writes
+the same set into a chosen folder with `provenance.json` (§7: view, `"source": "own photograph"`, today's date, the
+author, licence and retouch fields empty) and `entry.json`.
+
 ## 10. Retro side images
 
 The right pane of the dialog shows the retro device plugged into each connector, in the same style and with the same
@@ -290,39 +361,17 @@ The keyboard images double as the target picker for "bind to a ZX key": a click 
 
 ## 11. Seed families
 
-The first `devices.json`, from [research-host-apis.md §5](research-host-apis.md#5-other-controllers). Image status:
-`own` = we photograph it, `find` = a source to find, `generic` = the family fallback until then.
+The shipped `devices.json` has 74 families: the first-party pads of Microsoft, Sony, Nintendo, Valve, Google, Amazon
+and Logitech, 8BitDo per model, the retro adapters, and the licensed / compatible families generated from SDL3's
+`controller_list.h` (Xbox 360 / One compatible, PlayStation compatible, Switch wired and Switch Pro compatible, arcade
+sticks and fight pads per protocol). The full list with the ids per bus, the path on macOS, Windows and Linux and the
+picture of each is the [POC 033 inventory](../../../tools/poc/033-vector-controller-pictures/inventory.md); the
+generator script of the compatible families is kept with the all-pads task's scratch files, the families themselves
+are plain data.
 
-| # | Family id | VID | PIDs | Layout | Images |
-|:--|:--|:--|:--|:--|:--|
-| 1 | `xbox-elite-2` | 045E | 0B00, 0B05, 0B22 | xbox | own |
-| 2 | `xbox-elite-1` | 045E | 02E3 | xbox | find |
-| 3 | `xbox-360` | 045E | 028E (real wired; not the macOS synthetic) | xbox | find |
-| 4 | `xbox-one` | 045E | 02D1, 02DD | xbox | find |
-| 5 | `xbox-one-s` | 045E | 02EA, 02E0, 02FD, 0B20 | xbox | find |
-| 6 | `xbox-series` | 045E | 0B12, 0B13 | xbox | find |
-| 7 | `xbox-adaptive` | 045E | 0B0A, 0B0C, 0B21 | xbox | find |
-| 8 | `xbox-wireless-adapter` | 045E | 02E6, 02FE (pads behind it report their own families) | — | — |
-| 9 | `dualshock-4` | 054C | 05C4, 09CC, 0BA0 | playstation | find |
-| 10 | `dualsense` | 054C | 0CE6 | playstation | find |
-| 11 | `dualsense-edge` | 054C | 0DF2 | playstation | find |
-| 12 | `switch-pro` | 057E | 2009 | nintendo-positional | find |
-| 13 | `joy-con` | 057E | 2006, 2007, 200E | nintendo-positional | find |
-| 14 | `nso-snes` / `nso-n64` / `nso-megadrive` | 057E | 2017 / 2019 / 201E | snes / n64 / megadrive | find |
-| 15 | `8bitdo-sf30-pro` | 2DC8 | 6000, 6100 | nintendo-positional | find |
-| 16 | `8bitdo-sn30-pro` | 2DC8 | 6001, 6101 | nintendo-positional | find |
-| 17 | `8bitdo-pro-2` / `pro-3` | 2DC8 | 6003, 6006 / 6009 | nintendo-positional | find |
-| 18 | `8bitdo-ultimate` | 2DC8 | 6012, 301B, 310A, 202F, 3106, 2002 | xbox | find |
-| 19 | `megadrive-mini` | 0CA3 | 0024 (6B), 0025 (3B) | megadrive | find |
-| 20 | `atari-vcs` | 3250 | 1001 (Classic), 1002 (Modern) | atari / xbox | find |
-| 21 | `atari-cx` | 0E6A | 4011 | atari | find |
-| 22 | `thec64-joystick` / `thegamepad` | 1C59 | 0024 / 0026 | c64-stick / snes | find |
-| 23 | `thejoystick-spectrum` | 1C59 | unverified (Q-8) | c64-stick | own when available |
-| 24 | `retrobit-adapter` | 1292 | 4745, 4643, 5346 | megadrive / nes / snes | find |
-| 25 | `generic-db9-adapter` | 0E8F, 16C0, 0079 | 3013; 05E1; 0006 | raw → wizard | generic |
-| 26 | `generic-snes-usb` | 0810, 0079 | E501; 0011 | snes | generic |
-| 27 | `arcade-stick` | 0F30, 0079, 0738 | 1100-1116; 1830, 181A, 181B; 8180 | arcade | generic |
-| 28 | `macos-synthetic-xbox` | 045E | 028E version 0, IOClass `AppleGCResource` | — | ignored |
+Image status: every family has an own POC 033 vector set or a look-alike's (Xbox One S on Xbox One, Elite 1 on
+Elite 2, Ultimate 2C on Ultimate 2, Switch 2 Pro on Switch Pro, the compatible families on the generic pads, the
+retro adapters on the NSO pads). THEJOYSTICK (row 23 of the first seed) is still unverified (Q-8).
 
 The Stream Deck (0FD9) is not a host device here. It is a companion client through the WebAPI
 ([debug-and-ttd.md](debug-and-ttd.md), [research-host-apis.md §6](research-host-apis.md#6-stream-deck)).
@@ -331,6 +380,6 @@ The Stream Deck (0FD9) is not a host device here. It is a companion client throu
 
 | # | Question |
 |:--|:--|
-| Q-1 | Vectorization: trace the retouched photos into SVG (themeable, small, crisp at any size, Mesen2-style), or keep rasters? A separate study: tools, cost per device, the look next to the photos, dark / light themes. Until then the raster + hotspot map is canonical, and the map format does not change if the image becomes SVG. |
+| Q-1 | Answered (owner, 2026-10-23): vector pictures drawn by a generator from per-device data, POC 033 ([§6](#6-images-the-house-style)). |
 | Q-8 | Retro Games Ltd THEJOYSTICK / THESPECTRUM pad VID/PIDs: read them from ioreg when a device is available. |
 | Q-9 | Manufacturer press-kit terms. **Answered** (D5): allowed with the source and terms recorded per image, platform logos removed in the retouch; where a vendor forbids it, CC images or our own photos. |

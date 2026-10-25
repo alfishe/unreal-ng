@@ -2094,6 +2094,15 @@ bool SlotManager::BuildCards()
             const std::vector<PortClaim> claims = CardClaims(*def, slot.entry.options);
             const auto order = static_cast<uint8_t>(PortDecoder::kSlotCardSlotBase + _cards.size());
             decoder->AttachSlotCard(card.get(), claims, order, def->detection);
+            // A card with the Kempston joystick function (the `kempston` interface): the machine's joystick reaches
+            // the guest, so its input paths, connector and TTD blob come with it
+            for (const FunctionUse& use : CardFunctions(*def, slot.entry.options))
+            {
+                if (use.function == Function::KempstonJoystick)
+                {
+                    decoder->SetSlotKempstonJoystick(true);
+                }
+            }
         }
         if (SoundManager* sound = _context->pSoundManager)
         {
@@ -2143,6 +2152,7 @@ void SlotManager::ReleaseCards()
     if (decoder != nullptr && !_cards.empty())
     {
         decoder->BindSlotSignals(nullptr);
+        decoder->SetSlotKempstonJoystick(false);
     }
     _cards.clear();
 }

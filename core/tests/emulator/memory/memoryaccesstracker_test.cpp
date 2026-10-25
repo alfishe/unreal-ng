@@ -2,11 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 
+#include "_helpers/testthread.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -525,6 +528,106 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_EnableAllocatesBuffers)
     ASSERT_NE(regionStats, nullptr) << "Region stats should be available";
     EXPECT_GE(regionStats->readCount, 1) << "Read count should be tracked";
     EXPECT_GE(regionStats->writeCount, 1) << "Write count should be tracked";
+}
+
+TEST_F(MemoryAccessTracker_Test, ResetWhileAnotherThreadTogglesTracking)
+{
+    // The SIGSEGV of 2026-10-24: a snapshot load (Core::Reset -> ResetCounters on a WebAPI thread) zeroed the counters
+    // while another thread's feature change freed them (DeallocateCounters drops the storage before the size), so
+    // memset ran on a null buffer of the old size. A reset and an allocate / free never overlap now
+    FeatureManager* fm = _context->pFeatureManager;
+    ASSERT_NE(fm, nullptr);
+    std::atomic<bool> done{false};
+    std::atomic<int> toggles{0};
+    TestThread toggler(
+        [&] {
+            bool on = false;
+            while (!done.load())
+            {
+                fm->setFeature(Features::kMemoryTracking, on);
+                _tracker->UpdateFeatureCache();
+                on = !on;
+                toggles.fetch_add(1);
+            }
+        },
+        [&] { done = true; });
+    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; })) << "the toggling thread runs";
+    // Each reset waits for the next toggle, so both sides make progress (a reset holds the mutex for its 75 MB)
+    int resets = 0;
+    int interleaved = 0;
+    for (; resets < 12; resets++)
+    {
+        const int before = toggles.load();
+        _tracker->ResetCounters();
+        interleaved += TestWait::For([&] { return toggles.load() > before; }) ? 1 : 0;
+    }
+    toggler.Join();
+    EXPECT_EQ(interleaved, resets) << "a free or an allocation ran after every reset";
+    EXPECT_GE(toggles.load(), resets) << "the frees and allocations ran beside the resets";
+
+    // The last word is the feature's: the buffers follow it, whatever order the threads ended in
+    fm->setFeature(Features::kMemoryTracking, true);
+    _tracker->UpdateFeatureCache();
+    EXPECT_TRUE(_tracker->_isAllocated.load());
+    EXPECT_FALSE(_tracker->_z80ReadCounters.empty());
+}
+
+TEST_F(MemoryAccessTracker_Test, ReadsWhileAnotherThreadSwitchesTrackingOff)
+{
+    // A tool's read (a WebAPI counters dump, the debugger's overlay, a count getter) on one thread, the feature switched
+    // off on another: the free waits for the read instead of pulling the buffers from under it
+    FeatureManager* fm = _context->pFeatureManager;
+    ASSERT_NE(fm, nullptr);
+    std::atomic<bool> done{false};
+    std::atomic<int> toggles{0};
+    TestThread toggler(
+        [&] {
+            bool on = true;
+            while (!done.load())
+            {
+                fm->setFeature(Features::kMemoryTracking, on);
+                _tracker->UpdateFeatureCache();
+                on = !on;
+                toggles.fetch_add(1);
+            }
+        },
+        [&] { done = true; });
+    ASSERT_TRUE(TestWait::For([&] { return toggles.load() > 0; })) << "the toggling thread runs";
+
+    int rounds = 0;
+    int interleaved = 0;
+    int allocatedReads = 0;
+    uint64_t sum = 0;
+    // At least 24 rounds, more until the reads have met both states (the toggler's phase is not ours to pick)
+    for (; rounds < 400 && (rounds < 24 || allocatedReads == 0 || allocatedReads == rounds); rounds++)
+    {
+        const int before = toggles.load();
+        {
+            const MemoryAccessTracker::CountersView z80 = _tracker->Z80CountersView();
+            if (z80.reads)
+            {
+                allocatedReads++;
+                for (size_t a = 0; a < z80.size; a += 61)
+                    sum += z80.reads[a] + z80.writes[a] + z80.executes[a];
+            }
+        }
+        {
+            const MemoryAccessTracker::CountersView phys = _tracker->PhysCountersView();
+            if (phys.reads)
+                sum += phys.reads[phys.size - 1] + phys.writes[0] + phys.executes[phys.size / 2];
+        }
+        for (uint8_t bank = 0; bank < 4; bank++)
+            sum += _tracker->GetZ80BankTotalAccessCount(bank) + _tracker->GetZ80BankReadAccessCount(bank);
+        sum += _tracker->GetZ80AddressReadCount(0x8000) + _tracker->GetZ80AddressExecuteCount(0xFFFF) +
+               _tracker->GetPageTotalAccessCount(5) + _tracker->GetPageWriteAccessCount(5) +
+               (_tracker->HasActivity(0x4000, 0x40FF) ? 1 : 0);
+        interleaved += TestWait::For([&] { return toggles.load() > before; }) ? 1 : 0;
+    }
+    toggler.Join();
+    EXPECT_EQ(interleaved, rounds) << "a free or an allocation ran after every read";
+    EXPECT_GT(allocatedReads, 0) << "some reads found the counters allocated (the race had both states)";
+    EXPECT_LT(allocatedReads, rounds) << "some reads found them freed";
+    EXPECT_EQ(sum, 0u) << "nothing executes: the counters stay zero";
 }
 
 // Test that disabling debug mode also disables memory tracking

@@ -99,11 +99,12 @@ namespace
             }
     }
     void RespondHost(std::function<void(const HttpResponsePtr&)>& callback, const HttpRequestPtr& req,
-                     const std::string& verb, bool post)
+                     const std::string& verb, bool post, const std::string& device = {})
     {
 #ifdef ENABLE_CONTROLLERS
-        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
-                                                       "haptics"};
+        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile",
+                                                       "bindings", "haptics", "database", "probe",
+                                                       "reports", "aliases", "match"};
         const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
         const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
                            HostInputControl::Verbs().end();
@@ -121,12 +122,15 @@ namespace
         if (auto json = req->getJsonObject())
             for (const std::string& name : json->getMemberNames())
                 request.options[name] = OptionText((*json)[name]);
+        if (!device.empty())
+            request.options["device"] = device;  // the path's device wins over a body's
         const HostReply reply = HostInputControl::Process(request);
         Respond(callback, reply.HttpStatus(), reply.ToJson());
 #else
         (void)req;
         (void)verb;
         (void)post;
+        (void)device;
         Respond(callback, 503,
                 R"json({"ok":false,"error":"unavailable","message":"built without host game controllers (ENABLE_CONTROLLERS=OFF)"})json");
 #endif
@@ -134,7 +138,8 @@ namespace
 }  // namespace
 
 /// @brief GET /api/v1/controllers/{verb}: devices, context, profiles (?set=&machine=), profile (?id=), bindings
-/// (?device=&layer=), haptics (?device=)
+/// (?device=&layer=), haptics (?device=), database (?vidpid=&bus=&name=&version= | guid= | device= | family=), probe
+/// (?device=), reports (?device=), aliases
 void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& verb) const
 {
@@ -148,11 +153,36 @@ void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<vo
 
 /// @brief POST /api/v1/controllers/{verb}: save {text}, delete {id}, apply {id}, bind {control, spec, layer, family,
 /// device, profile}, unbind {control, layer, family, device, profile}, scheme {id, family, device, profile}, rumble
-/// {device, effect}, output {device, pattern | steps, clicks | marks}, light {device, color}
+/// {device, effect}, output {device, pattern | steps, clicks | marks}, light {device, color}, role {device, role}, pin
+/// {device, pin}, identify {device}, player {device, connector}, database_save {text}, database_delete {id},
+/// database_import {text, save}, learn {device, step, controls, control, value, name, save}, unalias {id}
 void EmulatorAPI::postHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& verb) const
 {
     RespondHost(callback, req, verb, true);
+}
+
+/// @brief POST /api/v1/controllers/database/import {text, save?}: a gamecontrollerdb line or a RetroArch autoconfig
+/// file into devices.user.json (the database_import verb)
+void EmulatorAPI::postHostDatabaseImport(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    RespondHost(callback, req, "database_import", true);
+}
+
+/// @brief POST /api/v1/controllers/host/{device}/{verb}: role {role}, pin {pin}, identify, learn {step, ...} of one
+/// host device
+void EmulatorAPI::postHostDeviceVerb(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& device, const std::string& verb) const
+{
+    static const std::vector<std::string> deviceVerbs = {"role", "pin", "identify", "learn"};
+    if (std::find(deviceVerbs.begin(), deviceVerbs.end(), verb) == deviceVerbs.end())
+    {
+        Respond(callback, 404,
+                R"({"ok":false,"error":"bad-request","message":"a host device's verbs are role, pin, identify, learn"})");
+        return;
+    }
+    RespondHost(callback, req, verb, true, device);
 }
 
 /// @brief GET /api/v1/emulator/{id}/controllers

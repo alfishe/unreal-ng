@@ -227,7 +227,7 @@
             op["parameters"][1]["in"] = "query";
             op["parameters"][1]["required"] = false;
             op["parameters"][1]["schema"]["type"] = "string";
-            op["parameters"][1]["description"] = "Device id to report (kempston, sprinter, evo-ps2); 400 when the "
+            op["parameters"][1]["description"] = "Device id to report (kempston, sprinter, evo-ps2, amx); 400 when the "
                                                  "machine has no such device";
             addMouseResponses(op, "Mouse state", false);
             op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =

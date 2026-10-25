@@ -9,10 +9,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "_helpers/testwaithelper.h"
 #include "fake/fakebackend.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
@@ -257,6 +259,44 @@ TEST_F(InputRouter_Test, Roles_InstancesAndTheAutoConnector)
     _router.SetInstanceMode("fake:1", InstanceMode::All);
     EXPECT_EQ(Kempston("emu-1"), kFire);
     EXPECT_EQ(Kempston("emu-3"), kFire);
+}
+
+TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
+{
+    // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,
+    // each once; the debug layer and the non-retro targets draw none
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "auto:fire"), Bind({"dpad.*"}, "auto:dpad"), Bind({"east"}, "sinclair-1:fire"),
+                 To({"north"}, Keys("SPACE")), To({"west"}, Retro("keyjoy.1:fire"), kDebugLayer)});
+    EXPECT_EQ(_router.Connectors("fake:1"), std::vector<std::string>{"sinclair-1"}) << "no player connector yet";
+    _router.SetPlayerConnector("fake:1", "kempston");
+    EXPECT_EQ(_router.PlayerConnector("fake:1"), "kempston");
+    EXPECT_EQ(_router.Connectors("fake:1"), (std::vector<std::string>{"kempston", "sinclair-1"}));
+    _router.SetRole("fake:1", DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.Connectors("fake:1").empty()) << "a debugger remote reaches no connector";
+    EXPECT_TRUE(_router.Connectors("fake:9").empty()) << "an unknown device";
+}
+
+TEST_F(InputRouter_Test, Analog_TheOptionsTheBindingUpReadsAControlWith)
+{
+    // The test panel's thresholds (ui-ux.md §3.4): the profile's analog overrides of the binding that reads the stick
+    // or the trigger now, the defaults where none does
+    _router.OnDeviceAdded(kPad);
+    BindingOptions wide;
+    wide.analog.deadzone = 0.3f;
+    wide.analog.on = 0.6f;
+    BindingOptions hair;
+    hair.analog.triggerClick = 0.2f;
+    SetBindings({Bind({"lstick"}, "kempston:dpad", wide), Bind({"rt"}, "kempston:fire", hair)});
+    AnalogOptions options;
+    ASSERT_TRUE(_router.Analog("fake:1", "lstick", options));
+    EXPECT_FLOAT_EQ(options.deadzone, 0.3f);
+    EXPECT_FLOAT_EQ(options.on, 0.6f);
+    ASSERT_TRUE(_router.Analog("fake:1", "rt", options));
+    EXPECT_FLOAT_EQ(options.triggerClick, 0.2f);
+    EXPECT_FALSE(_router.Analog("fake:1", "rstick", options)) << "nothing reads it";
+    EXPECT_FLOAT_EQ(options.deadzone, AnalogOptions{}.deadzone) << "the defaults";
+    EXPECT_FALSE(_router.Analog("fake:9", "lstick", options));
 }
 
 TEST_F(InputRouter_Test, Scopes_DeviceBeatsFamilyBeatsGlobal)
@@ -605,9 +645,13 @@ TEST_F(InputRouter_Test, Targets_KeysMacroAndMouse)
         Sample();
         sizes.push_back(_last.keys.size());
         if (f == 0)
+        {
             EXPECT_EQ(_last.keys, j);
+        }
         if (f == 2)
+        {
             EXPECT_TRUE(std::is_permutation(_last.keys.begin(), _last.keys.end(), quote.begin()));
+        }
     }
     EXPECT_EQ(sizes, (std::vector<size_t>{1, 0, 2, 0, 0}));
 
@@ -662,3 +706,179 @@ TEST_F(InputRouter_Test, InvalidTargetsAreRefusedWithTheReason)
 }
 
 /// endregion </C2b>
+
+/// region <C7: repeat>
+
+/// mapping-and-profiles.md §1.3 `repeat: {delay, rate}`: a held action runs again on the host clock, after the delay
+/// and then every `rate` frames of 20 ms; a late poll runs it once, the release stops it
+TEST_F(InputRouter_Test, Repeat_AHeldActionRunsAgainOnTheHostClock)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding step = To({"dpad.right"}, ActionTarget("run.step_over"));
+    step.options.repeatDelay = 15;  // 300 ms
+    step.options.repeatRate = 4;    // 80 ms
+    SetBindings({step});
+    auto presses = [this] {
+        return std::count_if(_actions.begin(), _actions.end(), [](const ActionEvent& a) { return a.pressed; });
+    };
+
+    Set("fake:1", "dpad.right", 1);
+    EXPECT_EQ(presses(), 1);
+    EXPECT_EQ(_router.NextDeadline(), _now + 300'000'000) << "the timer's deadline: the first repeat";
+    AdvanceMs(299);
+    _router.Poll();
+    EXPECT_EQ(presses(), 1) << "not before the delay";
+    AdvanceMs(1);
+    _router.Poll();
+    EXPECT_EQ(presses(), 2) << "at the delay";
+    AdvanceMs(80);
+    _router.Poll();
+    EXPECT_EQ(presses(), 3) << "then every rate";
+    AdvanceMs(400);
+    _router.Poll();
+    EXPECT_EQ(presses(), 4) << "a late poll runs it once, no burst";
+    Sample();  // a running machine's frame boundary runs the repeats too
+    AdvanceMs(80);
+    Sample();
+    EXPECT_EQ(presses(), 5);
+
+    Set("fake:1", "dpad.right", 0);
+    EXPECT_FALSE(_actions.back().pressed) << "the release";
+    EXPECT_EQ(_router.NextDeadline(), UINT64_MAX) << "nothing waits";
+    AdvanceMs(1000);
+    _router.Poll();
+    EXPECT_EQ(presses(), 5) << "released: no more repeats";
+}
+
+/// A held retro control is released for one emulated frame after the delay and then every `rate` frames
+TEST_F(InputRouter_Test, Repeat_AHeldRetroControlReleasesAFrame)
+{
+    _router.OnDeviceAdded(kPad);
+    BindingOptions options;
+    options.repeatDelay = 3;
+    options.repeatRate = 4;
+    SetBindings({Bind({"south"}, "kempston:fire", options)});
+
+    Set("fake:1", "south", 1);
+    std::string seen;
+    for (int i = 0; i < 12; i++)
+        seen += Kempston() == kFire ? '1' : '0';
+    EXPECT_EQ(seen, "111011101110");
+    EXPECT_EQ(Kempston(), kFire) << "held again after the released frame";
+    Set("fake:1", "south", 0);
+    EXPECT_EQ(Kempston(), 0);
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire) << "a new press counts from its own frame";
+    EXPECT_EQ(Kempston(), kFire);
+}
+
+TEST_F(InputRouter_Test, Repeat_RefusedWhereItMeansNothing)
+{
+    std::string error;
+    BindingOptions options;
+    options.repeatDelay = 10;
+    options.repeatRate = 1;
+    EXPECT_FALSE(_router.SetBindings({}, {Bind({"south"}, "kempston:fire", options)}, error));
+    EXPECT_NE(error.find("rate of 2 or more"), std::string::npos) << error;
+    options.repeatRate = 4;
+    options.turbo = Turbo::Classic;
+    options.on = options.off = 2;
+    EXPECT_FALSE(_router.SetBindings({}, {Bind({"south"}, "kempston:fire", options)}, error));
+    EXPECT_NE(error.find("not with turbo"), std::string::npos) << error;
+    Binding mouse = To({"lstick.x"}, Mouse("dx"));
+    mouse.options.repeatDelay = 10;
+    mouse.options.repeatRate = 4;
+    EXPECT_FALSE(_router.SetBindings({}, {mouse}, error));
+    EXPECT_NE(error.find("key, retro or action"), std::string::npos) << error;
+    Binding scrub = To({"lt"}, ActionTarget("ttd.scrub_back"));
+    scrub.options.level = true;
+    scrub.options.repeatDelay = 10;
+    scrub.options.repeatRate = 4;
+    EXPECT_FALSE(_router.SetBindings({}, {scrub}, error)) << "a level action is not pressed again";
+}
+
+/// A paused machine samples nothing: the service's timer runs the repeat (and closes chord windows) by itself
+TEST(HostInputService_Test, Repeat_TheTimerRunsItWhilePaused)
+{
+    HostInputService service;
+    auto fake = std::make_unique<FakeBackend>();
+    FakeBackend* pads = fake.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(fake), reason)) << reason;
+    ASSERT_TRUE(pads->Connect(kPad));
+    std::atomic<int> presses{0};
+    service.Router().SetActionSink([&](const ActionEvent& action) {
+        if (action.pressed)
+            presses++;
+    });
+    Binding step = To({"dpad.right"}, ActionTarget("run.step_over"));
+    step.options.repeatDelay = 1;  // 20 ms
+    step.options.repeatRate = 1;
+    ASSERT_TRUE(service.Router().SetBindings({}, {step}, reason)) << reason;
+
+    ASSERT_TRUE(pads->Press("fake:1", "dpad.right"));
+    // Two repeats: 40 ms of host time, the timer's own (no frame samples the router here)
+    ASSERT_TRUE(TestWait::For([&] { return presses.load() >= 3; })) << presses.load();
+    ASSERT_TRUE(pads->Release("fake:1", "dpad.right"));
+    const int after = presses.load();
+    EXPECT_EQ(service.Router().NextDeadline(), UINT64_MAX);
+    EXPECT_EQ(presses.load(), after);
+    service.Stop();
+}
+
+/// endregion </C7: repeat>
+
+TEST_F(InputRouter_Test, PromoteMovesTheChosenSettings)
+{
+    // A gc: device had a role and a pin; its IOHID id takes over (architecture.md §5)
+    _router.SetRole("gc:pro-controller#1", DeviceRole::DebuggerRemote);
+    _router.SetInstanceMode("gc:pro-controller#1", InstanceMode::Pinned, "emu-2");
+    _router.Promote("gc:pro-controller#1", "fake:1");
+    EXPECT_EQ(_router.Role("fake:1"), DeviceRole::DebuggerRemote);
+    EXPECT_TRUE(_router.RoleSet("fake:1"));
+
+    // A device with settings of its own keeps them
+    _router.SetRole("fake:2", DeviceRole::Disabled);
+    _router.Promote("gc:pro-controller#1", "fake:2");
+    EXPECT_EQ(_router.Role("fake:2"), DeviceRole::Disabled);
+    // Nothing chosen for the old id: nothing moves
+    _router.Promote("gc:unknown#1", "fake:3");
+    EXPECT_FALSE(_router.RoleSet("fake:3"));
+}
+
+TEST(HostInputService_Test, PromotionsAreKeptForTheProfileStore)
+{
+    // The service moves the router settings and keeps the promotion for the store's alias (architecture.md §5)
+    HostInputService service;
+    service.Router().SetRole("gc:pro-controller#1", DeviceRole::DebuggerRemote);
+    const uint64_t revision = service.Revision();
+    service.OnDevicePromoted("gc:pro-controller#1", "bt:057e:2009:1");
+    EXPECT_GT(service.Revision(), revision);
+    EXPECT_EQ(service.Router().Role("bt:057e:2009:1"), DeviceRole::DebuggerRemote);
+    const auto promotions = service.TakePromotions();
+    ASSERT_EQ(promotions.size(), 1u);
+    EXPECT_EQ(promotions[0].first, "gc:pro-controller#1");
+    EXPECT_EQ(promotions[0].second, "bt:057e:2009:1");
+    EXPECT_TRUE(service.TakePromotions().empty()) << "each once";
+}
+
+/// A switch trigger (ZL / ZR): a pad sends `lt` at full travel, an older layout or a driver `lt.click` alone; a
+/// binding to either name fires for both
+TEST_F(InputRouter_Test, Trigger_SwitchTriggersDriveLtAndLtClick)
+{
+    _router.OnDeviceAdded(kPad);
+    _router.OnDeviceAdded(kPad2);
+    SetBindings({Bind({"lt.click"}, "kempston:fire"), Bind({"rt"}, "kempston:fire2")});
+
+    Set("fake:1", "lt", 1);
+    EXPECT_EQ(Kempston(), kFire) << "a digital ZL as `lt` at full travel clicks `lt.click`";
+    Set("fake:1", "lt", 0);
+    EXPECT_EQ(Kempston(), 0);
+
+    Set("fake:2", "lt.click", 1);
+    Set("fake:2", "rt.click", 1);
+    EXPECT_EQ(Kempston(), kFire | kFire2) << "a device sending only `lt.click` / `rt.click` drives both names";
+    Set("fake:2", "lt.click", 0);
+    Set("fake:2", "rt.click", 0);
+    EXPECT_EQ(Kempston(), 0);
+}

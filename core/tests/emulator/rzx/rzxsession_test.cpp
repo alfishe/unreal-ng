@@ -138,7 +138,9 @@ namespace
                 0, false);
             ASSERT_NE(_context->rzxPlayer, nullptr) << _emulator->GetRzxStatus().player.stopReason;
             if (_cpu->iff1)
+            {
                 ASSERT_TRUE(Step().intAccepted);
+            }
 
             const SessionStatus status = _emulator->GetRzxStatus();
             ASSERT_EQ(status.player.desyncs, 0u) << status.player.stopReason;
@@ -194,7 +196,9 @@ namespace
                 EXPECT_EQ(differences, 0u) << "RAM page " << page << ", first at offset #" << std::hex << first;
             }
             if (!is48K)
+            {
                 EXPECT_EQ(_context->emulatorState.p7FFD, refContext->emulatorState.p7FFD);
+            }
 
             EmulatorManager::GetInstance()->RemoveEmulator(reference->GetId());
         }

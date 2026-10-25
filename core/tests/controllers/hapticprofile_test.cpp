@@ -70,11 +70,13 @@ TEST(HapticProfile_Test, ParsesAndRefusesWhatItCannotDo)
         const char* reason;
     };
     const Bad bad[] = {
-        {R"({"sources": {"s": {"probe": "exec", "address": 1}}})", "not available yet"},
-        {R"({"sources": {"s": {"filter": "lowband"}}})", "unknown"},
+        {R"({"sources": {"s": {"probe": "peek", "address": 1}}})", "probe 'peek' unknown"},
+        {R"({"sources": {"s": {"filter": "highband"}}})", "unknown"},
         {R"({"sources": {"s": {"probe": "write"}}})", "'address' is required"},
         {R"({"sources": {"s": {"filter": "ay-noise"}}, "rules": [{"on": "t", "play": "tick"}]})", "names no source"},
         {R"({"sources": {"s": {"filter": "ay-noise"}}, "rules": [{"on": "s", "play": "boing"}]})", "'play' 'boing'"},
+        {R"({"sources": {"s": {"probe": "write", "address": 1, "word": true}}})", "on a value probe"},
+        {R"({"sources": {"s": {"probe": "value", "address": "0xFFFF", "word": true}}})", "second byte"},
         {R"({"source": {}})", "unknown field"},
     };
     for (const Bad& entry : bad)

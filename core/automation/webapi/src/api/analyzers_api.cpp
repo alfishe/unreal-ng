@@ -12,6 +12,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <emulator/sound/soundmanager.h>
@@ -1461,6 +1462,82 @@ void EmulatorAPI::getCoverageGaps(const HttpRequestPtr& req, std::function<void(
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/coverage/export
+/// @brief The coverage as a file another tool reads (coverageexport.h): body {"format": "skoolkit-map", "start",
+/// "end" (integer or "0x..." string), "path" (write the file; else the map comes back in "map"), "merge" (add the
+/// addresses of the file at path)}
+void EmulatorAPI::exportCoverage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    const auto reply = [&](HttpStatusCode status, const Json::Value& body) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(status);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        reply(HttpStatusCode::k404NotFound, error);
+        return;
+    }
+
+    // The body's members as the options of coverageexport::Export (numbers and booleans as their text)
+    coverageexport::Options options;
+    auto json = req->getJsonObject();
+    if (json && json->isObject())
+    {
+        for (const std::string& name : json->getMemberNames())
+        {
+            const Json::Value& value = (*json)[name];
+            if (value.isBool())
+                options[name] = value.asBool() ? "true" : "false";
+            else if (value.isIntegral())
+                options[name] = std::to_string(value.asInt64());
+            else if (value.isString())
+                options[name] = value.asString();
+            else if (!value.isNull())
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = name + " is no string, number or boolean";
+                reply(HttpStatusCode::k400BadRequest, error);
+                return;
+            }
+        }
+    }
+
+    const coverageexport::Result result = coverageexport::Export(findCoverageAnalyzer(emulator.get()), options);
+    if (!result.Ok())
+    {
+        Json::Value error;
+        const bool missing = result.error == coverageexport::Error::NotAvailable;
+        error["error"] = missing ? "Internal Error" : "Bad Request";
+        error["message"] = result.message;
+        reply(missing ? HttpStatusCode::k500InternalServerError : HttpStatusCode::k400BadRequest, error);
+        return;
+    }
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["success"] = true;
+    ret["format"] = result.format;
+    ret["start"] = StringHelper::Format("0x%04X", result.start);
+    ret["end"] = StringHelper::Format("0x%04X", result.end);
+    ret["count"] = static_cast<Json::UInt64>(result.count);
+    if (result.path.empty())
+        ret["map"] = result.text;
+    else
+    {
+        ret["path"] = result.path;
+        ret["merged"] = static_cast<Json::UInt64>(result.merged);
+    }
+    ret["message"] = result.message;
+    reply(HttpStatusCode::k200OK, ret);
 }
 
 /// endregion </Coverage analyzer endpoints>

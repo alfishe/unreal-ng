@@ -42,6 +42,7 @@ inline Json::Value StateToJson(const JoystickStateSnapshot& state)
     json["available"] = state.available;
     json["present"] = state.present;
     json["wired"] = state.wired;
+    json["fit"] = state.fit;
     json["state"] = state.state;
     json["port_value"] = state.portValue;
 
@@ -96,7 +97,7 @@ inline Reply StatusReply(const DebugJoystickManager& manager, const std::string&
     else if (!state.present)
         reply.body["warning"] = "joystick not present: the guest reads 0x00 on the joystick port";
     else if (!state.wired)
-        reply.body["warning"] = "this machine does not decode a Kempston joystick port: the guest cannot see the buttons";
+        reply.body["warning"] = DebugJoystickManager::UnwiredWarning(state.fit);
     return reply;
 }
 

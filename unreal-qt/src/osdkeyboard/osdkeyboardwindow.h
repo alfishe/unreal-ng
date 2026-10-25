@@ -36,6 +36,10 @@ public:
     void setPicture(const KeyboardPicture* picture);
     /// The keys drawn as held (the window's own presses and latches, and the host keyboard's)
     void setLit(std::set<std::string> lit);
+    /// Draw the legends of @p roles faint (`legends-<role>` groups of the SVG: "keyword", "extend"...): the legends
+    /// that do not matter while a shift is held; empty: every legend as printed
+    void setDimmed(std::set<std::string> roles);
+    const std::set<std::string>& dimmed() const { return _dimmed; }
     /// The picture's point (mm) under a widget point
     QPointF toPicture(const QPointF& point) const;
 
@@ -57,12 +61,17 @@ protected:
 
 private:
     QRectF imageRect() const;
+    /// The renderer of the picture as drawn now: the printed one, or the one with the dimmed roles faint
+    QSvgRenderer* renderer() const;
 
     const KeyboardPicture* _picture = nullptr;
     QSvgRenderer* _svg = nullptr;
-    QPixmap _cache;  ///< the picture at the widget's size: the SVGs are large, a repaint draws only the lit keys
-    QImage _recordBase;  ///< the picture at the recording's width, without lit keys
+    QSvgRenderer* _dimSvg = nullptr;  ///< the picture with the dimmed roles faint
+    QByteArray _svgData;              ///< the SVG as read, the source of the dimmed one
+    QPixmap _cache[2];  ///< the picture at the widget's size, printed and dimmed: a repaint draws only the lit keys
+    QImage _recordBase[2];  ///< the picture at the recording's width, without lit keys
     std::set<std::string> _lit;
+    std::set<std::string> _dimmed;
 };
 
 class OsdKeyboardWindow : public QWidget
@@ -100,6 +109,8 @@ public:
     std::set<std::string> held() const;
     /// The keys drawn lit: the window's own, and "host:<id>" for the host keyboard's
     const std::set<std::string>& lit() const { return _lit; }
+    /// The legend roles drawn faint now (Symbol Shift held: every mode legend but the symbols)
+    const std::set<std::string>& dimmed() const { return _view->dimmed(); }
     /// The line under the picture
     QString notice() const;
     /// Follow the bound machine: its model, the route, the host keys held

@@ -266,10 +266,14 @@ void RunChange(const SlotControlRequest& request, const std::string& emulatorId,
     restart["previousEmulatorId"] = result.previousEmulatorId.empty() ? emulatorId : result.previousEmulatorId;
     restart["emulatorId"] = result.emulator ? result.emulator->GetId() : emulatorId;
     restart["wasRunning"] = result.wasRunning;
+    restart["wasPaused"] = result.wasPaused;
     bool started = false;
-    if (result.Applied() && result.emulator && result.wasRunning && request.startWhenRunning)
+    if (result.Applied() && result.emulator && request.startWhenRunning)
     {
-        started = EmulatorManager::GetInstance()->StartEmulatorAsync(result.emulator->GetId());
+        // The run state the user had: a paused machine comes back started and paused, not "initialized"
+        const std::string id = result.emulator->GetId();
+        started = ModelSwitch::StartAsBefore(*result.emulator, {result.wasRunning, result.wasPaused},
+                                             [&id]() { EmulatorManager::GetInstance()->StartEmulatorAsync(id); });
     }
     restart["started"] = started;
     if (result.Applied())
@@ -972,6 +976,44 @@ StateNode SlotControl::Catalog(const SlotManager::Result& current)
         cards.push(std::move(c));
     }
     return cards;
+}
+
+std::string SlotControl::PlugHint(const SlotManager::Result& current, std::string_view card)
+{
+    if (current.machine == nullptr || Planner().FindCard(std::string(card)) == nullptr)
+    {
+        return {};
+    }
+    SlotRequest request;
+    request.op = SlotRequest::Op::Plug;
+    request.card = std::string(card);
+    request.dryRun = true;
+    const SlotPlan plan = Planner().Plan(current.model, current.Fitted(), request);
+    if (plan.hardRefusal || plan.slot.empty())
+    {
+        return {};
+    }
+    const std::string id(card);
+    std::string hint = "fit the `" + id + "` card: slots plug " + plan.slot + " " + id;
+    std::string mcp = "MCP emulator_manage slots_plug slot=" + plan.slot + " card=" + id;
+    std::string web = "WebAPI POST /emulator/{id}/slots/" + plan.slot + "/plug {\"card\":\"" + id + "\"";
+    if (!plan.allowed)
+    {
+        hint += " --replace";
+        mcp += " replace_if_incompatible=true";
+        web += ",\"replaceIfIncompatible\":true";
+    }
+    hint += " (" + mcp + "; " + web + "}); the machine restarts";
+    if (!plan.allowed)
+    {
+        std::string why;
+        for (const PlanReason& reason : plan.reasons)
+        {
+            why += (why.empty() ? "" : "; ") + reason.text;
+        }
+        hint += ". Needs the override: " + (why.empty() ? std::string("see slots_catalog") : why);
+    }
+    return hint;
 }
 
 SlotControlReply SlotControl::Execute(const SlotControlRequest& request)

@@ -626,8 +626,8 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_ActiveParts_PostPerPartAudioActivityForHud
     for (int frame = 0; frame < 8 && !pcmActive; frame++)
     {
         mainLoop->RunFrame();
-        pcmActive = WaitForCondition([&] { return pcmActiveEvents.load() >= 1; },
-                                     std::chrono::milliseconds(20));
+        ASSERT_TRUE(mc.WaitForOutstandingMessages());   // the frame's posts delivered: no timed wait per frame
+        pcmActive = pcmActiveEvents.load() >= 1;
     }
     EXPECT_TRUE(pcmActive) << "a keyed PCM slot must post MoonPCM activity";
 
@@ -651,9 +651,8 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_ActiveParts_PostPerPartAudioActivityForHud
     for (int frame = 0; frame < 15 + AudioActivityIndicators::HOLD_FRAMES && !bothSilent; frame++)
     {
         mainLoop->RunFrame();
-        bothSilent = WaitForCondition(
-            [&] { return fmSilentEvents.load() >= 1 && pcmSilentEvents.load() >= 1; },
-            std::chrono::milliseconds(20));
+        ASSERT_TRUE(mc.WaitForOutstandingMessages());
+        bothSilent = fmSilentEvents.load() >= 1 && pcmSilentEvents.load() >= 1;
     }
     EXPECT_TRUE(bothSilent) << "key-off must post the active->silent transition for both parts";
 

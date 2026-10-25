@@ -162,7 +162,7 @@ void NextMemory::SetBootRomEnabled(bool on)
 
 void NextMemory::SetConfigBank(uint8_t bank)
 {
-    _cfgBank = bank & 0x3F;
+    _cfgBank = bank;
     Remap();
 }
 
@@ -300,8 +300,8 @@ void NextMemory::ApplyContentionFlags()
         _slotContended[s] = contended;
     }
     if (UlaContention* ula = _context ? _context->pUlaContention : nullptr)
-        for (unsigned w = 0; w < 4; w++)
-            ula->SetSlotContended(static_cast<uint8_t>(w), _slotContended[w * 2] || _slotContended[w * 2 + 1]);
+        for (unsigned s = 0; s < kSlots; s++)
+            ula->SetHalfContended(static_cast<uint8_t>(s), _slotContended[s]);  // zxnext.vhd mem_contend: the 8K page at the address
 }
 
 void NextMemory::OnRomLoaded([[maybe_unused]] uint16_t imageBanks)
@@ -381,7 +381,7 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = (slot == 0 && !_divView.mapram) ? "divmmc rom" : "divmmc ram";
     }
-    else if (value == kMmuRom && bootRomHere)
+    else if (MmuIsRom(slot, value) && bootRomHere)
     {
         // the boot ROM: read-only
         _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);
@@ -389,15 +389,25 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = "boot rom";
     }
-    else if (value == kMmuRom && slot < 2 && _configMode)
+    else if (MmuIsRom(slot, value) && _configMode)
     {
         // config mapping: NR #04's 16K SRAM bank, writable (the firmware loads the ROMs through it)
-        const uint8_t* mem = _cfgBank < kSystemAreaPages ? ROMPageHostAddress(_cfgBank) : RAMPageAddress(_cfgBank - kSystemAreaPages);
-        _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(mem + slot * kSlotSize - _memory);
-        _physPage[slot] = _cfgBank < kSystemAreaPages ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
-        _kind[slot] = "config bank";
+        if (_cfgBank >= kSystemAreaPages && static_cast<unsigned>(_cfgBank - kSystemAreaPages) >= InstalledRamPages())
+        {
+            // a 16K SRAM bank beyond the installed RAM: nothing answers
+            _readOff[slot] = _writeOff[slot] = trash;
+            _physPage[slot] = ttd::kPhysPageNone;
+            _kind[slot] = "unmapped";
+        }
+        else
+        {
+            const uint8_t* mem = _cfgBank < kSystemAreaPages ? ROMPageHostAddress(_cfgBank) : RAMPageAddress(_cfgBank - kSystemAreaPages);
+            _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(mem + slot * kSlotSize - _memory);
+            _physPage[slot] = _cfgBank < kSystemAreaPages ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
+            _kind[slot] = "config bank";
+        }
     }
-    else if (value == kMmuRom)
+    else if (MmuIsRom(slot, value))
     {
         const uint8_t* rom = ROMPageHostAddress(EffectiveRom()) + (slot & 1) * kSlotSize;
         _readOff[slot] = static_cast<uint32_t>(rom - _memory);
@@ -470,7 +480,7 @@ void NextMemory::SyncWindows()
         const unsigned lo = w * 2;
         _bank_read[w] = _memory + _readOff[lo];
         _bank_write[w] = _memory + _writeOff[lo];
-        _bank_mode[w] = _mmu[lo] == kMmuRom ? BANK_ROM : BANK_RAM;
+        _bank_mode[w] = MmuIsRom(lo, _mmu[lo]) ? BANK_ROM : BANK_RAM;
         _bank_ram_page_cache[w] = _physPage[lo];
     }
     ApplyContentionFlags();
@@ -501,7 +511,7 @@ void NextMemory::SetRomSelect(uint8_t rom)
 {
     _rom = rom & 3;
     for (unsigned s = 0; s < kSlots; s++)
-        if (_mmu[s] == kMmuRom)
+        if (MmuIsRom(s, _mmu[s]))
             MapSlot(s);
     SyncWindows();
 }

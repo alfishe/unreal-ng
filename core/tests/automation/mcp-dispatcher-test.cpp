@@ -253,16 +253,17 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFourTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFiveTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 24u);
+    EXPECT_EQ(tools.size(), 25u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
+                              "signature_info",
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
                               "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
                               "companion_manage", "controllers",       "actions",           "streamdeck",
@@ -348,6 +349,21 @@ TEST_F(McpDispatcher_Test, ToolsCall_BadResponseFormatIsAToolError)
 
     ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
     EXPECT_NE(response["result"]["content"][0]["text"].asString().find("response_format"), std::string::npos);
+}
+
+// A misspelt argument ("addr" for "address") must not leave the tool's default in place: a read from 0 looks right
+TEST_F(McpDispatcher_Test, ToolsCall_UnknownArgumentIsAToolError)
+{
+    Json::Value params;
+    params["name"] = "memory_access";
+    params["arguments"]["action"] = "read";
+    params["arguments"]["addr"] = "0x8000";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("unknown argument 'addr'"), std::string::npos) << text;
+    EXPECT_NE(text.find("address"), std::string::npos) << text;
 }
 
 TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
@@ -764,4 +780,78 @@ TEST_F(McpDispatcher_Test, ARevokedSessionTurnsTheResultIntoAStopError)
     const std::string text = response["result"]["content"][0]["text"].asString();
     EXPECT_NE(text.find("revoked_by_user"), std::string::npos) << text;
     EXPECT_NE(text.find("Do not retry"), std::string::npos) << text;
+}
+
+namespace
+{
+/// control_execution <action> on the one emulator "e1" of the fake; returns the tool result
+Json::Value ControlExecution(mcp::McpDispatcher& dispatcher, FakeApiCaller& caller, const std::string& action)
+{
+    Json::Value list;
+    list["count"] = 1;
+    Json::Value e;
+    e["id"] = "e1";
+    list["emulators"].append(e);
+    caller.routes["GET /api/v1/emulator"] = {200, list};
+    Json::Value params;
+    params["name"] = "control_execution";
+    params["arguments"]["action"] = action;
+    return DispatchSync(dispatcher, caller, Rpc("tools/call", params))["result"];
+}
+}  // namespace
+
+/// release_control without a session of its own: the WebAPI ends the implicit session it holds for this MCP server
+/// (no header needed); when there was none the agent is told who holds control instead of "send the header"
+TEST_F(McpDispatcher_Test, ReleaseControlWithoutASessionEndsTheImplicitOneOrSaysWhoHoldsControl)
+{
+    Json::Value released;
+    released["released"] = true;
+    _caller->routes["DELETE /api/v1/emulator/e1/control/session"] = {200, released};
+    Json::Value result = ControlExecution(*_dispatcher, *_caller, "release_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    EXPECT_NE(result["content"][0]["text"].asString().find("session ended"), std::string::npos);
+
+    Json::Value nothing;
+    nothing["released"] = false;
+    nothing["message"] = "This client holds no session here. Run control is held by webapi (Python-urllib/3.12) in an "
+                         "implicit session";
+    _caller->routes["DELETE /api/v1/emulator/e1/control/session"] = {200, nothing};
+    result = ControlExecution(*_dispatcher, *_caller, "release_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("Nothing to release"), std::string::npos) << text;
+    EXPECT_NE(text.find("Python-urllib/3.12"), std::string::npos) << text;
+    EXPECT_EQ(text.find("session ended"), std::string::npos) << text;
+}
+
+/// take_control names the session id (for a host script) and the implicit session it took over
+TEST_F(McpDispatcher_Test, TakeControlNamesTheSessionIdAndTheImplicitSessionItTookOver)
+{
+    Json::Value opened;
+    opened["session"] = "11111111-2222-4333-8444-555555555555";
+    opened["took_over"]["surface"] = "webapi";
+    opened["took_over"]["client"] = "Python-urllib/3.12";
+    opened["took_over"]["implicit"] = true;
+    _caller->routes["POST /api/v1/emulator/e1/control/session"] = {200, opened};
+    const Json::Value result = ControlExecution(*_dispatcher, *_caller, "take_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("11111111-2222-4333-8444-555555555555"), std::string::npos) << text;
+    EXPECT_NE(text.find("Took over the implicit session of webapi (Python-urllib/3.12)"), std::string::npos) << text;
+}
+
+/// A run the automation gate refuses (another client's session) is an error naming the holder, not "already running"
+TEST_F(McpDispatcher_Test, ARunRefusedByAnotherSessionIsAnErrorNotAlreadyRunning)
+{
+    Json::Value refused;
+    refused["error"] = "held_by_other";
+    refused["retry"] = false;
+    refused["message"] = "Run control is held by webapi (Python-urllib/3.12) in an implicit session";
+    _caller->routes["POST /api/v1/emulator/e1/resume"] = {409, refused};
+    const Json::Value result = ControlExecution(*_dispatcher, *_caller, "run");
+    EXPECT_TRUE(result["isError"].asBool()) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("held_by_other"), std::string::npos) << text;
+    EXPECT_NE(text.find("Python-urllib/3.12"), std::string::npos) << text;
+    EXPECT_EQ(text.find("already running"), std::string::npos) << text;
 }

@@ -4,7 +4,7 @@
 /// @brief The Qt client's part of the host actions (control surfaces architecture §2, §3): the core
 /// actions::ActionRegistry (core/src/emulator/actions) holds the catalogue and runs every action on the instance's
 /// actions worker; this registers the GUI ones there (the debugger window and its panes, the screenshot to the
-/// clipboard, the analog scrub, the on-screen keyboard, the OSD stubs) and turns a device's action events into registry calls with the origin
+/// clipboard, the analog scrub, the on-screen keyboard, the Controllers window and its learn wizard, the OSD stubs) and turns a device's action events into registry calls with the origin
 /// of the device. GUI executors run on the GUI thread: the worker posts them and answers at once.
 ///
 /// Lifetime: the registrations end with this object; a GUI call still queued then finds the alive token false and does
@@ -32,6 +32,9 @@ struct GuiActionHooks
     std::function<void()> toggleKeyboard;        ///< the on-screen keyboard shown / hidden
     /// A host device's action came back with timeline marks (`ttd.seek_by`): the device feels them (GUI thread)
     std::function<void(const std::string& device, const std::vector<std::string>& marks)> marks;
+    std::function<void()> showControllers;  ///< Tools > Controllers (ctl.open)
+    /// The learn wizard for a host device (ctl.learn, ui-ux.md §3.5); the reason when it cannot start
+    std::function<QString(const std::string& device)> learn;
 };
 
 struct HostActionEvent;

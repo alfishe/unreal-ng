@@ -127,6 +127,7 @@ add_library(unreal-asm STATIC
     src/symbols/codecs/text/tokenizer.cpp
     src/symbols/codecs/crossasm/crossasmcodecs.cpp
     src/symbols/codecs/script/scriptcodecs.cpp
+    src/symbols/codecs/skoolkit/skoolkitcodecs.cpp
     src/symbols/model/namerules.cpp
     src/symbols/registry.cpp
     src/layout/z80size.cpp
@@ -242,6 +243,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/crossasmcodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/namerules_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/scriptcodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/skoolkitcodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/fromsource_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/live_test.cpp
         ${UNREAL_ASM_DIR}/tests/sync_test.cpp

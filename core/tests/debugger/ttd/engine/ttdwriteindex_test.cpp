@@ -149,5 +149,7 @@ TEST(TTDWriteIndex_Test, DropAfterKeepsWhatLiesUpToTheCut)
     const auto y = reference.FindLastInRange(0, cut, pred);
     ASSERT_EQ(x.has_value(), y.has_value());
     if (x)
+    {
         EXPECT_EQ(uint64_t(x->globalT), uint64_t(y->globalT));
+    }
 }

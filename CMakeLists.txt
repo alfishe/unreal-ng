@@ -360,6 +360,12 @@ if (BUILD_POC)
 	add_subdirectory(tools/poc)
 endif (BUILD_POC)
 
+# POC 034 (media signatures, Steam Deck P-12): the core/swsignature library over a collection; needs only the core
+option(BUILD_SIGNATURE_POC "Build POC 034 signature-poc (tools/poc/034-media-signatures)" OFF)
+if (BUILD_SIGNATURE_POC AND TARGET unrealng::swsignature)
+	add_subdirectory(tools/poc/034-media-signatures/cpp)
+endif ()
+
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
 # (apps/steamdeck-client/build.sh configures a steamrt4 container with this ON)
 option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (apps/steamdeck-client, needs SDL3)" OFF)

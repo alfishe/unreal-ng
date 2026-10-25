@@ -181,10 +181,12 @@ TEST_F(TimeTravelManager_Shadow_Test, RestoreToMemoryWritesOnlyWhatDiffers_AndMa
         ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, static_cast<size_t>(v), ram, present, err)) << err;
         for (uint32_t p = 0; p < pieces; ++p)
             if (present[p])
+            {
                 ASSERT_EQ(std::memcmp(live + size_t(p) * ttd::kTTDPieceSize, ram.data() + size_t(p) * ttd::kTTDPieceSize,
                                       ttd::kTTDPieceSize),
                           0)
                     << "piece " << p << " after restoring checkpoint " << index;
+            }
     };
 
     // Live memory holds the last frame: one frame back decodes what that frame changed

@@ -568,8 +568,8 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
     {
         // Memory::MemoryReadContended waits only in slow memory; MemoryReadM1Snow notes a refresh only with I there
         const UlaContention* ula = _context->pUlaContention;
-        if (!ula || ula->IsSlotContended(static_cast<uint8_t>(fetch >> 14)) ||
-            (!ula->IsGateArray() && ula->IsSlotContended(static_cast<uint8_t>(i >> 6))))
+        if (!ula || ula->IsContendedAt(fetch) ||
+            (!ula->IsGateArray() && ula->IsContendedAt(static_cast<uint16_t>(i << 8))))
             return false;
     }
     if (overlay)
@@ -1256,6 +1256,22 @@ void Z80::SetInterruptSource(IInterruptSource* source)
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
 }
 
+bool Z80::DeviceIntAsserted()
+{
+    uint32_t lines = _deviceIntLines;
+    // The chain's bit says only that a device is armed: whether it pulls /INT now is the chain's answer
+    if ((lines & kDeviceIntIm2Chain) && !_im2Chain.IsIntAsserted(t)) [[unlikely]]
+        lines &= ~kDeviceIntIm2Chain;
+    return lines != 0;
+}
+
+bool Z80::ChainAcknowledge(uint8_t& vector)
+{
+    if ((_deviceIntLines & kDeviceIntIm2Chain) == 0) [[likely]]
+        return false;
+    return _im2Chain.Acknowledge(t, vector);
+}
+
 void Z80::SetDeviceIntLine(uint32_t line, bool asserted)
 {
     const uint32_t lines = asserted ? (_deviceIntLines | line) : (_deviceIntLines & ~line);
@@ -1365,7 +1381,7 @@ void Z80::NotifyMachineM1Before(uint16_t address)
 void Z80::NoteAcknowledgeRefresh(uint32_t t3)
 {
     // As Memory::MemoryReadM1Snow: R before the increment; the Ferranti ULA machines only (ioContention)
-    if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(i >> 6)))
+    if (ioContention && ioContention->IsContendedAt(static_cast<uint16_t>(i << 8)))
         ioContention->NoteRefresh(t3, static_cast<uint8_t>(r_low - 1));
 }
 
@@ -1599,7 +1615,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     // port always has a driver on the bus, floating bus must not apply.
     bool fromFloatingBus = false;
     bool lateWaitsCounted = false;
-    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !cardDrove)
+    if (!portDecoder.WasLastPortDecoded() && portDecoder.FloatingBusDrives(port) && !cardDrove)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
@@ -1609,7 +1625,7 @@ uint8_t Z80::inFromBus(uint16_t port)
             uint8_t floatVal;
             if (ula->IsGateArray())
                 floatVal = ula->GetGateArrayFloatingBus(port);
-            else if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(port >> 14))) [[unlikely]]
+            else if (ioContention && ioContention->IsOddPortContended(port)) [[unlikely]]
             {
                 floatVal = FloatingBusAfterLateWaits(port, ioWait);
                 lateWaitsCounted = true;
@@ -1631,7 +1647,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     if (_inResultHooks) [[unlikely]]
     {
         if (portReadWatch)
-            portReadWatch->OnRead(port);
+            portReadWatch->OnRead(port, pc);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)
@@ -1718,7 +1734,7 @@ uint8_t Z80::FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait)
 // CPU-LIBRARY-MIGRATION(idle-cycles): the engine's Internal access kind on the contention hook
 void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
 {
-    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    const bool contended = idleContention && idleContention->IsContendedAt(addr);
     for (uint8_t i = 0; i < cycles; i++)
     {
         if (busTraceHook)
@@ -1936,12 +1952,18 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         const bool sourceInt = _interruptSource->IsIntAsserted(cpu.t);
         cpu.int_pending = sourceInt;
         if constexpr (DeviceInt)
-            cpu.int_pending = sourceInt || _deviceIntLines != 0;
+            cpu.int_pending = sourceInt || DeviceIntAsserted();
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            // Wired-OR: the machine's logic drives its vector when it asserts;
-            // a device alone drives none, the bus reads #FF
-            uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            // Wired-OR: a daisy-chain device that requests drives its vector (the machine's request stays pending);
+            // else the machine's logic drives its vector when it asserts; a plain device line drives none, the bus
+            // reads #FF
+            uint8_t vector = 0xFF;
+            bool chainDrove = false;
+            if constexpr (DeviceInt)
+                chainDrove = ChainAcknowledge(vector);
+            if (!chainDrove && sourceInt)
+                vector = _interruptSource->AcknowledgeInterrupt(cpu.t);
             if (const Joystick* joystick = _context->pJoystick)
                 vector = joystick->Im2Vector(vector, cpu.pc);
             // TTD (Phase 3): every vector the CPU took, recorded (a check and a
@@ -2006,13 +2028,17 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     // in int_pending, which tracks the machine's own pulse
     bool intLine = cpu.int_pending;
     if constexpr (DeviceInt)
-        intLine = intLine || _deviceIntLines != 0;
+        intLine = intLine || DeviceIntAsserted();
 
     if (intLine && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
-        // The idle bus reads #FF; a cheap Kempston interface may drive it (Joystick::Im2Vector)
+        // The idle bus reads #FF; a daisy-chain device that requests drives its vector (Im2DaisyChain), a cheap
+        // Kempston interface may drive it too (Joystick::Im2Vector)
+        uint8_t vector = 0xFF;
+        if constexpr (DeviceInt)
+            ChainAcknowledge(vector);
         const Joystick* joystick = _context->pJoystick;
-        HandleINT(joystick ? joystick->Im2Vector(0xFF, cpu.pc) : 0xFF);
+        HandleINT(joystick ? joystick->Im2Vector(vector, cpu.pc) : vector);
         intHandled = true;  // Signal caller to skip Z80Step this iteration
     }
 

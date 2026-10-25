@@ -15,6 +15,7 @@
 #include "emulator/execution/automationgate.h"
 #include "controllers/hostcontrollers.h"
 #include "debugger/disassemblerwidget.h"
+#include "emulator/actions/actionparams.h"
 #include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
 #include "router/analog.h"
@@ -302,6 +303,25 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
                 toggleKeyboard();
             return {};
         });
+
+    // The Controllers window, and its learn wizard for a device the database does not know (ui-ux.md §3.5)
+    const QString controllersGroup = Tr("Controllers");
+    std::function<void()> showControllers = _hooks.showControllers;
+    Add("ctl.open", Tr("Open the Controllers window"), controllersGroup, ValueKind::Press,
+        [showControllers](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
+            if (showControllers)
+                showControllers();
+            return {};
+        });
+    std::function<QString(const std::string&)> learn = _hooks.learn;
+    Add("ctl.learn", Tr("Learn a device's controls"), controllersGroup, ValueKind::Press,
+        [learn](const std::string&, const actions::ActionValue& value, const actions::ActionOrigin&) -> QString {
+            const std::optional<std::string> device = actions::TextParam(value, "device");
+            if (!device || device->empty())
+                return Tr("ctl.learn needs params.device: a host device id (controllers devices lists them)");
+            return learn ? learn(*device) : Tr("the Controllers window is not available");
+        },
+        {}, false, "device");
 
     // Stubs of the catalogue: a binding to one says why instead of doing nothing
     actions::ActionRules later;

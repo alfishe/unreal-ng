@@ -30,6 +30,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-symbols.cpp
     src/mcp-asm.h
     src/mcp-asm.cpp
+    src/mcp-signature.h
+    src/mcp-signature.cpp
     src/mcp-analysis.h
     src/mcp-analysis.cpp
     src/mcp-media.h

@@ -6,9 +6,15 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
+#include "devicedatabase.h"
 #include "fake/fakebackend.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
@@ -71,6 +77,24 @@ public:
     {
         _context.devices = std::move(devices);
     }
+    /// The Qt client's computes them with core/swsignature; here a table of path -> signatures
+    bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
+    {
+        const auto it = signaturesOf.find(path);
+        if (it == signaturesOf.end())
+        {
+            error = "cannot read '" + path + "'";
+            return false;
+        }
+        context.signatures = it->second;
+        return true;
+    }
+    void SetProgram(std::vector<std::string> signatures)
+    {
+        _context.signatures = std::move(signatures);
+        Reapply();
+    }
+    std::map<std::string, std::vector<std::string>> signaturesOf;
     int reapplied = 0;
     HostInputService* input = nullptr;
 
@@ -352,4 +376,267 @@ TEST(HostInputControl_Test, DevicesShowNoticeBatteryAndLight_LightSetsTheColour)
         << "an option light does not take";
     EXPECT_EQ(fake->Lights("fake:1").size(), 3u) << "nothing reached the pad on a refusal";
     service.Stop();
+}
+
+/// C10: role and pin through the router, identify rumbles and blinks (and the light goes back), probe lists the
+/// backends with the devices they found
+TEST(HostInputControl_Test, RolePinIdentifyAndProbe)
+{
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-role"));
+    HostInputControl control(owner);
+    const HostDeviceInfo pad{"fake:1", "Pad", "dualsense", "playstation", "fake"};
+    const HostDeviceInfo keyboard{"fake:kbd", "Keyboard", "keyboard", "keyboard", "fake"};
+    owner.SetDevices({pad, keyboard});
+    HostInputService service;
+    auto owned = std::make_unique<FakeBackend>();
+    FakeBackend* fake = owned.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(owned), reason)) << reason;
+    fake->SetHasLight("fake:1", true);
+    ASSERT_TRUE(fake->Connect(pad));
+    ASSERT_TRUE(fake->Connect(keyboard));
+    owner.input = &service;
+
+    HostReply reply = control.Execute({"role", {{"device", "fake:1"}, {"role", "debugger-remote"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(service.Router().Role("fake:1"), DeviceRole::DebuggerRemote);
+    EXPECT_EQ(control.Execute({"role", {{"device", "fake:1"}, {"role", "boss"}}}).error, "bad-request");
+    EXPECT_EQ(control.Execute({"role", {{"device", "fake:9"}, {"role", "player"}}}).error, "unknown-device");
+
+    reply = control.Execute({"pin", {{"device", "fake:1"}, {"pin", "pinned:emu-2"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.message, "Pad drives emulator emu-2 only");
+    std::string pinned;
+    EXPECT_EQ(service.Router().GetInstanceMode("fake:1", &pinned), InstanceMode::Pinned);
+    EXPECT_EQ(pinned, "emu-2");
+    EXPECT_EQ(control.Execute({"pin", {{"device", "fake:1"}, {"pin", "pinned:"}}}).error, "bad-request");
+    reply = control.Execute({"devices", {}});
+    const JsonValue* item = FindItem(*reply.body.Find("devices"), "id", "fake:1");
+    ASSERT_NE(item, nullptr);
+    EXPECT_EQ(item->Find("pin")->AsString(), "pinned:emu-2");
+    EXPECT_EQ(item->Find("role")->AsString(), "debugger-remote");
+    ASSERT_TRUE(control.Execute({"pin", {{"device", "fake:1"}, {"pin", "all"}}}).Ok());
+    EXPECT_EQ(service.Router().GetInstanceMode("fake:1"), InstanceMode::All);
+
+    // Identify: the light goes white and back to the colour it had, the motors pulse (the blink cut to 5 ms here)
+    service.SetIdentifyBlinkMs(5);
+    ASSERT_TRUE(control.Execute({"light", {{"device", "fake:1"}, {"color", "#0000ff"}}}).Ok());
+    reply = control.Execute({"identify", {{"device", "fake:1"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("rumble")->AsBool());
+    EXPECT_TRUE(reply.body.Find("light")->AsBool());
+    EXPECT_EQ(reply.message, "Pad: rumbled and blinked its light for 300 ms");
+    EXPECT_GT(fake->Rumble("fake:1").low, 0.0f);
+    std::vector<LightColor> lights = fake->Lights("fake:1");
+    ASSERT_GE(lights.size(), 2u) << "the blink (the timer may have put it back already)";
+    EXPECT_EQ(lights[1], (LightColor{255, 255, 255}));
+    reply = control.Execute({"identify", {{"device", "fake:kbd"}}});
+    EXPECT_EQ(reply.error, "unavailable") << "a keyboard has neither";
+
+    reply = control.Execute({"probe", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const JsonValue& backend = reply.body.Find("backends")->Items().at(0);
+    EXPECT_EQ(backend.Find("name")->AsString(), "fake");
+    EXPECT_TRUE(backend.Find("running")->AsBool());
+    EXPECT_EQ(backend.Find("found")->Items().size(), 2u);
+    EXPECT_NE(reply.body.Find("user_devices")->AsString().find("devices.user.json"), std::string::npos);
+
+    // The light goes back on the service's timer, after the blink's host time
+    ASSERT_TRUE(TestWait::For([&] { return fake->Lights("fake:1").size() == 3; }, std::chrono::milliseconds(2000)));
+    EXPECT_EQ(fake->Lights("fake:1")[2], (LightColor{0, 0, 255})) << "back to the colour it had";
+    service.Stop();
+}
+
+/// C10: the database looks up a VID / PID, a GUID or a device; an import writes a user family the device then uses;
+/// the learn wizard as data, start to finish, saved in gamecontrollerdb form and applied at once
+TEST(HostInputControl_Test, DatabaseImportAndLearn)
+{
+    namespace fs = std::filesystem;
+    const fs::path root = TestPathHelper::GetUniqueTestScratchPath("host-learn");
+    std::string error;
+    ASSERT_TRUE(DeviceDatabase::SetUser("", error)) << "no user layer from an earlier test";
+    FakeOwner owner((root / "profiles").string());
+    HostInputControl control(owner);
+    const HostDeviceInfo pad{"usb:1234:5678:0100:s1", "USB Gamepad", "generic", "generic", "fake"};
+    owner.SetDevices({pad});
+
+    HostReply reply = control.Execute({"database", {{"vidpid", "045e:0b00"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("match")->Find("family")->AsString(), "xbox-elite-2") << "built in, no service needed";
+    EXPECT_EQ(reply.body.Find("match")->Find("step")->AsString(), "exact") << "no version range on the family";
+    reply = control.Execute({"database", {{"guid", "030000005e040000000b000017050000"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("match")->Find("family")->AsString(), "xbox-elite-2");
+    reply = control.Execute({"database", {}});
+    ASSERT_TRUE(reply.Ok()) << "no key: the summary";
+    EXPECT_GT(reply.body.Find("families")->AsNumber(), 0.0);
+    EXPECT_EQ(control.Execute({"database", {{"vidpid", "045e:0b00"}, {"family", "dualsense"}}}).error, "bad-request");
+    EXPECT_EQ(control.Execute({"database", {{"vidpid", "nope"}}}).error, "bad-request");
+
+    HostInputService service;
+    auto owned = std::make_unique<FakeBackend>();
+    FakeBackend* fake = owned.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(owned), reason)) << reason;
+    ASSERT_TRUE(fake->Connect(pad));
+    owner.input = &service;
+    reply = control.Execute({"database", {{"device", pad.id}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("match")->Find("step")->AsString(), "unknown");
+
+    // An import without save shows what it would write
+    const std::string line = "03000000341200007856000000010000,USB Gamepad,a:b2,b:b1,platform:Mac OS X,";
+    reply = control.Execute({"database_import", {{"text", line}, {"save", "false"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_FALSE(reply.body.Find("saved")->AsBool());
+    EXPECT_FALSE(fs::exists(root / "devices.user.json"));
+    reply = control.Execute({"database_import", {{"text", line}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("family")->AsString(), "user-12345678");
+    EXPECT_TRUE(fs::exists(root / "devices.user.json"));
+    ASSERT_EQ(service.ControlMap(pad.id).size(), 2u) << "the connected device takes the map at once";
+    ASSERT_TRUE(fake->Press(pad.id, "button.2"));
+    EXPECT_EQ(service.Live(pad.id).at("south"), 1.0f) << "button.2 reports as south too";
+    ASSERT_TRUE(fake->Release(pad.id, "button.2"));
+    EXPECT_EQ(control.Execute({"database", {{"device", pad.id}}}).body.Find("match")->Find("family")->AsString(),
+              "user-12345678");
+    EXPECT_EQ(control.Execute({"database_import", {{"text", "garbage"}}}).error, "bad-request");
+
+    // The learn wizard: its events answer the prompts and reach nothing else
+    reply = control.Execute({"learn", {{"device", pad.id}, {"step", "start"}, {"controls", "dpad.up,south,east"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("control")->AsString(), "dpad.up");
+    EXPECT_EQ(reply.body.Find("prompt")->AsString(), "Press Up");
+    ASSERT_TRUE(fake->Set(pad.id, "lstick.y", -1.0f));  // the device itself
+    reply = control.Execute({"learn", {{"device", pad.id}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("map")->Find("dpad.up")->AsString(), "lstick.y-");
+    EXPECT_TRUE(reply.body.Find("waiting_for_release")->AsBool());
+    ASSERT_TRUE(fake->Set(pad.id, "lstick.y", 0.0f));
+    reply = control.Execute({"learn", {{"device", pad.id}, {"step", "sample"}, {"control", "button.5"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("answered")->AsBool()) << "a scripted press answers as the device's would";
+    EXPECT_EQ(reply.body.Find("control")->AsString(), "east");
+    control.Execute({"learn", {{"device", pad.id}, {"step", "sample"}, {"control", "button.5"}, {"value", "0"}}});
+    reply = control.Execute({"learn", {{"device", pad.id}, {"step", "skip"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("done")->AsBool());
+    EXPECT_EQ(control.Execute({"learn", {{"device", pad.id}, {"step", "jump"}}}).error, "bad-request");
+
+    reply = control.Execute({"learn", {{"device", pad.id}, {"step", "finish"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("saved")->AsBool());
+    EXPECT_EQ(reply.body.Find("map")->Dump(), R"({"dpad.up":"lstick.y-","south":"button.5"})");
+    EXPECT_EQ(reply.body.Find("gamecontrollerdb")->AsString(),
+              "03000000341200007856000000010000,USB Gamepad,a:b5,dpup:-a1,");
+    EXPECT_EQ(control.Execute({"learn", {{"device", pad.id}}}).error, "bad-request") << "the session ended";
+    ASSERT_TRUE(fake->Press(pad.id, "button.5"));
+    EXPECT_EQ(service.Live(pad.id).at("south"), 1.0f) << "the learned map applies at once (it replaced the import)";
+    ASSERT_TRUE(fake->Release(pad.id, "button.5"));
+
+    // A new start of the process reads it back
+    std::ifstream file(root / "devices.user.json");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    DeviceDatabase::SetUser("", error);
+    HostInputService again;
+    again.OnDeviceAdded(pad);
+    EXPECT_TRUE(again.ControlMap(pad.id).empty()) << "no user layer, no map";
+    ASSERT_TRUE(DeviceDatabase::SetUser(text, error)) << error;
+    HostInputService third;
+    third.OnDeviceAdded(pad);
+    EXPECT_EQ(third.ControlMap(pad.id).size(), 2u);
+    DeviceDatabase::SetUser("", error);
+    service.Stop();
+}
+
+/// C6 / D7 / H-3: match gives the game profiles a program's signatures choose (by path through the owner, by
+/// signatures given, or the loaded program), the one chosen and what comes next; context shows them for the loaded one
+TEST(HostInputControl_Test, MatchBySignatures)
+{
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-match"));
+    HostInputControl control(owner);
+    std::string error;
+    ASSERT_TRUE(owner.Profiles().AddText("schema: 1\nkind: play\nid: user/game-tape\nmatch:\n"
+                                         "  signatures: [\"tape:sha256:abcd\"]\nlayers:\n  play:\n"
+                                         "    west: { key: X }\n",
+                                         ProfileScope::User, error))
+        << error;
+
+    HostReply reply = control.Execute({"match", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("matches")->Items().empty()) << "nothing loaded";
+    EXPECT_EQ(reply.body.Find("next")->AsString(), "port-reads") << "the heuristic decides";
+
+    reply = control.Execute({"match", {{"signatures", "file:sha256:0001, tape:sha256:ABCD"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape");
+    EXPECT_EQ(reply.body.Find("next")->AsString(), "game-profile");
+    EXPECT_EQ(reply.body.Find("matches")->Items()[0].Find("how")->AsString(), "signature tape:sha256:abcd");
+    EXPECT_EQ(reply.message, "user/game-tape (signature tape:sha256:abcd)");
+
+    owner.signaturesOf["/games/elite.tzx"] = {"file:sha256:0002", "tape:sha256:abcd"};
+    reply = control.Execute({"match", {{"path", "/games/elite.tzx"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape") << "a TZX of the same tape";
+    reply = control.Execute({"match", {{"path", "/games/missing.tap"}}});
+    EXPECT_FALSE(reply.Ok());
+    EXPECT_NE(reply.message.find("missing.tap"), std::string::npos) << reply.message;
+    EXPECT_FALSE(control.Execute({"match", {{"bogus", "1"}}}).Ok()) << "unknown options are refused";
+
+    // The loaded program: context carries its signatures, the matches and where the haptics come from
+    owner.SetProgram({"file:sha256:0003", "tape:sha256:abcd"});
+    reply = control.Execute({"context", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    ASSERT_EQ(reply.body.Find("signatures")->Items().size(), 2u);
+    ASSERT_EQ(reply.body.Find("game_matches")->Items().size(), 1u);
+    EXPECT_EQ(reply.body.Find("game_matches")->Items()[0].Find("id")->AsString(), "user/game-tape");
+    EXPECT_NE(reply.body.Find("haptics_reason"), nullptr);
+    reply = control.Execute({"match", {}});
+    EXPECT_EQ(reply.body.Find("profile")->AsString(), "user/game-tape") << "without options: the loaded program";
+}
+
+/// aliases lists the promoted devices' old ids (architecture.md §5) and whether the new one is here; unalias forgets
+/// one, in the store and in aliases.yaml
+TEST(HostInputControl_Test, AliasesListAndUnaliasForgets)
+{
+    const std::string dir = TestPathHelper::GetUniqueTestScratchPath("host-aliases");
+    FakeOwner owner(dir);
+    HostInputControl control(owner);
+    HostReply listed = control.Execute({"aliases", {}});
+    ASSERT_TRUE(listed.Ok()) << listed.message;
+    EXPECT_TRUE(listed.body.Find("aliases")->Items().empty());
+    EXPECT_EQ(listed.message, "no device aliases");
+
+    ProfileStore& store = owner.Profiles();
+    store.AddAlias("gc:dualsense:1", "bt:054c:0ce6:1");
+    store.AddAlias("gc:xbox:2", "usb:045e:0b13:1");
+    listed = control.Execute({"aliases", {}});
+    ASSERT_TRUE(listed.Ok()) << listed.message;
+    const JsonValue& aliases = *listed.body.Find("aliases");
+    const JsonValue* dualSense = FindItem(aliases, "from", "gc:dualsense:1");
+    ASSERT_NE(dualSense, nullptr);
+    EXPECT_EQ(dualSense->Find("to")->AsString(), "bt:054c:0ce6:1");
+    EXPECT_TRUE(dualSense->Find("connected")->AsBool());
+    EXPECT_EQ(dualSense->Find("name")->AsString(), "DualSense");
+    const JsonValue* xbox = FindItem(aliases, "from", "gc:xbox:2");
+    ASSERT_NE(xbox, nullptr);
+    EXPECT_FALSE(xbox->Find("connected")->AsBool());
+    EXPECT_EQ(xbox->Find("name"), nullptr);
+
+    EXPECT_EQ(control.Execute({"unalias", {}}).error, "bad-request");
+    const HostReply unknown = control.Execute({"unalias", {{"id", "gc:none"}}});
+    EXPECT_EQ(unknown.error, "unknown-alias");
+    EXPECT_EQ(unknown.HttpStatus(), 404);
+
+    const int before = owner.reapplied;
+    const HostReply removed = control.Execute({"unalias", {{"id", "gc:dualsense:1"}}});
+    ASSERT_TRUE(removed.Ok()) << removed.message;
+    EXPECT_EQ(removed.body.Find("to")->AsString(), "bt:054c:0ce6:1");
+    EXPECT_EQ(owner.reapplied, before + 1);
+    EXPECT_EQ(store.Aliases().count("gc:dualsense:1"), 0u);
+    ProfileStore reloaded;
+    std::string error;
+    ASSERT_TRUE(reloaded.LoadAliases(dir, error)) << error;
+    EXPECT_EQ(reloaded.Aliases().size(), 1u) << "the file keeps only the other alias";
+    EXPECT_EQ(reloaded.Aliases().count("gc:xbox:2"), 1u);
 }

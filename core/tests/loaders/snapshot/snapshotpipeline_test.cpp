@@ -605,7 +605,9 @@ TEST(SnapshotTsConf_Test, WindowZeroShowsTheBasicTheSnapshotSelected)
         EXPECT_EQ(memory.GetROMPage(), memory.GetROMPageFromAddress(basic48 ? memory.base_sos_rom : memory.base_128_rom))
             << c.what << " (#7FFD " << std::hex << int(p7ffd) << "): the ROM that #7FFD bit 4 names";
         if (std::string(c.file).find("BBG128") == std::string::npos)
+        {
             EXPECT_EQ(basic48, c.basic48) << c.what;
+        }
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }
@@ -642,7 +644,9 @@ TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
             ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << model << " " << c.file;
             const uint16_t shown = memory.GetROMPage();
             if (c.is48k)
+            {
                 EXPECT_EQ(shown, memory.GetROMPageFromAddress(memory.base_sos_rom)) << model << " " << c.file << ": the 48K BASIC";
+            }
             memory.UpdateZ80Banks();
             EXPECT_EQ(memory.GetROMPage(), shown) << model << " " << c.file << ": the latch agrees with the ROM shown";
             EmulatorTestHelper::CleanupEmulator(emulator);

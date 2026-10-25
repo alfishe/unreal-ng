@@ -256,6 +256,7 @@ void InputRouter::OnDeviceRemoved(const HostDeviceId& id)
 void InputRouter::OnControl(const ControlEvent& event)
 {
     std::vector<ActionEvent> actions;
+    std::function<void()> wake;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto it = _devices.find(event.device);
@@ -272,8 +273,12 @@ void InputRouter::OnControl(const ControlEvent& event)
             it->second.values[info.name] = event.value;
             EvaluateLocked(it->second, now, actions);
         }
+        if (_wake && NextDeadlineLocked() != UINT64_MAX)
+            wake = _wake;
     }
     Dispatch(actions);
+    if (wake)
+        wake();  // a chord window or a repeat waits: the host timer polls at its deadline
 }
 
 std::vector<HostDeviceInfo> InputRouter::Devices() const
@@ -357,10 +362,106 @@ void InputRouter::SetInstanceMode(const HostDeviceId& device, InstanceMode mode,
     settings.pinned = mode == InstanceMode::Pinned ? pinned : std::string{};
 }
 
+InstanceMode InputRouter::GetInstanceMode(const HostDeviceId& device, std::string* pinned) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _settings.find(device);
+    if (pinned != nullptr)
+        *pinned = it != _settings.end() ? it->second.pinned : std::string{};
+    return it != _settings.end() ? it->second.mode : InstanceMode::FollowFocus;
+}
+
+void InputRouter::Promote(const HostDeviceId& from, const HostDeviceId& to)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto source = _settings.find(from);
+        if (source == _settings.end() || from == to)
+            return;
+        Settings& target = _settings[to];
+        const bool chosen = target.roleSet || target.mode != InstanceMode::FollowFocus || !target.connector.empty();
+        if (chosen)
+            return;
+        const DeviceRole before = RoleLocked(to);
+        target.roleSet = source->second.roleSet;
+        target.role = source->second.role;
+        target.mode = source->second.mode;
+        target.pinned = source->second.pinned;
+        target.connector = source->second.connector;
+        const auto it = _devices.find(to);
+        if (it != _devices.end() && RoleLocked(to) != before)
+        {
+            it->second.layers.clear();
+            it->second.epoch++;
+            EvaluateLocked(it->second, Now(), actions);
+        }
+    }
+    Dispatch(actions);
+}
+
 void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::string& connector)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _settings[device].connector = connector;
+}
+
+std::string InputRouter::PlayerConnector(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _settings.find(device);
+    return it != _settings.end() ? it->second.connector : std::string{};
+}
+
+std::vector<std::string> InputRouter::Connectors(const HostDeviceId& id) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<std::string> connectors;
+    const auto it = _devices.find(id);
+    if (it == _devices.end() || RoleLocked(id) != DeviceRole::Player)
+        return connectors;
+    const CompiledSet* set = BindingsForLocked(it->second);
+    if (set == nullptr)
+        return connectors;
+    const auto settings = _settings.find(id);
+    const std::string player = settings == _settings.end() ? std::string{} : settings->second.connector;
+    for (const CompiledBinding& compiled : set->bindings)
+    {
+        const Target& target = compiled.binding.target;
+        if (target.kind != TargetKind::Retro || compiled.binding.layer == kDebugLayer)
+            continue;
+        const std::string& connector = target.retro.connector == "auto" ? player : target.retro.connector;
+        if (!connector.empty() && std::find(connectors.begin(), connectors.end(), connector) == connectors.end())
+            connectors.push_back(connector);
+    }
+    return connectors;
+}
+
+bool InputRouter::Analog(const HostDeviceId& id, const std::string& control, AnalogOptions& out) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    out = AnalogOptions{};
+    const auto it = _devices.find(id);
+    if (it == _devices.end())
+        return false;
+    const CompiledSet* set = BindingsForLocked(it->second);
+    if (set == nullptr)
+        return false;
+    const std::vector<std::string> layers = ActiveLayersLocked(it->second);
+    // Top layer first: what a press reads now
+    for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer)
+        for (const CompiledBinding& compiled : set->bindings)
+        {
+            if (compiled.binding.layer != *layer)
+                continue;
+            for (const CompiledSource& source : compiled.sources)
+                if (source.control == control || source.control.rfind(control + ".", 0) == 0)
+                {
+                    out = compiled.binding.options.analog;
+                    return true;
+                }
+        }
+    return false;
 }
 
 void InputRouter::SetFocus(const std::string& instance)
@@ -452,7 +553,17 @@ bool InputRouter::Consumes(const HostDeviceId& id, const std::string& control) c
 float InputRouter::Value(const Device& device, const std::string& control)
 {
     const auto it = device.values.find(control);
-    return it == device.values.end() ? 0.0f : it->second;
+    if (it != device.values.end())
+        return it->second;
+    // A device whose trigger is only a switch may send `lt.click` alone (older layouts, a driver's digital L2):
+    // `lt` and the `lt.click` derived from it read that switch at full travel
+    if (control == "lt" || control == "rt")
+    {
+        const auto click = device.values.find(control + ".click");
+        if (click != device.values.end())
+            return click->second;
+    }
+    return 0.0f;
 }
 
 std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) const
@@ -838,9 +949,16 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         {
             const bool pressed = state.presses != presses;
             if (pressed)
+            {
                 actions.push_back({device.info.id, binding.target.name, true, 1});
+                // `repeat`: held, it runs again after the delay (ExpireLocked)
+                state.repeating = binding.options.repeatDelay != 0;
+                state.repeatAt = now + binding.options.repeatDelay * kRepeatFrameNs;
+            }
             if ((was != 0 || pressed) && state.bits == 0)
                 actions.push_back({device.info.id, binding.target.name, false, 0});
+            if (state.bits == 0)
+                state.repeating = false;
         }
         // A oneshot layer is used once one of its controls was pressed
         if (state.bits != 0)
@@ -959,7 +1077,61 @@ void InputRouter::ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions)
         });
         if (due)
             EvaluateLocked(device, now, actions);
+        // The held actions' repeats: one run per deadline, a late poll does not catch up in a burst
+        const CompiledSet* set = BindingsForLocked(device);
+        if (set == nullptr || device.states.size() != set->bindings.size())
+            continue;
+        for (size_t i = 0; i < device.states.size(); i++)
+        {
+            BindingState& state = device.states[i];
+            if (!state.repeating || now < state.repeatAt)
+                continue;
+            const Binding& binding = set->bindings[i].binding;
+            if (!state.active || state.bits == 0 || binding.options.repeatRate == 0)
+            {
+                state.repeating = false;
+                continue;
+            }
+            actions.push_back({device.info.id, binding.target.name, true, 1});
+            const uint64_t rate = binding.options.repeatRate * kRepeatFrameNs;
+            state.repeatAt += rate;
+            if (state.repeatAt <= now)
+                state.repeatAt = now + rate;
+        }
     }
+}
+
+uint64_t InputRouter::NextDeadlineLocked() const
+{
+    uint64_t next = UINT64_MAX;
+    for (const auto& [id, device] : _devices)
+    {
+        for (const auto& [name, gate] : device.gates)
+            if (gate.pending)
+                next = std::min(next, gate.until);
+        for (const BindingState& state : device.states)
+            if (state.repeating)
+                next = std::min(next, state.repeatAt);
+    }
+    return next;
+}
+
+uint64_t InputRouter::NextDeadline() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return NextDeadlineLocked();
+}
+
+uint64_t InputRouter::NowNs() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return Now();
+}
+
+void InputRouter::SetWakeSink(std::function<void()> wake)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _wake = std::move(wake);
 }
 
 bool InputRouter::DrivesLocked(const HostDeviceId& device, const std::string& instance) const
@@ -1153,7 +1325,14 @@ uint16_t InputRouter::Output(const CompiledBinding& compiled, const BindingState
     switch (options.turbo)
     {
         case Turbo::Off:
-            return bits;
+            if (options.repeatDelay == 0)
+                return bits;
+            // `repeat`: held, released for a frame after the delay and then every `rate` frames
+            if (edge)
+                phase.since = frame;
+            if (state.bits == 0 || frame - phase.since < options.repeatDelay)
+                return bits;
+            return (frame - phase.since - options.repeatDelay) % options.repeatRate == 0 ? uint16_t{0} : bits;
         case Turbo::Classic:
             if (edge)
                 phase.since = frame;

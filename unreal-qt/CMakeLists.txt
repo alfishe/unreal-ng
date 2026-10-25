@@ -372,6 +372,11 @@ else ()
     )
 endif ()
 
+# The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
+endif ()
+
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 set(CONFIGS_DIR "${DATA_PATH}/configs")
@@ -580,6 +585,8 @@ if (TESTS)
     target_link_libraries(hud-core-tests PRIVATE
         unrealng::core
         gtest_main
+        # MinGW has no gtest targets (core/tests compiles the sources in): -lgtest_main needs -lgtest after it
+        gtest
     )
 
     # unreal-qt-tests: front-end classes that need Qt (offscreen platform, real Qt events).
@@ -637,6 +644,24 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.h"
+        # The controllers dialog's pieces: connector LED, patch cords, test panel, toasts, hotspot editor (ui-ux.md)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/controllersui_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/devicetestpanel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/devicetestpanel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllertoast.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllertoast.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/hotspoteditor.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/hotspoteditor.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.h"
         # Tools > Stream Deck...: the daemon's supervision, settings, the pairing approved here (Stream Deck daemon.md §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/streamdeckdialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.cpp"

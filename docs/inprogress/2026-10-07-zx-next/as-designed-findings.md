@@ -67,3 +67,22 @@ Its DAC output is a small swing (samples 108..149 of 255) on a large DC level, s
 ## Zeus NEX File Example: needs the open NEX file handle
 
 The demo reads its private data (the poem) from its own NEX file through the handle NEXLOAD pokes into `Main.FileHandle` (`F_READ(TextBuffer.Length)`, [nex_example.asm#L44](https://github.com/Threetwosevensixseven/ZeusNexFileExample/blob/9b331c12c7100ee27beccc00bc38465ade4d8a3d/nex_example.asm#L44)). Started through the Browser (NEXLOAD) it prints the poem exactly like the author's [nexdemo.png](https://github.com/Threetwosevensixseven/ZeusNexFileExample/blob/9b331c12c7100ee27beccc00bc38465ade4d8a3d/nexdemo.png). The direct loader opens no esxDOS file, so there the screen stays grey: a limit of that loader, not of the machine.
+
+## Board versus the official zxnext.vhd (CORE 3.02.03), checked 2026-10-24
+
+The official core's CPU is T80 v0247 and its authors did **not** fix the undocumented flags or the other quirks of that T80 (the MiSTer port
+repaired them by hand in its T80 v350; its behaviour is not the board's). The same holds for the board logic below: where `zxnext.vhd` differs
+from what the wiki or a classic Spectrum does, the VHDL wins.
+
+| Item | Official behaviour | State |
+|:--|:--|:--|
+| N1 MMU page >= #E0 | slots 0-1: ROM (config bank in config mode); slots 2-7: no SRAM access at all (`sram_pre_active = 0`), the write is lost | done (reads of an unmapped slot return the trash page, not the held SRAM output) |
+| N2 floating bus | `#xxFF` only under the 48K / 128K timing; the +3 port (`#0FFD` type) only under the +3 timing with NR #82 bit 4; every other undecoded port reads #FF; bit 0 is forced only on the video byte, not on the last contended byte | done (`PortDecoder_Next::FloatingBusDrives`) |
+| N3 NR #03 | timing only with bit 7, an open lock and bit 3 = 0 (000 -> 001, 101-111 -> 011); bit 3 toggles the lock; type 1-4 only, config mode only; 111 enters config mode; reads `sub_idx & timing & lock & type` | done |
+| N4 60 Hz | NR #05 bit 2 latched at the frame sync, 264 lines, paper from line 40, INT on line 0; Pentagon forced to 50 Hz | done (48K 59136 T, 128K / +3 60192 T) |
+| N5 NR #07 / #80 | NR #80 bit 7 (expansion bus on) forces 3.5 MHz; NR #07 reads `00 & speed in force & 00 & programmed` | done (the switch is immediate, the VHDL's within the instruction) |
+| N6 NR #8E | a bank change writes #DFFD bits 2:0 = `00 & d7` and clears bit 3 (the Profi mapping is hard-wired off); #1FFD bit 1 = d0 | done |
+| N7 NR #04 / #0A | NR #04 keeps 8 bits on the Issue 5 board and reads 0 (no read case); NR #0A reads `{mf type, sd swap, automap, reverse, 0, dpi}` (mask #FB; the report's #DB is wrong) | done |
+| N8 contention | `port_contend = not A0 or port_7ffd_active or port_bf3b or port_ff3b`; `mem_contend` per 8K page; the +3 has no I/O contention | done; NR #08 bit 6 and speed latches (`hc(8)`) remain immediate |
+
+Not modelled: the held SRAM output a read of an unmapped slot returns on the board (N1), the within-instruction speed latch (N5).

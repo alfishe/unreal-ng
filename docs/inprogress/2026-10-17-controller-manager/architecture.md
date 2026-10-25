@@ -136,8 +136,8 @@ and the universal raw HID fallback (D2, D6). Measurements: [research-host-apis.m
 | OS | Primary (identity, input) | Companion (outputs, extras) | Universal fallback | Later |
 |:--|:--|:--|:--|:--|
 | macOS | **IOKit HID** (`IOHIDManager`): real VID/PID/version/serial, every HID pad, Xbox pads through the `XboxGamepad.dext` vendor pipe (report 0x20, GIP; over USB truncated to 18 bytes, so Elite paddles only over Bluetooth, research §2.3a); over BLE the plain HID report carries paddles and the profile on every profile (§2.3b); GameController never reports Elite paddles, used for outputs only (§2.3c) | **GameController.framework** (outputs; never the Elite paddles or battery): haptics incl. impulse triggers, battery of pads that report it, light, SF Symbols names, MFi and Bluetooth pads with no HID endpoint | our raw HID drivers (part of the primary) | SDL3 |
-| Windows | **GameInput** (installer prerequisite, loaded dynamically, D17): VID/PID, paddles (3.3+), trigger rumble, DualSense | **Raw Input** for generic HID pads, joysticks and DB9 adapters; **XInput** only if GameInput is missing | our raw HID drivers over Raw Input | SDL3 |
-| Linux | **evdev** (`/dev/input/event*`, uaccess ACLs): xpad maps Elite paddles to `BTN_TRIGGER_HAPPY5-8` (kernel 6.1+) | **hidraw** where udev rules allow it: LEDs, paddles over Bluetooth, vendor features | our raw HID drivers over hidraw | SDL3 |
+| Windows | **GameInput** (installer prerequisite, loaded dynamically, D17) for the Xbox families only: VID/PID, paddles (3.3+), trigger rumble, Guide and Share (system-button callback) | **Raw Input** for every other HID pad: generic pads, joysticks, DB9 adapters, the Surface Dial, and the DualSense / Edge, DualShock 4, Switch Pro controller, Joy-Cons, NSO pads, Steam Controllers (vendor page, lizard mode off) and the GameCube adapter (ports as devices) with their protocols (`ProtocolPads`: full reports, rumble, light, player LEDs, battery, Joy-Con pairs, the charging grip; a DualShock 3 gets its enable report and a notice about DsHidMini); **XInput** only if GameInput is missing | our raw HID drivers over Raw Input | SDL3 |
+| Linux | **evdev** (`/dev/input/event*`, uaccess ACLs) with the kernel drivers first: xpad (Elite paddles `BTN_GRIP*`, older kernels `BTN_TRIGGER_HAPPY5-8`), hid-playstation (the Edge's paddles and Fn buttons from 7.2), hid-sony, hid-nintendo, joycond; the motors through `FF_RUMBLE`, battery and light through the power supply and LED classes | **hidraw** where udev rules allow it, only for what the driver lacks: paddles over Bluetooth, DualSense trigger effects, Switch HD rumble, Xbox Bluetooth rumble without `FF_RUMBLE`, the Dial's clicks | our raw HID drivers over hidraw: the whole protocol of a PlayStation / Switch pad under hid-generic | SDL3 |
 
 Rules:
 
@@ -182,6 +182,65 @@ HostDeviceId = family-neutral, stable across replug and restart:
 - **Promotion**: a device first seen only through GameController (`gc:` id) that is later matched to its IOHID
   endpoint is promoted to the `usb:` / `bt:` id; the store records the old id as an alias, so its bindings, role and
   pin follow it, and the next connect is matched by the new id directly.
+- **`gc:` devices, built (2026-10-23, not exercised with a pad)**: `EndpointMerge::StandaloneDue` declares a companion
+  standalone when it is still unconfirmed `kArrivalWindowMs` (3 s) after it arrived and no unclaimed IOHID device has
+  its name (a nameless device that arrived with it counts as a candidate; a device of another name does not, since
+  at the start everything arrives together). The macOS backend checks every 0.1 s and reports it as
+  `gc:<vendor name slug>#<n>` (the name in lower case, other characters as `-`, the lowest free n; family and layout
+  from the database's name rules) with GameController's input (`GcPad`: the extended gamepad's elements, positional
+  faces, y negated; `GcCompanion::SetInput`), its haptics, light and battery. When an IOHID device of its name
+  appears later, the rule above holds (one device, input from IOHID only, D18): the `gc:` device stays listed but its
+  input stops at once (`EndpointMerge::IsShadowed`; `GcCompanion::SetInput` off releases what it held, `GcPad::Release`)
+  and the IOHID device gives the input; the companion's presses are counted afresh for the match (the ones of its
+  standalone time had nothing to coincide with). Holding the IOHID one back instead would keep the `gc:` settings
+  working until the match, but the IOHID device is the one that stays and the one the match needs presses from, and
+  §5 names it the input. The shadow ends when the IOHID device goes, or after `kShadowPresses` (4) presses of the
+  companion with none coincident on it (another pad of that name): the `gc:` input comes back. A device of another
+  name does not shadow it (the presses alone may still match the two, both give input until then). Two coincident
+  presses confirm the match; the confirmation is `promoted`: the `gc:` device is removed,
+  `IBackendSink::OnDevicePromoted(gc, usb/bt)` moves the router settings chosen for it (role, instance mode, player
+  connector: `InputRouter::Promote`, unless the new id has its own) and the IOHID id goes on with the companion's
+  outputs.
+- **Windows ids** (`WinDeviceId`, `platform/windowsdevices`): the same forms from the HID interface path that Raw Input
+  and GameInput give (`HID#VID_..&PID_..` for USB, the Bluetooth HID service GUID for `bt:`; the serial from
+  `HidD_GetSerialNumberString`, else a hash of the path; a Bluetooth pad hashes its serial, its MAC as Windows prints
+  it, or the path). Windows has no companion and no `gc:` devices, so nothing is promoted there; aliases recorded on
+  macOS apply only where the ids agree (a USB serial does; whether Windows and macOS print a Bluetooth pad's serial
+  alike, and so hash it alike, is not checked). Every protocol pad on Windows is one top-level collection, so the
+  Raw Input backend does not merge endpoints; the one-device-once rule between GameInput and Raw Input is by family
+  (GameInput takes the Xbox families; Raw Input skips every XInput-compatible collection, the `&IG_` in its path,
+  whichever of GameInput or XInput serves them). Unique ids within the backend cover
+  ProtocolPads' devices and Joy-Con pairs (`ProtocolPads::IdTaken`).
+- **Linux, built (2026-10-24, run against the kernel drivers with uhid-emulated pads, not exercised with a real
+  pad)**: the ids come from the evdev node (`LinuxDeviceId`,
+  platform/linuxpads.h): `bt:<vid>:<pid>:<hash of uniq, else phys>`, `usb:<vid>:<pid>:<version>:<uniq>` (hid-playstation
+  and hid-nintendo set `uniq` to the pad's MAC over USB as well, so a DualSense keeps one id on the cable and the
+  same MAC hash over Bluetooth stays per bus), else `usb:...@<hash of phys>`; a uinput device `virtual:` (joycond).
+  The version is the node's: hid-playstation and hid-nintendo set bit 15 of it (their mappings, for SDL), so a USB
+  pad's id under hid-generic (an old kernel, the module not loaded) differs from the one under its driver
+  (`usb:054c:0ce6:0100:...` against `8100`); a Bluetooth id has no version. Identical ids get `#<n>`. hid-playstation's extra nodes (Touchpad, Motion Sensors) and hid-nintendo's IMU nodes
+  have no pad keys and are not devices. The evdev node and the hidraw node of one HID device are one device
+  (`HidrawSourceMerge`: the hidraw reports while they are read, evdev otherwise). Joy-Cons: the backend pairs a left
+  and a right one as on macOS (`JoyConPairing`, id `left+right`, "Joy-Con (L/R)"; each half's evdev keys renamed to
+  the pair layout); joycond, when installed, takes the halves' evdev nodes (EVIOCGRAB, mode 0600: the backend closes
+  a node that stops being readable) and offers "Nintendo Switch Combined Joy-Cons" (057E:2008) instead, whose id is
+  the same pair id when exactly one taken left and one taken right Joy-Con are found in sysfs
+  (`FindJoyConHalves`, `JoycondPairId`), so a profile of the pair applies with or without joycond; else
+  `virtual:057e:2008:0000@<hash>`. No promotion happens on Linux (no companion backend), so no alias is recorded.
+  Under hid-generic, hid-microsoft and hid-google-stadiaff (`LinuxHidUsageNamed`) the evdev keys are HID button
+  numbers, named by the family's HID map (devices.json `hid`, `HidLayoutFor(DeviceMatch)`) as HidPad names them, so
+  a profile written on macOS fits; its consumer usages (the Luna's guide, view, record) are keys of the same node,
+  named by the map; a map's vendor bits are read from hidraw. A Steam pad the Steam client holds (hid-steam took its
+  input device away) is a device with no controls and a notice. A GameCube adapter (no input device) is read from
+  its hidraw node alone, each port a device `<adapter id>:p1..p4`.
+- **Aliases, built (2026-10-23)**: `HostInputService` keeps each promotion (`TakePromotions`); the Qt client's poll
+  records it in the profile store (`ProfileStore::AddAlias(old, new)`; an alias of the old id moves to the new one) and
+  writes `<user profiles>/aliases.yaml` (`schema: 1`, `aliases: [{from, to}]`), read again at start. A profile's
+  `applies_to.devices` and a player pin match a device by its id or any of its old ids (substrings, as before), so
+  the bindings and pin of the `gc:` id follow, and the next connect is the IOHID id at once. The router settings
+  (role, instance mode) are not kept across restarts for any id, so they move only at run time. The host verbs
+  `aliases` (the list: `from`, `to`, `connected`) and `unalias` (`id` = the old id; saved and applied at once) show
+  and forget them on the CLI, REST, WebSocket, MCP and Python ([surfaces.md §2](surfaces.md)).
 
 ## 6. The canonical control vocabulary
 
@@ -193,7 +252,7 @@ and glyph from the database.
 |:--|:--|
 | Face | `south` `east` `west` `north` |
 | D-pad | `dpad.up` `dpad.down` `dpad.left` `dpad.right` (a hat becomes these four) |
-| Shoulders | `lb` `rb` (digital), `lt` `rt` (analog 0..1, with `lt.click` / `rt.click` at the threshold) |
+| Shoulders | `lb` `rb` (digital), `lt` `rt` (analog 0..1, with `lt.click` / `rt.click` at the threshold; a digital trigger such as Switch ZL / ZR sends `lt` / `rt` at 0 or 1, and a device that sends only `lt.click` is read as `lt` too) |
 | Sticks | `lstick.x` `lstick.y` `rstick.x` `rstick.y` (-1..1), `lstick.click` `rstick.click`; derived digital `lstick.up` ... |
 | System | `view` (Back / Select / Share on PS4), `menu` (Start / Options), `guide` (Xbox / PS / Home), `share` (Series X / Create), `profile` (Elite profile button, when visible) |
 | Extra | `paddle.p1` .. `paddle.p4` (Elite P1-P4, DualSense Edge back buttons, Steam Deck L4 L5 R4 R5), `misc.1` .. `misc.6`, `touchpad.click`, `touchpad.x` `touchpad.y` |
@@ -282,7 +341,8 @@ and exit. Outputs are never journaled. Defaults are off for players except the b
 
 The light colour and the battery are `IBackend` calls (`SetLight`, `Battery`; defaulted, built 2026-10-22): the
 pure parts (GameController's and XInput's values, the Linux power supply and LED classes, the DualSense light report)
-in `devicestatus.{h,cpp}` and `DualSenseOutput::UsbLightReport`, the sources per OS in
+in `devicestatus.{h,cpp}` and `DualSenseOutput::UsbLightReport`, the pads with a protocol of their own in
+`ProtocolPads` (Windows; the IOHID backend has the same rules inline), the sources per OS in
 [surfaces.md §2](surfaces.md#battery-light-and-notice-built). A battery read never waits for a device: each backend
 refreshes a copy on its own thread.
 

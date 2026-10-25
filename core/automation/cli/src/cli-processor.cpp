@@ -166,6 +166,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Assembler and source-listing commands
                         {"assemble", &CLIProcessor::HandleAssemble},  // Assemble Z80 text into memory
                         {"asm", &CLIProcessor::HandleAsm},           // Assembler sources (asm decode ...), else assemble
+                        {"signature", &CLIProcessor::HandleSignature},  // Media signatures (file, media, compare)
                         {"listing", &CLIProcessor::HandleListing},    // Source-listing navigation
 
                         // Analysis commands (screen digest, beam, frame cost, analyzers)
@@ -811,6 +812,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  video temporal [status|list|off|<name>] - ZX DLSS de-flicker: status, algorithms, switch" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
+    oss << "  coverage export [<path>] [--start A] [--end B] [--merge] - SkoolKit code execution map ($HHHH lines)" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
@@ -845,6 +847,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  controllers plug <connector|auto> <device> [opt=val ..] | unplug <connector>" << NEWLINE;
     oss << "  controllers input <connector> press=up+fire | release=fire | set=none" << NEWLINE;
     oss << "  controllers help       - All verbs and flags" << NEWLINE;
+    oss << "  signature <file> [--details] [--external] - Media signatures: exact, tape content, TR-DOS file set, memory" << NEWLINE;
+    oss << "  signature media | compare <known> <candidate> - Of the loaded media; how two files relate" << NEWLINE;
     oss << "  action [list]          - Host actions (run control, time travel, machine) and whether they can run" << NEWLINE;
     oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
     oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;
@@ -1001,6 +1005,8 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         }
         const std::string client = args.size() > 1 ? args[1] : std::string("cli");
         const unreal::UUID owner = unreal::UUID::Generate();
+        // Another client's implicit session gives way to an explicit take (the reply says whose)
+        const EmulatorContext::RunControlState before = context->GetRunControlState();
         std::string reason;
         if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0),
                                      PeerAddressOf(session.GetSocket())))
@@ -1010,22 +1016,34 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         }
         _controlSession = owner;
         _controlEmulator = emulator;
+        const std::string tookOver = before.claimed && before.implicit
+                                         ? " Took over the implicit session of " + before.surfaceLabel +
+                                               (before.client.empty() ? std::string() : " (" + before.client + ")") + "."
+                                         : std::string();
         session.SendResponse(std::string("Run control taken: the user sees it at the GUI and can take it back. ") +
-                             "'session release' ends it; closing the connection does too." + NEWLINE);
+                             "'session release' ends it; closing the connection does too." + tookOver + NEWLINE);
         return;
     }
     if (sub == "release")
     {
+        const bool held = HoldsControl(context);
         if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
             _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
         _controlSession = unreal::UUID();
         _controlEmulator.reset();
-        session.SendResponse(std::string("Run control released") + NEWLINE);
+        session.SendResponse((held ? std::string("Run control released")
+                                   : "This connection holds no session here. " +
+                                         EmulatorContext::DescribeHolder(context->GetRunControlState())) +
+                             NEWLINE);
         return;
     }
     const EmulatorContext::RunControlState state = context->GetRunControlState();
     std::string text = state.claimed ? "Run control held by " + state.surfaceLabel +
                                            (state.client.empty() ? std::string() : " (" + state.client + ")") +
+                                           (state.implicit ? ", implicit" : ", explicit") +
+                                           (state.leaseMs ? ", lease ends in " +
+                                                                std::to_string((state.leaseLeftMs + 999) / 1000) + " s"
+                                                          : std::string()) +
                                            (HoldsControl(context) ? " - this connection" : std::string())
                                      : std::string("Run control: free");
     for (const auto& [key, secondsLeft] : state.cooldowns)

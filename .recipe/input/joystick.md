@@ -15,8 +15,32 @@ Which machines let the guest see it (the others accept the input with a warning)
 | `PROFI`, `PROFI3` | `#1F` in the normal port set | |
 | `SPRINTER` | `#1F` / `#0F` outside TR-DOS, `#FF` in it | the PLD's fixed-port rewrite (code `#15`) |
 
-Not wired (accept the input and warn): `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `ATM710`, `ATM450`
-(`ATM3` is the only ATM board with the joystick decoder).
+### Machines without a Kempston decode: fit the interface card
+
+`48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `ATM710`, `ATM450` have no Kempston decode on the board (`ATM3` is the only
+ATM board with one). On the real machines a Kempston interface plugs into the edge connector; here it is the slot card
+`kempston` ([slots.md](../machines/slots.md)). Fitting it restarts the machine (new id); then the guest reads `IN #1F`
+and every call below works as on a Pentagon.
+
+| Model | Fit | Command |
+|:--|:--|:--|
+| `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3` | real (edge connector) | `emulator_manage {"action":"slots_plug","slot":"edge.next","card":"kempston"}` |
+| `ATM450`, `ATM710` | `unrealistic` (no edge connector; the CPU socket) | the same with `"replace_if_incompatible":true` |
+| every model in the table above | refused: the board's Kempston holds the function | - |
+
+```text
+emulator_manage {"action":"create","model":"48K","slots":{"edge.1":"kempston"}}   # created with it, no restart
+emulator_manage {"action":"slots_plug","slot":"edge.next","card":"kempston"}      # a running 48K: restarts
+slots plug edge.next kempston                                                    # CLI (decode=a5: early boards)
+curl -s -X POST "$B/$ID/slots/edge.next/plug" -H "$J" -d '{"card":"kempston"}' | jq -r .restart.emulatorId
+```
+
+The card: decode `a7a6a5` (issue 4: any port `#00`-`#1F` of any high byte, the default) or `a5` (early boards: any port
+with A5 = 0); D5-D7 read 0; behind a Beta 128 it sees nothing while TR-DOS is paged in (`#1F` is the floppy controller
+there, as on the Pentagon). The stock configurations do not fit it (the real machines came without one). Without the
+card the input is accepted and the warning says how to fit it: `no Kempston joystick interface on this machine: the
+guest cannot see the buttons; fit the `kempston` card: slots plug edge.1 kempston (...)`; `status` / `GET /joystick`
+add the same hint as `fit` when `wired` is false.
 
 Fitting: `[INPUT] Joystick=KEMPSTON|NONE` and the runtime feature `kempstonjoystick` (on by
 default). Not fitted: the port reads `0x00` and every input call warns. Host keypad keys
@@ -67,8 +91,8 @@ curl -s -X POST $B/$ID/joystick/tap     -H "$J" -d '{"buttons":"fire","frames":5
 curl -s $B/$ID/joystick | jq '{state, port_value, pressed, wired, pending_tap, warning}'
 ```
 
-Assert on `state` / `port_value` (the byte `IN #1F` returns) and `wired` (this machine's decoder answers
-the joystick), never on the message text. Status codes: 400 for a bad name, type or range, 404 for an
+Assert on `state` / `port_value` (the byte `IN #1F` returns) and `wired` (this machine answers the joystick:
+its board, or the `kempston` card), never on the message text. Status codes: 400 for a bad name, type or range, 404 for an
 unknown id, 409 while a TTD replay drives the machine, 500 without a joystick device.
 
 ### Worked example: see the guest read it (ATM3)
@@ -111,4 +135,4 @@ print(emu.joystick_state()["pressed"])
 - Reading the state straight after a call on a paused machine shows the old state: `run_frames 1` first.
 - `IN #1F` reads `0x00` when nothing is held (the Evo board's idle), not `0xFF`.
 - During a TTD replay every live call is refused (409 / error): recorded input drives the machine.
-- A 48K, 128K, +2, +2A, +3, ATM710 or ATM450 accepts the input and warns `this machine does not decode a Kempston joystick port` (see the table at the top).
+- A 48K, 128K, +2, +2A, +3, ATM710 or ATM450 without the `kempston` card accepts the input and warns `no Kempston joystick interface on this machine`, with the plug command that fits it (see [the card](#machines-without-a-kempston-decode-fit-the-interface-card)). The id changes when you fit it.

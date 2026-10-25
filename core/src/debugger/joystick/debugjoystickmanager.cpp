@@ -7,6 +7,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/slotcontrol.h"
+#include "emulator/slots/slotmanager.h"
 
 /// region <Guards and journal>
 
@@ -26,6 +28,18 @@ bool DebugJoystickManager::IsReplaying() const
         return true;
     return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
 }
+
+namespace
+{
+/// The slot card that gives the machine a Kempston joystick, as a plug command (the machine's slot planner decides
+/// where it goes and whether it needs the override)
+std::string FitHint(EmulatorContext* context)
+{
+    if (!context || !context->pSlotManager)
+        return {};
+    return SlotControl::PlugHint(context->pSlotManager->Current(), "kempston");
+}
+}  // namespace
 
 JoystickInjectResult DebugJoystickManager::Guard() const
 {
@@ -50,8 +64,16 @@ JoystickInjectResult DebugJoystickManager::Success(const std::string& message) c
     if (Joystick* joystick = Device(); joystick && !joystick->IsPresent())
         result.warning = "joystick not present: the guest reads 0x00 on the joystick port";
     else if (_context && _context->pPortDecoder && !_context->pPortDecoder->HasKempstonJoystick())
-        result.warning = "this machine does not decode a Kempston joystick port: the guest cannot see the buttons";
+        result.warning = UnwiredWarning(FitHint(_context));
     return result;
+}
+
+std::string DebugJoystickManager::UnwiredWarning(const std::string& fit)
+{
+    std::string warning = "no Kempston joystick interface on this machine: the guest cannot see the buttons";
+    if (!fit.empty())
+        warning += "; " + fit;
+    return warning;
 }
 
 JoystickInjectResult DebugJoystickManager::Invalid(const std::string& message) const
@@ -451,6 +473,8 @@ JoystickStateSnapshot DebugJoystickManager::GetState() const
     snapshot.available = true;
     snapshot.present = joystick->IsPresent();
     snapshot.wired = !_context->pPortDecoder || _context->pPortDecoder->HasKempstonJoystick();
+    if (!snapshot.wired)
+        snapshot.fit = FitHint(_context);
     snapshot.state = joystick->State();
     snapshot.portValue = joystick->Read();
     snapshot.keys = joystick->BindingsSpec();

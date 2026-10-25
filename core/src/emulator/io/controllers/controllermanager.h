@@ -42,6 +42,7 @@ namespace controllers
 
 class IHostInputSource;
 class IHapticFeed;
+class HapticProbes;
 
 /// Options of a connector's device (each device reads its own, the others are ignored)
 struct OverlayOptions
@@ -76,7 +77,7 @@ class ControllerManager : public ttd::TTDSerializable
 {
 public:
     explicit ControllerManager(EmulatorContext* context);
-    ~ControllerManager() override = default;
+    ~ControllerManager() override;
 
     /// region <Connectors>
     /// The connectors of the machine as it is now (model, port decoder). A connector whose id survives keeps its
@@ -133,6 +134,14 @@ public:
     /// The host's haptics (haptics.md §3): a summary of the frame's sound goes to it at every live frame boundary;
     /// nullptr (the default) costs one pointer check per frame
     void SetHapticFeed(std::shared_ptr<IHapticFeed> feed);
+    /// The machine starts or ends replaying (a TTD seek, scrub, step back or history replay, RZX playback): the feed
+    /// is told at once (IHapticFeed::OnHapticHold), not at the next live frame. The TTD controllers call it when they
+    /// enter and leave replay mode, OnFrame when replay takes input or gives it back. Any thread
+    void UpdateHapticHold();
+    bool HapticHeld() const
+    {
+        return _hapticHeld.load(std::memory_order_acquire);
+    }
     /// MainLoop, after the frame's checkpoint: sample the host, submit what changed. While the journal owns
     /// input the samples are dropped; when it gives input back, the next sample is submitted whole (a seek
     /// restored the devices: a held button stays held, a released one is released)
@@ -220,9 +229,15 @@ private:
     std::mutex _sourceMutex;
     std::shared_ptr<IHostInputSource> _source;
     std::shared_ptr<IHapticFeed> _hapticFeed;  ///< under _sourceMutex
-    const IHapticFeed* _hapticFed = nullptr;   ///< the feed the last frame went to: a new one starts from fresh counters
+    std::shared_ptr<IHapticFeed> _hapticFed;   ///< the feed the last frame went to: a new one starts from fresh counters
     std::vector<HapticWatch> _hapticWatches;   ///< the bytes _hapticFed reads (emulator thread)
+    size_t _hapticStreams = 0;                 ///< the sound's haptic taps _hapticFed asked for
+    std::unique_ptr<HapticProbes> _hapticProbes;  ///< its breakpoint probes (emulator thread)
+    std::atomic<bool> _hapticHeld{false};      ///< replay or seek: the feed was told (UpdateHapticHold)
+    std::mutex _holdMutex;                     ///< UpdateHapticHold from the control thread and the frame boundary
     void FeedHaptics(uint64_t frame);
+    void AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed);
+    void DetachHapticFeed();
     /// Per connector: the host's last submitted sample (-1 = none yet, submit the next one whole)
     std::vector<int32_t> _lastSample;
     bool _wasOwned = false;

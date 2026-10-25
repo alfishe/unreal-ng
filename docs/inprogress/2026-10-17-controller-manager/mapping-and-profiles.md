@@ -70,7 +70,7 @@ A binding is **source → target, with options**. A profile is a list of binding
 | `press` | `hold`, `tap` | `hold` | `tap`: a fixed `frames` pulse on the press edge regardless of how long the button is held (menu keys, ENTER). |
 | `frames` | 1..50 | 2 | Tap length, like `DebugJoystickManager::Tap`. |
 | `invert` | bool | false | For axes, and for "released = pressed" oddities. |
-| `repeat` | `{delay, rate}` in frames | none | Key repeat for a held ZX key from a pad (menu navigation). |
+| `repeat` | `{delay, rate}` in frames (1..500 each), or `none` | none | Key repeat for a held ZX key from a pad (menu navigation). Built: a held key or retro control is released for one emulated frame `delay` frames after the press and then every `rate` frames (`rate` 2 or more), so a menu that waits for a new press sees one, and a recording replays it; a held action (a debug layer's step keys) runs again on the host clock, `delay` and then every `rate` frames of 20 ms, also while the machine is paused ([debug-and-ttd.md §3.3](debug-and-ttd.md#33-debugger-ui)). Refused with `turbo`, `press: tap`, a `level` action, an encoder or a mouse target. |
 | `label` | string | none | The game's meaning ("Fire", "Hyperspace"), shown in the picture callouts (RetroArch descriptors). |
 
 ## 2. Routing and layers
@@ -209,8 +209,19 @@ flowchart TB
 
 1. **Signature.** As the Deck design §4 defines: exact SHA-256, then the content signature (TAP / TZX payloads), then
    the TR-DOS file set, then the fuzzy set match. The library index and zx-meta-db key on the same signatures
-   ([metadata-manager](../2026-09-27-metadata-manager/design.md)). **Not implemented yet**; until it is, step 1 always
-   misses and the chain starts at step 2. The design does not depend on it.
+   ([metadata-manager](../2026-09-27-metadata-manager/design.md)). Implemented by `core/swsignature`
+   (`unrealng::swsignature`, option `ENABLE_SWSIGNATURE`): when a program is loaded from a file the Qt client computes
+   its signatures (`file:sha256:<hex>` and, by media, `tape:sha256:` / `trdset:sha256:` / `mem:sha256:`) and its TR-DOS
+   file set into the profile context; a game profile matches by `match.signatures` (exact or content), then
+   `match.file_sha256` (also the `file:sha256:` signature: profiles of older versions keep working), then
+   `match.file_set` by the catalog rule (every catalogue entry of the profile's disk kept, at most one file with
+   other data but not all, at most max(2, n) entries added; a set without `n:` entry tokens falls back to Jaccard
+   ≥ 0.8 with no code file missing; `core/swsignature/src/match.h`, header-only, so the controllers library takes no
+   core symbols). The host verb
+   `match` (every plane: `controllers match`, `GET /api/v1/controllers/match`, MCP `controllers` action `match`,
+   Python `controllers_match`) tells which profiles match and how; `context` carries the signatures, `game_matches`
+   ([id, how], strongest first) and `haptics_reason`. Measured on the vtrd.in collection by
+   [POC 034](../../../tools/poc/034-media-signatures/README.md).
 2. **Port-read heuristic.** The core's `PortReadWatch` ([architecture.md §13](architecture.md#13-code-placement))
    counts the guest's reads per frame, smoothed, from the end of loading for up to 30 s of play:
 
@@ -228,8 +239,10 @@ flowchart TB
    | all half-rows in a loop (text input) | keyboard: hint "this program wants the keyboard" |
 
    The neutral profile drives Kempston **and** QAOP + Space at once while the watch runs (the Deck design's choice),
-   unless the machine has no Kempston connector. The toast offers **Keep** (saves a user profile under the
-   signature, or under the media file hash while signatures do not exist) and **Change**.
+   unless the machine has no Kempston connector. The toast offers **Keep** (saves a user profile `user/game-<16 hex of
+   the content signature>` with `match.signatures` = the content signature, `match.file_set` = the TR-DOS file set
+   and `match.file_sha256` = the file's hash; a medium without a content signature keeps the file hash only) and
+   **Change**.
 3. **Manual.** Profiles chosen in the dialog or by `POST /controllers/profiles/{profile}/apply`.
 
 ### 6.2 Layering
@@ -265,6 +278,9 @@ label: Sabre Wulf
 match:
   signatures: ["tape:sha256:5e1c..."]
   file_sha256: ["3b2a..."]
+  # a disk game: the TR-DOS file set for the catalog rule, two tokens per entry (n: the entry without its data;
+  # c: code / BASIC, d: other, with the data; 16 hex each)
+  # file_set: [n:51c0e9a2d4b37f18, c:9f2d0c1b7a6e5d4c, n:7d3e0a19c2b4f586, d:1a2b3c4d5e6f7081]
   title: Sabre Wulf
   zxdb_id: 4231
 applies_to: { families: [xbox], devices: [] }
@@ -372,11 +388,13 @@ profiles:
 ```
 
 One line per profile; `file` is relative to `games/`, `offset` / `length` the bytes of its YAML document (a bundle
-holds many), `keys` are `sha256:<hex>`, `sig:<signature>`, `zxdb:<id>` in lower case. `--check` fails when the
+holds many), `keys` are `sha256:<hex>`, `sig:<signature>`, `zxdb:<id>` in lower case; a profile with
+`match.file_set` has `file_set: [...]` too, which the loader indexes by token: a program's set finds its candidates by
+a shared token and the catalog rule decides, without parsing a profile. `--check` fails when the
 committed index is not what the files say, and the profile test compares the two too.
 
 At start the loader reads the index only and keeps a map from every key to its entries. A key comes from what the
-emulator knows about the program: the SHA-256 of a file it loaded, a signature (when the signature library exists),
+emulator knows about the program: the SHA-256 of a file it loaded, its signatures (`core/swsignature`), its file set,
 the ZXDB id the metadata manager found. On a hit it parses that one entry (the `offset` / `length` slice of the file),
 validates it and adds it to the store; a second hit is served from the store. The dialog's game list (manual choice,
 §6.1 step 3, the program the emulator did not load itself - a NEX started from NextZXOS's browser) is the index's

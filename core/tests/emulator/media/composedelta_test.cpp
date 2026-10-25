@@ -148,7 +148,9 @@ TEST_P(ComposeDelta_Test, RoundTrip)
     GuestWrites("/MORE.TXT");
     EXPECT_TRUE(_manager.Info("sd.zc")->dirty) << "a later write is unsaved again";
     if (_spill.Active())
+    {
         EXPECT_TRUE(_spill.Spilled()) << "the round trip went through a spill file";
+    }
 }
 
 TEST_P(ComposeDelta_Test, IdMismatchRefusedWithReason)

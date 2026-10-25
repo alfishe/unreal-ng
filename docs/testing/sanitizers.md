@@ -226,12 +226,9 @@ misses its time budget under TSan (expected).
 
 A full run on 16 shards (as in §3, `TSAN_OPTIONS` instead of `ASAN_OPTIONS`) needs `UNREAL_TEST_TIME_SCALE=5`: the
 Dezog and ZEsarUX tests wait at most 5 s for their free runs, and under TSan with 16 shards at once they miss it
-(they pass alone and with the scale). On 2026-10-23 such a run gave 25 warnings, all in production code the
-suppressions do not cover: `Core::SelectMemoryInterface` swapping the memory interface under a running CPU,
-`ScreenZX::UpdateScreen` / `Screen::GetCurrentTstate` against API reads, `MessageCenterFast::post`,
-`MemoryAccessTracker::TrackPortWrite`, `DezogDebugAdapter::getRegisters` / `pause`, `Keyboard::PressKey`,
-`SoundManager::HostOutputHold::Release`, `PortDecoder_Profi::SetFrontPanelSwitch`, `Emulator::IsOverscanMode`,
-`Logger`. New `SUMMARY:` sites are yours.
+(they pass alone and with the scale). Since `c9e59f6ca` (2026-10-23, was 25 warnings) such a run reports none; under
+TSan only time and memory budgets fail (`BreakpointHotpathBench.*` ns per call, `MediaMemory_Test.ResidentGrowthPerMode`
+with the shadow memory), as expected. New `SUMMARY:` sites are yours.
 
 On Linux, `docker/linux/build.sh --tsan [--test]` builds with gcc 14 in the CI image (`scratch/linux-amd64-<type>-san-thread`).
 gcc's TSan keeps a fixed shadow layout that a kernel with high `mmap_rnd_bits` (Ubuntu 24.04 on 6.6+) breaks
@@ -389,10 +386,11 @@ What these instruments found (the bug entries are in the git history of
 | LSan | `FDD`s of a bare `Core` (tests) never freed | test-only |
 | UBSan | logger array index, `1 << 255`, float->short in TurboSound, misaligned SCL loads, null `Emulator&` | `d5e197532` |
 | Linux ASan | test `operator new` replacement missed the nothrow forms (false `alloc-dealloc-mismatch`) | this change |
-| TSan | 55 races between the emulation thread and API threads (baseline) | open |
+| TSan | 55 races between the emulation thread and API threads (baseline); the last 24 of a sharded run | `c9e59f6ca` |
 | ASan stress | ~144 GUI context reads without a lease | `f38e72b8e` |
 | valgrind (2026-10-11) | the `.z80` loader freed `new[]` staging pages with `delete` | `9643b9623` |
 | valgrind (2026-10-11) | a missing `RESET=` compared an uninitialized buffer (reset ROM undefined) | `202db83c2` |
 | valgrind (2026-10-11) | test fixtures leaked their `Core`, drives and context | `befe0e730` |
 | TSan on Linux (2026-10-11) | ZX-Poly status read the members' registers while they ran | `a5aa1b910` |
 | TSan on Linux (2026-10-11) | two overscan switches at once both saw the old video mode | `c13e28bb0` |
+| TSan, `core-tests` (2026-10-24) | a snapshot load zeroed the memory-tracking counters while another thread's feature change freed them (SIGSEGV in `MemoryAccessTracker::ResetCounters`) | `MemoryAccessTracker_Test.ResetWhileAnotherThreadTogglesTracking` |

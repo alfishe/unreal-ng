@@ -444,6 +444,8 @@ protected:
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
     // legitimate 0xFF values from devices like WD1793).
     bool _lastPortDecoded = false;
+    /// A slot card answers the Kempston joystick (SetSlotKempstonJoystick)
+    bool _slotKempstonJoystick = false;
 
     // Registered port handlers from external peripheral devices
     // (RegisterPortHandler), keyed by the DECODED port the model decoders hand
@@ -596,6 +598,8 @@ protected:
     // Frame-scoped rolling counters (debugger status panel); updated only while
     // the porttrace feature is on
     PortActivitySummary _activitySummary;
+    // Set by a switch-on (any thread), consumed by the emulator thread: only it writes the counters
+    std::atomic<bool> _activitySummaryResetPending{false};
 
     /// endregion </Port trace>
 
@@ -667,9 +671,14 @@ public:
     virtual void OnDosRomFetch([[maybe_unused]] uint16_t pc) {}
     /// endregion </Board NMI hooks>
 
-    /// The model decodes a Kempston joystick (#1F; Scorpion #FF1F) and answers Joystick::Read(). Machines
-    /// without the arm stay false: the host joystick keys are not bound there, the TTD blob is not carried
-    virtual bool HasKempstonJoystick() const { return false; }
+    /// The machine answers a Kempston joystick with Joystick::Read(): its board decodes one, or a fitted slot card
+    /// provides the function (the `kempston` interface on a 48K). False: the host joystick keys are not bound, the
+    /// TTD blob is not carried, the input calls warn and name the card that fits
+    bool HasKempstonJoystick() const { return _slotKempstonJoystick || BoardHasKempstonJoystick(); }
+    /// The model's own decode (#1F; Scorpion #FF1F). Machines without the arm stay false
+    virtual bool BoardHasKempstonJoystick() const { return false; }
+    /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
+    void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
     virtual bool IsFEPort(uint16_t port);
 
@@ -677,6 +686,9 @@ public:
     /// Z80::in() uses this to decide whether to apply the floating bus override:
     /// only unmapped ports (no device responded) get the floating bus byte.
     bool WasLastPortDecoded() const { return _lastPortDecoded; }
+    /// A read of a port nothing decoded sees the ULA's floating bus on the Spectrums; a board whose bus decode says otherwise
+    /// (the Next: only #xxFF and the +3 port) overrides this to keep the idle #FF
+    virtual bool FloatingBusDrives(uint16_t port) const { return (port & 0x0001) != 0; }
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);

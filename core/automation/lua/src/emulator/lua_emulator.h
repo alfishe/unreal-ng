@@ -90,6 +90,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
@@ -763,6 +764,7 @@ protected:
         t["available"] = state.available;
         t["present"] = state.present;
         t["wired"] = state.wired;
+        t["fit"] = state.fit;
         t["state"] = static_cast<int>(state.state);
         t["port_value"] = static_cast<int>(state.portValue);
         t["buttons"] = buttons;
@@ -6694,6 +6696,57 @@ public:
                 index++;
             }
             result["ranges"] = ranges;
+            return result;
+        });
+
+        // coverage_export([path], [{format=, start=, ["end"]=, merge=}]) or coverage_export({path=, ...}): the coverage
+        // as SkoolKit's code execution map (coverageexport.h); without a path the map comes back in result.map
+        lua.set_function("coverage_export", [this](sol::object first, sol::object second) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            coverageexport::Options options;
+            const auto take = [&options](const sol::table& table) {
+                for (const auto& [key, value] : table)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (value.is<bool>())
+                        options[name] = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        options[name] = std::to_string(value.as<int64_t>());
+                    else if (value.is<std::string>())
+                        options[name] = value.as<std::string>();
+                }
+            };
+            if (first.is<std::string>())
+                options["path"] = first.as<std::string>();
+            else if (first.is<sol::table>())
+                take(first.as<sol::table>());
+            if (second.is<sol::table>())
+                take(second.as<sol::table>());
+
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            const coverageexport::Result r =
+                coverageexport::Export(manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr, options);
+            if (!r.Ok()) { result["error"] = r.message; return result; }
+            result["success"] = true;
+            result["format"] = r.format;
+            result["start"] = r.start;
+            result["end"] = r.end;
+            result["count"] = r.count;
+            if (r.path.empty())
+                result["map"] = r.text;
+            else
+            {
+                result["path"] = r.path;
+                result["merged"] = r.merged;
+            }
+            result["message"] = r.message;
             return result;
         });
 

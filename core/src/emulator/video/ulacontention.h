@@ -209,14 +209,31 @@ public:
     /// (UpdateSlotContention) whenever a slot is mapped - a cold path hit only on paging port writes.
     inline bool IsAddressContended(uint16_t addr) const
     {
-        return _contentionEnabled && _slotContended[addr >> 14];
+        return _contentionEnabled && _slotContended[addr >> 13];
     }
 
     /// Cache update: Memory calls it whenever it maps a slot (cold path: paging port writes). ROM is never
     /// contended; a RAM page per IsRamPageContended. On the +2A/+3 the all-RAM layouts put contended pages
     /// into any slot, #0000 included
-    void SetSlotContended(uint8_t slot, bool contended) { _slotContended[slot & 0x03] = contended; }
-    bool IsSlotContended(uint8_t slot) const { return _slotContended[slot & 0x03]; }
+    void SetSlotContended(uint8_t slot, bool contended) { _slotContended[(slot & 0x03) * 2] = _slotContended[(slot & 0x03) * 2 + 1] = contended; }
+    /// One 8K half of a slot: the Next decides contention on the page at the accessed address (zxnext.vhd mem_contend), not per 16K
+    void SetHalfContended(uint8_t half, bool contended) { _slotContended[half & 0x07] = contended; }
+    bool IsSlotContended(uint8_t slot) const { return _slotContended[(slot & 0x03) * 2] || _slotContended[(slot & 0x03) * 2 + 1]; }
+    /// The hot-path test of the contended memory interfaces: is the 8K half holding this address contended
+    bool IsContendedAt(uint16_t addr) const { return _slotContended[addr >> 13]; }
+
+    /// The Next's I/O contention (zxula.vhd i_contention_port = zxnext.vhd port_contend): no wait before IORQ, and after it only
+    /// A0 = 0 ports and the ports `rule` names (#7FFD, the ULA+ pair); the contended memory behind the high byte plays no part.
+    /// Without a rule the Spectrum behaviour stays: the high byte in contended memory contends the port
+    void SetOddPortRule(bool (*rule)(const void* owner, uint16_t port), const void* owner)
+    {
+        _oddPortRule = rule;
+        _oddPortOwner = owner;
+    }
+    bool IsOddPortContended(uint16_t port) const
+    {
+        return _oddPortRule ? _oddPortRule(_oddPortOwner, port) : _slotContended[port >> 13];
+    }
 
     /// +2A/+3: the gate array keeps the last byte of a contended memory access on its bus; the floating
     /// bus shows it between screen fetches. Called by the contended memory interfaces on contended accesses
@@ -342,7 +359,9 @@ private:
     const uint8_t* _delayLut = nullptr;
     uint32_t _delayLutSize = 0;
     void RebuildDelayLut();  // after any change of _raster or _gateArray (ComputeContentionDelay reads nothing else)
-    bool _slotContended[4] = { false, true, false, false };  // 48K / 128K power-on layout: page 5 at #4000
+    bool _slotContended[8] = { false, false, true, true, false, false, false, false };  // 48K / 128K power-on layout: page 5 at #4000
+    bool (*_oddPortRule)(const void*, uint16_t) = nullptr;
+    const void* _oddPortOwner = nullptr;
     uint8_t _lastContendedByte = 0xFF;
     UlaFetchType _fetchType = ULA_FERRANTI;
 

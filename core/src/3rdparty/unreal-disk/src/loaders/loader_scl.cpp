@@ -88,12 +88,16 @@ bool LoaderSCL::writeImage(const std::string& path)
         return result;
     }
 
-    // Walk the catalog: export non-deleted files only; sectors not owned by an exported file are not stored
+    // Walk the catalog: export non-deleted files only; sectors not owned by an exported file are not stored.
+    // The catalog ends at the first entry starting with 0x00, not at the volume sector's file count: TR-DOS CAT
+    // (A2FC6 in the 5.04T source) and FIND_NAME (LOAD, RUN, ...) walk all 128 slots up to that marker, the count
+    // (#E4) is only the number CAT prints and the slot SAVE writes next. Disks put entries past it (catalog text
+    // lines with 0 sectors, or files) that TR-DOS lists and loads
     size_t totalDataSize = 0;
     std::vector<TRDOSDirectoryEntry> fileDescriptors;
-    fileDescriptors.reserve(fileCount);
+    fileDescriptors.reserve(TRD_MAX_FILES);
 
-    for (uint8_t i = 0; i < fileCount; i++)
+    for (uint8_t i = 0; i < TRD_MAX_FILES; i++)
     {
         uint8_t sectorNo = i / 16;  // 16 file descriptors per sector
         uint8_t entryNo = i % 16;

@@ -243,6 +243,11 @@ else()
         target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
     endif()
 
+    # The media signatures (SignatureControl in core/swsignature)
+    if (TARGET unrealng::swsignature)
+        target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
+    endif()
+
     # zstd::libzstd is required because core's ttd_compression.h (pulled in
     # transitively via python_emulator.h -> timetravelmanager.h ->
     # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses

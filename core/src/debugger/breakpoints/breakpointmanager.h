@@ -146,11 +146,26 @@ struct BreakpointDescriptor
 
     bool active = true;   // Breakpoint can be temporarily disabled
     bool hidden = false;  // Internal/temporary breakpoint (e.g. step-over, step-out, traps)
+    // A probe of the haptic feed (controller manager haptics.md §5): the non-breaking "notify feed" action. A hit
+    // never stops; it is counted and told to the probe sink (BreakpointManager::SetProbeSink) with this index.
+    // BRK_NO_PROBE: a breakpoint that stops
+    uint8_t probe = 0xFF;
 
     std::string owner =
         "interactive";  // Owner: "interactive" for user/CLI, or "analyzer_manager" if set by analyzer manager
     std::string note;   // Annotation for the breakpoint
     std::string group = "default";  // Group name for organizing breakpoints
+};
+
+constexpr uint8_t BRK_NO_PROBE = 0xFF;
+
+/// Where the hits of probe breakpoints go (BreakpointDescriptor::probe): on the emulation thread, inside the access,
+/// so it must only note the hit. `value`: the byte an OUT wrote, -1 for the other accesses (a write's byte is in memory)
+class IBreakpointProbeSink
+{
+public:
+    virtual ~IBreakpointProbeSink() = default;
+    virtual void OnProbeHit(uint8_t probe, uint16_t address, int value) = 0;
 };
 
 typedef std::unordered_map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddress;
@@ -292,6 +307,9 @@ protected:
     // nor counted (Emulator::DirectStepScope arms it, the first instruction disarms it)
     bool _execPassArmed = false;
     uint16_t _execPassAddress = 0;
+
+    // The probe breakpoints' hits go here (SetProbeSink)
+    IBreakpointProbeSink* _probeSink = nullptr;
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -534,6 +552,10 @@ public:
     BreakpointSummary GetSummary() const;
     /// Bumped on every change of the set (add, remove, enable, group, note; hidden ones too): a reader caches by it
     uint64_t Revision() const { return _revision.load(std::memory_order_relaxed); }
+
+    /// The probe breakpoints' sink (haptics.md §5); nullptr: their hits are counted only. Set on the emulation thread
+    /// (or with the CPU held); the sink must outlive its probes or be cleared first
+    void SetProbeSink(IBreakpointProbeSink* sink) { _probeSink = sink; }
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);
@@ -584,6 +606,13 @@ public:
         if (!_hotState.hasPortOut || !_hotState.PortBit(BRK_PORT_OUT, portAddress))
             return BRK_INVALID;
         return ResolvePort(BRK_PORT_OUT, portAddress);
+    }
+    /// The same with the byte written, for the probes that test it
+    uint16_t HandlePortOut(uint16_t portAddress, uint8_t value)
+    {
+        if (!_hotState.hasPortOut || !_hotState.PortBit(BRK_PORT_OUT, portAddress))
+            return BRK_INVALID;
+        return ResolvePort(BRK_PORT_OUT, portAddress, value);
     }
     /// A NextREG access (the board's single read / write choke points): the breakpoint that stops, or BRK_INVALID.
     /// `door` is one BRK_NR_DOOR_* bit; `value` is what is written or what the read returns
@@ -639,15 +668,16 @@ protected:
     /// the hit policy (counting), the TTD-replay suppression. The id of the first candidate that stops
     uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
     uint16_t ResolveMemory(int kind, uint16_t address);
-    uint16_t ResolvePort(int direction, uint16_t port);
+    uint16_t ResolvePort(int direction, uint16_t port, int value = -1);
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
-    /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical)
-    uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first);
+    /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical). A probe
+    /// candidate never stops: it goes to the probe sink with `address` and `value`
+    uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, uint16_t address = 0, int value = -1);
     /// Whether a breakpoint covers the access (for the lookups that are not on the hot path)
     static bool CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page);
 

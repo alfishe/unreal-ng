@@ -112,7 +112,8 @@ std::string SettingsText(const Json::Value& reply)
 
 const std::vector<std::string>& AudioMixerToolActions()
 {
-    static const std::vector<std::string> actions = {"get", "source", "set", "levels", "settings", "set_setting"};
+    static const std::vector<std::string> actions = {"get", "source", "set", "mute", "unmute", "levels", "settings",
+                                                      "set_setting"};
     return actions;
 }
 
@@ -125,7 +126,8 @@ void RegisterAudioMixer(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "get (default: the rows; with source: that row and its channels), source (one row or channel), set (mute / "
-        "solo / volume / gain_db of a row or channel; source master takes muted only), levels (every row's and "
+        "solo / volume / gain_db of a row or channel; source master takes muted only), mute / unmute (set muted of source, "
+        "default master), levels (every row's and "
         "channel's levels and mute / solo: what the WebSocket topic audio.mixer pushes), settings (the sound settings), "
         "set_setting (name, value)";
     schema["properties"]["source"]["type"] = "string";
@@ -161,24 +163,31 @@ void RegisterAudioMixer(ToolRegistry& registry)
         "room, punch, FM trim, NeoGS stereo, Covox DC removal, the FIR filter (Sound HQ), the core audio rate.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
-            const std::string action = args.isMember("action") ? args["action"].asString() : std::string("get");
+            const std::string requested = args.isMember("action") ? args["action"].asString() : std::string("get");
             bool known = false;
             for (const std::string& a : AudioMixerToolActions())
-                known = known || a == action;
+                known = known || a == requested;
             if (!known)
             {
-                done(ToolResult::Error("unknown action '" + action +
-                                       "' (get, source, set, levels, settings, set_setting)"));
+                done(ToolResult::Error("unknown action '" + requested +
+                                       "' (get, source, set, mute, unmute, levels, settings, set_setting)"));
                 return;
             }
-            const std::string source = args.isMember("source") ? args["source"].asString() : std::string();
+            // mute / unmute: set muted, of the master unless a source is named
+            const bool muteShortcut = requested == "mute" || requested == "unmute";
+            const std::string action = muteShortcut ? std::string("set") : requested;
+            std::string source = args.isMember("source") ? args["source"].asString() : std::string();
+            if (muteShortcut && source.empty())
+                source = "master";
             if ((action == "source" || action == "set") && source.empty())
             {
                 done(ToolResult::Error(action + " takes source (a row such as ay1, or a channel such as ay1.a)"));
                 return;
             }
             auto body = std::make_shared<Json::Value>(Json::objectValue);
-            if (action == "set")
+            if (muteShortcut)
+                (*body)["muted"] = requested == "mute";
+            else if (action == "set")
                 for (const char* key : {"muted", "solo", "volume", "gain_db"})
                     if (args.isMember(key))
                         (*body)[key] = args[key];

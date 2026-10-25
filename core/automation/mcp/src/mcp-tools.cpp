@@ -27,6 +27,7 @@
 #include "mcp-router.h"
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
+#include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
@@ -842,6 +843,70 @@ std::string ExtractFilename(const std::string& path)
     return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+/// Tape autostart, as the media.open action does it: LOAD "" typed into the ROM editor (POST /basic/run leaves a
+/// 128K menu for 128 BASIC first; the ROM loader then takes the tape, which is already playing). Typing needs a running
+/// machine: a paused or a not yet started one runs for the typing and is paused again, so the agent's run_frames go
+/// on from where they were. `loaded` is the text of the load step
+void AutostartTape(IApiCaller& caller, const std::string& id, const std::string& loaded, ToolCallback done)
+{
+    caller.Call("GET", Endpoint(id), nullptr, [&caller, id, loaded, done](int status, Json::Value info) {
+        if (status < 200 || status >= 300)
+        {
+            done(ToolResult::Error(loaded + "; autostart: the machine's state is unknown (HTTP " +
+                                   std::to_string(status) + "): " + DescribeErrorBody(info)));
+            return;
+        }
+        const bool running = info.get("is_running", false).asBool();
+        const bool paused = info.get("is_paused", false).asBool();
+        const bool holdAfter = !running || paused;  // still before the typing: still after it
+        const std::string wake = !running ? "/start" : paused ? "/resume" : "";
+
+        auto finish = [&caller, id, loaded, holdAfter, done](int typedStatus, Json::Value typed) {
+            const bool ok = typedStatus >= 200 && typedStatus < 300;
+            auto report = [ok, typedStatus, loaded, done, typed = std::move(typed)](int, Json::Value) mutable {
+                if (ok)
+                {
+                    // Read the editor before the move: the order of evaluation of the arguments is unspecified (gcc
+                    // moves `typed` first, MSVC / clang last)
+                    const std::string editor = typed.get("editor", "BASIC").asString();
+                    done(ToolResult::Ok(loaded + ", LOAD \"\" typed (" + editor + ")", std::move(typed)));
+                    return;
+                }
+                done(ToolResult::Error(loaded + "; autostart: LOAD \"\" was not typed (HTTP " +
+                                       std::to_string(typedStatus) + "): " + DescribeErrorBody(typed)));
+            };
+            if (holdAfter)
+                caller.Call("POST", Endpoint(id, "/pause"), nullptr, std::move(report));
+            else
+                report(200, Json::Value());
+        };
+        auto type = [&caller, id, finish]() {
+            Json::Value command;
+            command["command"] = "LOAD \"\"";
+            caller.Call("POST", Endpoint(id, "/basic/run"), &command, finish);
+        };
+        if (wake.empty())
+        {
+            type();
+            return;
+        }
+        caller.Call("POST", Endpoint(id, wake), nullptr, [&caller, id, running, type, finish](int wakeStatus, Json::Value body) {
+            if (wakeStatus < 200 || wakeStatus >= 300)
+            {
+                finish(wakeStatus, std::move(body));
+                return;
+            }
+            if (running)
+            {
+                type();
+                return;
+            }
+            // A machine that ran frames before its start keeps the pause those direct runs left: it starts paused
+            caller.Call("POST", Endpoint(id, "/resume"), nullptr, [type](int, Json::Value) { type(); });
+        });
+    });
+}
+
 void RegisterLoadSoftware(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -859,8 +924,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["autostart"]["type"] = "boolean";
     schema["properties"]["autostart"]["default"] = false;
     schema["properties"]["autostart"]["description"] =
-        "Disk images only, drive A only: quick-reset into TR-DOS and run the disk, same as the Qt UI's "
-        "drag-and-drop autostart. Ignored for snapshots/tapes and for drives other than A.";
+        "Run the software after loading it. Disk images, drive A only: quick-reset into TR-DOS and run the disk, "
+        "same as the Qt UI's drag-and-drop autostart (ignored for other drives). Tapes: playback starts and "
+        "LOAD \"\" is typed (a 128K menu is left for 128 BASIC first), as the media.open action; a paused machine "
+        "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots.";
     schema["properties"]["commit"]["type"] = "string";
     schema["properties"]["commit"]["description"] =
         "Snapshots only: who writes the machine. Omitted = the plan decides (the machine's own policy, else the legacy "
@@ -873,6 +940,11 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "Snapshots only: do not load, report what loading would do on this machine (the file's contents - format, "
         "banks, CPU, paging, extensions - and the plan: who would commit it, or the refusal and its reason). Nothing "
         "is written";
+    schema["properties"]["paused"]["type"] = "boolean";
+    schema["properties"]["paused"]["default"] = false;
+    schema["properties"]["paused"]["description"] =
+        "Pause the machine before loading, so the program has not run a single instruction when the call "
+        "returns: poke it (memory_access write), set breakpoints or start coverage, then resume / run_frames";
     schema["required"].append("path");
 
     registry.Register(
@@ -918,6 +990,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             bool play = args.isMember("play") && args["play"].asBool();
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
             const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
+            const bool pausedFirst = args.isMember("paused") && args["paused"].asBool();
             std::string commit = args.isMember("commit") && args["commit"].isString() ? args["commit"].asString() : "";
             // A policy name is an identifier: it goes into a query string as is
             if (commit.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos)
@@ -934,7 +1007,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -942,106 +1015,139 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                     return;
                 }
                 const std::string& id = idOrError;
+                // paused: the pause lands first, so the load leaves a machine that has not run the program yet
+                auto load = [=, &caller]() {
 
-                // Build headers for raw upload
-                std::map<std::string, std::string> headers;
-                headers["X-Filename"] = filename;
-                if (autostart && isDisk)
-                {
-                    headers["X-Autostart"] = "true";
-                }
+                    // Build headers for raw upload
+                    std::map<std::string, std::string> headers;
+                    headers["X-Filename"] = filename;
+                    if (autostart && isDisk)
+                    {
+                        headers["X-Autostart"] = "true";
+                    }
 
-                // An RZX recording plays on the model it needs (the model
-                // switches when this machine is another one: a new target id)
-                if (ext == "rzx")
-                {
-                    if (isLocalFile)
+                    // An RZX recording plays on the model it needs (the model
+                    // switches when this machine is another one: a new target id)
+                    if (ext == "rzx")
                     {
-                        ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
-                                       "Playing RZX " + filename + " (uploaded) from " + id, done);
-                    }
-                    else
-                    {
-                        Json::Value body;
-                        body["path"] = path;
-                        ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
-                                    done);
-                    }
-                    return;
-                }
-
-                if (isSnapshot)
-                {
-                    // inspect = what a load would do (nothing written); the commit choice rides on a query for an upload
-                    const std::string action = inspect ? "/snapshot/inspect" : "/snapshot/load";
-                    const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
-                    if (isLocalFile)
-                    {
-                        const std::string endpoint =
-                            Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
-                        ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
-                                       verb + filename + " (uploaded) on " + id, done);
-                    }
-                    else
-                    {
-                        Json::Value body;
-                        body["path"] = path;
-                        if (!commit.empty())
-                            body["commit"] = commit;
-                        ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
-                    }
-                    return;
-                }
-
-                if (isTape)
-                {
-                    auto loadDone = [&caller, id, path, filename, play, done, isLocalFile](int status, Json::Value response) {
-                        if (status < 200 || status >= 300)
+                        if (isLocalFile)
                         {
-                            done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
-                                                   DescribeErrorBody(response)));
-                            return;
+                            ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                                           "Playing RZX " + filename + " (uploaded) from " + id, done);
                         }
-                        std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
-                        if (!play)
+                        else
                         {
-                            done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
-                            return;
+                            Json::Value body;
+                            body["path"] = path;
+                            ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
+                                        done);
                         }
-                        ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller,
-                                    "Loaded tape " + loadedName + " and started playback on " + id, done);
-                    };
+                        return;
+                    }
 
+                    if (isSnapshot)
+                    {
+                        // inspect = what a load would do (nothing written); the commit choice rides on a query for an upload
+                        const std::string action = inspect ? "/snapshot/inspect" : "/snapshot/load";
+                        const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
+                        if (isLocalFile)
+                        {
+                            const std::string endpoint =
+                                Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
+                            ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
+                                           verb + filename + " (uploaded) on " + id, done);
+                        }
+                        else
+                        {
+                            Json::Value body;
+                            body["path"] = path;
+                            if (!commit.empty())
+                                body["commit"] = commit;
+                            ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
+                        }
+                        return;
+                    }
+
+                    if (isTape)
+                    {
+                        auto loadDone = [&caller, id, path, filename, play, autostart, done, isLocalFile](int status, Json::Value response) {
+                            if (status < 200 || status >= 300)
+                            {
+                                done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
+                                                       DescribeErrorBody(response)));
+                                return;
+                            }
+                            std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
+                            if (!play && !autostart)
+                            {
+                                done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
+                                return;
+                            }
+                            const std::string played = "Loaded tape " + loadedName + " and started playback on " + id;
+                            if (!autostart)
+                            {
+                                ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, played, done);
+                                return;
+                            }
+                            // Autostart plays the tape as well: LOAD "" waits for it
+                            caller.Call("POST", Endpoint(id, "/tape/play"), nullptr,
+                                        [&caller, id, played, done](int playStatus, Json::Value playBody) {
+                                            if (playStatus < 200 || playStatus >= 300)
+                                            {
+                                                done(ToolResult::Error("Tape loaded, playback failed (HTTP " +
+                                                                       std::to_string(playStatus) + "): " +
+                                                                       DescribeErrorBody(playBody)));
+                                                return;
+                                            }
+                                            AutostartTape(caller, id, played, done);
+                                        });
+                        };
+
+                        if (isLocalFile)
+                        {
+                            caller.CallRaw("POST", Endpoint(id, "/tape/load"), *fileContent, headers, loadDone);
+                        }
+                        else
+                        {
+                            Json::Value body;
+                            body["path"] = path;
+                            caller.Call("POST", Endpoint(id, "/tape/load"), &body, loadDone);
+                        }
+                        return;
+                    }
+
+                    // Disk
                     if (isLocalFile)
                     {
-                        caller.CallRaw("POST", Endpoint(id, "/tape/load"), *fileContent, headers, loadDone);
+                        ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
+                                       "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
                     }
                     else
                     {
                         Json::Value body;
                         body["path"] = path;
-                        caller.Call("POST", Endpoint(id, "/tape/load"), &body, loadDone);
+                        if (autostart)
+                        {
+                            body["autostart"] = true;
+                        }
+                        ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
+                                    "Inserted disk " + path + " into drive " + drive + " of " + id, done);
                     }
+                };
+                if (!pausedFirst)
+                {
+                    load();
                     return;
                 }
-
-                // Disk
-                if (isLocalFile)
-                {
-                    ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
-                                   "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
-                }
-                else
-                {
-                    Json::Value body;
-                    body["path"] = path;
-                    if (autostart)
+                caller.Call("POST", Endpoint(id, "/pause"), nullptr, [load, done](int status, Json::Value response) {
+                    if (status < 200 || status >= 300)
                     {
-                        body["autostart"] = true;
+                        done(ToolResult::Error("Pause before the load failed (HTTP " + std::to_string(status) + "): " +
+                                               DescribeErrorBody(response)));
+                        return;
                     }
-                    ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
-                                "Inserted disk " + path + " into drive " + drive + " of " + id, done);
-                }
+                    load();
+                });
             });
         });
 }
@@ -1197,7 +1303,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Stepping actions automatically include the new register snapshot. "
         "take_control opens an automation session (optional client: your name; lease_seconds, default 60): the user sees "
         "it in the GUI, its controls lock, and your calls run while other surfaces' runs are refused; release_control "
-        "ends it. If the user takes control back, calls answer revoked_by_user: stop, do not retry, ask the user.",
+        "ends it (yours: the explicit one, else the implicit session your changes opened). A call refused held_by_other "
+        "names the holder: take_control takes over an implicit session of another client (a host script's), never an "
+        "explicit one. If the user takes control back, calls answer revoked_by_user: stop, do not retry, ask the user.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -1225,9 +1333,19 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status == 200 && reply.isMember("session"))
                         {
                             caller.SetSession(reply["session"].asString());
-                            done(ToolResult::Ok("You hold run control of this emulator (the user sees it and can take it "
-                                                "back). release_control ends the session.",
-                                                std::move(reply)));
+                            std::string text = "You hold run control of this emulator (the user sees it and can take it "
+                                               "back). release_control ends the session. Session id " +
+                                               reply["session"].asString() +
+                                               ": a host script driving this emulator too sends it as X-Unreal-Session.";
+                            if (reply["took_over"].isObject())
+                            {
+                                const Json::Value& was = reply["took_over"];
+                                text += " Took over the implicit session of " + was["surface"].asString() +
+                                        (was["client"].asString().empty() ? std::string()
+                                                                          : " (" + was["client"].asString() + ")") +
+                                        ".";
+                            }
+                            done(ToolResult::Ok(text, std::move(reply)));
                         }
                         else
                             done(ToolResult::Error("take_control refused (HTTP " + std::to_string(status) + "): " +
@@ -1237,10 +1355,17 @@ void RegisterControlExecution(ToolRegistry& registry)
                 }
                 if (action == "release_control")
                 {
+                    // Without a session of its own the WebAPI ends the implicit session it holds for this MCP server
                     caller.Call("DELETE", Endpoint(id, "/control/session"), nullptr, [&caller, done](int status, Json::Value reply) {
                         caller.SetSession({});
-                        if (status == 200)
+                        if (status == 200 && reply.get("released", false).asBool())
                             done(ToolResult::Ok("Automation session ended: run control released.", std::move(reply)));
+                        else if (status == 200)
+                        {
+                            const std::string text = "Nothing to release: you held no session of this emulator. " +
+                                                     reply.get("message", "").asString();
+                            done(ToolResult::Ok(text, std::move(reply)));
+                        }
                         else
                             done(ToolResult::Error("release_control failed (HTTP " + std::to_string(status) + "): " +
                                                    DescribeErrorBody(reply)));
@@ -1255,6 +1380,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status >= 200 && status < 300)
                         {
                             done(ToolResult::Ok(action == "run" ? "Running (until breakpoint/pause)" : "Resumed", std::move(body)));
+                        }
+                        else if (IsSessionRefusal(body))
+                        {
+                            // The automation gate refused it (another client's session, a take-back): not "running"
+                            done(ToolResult::Error("Resume refused (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(body)));
                         }
                         else if (status == 400 || status == 409)
                         {
@@ -1702,7 +1833,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status < 200 || status >= 300)
                         {
                             std::string hint;
-                            if (status == 409)
+                            if (status == 409 && !IsSessionRefusal(response))
                             {
                                 hint = " Hint: the machine may need to be paused first — use action:'pause'.";
                             }
@@ -4391,7 +4522,8 @@ void RegisterMouseInput(ToolRegistry& registry)
     schema["properties"]["dy"]["description"] = "+ = UP (move: -127..127; glide: -4096..4096; optional pre-move for click)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
-        "status: report this device of the machine (kempston, sprinter, evo-ps2); default the first fitted one";
+        "status: report this device of the machine (kempston, sprinter, evo-ps2, amx - the AMX mouse card); default the "
+        "first fitted one";
     Json::Value buttonEnum(Json::arrayValue);
     for (const char* button : {"left", "right", "middle"})
     {
@@ -4606,7 +4738,8 @@ void RegisterJoystickInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Kempston joystick (reads at IN #1F on ATM3 / Scorpion / TS-Conf). 'press' holds buttons, 'release' lets them go, "
+        "Kempston joystick (reads at IN #1F on the machines whose board decodes it: Pentagon, Scorpion, Profi, ZX-Evo "
+        "BaseConf, TS-Conf, Sprinter, Next; not the 48K / 128K / +2 / +2A / +3 or the ATM Turbo 2+). 'press' holds buttons, 'release' lets them go, "
         "'set' makes exactly the given buttons (or state byte) held, 'tap' presses for N frames then releases. Input is "
         "applied immediately; call control_execution run_frames to let the program react.";
     schema["properties"]["target"]["type"] = "string";
@@ -4642,10 +4775,14 @@ void RegisterJoystickInput(ToolRegistry& registry)
         "joystick_input",
         "Send Kempston joystick input to the emulator: press / release buttons, set the exact held set or state byte, tap "
         "for N frames, status (device byte, fitted / wired, host keys). Values are forwarded as-is; the WebAPI validates "
-        "names and ranges and warns when the machine does not decode the joystick.",
+        "names and ranges and warns when the machine has no Kempston interface (48K, 128K, +2, +2A, +3, ATM): the warning "
+        "names the slot card `kempston` and the emulator_manage slots_plug call that fits it.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
+            // 'get' reads like the other tools' read action: the status
+            if (action == "get")
+                action = "status";
 
             if (args.isMember("connector"))
             {
@@ -4708,7 +4845,7 @@ void RegisterJoystickInput(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "'"));
+            done(ToolResult::Error("Unknown action '" + action + "' (press, release, set, tap, status)"));
         });
 }
 
@@ -6312,6 +6449,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);
     RegisterAsmSource(*registry);
+    RegisterSignatureInfo(*registry);
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);

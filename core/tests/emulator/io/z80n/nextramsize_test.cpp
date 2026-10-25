@@ -93,8 +93,8 @@ TEST(NextRamSize_Test, TwoAndFourMegabytesWireTheSameBanksTheCoreAddresses)
         EXPECT_EQ(four.memory->InstalledRamPages(), expectedPages);
         four.ports->Board().WriteNextReg(kRegSlot2, kBank1MbEdge);
         EXPECT_STREQ(four.memory->SlotKind(2), "ram");
-        four.ports->Board().WriteNextReg(kRegSlot2, kAddressableBanks - 1);  // #FF is the ROM bank
-        EXPECT_STREQ(four.memory->SlotKind(2), "rom");
+        four.ports->Board().WriteNextReg(kRegSlot2, kAddressableBanks - 1);  // #FF: no ROM in slot 2, and no RAM either (zxnext.vhd)
+        EXPECT_STREQ(four.memory->SlotKind(2), "unmapped");
     }
 }
 

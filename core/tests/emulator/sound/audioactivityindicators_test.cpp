@@ -513,7 +513,9 @@ TEST(AudioActivityIndicators_Test, MultiSoundRowsLightTheirOwnIndicatorPerChip)
         EXPECT_TRUE(TestWait::ForExactly(counters[active]->on, 1)) << "row " << active;
         for (size_t i = 0; i < counters.size(); i++)
             if (i != active)
+            {
                 EXPECT_EQ(counters[i]->on.load(), i < active ? 1 : 0) << "row " << active << " lit indicator " << i;
+            }
     }
 
     for (auto& counter : counters)

@@ -1,6 +1,7 @@
 #include "osdkeyboardwindow.h"
 
 #include <QComboBox>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
@@ -82,7 +83,8 @@ void PaintLit(QPainter& painter, const KeyboardPicture& picture, const std::set<
 
 // region <OsdKeyboardView>
 
-OsdKeyboardView::OsdKeyboardView(QWidget* parent) : QWidget(parent), _svg(new QSvgRenderer(this))
+OsdKeyboardView::OsdKeyboardView(QWidget* parent)
+    : QWidget(parent), _svg(new QSvgRenderer(this)), _dimSvg(new QSvgRenderer(this))
 {
     setFocusPolicy(Qt::NoFocus);
     setMinimumSize(320, 120);
@@ -94,9 +96,14 @@ OsdKeyboardView::OsdKeyboardView(QWidget* parent) : QWidget(parent), _svg(new QS
 void OsdKeyboardView::setPicture(const KeyboardPicture* picture)
 {
     _picture = picture;
-    _svg->load(picture ? picture->svgPath : QString());
-    _cache = {};
-    _recordBase = {};
+    _svgData.clear();
+    if (QFile file(picture ? picture->svgPath : QString()); picture && file.open(QIODevice::ReadOnly))
+        _svgData = file.readAll();
+    _svg->load(_svgData);
+    _dimSvg->load(QByteArray());
+    _dimmed.clear();
+    _cache[0] = _cache[1] = {};
+    _recordBase[0] = _recordBase[1] = {};
     _lit.clear();
     updateGeometry();
     update();
@@ -108,6 +115,32 @@ void OsdKeyboardView::setLit(std::set<std::string> lit)
         return;
     _lit = std::move(lit);
     update();
+}
+
+void OsdKeyboardView::setDimmed(std::set<std::string> roles)
+{
+    if (roles == _dimmed)
+        return;
+    _dimmed = std::move(roles);
+    if (!_dimmed.empty())
+    {
+        // A faint group, not a hidden one: the legend stays readable, the ones the shift brings forward stand out
+        QByteArray data = _svgData;
+        for (const std::string& role : _dimmed)
+        {
+            const QByteArray group = "<g id=\"legends-" + QByteArray::fromStdString(role) + "\"";
+            data.replace(group, group + " opacity=\"0.3\"");
+        }
+        _dimSvg->load(data);
+    }
+    _cache[1] = {};
+    _recordBase[1] = {};
+    update();
+}
+
+QSvgRenderer* OsdKeyboardView::renderer() const
+{
+    return _dimmed.empty() ? _svg : _dimSvg;
 }
 
 QSize OsdKeyboardView::sizeHint() const
@@ -144,7 +177,7 @@ void OsdKeyboardView::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     const QRectF image = imageRect();
-    if (image.isEmpty() || !_svg->isValid())
+    if (image.isEmpty() || !renderer()->isValid())
     {
         painter.setPen(palette().color(QPalette::PlaceholderText));
         painter.drawText(rect(), Qt::AlignCenter, tr("No keyboard picture for this machine"));
@@ -152,31 +185,33 @@ void OsdKeyboardView::paintEvent(QPaintEvent*)
     }
     const qreal ratio = devicePixelRatioF();
     const QSize pixels = (image.size() * ratio).toSize();
-    if (_cache.size() != pixels)
+    QPixmap& picture = _cache[_dimmed.empty() ? 0 : 1];
+    if (picture.size() != pixels)
     {
-        _cache = QPixmap(pixels);
-        _cache.fill(Qt::transparent);
-        QPainter cache(&_cache);
-        _svg->render(&cache, QRectF(QPointF(), QSizeF(pixels)));
-        _cache.setDevicePixelRatio(ratio);
+        picture = QPixmap(pixels);
+        picture.fill(Qt::transparent);
+        QPainter cache(&picture);
+        renderer()->render(&cache, QRectF(QPointF(), QSizeF(pixels)));
+        picture.setDevicePixelRatio(ratio);
     }
-    painter.drawPixmap(image.topLeft(), _cache);
+    painter.drawPixmap(image.topLeft(), picture);
     PaintLit(painter, *_picture, _lit, image);
 }
 
 QImage OsdKeyboardView::renderImage(int width)
 {
-    if (!_picture || _picture->size.isEmpty() || !_svg->isValid() || width <= 0)
+    if (!_picture || _picture->size.isEmpty() || !renderer()->isValid() || width <= 0)
         return {};
     const QSize pixels(width, static_cast<int>(width * _picture->size.height() / _picture->size.width()));
-    if (_recordBase.size() != pixels)
+    QImage& recordBase = _recordBase[_dimmed.empty() ? 0 : 1];
+    if (recordBase.size() != pixels)
     {
-        _recordBase = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
-        _recordBase.fill(Qt::transparent);
-        QPainter base(&_recordBase);
-        _svg->render(&base, QRectF(QPointF(), QSizeF(pixels)));
+        recordBase = QImage(pixels, QImage::Format_RGBA8888_Premultiplied);
+        recordBase.fill(Qt::transparent);
+        QPainter base(&recordBase);
+        renderer()->render(&base, QRectF(QPointF(), QSizeF(pixels)));
     }
-    QImage image = _recordBase.copy();
+    QImage image = recordBase.copy();
     QPainter painter(&image);
     PaintLit(painter, *_picture, _lit, QRectF(QPointF(), QSizeF(pixels)));
     return image;
@@ -336,9 +371,9 @@ void OsdKeyboardWindow::refresh()
     }
     // Every key the matrix holds, whoever pressed it (automation, the host, this window): a key printed with exactly
     // the held combination lights instead of its parts (Caps Shift + 5 is the Pentagon's LEFT)
+    std::set<ZXKeysEnum> down;
     if (keyboard)
     {
-        std::set<ZXKeysEnum> down;
         for (const PictureKey& key : _picture.keys)
         {
             uint8_t row = 0;
@@ -362,6 +397,11 @@ void OsdKeyboardWindow::refresh()
     }
     _lit = lit;
     _view->setLit(std::move(lit));
+    // Symbol Shift held alone: what it types is the symbols, the other mode legends go faint. Both shifts are the
+    // Extend Mode switch: nothing to bring forward yet (the mode itself lives in the ROM, not on the matrix)
+    static const std::set<std::string> notSymbols{"keyword", "extend", "extend-shift", "graphic", "colour", "cyrillic"};
+    const bool symbols = down.count(ZXKEY_SYM_SHIFT) != 0 && down.count(ZXKEY_CAPS_SHIFT) == 0;
+    _view->setDimmed(symbols ? notSymbols : std::set<std::string>{});
     updateNotice();
 }
 

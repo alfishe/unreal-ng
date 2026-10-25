@@ -91,7 +91,9 @@ TEST(RecordingManager_Test, FrameLengthChange_TimestampsAreTheSumOfTheFrames)
         ASSERT_EQ(timestamps.size(), static_cast<size_t>(i + 1));
         EXPECT_NEAR(timestamps[i], expected, 1e-9) << "frame " << i;
         if (i > 0)
+        {
             ASSERT_GT(timestamps[i], timestamps[i - 1]) << "frame " << i << ": the timestamps only grow";
+        }
         expected += short312 ? kFrame312 : kFrame320;
     }
     context->config.frame = savedFrame;

@@ -138,8 +138,8 @@ or written to (saved games on a disk). Whole-file CRC, as RetroArch uses, fails 
 | any | **exact**: SHA-256 of the file. MD5 / SHA-1 as needed for external lookups (ZXInfo `/filecheck/{hash}`, RetroAchievements rules) | nothing; fastest path |
 | TAP, TZX, PZX | **content**: SHA-256 over the concatenated *data payloads* of data blocks, in order. Excluded: TZX text, archive-info, pause, group and timing parameters, and the flag / checksum bytes. Per-block hashes kept for partial matches | TAP ↔ TZX conversion, re-mastered pauses, added info blocks |
 | TRD, SCL, FDI, UDI, TD0 with TR-DOS | **file set**: for each catalogue entry, `(name, ext, start, length)` + SHA-256 of the file's data from its sectors (`TrdosCatalog`); signature = SHA-256 of the sorted entry hashes; plus the set itself for fuzzy matching | TRD ↔ SCL, sector layout changes, disk label |
-| same, after saves | **fuzzy**: Jaccard similarity of the entry-hash sets ≥ 0.8 with no *code* file missing | high-score files and saves added to the disk |
-| SNA, Z80, SZX | **memory**: SHA-256 over 256-byte pages of RAM outside the screen (`#4000–#5AFF`) and the stack page; a match needs ≥ 90 % of pages equal | snapshots of the same game taken at different moments (best effort) |
+| same, after saves | **fuzzy**, the catalog rule ([POC 034](../../../tools/poc/034-media-signatures/README.md)): every catalogue entry `(name, ext, start, length)` of the known title is on the disk, at most one file has other data (not all of them), at most max(2, n) entries were added. A set without entry tokens (written by hand) falls back to the first draft: Jaccard similarity of the entry-hash sets ≥ 0.8 with no *code* file missing | high-score files and saves added to the disk or rewritten in place, a re-release with one file patched |
+| SNA, Z80, SZX | **memory**: SHA-256 over 256-byte pages of RAM outside the screen (`#4000–#5AFF`), the stack page and uniform pages (cleared RAM); a match needs ≥ 90 % of ≥ 16 common pages equal | snapshots of the same game taken at different moments (best effort) |
 | SPG, ZXP | exact only | — |
 | ROM pages (machine profiles) | `SignatureCache` (already in the core) | — |
 
@@ -147,7 +147,15 @@ Lookup order: exact → content / file set → fuzzy → heuristic ([§5](#5-heu
 Signatures are computed once by the scanner, on a worker, and stored in the library index. A
 1 MB TZX takes about 2 ms.
 
-The algorithms are front-end neutral and belong in a small shared library (`swsignature`). The
+The algorithms are front-end neutral and live in a small shared library, `core/swsignature`
+(`unrealng::swsignature`; built with the core, option `ENABLE_SWSIGNATURE`). Its signature strings carry their kind:
+`file:sha256:<hex>`, `tape:sha256:<hex>`, `trdset:sha256:<hex>`, `mem:sha256:<hex>`; the TR-DOS file set for the
+fuzzy rule is a list of tokens, two per entry: `n:<16 hex>` of the entry without its data (name, type, start, length)
+and `c:<16 hex>` (BASIC and code files) / `d:<16 hex>` (others) of the entry hash, each the first 64 bits. Details fixed by the implementation: a TR-DOS entry hash is SHA-256 over the 8 name bytes as stored, the
+type, start and length (little-endian) and the lower-case hex SHA-256 of the data (a BASIC file: `start` bytes, the
+program and its variables; others `length` bytes; a zero length: every sector); a tape's raw-bit block (TZX `$14`)
+hashes whole; a memory page hash is the first 64 bits of its SHA-256, positional by bank and page. The gate P-12 was
+run as [POC 034](../../../tools/poc/034-media-signatures/README.md). The
 metadata manager's "library index: signature → packs"
 ([2026-09-27-metadata-manager](../2026-09-27-metadata-manager/design.md)) and zx-meta-db
 ([concept](../2026-09-28-zx-meta-db/concept.md)) key on the same signatures.

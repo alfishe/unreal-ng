@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "family": "nso-nes",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "lb",
+      "label": "L",
+      "shape": {
+        "rect": [
+          786,
+          502,
+          71,
+          22
+        ]
+      },
+      "anchor": [
+        821,
+        513
+      ],
+      "callout": "left",
+      "order": 0
+    },
+    {
+      "control": "rb",
+      "label": "R",
+      "shape": {
+        "rect": [
+          1138,
+          502,
+          71,
+          22
+        ]
+      },
+      "anchor": [
+        1174,
+        513
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "view",
+      "label": "Select",
+      "shape": {
+        "rect": [
+          869,
+          841,
+          89,
+          40
+        ]
+      },
+      "anchor": [
+        914,
+        861
+      ],
+      "callout": "left",
+      "order": 2
+    },
+    {
+      "control": "menu",
+      "label": "Start",
+      "shape": {
+        "rect": [
+          1007,
+          841,
+          89,
+          40
+        ]
+      },
+      "anchor": [
+        1052,
+        861
+      ],
+      "callout": "right",
+      "order": 3
+    },
+    {
+      "control": "dpad.up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          646,
+          704,
+          62,
+          59
+        ]
+      },
+      "anchor": [
+        677,
+        734
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 4
+    },
+    {
+      "control": "dpad.down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          646,
+          826,
+          62,
+          59
+        ]
+      },
+      "anchor": [
+        677,
+        855
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 5
+    },
+    {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          587,
+          764,
+          59,
+          62
+        ]
+      },
+      "anchor": [
+        617,
+        795
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 6
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          708,
+          764,
+          59,
+          62
+        ]
+      },
+      "anchor": [
+        738,
+        795
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 7
+    },
+    {
+      "control": "south",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1242,
+          863,
+          45
+        ]
+      },
+      "anchor": [
+        1242,
+        863
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "east",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1378,
+          863,
+          45
+        ]
+      },
+      "anchor": [
+        1378,
+        863
+      ],
+      "callout": "right",
+      "order": 9
+    }
+  ]
+}

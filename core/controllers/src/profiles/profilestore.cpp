@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <sstream>
 
 #include "devicedatabase.h"
+#include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/yaml.h"
 #include "router/inputrouter.h"
 
@@ -44,10 +46,15 @@ bool FamilyMatches(const std::vector<std::string>& families, const std::string& 
     });
 }
 
-bool DeviceMatches(const std::vector<std::string>& devices, const HostDeviceId& device)
+/// An item of a profile's `devices` (or a pin's device) is a substring of the id or of one of its old ids (aliases)
+bool DeviceMatches(const std::vector<std::string>& devices, const HostDeviceId& device,
+                   const std::vector<HostDeviceId>& aliases = {})
 {
-    return std::any_of(devices.begin(), devices.end(), [&device](const std::string& item) {
-        return !item.empty() && device.find(item) != std::string::npos;
+    return std::any_of(devices.begin(), devices.end(), [&device, &aliases](const std::string& item) {
+        return !item.empty() &&
+               (device.find(item) != std::string::npos ||
+                std::any_of(aliases.begin(), aliases.end(),
+                            [&item](const HostDeviceId& alias) { return alias.find(item) != std::string::npos; }));
     });
 }
 
@@ -57,13 +64,15 @@ struct ScopeTarget
     std::string family;
     HostDeviceId device;
     std::string layout;
+    std::vector<HostDeviceId> aliases;  ///< the device's old ids
 };
 
 bool AppliesTo(const Profile& profile, const ScopeTarget& target)
 {
     if (!profile.families.empty() && (target.family.empty() || !FamilyMatches(profile.families, target.family, target.layout)))
         return false;
-    if (!profile.devices.empty() && (target.device.empty() || !DeviceMatches(profile.devices, target.device)))
+    if (!profile.devices.empty() &&
+        (target.device.empty() || !DeviceMatches(profile.devices, target.device, target.aliases)))
         return false;
     return true;
 }
@@ -75,7 +84,7 @@ bool RemoteByNature(const Profile& profile)
     return profile.devices.empty() && !profile.families.empty() &&
            std::all_of(profile.families.begin(), profile.families.end(), [](const std::string& family) {
                return family == "keyboard" ||
-                      DeviceDatabase::Builtin().ForFamily(family).role == DeviceRole::DebuggerRemote;
+                      DeviceDatabase::Active()->ForFamily(family).role == DeviceRole::DebuggerRemote;
            });
 }
 
@@ -93,10 +102,7 @@ bool Selected(const Profile& profile, const ProfileContext& context)
         return true;
     if (!profile.IsGame())
         return true;
-    const auto any = [](const std::vector<std::string>& wanted, const std::vector<std::string>& have) {
-        return std::any_of(wanted.begin(), wanted.end(), [&have](const std::string& w) { return Contains(have, w); });
-    };
-    return any(profile.signatures, context.signatures) || any(profile.fileSha256, context.fileSha256);
+    return !GameMatch(profile, context).empty();
 }
 
 /// The rank of a selected profile: specificity (a manual choice ranks as a game), then scope
@@ -106,6 +112,18 @@ std::pair<int, int> Rank(const Profile& profile, const ProfileContext& context)
     if (profile.kind == ProfileKind::Play && Contains(context.manual, profile.id))
         specificity = Specificity::Game;
     return {static_cast<int>(specificity), static_cast<int>(profile.scope)};
+}
+
+/// GameMatch's levels, strongest first: the order gameMatches lists them in
+int MatchStrength(const std::string& how)
+{
+    if (how == "manual")
+        return 0;
+    if (how.rfind("signature", 0) == 0)
+        return 1;
+    if (how.rfind("file sha256", 0) == 0)
+        return 2;
+    return 3;
 }
 
 using Layers = std::vector<std::pair<std::string, JsonValue::Members>>;
@@ -336,6 +354,29 @@ size_t ProfileStore::LoadDirectory(const std::string& root, ProfileScope scope, 
     return kept;
 }
 
+std::string GameMatch(const Profile& profile, const ProfileContext& context)
+{
+    if (profile.kind == ProfileKind::Play && Contains(context.manual, profile.id))
+        return "manual";
+    if (!profile.IsGame())
+        return {};
+    for (const std::string& signature : profile.signatures)
+        if (Contains(context.signatures, signature))
+            return "signature " + Lower(signature);
+    for (const std::string& sha : profile.fileSha256)
+        if (Contains(context.fileSha256, sha) ||
+            Contains(context.signatures, std::string(unrealng::swsignature::kFilePrefix) + sha))
+            return "file sha256 " + Lower(sha);
+    if (!profile.fileSet.empty() && !context.fileSet.empty())
+    {
+        const unrealng::swsignature::FileSetScore score =
+            unrealng::swsignature::CompareFileSets(profile.fileSet, context.fileSet);
+        if (score.matches)
+            return "file set: " + score.Reason();
+    }
+    return {};
+}
+
 bool ProfileStore::OpenGames(const std::string& gamesDir, std::vector<std::string>& errors)
 {
     return _games.Open(gamesDir, errors);
@@ -347,10 +388,19 @@ size_t ProfileStore::LoadGamesFor(const ProfileContext& context, std::vector<std
     for (const std::string& sha : context.fileSha256)
         keys.push_back("sha256:" + sha);
     for (const std::string& signature : context.signatures)
+    {
         keys.push_back("sig:" + signature);
+        // An older profile names the file by match.file_sha256 only
+        const std::string prefix = unrealng::swsignature::kFilePrefix;
+        if (signature.rfind(prefix, 0) == 0)
+            keys.push_back("sha256:" + signature.substr(prefix.size()));
+    }
     std::vector<std::string> ids;
     for (const GameEntry* entry : _games.Lookup(keys))
         ids.push_back(entry->id);
+    for (const GameEntry* entry : _games.LookupFileSet(context.fileSet))
+        if (std::find(ids.begin(), ids.end(), entry->id) == ids.end())
+            ids.push_back(entry->id);
     for (const std::string& id : context.manual)
         if (_games.FindId(id) != nullptr)
             ids.push_back(id);
@@ -398,6 +448,15 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
             selected.push_back(&profile);
     std::stable_sort(selected.begin(), selected.end(), [&context](const Profile* a, const Profile* b) {
         return Rank(*a, context) < Rank(*b, context);
+    });
+    for (const Profile* profile : selected)
+    {
+        const std::string how = GameMatch(*profile, context);
+        if (!how.empty())
+            resolved.gameMatches.emplace_back(profile->id, how);
+    }
+    std::stable_sort(resolved.gameMatches.begin(), resolved.gameMatches.end(), [](const auto& a, const auto& b) {
+        return MatchStrength(a.second) < MatchStrength(b.second);
     });
 
     // §7.6: the schemes a profile extends merge just below it, in order, a scheme's own schemes below that scheme
@@ -448,6 +507,12 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
             {
                 resolved.haptics = profile.haptics;
                 resolved.hapticsProfile = profile.id;
+                // H-3: a game profile by its match (signature, file, file set, manual), else the default it is
+                const std::string how = GameMatch(profile, context);
+                resolved.hapticsReason = !how.empty() ? "game profile " + profile.id + " (" + how + ")"
+                                                      : profile.id + " (" +
+                                                            (profile.machines.empty() ? "default" : "machine default") +
+                                                            ")";
             }
         };
         for (const Profile* profile : selected)
@@ -478,15 +543,16 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                    FamilyMatches(p->families, device.family, device.layout);
         });
         if (familyNamed && families.insert(device.family).second)
-            mergeFor({device.family, {}, device.layout}, "family:" + device.family, false);
+            mergeFor({device.family, {}, device.layout, {}}, "family:" + device.family, false);
     }
     for (const HostDeviceInfo& device : context.devices)
     {
-        const bool deviceNamed = std::any_of(selected.begin(), selected.end(), [&device](const Profile* p) {
-            return DeviceMatches(p->devices, device.id) && AppliesTo(*p, {device.family, device.id, device.layout});
+        const ScopeTarget target{device.family, device.id, device.layout, AliasesOf(device.id)};
+        const bool deviceNamed = std::any_of(selected.begin(), selected.end(), [&target](const Profile* p) {
+            return DeviceMatches(p->devices, target.device, target.aliases) && AppliesTo(*p, target);
         });
         if (deviceNamed)
-            mergeFor({device.family, device.id, device.layout}, device.id, false);
+            mergeFor(target, device.id, false);
     }
     return resolved;
 }
@@ -545,7 +611,7 @@ ResolvedProfiles ProfileStore::Apply(InputRouter& router, const ProfileContext& 
             continue;
         }
         for (const HostDeviceInfo& device : context.devices)
-            if (DeviceMatches({pin.device}, device.id))
+            if (DeviceMatches({pin.device}, device.id, AliasesOf(device.id)))
                 router.SetPlayerConnector(device.id, pin.connector);
     }
     return resolved;
@@ -573,6 +639,7 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
     DumpStrings(match, "machines", profile.machines);
     DumpStrings(match, "signatures", profile.signatures);
     DumpStrings(match, "file_sha256", profile.fileSha256);
+    DumpStrings(match, "file_set", profile.fileSet);
     if (!profile.title.empty())
         match.Set("title", JsonValue::String(profile.title));
     if (!match.GetMembers().empty())
@@ -634,6 +701,111 @@ std::string ProfileStore::SavePath(const Profile& profile, const std::string& ro
 {
     return (std::filesystem::path(root) / Directory(profile) / (FileName(profile) + ".yaml")).string();
 }
+
+/// region <Aliases>
+
+void ProfileStore::AddAlias(const HostDeviceId& from, const HostDeviceId& to)
+{
+    if (from.empty() || to.empty() || from == to)
+        return;
+    for (auto& [old, current] : _aliases)
+        if (current == from)
+            current = to;  // promoted twice: the oldest id follows to the newest
+    _aliases.erase(to);    // the new id is a device of its own again, not an alias
+    _aliases[from] = to;
+}
+
+bool ProfileStore::RemoveAlias(const HostDeviceId& from)
+{
+    return _aliases.erase(from) != 0;
+}
+
+std::vector<HostDeviceId> ProfileStore::AliasesOf(const HostDeviceId& device) const
+{
+    std::vector<HostDeviceId> out;
+    for (const auto& [old, current] : _aliases)
+        if (current == device)
+            out.push_back(old);
+    return out;
+}
+
+std::string ProfileStore::AliasesPath(const std::string& root)
+{
+    return (std::filesystem::path(root) / "aliases.yaml").string();
+}
+
+std::string ProfileStore::DumpAliases(const std::map<HostDeviceId, HostDeviceId>& aliases)
+{
+    std::vector<JsonValue> items;
+    for (const auto& [from, to] : aliases)
+        items.push_back(JsonValue::Object({{"from", JsonValue::String(from)}, {"to", JsonValue::String(to)}}));
+    JsonValue root = JsonValue::Object({{"schema", JsonValue::Number(1)}, {"aliases", JsonValue::Array(items)}});
+    return "# The ids of promoted controllers (old -> new): written by unreal-ng\n" + DumpYaml(root);
+}
+
+bool ProfileStore::ParseAliases(const std::string& text, std::map<HostDeviceId, HostDeviceId>& out,
+                                std::string& error)
+{
+    JsonValue root;
+    if (!ParseYaml(text, root, error))
+        return false;
+    const JsonValue* items = root.IsObject() ? root.Find("aliases") : nullptr;
+    if (items == nullptr || !items->IsArray())
+    {
+        error = "no 'aliases' list";
+        return false;
+    }
+    for (const JsonValue& item : items->Items())
+    {
+        const JsonValue* from = item.IsObject() ? item.Find("from") : nullptr;
+        const JsonValue* to = item.IsObject() ? item.Find("to") : nullptr;
+        if (from == nullptr || to == nullptr || !from->IsString() || !to->IsString() || from->AsString().empty() ||
+            to->AsString().empty())
+        {
+            error = "an alias needs 'from' and 'to' ids";
+            return false;
+        }
+        out[from->AsString()] = to->AsString();
+    }
+    return true;
+}
+
+bool ProfileStore::LoadAliases(const std::string& root, std::string& error)
+{
+    const std::string path = AliasesPath(root);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+        return true;
+    std::ifstream in(path, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::map<HostDeviceId, HostDeviceId> aliases;
+    if (!in || !ParseAliases(text.str(), aliases, error))
+    {
+        error = path + ": " + (error.empty() ? std::string("cannot be read") : error);
+        return false;
+    }
+    for (const auto& [from, to] : aliases)
+        AddAlias(from, to);
+    return true;
+}
+
+bool ProfileStore::SaveAliases(const std::string& root, std::string& error) const
+{
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    const std::string path = AliasesPath(root);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << DumpAliases(_aliases);
+    if (!out)
+    {
+        error = path + ": cannot be written";
+        return false;
+    }
+    return true;
+}
+
+/// endregion </Aliases>
 
 bool ProfileStore::Save(const Profile& profile, const std::string& root, std::string& error)
 {

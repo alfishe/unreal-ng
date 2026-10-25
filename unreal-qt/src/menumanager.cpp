@@ -902,6 +902,10 @@ void MenuManager::createMachineMenu()
     _slotsWindowAction->setCheckable(true);
     _slotsWindowAction->setChecked(false);
     connect(_slotsWindowAction, &QAction::triggered, this, &MenuManager::slotsWindowToggled);
+    // Quick plugs per connector, swap the ports, reset the hand-made choices (controller manager ui-ux.md §8); the
+    // main window fills it each time it opens
+    _machineControllersMenu = _machineMenu->addMenu(tr("C&ontrollers"));
+    _machineControllersMenu->setStatusTip(tr("Plug a joystick into a connector, swap the joystick ports"));
 
     _machineMenu->addSeparator();
 

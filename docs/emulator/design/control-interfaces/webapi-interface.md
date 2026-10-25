@@ -537,9 +537,10 @@ GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette f
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/execution     Execution arbiter: phase, intent and who set it, main loop, the command holding the CPU, queue, claim, counters, driver_violations
-POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); 409 held_by_other / revoked_cooldown (retry: false)
-GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from), since when, clients in a re-take cooldown
-DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session
+POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); takes over another client's implicit session (took_over names it), never an explicit one; 409 held_by_other {holder} / revoked_cooldown (retry: false)
+GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from, implicit, lease_seconds_left, holder), since when, clients in a re-take cooldown; yours, and session (the id) only for the asker's own implicit session
+DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session; without it (or with one that holds nothing) the asker's own implicit session; released: false + message (who holds it) otherwise
+     (a change refused by the automation gate: 409 held_by_other {message: who holds it and how to resolve it, holder: {surface, client, peer, implicit, lease_seconds_left}}; an implicit holder is taken over by an explicit take; a session header that does not hold the instance is no pass, the gate applies)
      (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
      Companion clients (a paired device acting as the user's hands, docs/inprogress/2026-10-16-companion-client/protocol.md):
      with Authorization: Bearer <token> a change opens no session (no remote control at the GUI, no lock); any action
@@ -662,6 +663,7 @@ POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
 POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
 GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
 GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/coverage/export     SkoolKit code execution map (body: {"format": "skoolkit-map", "start", "end", "path", "merge"})
 POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
 GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
@@ -1443,7 +1445,7 @@ own (unchanged JSON); `ports` are what the machine's ports return; the machine's
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 | `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
-| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`, `amx`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`, `amx-pio`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`), the AMX mouse `pio` (`a` / `b`: `mode`, `vector`, `data`, `interrupt_enabled`, `interrupt_pending`, `under_service`; `pending` {`dx`,`dy`} mickeys not yet strobed, `buttons_port` = `IN #DF`, `strobes`). |
 | `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
 | `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
@@ -1619,7 +1621,8 @@ inject, `run_frames N`, then `GET /joystick`.
 `button` is accepted as an alias of `buttons`. A successful POST returns `success`, `message`,
 an echo of the input (`buttons`, `frames`, `requested_state`), the resulting `state` object and,
 when the guest cannot see the buttons, a `warning`. The state object (also the body of the GET, plus
-`emulator_id`): `available`, `present`, `wired` (this machine's port decoder answers the joystick),
+`emulator_id`): `available`, `present`, `wired` (this machine answers the joystick: its board, or the slot card
+`kempston`), `fit` (when not wired: the plug command that fits the `kempston` card here; `""` when wired or nothing fits),
 `state` (the byte), `port_value` (what `IN #1F` returns now), `buttons` (a boolean per name),
 `pressed` (the names), `button_names`, `keys` (host key bindings), `pending_tap`
 (`{mask, frames_left}` or `null`).
@@ -1679,9 +1682,25 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | probe | database | reports | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light
+                                                         | light | haptics_probe | role | pin | identify | player
+                                                         | database_save | database_delete | database_import | learn
+                                                         | unalias
+POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
+POST /api/v1/controllers/host/{device}/{verb}            role | pin | identify | learn, the device from the path
+GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
+GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
+GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
 ```
+
+`GET /api/v1/controllers/match?path=game.trd` (or `signatures=a,b`, `file_sha256=`, `file_set=` comma lists,
+`machine=`; none: the loaded program) answers the game profiles the signatures choose, `matches` [{`id`, `how`}]
+strongest first, `profile` and `next` (`game-profile` or `port-reads`), `haptics_reason`; `context` carries the loaded
+program's `signatures`, `file_set`, `game_matches` and `haptics_reason`. The signature routes
+([command-interface.md section 18](./command-interface.md#18-media-signatures); OpenAPI tag `Signatures`) answer
+`{ok, path, signature: {...}}`, `{ok, media: [...]}` and `{ok, path, with, match: {level, matches, score, reason}}`;
+`404` for a file that is missing, `503` for a build without the library.
 
 The machine routes are ControllerControl, the host routes HostInputControl
 ([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
@@ -1690,6 +1709,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/haptics_probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
+a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
+game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
+`unavailable` without a program loaded from a file.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
@@ -1700,8 +1724,25 @@ when known also `level` (absent without one), `coarse`, `charging`, `wired`), `l
 `reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
 `POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
 query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
-reason where the OS does not let the emulator set it. On the WebSocket `/api/v1/ws` all of them are `call`s, as every
-route.
+reason where the OS does not let the emulator set it.
+
+`POST /api/v1/controllers/role {"device", "role": "player|debugger-remote|disabled"}` and `POST
+/api/v1/controllers/pin {"device", "pin": "follow-focus|all|pinned:<emulator id>"}` set what a host device is for and
+which instance it drives (`devices` shows both: `role`, `pin`). `POST /api/v1/controllers/identify {"device"}` rumbles
+it for 300 ms and blinks its light where it has them (`rumble`, `light`, `ms`; `503` when it has neither).
+`GET /api/v1/controllers/probe` lists the backends (`running`, else `reason`) with the devices each found (`match`
+`{step, score}`, `notice`) and `user_devices`. `GET /api/v1/controllers/database?vidpid=045e:0b00` (or `guid=<SDL
+GUID>`, `device=<id>`; `name=`, `version=`) answers what the device database says (`query`, `match`).
+`POST /api/v1/controllers/database/import {"text": "<gamecontrollerdb line or RetroArch .cfg>", "save": true}` imports
+a mapping (`source`, `name`, `device`, `map`, `skipped`, `gamecontrollerdb`; saved as the user family `family` in
+`path`, and a connected device of that VID / PID takes it at once). `POST /api/v1/controllers/learn {"device", "step":
+"start|status|sample|skip|back|finish|cancel", ...}` runs the learn wizard of an unknown device: `start` (`controls`: a
+comma list) takes the device, whose presses then answer the prompts (`control`, `prompt`, `index`, `count`,
+`waiting_for_release`, `map`); `sample {control, value}` feeds a raw control from a script; `finish` (`name`, `save`)
+saves the map. `GET /api/v1/controllers/aliases` lists the device aliases (`{aliases: [{from, to, connected, name}]}`:
+a pad first seen through GameController alone, `gc:...`, and later matched to its HID device keeps its profiles under
+the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}` forgets one (`200` with `from`, `to`; `404`
+`unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every route.
 
 ### Host Actions
 

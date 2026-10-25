@@ -52,6 +52,7 @@ Z80NEngine::Z80NEngine(EmulatorContext* context, Z80* cpu) : _context(context), 
     Z80nCpuSetRetiFn(_cpu, &Reti, this);
     Z80nCpuSetRetnFn(_cpu, &Retn, this);
     Z80nCpuSetNextRegFn(_cpu, &NextReg, this);
+    Z80nCpuSetT80Persona(_cpu, 1);  // the Next's CPU is the FPGA core's T80: its flags, not the Zilog die's
 }
 
 Z80NEngine::~Z80NEngine()

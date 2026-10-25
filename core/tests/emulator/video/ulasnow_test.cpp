@@ -171,7 +171,9 @@ TEST_F(UlaSnow_Test, OnlyTheFerrantiUlaWithIInSlowMemory)
         for (uint32_t cell = 0; cell < 32; cell++)
             marks += Marked(0, cell, pixel, attr) ? 1u : 0u;
         if (c.snows)
+        {
             EXPECT_GT(marks, 0u) << c.model << ": the positive control did not snow";
+        }
         else
             EXPECT_EQ(marks, 0u) << c.model << " I=#" << std::hex << int(c.i) << " contention " << c.contention;
         EmulatorTestHelper::CleanupEmulator(_emulator);

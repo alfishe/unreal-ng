@@ -10,6 +10,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
@@ -115,6 +116,11 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     if (PortDecoder* ports = emulator->GetContext()->pPortDecoder; ports && ports->RtcChip())
         ports->RtcChip()->AnchorEmulatedTime(Ds12887::ToMicros({2026, 1, 1, 12, 0, 0}));
 
+    // The turbo render decimation in its fixed mode: the adaptive one reads the wall clock, so under load (a parallel
+    // run of 20 shards) two machines skip different turbo frames and what a test sees on the screen differs
+    if (MainLoop* mainLoop = emulator->GetMainLoop())
+        mainLoop->SetTurboRenderAdaptive(false);
+
     // Test-speed defaults (2026-09-13): the two per-frame "HQ" features are
     // OFF for tests. Per-t-state screen rendering (screenhq) and the FIR
     // audio path (soundhq) cost about a third of every emulated frame, and
@@ -168,6 +174,8 @@ Emulator* EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(const std::string
         delete emulator;
         return nullptr;
     }
+    if (MainLoop* mainLoop = emulator->GetMainLoop())
+        mainLoop->SetTurboRenderAdaptive(false);  // see CreateStandardEmulator
     return emulator;
 }
 

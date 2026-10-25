@@ -126,7 +126,7 @@ public:
     /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
     FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
     /// Code #15 (port #FF in TR-DOS, #1F / #0F outside it) carries the Kempston bits
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView; this debug read: PeekMouseView)

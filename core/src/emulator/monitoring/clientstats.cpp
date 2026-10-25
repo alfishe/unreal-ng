@@ -48,6 +48,11 @@ void ClientStats::Request(ClientPlane plane)
     _counters[static_cast<size_t>(plane)].requests.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ClientStats::Dropped(ClientPlane plane)
+{
+    _counters[static_cast<size_t>(plane)].dropped.fetch_add(1, std::memory_order_relaxed);
+}
+
 ClientCounts ClientStats::Read(ClientPlane plane) const
 {
     const Counters& counters = _counters[static_cast<size_t>(plane)];
@@ -55,6 +60,7 @@ ClientCounts ClientStats::Read(ClientPlane plane) const
     counts.connections = counters.connections.load(std::memory_order_relaxed);
     counts.opened = counters.opened.load(std::memory_order_relaxed);
     counts.requests = counters.requests.load(std::memory_order_relaxed);
+    counts.dropped = counters.dropped.load(std::memory_order_relaxed);
     return counts;
 }
 
@@ -65,6 +71,7 @@ void ClientStats::Reset()
         counters.connections.store(0, std::memory_order_relaxed);
         counters.opened.store(0, std::memory_order_relaxed);
         counters.requests.store(0, std::memory_order_relaxed);
+        counters.dropped.store(0, std::memory_order_relaxed);
     }
 }
 
