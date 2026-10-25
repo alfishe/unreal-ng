@@ -65,50 +65,28 @@ void Emulator_Test::DestroyEmulator()
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
 {
+    // Instances are created, initialised, stopped and released over and over without one leaking into the next. How long
+    // that takes is a speed of the host: no clock here
     constexpr int iterations = 20;
-
-    // Profiling accumulators (microseconds)
-    uint64_t totalConstruct = 0, totalInit = 0, totalStop = 0, totalRelease = 0, totalDelete = 0;
 
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)
     {
-        auto t0 = std::chrono::high_resolution_clock::now();
         Emulator* emulator = new Emulator(LoggerLevel::LogError);
-        auto t1 = std::chrono::high_resolution_clock::now();
 
         if (emulator)
         {
             if (emulator->Init())
             {
-                auto t2 = std::chrono::high_resolution_clock::now();
                 emulator->Stop();
-                auto t3 = std::chrono::high_resolution_clock::now();
                 emulator->Release();
-                auto t4 = std::chrono::high_resolution_clock::now();
-
-                totalInit += std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-                totalStop += std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count();
-                totalRelease += std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
 
                 successCounter++;
             }
 
-            auto t5 = std::chrono::high_resolution_clock::now();
             delete emulator;
-            auto t6 = std::chrono::high_resolution_clock::now();
-
-            totalConstruct += std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-            totalDelete += std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
         }
     }
-
-    GTEST_LOG_(INFO) << "Profiling (" << iterations << " iterations):";
-    GTEST_LOG_(INFO) << "  Construct: " << totalConstruct / 1000 << " ms (" << totalConstruct / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Init:      " << totalInit / 1000 << " ms (" << totalInit / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Stop:      " << totalStop / 1000 << " ms (" << totalStop / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Release:   " << totalRelease / 1000 << " ms (" << totalRelease / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Delete:    " << totalDelete / 1000 << " ms (" << totalDelete / iterations << " us/iter)";
 
     if (successCounter != iterations)
     {
@@ -140,11 +118,7 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             // startup flag handling, so a Stop() issued afterwards is
             // guaranteed to be honoured - unlike IsRunning(), which
             // StartAsync() raises before the worker even starts
-            auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
+            TestWait::For([&] { return emulator->GetState() == StateRun; }, std::chrono::seconds(2));
 
             if (!emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to start" << std::endl;

@@ -6,6 +6,8 @@
 #define _CODE_UNDER_TEST 1
 
 #include "emulator/io/fdc/wd1793.h"
+#include "_helpers/testwaithelper.h"
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -180,16 +182,10 @@ protected:
         }
     }
 
-    static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 200)
+    static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 2000)
     {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (condition())
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return condition();
+        // The timeout only bounds a failure: the wait ends the moment the condition holds
+        return TestWait::For(condition, std::chrono::milliseconds(timeoutMs));
     }
 
     // Barrier against cross-test pollution. The previous test's last posts
@@ -212,6 +208,11 @@ protected:
         {
             FAIL() << "MessageCenter drain sentinel not dispatched within 1000 ms";
         }
+        // The sentinel has done its job: out of the captures, so the next drain waits for its own
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        g_capturedFdcStates.erase(std::remove_if(g_capturedFdcStates.begin(), g_capturedFdcStates.end(),
+                                                 [](const CapturedFdcState& c) { return c.trackRegister == SENTINEL_TRACK; }),
+                                  g_capturedFdcStates.end());
     }
 
     void SetUp() override
@@ -297,12 +298,10 @@ TEST_F(FDCNotificationTest, NoPostWhenNothingChanged)
     ASSERT_TRUE(WaitForCondition([]() { return hasCaptureWithTrack(40); }));
     clearCaptures();
 
-    // Re-write the same value — the diff gate must swallow it. Bounded window
-    // rather than a flat 50 ms sleep: a leaked payload ends the wait at once,
-    // and the passing path costs only the settle.
+    // Re-write the same value — the diff gate must swallow it. Everything posted before the drain sentinel has been
+    // captured when the drain returns (one FIFO worker), so a leaked payload would be in the captures
     _fdc->portDeviceOutMethod(0x003F, 40);
-    EXPECT_FALSE(WaitForCondition([]() { return captureCount() > 0; }, 10))
-        << "Diff gate failed: a payload was posted for unchanged state";
+    DrainPendingNotifications();
 
     const size_t leakedPayloads = captureCount();
     EXPECT_EQ(leakedPayloads, 0u) << "Diff gate failed: " << leakedPayloads

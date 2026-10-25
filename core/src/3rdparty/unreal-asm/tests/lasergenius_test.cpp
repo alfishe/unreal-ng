@@ -19,6 +19,8 @@
 #include "unrealasm/dialect.h"
 #include "unrealasm/registry.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
@@ -59,9 +61,7 @@ std::vector<std::string> ToSjasmplus(const std::string& text)
 
 std::filesystem::path ScratchDirectory()
 {
-    std::random_device random;
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::filesystem::path dir = std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(stamp) + "-" + std::to_string(random()));
+    std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     return dir;
 }

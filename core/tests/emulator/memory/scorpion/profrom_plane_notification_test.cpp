@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "pch.h"
+#include "_helpers/testwaithelper.h"
 
 #include "emulator/ports/models/scorpionfixture.h"
 #include "emulator/notifications.h"
@@ -103,9 +104,7 @@ TEST_F(ProfRomPlane_Test, PlaneSwitchReachesRomPageNotification)
     _memory->MemoryReadFast(0x0104, false);   // Q0 -> Q3
     _memory->handleFrameEnd();
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    while (g_romNotifications.load() == 0 && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    TestWait::For([] { return g_romNotifications.load() > 0; });
 
     mc.RemoveObserver(NC_ROM_PAGE_CHANGED, &onRomPageChanged);
 

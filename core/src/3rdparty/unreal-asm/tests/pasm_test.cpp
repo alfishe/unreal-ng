@@ -17,6 +17,8 @@
 #include "unrealasm/dialect.h"
 #include "unrealasm/registry.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
@@ -70,10 +72,7 @@ SourceDocument Pasm(const std::string& relative)
 std::vector<uint8_t> AssembleAt6000(const char* sjasmplus, const std::vector<ProjectFile>& project, const std::vector<std::pair<std::string, std::string>>& binaries,
                                     size_t size)
 {
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-pasm-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                       std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests-pasm");
     std::filesystem::create_directories(dir);
     const ProjectResult converted = ConvertProject(project, "sjasmplus");
     EXPECT_TRUE(converted.ok);

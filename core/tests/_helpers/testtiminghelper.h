@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <thread>
+#include "testwaithelper.h"
 
 // Addons to Gtest matchers
 #define EXPECT_IN_RANGE(VAL, MIN, MAX) \
@@ -43,14 +44,8 @@ inline bool WaitForCondition(
     std::chrono::milliseconds timeout = TestTiming::kDefaultTimeout,
     std::chrono::milliseconds pollInterval = TestTiming::kPollInterval)
 {
-    auto start = std::chrono::steady_clock::now();
-    while (!pred())
-    {
-        if (std::chrono::steady_clock::now() - start >= timeout)
-            return false;
-        std::this_thread::sleep_for(pollInterval);
-    }
-    return true;
+    // One implementation of the polling wait for every test: TestWait (scaled timeout, a final check at the deadline)
+    return TestWait::For(pred, timeout, std::chrono::duration_cast<std::chrono::microseconds>(pollInterval));
 }
 
 /// endregion <GTest helpers>

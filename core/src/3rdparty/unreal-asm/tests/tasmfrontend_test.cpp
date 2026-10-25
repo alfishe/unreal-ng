@@ -18,6 +18,8 @@
 #include "unrealasm/containers.h"
 #include "unrealasm/dialect.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 
@@ -130,9 +132,8 @@ TEST(TasmFrontend_Test, FlatConditionalsAssembleToWhatTasm412Built)
     options.catalog = file.Hints();
     const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
     ASSERT_TRUE(r.ok);
-    std::random_device random;
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "IFNEST.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
     const std::string harness = "        DEVICE ZXSPECTRUM128\n        INCLUDE \"IFNEST.asm\"\n        SAVEBIN \"out.bin\",#7000,12\n";
@@ -230,9 +231,8 @@ TEST(TasmFrontend_Test, GsRomAssemblesToTheRomTasmBuilt)
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
     if (!sjasmplus)
         GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
-    std::random_device random;
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     const codecs::SjasmplusCodec codec;
     for (const ProjectFile& file : GsRom().files)
@@ -276,9 +276,8 @@ TEST(TasmFrontend_Test, SinusTableAssemblesToWhatTasm412Built)
     options.catalog = file.Hints();
     const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
     ASSERT_TRUE(r.ok);
-    std::random_device random;
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "SIN7.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
     const std::string harness = "        DEVICE ZXSPECTRUM128\n        INCLUDE \"SIN7.asm\"\n        SAVEBIN \"out.bin\",#7000,256\n";
@@ -312,9 +311,8 @@ TEST(TasmFrontend_Test, PageAndRunAsTasm412Uses)
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
     if (!sjasmplus)
         GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
-    std::random_device random;
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "PGTEST.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
     const std::string harness = "        INCLUDE \"PGTEST.asm\"\n        SLOT 3\n        PAGE 1\n        SAVEBIN \"p1.bin\",#C000,2\n"
@@ -361,9 +359,8 @@ TEST(TasmFrontend_Test, Tasm50ProgramAssemblesToWhatTasm50Built)
     options.catalog = file.Hints();
     const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
     ASSERT_TRUE(r.ok);
-    std::random_device random;
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "PROG.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
     const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"PROG.asm\"\n        SAVEBIN \"out.bin\",#7000,45\n";

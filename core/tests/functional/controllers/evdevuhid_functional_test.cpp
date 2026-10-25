@@ -1,6 +1,6 @@
-/// @file evdevuhid_test.cpp
-/// @brief The evdev backend against the real kernel drivers, with the pad emulated through uhid (Linux only, opt-in:
-/// `UNREAL_UHID_TESTS=1` and write access to /dev/uhid, normally root). The kernel's own hid-playstation binds the
+/// @file evdevuhid_functional_test.cpp
+/// @brief The evdev backend against the real kernel drivers, with the pad emulated through uhid (Linux only, functional: `UNREAL_FUNCTIONAL_TESTS=1` and
+/// write access to /dev/uhid, normally root; filter *_Functional.*). The kernel's own hid-playstation binds the
 /// emulated DualSense / DualSense Edge (054C:0CE6 / 0DF2 over USB): the test answers its probe (feature reports 0x09
 /// pairing, 0x20 firmware, 0x05 calibration), sends input report 0x01 and records every output report the kernel and
 /// the backend write. Checked: one device with the MAC id hid-playstation sets, its controls from evdev (no `lt` jump
@@ -37,6 +37,7 @@
 #include <utility>
 #include <vector>
 
+#include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "hostbackend.h"
 #include "platform/linux/evdevbackend.h"
@@ -447,10 +448,9 @@ private:
 
 bool UhidAllowed(std::string& why)
 {
-    const char* opt = std::getenv("UNREAL_UHID_TESTS");
-    if (opt == nullptr || std::string(opt) != "1")
+    if (!TestTier::Functional())
     {
-        why = "UNREAL_UHID_TESTS=1 not set (the test makes a pad appear on this machine)";
+        why = "functional test: UNREAL_FUNCTIONAL_TESTS=1 not set (the test makes a pad appear on this machine)";
         return false;
     }
     if (access("/dev/uhid", R_OK | W_OK) != 0)
@@ -557,7 +557,7 @@ private:
 };
 }  // namespace
 
-TEST(LinuxUhid_Test, DualSense_KernelMotorsBackendTriggersLightAndControls)
+TEST(LinuxUhid_Functional, DualSense_KernelMotorsBackendTriggersLightAndControls)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -624,7 +624,7 @@ TEST(LinuxUhid_Test, DualSense_KernelMotorsBackendTriggersLightAndControls)
     EXPECT_TRUE(TestWait::For([&] { return session.sink.Removed(id); }));
 }
 
-TEST(LinuxUhid_Test, DualSenseEdge_PaddlesAndFnButtonsArriveOnEveryKernel)
+TEST(LinuxUhid_Functional, DualSenseEdge_PaddlesAndFnButtonsArriveOnEveryKernel)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -647,7 +647,7 @@ TEST(LinuxUhid_Test, DualSenseEdge_PaddlesAndFnButtonsArriveOnEveryKernel)
     EXPECT_FALSE(session.sink.Ever(id, "paddle.p1", 1.0f)) << "the right paddle never pressed";
 }
 
-TEST(LinuxUhid_Test, DualSenseUnderHidGeneric_TheBackendSpeaksItsProtocol)
+TEST(LinuxUhid_Functional, DualSenseUnderHidGeneric_TheBackendSpeaksItsProtocol)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -699,7 +699,7 @@ TEST(LinuxUhid_Test, DualSenseUnderHidGeneric_TheBackendSpeaksItsProtocol)
 /// The GameCube controller adapter (057E:0337) under hid-generic: no input device (its reports are on the Game
 /// Controls page), so the backend finds its hidraw node by the ids, writes the start report 0x13 and shows each port
 /// with a controller in it as a device of its own, as on macOS
-TEST(LinuxUhid_Test, GameCubeAdapter_PortsThroughHidraw)
+TEST(LinuxUhid_Functional, GameCubeAdapter_PortsThroughHidraw)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -750,7 +750,7 @@ TEST(LinuxUhid_Test, GameCubeAdapter_PortsThroughHidraw)
 
 /// An Xbox Wireless Controller over Bluetooth (045E:0B13) under hid-generic: hid-input numbers its keys (Button 4, X,
 /// arrives as BTN_NORTH by its code); the family's HID map names them as HidPad does on macOS, X is `west`
-TEST(LinuxUhid_Test, XboxUnderHidGeneric_KeysNamedByTheFamilysHidMap)
+TEST(LinuxUhid_Functional, XboxUnderHidGeneric_KeysNamedByTheFamilysHidMap)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -791,7 +791,7 @@ TEST(LinuxUhid_Test, XboxUnderHidGeneric_KeysNamedByTheFamilysHidMap)
 /// An Amazon Luna Controller over Bluetooth (0171:0419) under hid-generic: its guide, view and record are consumer
 /// usages inside the Game Pad application, so hid-input gives them the pad's node as KEY_HOMEPAGE / KEY_BACK /
 /// KEY_RECORD; the family's `hid.consumer` map names them as HidPad does on macOS, no hidraw node needed
-TEST(LinuxUhid_Test, LunaConsumerKeysOnThePadsNode)
+TEST(LinuxUhid_Functional, LunaConsumerKeysOnThePadsNode)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -826,7 +826,7 @@ TEST(LinuxUhid_Test, LunaConsumerKeysOnThePadsNode)
     EXPECT_TRUE(TestWait::For([&] { return session.sink.Last(id, "south") == 1.0f; }));
 }
 
-TEST(LinuxUhid_Test, SwitchPro_CaptureAndHdRumbleThroughHidraw)
+TEST(LinuxUhid_Functional, SwitchPro_CaptureAndHdRumbleThroughHidraw)
 {
     std::string why;
     if (!UhidAllowed(why))
@@ -858,7 +858,7 @@ TEST(LinuxUhid_Test, SwitchPro_CaptureAndHdRumbleThroughHidraw)
     ASSERT_TRUE(session.backend->SetRumble(id, {}));
 }
 
-TEST(LinuxUhid_Test, JoyCons_JoinedAsOnePadEachHalfItsSide)
+TEST(LinuxUhid_Functional, JoyCons_JoinedAsOnePadEachHalfItsSide)
 {
     std::string why;
     if (!UhidAllowed(why))

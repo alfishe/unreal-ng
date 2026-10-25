@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "pch.h"
+#include "_helpers/testwaithelper.h"
 
 #include <atomic>
 #include <chrono>
@@ -220,12 +221,7 @@ TEST_F(VideoModeChange_Test, ModeChange_PostsNotificationWithEmulatorId)
     ASSERT_TRUE(_emulator->SetOverscanMode(true));
 
     // Notification dispatch is asynchronous (MessageCenter thread)
-    auto start = std::chrono::steady_clock::now();
-    while (observer.received.load() == 0 &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
-    }
+    TestWait::ForAtLeast(observer.received, 1);
 
     // Waited for the first dispatch to complete above, so no in-flight
     // dispatch can reference the observer after this removal

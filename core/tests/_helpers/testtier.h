@@ -1,5 +1,7 @@
 #pragma once
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -19,6 +21,22 @@ inline bool Long()
 {
     static const bool on = [] {
         const char* v = std::getenv("UNREAL_LONG_TESTS");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return on;
+}
+
+/// @brief true when `UNREAL_FUNCTIONAL_TESTS` is `1`: run the functional tests.
+///
+/// A functional test needs what a unit test must not touch: a real clock or timer, real threads whose pace decides the
+/// outcome, the kernel (uhid), a boot scenario bounded by a deadline. Its suite name ends in `_Functional`, its file lives
+/// in core/tests/functional/ (`*_functional_test.cpp`), and it skips itself (SKIP_UNLESS_FUNCTIONAL) unless this variable
+/// is set: `UNREAL_FUNCTIONAL_TESTS=1 core-tests --gtest_filter='*_Functional.*'` runs exactly them. Not part of the
+/// default run, nor of CI's (core/tests/README.md, Functional tests).
+inline bool Functional()
+{
+    static const bool on = [] {
+        const char* v = std::getenv("UNREAL_FUNCTIONAL_TESTS");
         return v && v[0] == '1' && v[1] == '\0';
     }();
     return on;
@@ -44,3 +62,11 @@ inline std::vector<std::filesystem::path> Sample(const std::vector<std::filesyst
     return picked;
 }
 }  // namespace TestTier
+
+/// @brief First line of a functional test (and of its fixture's SetUp): skips unless `UNREAL_FUNCTIONAL_TESTS=1`
+#define SKIP_UNLESS_FUNCTIONAL()                                                                              \
+    do                                                                                                        \
+    {                                                                                                         \
+        if (!TestTier::Functional())                                                                          \
+            GTEST_SKIP() << "functional test: set UNREAL_FUNCTIONAL_TESTS=1 and filter '*_Functional.*'";    \
+    } while (0)

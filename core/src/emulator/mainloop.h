@@ -123,7 +123,16 @@ public:
     /// Set before the loop starts or while it is stopped
     void SetFrameEndHook(std::function<void(bool rendered)> hook) { _frameEndHook = std::move(hook); }
 
-    /// Adaptive decimation (default on). Tests that assert the fixed cadence turn it off.
+    /// Adaptive decimation reads the wall clock, so it is on only for a real front end. The default of every loop
+    /// created afterwards: on in the product, switched off once at the start of the test binary - a test must not
+    /// depend on the host's speed or load
+    static bool& AdaptiveDefault()
+    {
+        static bool value = true;
+        return value;
+    }
+
+    /// Adaptive decimation (the default above). Tests that assert the fixed cadence get it off through the default.
     void SetTurboRenderAdaptive(bool adaptive) { _turboRenderAdaptive = adaptive; }
     bool IsTurboRenderAdaptive() const { return _turboRenderAdaptive; }
     uint64_t GetTurboRenderDecimation() const { return _turboRenderDecimation; }
@@ -148,7 +157,7 @@ protected:
     /// starts the beam at t=0 instead of a stale end-of-frame position.
     bool _lastFrameRendered = true;
 
-    bool _turboRenderAdaptive = true;
+    bool _turboRenderAdaptive = AdaptiveDefault();
     double _turboRenderMaxFps = 0.0;
     uint64_t _turboRenderDecimation = TURBO_RENDER_DECIMATION;
     double _turboMeasuredFps = 0.0;

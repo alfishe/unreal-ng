@@ -18,6 +18,8 @@
 #include "unrealasm/layout.h"
 #include "unrealasm/registry.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
@@ -77,9 +79,7 @@ std::vector<uint8_t> ReadBytes(const std::filesystem::path& path)
 /// sjasmplus' bytes of a source from #8000 (`length` of them)
 std::vector<uint8_t> Assemble(const char* sjasmplus, const SourceDocument& source, size_t length)
 {
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "prog.asm", codecs::SjasmplusCodec().Encode(source, {}).bytes);
     const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"prog.asm\"\n        SAVEBIN \"out.bin\",#8000," + std::to_string(length) + "\n";

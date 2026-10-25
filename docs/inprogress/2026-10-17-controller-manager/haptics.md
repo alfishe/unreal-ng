@@ -462,7 +462,7 @@ lacks (`HidrawUseFor(LinuxPadFacts)`, the driver from the HID device's uevent `D
 - A Joy-Con pair (the backend's, as on macOS): the left half the low level, the right one the high one, each through
   its own path. joycond's combined device forwards `FF_RUMBLE` to both halves itself.
 
-`LinuxUhid_Test` (opt-in: `UNREAL_UHID_TESTS=1`, root; Linux 7.0 on x86_64) creates the pads through `/dev/uhid`, so
+`LinuxUhid_Functional` (opt-in: `UNREAL_FUNCTIONAL_TESTS=1`, root; Linux 7.0 on x86_64) creates the pads through `/dev/uhid`, so
 the kernel's own hid-playstation / hid-nintendo / hid-generic bind them and the test sees every output report: a
 DualSense (hid-playstation's report 2 with the `FF_RUMBLE` motors, the backend's trigger-only report beside it, the
 light bar through the LED class), a DualSense Edge (paddles and Fn from hidraw on a kernel before 7.2), a DualSense

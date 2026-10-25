@@ -43,15 +43,24 @@ struct Credentials
 /// A self-signed certificate for `name` (SAN DNS:name)
 void MakeCredentials(const std::string& name, Credentials& c)
 {
+    // Every certificate of the process gets its own serial and its own subject (an OU with the serial): the client's
+    // store is process-wide and keeps every certificate handed to TrustExtraPem, and it finds an issuer by subject - a
+    // second "CN=localhost" made the connect verify against the first test's key (it failed when the test ran twice or
+    // after another certificate was trusted)
+    static std::atomic<long> serial{0};
+    const long thisSerial = ++serial;
     c.key = EVP_EC_gen("P-256");
     c.cert = X509_new();
     X509_set_version(c.cert, 2);
-    ASN1_INTEGER_set(X509_get_serialNumber(c.cert), 1);
-    X509_gmtime_adj(X509_getm_notBefore(c.cert), -60);
-    X509_gmtime_adj(X509_getm_notAfter(c.cert), 3600);
+    ASN1_INTEGER_set(X509_get_serialNumber(c.cert), thisSerial);
+    // A fixed validity (2000 .. 2099), not the host's clock: the window is wide enough for any date the verifier uses
+    ASN1_TIME_set_string(X509_getm_notBefore(c.cert), "20000101000000Z");
+    ASN1_TIME_set_string(X509_getm_notAfter(c.cert), "20991231235959Z");
     X509_set_pubkey(c.cert, c.key);
     // The name is built on its own and copied in: OpenSSL 4 returns the certificate's subject as const
     X509_NAME* subject = X509_NAME_new();
+    X509_NAME_add_entry_by_txt(subject, "OU", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(std::to_string(thisSerial).c_str()), -1,
+                               -1, 0);
     X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(name.c_str()), -1, -1, 0);
     X509_set_subject_name(c.cert, subject);
     X509_set_issuer_name(c.cert, subject);

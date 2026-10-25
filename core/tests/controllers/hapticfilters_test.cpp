@@ -12,6 +12,7 @@
 
 #include "haptics/audiofilters.h"
 #include "haptics/hapticmixer.h"
+#include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
 #include "haptics/soundhaptics.h"
@@ -56,7 +57,7 @@ HapticProfile Parse(const char* text)
 
 HapticMixer MakeMixer()
 {
-    return HapticMixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    return HapticMixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
 }
 }  // namespace
 
@@ -247,7 +248,7 @@ TEST(HapticFilters_Test, ProbeEventsPlayTheirRules)
     EXPECT_EQ(level("red"), 1.0f) << "the second OUT matched value & mask";
     EXPECT_EQ(level("hit"), 1.0f) << "a decrease undone within one frame";
     EXPECT_GT(level("bass"), 0.2f);
-    mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));  // past the effects' attacks
+    mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));  // past the effects' attacks
     const RumbleLevels written = mixer.Written("pad");
     EXPECT_GT(written.high, 0.0f);
     EXPECT_GT(written.leftTrigger, 0.0f);
@@ -261,7 +262,7 @@ TEST(HapticFilters_Test, ProbeEventsPlayTheirRules)
     EXPECT_EQ(mixer.Written("pad"), RumbleLevels{}) << "held: frames do not play";
     feed.OnHapticHold(false);
     feed.OnHapticFrame(frame);
-    mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));
+    mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));
     EXPECT_GT(mixer.Written("pad").high, 0.0f) << "live again";
 
     frame.probeEventCount = 1;

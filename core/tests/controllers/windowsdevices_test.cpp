@@ -274,21 +274,18 @@ TEST(WindowsDevices_Test, GameInputSystemButtonsAsGuideAndShare)
 
 #if defined(_WIN32)
 /// The factory's backends on this host: Raw Input always runs, GameInput or XInput serves the Xbox pads, never both.
-/// Boot-free but bound by the backends' start (loading GameInput, the Raw Input window): no 50 ms promise
+/// Boot-free but bound by the backends' start (loading GameInput, the Raw Input window): no time promise
 TEST(WindowsDevices_Test, NativeBackendsServeXboxPadsOnce)
 {
-    const auto started = std::chrono::steady_clock::now();
     HostInputService service;
     service.StartNative();
     std::map<std::string, BackendProbe> probes;
     for (const BackendProbe& probe : service.Probe())
         probes[probe.name] = probe;
-    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
     service.Stop();
     for (const auto& [name, probe] : probes)
         std::cout << "[ backend  ] " << name << (probe.running ? " running" : " off: " + probe.reason) << ", "
                   << probe.devices << " devices\n";
-    std::cout << "[ backend  ] started in " << ms.count() << " ms\n";
 
     ASSERT_EQ(probes.size(), 3u);
     ASSERT_TRUE(probes.count("gameinput") && probes.count("rawinput") && probes.count("xinput"));

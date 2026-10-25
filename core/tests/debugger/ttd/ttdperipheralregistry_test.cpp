@@ -4,7 +4,6 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "debugger/ttd/engine/ttdregiontracker.h"
 
-#include <chrono>
 #include <cstring>
 #include <numeric>
 #include <random>
@@ -322,34 +321,19 @@ TEST_F(TTDPeripheralRegistryTest, EmptyBlobNotRestored)
     EXPECT_EQ(mock.GetState(), originalState);
 }
 
-// Regression gate: peripheral capture/restore must stay within the per-frame
-// budget. Like TtdCaptureCostGate_Test, this is a wall-clock *gate*, not a
-// micro-benchmark (those live in core/benchmarks/): its job is to catch an
-// algorithmic blowup or an accidental extra full copy, not to track fine
-// timings. The budgets are therefore deliberately generous.
-//
-// The workload is the worst case on purpose - 32 KB of *incompressible*
-// random data, so zstd does maximum work and cannot early-out. Measured on
-// the development machine: ~20 us/iteration Release, ~1070 us/iteration
-// Debug. The 50x Debug/Release spread is why the budgets are set from the
-// Debug number: the earlier 1000 us capture budget was calibrated on Release
-// alone and so failed 100% of the time in a Debug build - a broken gate, not
-// a flaky one.
-TEST_F(TTDPeripheralRegistryTest, PerformanceBudget)
+// The worst case for capture/restore: 32 KB of *incompressible* data (zstd does maximum work and cannot early-out).
+// What it costs in time is a speed of the host and of the build type (~20 us Release, ~1000 us Debug): the benchmark
+// core/benchmarks/debugger/ttd/ttd_peripheralregistry_benchmark.cpp measures it, no test here reads a clock. The test
+// pins what must hold on any host: the state survives capture, a change and restore bit for bit, and the blob of
+// random data stays near the raw size (a duplicated pass or a copy would show as a blown-up blob or a wrong state)
+TEST_F(TTDPeripheralRegistryTest, LargeIncompressibleStateRoundTrips)
 {
-    // ~9x the Debug measurement, ~500x the Release one. An O(n) -> O(n^2)
-    // regression or a duplicated compression pass still fails immediately.
-    constexpr int64_t kCaptureBudgetUs = 10000;
-    constexpr int64_t kRestoreBudgetUs = 10000;
-
     constexpr size_t kLargeStateSize = 32768;  // 32KB (e.g., GeneralSound sample RAM)
-    constexpr int kIterations = 100;
 
     MockPeripheral large(kLargeStateSize, PeripheralId::GeneralSound);
 
-    // Random state data
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    // Random state data: a fixed seed, the same bytes on every run
+    std::mt19937 gen(0x5EED);
     std::uniform_int_distribution<> dist(0, 255);
     std::vector<uint8_t> randomState(kLargeStateSize);
     for (auto& b : randomState)
@@ -358,42 +342,16 @@ TEST_F(TTDPeripheralRegistryTest, PerformanceBudget)
 
     registry.Register(&large);
 
-    // Measure capture time
-    auto captureStart = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < kIterations; ++i)
-    {
-        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-        registry.CaptureAll(blobs);
-    }
-    auto captureEnd = std::chrono::high_resolution_clock::now();
-    auto captureUs = std::chrono::duration_cast<std::chrono::microseconds>(
-        captureEnd - captureStart).count() / kIterations;
-
-    // Measure restore time
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
+    const auto& blob = blobs[static_cast<uint8_t>(PeripheralId::GeneralSound)];
+    EXPECT_FALSE(blob.empty());
+    EXPECT_LT(blob.size(), kLargeStateSize + kLargeStateSize / 16) << "random data must not grow past the raw size by much";
 
-    auto restoreStart = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < kIterations; ++i)
-    {
-        registry.RestoreAll(blobs);
-    }
-    auto restoreEnd = std::chrono::high_resolution_clock::now();
-    auto restoreUs = std::chrono::duration_cast<std::chrono::microseconds>(
-        restoreEnd - restoreStart).count() / kIterations;
-
-    // Report the measurements so a CI run shows the trend even when it passes.
-    RecordProperty("capture_us_per_iteration", std::to_string(captureUs));
-    RecordProperty("restore_us_per_iteration", std::to_string(restoreUs));
-    RecordProperty("capture_budget_us", std::to_string(kCaptureBudgetUs));
-    RecordProperty("restore_budget_us", std::to_string(kRestoreBudgetUs));
-
-    EXPECT_LT(captureUs, kCaptureBudgetUs)
-        << "Capture took " << captureUs << " us/iteration for " << kLargeStateSize
-        << " bytes, budget " << kCaptureBudgetUs << " us.";
-    EXPECT_LT(restoreUs, kRestoreBudgetUs)
-        << "Restore took " << restoreUs << " us/iteration for " << kLargeStateSize
-        << " bytes, budget " << kRestoreBudgetUs << " us.";
+    large.SetState(std::vector<uint8_t>(kLargeStateSize, 0xAA));
+    ASSERT_NE(large.GetState(), randomState);
+    registry.RestoreAll(blobs);
+    EXPECT_EQ(large.GetState(), randomState);
 }
 
 TEST_F(TTDPeripheralRegistryTest, CompressionEfficiency)

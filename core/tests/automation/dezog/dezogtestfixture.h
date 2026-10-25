@@ -26,6 +26,7 @@
 #include "emulator/platform.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 
+#include "_helpers/messagecenterdrain.h"
 #include "_helpers/testwaithelper.h"
 
 #include <chrono>
@@ -172,19 +173,18 @@ protected:
         return _events.size();
     }
 
-    /// @brief Prove no further pause event arrives within `settle`.
+    /// @brief Prove no further pause event is on its way: everything the emulator posted to the MessageCenter before
+    /// this call has been delivered (DrainMessageCenter: a sentinel through the same queue), so the pause events
+    /// that exist have reached `_events` and the caller counts them. No settle window, no guessed interval.
     ///
-    /// The negative counterpart of waitForEvent, and the reason the tests below
-    /// no longer sleep before an `EXPECT_EQ(pendingEvents(), 0)`. A fixed sleep
-    /// was wrong in both directions: it always paid its full length, and it
-    /// still only proved "nothing arrived in the interval I guessed". This
-    /// waits on the same condition variable, so a stray event ends the wait
-    /// immediately (fast, informative failure) while the passing path costs the
-    /// settle window once.
-    bool noFurtherEvents(std::chrono::milliseconds settle = std::chrono::milliseconds(10))
+    /// The adapter hears a stop from the MessageCenter (onBreakpointMessage); the events a test expects have been
+    /// waited for with waitForEvent, so what the drain can still deliver is exactly the surplus.
+    bool noFurtherEvents()
     {
-        std::unique_lock<std::mutex> lock(_eventMutex);
-        return !_eventCv.wait_for(lock, settle, [this] { return !_events.empty(); });
+        if (!DrainMessageCenter(MessageCenter::DefaultMessageCenter()))
+            return false;
+        std::lock_guard<std::mutex> lock(_eventMutex);
+        return _events.empty();
     }
 
     /// @brief Number of complete frames the emulated machine has run.

@@ -11,6 +11,7 @@
 
 #include "fake/fakebackend.h"
 #include "haptics/hapticmixer.h"
+#include "_helpers/fixedmixerclock.h"
 #include "hostinputservice.h"
 
 using namespace controllers;
@@ -34,8 +35,8 @@ struct Recorder
 TEST(Haptics_Test, Mixer_LoudestPerChannelEndsOnTimeAndTheGate)
 {
     Recorder recorder;
-    HapticMixer mixer(recorder.Writer(), false);
-    const auto start = HapticMixer::Clock::now();
+    HapticMixer mixer(recorder.Writer(), false, FixedMixerClock());
+    const auto start = FixedMixerTime();
     mixer.Play("pad", {{0.5f, 0.0f, 0.0f, 0.0f}, 1000, false});
     mixer.Play("pad", {{0.2f, 0.8f, 0.0f, 0.0f}, 1000, false});
     EXPECT_EQ(mixer.Written("pad"), (RumbleLevels{0.5f, 0.8f, 0.0f, 0.0f})) << "the loudest per channel";

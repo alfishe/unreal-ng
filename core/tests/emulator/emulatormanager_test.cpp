@@ -181,12 +181,8 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
     // Start the emulator asynchronously using the built-in method
     emulator->StartAsync();
 
-    // Wait for the emulator to transition to running state (1s budget: the
-    // original 100ms cap could trip on a CPU-starved parallel shard runner)
-    for (int i = 0; i < 500 && emulator->GetState() != StateRun; ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    // Wait for the emulator to transition to running state (the wait's timeout only bounds a failure)
+    TestWait::For([&] { return emulator->GetState() == StateRun; }, std::chrono::milliseconds(1000));
 
     // Verify the emulator transitioned to a running state
     int currentState = emulator->GetState();
@@ -205,22 +201,16 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
         // Pause the emulator
         emulator->Pause();
 
-        // Wait for pause to take effect (1s budget - see StartAsync note)
-        for (int i = 0; i < 500 && !emulator->IsPaused(); ++i)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        // Wait for pause to take effect
+        TestWait::For([&] { return emulator->IsPaused(); }, std::chrono::milliseconds(1000));
 
         EXPECT_TRUE(emulator->IsPaused()) << "Emulator should be paused";
 
         // Resume the emulator
         emulator->Resume();
 
-        // Wait for resume to take effect (1s budget - see StartAsync note)
-        for (int i = 0; i < 500 && emulator->IsPaused(); ++i)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        // Wait for resume to take effect
+        TestWait::For([&] { return !emulator->IsPaused(); }, std::chrono::milliseconds(1000));
 
         EXPECT_FALSE(emulator->IsPaused()) << "Emulator should not be paused after resume";
     }

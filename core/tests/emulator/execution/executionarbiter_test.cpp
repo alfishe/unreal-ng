@@ -7,107 +7,15 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/executionarbitertesthelpers.h"
 #include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/execution/executionarbiter.h"
 
 using namespace execution;
+using namespace arbitertest;
 using namespace std::chrono_literals;
 
-namespace
-{
-
-const Requester kGui{Origin::Gui, {}};
-const Requester kApi{Origin::WebApi, {}};
-const Requester kTtd{Origin::Ttd, {}};
-const Requester kGdb{Origin::Gdb, "1"};
-const Requester kDezog{Origin::DeZog, "a"};
-
-/// Counts threads that execute "Z80 instructions" or a command body at once: more than one is the bug
-struct DriveMonitor
-{
-    std::atomic<int> active{0};
-    std::atomic<int> violations{0};
-
-    void Enter()
-    {
-        if (active.fetch_add(1, std::memory_order_acq_rel) != 0)
-            violations.fetch_add(1, std::memory_order_relaxed);
-    }
-    void Leave() { active.fetch_sub(1, std::memory_order_acq_rel); }
-};
-
-/// A main loop: executes "instructions" while the arbiter lets it, parks when told
-class FakeLoop
-{
-public:
-    FakeLoop(ExecutionArbiter& arbiter, DriveMonitor& monitor) : _arbiter(arbiter), _monitor(monitor)
-    {
-        _thread = std::thread([this]() { Run(); });
-        TestWait::For([this]() { return _attached.load(); });
-    }
-    ~FakeLoop() { Stop(); }
-
-    void Stop()
-    {
-        if (!_thread.joinable())
-            return;
-        _arbiter.BeginStop();
-        _thread.join();
-    }
-
-    std::thread::id Id() const { return _thread.get_id(); }
-    uint64_t Instructions() const { return _instructions.load(); }
-
-    /// Runs on the loop's thread at its next instruction boundary (a "hook")
-    std::function<void()> hook;
-    std::atomic<bool> hookPending{false};
-
-private:
-    void Run()
-    {
-        _arbiter.AttachMainLoop();
-        _attached = true;
-        while (_arbiter.LoopWait())
-        {
-            while (!_arbiter.ShouldYield())
-            {
-                _monitor.Enter();
-                _instructions.fetch_add(1, std::memory_order_relaxed);
-                _monitor.Leave();
-                if (hookPending.exchange(false) && hook)
-                    hook();
-                std::this_thread::yield();
-            }
-        }
-        _arbiter.DetachMainLoop();
-    }
-
-    ExecutionArbiter& _arbiter;
-    DriveMonitor& _monitor;
-    std::thread _thread;
-    std::atomic<bool> _attached{false};
-    std::atomic<uint64_t> _instructions{0};
-};
-
-/// A command body that blocks until released (a long journal allocation, a slow media insert)
-struct Gate
-{
-    std::atomic<bool> entered{false};
-    std::atomic<bool> open{false};
-
-    CommandBody Body(DriveMonitor& monitor)
-    {
-        return [this, &monitor](CommandContext& ctx) {
-            monitor.Enter();
-            entered = true;
-            TestWait::For([this, &ctx]() { return open.load() || ctx.IsAborted(); });
-            monitor.Leave();
-        };
-    }
-};
-
-}  // namespace
 
 TEST(ExecutionArbiter_Test, ForeignPauseSurvivesCommandEnd)
 {
@@ -223,25 +131,6 @@ TEST(ExecutionArbiter_Test, RunDuringADrivingCommandStartsTheLoopAfterIt)
     EXPECT_EQ(run.Wait(1s).outcome, Outcome::Applied);
     EXPECT_TRUE(TestWait::For([&]() { return loop.Instructions() > before; }));
     EXPECT_EQ(monitor.violations.load(), 0);
-}
-
-TEST(ExecutionArbiter_Test, ThrottleWindowGathersIntentsWhileRunning)
-{
-    ExecutionArbiter arbiter;
-    DriveMonitor monitor;
-    FakeLoop loop(arbiter, monitor);
-    ASSERT_EQ(arbiter.SubmitIntent(Intent::Run, kGui).Wait(1s).outcome, Outcome::Applied);
-    int edges = 0;
-    arbiter.SetEdgeListener([&](const IntentEdge&) { ++edges; });
-    arbiter.SetThrottle(20ms);  // within the 50 ms test budget
-
-    Ticket flap1 = arbiter.SubmitIntent(Intent::Pause, kGui);
-    Ticket flap2 = arbiter.SubmitIntent(Intent::Run, kGui);
-    EXPECT_FALSE(flap1.Done()) << "gathered for the window";
-    EXPECT_EQ(flap1.Wait(1s).outcome, Outcome::Coalesced);
-    EXPECT_EQ(flap2.Wait(1s).outcome, Outcome::Applied);
-    EXPECT_EQ(edges, 0) << "a pause-run flap inside the window is no change";
-    EXPECT_EQ(arbiter.CurrentIntent(), Intent::Run);
 }
 
 TEST(ExecutionArbiter_Test, PauseFromTheDriverSupersedesQueuedIntents)
@@ -393,21 +282,6 @@ TEST(ExecutionArbiter_Test, WaitingOnOwnQueuedRequestIsBusyNotADeadlock)
     EXPECT_EQ(waited.outcome, Outcome::Busy);
     EXPECT_NE(waited.detail.find("self-wait"), std::string::npos);
     EXPECT_EQ(arbiter.CurrentIntent(), Intent::Run) << "still applied after the outer command";
-}
-
-TEST(ExecutionArbiter_Test, DeadlinePassedIsBusyAndNamesTheHolder)
-{
-    ExecutionArbiter arbiter;
-    DriveMonitor monitor;
-    Gate gate;
-    TestThread holder([&]() { arbiter.Execute(kTtd, "ttd.journal", gate.Body(monitor)); }, [&] { gate.open = true; });
-    ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
-    const Result r = arbiter.Execute(kApi, "poke", [](CommandContext&) {}, {}, Clock::now() + 5ms);
-    EXPECT_EQ(r.outcome, Outcome::Busy);
-    EXPECT_NE(r.detail.find("ttd.journal"), std::string::npos) << r.detail;
-    EXPECT_TRUE(arbiter.GetSnapshot().queue.empty()) << "withdrawn";
-    gate.open = true;
-    holder.Join();
 }
 
 TEST(ExecutionArbiter_Test, PostedCommandRunsOnTheParkedLoop)

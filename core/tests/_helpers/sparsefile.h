@@ -36,14 +36,19 @@ inline bool ResizeSparse(const std::filesystem::path& path, uint64_t size)
     if (file == INVALID_HANDLE_VALUE)
         return false;
     DWORD returned = 0;
-    const bool marked = DeviceIoControl(file, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr) != 0;
+    bool ok = DeviceIoControl(file, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr) != 0;
+    // SetEndOfFile on the sparse file, not std::filesystem::resize_file: the MinGW runtime's truncate writes the new
+    // tail as zeros (17 GiB of them: 13 s, then "No space left on device" and every later test starved of disk)
+    LARGE_INTEGER end;
+    end.QuadPart = static_cast<LONGLONG>(size);
+    ok = ok && SetFilePointerEx(file, end, nullptr, FILE_BEGIN) != 0 && SetEndOfFile(file) != 0;
     CloseHandle(file);
-    if (!marked)
-        return false;
-#endif
+    return ok;
+#else
     std::error_code ec;
     std::filesystem::resize_file(path, size, ec);
     return !ec;
+#endif
 }
 
 }  // namespace testfiles

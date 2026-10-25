@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/featuremanager.h"
+#include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcompression.h"
@@ -57,8 +58,7 @@ protected:
         z80->pc = 0x8000;
         z80->sp = 0xBFF0;
 
-        _dir = std::filesystem::temp_directory_path() /
-               ("unreal-ng-clip-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        _dir = std::filesystem::path(TestPathHelper::GetUniqueTestScratchPath("ttd-clip"));
     }
 
     void TearDown() override

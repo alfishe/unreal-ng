@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <atomic>
 #include <optional>
 #include <thread>
@@ -82,7 +83,9 @@ TEST_F(ExecutionArbiterMachine_Test, CpuHoldsOnAnotherThreadNeverResumeAStep)
     std::atomic<bool> stop{false};
     std::atomic<int> pairs{0};
     std::thread journalSwitch([&]() {
-        while (!stop.load())
+        // bounded by both sides: it ends with the test, and after 20000 pairs of its own (a thread that only stopped with
+        // the test could starve the stepping thread for good under load)
+        while (!stop.load() && pairs.load() < 20000)
         {
             {
                 Emulator::CpuHold hold(*_emulator, "ttd.journal");  // what the silent pair became
@@ -213,8 +216,12 @@ TEST_F(ExecutionArbiterMachine_Test, ADirectRunKeepsEveryOtherThreadOut)
         _emulator->GetArbiter().Execute(execution::Requester{execution::Origin::Ttd, {}}, "ttd.journal",
                                         [&](execution::CommandContext&) { commandRan = true; });
     });
-    EXPECT_FALSE(TestWait::For([&]() { return commandRan.load(); }, std::chrono::milliseconds(20)))
-        << "the command was served during the run";
+    // Queued behind the run, which is still in progress (it waits for Release): the queue is the proof, not a window of time
+    ASSERT_TRUE(TestWait::For([&]() {
+        const auto queue = _emulator->GetArbiter().GetSnapshot().queue;
+        return std::any_of(queue.begin(), queue.end(), [](const execution::SnapshotEntry& e) { return e.command; });
+    }));
+    EXPECT_FALSE(commandRan.load()) << "the command was served during the run";
     run.Release();
     other.join();
     EXPECT_TRUE(commandRan.load()) << "served after the run";
@@ -229,8 +236,8 @@ TEST_F(ExecutionArbiterMachine_Test, AResumeDuringADirectRunAppliesAfterIt)
     const uint64_t frame = Frame(_emulator);
     execution::Ticket resume = _emulator->GetArbiter().SubmitIntent(
         execution::Intent::Run, execution::Requester{execution::Origin::Gui, {}});
-    EXPECT_FALSE(TestWait::For([&]() { return resume.Done(); }, std::chrono::milliseconds(20)))
-        << "the Resume applied during the run";
+    EXPECT_FALSE(resume.Done()) << "the Resume applied during the run";
+    EXPECT_FALSE(_emulator->GetArbiter().GetSnapshot().queue.empty()) << "it waits behind the run, not lost";
     EXPECT_EQ(Frame(_emulator), frame) << "the main loop ran during the run";
     run.Release();
     EXPECT_EQ(resume.Wait(std::chrono::seconds(1)).outcome, execution::Outcome::Applied);
@@ -578,12 +585,11 @@ struct ForeignHold
 TEST_F(ExecutionArbiterMachine_Test, APauseBehindACommandReturnsAtOnceQueuedAndApplyLater)
 {
     ForeignHold command(_emulator);
-    const auto t0 = std::chrono::steady_clock::now();
+    // The command is held until command.Release() below, so a Pause() that returned Pending did not wait for it (a
+    // Pause that waited would never return): no clock is needed to tell
     const execution::Result result = _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}});
-    const auto waited = std::chrono::steady_clock::now() - t0;
-    EXPECT_EQ(result.outcome, execution::Outcome::Pending);
+    EXPECT_EQ(result.outcome, execution::Outcome::Pending) << "it did not wait for the command";
     EXPECT_NE(result.detail.find("long command"), std::string::npos) << result.detail;
-    EXPECT_LT(waited, 200ms) << "it did not wait for the command";
     command.Release();
     EXPECT_TRUE(TestWait::For([&]() { return _emulator->IsPaused() && _emulator->IsEmulationParked(); }))
         << "the queued pause applied when the command ended";

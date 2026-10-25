@@ -5,6 +5,7 @@
 // and the machine ends parked when paused. UNREAL_EXEC_FUZZ_SEED replays one seed, UNREAL_EXEC_FUZZ_ITERATIONS runs
 // more (default 3: each seed boots a machine, about 100 ms).
 
+#include "_helpers/testtier.h"
 #include "stdafx.h"
 #include "pch.h"
 
@@ -165,8 +166,9 @@ std::vector<std::string> RunMachineScenario(uint32_t seed)
 }  // namespace
 
 // Boot-bound: each seed starts a Pentagon (turbo), about 100 ms; the default set is 3 seeds
-TEST(ExecutionArbiterMachineFuzz_Test, ConcurrentControlKeepsOneDriverAndExactSteps)
+TEST(ExecutionArbiterMachineFuzz_Functional, ConcurrentControlKeepsOneDriverAndExactSteps)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     const char* one = std::getenv("UNREAL_EXEC_FUZZ_SEED");
     const uint32_t first = one ? EnvU32("UNREAL_EXEC_FUZZ_SEED", 0) : 1;
     const uint32_t count = one ? 1 : std::min<uint32_t>(EnvU32("UNREAL_EXEC_FUZZ_ITERATIONS", 3), 200);
@@ -211,8 +213,9 @@ uint64_t MachineHash(Emulator* emulator)
 /// submitting commands that change the machine and put it back (FRAMES flipped, then restored - net nothing, unless one
 /// is let into the step, where the ROM's interrupt increments the flipped value). The two end states must be equal.
 /// Boot-bound: one Pentagon boot, about 80 ms
-TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoAStep)
+TEST(ExecutionArbiterMachineFuzz_Functional, CommandsFromOtherThreadsNeverReachIntoAStep)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     emulator->EnableTurboMode();
@@ -225,11 +228,16 @@ TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoASt
     auto runFrom = [&](int noiseThreads) {
         EXPECT_TRUE(emulator->LoadSnapshot(path));
         std::atomic<bool> stop{false};
+        std::atomic<unsigned> commands{0};
         std::vector<std::thread> noise;
+        // Each noise thread is bounded by both sides: it ends when the run is over, and after kNoiseCommands of its own.
+        // A thread that only stopped with the run could starve it: under a 6-shard load on MinGW three noise threads kept
+        // the arbiter busy for good and RunNFrames never got in (a livelock, 25 minutes of CPU)
+        constexpr unsigned kNoiseCommands = 400;
         for (int i = 0; i < noiseThreads; ++i)
             noise.emplace_back([&, i]() {
                 const execution::Requester who{i % 2 ? execution::Origin::Gui : execution::Origin::Ttd, {}};
-                while (!stop.load())
+                for (unsigned n = 0; n < kNoiseCommands && !stop.load(); ++n)
                 {
                     emulator->GetArbiter().Execute(who, "noise", [&](execution::CommandContext&) {
                         Memory* memory = emulator->GetContext()->pMemory;
@@ -237,16 +245,23 @@ TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoASt
                         memory->DirectWriteToZ80Memory(23672, static_cast<uint8_t>(frames ^ 0xFF));
                         std::this_thread::yield();
                         memory->DirectWriteToZ80Memory(23672, frames);
+                        commands++;
                     });
                     {
                         Emulator::CpuHold hold(*emulator, "noise.hold");  // a hold as well
                     }
                 }
             });
+        // The noise is running before the frames start (a test that nothing disturbed proves nothing)
+        if (noiseThreads > 0)
+            EXPECT_TRUE(TestWait::For([&] { return commands.load() > 0; }));
         emulator->RunNFrames(40);
         stop = true;
         for (auto& n : noise)
             n.join();
+        // The noise was there: the commands ran (a test that nothing disturbed proves nothing)
+        if (noiseThreads > 0)
+            EXPECT_GT(commands.load(), 0u) << "no noise command ran: the check would be vacuous";
         return MachineHash(emulator);
     };
 
@@ -261,8 +276,9 @@ TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoASt
 /// stop, in a seeded order. These are the paths the bug ran through (the GUI's journal switch on adoption) and that X3
 /// turned into CPU holds. Checked: no second driver, every counted RunNFrames(k) exact, no hang.
 /// Boot-bound: each seed starts a Pentagon (turbo) with TTD on, about 100 ms; 3 seeds by default
-TEST(ExecutionArbiterMachineFuzz_Test, TtdRecordingUnderConcurrentControl)
+TEST(ExecutionArbiterMachineFuzz_Functional, TtdRecordingUnderConcurrentControl)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     const char* one = std::getenv("UNREAL_EXEC_FUZZ_SEED");
     const uint32_t first = one ? EnvU32("UNREAL_EXEC_FUZZ_SEED", 0) : 1;
     const uint32_t count = one ? 1 : std::min<uint32_t>(EnvU32("UNREAL_EXEC_FUZZ_ITERATIONS", 3), 200);
@@ -407,8 +423,9 @@ uint32_t FirstSeed()
 /// one thread through the group (recording, its stop / seek / resume, keys, parallel slaves) and two through the
 /// master's control (pauses, resumes, holds, direct runs counted exactly). Never two drivers on any module, every
 /// counted run exact, no hang
-TEST(ExecutionArbiterMachineFuzz_Test, ZXPolyGroupUnderConcurrentControl)
+TEST(ExecutionArbiterMachineFuzz_Functional, ZXPolyGroupUnderConcurrentControl)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     EmulatorManager* manager = EmulatorManager::GetInstance();
     const uint32_t first = FirstSeed();
     for (uint32_t seed = first; seed < first + SeedCount(); ++seed)
@@ -485,8 +502,9 @@ TEST(ExecutionArbiterMachineFuzz_Test, ZXPolyGroupUnderConcurrentControl)
 /// RZX playback in the matrix: a running 48K playing a recording, one thread through the playback (play, stop, seek,
 /// status) and two through the control. Never two drivers, no hang (a direct run under a playback ends a little
 /// past its frame boundary: frames are not counted here)
-TEST(ExecutionArbiterMachineFuzz_Test, RzxPlaybackUnderConcurrentControl)
+TEST(ExecutionArbiterMachineFuzz_Functional, RzxPlaybackUnderConcurrentControl)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     const std::string rzx =
         (TestPathHelper::FindProjectRoot() / "testdata" / "loaders" / "rzx" / "archive" / "garfield.rzx").string();
     const uint32_t first = FirstSeed();
@@ -541,8 +559,9 @@ TEST(ExecutionArbiterMachineFuzz_Test, RzxPlaybackUnderConcurrentControl)
 }
 
 /// Probe (not in the default run): RunNFrames on a ZX-Poly master from one thread, group operations in between
-TEST(ExecutionArbiterMachineFuzz_Test, DISABLED_ZXPolyMasterRunNFramesIsExactSingleThreaded)
+TEST(ExecutionArbiterMachineFuzz_Functional, DISABLED_ZXPolyMasterRunNFramesIsExactSingleThreaded)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::string error;
     std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine(

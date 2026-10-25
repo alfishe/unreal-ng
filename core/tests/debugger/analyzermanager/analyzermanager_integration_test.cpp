@@ -25,6 +25,7 @@
 #include "emulator/memory/memory.h"
 #include "base/featuremanager.h"
 
+#include "_helpers/messagecenterdrain.h"
 #include "_helpers/testwaithelper.h"
 
 // Mock Analyzer that tracks breakpoint hits
@@ -160,14 +161,12 @@ TEST_F(AnalyzerManagerIntegration_test, AnalyzerBreakpointIsSilent)
     // Execute a few CPU cycles (enough to hit 0x0000 and continue)
     _emulator->RunNCPUCycles(10, false);
 
-    // Wait for the analyzer callback, then give MessageCenter a bounded window
-    // to deliver a notification it must not deliver. A fixed 50 ms sleep was
-    // wrong in both directions: it paid its full length on every pass, and it
-    // still only proved "nothing arrived in the interval I guessed".
+    // Wait for the analyzer callback, then drain MessageCenter: everything posted before the drain has been delivered,
+    // so "nothing arrived" is a fact and not "nothing arrived in the interval I guessed".
     EXPECT_TRUE(TestWait::ForAtLeast(mock->breakpointHitCount, 1))
         << "Analyzer onBreakpointHit was never called";
-    EXPECT_TRUE(TestWait::ForExactly(messageCenterNotifications, 0))
-        << "Silent breakpoint leaked a MessageCenter notification";
+    ASSERT_TRUE(DrainMessageCenter(messageCenter));
+    EXPECT_EQ(messageCenterNotifications.load(), 0) << "Silent breakpoint leaked a MessageCenter notification";
     
     // Remove observer
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -217,12 +216,7 @@ TEST_F(AnalyzerManagerIntegration_test, InteractiveBreakpointTriggersMessageCent
     _emulator->RunNCPUCycles(10, false);
     
     // Wait for async notification
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointHit.load() && 
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
-    }
+    TestWait::For([&] { return breakpointHit.load(); });
     
     // Remove observer
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -271,11 +265,11 @@ TEST_F(AnalyzerManagerIntegration_test, MixedBreakpointsBehavior)
     // Execute enough cycles to hit the analyzer breakpoint at 0x0000
     _emulator->RunNCPUCycles(10, false);
 
-    // As above: wait for the callback, then bound the negative assertion.
+    // As above: wait for the callback, then drain MessageCenter before the negative assertion.
     EXPECT_TRUE(TestWait::ForAtLeast(mock->breakpointHitCount, 1))
         << "Analyzer onBreakpointHit was never called";
-    EXPECT_TRUE(TestWait::ForExactly(messageCenterNotifications, 0))
-        << "Silent breakpoint leaked a MessageCenter notification";
+    ASSERT_TRUE(DrainMessageCenter(messageCenter));
+    EXPECT_EQ(messageCenterNotifications.load(), 0) << "Silent breakpoint leaked a MessageCenter notification";
     
     // Remove observer
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -449,7 +443,7 @@ TEST_F(AnalyzerManagerIntegration_test, PageSpecificAnalyzerBreakpointIsSilent)
     WriteTestCode(testCode, sizeof(testCode));
     _emulator->RunNCPUCycles(5, false);
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(DrainMessageCenter(messageCenter));
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // Page-specific analyzer breakpoint should be silent

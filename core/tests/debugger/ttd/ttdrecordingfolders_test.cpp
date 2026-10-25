@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -24,22 +23,33 @@ namespace
 {
     constexpr uint32_t kNoSuchProcess = 0x7FFFFFF0u;   // above every system's pid limit
 
-    /// Dates @p path back by @p age through the OS API: libstdc++ on Windows sets no folder's time
+    /// The "now" of every test here: a fixed instant (2027-01-15 08:00:00 UTC), not the host's clock - the folders are dated
+    /// back from it and the cleanup is given the same instant
+    constexpr int64_t kNowUnixSeconds = 1800000000;
+
+    /// Dates @p path back by @p age from kNowUnixSeconds through the OS API: libstdc++ on Windows sets no folder's time
     void SetAge(const fs::path& path, std::chrono::hours age)
     {
-        const int64_t seconds = static_cast<int64_t>(std::time(nullptr)) - std::chrono::seconds(age).count();
+        const int64_t seconds = kNowUnixSeconds - std::chrono::seconds(age).count();
         ASSERT_TRUE(SetMTimeUnixSeconds(path, seconds)) << FileHelper::FromFsPath(path);
     }
 
     struct Root
     {
         std::string path = TestPathHelper::GetUniqueTestScratchPath("ttd-recordings");
-        fs::file_time_type now = fs::file_time_type::clock::now();
+        fs::file_time_type now;
 
         Root()
         {
             FileHelper::DeleteFolder(path);
             FileHelper::CreateFolders(path);
+            // kNowUnixSeconds as a file_time_type (its epoch differs between standard libraries): the time the file
+            // system reads back from a marker file dated to it
+            const fs::path marker = FileHelper::ToFsPath(FileHelper::PathCombine(path, "now.marker"));
+            std::ofstream(marker).put('x');
+            EXPECT_TRUE(SetMTimeUnixSeconds(marker, kNowUnixSeconds));
+            now = fs::last_write_time(marker);
+            fs::remove(marker);
         }
 
         /// A recording folder with one segment file, @p days old, owned by @p pid (0: no owner file)

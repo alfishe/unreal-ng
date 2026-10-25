@@ -7,6 +7,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/ttdv1tests.h"
@@ -64,6 +65,9 @@ static void PinTimeZone()
 int main(int argc, char **argv)
 {
   PinTimeZone();
+  // No wall clock in a test: the adaptive turbo render decimation measures the host's speed, so two machines under
+  // load skipped different frames. Every loop of this process uses the fixed cadence
+  MainLoop::AdaptiveDefault() = false;
   // Session journals (<image>.usession) never land next to test data: a test that wants one says journal: replay
   SessionWriteMap::OverrideJournalDefault(false);
   // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that

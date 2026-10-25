@@ -45,7 +45,7 @@ float HapticEffect::Envelope(uint32_t ms) const
     return 0;
 }
 
-HapticMixer::HapticMixer(Writer writer, bool threaded) : _writer(std::move(writer))
+HapticMixer::HapticMixer(Writer writer, bool threaded, NowFunction now) : _writer(std::move(writer)), _now(std::move(now))
 {
     if (threaded)
         _thread = std::thread([this] { Run(); });
@@ -70,7 +70,7 @@ void HapticMixer::Play(const HostDeviceId& device, const HapticEffect& effect)
         std::lock_guard lock(_mutex);
         if (!_gate && !effect.feedback)
             return;
-        const Clock::time_point now = Clock::now();
+        const Clock::time_point now = Now();
         _active[device].push_back({effect, now, now + std::chrono::milliseconds(effect.durationMs)});
         TickLocked(now, writes);
     }
@@ -91,7 +91,7 @@ void HapticMixer::SetGate(bool open)
             for (auto& [device, effects] : _active)
                 effects.erase(std::remove_if(effects.begin(), effects.end(), [](const Active& a) { return !a.effect.feedback; }),
                               effects.end());
-            TickLocked(Clock::now(), writes);
+            TickLocked(Now(), writes);
         }
     }
     Write(writes);
@@ -127,7 +127,7 @@ void HapticMixer::StopGameEffects(const HostDeviceId& device)
         auto& effects = found->second;
         effects.erase(std::remove_if(effects.begin(), effects.end(), [](const Active& a) { return !a.effect.feedback; }),
                       effects.end());
-        TickLocked(Clock::now(), writes);
+        TickLocked(Now(), writes);
     }
     Write(writes);
 }
@@ -138,7 +138,7 @@ void HapticMixer::StopAll()
     {
         std::lock_guard lock(_mutex);
         _active.clear();
-        TickLocked(Clock::now(), writes);
+        TickLocked(Now(), writes);
     }
     Write(writes);
 }
@@ -228,7 +228,7 @@ void HapticMixer::Run()
             {
                 next = std::min(next, active.end);
                 if (active.effect.shape != HapticShape::Pulse)
-                    next = std::min(next, Clock::now() + kEnvelopePeriod);
+                    next = std::min(next, Now() + kEnvelopePeriod);
             }
         }
         if (next == Clock::time_point::max())
@@ -238,7 +238,7 @@ void HapticMixer::Run()
         if (_stopping)
             break;
         std::vector<std::pair<HostDeviceId, RumbleLevels>> writes;
-        TickLocked(Clock::now(), writes);
+        TickLocked(Now(), writes);
         lock.unlock();
         Write(writes);
         lock.lock();

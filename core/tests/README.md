@@ -43,7 +43,8 @@ regression tests: [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.m
 12. **Budget: about 10 ms per test, an integration test under 1 s**: the full scenario goes behind `TestTier::Long()` (`UNREAL_LONG_TESTS=1`, see [Test Speed](#test-speed--determinism))
 13. **Stop when the assertion is satisfied**: Do not keep looping once the test can no longer fail
 14. **Turn off audio work for boot-bound tests**: `EnableTurboMode()` - but never when asserting on rendered pixels
-15. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
+15. **A test whose outcome depends on a clock, a timer, a real thread race or the kernel is not a unit test**: it goes to the functional suite (`core/tests/functional/`, suite `*_Functional`, `UNREAL_FUNCTIONAL_TESTS=1`, see [The functional suite](#the-functional-suite-_functional)); the deterministic part stays a unit test
+16. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
 16. **A thread you start may not have run yet**: a test with a second thread waits for it to start and bounds its loop by what *both* sides did, never by one side's count alone (see [Concurrency tests](#concurrency-tests))
 
 ---
@@ -432,8 +433,8 @@ TEST_F(LoaderTest, LoadFile)
 via one of:
 
 - `TestPathHelper::GetScratchDir()` - the `<project_root>/scratch` directory itself (created on demand).
-- `TestPathHelper::GetTestScratchPath("name.ext")` - an absolute path under `scratch/` with a fixed leaf name.
-  Fine for a test that never runs concurrently with another copy of itself writing the same name.
+- `TestPathHelper::GetTestScratchPath("name.ext")` - the same as `GetUniqueTestScratchPath` below (it used to be
+  one path under `scratch/` for every copy of the binary, and parallel shards collided on it).
 - `TestPathHelper::GetUniqueTestScratchPath("name.ext")` - the same, placed inside the per-process scratch
   directory (`scratch/<pid>/name.ext`). Parallel GTest shards (see
   [Parallel Test Execution](#parallel-test-execution)) run several copies of the test binary concurrently, so any
@@ -523,11 +524,24 @@ EXPECT_TRUE(TestWait::For([&] { return observer.hits.load() >= 2; }));
 // Same, for an atomic counter.
 EXPECT_TRUE(TestWait::ForAtLeast(messages, 2));
 
-// "Exactly N, and nothing extra arrived." Waits for N, then allows a short
-// bounded settle window for any surplus to show up. Use this instead of
-// sleeping to prove a negative.
+// "Exactly N, and nothing extra arrived." Waits for N, then drains the default
+// MessageCenter (a sentinel through the same FIFO queue: everything posted before
+// it has been delivered), so the counter is final. No settle window, no guessed
+// interval. Use this instead of sleeping to prove a negative.
 EXPECT_TRUE(TestWait::ForExactly(messages, 2)) << "a no-op strobe must not re-notify";
+
+// A negative with no count to wait for ("this must NOT notify"): drain, then look.
+ASSERT_TRUE(TestWait::DrainMessageCenter(MessageCenter::DefaultMessageCenter()));
+EXPECT_EQ(notifications.load(), 0);
 ```
+
+**No wall clock in a test.** Nothing a test asserts may depend on how fast the host is: no `sleep_for`, no
+`steady_clock::now()` compared with a limit, no "must finish within N ms" (a loaded 20-shard run breaks it), no time
+in a file name. Frames, T-states and event counts are the clock of the emulated machine: drive it with `RunNFrames` /
+`RunTStates` on the test thread. A component that reads the clock takes it as a parameter (`HapticMixer` takes a
+`NowFunction`; tests use `FixedMixerClock()`). What a component costs in time is a benchmark (`core/benchmarks/`),
+not a test. The test binary also switches the adaptive turbo render decimation off for the whole process
+(`MainLoop::AdaptiveDefault()`): it measured the host's frame rate.
 
 | Instead of | Write |
 |---|---|
@@ -876,6 +890,30 @@ TEST_F(Emulator_Test, MultiInstanceRun)
     }
 }
 ```
+
+### The functional suite (`*_Functional`)
+
+A unit test proves one rule from state the test sets up, in about 10 ms, and gets the same answer on every host at any
+load. What needs more than that is not a unit test, even if it is useful:
+
+- the real clock or a real timer decides the outcome (a throttle window, a deadline expiring, a write interval compared
+  with `steady_clock`, a pacing loop);
+- threads whose pace decides the outcome (a fuzz with noise threads and real deadlines, a reader racing a writer);
+- the kernel or the host (`/dev/uhid`, real devices);
+- a boot or a demo bounded by a deadline instead of by a counted number of frames.
+
+Such a test lives in `core/tests/functional/<area>/<name>_functional_test.cpp`, in a suite named `<Name>_Functional`, and
+its first line (a fixture's `SetUp`) is `SKIP_UNLESS_FUNCTIONAL();` from `_helpers/testtier.h`. It compiles into
+`core-tests` and skips in no time unless `UNREAL_FUNCTIONAL_TESTS=1` (the one switch of the tier, like
+`UNREAL_LONG_TESTS` for the long tier; [environment variables](../../docs/emulator/environment-variables.md)):
+
+```bash
+UNREAL_FUNCTIONAL_TESTS=1 cmake-build-agent-release/bin/core-tests --gtest_filter='*_Functional.*'
+```
+
+The functional suite is not part of the default run and not of CI's. When a test mixes both, split it: the
+deterministic claim stays a unit test (counted frames, the queue or a counter as the proof, never a window of time), the
+time-based claim moves. A deadline in `TestWait` that only bounds how long a failing test waits is not a clock dependence.
 
 ### Timing/Cycle-Accurate Tests
 

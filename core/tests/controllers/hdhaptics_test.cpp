@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "haptics/hapticmixer.h"
+#include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
 #include "hid/drivers/dualsenseoutput.h"
@@ -38,7 +39,7 @@ TEST(HdHaptics_Test, EnvelopesAndPriorities)
     EXPECT_FLOAT_EQ(pattern.Envelope(15), 0.2f);
     EXPECT_FLOAT_EQ(pattern.Envelope(25), 1.0f) << "the pattern repeats";
 
-    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
     HapticEffect low({0.8f, 0.0f, 0.0f, 0.0f}, 60000);
     HapticEffect high({0.0f, 0.4f, 0.0f, 0.0f}, 60000);
     high.priority = 2;
@@ -63,7 +64,7 @@ TEST(HdHaptics_Test, Haptics_Fallback)
     EXPECT_EQ(profile.rules[0].TargetFor(kTargetAll), kTriggerRight);
     EXPECT_EQ(profile.rules[0].TargetFor(kHandleLow | kHandleHigh), kHandleHigh) << "no trigger motors";
 
-    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
     ProfileHaptics feed(
         profile, "fallback", mixer, [] { return std::vector<HostDeviceId>{"xinput", "elite"}; },
         [](const HostDeviceId& device) {
@@ -115,7 +116,7 @@ TEST(HdHaptics_Test, DualSenseOutputReport)
 TEST(HdHaptics_Test, FrequencyOfTheLoudestEffectPerBand)
 {
     // The mixer: each band's frequency is the one of the effect loudest in it, 0 while the band is silent
-    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
     HapticEffect deep({0.9f, 0.2f, 0.0f, 0.0f, 50, 120}, 60000);
     HapticEffect bright({0.3f, 0.7f, 0.0f, 0.0f, 150, 300}, 60000);
     mixer.Play("pad", deep);
@@ -149,7 +150,7 @@ TEST(HdHaptics_Test, FrequencyOfTheLoudestEffectPerBand)
     frame.probeCount = 1;
     frame.probeHits[0] = 1;
     feed.OnHapticFrame(frame);
-    mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));
+    mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));
     const RumbleLevels written = mixer.Written("pad");
     EXPECT_GT(written.low, 0.0f);
     EXPECT_EQ(written.lowHz, 70) << "the explosion is the louder low; the rule's frequency";

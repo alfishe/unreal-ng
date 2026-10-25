@@ -33,7 +33,7 @@ TEST(ProcessStats_Test, ASampleOfThisProcessIsSane)
 TEST(ProcessStats_Test, CpuPercentIsCpuTimeOverWallTimeAndCachedWithinTheInterval)
 {
     ProcessStatsSampler sampler(0.5);
-    const auto t0 = ProcessStatsSampler::Clock::now();
+    const auto t0 = ProcessStatsSampler::Clock::time_point(std::chrono::hours(1));  // a fixed origin: ReadAt() is given the times
     ProcessSample a;
     a.ok = true;
     a.cpuTimeUs = 1'000'000;

@@ -14,7 +14,7 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - the main-loop interface (`AttachMainLoop`, `ShouldYield`, `LoopWait`, `DetachMainLoop`);
   - Snapshot, the decision log and the interleave hook.
 - [x] `ExecutionArbiter_Test`: 18 tests, one rule each, plus the bug as `ForeignPauseSurvivesCommandEnd`.
-- [x] `ExecutionArbiterFuzz_Test`: model-based fuzz.
+- [x] `ExecutionArbiterFuzz_Functional`: model-based fuzz.
   - **The load.** Seeded control threads (1-6) issue intents, synchronous, nested, driving, paired and posted
     commands, deadlines, aborts, claims, and bursts that build deep mixed queues. A fake loop runs instructions of
     varying length and fires `PauseFromDriver` and inline commands from its hooks. Throttle 0 / 1 / 3 ms, runs with
@@ -22,7 +22,7 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - **The checks.** After each run, I1-I9 and the decision log are replayed through the sequential model: intent
     replay, edges, the owner model, the priority lane, command order and completeness, barriers. A watchdog reports
     hangs.
-  - **The default suite** runs 12 seeds (about 50 ms). `UNREAL_EXEC_FUZZ_SEED` replays one seed;
+  - **The functional suite** (`UNREAL_FUNCTIONAL_TESTS=1`, no longer the default run: the fuzz uses real deadlines and noise threads) runs 12 seeds (about 50 ms). `UNREAL_EXEC_FUZZ_SEED` replays one seed;
     `UNREAL_EXEC_FUZZ_ITERATIONS` runs more seeds.
 - [x] Found by the fuzz and fixed: `NextWakeLocked` returned a past throttle time while a command was served. The
   waiters spun on the mutex and starved the thread that runs the command, a livelock (seed 14, about 1 run in 8).
@@ -128,7 +128,7 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - `ADirectRunKeepsEveryOtherThreadOut`: another thread's command is served only after `RunNFrames(30)`, which
     steps exactly 30 frames.
   - `AResumeDuringADirectRunAppliesAfterIt`.
-- [x] **`ExecutionArbiterMachineFuzz_Test`** (design §8.2): 2-5 threads drive one running Pentagon in a seeded mix.
+- [x] **`ExecutionArbiterMachineFuzz_Functional`** (design §8.2): 2-5 threads drive one running Pentagon in a seeded mix.
   - **Operations:** pause, resume, silent pairs, `RunNFrames` (some counted inside a driving hold),
     `RunTStates`, `RunSingleCPUCycle`, arbiter commands that poke memory, status reads.
   - **Checks:** no second driver; a counted `RunNFrames(k)` advances exactly k frames; no hang (a watchdog prints
@@ -169,7 +169,7 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   a reset.
 - [x] **The machine fuzz** also does `Reset`, overscan, NMI and snapshot save + load from other threads. A counted
   `RunNFrames(k)` stays exact.
-- [x] **`ExecutionArbiterMachineFuzz_Test.CommandsFromOtherThreadsNeverReachIntoAStep`** (design §8.2,
+- [x] **`ExecutionArbiterMachineFuzz_Functional.CommandsFromOtherThreadsNeverReachIntoAStep`** (design §8.2,
   determinism):
   - the same 40 frames from one snapshot, quiet and with 3 threads submitting commands that flip FRAMES and restore
     it;
@@ -310,13 +310,13 @@ showed the same address.
   - The tests that modelled the silent pair use `CpuHold` (`CpuHoldsOnAnotherThreadNeverResumeAStep`,
     `APauseDuringACpuHoldSurvivesItsEnd`, `StepsAndNestedHoldsInsideACpuHoldKeepTheMachineRunning`,
     `StopWhileHoldingTheCpu`).
-- [x] **The mode matrix, TTD: `ExecutionArbiterMachineFuzz_Test.TtdRecordingUnderConcurrentControl`.**
+- [x] **The mode matrix, TTD: `ExecutionArbiterMachineFuzz_Functional.TtdRecordingUnderConcurrentControl`.**
   - **Setup:** a running Pentagon with debug mode and TTD on.
   - **Load:** one thread starts and stops recordings and switches the write journal on and off (the bug's path);
     two others pause, resume, hold the CPU, run counted `RunNFrames(k)` and `RunTStates`.
   - **Checks:** no second driver, every counted step exact, no hang.
   - **Result:** all machine fuzz tests, 6 processes × 30 seeds in parallel: all clean.
-- [x] **ZX-Poly groups and RZX playback in the fuzz matrix** (`ExecutionArbiterMachineFuzz_Test.
+- [x] **ZX-Poly groups and RZX playback in the fuzz matrix** (`ExecutionArbiterMachineFuzz_Functional.
   ZXPolyGroupUnderConcurrentControl`, `RzxPlaybackUnderConcurrentControl`): a running group / a playing 48K, one
   thread through the group (recording, stop / seek / resume, keys, parallel slaves) or the playback (play, stop,
   seek, status), two through the control. The ZX-Poly one found two drivers on a slave (2 of 216 runs): with

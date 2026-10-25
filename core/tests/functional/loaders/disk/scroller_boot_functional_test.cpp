@@ -12,6 +12,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
@@ -54,7 +55,7 @@
 ///     the covox menu shows, SPACE starts the demo, the init chain climbs into the
 ///     dead top and slides past $FFFF into ROM reset. See TRIAGE.md section 9.
 
-class Scroller_Boot_Test : public ::testing::Test
+class Scroller_Boot_Functional : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
@@ -62,6 +63,7 @@ protected:
 
     void SetUp() override
     {
+        SKIP_UNLESS_FUNCTIONAL();
         MessageCenter::DisposeDefaultMessageCenter();
         _emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
         if (_emulator)
@@ -113,7 +115,7 @@ static std::string FirstScreenLines(const std::string& screen, size_t lines)
     return result;
 }
 
-void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu, const std::string& customTrdPath, bool directDOSBoot)
+void Scroller_Boot_Functional::BootAndRunScroller(bool via128KMenu, const std::string& customTrdPath, bool directDOSBoot)
 {
     if (!_emulator)
     {
@@ -717,7 +719,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu, const std::string&
     }
 }
 
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD)
+TEST_F(Scroller_Boot_Functional, BootScrollerDemoTRD)
 {
     BootAndRunScroller(false);
 }
@@ -726,7 +728,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD)
 // Asserts the AUTHENTIC failure (see file header): stock ROM halves do not sync
 // BANK_M on BASIC OUT commands, so the editor SWAP hook reverts the demo's page
 // selection and the demo dies. No emulator compensation exists for this by design.
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD_Via128KMenu)
+TEST_F(Scroller_Boot_Functional, BootScrollerDemoTRD_Via128KMenu)
 {
     if (!_emulator)
     {
@@ -739,7 +741,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD_Via128KMenu)
 
 // Verifies that the patched dual-mode loader in scroller_fixed.trd allows the demo
 // to boot and run cleanly even when starting from the 128K Sinclair service menu.
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenu)
+TEST_F(Scroller_Boot_Functional, BootScrollerFixedTRD_Via128KMenu)
 {
     if (!_emulator)
     {
@@ -755,7 +757,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenu)
     BootAndRunScroller(true, fixedTrdPath);
 }
 
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via48K)
+TEST_F(Scroller_Boot_Functional, BootScrollerFixedTRD_Via48K)
 {
     if (!_emulator)
     {
@@ -774,7 +776,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via48K)
 // Tests the "128K menu → 48K BASIC → TR-DOS" path where the $5B00 SWAP routine
 // remains in RAM even after switching to 48K mode. This is the user-reported
 // failing path where boot is via 128K menu, then 48K BASIC selected, then USR 15616.
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenuTo48K)
+TEST_F(Scroller_Boot_Functional, BootScrollerFixedTRD_Via128KMenuTo48K)
 {
     if (!_emulator)
     {
@@ -855,7 +857,8 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenuTo48K)
 // Tests direct TR-DOS boot (RESET=DOS) - boots directly into TR-DOS without
 // going through 48K BASIC or 128K menu. This is the "48K TR-DOS" path where
 // no 128K editor hooks exist.
-TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_ViaDOSBoot)
+// Fails today (run 2026-10-25 with UNREAL_FUNCTIONAL_TESTS=1: the checks at the end of the boot, lines 687-689): kept DISABLED_
+TEST_F(Scroller_Boot_Functional, DISABLED_BootScrollerFixedTRD_ViaDOSBoot)
 {
     if (!_emulator)
     {
@@ -877,7 +880,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_ViaDOSBoot)
 // Verifies that the clean 128K .SNA snapshot generated from scroller_by_demarche.trd
 // bypasses all loader/SWAP issues, starts into the menu, accepts SPACE, and runs
 // the full demo engine with 50Hz IM2 interrupt handling.
-TEST_F(Scroller_Boot_Test, DISABLED_RunGeneratedScrollerSNA)
+TEST_F(Scroller_Boot_Functional, RunGeneratedScrollerSNA)
 {
     if (!_emulator)
     {
@@ -985,7 +988,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_RunGeneratedScrollerSNA)
     EXPECT_GE(im2HandlerHits.load(), 20) << "50Hz IM2 interrupt handler at $BFBF failed to run";
 }
 
-void Scroller_Boot_Test::RealtimeGuiFlow(const char* label, bool via128KMenu, const std::string& customTrdPath)
+void Scroller_Boot_Functional::RealtimeGuiFlow(const char* label, bool via128KMenu, const std::string& customTrdPath)
 {
     if (!_emulator)
     {
@@ -1326,7 +1329,7 @@ void Scroller_Boot_Test::RealtimeGuiFlow(const char* label, bool via128KMenu, co
 // realtime version of the 128K-menu path. If this lands on the covox-menu side
 // while the breakpoint/CAT-instrumented run lands on the zeroed-page-2 side,
 // the harness perturbation - not emulator timing - decides the outcome.
-TEST_F(Scroller_Boot_Test, DISABLED_RealtimeGuiFlow_NoPerturbation)
+TEST_F(Scroller_Boot_Functional, RealtimeGuiFlow_NoPerturbation)
 {
     if (!_emulator)
     {
@@ -1337,7 +1340,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_RealtimeGuiFlow_NoPerturbation)
     RealtimeGuiFlow("menu -> TR-DOS -> RUN, no breakpoints, no CAT");
 }
 
-TEST_F(Scroller_Boot_Test, DISABLED_RealtimeGuiFlow_FixedTRD_Via48K)
+TEST_F(Scroller_Boot_Functional, RealtimeGuiFlow_FixedTRD_Via48K)
 {
     if (!_emulator)
     {

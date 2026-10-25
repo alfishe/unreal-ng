@@ -1,8 +1,8 @@
 /// @file xboxbluetoothoutput_test.cpp
 /// @brief The Xbox One / Series Bluetooth rumble (hid/drivers/xboxbluetoothoutput.h), on every OS: which pads take
 /// output report 3, its bytes for given levels (the builder the macOS IOHID and the Linux hidraw paths share), and the
-/// RumbleWriter that keeps SetRumble from blocking: the latest levels win, equal levels are not written again, writes
-/// are an interval apart, the end stops the motors.
+/// RumbleWriter that keeps SetRumble from blocking: the latest levels win, equal levels are not written again, the end
+/// stops the motors. The interval between writes needs the real clock: functional/controllers/xboxbluetoothoutput_functional_test.cpp.
 
 #include <gtest/gtest.h>
 
@@ -69,7 +69,6 @@ struct FakeRumbleDevice
     std::condition_variable gate;
     bool open = true;
     std::vector<RumbleLevels> written;
-    std::vector<std::chrono::steady_clock::time_point> at;
     std::atomic<int> started{0};
     bool refuse = false;
 
@@ -80,7 +79,6 @@ struct FakeRumbleDevice
             ++started;
             gate.wait(lock, [this] { return open; });
             written.push_back(levels);
-            at.push_back(std::chrono::steady_clock::now());
             return !refuse;
         };
     }
@@ -139,20 +137,6 @@ TEST(XboxBluetoothOutput_Test, Writer_EqualLevelsAreNotWrittenAgainAndAStoppedPa
     ASSERT_EQ(written.size(), 2u) << "no repeat of 0.5, no zero at the end after a zero";
     EXPECT_EQ(written[0], Low(0.5f));
     EXPECT_EQ(written[1], RumbleLevels{});
-}
-
-TEST(XboxBluetoothOutput_Test, Writer_WritesAnIntervalApart)
-{
-    constexpr auto kInterval = std::chrono::milliseconds(15);
-    FakeRumbleDevice device;
-    RumbleWriter writer(device.Writer(), kInterval);
-    writer.Set(Low(0.3f));
-    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 1; }));
-    writer.Set(Low(0.7f));
-    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 2; }));
-    std::lock_guard<std::mutex> lock(device.mutex);
-    ASSERT_EQ(device.at.size(), 2u);
-    EXPECT_GE(device.at[1] - device.at[0], kInterval);
 }
 
 TEST(XboxBluetoothOutput_Test, Writer_ARefusedWriteIsRetriedAndStoppedAtTheEnd)

@@ -4,6 +4,7 @@
 // disagree. The machine-level tests run ScreenNext (segments of a copper line, the two sets, the swap at the frame end).
 
 #include "stdafx.h"
+#include "_helpers/testwaithelper.h"
 #include "pch.h"
 
 #include <gtest/gtest.h>
@@ -378,8 +379,9 @@ TEST_F(NextLayerCaptureMachine_Test, TwoSetsSwapAtTheFrameEnd)
     }
 }
 
-// 20 frames of the bare renderer (no CPU, ~2 ms each with the reader polling; the machine creation is 35 ms) while a reader thread polls: bounded by the frame count, not by time, and
-// there is no sleep anywhere; the reader only stops when the last frame is drawn.
+// 20 frames of the bare renderer (no CPU) while a reader thread polls: bounded by the frame count, not by time; the reader
+// is waited for before the frames and after each of them (a reader that never ran proves nothing), and it only stops when
+// the last frame is drawn.
 TEST_F(NextLayerCaptureMachine_Test, ReaderThreadNeverSeesAHalfDrawnFrame)
 {
     _screen->SetLayerCapture(true);
@@ -409,16 +411,22 @@ TEST_F(NextLayerCaptureMachine_Test, ReaderThreadNeverSeesAHalfDrawnFrame)
             }
         }
     });
+    // The reader must be running before the frames count (under load it may not get a core for a while, and reads
+    // beside no writer prove nothing), and it must read between the frames: the loop below waits for one more read
+    // after each frame, bounded by the wait's timeout
+    ASSERT_TRUE(TestWait::For([&] { return reads.load() > 0; }));
     for (unsigned i = 0; i < 20; i++)
     {
+        const unsigned readsBefore = reads.load();
         _context->emulatorState.pFE = static_cast<uint8_t>(1 + (i & 1));
         _screen->InitFrame();
         _screen->RenderFrameBatch();
+        EXPECT_TRUE(TestWait::For([&] { return reads.load() > readsBefore; })) << "the reader did not read after frame " << i;
     }
     stop = true;
     reader.join();
     EXPECT_EQ(torn.load(), 0u) << "a frame mixed the borders of two frames";
-    EXPECT_GT(reads.load(), 0u);
+    EXPECT_GE(reads.load(), 20u) << "the reader read between the frames";
     EXPECT_EQ(_screen->LayerFramesCaptured(), before + 21u);
 }
 

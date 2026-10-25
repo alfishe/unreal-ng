@@ -24,6 +24,8 @@
 #include "unrealasm/containers.h"
 #include "unrealasm/dialect.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
@@ -86,9 +88,7 @@ std::vector<uint8_t> ReadBytes(const std::filesystem::path& path)
 std::vector<uint8_t> AssembleWithZ80asm(const char* z80asm, const ProjectResult& project, const std::string& main,
                                         const std::vector<std::pair<std::string, std::vector<uint8_t>>>& binaries, uint16_t base, size_t length)
 {
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     const codecs::TextCodec text;
     for (const ProjectFile& f : project.files)

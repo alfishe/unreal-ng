@@ -264,7 +264,8 @@ protected:
     std::unique_ptr<ActionRegistry> _registry;
     std::vector<RegistrationHandle> _handles;
     std::unique_ptr<WsHub> _hub;
-    std::chrono::steady_clock::time_point _now = std::chrono::steady_clock::now();
+    // The hub's injected clock: a fixed origin, moved only by Advance() (the host clock is never read)
+    std::chrono::steady_clock::time_point _now = std::chrono::steady_clock::time_point(std::chrono::hours(1));
     double _armedHz = 0;
     uint64_t _timerIds = 0;
     std::atomic<bool> _slow{false};

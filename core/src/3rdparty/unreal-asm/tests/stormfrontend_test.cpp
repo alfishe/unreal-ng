@@ -19,6 +19,8 @@
 #include "unrealasm/containers.h"
 #include "unrealasm/dialect.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 
@@ -81,9 +83,7 @@ std::vector<uint8_t> AssembleConverted(const char* sjasmplus, const std::string&
     options.catalog = file.Hints();
     const ConvertResult r = Convert(storm.Decode(file.data, options).document, "sjasmplus");
     EXPECT_TRUE(r.ok);
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "PROG.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
     const containers::TrdosFile inc = Hobeta("dialects/storm13/INC.$C");

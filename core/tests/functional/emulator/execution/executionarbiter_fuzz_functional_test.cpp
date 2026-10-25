@@ -22,6 +22,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/execution/executionarbiter.h"
 
@@ -549,8 +550,9 @@ uint32_t EnvU32(const char* name, uint32_t fallback)
 
 }  // namespace
 
-TEST(ExecutionArbiterFuzz_Test, SeededScenariosKeepTheInvariants)
+TEST(ExecutionArbiterFuzz_Functional, SeededScenariosKeepTheInvariants)
 {
+    SKIP_UNLESS_FUNCTIONAL();
     // A fixed set in the default suite (each seed is a few ms); UNREAL_EXEC_FUZZ_ITERATIONS for long runs
     const char* one = std::getenv("UNREAL_EXEC_FUZZ_SEED");
     const uint32_t iterations = one ? 1 : EnvU32("UNREAL_EXEC_FUZZ_ITERATIONS", 12);

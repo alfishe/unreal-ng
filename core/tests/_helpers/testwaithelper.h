@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <thread>
 
+#include "3rdparty/message-center/messagecenter.h"
+
 /// @brief Deterministic replacement for fixed `sleep_for` waits in tests.
 ///
 /// A test that posts asynchronous work and then sleeps a fixed amount before
@@ -69,23 +71,41 @@ bool ForAtLeast(const std::atomic<T>& counter, T expected,
     return For([&counter, expected] { return counter.load() >= expected; }, timeout);
 }
 
-/// @brief Wait for an expected count to be reached, then give any surplus work a
-///        brief chance to arrive so that "exactly N" assertions stay meaningful.
+/// @brief Everything posted to @p messageCenter before this call has been delivered when it returns true.
 ///
-/// Use where a test asserts an exact count and must also prove nothing extra was
-/// delivered. The settle window only costs its full length when the expected
-/// count never arrives, which is a failing test anyway.
+/// The center has one queue and one worker, so a sentinel on a topic of its own comes out after every message that was
+/// posted ahead of it: a fact about the queue, where a settle sleep only proves "nothing arrived in the interval I
+/// guessed". @return false when the sentinel was not delivered within the (scaled) default timeout
+inline bool DrainMessageCenter(MessageCenter& messageCenter)
+{
+    static const char* const kTopic = "TEST_DRAIN_SENTINEL";
+    messageCenter.RegisterTopic(kTopic);
+    std::atomic<int> seen{0};
+    const uint64_t id = messageCenter.AddObserver(kTopic, [&seen](int, Message*) { seen++; });
+    messageCenter.Post(kTopic);
+    const bool delivered = ForAtLeast(seen, 1);
+    messageCenter.RemoveObserverById(kTopic, id);
+    return delivered;
+}
+
+/// @brief Wait for an expected count to be reached, then make sure no surplus delivery is still on its way, so that
+///        "exactly N" assertions stay meaningful.
+///
+/// The surplus can only come through the default MessageCenter (every counter this guards is an observer of it), and
+/// the center delivers in order: after the count is reached, a drain of its queue (DrainMessageCenter) means that
+/// everything posted so far has been delivered and the counter is final. No settle window - nothing to guess.
+/// @param settle kept for the callers' sake; not used any more
 template <typename T>
 bool ForExactly(const std::atomic<T>& counter, T expected,
                 std::chrono::milliseconds timeout = kDefaultTimeout,
                 std::chrono::milliseconds settle = std::chrono::milliseconds(5))
 {
+    (void)settle;
     if (!ForAtLeast(counter, expected, timeout))
         return false;
 
-    // Surplus deliveries would push the counter past `expected`; give them a
-    // short, bounded window to show up rather than asserting on a racing value.
-    std::this_thread::sleep_for(settle);
+    if (!DrainMessageCenter(MessageCenter::DefaultMessageCenter()))
+        return false;
     return counter.load() == expected;
 }
 }  // namespace TestWait

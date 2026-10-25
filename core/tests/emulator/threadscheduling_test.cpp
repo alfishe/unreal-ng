@@ -19,7 +19,9 @@
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
 
 namespace
@@ -65,10 +67,12 @@ ThreadFacts FindThread(const std::string& prefix)
     return facts;
 }
 
-/// Let the loop run a few frames so it samples its scheduling request
-void LetFramesRun()
+/// Let the loop run a few frames (counted) so it samples its scheduling request at a frame start
+void LetFramesRun(Emulator* emulator)
 {
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const uint64_t target = emulator->GetContext()->emulatorState.frame_counter + 3;
+    EXPECT_TRUE(TestWait::For([&] { return emulator->GetContext()->emulatorState.frame_counter >= target; },
+                              std::chrono::seconds(5)));
 }
 }  // namespace
 
@@ -104,7 +108,7 @@ protected:
 TEST_F(ThreadScheduling_Test, InactiveInstanceIsNotRealtime)
 {
     _emulator->StartAsync();
-    LetFramesRun();
+    LetFramesRun(_emulator);
 
     const ThreadFacts facts = FindThread(_threadName);
     ASSERT_TRUE(facts.found) << "emulation thread '" << _threadName << "' not found";
@@ -117,20 +121,20 @@ TEST_F(ThreadScheduling_Test, ActiveInstanceIsRealtimeOnlyWhileCadenced)
 {
     _emulator->GetMainLoop()->SetRealtimeRequested(true);
     _emulator->StartAsync();
-    LetFramesRun();
+    LetFramesRun(_emulator);
 
     ThreadFacts facts = FindThread(_threadName);
     ASSERT_TRUE(facts.found);
     EXPECT_TRUE(facts.timeConstraint) << "active instance, cadenced playback";
 
     _emulator->EnableTurboMode();
-    LetFramesRun();
+    LetFramesRun(_emulator);
     facts = FindThread(_threadName);
     EXPECT_FALSE(facts.timeConstraint) << "turbo drops real-time";
 
     _emulator->DisableTurboMode();
     _emulator->GetMainLoop()->SetRealtimeRequested(false);
-    LetFramesRun();
+    LetFramesRun(_emulator);
     facts = FindThread(_threadName);
     EXPECT_FALSE(facts.timeConstraint) << "no longer active";
 }

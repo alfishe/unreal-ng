@@ -2,7 +2,7 @@
 
 > **Artifact**: Complete disassembly, memory banking architecture, and boot failure analysis of "Scroller by Demarche", a landmark Soviet/Russian Covox demo released in 1996 for the **Pentagon 128**.
 > **Disk Image**: [`testdata/sound/covox/scroller_by_demarche.trd`](../../../../testdata/sound/covox/scroller_by_demarche.trd)
-> **Primary Test**: [`core/tests/loaders/disk/scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp)
+> **Primary Test**: [`core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp`](../../../../core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp)
 
 ---
 
@@ -80,7 +80,7 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd_v2.py
 - **Use Case**: When the demo might be run from the 128K menu → 48K path, this version provides a clear error message instead of a mysterious crash
 - **Output**: [`scroller_fixed_v2.trd`](scroller_fixed_v2.trd) (1019 bytes BASIC, 4 sectors)
 
-Both versions verified by automated tests in [`scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp).
+Both versions verified by automated tests in [`scroller_boot_functional_test.cpp`](../../../../core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp).
 
 > [!NOTE]
 > **How to Launch from TR-DOS**:

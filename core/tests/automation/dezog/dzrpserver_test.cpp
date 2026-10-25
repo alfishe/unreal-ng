@@ -832,7 +832,6 @@ TEST_F(AutomationDezog_test, StartStopLifecycle)
     // A client can connect and handshake
     TestDzrpClient client;
     ASSERT_TRUE(client.connect(port));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     std::vector<uint8_t> payload = {2, 0, 0, 'D', 0};
     auto resp = client.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);

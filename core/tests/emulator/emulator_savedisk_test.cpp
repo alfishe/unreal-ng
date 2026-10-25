@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "_helpers/testwaithelper.h"
 
 #include <atomic>
 #include <chrono>
@@ -159,11 +160,7 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     Emulator::DiskSaveResult result = _emulator->SaveDisk(0);
 
     // Wait for async notification to be delivered (MessageCenter dispatches asynchronously)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
-    while (notifications.load() == 0 && std::chrono::steady_clock::now() < deadline)
-    {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
-    }
+    TestWait::ForAtLeast(notifications, 1);
 
     messageCenter.RemoveObserverById(NC_FDD_DISK_SAVE_RETARGETED, callbackId);
 

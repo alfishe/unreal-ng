@@ -479,12 +479,18 @@ TEST_F(DezogDebugAdapter_test, TemporaryBreakpointHitThenCleared)
     EXPECT_EQ(_adapter->getTemporaryBreakpointCount(), 0u);
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointById(temp), nullptr);
 
-    // Resume must now run freely (no stale temp breakpoint re-triggers). A
-    // stale temp breakpoint on this 3-instruction loop would re-fire within
-    // microseconds, so the settle window only has to outlast the loop.
+    // Resume must now run freely (no stale temp breakpoint re-triggers). A stale temp breakpoint on this
+    // 3-instruction loop would re-fire within the first frame (thousands of laps a frame), so two full frames in
+    // turbo (counted, not timed) with no stop prove it
+    _emulator->EnableTurboMode();
+    const uint64_t target = frameCounter() + 2;
     _adapter->resume();
+    EXPECT_TRUE(TestWait::For([&] { return frameCounter() >= target || _emulator->IsPaused(); },
+                              std::chrono::milliseconds(5000)));
     EXPECT_TRUE(noFurtherEvents()) << "a stale temporary breakpoint re-triggered";
     EXPECT_FALSE(_emulator->IsPaused());
+    EXPECT_GE(frameCounter(), target);
+    _emulator->DisableTurboMode();
 }
 
 TEST_F(DezogDebugAdapter_test, ResumeAfterBreakpointContinuesToNextHit)
@@ -916,16 +922,11 @@ TEST_F(DezogHistory_test, MemoryDuringBrowseIsPresentPerDeZogModel)
 
     // Browse back to the DI at 8000: the ENTRY carries historic registers, but
     // readMemory still reflects the present (value 1), per the DeZog model.
-    // Rare transient under full test-parallel load (20 concurrent shards):
-    // a getHistoryEntry came back empty on the first scan and the loop stopped
-    // before reaching the DI entry. Rescan once after a settle pause instead of
-    // treating the transient as end-of-history; a persistent miss still fails.
+    // A getHistoryEntry can come back empty while its cache resolves (seen under a 20-shard parallel run): a scan that
+    // misses the DI entry is repeated until it is found (the bound only ends a persistent miss, it is no pause)
     bool sawDi = false;
     uint32_t scanned = 0;
-    for (int attempt = 0; attempt < 2 && !sawDi; ++attempt)
-    {
-        if (attempt > 0)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    TestWait::For([&] {
         for (uint32_t i = 0; i < 32; ++i)
         {
             auto e = _adapter->getHistoryEntry(i);
@@ -938,7 +939,8 @@ TEST_F(DezogHistory_test, MemoryDuringBrowseIsPresentPerDeZogModel)
                 EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x01) << "memory is present, not historic";
             }
         }
-    }
+        return sawDi;
+    });
     EXPECT_TRUE(sawDi) << "DI entry not found in history; entries scanned: " << scanned;
 
     // Resume returns to the present and continues; next hit as usual.
@@ -1188,15 +1190,15 @@ TEST_F(DezogHistory_test, DeepBrowseAcrossFrameBoundaryThenResumeStaysCoherent)
     // ~1.1s through zeroed RAM and BASIC before stumbling back into 8006).
     uint16_t id = _adapter->addBreakpoint(PROGRAM_JP);
     ASSERT_NE(id, 0);
-    const auto t0 = std::chrono::steady_clock::now();
+    // Counted in frames, not milliseconds: three instructions away is T-states, so at most the frame the resume began
+    // in may end before the hit; the free run of the bug went through ~55 frames of zeroed RAM and BASIC
+    const uint64_t frameAtResume = frameCounter();
     _adapter->resume();
     PauseEvent hit{};
     ASSERT_TRUE(waitForEvent(hit, std::chrono::seconds(5))) << "breakpoint did not re-hit";
-    const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - t0)
-                        .count();
     EXPECT_EQ(hit.address, PROGRAM_JP);
-    EXPECT_LT(dt, 500) << "re-hit took " << dt << "ms - machine resumed in a corrupted state";
+    EXPECT_LE(frameCounter() - frameAtResume, 1u)
+        << "re-hit took " << frameCounter() - frameAtResume << " frames - machine resumed in a corrupted state";
     _adapter->removeBreakpoint(id);
 }
 
@@ -1358,61 +1360,37 @@ TEST_F(DezogHistoryEngine_test, DebuggerEditKeepsTheHistory)
     _adapter->resume();
 }
 
-TEST_F(DezogHistory_test, LatencyReportAfterFreeRun)
+TEST_F(DezogHistory_test, HistoryEntriesAreServedAfterAFreeRun)
 {
-    // Realistic shape: the target ran freely for a while before the user
-    // pauses and starts stepping back. 10 frames of the 3-instruction loop
-    // records ~7k history entries per frame, comfortably beyond the deepest
-    // jump probed below (index 20000). Frames, not milliseconds: the entry
-    // count is what the assertions depend on.
+    // Realistic shape: the target ran freely for a while before the user pauses and starts stepping back. 10 frames of
+    // the 3-instruction loop records ~7k history entries per frame, comfortably beyond the deepest jump probed below
+    // (index 20000). Frames, not milliseconds: the entry count is what the assertions depend on. How long the entries
+    // take to serve is a speed of the host: no clock here
     _adapter->onSessionOpened();
     installProgram();
     freeRunFrames(10, /*useAdapter=*/true);
     PauseEvent ev{};
     ASSERT_TRUE(waitForEvent(ev));
 
-    using clock = std::chrono::steady_clock;
-    auto t0 = clock::now();
     for (uint32_t i = 0; i < 10; ++i)
         ASSERT_TRUE(_adapter->getHistoryEntry(i).has_value()) << i;
-    auto t1 = clock::now();
     ASSERT_TRUE(_adapter->getHistoryEntry(500).has_value());
-    auto t2 = clock::now();
     ASSERT_TRUE(_adapter->getHistoryEntry(20000).has_value());  // crosses frame checkpoints
-    auto t3 = clock::now();
     _adapter->resume();
     _emulator->Pause();
-    auto t4 = clock::now();
-
-    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    std::cout << "[history-latency free-run] 10 sequential entries: " << ms(t0, t1) << " ms ("
-              << ms(t0, t1) / 10 << " ms/entry), jump to 500: " << ms(t1, t2)
-              << " ms, jump to 20000: " << ms(t2, t3) << " ms, return to present + resume: " << ms(t3, t4)
-              << " ms\n";
 }
 
-TEST_F(DezogHistory_test, LatencyReport)
+TEST_F(DezogHistory_test, HistoryEntriesAreServedInTheSpotPrefetchShape)
 {
     _adapter->onSessionOpened();
     installProgram();
     runToJp(40);  // ~120 instructions of history
 
-    using clock = std::chrono::steady_clock;
-    auto t0 = clock::now();
     for (uint32_t i = 0; i < 10; ++i)
         ASSERT_TRUE(_adapter->getHistoryEntry(i).has_value()) << i;  // DeZog "spot" prefetch shape
-    auto t1 = clock::now();
     ASSERT_TRUE(_adapter->getHistoryEntry(60).has_value());           // deep jump (batched)
-    auto t2 = clock::now();
     _adapter->resume();
     _emulator->Pause();
-    auto t3 = clock::now();
-
-    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    std::cout << "[history-latency] 10 sequential entries: " << ms(t0, t1) << " ms ("
-              << ms(t0, t1) / 10 << " ms/entry), jump to index 60: " << ms(t1, t2)
-              << " ms, return to present + resume: " << ms(t2, t3) << " ms\n";
-    RecordProperty("ms_per_entry", ms(t0, t1) / 10);
 }
 
 /// endregion </Instruction history (TTD reverse debugging)>

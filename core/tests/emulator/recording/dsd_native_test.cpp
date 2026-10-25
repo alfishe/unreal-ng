@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "_helpers/testwaithelper.h"
 
 #include <cmath>
 #include <cstdint>
@@ -400,13 +401,11 @@ TEST_F(DSDEncoderE2ETest, NativeModeWritesValidDSFFile)
     ASSERT_TRUE(encoder.IsRecording());
     ASSERT_TRUE(tap->isActive());
 
-    // Producer: 100 ms of a 440 Hz tone at native rate, pushed in
-    // emulation-sized bursts (4375 frames = one 20 ms video frame) at
-    // realtime pace. The DSD128 worker converts at ~3.3x realtime, so
-    // the ring must never overrun at 1x.
+    // Producer: 100 ms of a 440 Hz tone at native rate, pushed in emulation-sized bursts (4375 frames = one 20 ms video
+    // frame). Each burst waits until the worker has taken the previous one out of the ring (no pacing by the clock: that
+    // the DSD128 worker keeps up with real time, ~3.3x, is a speed of the host and not asserted here)
     constexpr size_t TOTAL_FRAMES = NATIVE_RATE / 10;
     size_t pushed = 0;
-    auto nextFrame = std::chrono::steady_clock::now();
     while (pushed < TOTAL_FRAMES)
     {
         size_t burst = std::min<size_t>(4375, TOTAL_FRAMES - pushed);
@@ -418,8 +417,7 @@ TEST_F(DSDEncoderE2ETest, NativeModeWritesValidDSFFile)
         }
         pushed += burst;
 
-        nextFrame += std::chrono::milliseconds(20);
-        std::this_thread::sleep_until(nextFrame);
+        ASSERT_TRUE(TestWait::For([&] { return tap->available() == 0; }, std::chrono::seconds(10)));
     }
 
     EXPECT_EQ(tap->overruns(), 0u);

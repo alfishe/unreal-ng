@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "haptics/hapticmixer.h"
+#include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
 #include "profiles/profile.h"
@@ -105,7 +106,7 @@ TEST(HapticProfile_Test, Haptics_ProbeWriteDecreased)
             writes.emplace_back(device, levels);
             return true;
         },
-        false);
+        false, FixedMixerClock());
     ProfileHaptics feed(ParseGame(), "game/haptic-test", mixer, [] { return std::vector<HostDeviceId>{"pad"}; });
     const std::vector<HapticWatch> watches = feed.Watches();
     ASSERT_EQ(watches.size(), 2u) << "the probes ask the core for their bytes";
@@ -133,7 +134,7 @@ TEST(HapticProfile_Test, Haptics_ProbeWriteDecreased)
     boom.ay[0].envelopeUsed = true;
     boom.ay[0].envelopeShape = 0x09;
     feed.OnHapticFrame(boom);
-    mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(6));
+    mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(6));
     EXPECT_GT(mixer.Written("pad").low, 0.9f) << "an envelope boom plays the explosion, past its 5 ms attack";
     bool fired = false;
     for (const auto& [name, level] : feed.SourceLevels())

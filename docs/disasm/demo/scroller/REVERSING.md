@@ -4,7 +4,7 @@ Everything in this document was derived from `testdata/sound/covox/scroller_by_d
 (catalog dump, opcode-level disassembly) and cross-checked against the original
 sources in `testdata/sound/covox/source/`. Byte values are exact; symbolic names
 follow the source labels where available. Runtime confirmation came from the
-instrumented boot test (`core/tests/emulator/io/fdc/scroller_boot_test.cpp`).
+instrumented boot test (`core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp`).
 
 ## 1. Disk Image
 

@@ -25,6 +25,7 @@
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/memory/memory.h"
 #include "haptics/hapticmixer.h"
+#include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
 #include "profiles/profilestore.h"
@@ -127,7 +128,7 @@ class GameHaptics_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    HapticMixer _mixer{[](const HostDeviceId&, const RumbleLevels&) { return true; }, false};
+    HapticMixer _mixer{[](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock()};
     std::shared_ptr<ProfileHaptics> _feed;
 
     void SetUp() override
@@ -209,7 +210,7 @@ TEST_P(GameHapticsGames_Test, EachSourceFiresAndPlays)
         for (const auto& [name, level] : Levels())
             EXPECT_EQ(level, name == source ? 1.0f : 0.0f) << game.id << ": a CALL #" << std::hex << address
                                                            << " and source " << name;
-        _mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));  // past the effects' attacks
+        _mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));  // past the effects' attacks
         const RumbleLevels written = _mixer.Written("pad");
         EXPECT_GT(std::max({written.low, written.high, written.leftTrigger, written.rightTrigger}), 0.0f)
             << game.id << " " << source << ": its effect plays";
@@ -251,7 +252,7 @@ TEST_F(GameHaptics_Test, ChaseHqSpeedDrivesTheEngine)
     EXPECT_NEAR(low, 229 * 0.5f / 255.0f, 1e-5f);
     EXPECT_NEAR(high, 330 * 0.5f / 255.0f, 1e-5f) << "the word: the high byte counts";
     EXPECT_EQ(speed(511), 1.0f) << "the turbo's top speed is full";
-    _mixer.Tick(HapticMixer::Clock::now() + std::chrono::milliseconds(10));
+    _mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));
     EXPECT_GT(_mixer.Written("pad").low, 0.0f) << "the engine on the low motor";
     EXPECT_EQ(_mixer.Written("pad").high, 0.0f);
 }

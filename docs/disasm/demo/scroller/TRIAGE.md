@@ -173,7 +173,7 @@ At `$5B14`, the 128K editor provides an inter-ROM trampoline:
 
 ## 5. Hardware Bus Trace & Event Timeline
 
-Captured directly from the emulator's Z80 bus tracer in [`Scroller_Boot_Test.DISABLED_RealtimeGuiFlow_NoPerturbation`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp#L716):
+Captured directly from the emulator's Z80 bus tracer in [`Scroller_Boot_Functional.RealtimeGuiFlow_NoPerturbation`](../../../../core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp#L716):
 
 ```
 [SEQ 285] OUT #7FFD value=10 pc=5B10 caller=1E7A -> p7FFD=10 bank0=48k trdos=0 bank3=page0
@@ -255,12 +255,12 @@ memory.DirectWriteToZ80Memory(0x5B5C, value);  // REJECTED: Violates hardware fi
 ## 8. Verification Test Reference
 
 The reproduction and validation scenarios are codified in:
-- [`core/tests/loaders/disk/scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp)
-  - `Scroller_Boot_Test.BootScrollerDemoTRD`: 48K/Clean TR-DOS boot path (passes).
-  - `Scroller_Boot_Test.BootScrollerDemoTRD_Via128KMenu`: 128K menu path reproducing the authentic `$5B00` desync failure.
-  - `Scroller_Boot_Test.BootScrollerFixedTRD_Via128KMenu`: 128K menu path loading `scroller_fixed.trd`, verifying all 7 TR-DOS loads, all 6 MegaLZ unpacks, `#7FFD` port switches, Covox menu entry (`$9B6B`), Space trigger (`$9CD6`), and 50Hz IM2 audio execution.
-  - `Scroller_Boot_Test.RunGeneratedScrollerSNA`: Automated validation of the clean 128K `.SNA` snapshot.
-  - `Scroller_Boot_Test.DISABLED_RealtimeGuiFlow_NoPerturbation`: Full passive realtime bus trace pin-pointing the exact instruction sequence.
+- [`core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp`](../../../../core/tests/functional/loaders/disk/scroller_boot_functional_test.cpp)
+  - `Scroller_Boot_Functional.BootScrollerDemoTRD`: 48K/Clean TR-DOS boot path (passes).
+  - `Scroller_Boot_Functional.BootScrollerDemoTRD_Via128KMenu`: 128K menu path reproducing the authentic `$5B00` desync failure.
+  - `Scroller_Boot_Functional.BootScrollerFixedTRD_Via128KMenu`: 128K menu path loading `scroller_fixed.trd`, verifying all 7 TR-DOS loads, all 6 MegaLZ unpacks, `#7FFD` port switches, Covox menu entry (`$9B6B`), Space trigger (`$9CD6`), and 50Hz IM2 audio execution.
+  - `Scroller_Boot_Functional.RunGeneratedScrollerSNA`: Automated validation of the clean 128K `.SNA` snapshot.
+  - `Scroller_Boot_Functional.RealtimeGuiFlow_NoPerturbation`: Full passive realtime bus trace pin-pointing the exact instruction sequence.
 
 ---
 

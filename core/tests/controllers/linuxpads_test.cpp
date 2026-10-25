@@ -520,6 +520,9 @@ void AddSteamHid(const fs::path& root, const std::string& dir, const std::string
 /// hid-steam: the game pad interface (no hidraw node of its own) without its input device while Steam has it
 TEST(LinuxPads_Test, HidSteam_ThePadsTheSteamClientHolds)
 {
+#ifdef _WIN32
+    GTEST_SKIP() << "the sysfs fixture names directories like 0003:28DE:1102.0001: ':' is not valid in a Windows file name";
+#endif
     const fs::path root = TestPathHelper::GetUniqueTestScratchPath("linuxpads-steam");
     fs::remove_all(root);
     const fs::path drivers = root / "bus" / "hid" / "drivers" / "hid-steam";

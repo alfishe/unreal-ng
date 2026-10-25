@@ -71,8 +71,12 @@ public:
     /// A lower priority plays at this share under a higher one
     static constexpr float kDuck = 0.25f;
 
+    /// Where the mixer reads the time (effect starts, ends, the envelope period): the steady clock; a test passes its own
+    /// and moves it by hand, so no effect depends on how long the host took between two calls
+    using NowFunction = std::function<Clock::time_point()>;
+
     /// @p threaded: a worker ends the effects on time; tests pass false and call Tick
-    explicit HapticMixer(Writer writer, bool threaded = true);
+    explicit HapticMixer(Writer writer, bool threaded = true, NowFunction now = {});
     ~HapticMixer();
     HapticMixer(const HapticMixer&) = delete;
     HapticMixer& operator=(const HapticMixer&) = delete;
@@ -109,6 +113,8 @@ private:
     void Run();
 
     Writer _writer;
+    NowFunction _now;
+    Clock::time_point Now() const { return _now ? _now() : Clock::now(); }
     mutable std::mutex _mutex;
     std::condition_variable _wake;
     std::map<HostDeviceId, std::vector<Active>> _active;

@@ -23,6 +23,8 @@
 #include "unrealasm/layout.h"
 #include "unrealasm/symbols/fromsource.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
@@ -90,9 +92,7 @@ std::vector<std::vector<uint8_t>> Assemble(const char* sjasmplus, const std::vec
 {
     const ProjectResult converted = ConvertProject(project, "sjasmplus");
     EXPECT_TRUE(converted.ok);
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     for (const ProjectFile& f : converted.files)
         WriteBytes(dir / (f.name + ".asm"), codecs::SjasmplusCodec().Encode(f.document, {}).bytes);

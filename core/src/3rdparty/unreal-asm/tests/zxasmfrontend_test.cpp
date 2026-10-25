@@ -19,6 +19,8 @@
 #include "unrealasm/containers.h"
 #include "unrealasm/dialect.h"
 
+#include "scratchdir.h"
+
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 
@@ -86,9 +88,7 @@ std::vector<uint8_t> AssembleConverted(const char* sjasmplus, const std::string&
         project.push_back({file, zxasm.Decode(hobeta.data, options).document});
     }
     const ProjectResult r = ConvertProject(project, "sjasmplus");
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     for (const ProjectFile& f : r.files)
         WriteBytes(dir / (f.name + ".asm"), codecs::SjasmplusCodec().Encode(f.document, {}).bytes);
@@ -217,9 +217,7 @@ TEST(ZxasmFrontend_Test, MakeAssemblesSectionsIntoFiles)
     DecodeOptions options;
     options.catalog = hobeta.Hints();
     const ConvertResult r = Convert(zxasm.Decode(hobeta.data, options).document, "sjasmplus");
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "zmk.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
 #ifdef _WIN32
@@ -249,9 +247,7 @@ TEST(ZxasmFrontend_Test, EndaStartsAnAssemblyWithAnEmptyLabelTable)
     DecodeOptions options;
     options.catalog = hobeta.Hints();
     const ConvertResult r = Convert(zxasm.Decode(hobeta.data, options).document, "sjasmplus");
-    std::random_device random;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
     std::filesystem::create_directories(dir);
     WriteBytes(dir / "enda1.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
 #ifdef _WIN32
@@ -307,9 +303,7 @@ TEST(ZxasmFrontend_Test, LoadtabTablesAssembleToWhatZasmBuilt)
         decode.catalog = hobeta.Hints();
         const ProjectResult r = ConvertProject({{name, zxasm.Decode(hobeta.data, decode).document}}, "sjasmplus", options);
         ASSERT_EQ(r.files.size(), 1u);
-        std::random_device random;
-        const std::filesystem::path dir = std::filesystem::temp_directory_path() /
-                                          ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        const std::filesystem::path dir = unreal_asm_tests::UniqueDir("unreal-asm-tests");
         std::filesystem::create_directories(dir);
         WriteBytes(dir / "x.asm", codecs::SjasmplusCodec().Encode(r.files[0].document, {}).bytes);
 #ifdef _WIN32

@@ -1,12 +1,17 @@
 #include <gtest/gtest.h>
-#include <chrono>
-#include <iostream>
-#include <iomanip>
+
+#include <cstdio>
+#include <memory>
+#include <string>
 
 #include "hud/core/hudmodel.h"
 #include "hud/core/hudtiming.h"
 
-class HudPerformanceBenchmark : public ::testing::Test
+/// What the HUD model's update path promises, as facts and not as microseconds: this file used to be a "benchmark" whose
+/// tests asserted time per call (a speed of the host and of the build type, flaky by nature). The promises behind those
+/// numbers are checked directly: an update with the same content publishes nothing new (dirty tracking), a snapshot read
+/// is a load of the published snapshot (no copy), and the model holds what was last set.
+class HudModelUpdates_Test : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -16,84 +21,49 @@ protected:
     }
 
     std::shared_ptr<HudModel> _model;
-
-    // Measure execution time of a callable
-    template<typename Func>
-    double measureMs(Func&& func, int iterations)
-    {
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < iterations; ++i)
-        {
-            func();
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        return duration.count() / 1000.0; // Return ms
-    }
 };
 
-// Benchmark: Indicator updates with SAME content (should be fast with dirty tracking)
-TEST_F(HudPerformanceBenchmark, IndicatorUpdateSameContent)
+// Indicator updates with SAME content (the beeper firing every frame) publish nothing: the snapshot object stays
+TEST_F(HudModelUpdates_Test, IndicatorUpdateSameContentPublishesNothingNew)
 {
     constexpr int kIterations = 10000;
-    constexpr int kFrames = 50; // Simulate 1 second at 50fps
 
-    // Initial indicator
-    _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active,
-                           "BEEP", "", "speaker", std::chrono::milliseconds(1000), true);
+    _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active, "BEEP", "", "speaker",
+                           std::chrono::milliseconds(1000), true);
+    const auto published = _model->snapshot();
+    ASSERT_EQ(published->elements.size(), 1u);
 
-    // Measure repeated updates with SAME content (simulates beeper firing every frame)
-    double timeMs = measureMs([this]() {
-        _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active,
-                               "BEEP", "", "speaker", std::chrono::milliseconds(1000), true);
-    }, kIterations);
+    for (int i = 0; i < kIterations; ++i)
+    {
+        _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active, "BEEP", "", "speaker",
+                               std::chrono::milliseconds(1000), true);
+    }
 
-    double perCallUs = (timeMs * 1000.0) / kIterations;
-    double perFrameUs = perCallUs * 1; // 1 indicator per frame
-
-    std::cout << "\n=== Indicator Update (Same Content) ===" << std::endl;
-    std::cout << "  Iterations: " << kIterations << std::endl;
-    std::cout << "  Total time: " << std::fixed << std::setprecision(2) << timeMs << " ms" << std::endl;
-    std::cout << "  Per call:   " << std::fixed << std::setprecision(3) << perCallUs << " us" << std::endl;
-    std::cout << "  Per frame (50fps): " << std::fixed << std::setprecision(3) << perFrameUs << " us" << std::endl;
-    std::cout << "  Frame budget used: " << std::fixed << std::setprecision(4)
-              << (perFrameUs / 20000.0) * 100 << "% (of 20ms)" << std::endl;
-
-    // Should be very fast with dirty tracking - under 1us per call
-    EXPECT_LT(perCallUs, 10.0) << "Same-content update should be < 10us";
+    EXPECT_EQ(_model->snapshot().get(), published.get()) << "dirty tracking: same content, same published snapshot";
 }
 
-// Benchmark: Indicator updates with DIFFERENT content (triggers full publish)
-TEST_F(HudPerformanceBenchmark, IndicatorUpdateDifferentContent)
+// Indicator updates with DIFFERENT content publish: the snapshot follows the last one set
+TEST_F(HudModelUpdates_Test, IndicatorUpdateDifferentContentPublishesTheLastOne)
 {
     constexpr int kIterations = 10000;
 
-    double timeMs = measureMs([this, i = 0]() mutable {
+    for (int i = 0; i < kIterations; ++i)
+    {
         char buf[16];
         snprintf(buf, sizeof(buf), "RAM %d", i % 8);
-        _model->setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active,
-                               buf, "", "ram", std::chrono::milliseconds(1200), true);
-        ++i;
-    }, kIterations);
+        _model->setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, buf, "", "ram",
+                               std::chrono::milliseconds(1200), true);
+    }
 
-    double perCallUs = (timeMs * 1000.0) / kIterations;
-
-    std::cout << "\n=== Indicator Update (Different Content) ===" << std::endl;
-    std::cout << "  Iterations: " << kIterations << std::endl;
-    std::cout << "  Total time: " << std::fixed << std::setprecision(2) << timeMs << " ms" << std::endl;
-    std::cout << "  Per call:   " << std::fixed << std::setprecision(3) << perCallUs << " us" << std::endl;
-    std::cout << "  Frame budget used: " << std::fixed << std::setprecision(4)
-              << (perCallUs / 20000.0) * 100 << "% (of 20ms)" << std::endl;
-
-    EXPECT_LT(perCallUs, 100.0) << "Different-content update should be < 100us";
+    const auto snap = _model->snapshot();
+    ASSERT_EQ(snap->elements.size(), 1u);
+    EXPECT_EQ(snap->elements[0].id, "ind/mem");
+    EXPECT_EQ(snap->elements[0].value, "RAM 7") << "the last of 10000 (9999 % 8)";
 }
 
-// Benchmark: Snapshot generation
-TEST_F(HudPerformanceBenchmark, SnapshotGeneration)
+// A snapshot read is a load of the published snapshot: the same object every time, nothing copied
+TEST_F(HudModelUpdates_Test, SnapshotReadReturnsThePublishedObject)
 {
-    constexpr int kIterations = 10000;
-
-    // Add several indicators
     _model->setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, "RAM 3", "", "ram",
                            std::chrono::milliseconds(1200), true);
     _model->setIndicatorAt("rom", HudTilePosition::TopLeft, HudState::Active, "ROM 0", "", "rom",
@@ -101,70 +71,43 @@ TEST_F(HudPerformanceBenchmark, SnapshotGeneration)
     _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active, "BEEP", "", "speaker",
                            std::chrono::milliseconds(1000), true);
 
-    double timeMs = measureMs([this]() {
-        auto snap = _model->snapshot();
-        (void)snap; // Prevent optimization
-    }, kIterations);
-
-    double perCallUs = (timeMs * 1000.0) / kIterations;
-
-    std::cout << "\n=== Snapshot Read ===" << std::endl;
-    std::cout << "  Iterations: " << kIterations << std::endl;
-    std::cout << "  Total time: " << std::fixed << std::setprecision(2) << timeMs << " ms" << std::endl;
-    std::cout << "  Per call:   " << std::fixed << std::setprecision(3) << perCallUs << " us" << std::endl;
-
-    // Snapshot read should be very fast (atomic load)
-    EXPECT_LT(perCallUs, 1.0) << "Snapshot read should be < 1us";
+    const auto first = _model->snapshot();
+    EXPECT_EQ(first->elements.size(), 3u);
+    for (int i = 0; i < 10000; ++i)
+        ASSERT_EQ(_model->snapshot().get(), first.get());
 }
 
-// Benchmark: Simulated frame with multiple notifications
-TEST_F(HudPerformanceBenchmark, SimulatedFrameWorkload)
+// A typical frame (the beeper active, a page switch every 10 frames, the expiry check, the paint's snapshot read)
+// leaves both indicators in the model with the last page shown
+TEST_F(HudModelUpdates_Test, SimulatedFrameWorkloadKeepsTheIndicators)
 {
     constexpr int kFrames = 1000;
 
-    double timeMs = measureMs([this, frame = 0]() mutable {
-        // Simulate typical frame with beeper active + occasional page switch
-        _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active,
-                               "BEEP", "", "speaker", std::chrono::milliseconds(1000), true);
-
-        if (frame % 10 == 0) // Page switch every 10 frames
+    for (int frame = 0; frame < kFrames; ++frame)
+    {
+        _model->setIndicatorAt("beeper", HudTilePosition::TopLeft, HudState::Active, "BEEP", "", "speaker",
+                               std::chrono::milliseconds(1000), true);
+        if (frame % 10 == 0)
         {
             char buf[16];
             snprintf(buf, sizeof(buf), "RAM %d", frame % 8);
-            _model->setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active,
-                                   buf, "", "ram", std::chrono::milliseconds(1200), true);
+            _model->setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, buf, "", "ram",
+                                   std::chrono::milliseconds(1200), true);
         }
+        _model->expire(HudClock::time_point{});  // an instant before everything: the call is made, nothing is due
+        (void)_model->snapshot();
+    }
 
-        // Expire check (like animation timer would do)
-        _model->expire(HudClock::now());
-
-        // Snapshot read (like paintEvent would do)
-        auto snap = _model->snapshot();
-        (void)snap;
-
-        ++frame;
-    }, kFrames);
-
-    double perFrameUs = (timeMs * 1000.0) / kFrames;
-    double fps50Budget = 20000.0; // 20ms = 20000us
-
-    std::cout << "\n=== Simulated Frame Workload ===" << std::endl;
-    std::cout << "  Frames: " << kFrames << std::endl;
-    std::cout << "  Total time: " << std::fixed << std::setprecision(2) << timeMs << " ms" << std::endl;
-    std::cout << "  Per frame:  " << std::fixed << std::setprecision(3) << perFrameUs << " us" << std::endl;
-    std::cout << "  Frame budget used: " << std::fixed << std::setprecision(4)
-              << (perFrameUs / fps50Budget) * 100 << "% (of 20ms @ 50fps)" << std::endl;
-
-    // HUD should use < 1% of frame budget
-    EXPECT_LT(perFrameUs / fps50Budget * 100, 1.0) << "HUD should use < 1% of frame budget";
-}
-
-// Summary output
-TEST_F(HudPerformanceBenchmark, PrintSummary)
-{
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "HUD Performance Benchmark Summary" << std::endl;
-    std::cout << "========================================" << std::endl;
-    std::cout << "Target: < 1% of 20ms frame budget (< 200us/frame)" << std::endl;
-    std::cout << "========================================\n" << std::endl;
+    const auto snap = _model->snapshot();
+    ASSERT_EQ(snap->elements.size(), 2u);
+    bool beeper = false;
+    std::string page;
+    for (const auto& e : snap->elements)
+    {
+        beeper = beeper || e.id == "ind/beeper";
+        if (e.id == "ind/mem")
+            page = e.value;
+    }
+    EXPECT_TRUE(beeper);
+    EXPECT_EQ(page, "RAM 6") << "the last page switch was frame 990 (990 % 8 = 6)";
 }

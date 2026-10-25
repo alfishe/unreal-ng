@@ -484,9 +484,36 @@ static void LoadUart(Reader& r, NextUart& u)
     u._pollClean = false;  // the levels and the counts were replaced
 }
 
+// The frame timing field by field: the struct has a padding tail since it carries the 60 Hz flag, and padding bytes are not
+// defined (a raw copy made the blob - and its compressed size - differ between compilers). The layout is the one of the
+// 8 x uint32 it always was; the flag is derived: the only frames shorter than 61000 T-states are the 60 Hz ones
+static void PutTiming(Writer& w, const NextTiming& t)
+{
+    w.Put(t.frame);
+    w.Put(t.line);
+    w.Put(t.intStart);
+    w.Put(t.intLength);
+    w.Put(t.intLine);
+    w.Put(t.intHc);
+    w.Put(t.minVactive);
+    w.Put(t.minHactive);
+}
+static void GetTiming(Reader& r, NextTiming& t)
+{
+    r.Get(t.frame);
+    r.Get(t.line);
+    r.Get(t.intStart);
+    r.Get(t.intLength);
+    r.Get(t.intLine);
+    r.Get(t.intHc);
+    r.Get(t.minVactive);
+    r.Get(t.minHactive);
+    t.sixty = t.frame < 61000;
+}
+
 static void SaveInterrupts(Writer& w, const NextInterruptSource& i)
 {
-    w.Put(i._timing);
+    PutTiming(w, i._timing);
     w.Put(i._control);
     w.PutArray(i._nmiReturn);
     w.Put(i._enable0);
@@ -505,7 +532,7 @@ static void SaveInterrupts(Writer& w, const NextInterruptSource& i)
 }
 static void LoadInterrupts(Reader& r, NextInterruptSource& i)
 {
-    r.Get(i._timing);
+    GetTiming(r, i._timing);
     r.Get(i._control);
     r.GetArray(i._nmiReturn);
     r.Get(i._enable0);
