@@ -174,6 +174,13 @@ private:
     std::atomic<bool> _stop{false};
 };
 
+/// The process-wide client context loads the system roots once (the macOS keychain anchors: 0.2-0.6 s, more under
+/// a parallel suite); made here, outside the bridge's timed waits
+void WarmContext()
+{
+    HostTls warm("localhost");
+}
+
 bool NextEvent(HostNetBridge& bridge, HostNetEvent& ev)
 {
     return TestWait::For([&] { return bridge.PollEvent(ev); });
@@ -182,6 +189,7 @@ bool NextEvent(HostNetBridge& bridge, HostNetEvent& ev)
 
 TEST(HostTls_Test, PlaintextThroughATlsConnectionToALoopbackServer)
 {
+    WarmContext();
     ASSERT_TRUE(HostTls::Available());
     Credentials c;
     MakeCredentials("localhost", c);
@@ -206,6 +214,7 @@ TEST(HostTls_Test, PlaintextThroughATlsConnectionToALoopbackServer)
 
 TEST(HostTls_Test, AWrongNameFailsTheConnect)
 {
+    WarmContext();
     Credentials c;
     MakeCredentials("localhost", c);
     HostTls::TrustExtraPem(c.pem);
@@ -220,6 +229,7 @@ TEST(HostTls_Test, AWrongNameFailsTheConnect)
 
 TEST(HostTls_Test, AnUntrustedCertificateFailsTheConnect)
 {
+    WarmContext();
     Credentials c;
     MakeCredentials("localhost", c);   // not trusted: its PEM is never handed over
     TlsEchoServer server(c);

@@ -111,9 +111,11 @@ protected:
 
 // The FUSE vectors through the adapter: every memory and port event reaches the host's paths at the T-state the native core
 // puts it at, the final state matches (the NMOS baseline of the library: OUT (C),0 writes 0, and unreal-z80's MEMPTR after
-// repeating block I/O). ~1 300 short cases; internal cycles are not reported to the host (no ULA contention to apply)
+// repeating block I/O). ~1 300 short cases; internal cycles are not reported to the host (no ULA contention to apply).
+// The vectors hold the Zilog die's undocumented flags: the Next's T80 persona (its own tests in z80nopcodes_test) is off
 TEST_F(Z80NEngine_Test, FuseVectorsThroughTheHostBus)
 {
+    Z80nCpuSetT80Persona(_engine->Cpu(), 0);
     auto cases = FuseVectors::LoadCases();
     ASSERT_GT(cases.size(), 1000u);
     FuseVectors::FusePortDecoder fuseDecoder(_context);

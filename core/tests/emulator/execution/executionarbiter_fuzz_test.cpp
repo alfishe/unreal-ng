@@ -45,6 +45,15 @@ struct Monitor
 
 thread_local std::mt19937* tlsRng = nullptr;
 
+/// Up to `yields` yields, cut at `limit`: on a loaded host a yield can hand over a whole time slice (Windows
+/// SwitchToThread), and a count alone stretched a 500-yield hold past the 10 s hang check (MSVC, seed 5)
+void YieldFor(int yields, std::chrono::microseconds limit, const CommandContext* ctx = nullptr)
+{
+    const auto end = std::chrono::steady_clock::now() + limit;
+    for (int i = 0; i < yields && !(ctx && ctx->IsAborted()) && std::chrono::steady_clock::now() < end; ++i)
+        std::this_thread::yield();
+}
+
 struct Scenario
 {
     uint32_t seed = 0;
@@ -374,8 +383,7 @@ std::vector<std::string> RunScenario(const Scenario& s)
                     const int spins = rng() % 4 == 0 ? 2000 : 20;  // a long hold lets the queue grow deep
                     const Result result = arbiter.Execute(who, "cmd", [&, nested, spins](CommandContext& ctx) {
                         monitor.Enter();
-                        for (int i = 0; i < spins && !ctx.IsAborted(); ++i)
-                            std::this_thread::yield();
+                        YieldFor(spins, spins > 20 ? 2000us : 200us, &ctx);
                         monitor.Leave();
                         if (nested)
                             noteResult(arbiter.Execute(who, "nested", [&](CommandContext&) {
@@ -418,8 +426,7 @@ std::vector<std::string> RunScenario(const Scenario& s)
                     if (hold.Valid())
                     {
                         monitor.Enter();
-                        for (int i = static_cast<int>(rng() % 30); i > 0; --i)
-                            std::this_thread::yield();
+                        YieldFor(static_cast<int>(rng() % 30), 200us);
                         monitor.Leave();
                         const uint64_t seq = hold.request ? r.seq : 0;
                         arbiter.EndHold(hold);
@@ -434,8 +441,7 @@ std::vector<std::string> RunScenario(const Scenario& s)
                     std::vector<Ticket> burstCommands;
                     burst.push_back(arbiter.Post(who, "burst.hold", [&](CommandContext& ctx) {
                         monitor.Enter();
-                        for (int i = 0; i < 500 && !ctx.IsAborted(); ++i)
-                            std::this_thread::yield();
+                        YieldFor(500, 1000us, &ctx);
                         monitor.Leave();
                     }));
                     burstCommands.push_back(burst.back());
