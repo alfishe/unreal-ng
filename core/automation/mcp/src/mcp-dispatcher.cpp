@@ -219,6 +219,29 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
             }
             replyJson = format.asString() == "json";
         }
+        // An argument the schema does not name is a typo ("addr" for "address"): ignored, it would leave the tool's
+        // default in place and answer something that looks right (a read from 0). Names starting with '_' are internal;
+        // 'target' is taken by every tool (agents send target "auto" everywhere, a tool without a machine ignores it)
+        const Json::Value& properties = tool->inputSchema["properties"];
+        if (argumentsCopy->isObject() && properties.isObject())
+        {
+            for (const std::string& key : argumentsCopy->getMemberNames())
+            {
+                if (key.empty() || key[0] == '_' || key == "target" || properties.isMember(key))
+                    continue;
+                std::string known;
+                for (const std::string& property : properties.getMemberNames())
+                    known += (known.empty() ? "" : ", ") + property;
+                Json::Value payload;
+                Json::Value text;
+                text["type"] = "text";
+                text["text"] = name + ": unknown argument '" + key + "' (arguments: " + known + ")";
+                payload["content"].append(text);
+                payload["isError"] = true;
+                done(MakeRpcResult(id, std::move(payload)));
+                return;
+            }
+        }
         if (name == "control_execution" && argumentsCopy->isObject() && !argumentsCopy->isMember("_mcp_client"))
         {
             std::lock_guard<std::mutex> lock(_clientMutex);

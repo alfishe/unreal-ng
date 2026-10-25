@@ -78,6 +78,7 @@ matches; it names the recipe(s) for that action.
 | Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | keyboard, joystick |
 | Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
 | How a running program keeps its state: its buffers, pointers, flags and the code that changes them | [articles/program-state-reverse.md](articles/program-state-reverse.md) | trying keys and diffing screenshots |
+| Reverse-engineering a whole program into annotated sources that rebuild byte for byte (coverage, code/data split, naming, relocation proof, SkoolKit / zx-reaper interop) | [articles/game-reverse-pipeline.md](articles/game-reverse-pipeline.md) | reading the code to answer what a run can show |
 | Waiting until something happens (PC, a write, a port, a prompt on screen) instead of `sleep`; who writes an address | [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | profilers |
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
@@ -245,6 +246,7 @@ call.
 | [articles/demo-boot-verification.md](articles/demo-boot-verification.md) | Deterministic boot verification: autostart + `run_frames` + screen digest + OCR |
 | [articles/disk-protection-triage.md](articles/disk-protection-triage.md) | Disk protection triage: catalog vs raw sectors + FDC state + `fdc-only` port trace |
 | [articles/program-state-reverse.md](articles/program-state-reverse.md) | Where a running program keeps its state: `memory/find` over all RAM + a state diff + write journal `find-last` / a write watchpoint with `debug/wait` + `disasm` (operands the code rewrites) |
+| [articles/game-reverse-pipeline.md](articles/game-reverse-pipeline.md) | A whole program (game, demo, resident tool) into readable, annotated, rebuildable sources on any machine: capture at handover, coverage from scripts / random play / RZX with a stop rule, classification by writers and readers (write journal, `find-last`), annotation rules, a findings register, the shift test on per-frame screen digests, labels back into the debugger and SkoolKit interop (the method of zx-reaper) |
 | [articles/physical-protection-forensics.md](articles/physical-protection-forensics.md) | Physical copy-protection forensics: diskinfo structural scan, clock bitmap, flaky-sector differential test, RE the check |
 
 ## Ground truth links

@@ -351,6 +351,21 @@ TEST_F(McpDispatcher_Test, ToolsCall_BadResponseFormatIsAToolError)
     EXPECT_NE(response["result"]["content"][0]["text"].asString().find("response_format"), std::string::npos);
 }
 
+// A misspelt argument ("addr" for "address") must not leave the tool's default in place: a read from 0 looks right
+TEST_F(McpDispatcher_Test, ToolsCall_UnknownArgumentIsAToolError)
+{
+    Json::Value params;
+    params["name"] = "memory_access";
+    params["arguments"]["action"] = "read";
+    params["arguments"]["addr"] = "0x8000";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("unknown argument 'addr'"), std::string::npos) << text;
+    EXPECT_NE(text.find("address"), std::string::npos) << text;
+}
+
 TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
