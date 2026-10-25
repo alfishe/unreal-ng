@@ -1,7 +1,8 @@
 # Recipe: ZX-bus Slots (fit a card, plan, apply, model switch)
 
 The cards on a machine's buses - General Sound / NeoGS, TurboSound FM in the AY socket, MoonSound, Covox /
-SounDrive, the network cards, the ZX-MultiSound - are **slot cards**: each sits in a slot of a bus (`zxbus.1`,
+SounDrive, the network cards, the ZX-MultiSound, and on the Sinclair edge the Kempston joystick interface, the
+Fuller Box and the AMX mouse - are **slot cards**: each sits in a slot of a bus (`zxbus.1`,
 `edge.1`, `ay-socket`), the emulator checks that they fit together, and a change is planned before it is made. Use
 this recipe to see what a machine has, to fit a card for a test, and to read what a change would remove. Verified
 2026-10-05 against branch `zx-bus-slots` (MCP, WebAPI, CLI, Lua). User guide:
@@ -116,6 +117,34 @@ The reply of every change: `status` (`applied`, `dry-run`, `refused`, `recording
 `bad-request`), `message`, `plan` (`removed[]` with each card's `options` and `undo` - the plug that puts it back -,
 `shadowed[]`, `lostFunctions[]`, `media[]`, `resultingSlots[]`, `slotsSection[]`, `lines[]`), `restart`
 (`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media` (`attached`, `detached`, `closed`).
+
+## A Kempston joystick on a 48K / 128K / +2 / +2A / +3 (edge card)
+
+These machines have no Kempston decode; the interface is the edge card `kempston` (options `decode=a7a6a5` default,
+issue 4; `decode=a5`, early boards). Without it the joystick input calls warn and name this plug.
+
+```text
+emulator_manage {"action":"create","model":"48K","slots":{"edge.1":"kempston"}}
+emulator_manage {"action":"slots_plug","slot":"edge.next","card":"kempston"}              # running machine: restarts
+#   slots: applied
+#     plug kempston -> edge.1: allowed, fit real
+#   restarted: emulator <old> -> <new> (running)
+joystick_input  {"action":"set","buttons":"up+fire"}                                     # IN #1F reads 0x18
+emulator_manage {"action":"slots_plug","slot":"cpu-socket.next","card":"kempston","replace_if_incompatible":true}  # ATM450 / ATM710: unrealistic
+```
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/slots/catalog" | jq '.cards[] | select(.id=="kempston") | .thisMachine'
+EMU_ID=$(curl -s -X POST "$BASE/emulator/$EMU_ID/slots/edge.next/plug" -H 'Content-Type: application/json' \
+     -d '{"card":"kempston"}' | jq -r .restart.emulatorId)
+curl -s "$BASE/emulator/$EMU_ID/joystick" | jq '{wired, fit}'                             # wired: true
+```
+
+CLI `slots plug edge.next kempston`; Lua / Python `slots_plug("edge.next", "kempston")` (the surfaces' slot verbs).
+Machines with a board decode (Pentagon, Scorpion, ZX-Evo, TS-Conf, Profi, Sprinter, Next) refuse it: their built-in
+holds `kempston-joystick`. In TR-DOS (`CF_TRDOS`) the card sees no cycle: `#1F` is the WD1793 (Beta 128 passes /IORQ
+on only outside DOS, MAME beta128.cpp). TTD carries it as `edge.1.kempston` (type 69) plus the machine's
+`kempstonjoystick` blob.
 
 ## The Sprinter's ISA slots (SL-8)
 

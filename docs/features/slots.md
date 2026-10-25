@@ -21,7 +21,7 @@ slots with it (the NeoGS brings `sd.ngs`).
 |---|---|
 | **Bus** | A connector family of the machine: `zxbus` (ZX-bus / NemoBus), `edge` (the Sinclair edge connector), `iobus` (ATM Turbo), `profi-bus`, `isa` (Sprinter), `cpu-socket` (a card on an adapter in the Z80 socket), and `ay-socket` (the AY chip's socket) |
 | **Slot** | One place on a bus: `zxbus.1`, `zxbus.2`, `edge.1`, `ay-socket`. `zxbus.next` means "the next free one" |
-| **Card** | What sits in a slot: `gs`, `gs-lw`, `neogs`, `tsfm`, `ts`, `ay`, `none` (an empty AY socket), `moonsound`, `covox-fb`, `soundrive`, `multisound`, `zxnetusb`, `zx-wifi` |
+| **Card** | What sits in a slot: `gs`, `gs-lw`, `neogs`, `tsfm`, `ts`, `ay`, `none` (an empty AY socket), `moonsound`, `covox-fb`, `soundrive`, `multisound`, `zxnetusb`, `zx-wifi`; on the Sinclair edge `kempston`, `fuller-box`, `amx-mouse` |
 | **Built-in device** | Something the board itself has: the AY, the Beta 128 disk interface, a Covox. A card can **shadow** it (the card answers its ports, the built-in stays silent) or switch it off |
 | **Function** | The job a card does: `gs`, `ay-socket`, `opl4`, `covox-fb`, `soundrive`, `midi`, ... Two cards with the same job do not fit together (rule D1) |
 | **Fit** | How a card fits the bus: `real` (as on real hardware), `adapter` (behind a bus adapter), `unrealistic` (it works in the emulator although the bus lacks a signal the card needs) |
@@ -105,6 +105,27 @@ implementation (`UNREAL_TTD_BACKEND=v1`) refuses the change while it records, na
 **What a restart keeps besides the cards:** the network settings and the firmware choices made through them - the
 ZX-Evo AVR (`avr_firmware`, `[EVO] Avr=`) and the ATM Turbo 2+ keyboard controller (`kbc_firmware`, `[ATM] Kbc=`) -
 as the machine runs with them.
+
+## The Kempston joystick interface
+
+The 48K, 128K, +2, +2A and +3 have no Kempston decode of their own: on the real machines a Kempston interface plugs
+into the edge connector. Here it is the card `kempston` on the `edge` bus (`slots plug edge.next kempston`, WebAPI
+`POST /emulator/{id}/slots/edge.next/plug {"card":"kempston"}`, MCP `emulator_manage` `slots_plug`); after the restart
+the guest reads `IN #1F` and every joystick input path reaches it (the `kempston` connector of the controllers, the
+keypad keys, `joystick` / `joystick_input` / `POST /joystick` on every surface, the TTD journal). The shipped
+configurations do not fit it: the machines came without one.
+
+| Option | Values | Meaning |
+|---|---|---|
+| `decode` | `a7a6a5` (default), `a5` | issue 4 (74LS138 on A7-A5 = 000: every port `#00`-`#1F`), or the early boards' A5 = 0 only |
+
+D5-D7 read 0 (the issue-4 board's sixth driver and diodes). Behind a Beta 128 the interface sees no I/O while the
+TR-DOS ROM is paged in (the Beta 128 passes /IORQ on only outside DOS): `#1F` is then the WD1793's register, as on the
+Pentagon. The ATM Turbo 2 / 2+ have no edge connector: the card fits there only `unrealistic` (`--replace`). Machines
+with a Kempston decode on the board (Pentagon, Scorpion, ZX-Evo, TS-Conf, Profi, Sprinter, Next) refuse it. Without
+the card a joystick input call is accepted with the warning `no Kempston joystick interface on this machine`, followed
+by the plug command for this machine. The Kempston mouse needs no card: its standard decode is on every model
+(`[INPUT] Mouse=`).
 
 ## The General Sound personality
 

@@ -763,6 +763,7 @@ protected:
         t["available"] = state.available;
         t["present"] = state.present;
         t["wired"] = state.wired;
+        t["fit"] = state.fit;
         t["state"] = static_cast<int>(state.state);
         t["port_value"] = static_cast<int>(state.portValue);
         t["buttons"] = buttons;

@@ -439,8 +439,8 @@ joystick_tap_pending()             --> true while a tap is still holding its but
 joystick_button_names()            --> {"up","down","left","right","fire","b5","b6","b7"}
 ```
 
-`state` has the same key names as the WebAPI state object: `available`, `present`, `wired`,
-`state` (the byte), `port_value` (what `IN #1F` returns), `buttons = {up=..., ...}`, `pressed`
+`state` has the same key names as the WebAPI state object: `available`, `present`, `wired`, `fit`
+(`""` when wired, else how to fit the slot card `kempston`), `state` (the byte), `port_value` (what `IN #1F` returns), `buttons = {up=..., ...}`, `pressed`
 (array of names), `button_names`, `keys`, `pending_tap` (`{mask, frames_left}`, or **absent**),
 plus `warning` when the guest cannot see the buttons.
 

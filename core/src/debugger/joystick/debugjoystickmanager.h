@@ -34,7 +34,8 @@ struct JoystickStateSnapshot
 {
     bool available = false;  // a Joystick device exists
     bool present = false;    // fitted (config + feature); absent = the port reads 0x00
-    bool wired = false;      // this machine's port decoder answers a Kempston joystick
+    bool wired = false;      // this machine answers a Kempston joystick (its board, or a fitted `kempston` card)
+    std::string fit;         // not wired: how to fit the interface (SlotControl::PlugHint), "" when it cannot be fitted
     uint8_t state = 0;       // the device byte, active high
     uint8_t portValue = 0;   // what IN #1F returns from the device right now
     std::vector<std::string> buttons;  // names of the pressed bits (right, left, down, up, fire, b5, b6, b7)
@@ -91,6 +92,10 @@ public:
     /// endregion </Automation - timed>
 
     JoystickStateSnapshot GetState() const;
+
+    /// The warning of an input call (and of the status) on a machine whose guest cannot see the stick: no Kempston
+    /// interface, and how to fit one (the slot card `kempston`)
+    static std::string UnwiredWarning(const std::string& fit);
 
     /// region <Names>
     /// One name or a ',' / '+' list -> mask; 0 when empty or any name is unknown

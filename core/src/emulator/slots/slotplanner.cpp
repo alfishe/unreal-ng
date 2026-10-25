@@ -1307,6 +1307,11 @@ std::vector<PortClaim> CardClaims(const CardDef& card, const CardOptions& option
     return ActiveClaims(card, options);
 }
 
+std::vector<FunctionUse> CardFunctions(const CardDef& card, const CardOptions& options)
+{
+    return ActiveFunctions(card, options);
+}
+
 bool ParseCardOptions(const CardDef& card, std::string_view text, CardOptions& out, std::string* error)
 {
     auto fail = [error](std::string message) {

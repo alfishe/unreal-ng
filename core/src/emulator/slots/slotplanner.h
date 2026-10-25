@@ -48,6 +48,9 @@ uint32_t OptionBits(const CardDef& card, const CardOptions& options, Opt key);
 /// The card's port claims its options switch on (a claim with a `when` condition only when it holds)
 std::vector<PortClaim> CardClaims(const CardDef& card, const CardOptions& options);
 
+/// The card's functions its options switch on
+std::vector<FunctionUse> CardFunctions(const CardDef& card, const CardOptions& options);
+
 /// Parses "dip=ym,saa,gs mode=2" (space-separated name=value; a set option takes a comma list, "" or "none" = empty)
 bool ParseCardOptions(const CardDef& card, std::string_view text, CardOptions& out, std::string* error = nullptr);
 

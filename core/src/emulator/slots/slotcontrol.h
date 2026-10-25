@@ -110,6 +110,11 @@ public:
 
     /// The machine's card catalog (verb catalog) for a slot set; the card nodes the catalog lists
     static StateNode Catalog(const SlotManager::Result& current);
+    /// How to fit `card` on this machine, for a message that says a function is missing (the joystick input on a 48K):
+    /// "fit the `kempston` card: slots plug edge.1 kempston (MCP emulator_manage slots_plug, WebAPI POST
+    /// /emulator/{id}/slots/edge.1/plug); the machine restarts". A fit that needs the override says so and why; ""
+    /// when the card cannot be fitted here (refused) or there is no machine
+    static std::string PlugHint(const SlotManager::Result& current, std::string_view card);
     /// A change plan as the surfaces show it (also a refused one): the plan engine's plan, the refusal, the new
     /// [SLOTS] lines
     static StateNode PlanValue(const SlotManager::ChangePlan& plan);
