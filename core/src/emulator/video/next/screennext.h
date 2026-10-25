@@ -66,6 +66,7 @@ public:
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
+    uint32_t GridFirstT() const;  ///< the T-state where the grid's line 0 starts
 
     /// region <Layer capture> (design-layer-capture.md)
     /// The per-layer record of the frame being drawn. Off: nothing is allocated and the renderer is called as before. Switching it
@@ -107,6 +108,7 @@ private:
     unsigned _nextLine = 0;
     unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;
+    uint8_t _lastSixty = 0;
     bool _copperBound = false;
 
     std::atomic<bool> _layerWanted{false};

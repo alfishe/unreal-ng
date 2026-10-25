@@ -173,6 +173,13 @@ public:
     std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 
+    /// zxnext.vhd: the ULA byte reaches the bus only on port #xxFF under the 48K / 128K timing (port_ff_dat_ula), and on the
+    /// +3 port (A15:12 = 0, A1:0 = 01) under the +3 timing with NR #82 bit 4; every other undecoded port reads #FF
+    bool FloatingBusDrives(uint16_t port) const override;
+    bool OddPortContended(uint16_t port) const;
+    bool SixtyHzWanted(uint8_t timing) const;
+    void BeforeRelease() override;
+
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     /// NextREG breakpoints (BreakpointManager::HandleNextReg). A hit of the CPU's doors stops the machine where it happens (as a port

@@ -64,6 +64,7 @@ public:
     /// region <Palettes>
     void WritePaletteIndex(uint8_t value);
     uint8_t PaletteIndex() const { return _index; }
+    bool PaletteSubIndex() const { return _haveFirst; }  ///< nr_palette_sub_idx: the next NR #44 write is the second byte
     void WritePaletteValue8(uint8_t value);   ///< NR #41: RRRGGGBB, the low blue bit is B1 | B0
     void WritePaletteValue9(uint8_t value);   ///< NR #44: two writes; the second carries the low blue bit (and the Layer 2 priority)
     void WritePaletteControl(uint8_t value);  ///< NR #43

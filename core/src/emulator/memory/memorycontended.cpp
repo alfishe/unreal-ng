@@ -22,7 +22,7 @@
 template <MemoryReadCallback Plain, bool Stats>
 uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 {
-    if (!_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
+    if (!_contentionUla->IsContendedAt(addr))
         return (this->*Plain)(addr, isExecution);
 
     const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
@@ -38,7 +38,7 @@ uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 template <MemoryWriteCallback Plain, bool Stats>
 void Memory::MemoryWriteContended(uint16_t addr, uint8_t value)
 {
-    if (_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
+    if (_contentionUla->IsContendedAt(addr))
     {
         const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
         _contentionCpu->InsertWaitStates(wait);
@@ -59,7 +59,7 @@ uint8_t Memory::MemoryReadM1Snow(uint16_t addr, bool isExecution)
 {
     const uint8_t value = (this->*Read)(addr, isExecution);
     const Z80* cpu = _contentionCpu;
-    if (!_contentionUla->IsGateArray() && _contentionUla->IsSlotContended(static_cast<uint8_t>(cpu->i >> 6)))
+    if (!_contentionUla->IsGateArray() && _contentionUla->IsContendedAt(static_cast<uint16_t>(cpu->i << 8)))
         [[unlikely]] _contentionUla->NoteRefresh(cpu->t - 1, static_cast<uint8_t>(cpu->r_low - 1));
     return value;
 }

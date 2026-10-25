@@ -90,8 +90,10 @@ uint8_t UlaContention::IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) con
     // The +2A/+3 gate array contends memory cycles only, never I/O
     if (!_contentionEnabled || _gateArray)
         return 0;
+    if (_oddPortRule)
+        return 0;  // the Next: the waits come after IORQ, whatever the high byte addresses
     // C:1 when the high byte addresses contended memory, N:1 otherwise
-    return _slotContended[port >> 14] ? ComputeContentionDelay(cycleStartT) : 0;
+    return _slotContended[port >> 13] ? ComputeContentionDelay(cycleStartT) : 0;
 }
 
 uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
@@ -103,8 +105,12 @@ uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
     if ((port & 0x0001) == 0)
         return ComputeContentionDelay(iorqT);
 
+    // The Next: the odd ports that contend (#7FFD, ULA+) have the same pattern as a ULA port
+    if (_oddPortRule)
+        return _oddPortRule(_oddPortOwner, port) ? ComputeContentionDelay(iorqT) : 0;
+
     // Only the high byte contended: C:1, C:1, C:1 - a wait before each of the remaining T-states
-    if (_slotContended[port >> 14])
+    if (_slotContended[port >> 13])
     {
         uint32_t t = iorqT;
         uint32_t waits = 0;
@@ -141,8 +147,12 @@ uint8_t UlaContention::GetGateArrayFloatingBus(uint16_t port) const
         return 0xFF;  // paging locked: the gate array stops driving the bus
 
     uint8_t value = 0xFF;
-    if (!FetchedByte(value))
+    const bool video = FetchedByte(value);
+    if (!video)
         value = _lastContendedByte;
+    // zxula.vhd o_ula_floating_bus: on the Next bit 0 is forced only on the video byte, the last contended byte comes as is
+    if (_context && _context->config.mem_model == MM_NEXT && !video)
+        return value;
     return static_cast<uint8_t>(value | 0x01);
 }
 
