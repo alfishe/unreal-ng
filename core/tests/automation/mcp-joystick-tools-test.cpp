@@ -218,6 +218,6 @@ TEST_F(McpJoystick_Test, MissingArguments_AreRejectedBeforeAnyCall)
     EXPECT_EQ(Run("release").text, "release requires 'buttons'");
     EXPECT_EQ(Run("tap").text, "tap requires 'buttons'");
     EXPECT_EQ(Run("set").text, "set requires 'state' or 'buttons'");
-    EXPECT_EQ(Run("dance").text, "Unknown action 'dance'");
+    EXPECT_EQ(Run("dance").text, "Unknown action 'dance' (press, release, set, tap, status)");
     EXPECT_EQ(_caller->calls.size(), before) << "nothing reached the WebAPI";
 }
