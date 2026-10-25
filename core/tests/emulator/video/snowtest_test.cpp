@@ -308,7 +308,9 @@ TEST_P(SnowTestLoad_Test, LiveBandAsPredicted)
     _context->pFeatureManager->setFeature(Features::kFastTape, true);
     const std::string path = SnowPath(l.file);
     if (std::string(l.file).find(".tap") != std::string::npos)
+    {
         ASSERT_TRUE(_emulator->LoadTape(path));
+    }
     else
         ASSERT_TRUE(_emulator->LoadDisk(path));
     CommandTyper* typer = _context->pDebugManager->GetCommandTyper();

@@ -269,7 +269,9 @@ TEST_P(TapeLoadingSweep_Test, LoadsAndRuns)
     }
 
     if (MustLoad(c))
+    {
         EXPECT_NE(verdict, Verdict::Hang) << line << Screen();
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(Tapes, TapeLoadingSweep_Test, ::testing::ValuesIn(Cases()), CaseName);

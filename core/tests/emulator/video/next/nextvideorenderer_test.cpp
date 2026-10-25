@@ -1091,7 +1091,9 @@ TEST_F(NextVideoRenderer_Test, RandomStatesDigestIsUnchanged)
         // compositor draws by its ULA-only path. Its digest was recorded with that path switched off
         const bool quiet = state >= 48;
         if (state == 48)
+        {
             EXPECT_EQ(digest, 0xD15149A1F677E1AEull) << "the general compositor";
+        }
         // (the quiet half keeps the last memory and palettes: filling them is most of the test's time)
         for (uint8_t& b : _ram)
         {

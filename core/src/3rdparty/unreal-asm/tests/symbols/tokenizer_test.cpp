@@ -16,7 +16,9 @@ TEST(Tokenizer_Test, Numbers)
         int64_t value = 0;
         const bool ok = ParseNumber(text, value);
         if (expected < 0)
+        {
             EXPECT_FALSE(ok) << text;   // a hex number must start with a digit: C000h is a name
+        }
         else
         {
             ASSERT_TRUE(ok) << text;

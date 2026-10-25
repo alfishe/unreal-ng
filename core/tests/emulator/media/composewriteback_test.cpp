@@ -157,7 +157,9 @@ TEST_P(ComposeWriteBack_Test, ModifyCreateAndCopyUp)
         << "no staged file left";
     EXPECT_FALSE(std::filesystem::exists(WriteBack::JournalFor(_descriptor)));
     if (_spill.Active())
+    {
         EXPECT_TRUE(_spill.Spilled()) << "the guest's files were attributed and written back from a spill file";
+    }
 }
 
 TEST_P(ComposeWriteBack_Test, DeletesFollowTheirPolicies)

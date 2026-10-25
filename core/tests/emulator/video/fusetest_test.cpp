@@ -264,7 +264,9 @@ TEST_P(FuseTest_Test, EveryTestPrintsWhatTheHardwarePrints)
         for (const std::string& u : m.unchecked)
             unchecked = unchecked || u == name;
         if (unchecked)
+        {
             EXPECT_FALSE(verdict.empty()) << name << ": no verdict\n" << Screen();
+        }
         else if (auto d = m.deviations.find(name); d != m.deviations.end())
             EXPECT_EQ(verdict, d->second.printed)
                 << name << ": known unreal-ng deviation changed (" << d->second.why << "); the hardware prints '"

@@ -335,7 +335,9 @@ TEST_F(NextBoot_Test, TheAliasSdNamesTheFirstNextSlot)
             EXPECT_NE(std::find(aliases.begin(), aliases.end(), "sd"), aliases.end());
         }
         if (slot.descriptor.id == "sd.next1")
+        {
             EXPECT_EQ(std::find(aliases.begin(), aliases.end(), "sd"), aliases.end());
+        }
     }
     EXPECT_TRUE(found);
 }

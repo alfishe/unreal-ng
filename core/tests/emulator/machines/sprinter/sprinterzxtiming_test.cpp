@@ -382,7 +382,9 @@ TEST_F(SprinterZxTimeModes_Test, LauncherModes)
         const bool origin = std::strstr(mode.options, "/origin") != nullptr;
         EXPECT_EQ(r.turbo, turbo) << Describe(r);
         if (!turbo)
+        {
             EXPECT_EQ(r.frameT, lines312 ? 69888u : 71680u) << Describe(r);
+        }
         EXPECT_EQ(r.ints, 50u) << Describe(r);
         EXPECT_EQ(r.repeats, 0u) << Describe(r);
         EXPECT_EQ((pld.allMode & 0x04) == 0, origin) << "ALL_MODE bit 2 = 0 only in ORIGIN.ZX";

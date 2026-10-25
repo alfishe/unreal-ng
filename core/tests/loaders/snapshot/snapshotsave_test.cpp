@@ -190,7 +190,9 @@ TEST_P(SnapshotSaveRoundTrip_Test, EveryFormatLoadsBackAsTheSameState)
         EXPECT_EQ(y.im, x.im);
         EXPECT_EQ(y.iff1, x.iff1);
         if (!is48)
+        {
             EXPECT_EQ(to->emulatorState.p7FFD, from->emulatorState.p7FFD) << machine.tag << " ." << format;
+        }
         EXPECT_EQ(to->pScreen->GetBorderColor() & 7, 5) << machine.tag << " ." << format;
 
         std::remove(path.c_str());

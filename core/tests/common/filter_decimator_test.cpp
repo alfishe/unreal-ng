@@ -293,7 +293,9 @@ TEST(FilterDecimator_Test, IntegerRatioIsThePlainIntegerDesign)
             for (size_t i = 0; i < h.size() && i <= k; i++)
                 expected += input[k - i] * h[i];
             if (k >= h.size())
+            {
                 ASSERT_NEAR(y, expected, 1e-14) << "output " << k;
+            }
         }
     }
 }

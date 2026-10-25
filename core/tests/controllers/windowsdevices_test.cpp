@@ -295,7 +295,9 @@ TEST(WindowsDevices_Test, NativeBackendsServeXboxPadsOnce)
     EXPECT_TRUE(probes["rawinput"].running) << probes["rawinput"].reason;
     EXPECT_FALSE(probes["gameinput"].running && probes["xinput"].running) << "one device once";
     if (probes["gameinput"].running)
+    {
         EXPECT_EQ(probes["xinput"].reason, "GameInput serves the Xbox pads");
+    }
     else
         EXPECT_FALSE(probes["gameinput"].reason.empty());
 }

@@ -186,7 +186,9 @@ TEST(TimeTravelEngine_Test, OneChangedPieceRecordsOneChange_TheRestIsShared)
     ASSERT_TRUE(engine.CaptureFrame(f1, err));
     for (uint32_t p = 0; p < 1024; ++p)
         if (p / 32 != 100 / 32)
+        {
             ASSERT_EQ(engine.VersionAt(0, 0, p), engine.VersionAt(1, 0, p));
+        }
     EXPECT_NE(engine.VersionAt(0, 0, 100), engine.VersionAt(1, 0, 100));
 
     // One change record, not a copy of the whole map

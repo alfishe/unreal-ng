@@ -83,7 +83,9 @@ protected:
         features->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
         if (fitGs)
+        {
             ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, generalSound));
+        }
     }
 
     void TearDown() override
@@ -200,8 +202,10 @@ TEST_F(TimeTravelManager_EngineSeek_Test, LiveRecordingWithKeys_EngineSeeksLandO
     for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
         for (int32_t d : {-500, 1, 900})
             if (int64_t(e.time.tInFrame) + d > 0 && int64_t(e.time.tInFrame) + d < span)
+            {
                 ASSERT_NO_FATAL_FAILURE(
                     ExpectSameSeek({e.time.frame, static_cast<uint32_t>(int64_t(e.time.tInFrame) + d)}));
+            }
     ASSERT_GT(_v1->GetPortReadJournal().Size(), 1000u) << "port journals on";
     EXPECT_GT(_busPlayed, 0u) << "the replays read the engine's IN journal";
     EXPECT_EQ(_engine.BusReads().ValueMismatches(), 0u) << "the devices answered as recorded";
@@ -224,8 +228,10 @@ TEST_F(TimeTravelManager_EngineSeek_Test, RecordedFixtures_EngineSeeksLandOnV1sM
         ASSERT_TRUE(ttd::ReadTTDFileInfo((root / name).string(), info, err)) << err;
         ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound, true));
         if (fixture.tape)
+        {
             ASSERT_TRUE(_emulator->LoadTape(
                 (TestPathHelper::FindProjectRoot() / "testdata/loaders/tap" / fixture.tape).string()));
+        }
         std::ifstream in(root / name, std::ios::binary);
         ASSERT_TRUE(_v1->DeserializeSession(in, err)) << err;
         ASSERT_TRUE(ttd::bench::FeedV1Session(*_v1, _engine, err)) << err;

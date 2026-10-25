@@ -261,7 +261,9 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_RoundTripDeterminism)
         // We seek to a slightly later frame first to force a real restore
         // (not a no-op), then back to the target.
         if (i < 4)
+        {
             ASSERT_TRUE(_ttd->SeekTo({static_cast<uint64_t>(i + 1), 0}));
+        }
         else
             ASSERT_TRUE(_ttd->SeekTo({static_cast<uint64_t>(i - 1), 0}));
 

@@ -257,7 +257,9 @@ TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
             ASSERT_EQ(std::memcmp(y.args, x.args, sizeof(x.args)), 0);
             ASSERT_EQ(static_cast<bool>(y.payload), static_cast<bool>(x.payload));
             if (x.payload)
+            {
                 ASSERT_EQ(loaded.Payloads().Bytes(y.payload), original.Payloads().Bytes(x.payload));
+            }
         }
         EXPECT_TRUE(SameRecords(Records(loaded.BusReads()), Records(original.BusReads())));
         EXPECT_TRUE(SameRecords(Records(loaded.BusWrites()), Records(original.BusWrites())));

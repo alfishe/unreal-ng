@@ -79,7 +79,9 @@ TEST_F(ZiFi_Test, TheFpgaPacksTheHighByte)
     {
         const int reg = caps.serialRegister(static_cast<uint16_t>(high << 8 | 0xEF));
         if (high < 0xC0 || (high >= 0xF0 && high < 0xF8))
+        {
             EXPECT_EQ(reg, ComPortRegister::kDataRegion) << std::hex << high;
+        }
         else if (high >= 0xF8)
             EXPECT_EQ(reg, static_cast<int>(high - 0xF8)) << std::hex << high;
         else
