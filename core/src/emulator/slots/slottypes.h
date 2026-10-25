@@ -105,6 +105,10 @@ enum class Src : uint16_t
     LunterAmxNotes,
     ZilogUm0081,
     MameZ80Pio,
+    MameKempjoy,
+    ZxspKempstonJoy,
+    SincTimesKempston,
+    MameBeta128,
     // The SL-0 research of this design (facts collected from sources without a direct URL, e.g. SVN-only)
     RepoSlotsResearchMachines,
     RepoSlotsResearchCards,

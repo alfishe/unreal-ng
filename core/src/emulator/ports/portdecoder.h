@@ -444,6 +444,8 @@ protected:
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
     // legitimate 0xFF values from devices like WD1793).
     bool _lastPortDecoded = false;
+    /// A slot card answers the Kempston joystick (SetSlotKempstonJoystick)
+    bool _slotKempstonJoystick = false;
 
     // Registered port handlers from external peripheral devices
     // (RegisterPortHandler), keyed by the DECODED port the model decoders hand
@@ -669,9 +671,14 @@ public:
     virtual void OnDosRomFetch([[maybe_unused]] uint16_t pc) {}
     /// endregion </Board NMI hooks>
 
-    /// The model decodes a Kempston joystick (#1F; Scorpion #FF1F) and answers Joystick::Read(). Machines
-    /// without the arm stay false: the host joystick keys are not bound there, the TTD blob is not carried
-    virtual bool HasKempstonJoystick() const { return false; }
+    /// The machine answers a Kempston joystick with Joystick::Read(): its board decodes one, or a fitted slot card
+    /// provides the function (the `kempston` interface on a 48K). False: the host joystick keys are not bound, the
+    /// TTD blob is not carried, the input calls warn and name the card that fits
+    bool HasKempstonJoystick() const { return _slotKempstonJoystick || BoardHasKempstonJoystick(); }
+    /// The model's own decode (#1F; Scorpion #FF1F). Machines without the arm stay false
+    virtual bool BoardHasKempstonJoystick() const { return false; }
+    /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
+    void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
     virtual bool IsFEPort(uint16_t port);
 

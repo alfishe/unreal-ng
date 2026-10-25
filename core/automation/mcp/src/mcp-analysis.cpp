@@ -8,6 +8,7 @@
 //
 // analyze_performance actions:
 //   coverage_start/stop/read/gaps/clear → /coverage* endpoints
+//   coverage_export                     → POST /coverage/export {format?, start?, end?, path?, merge?}
 //   frame_cost                          → GET /frame_cost
 //   vdac2_line_budget                   → GET /vdac2/metrics[?lines=1&in_flight=1] (FT812 line metrics)
 //   vdac2_line_budget_set               → PUT /vdac2/metrics {margin?, measure_always?}
@@ -66,6 +67,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["pattern_hex"]["type"] = "string";
     schema["properties"]["pattern_hex"]["description"] =
         "Hex byte pattern for find_bytes, e.g. \"CD 16 00\"; \"??\" = any byte, \"A?\" = any low nibble (alias: pattern)";
+    schema["properties"]["pattern"]["type"] = "string";
+    schema["properties"]["pattern"]["description"] = "find_bytes: the same as pattern_hex";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["description"] =
         "find_bytes address space: \"cpu\" (default, what is paged in now), \"ram\" (every RAM page; matches as page + "
@@ -395,7 +398,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "frame_cost",
+    for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
                                "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
                                "analyzers"})
@@ -403,7 +406,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
+        "Analysis operation: executed-address coverage (coverage_export writes it as SkoolKit's code execution map for "
+        "sna2ctl.py / sna2skool.py -m: one $HHHH line per executed instruction start), per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
         "trace (on decoders with internal port codes - ZX-Evo decode arms - each event also carries code / code_name, "
         "and session.codes lists them), or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC "
         "fetches + event trace), or the TS-Conf VDAC2 card's FT812 line budget: vdac2_line_budget (the last finished "
@@ -437,9 +441,20 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["max_ranges"]["type"] = "integer";
     schema["properties"]["max_ranges"]["description"] = "Maximum executed ranges for coverage_read (default 512, 0 = unlimited)";
     schema["properties"]["start"]["type"] = "string";
-    schema["properties"]["start"]["description"] = "coverage_gaps window start — integer or \"0x…\" hex string (default 0x4000)";
+    schema["properties"]["start"]["description"] =
+        "coverage_gaps / coverage_export window start — integer or \"0x…\" hex string (default 0x4000 for gaps, 0 for export)";
     schema["properties"]["end"]["type"] = "string";
-    schema["properties"]["end"]["description"] = "coverage_gaps window end (default 0xFFFF)";
+    schema["properties"]["end"]["description"] = "coverage_gaps / coverage_export window end (default 0xFFFF)";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["format"]["enum"].append("skoolkit-map");
+    schema["properties"]["format"]["description"] = "coverage_export: the file format (default skoolkit-map)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] =
+        "coverage_export: the file to write (on the emulator's host); without it the map comes back in the answer";
+    schema["properties"]["merge"]["type"] = "boolean";
+    schema["properties"]["merge"]["description"] =
+        "coverage_export: add the addresses of the map file already at path (several runs into one map)";
     schema["properties"]["max_gaps"]["type"] = "integer";
     schema["properties"]["max_gaps"]["description"] = "Maximum gap ranges for coverage_gaps (default 256)";
     schema["properties"]["limit"]["type"] = "integer";
@@ -464,7 +479,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
 
     registry.Register(
         "analyze_performance",
-        "Performance and coverage analysis: executed-address coverage (start/stop/read/gaps/clear), frame cost (active vs "
+        "Performance and coverage analysis: executed-address coverage (start/stop/read/gaps/clear, export as a SkoolKit "
+        "code execution map), frame cost (active vs "
         "halted t-states per frame), unified profiler control (opcode/memory/call-trace) with a combined report, and a "
         "one-shot port I/O trace over N frames.",
         std::move(schema),
@@ -525,6 +541,31 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                     suffix += "?" + query;
                 }
                 ResolveAndForward(args, "GET", suffix, nullptr, caller, "Coverage gaps", done);
+                return;
+            }
+            if (action == "coverage_export")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"format", "path"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                for (const char* name : {"start", "end"})
+                    if (args.isMember(name) && !AddressArg(args[name]).empty())
+                        body[name] = AddressArg(args[name]);
+                if (args.isMember("merge"))
+                    body["merge"] = args["merge"].asBool();
+                // An agent may see only the text: the message, then the map itself (or where it was written)
+                ResolveAndForward(args, "POST", "/coverage/export", &body, caller, "Coverage map", [done](ToolResult result) {
+                    if (!result.isError && result.structured.isObject())
+                    {
+                        const Json::Value& r = result.structured;
+                        result.text = r.get("message", "Coverage map").asString() + " [" + r.get("start", "").asString() +
+                                      "-" + r.get("end", "").asString() + ", format " + r.get("format", "").asString() + "]";
+                        if (r.isMember("map"))
+                            result.text += "\n" + r["map"].asString();
+                    }
+                    done(std::move(result));
+                });
                 return;
             }
             if (action == "frame_cost")

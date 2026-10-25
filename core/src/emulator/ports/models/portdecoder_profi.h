@@ -45,7 +45,7 @@ public:
     void UpdateModelMemoryBanks() override;
 
     /// #1F in the NORMAL port set reads Joystick::Read() while a joystick is fitted
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;

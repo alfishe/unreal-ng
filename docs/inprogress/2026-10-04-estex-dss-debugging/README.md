@@ -65,3 +65,11 @@ debugger?"):
 The NedoOS pattern ([2026-09-30-nedoos-integration](../2026-09-30-nedoos-integration/README.md)) stays the
 model; NedoOS's own doc even notes `QUIT (0x0000)` as an intended debugger breakpoint - the same trick as the
 DSS LEAVE vector here.
+
+## Recipes: driving the analyzers (added 2026-10-24)
+
+Both OS-aware analyzers shipped to master (`dss` here, `nedoos` in #78, merge `cd4b9857b`):
+[osaware-recipes.md](osaware-recipes.md) - enable/stream/snapshot over MCP (`analyze_performance` op
+`analyzers`, `invoke_api` for the snapshot), WebAPI, CLI, Lua/Python; the leak-and-hungriness scenarios
+(the audience question as a runbook) and the pitfalls (implicit automation sessions, quiet calls, the
+post-merge binary requirement).

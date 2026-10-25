@@ -408,7 +408,9 @@ class Emulator:
     def take_control(self, client: str = "python") -> None:
         """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
         control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control
-        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown)"""
+        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown).
+        Takes over another client's implicit session (a WebAPI or MCP client that drove without one), never an
+        explicit one: RuntimeError held_by_other names the holder"""
 
     def release_control(self) -> None:
         """End the automation session"""
@@ -976,7 +978,7 @@ emu.joystick_button_names()             # ["up", "down", "left", "right", "fire"
 ```
 
 Every changing method returns the resulting **state dict**, with the keys of the WebAPI state object:
-`available`, `present`, `wired`, `state` (the byte), `port_value` (what `IN #1F` returns),
+`available`, `present`, `wired`, `fit` (`""` when wired, else how to fit the slot card `kempston`), `state` (the byte), `port_value` (what `IN #1F` returns),
 `buttons` (a bool per name), `pressed`, `button_names`, `keys`, `pending_tap` (`None` or
 `{'mask', 'frames_left'}`), plus `warning` when the guest cannot see the buttons.
 
@@ -1829,6 +1831,8 @@ emu.coverage_start()                 # start clean; keep=True retains old data
 emu.coverage_stop()
 emu.coverage_status(max_ranges=100)  # executed count + first ranges
 emu.coverage_gaps()                  # executed ranges and gaps (start=0x4000, end=0xFFFF)
+emu.coverage_export()                # SkoolKit map: {success, format, start, end, count, map, message}
+emu.coverage_export("/abs/run.map", start=0x6000, merge=True)   # written: {..., path, merged}
 
 # AY register log
 emu.ay_log_start()                   # default capacity; capacity=8192 to override

@@ -1,0 +1,54 @@
+@start
+@equ=ROM_BEEPER=$03B5
+@equ=FRAMES=$5C78
+@equ=SCREEN=$4000
+@equ=ATTRS=$5800
+@equ=ROM_CHARSET=$3D00
+
+
+
+; Tail of the guard loop of the routine at 66A4
+;
+; These 11 bytes are code, although they look like a small table: the end of the loop in #R$66A4 that sends the
+; released guards home when Horace eats one. The loop enters at $6732 by the JR at $672D, and the first
+; instruction (CALL #R$663D, DrawGuard) is skipped by it, so it can never run (dead code, perhaps left over from
+; an earlier version of the loop that redrew the guard at once).
+; .
+; $6732 stores the working guard record (#R$6A6A). $6735 restores the registers pushed at $6702 and $6706 (the guard
+; counter and the pointer to the timers, which has advanced one byte, see #R$66A4), and loops for the next of the four
+; guards. After the last one RET returns to the main loop at #R$6000.
+;
+; B Guards left, 4 down to 1
+c$672F CALL $663D    ; dead: the JR at $672D jumps over it
+@label=CheckGuardContact_Store
+*$6732 CALL $6A6A    ; write the record back
+@label=CheckGuardContact_Next
+*$6735 POP HL        ; pointer into the timers
+ $6736 POP BC        ; guard counter
+ $6737 DJNZ $6702    ; next guard
+ $6739 RET           ; to the main loop
+
+@org
+; Vocabulary index by first letter
+;
+; The dictionary: words the parser knows and words the messages print, packed 5
+; bits per letter. Words are named by their offset from $6000 (0-$BEA);
+; messages, the command table and the tables below store offsets, not
+; addresses.
+; .
+; This index: 27 words, entry n (A=1 ... Z=26; entry 0 and the unused X and Z
+; are 0) is the offset of the first word that starts with letter n. $74CE
+; (print) and $6F47 (parse) read it; the words of one letter are contiguous and
+; end where the next letter's begin.
+@label=Vocabulary
+@keep
+w$6000 DEFW $0000
+@keep
+ $6002 DEFW $0040
+@keep
+ $6004 DEFW $007C
+@keep
+ $6006 DEFW $00E2
+@keep
+ $6008 DEFW $017C
+@keep

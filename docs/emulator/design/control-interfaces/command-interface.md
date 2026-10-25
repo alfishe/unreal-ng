@@ -930,7 +930,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Audio capture of one device (its own buffer) | `audiocapture start <seconds> [source]` | `POST /audio/capture {action: start, seconds, source}` | `audio_capture_start(s, source)` | `audio_capture_start(s, source)` | `capture_media` audio_capture `source` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Execution arbiter | `state execution` / `state exec` | `GET /state/execution` | `execution_state()` | `execution_state()` | `execution` |
-| Automation session (take / release run control) | `session take [name]` / `session release` / `session` | `POST` / `DELETE` / `GET /control/session` + `X-Unreal-Session` | `take_control(name)` / `release_control()` | `take_control(name)` / `release_control()` | `control_execution take_control` / `release_control` |
+| Automation session (take / release run control; a take takes over another client's implicit session, never an explicit one; release without the id ends the caller's own implicit session; the status shows the holder's kind and lease left, `held_by_other` the same and how to resolve it; [design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)) | `session take [name]` / `session release` / `session` | `POST` / `DELETE` / `GET /control/session` + `X-Unreal-Session` | `take_control(name)` / `release_control()` | `take_control(name)` / `release_control()` | `control_execution take_control` / `release_control` |
 | Act as a companion client (no session; [companion clients](../../../inprogress/2026-10-16-companion-client/surfaces.md)) | `companion auth <token>` / `companion logout` | `Authorization: Bearer <token>` | - (never) | - (never) | - (never) |
 | Companion: status, take back, allow again | `companion` / `companion take-back` / `companion allow-again` | `GET /api/v1/companions/me`, `POST /control/take-back`, `POST /control/allow-again` | - | - | - |
 | Companion: the instances' live status, pushed (state, control, actions, model, selected; instances coming and going) | - | WebSocket `/api/v1/companions/events`; or topic `instances` on `/api/v1/ws` ([websocket-interface.md §3.2](websocket-interface.md#32-the-instances-topic)) | - | - | - |
@@ -1560,6 +1560,7 @@ ranges and gaps.
 | `coverage clear` | | Clear all collected coverage data. |
 | `coverage gaps [start] [end]` | `[<from> <to>]` | List executed ranges and unexecuted gaps within a window (default 0x0000-0xFFFF). |
 | `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
+| `coverage export [path]` | `[<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]` | Write the executed instruction starts as SkoolKit's code execution map (`$HHHH` lines, for `sna2ctl.py -m` / `sna2skool.py -m`); no path: the map is returned. `--merge` adds the addresses of the map already at the path. REST/WebSocket `POST /coverage/export`, MCP `analyze_performance` `coverage_export`, Lua / Python `coverage_export`. Recipe: [SkoolKit code execution map](../../../../.recipe/analysis/code-coverage-and-analyzers.md#skoolkit-code-execution-map). |
 
 #### 5.6 AY Register Log
 
@@ -3667,15 +3668,17 @@ N-th emulated frame. (The Kempston mouse queues the same way.)
 | `joystick set` | | `<state\|buttons\|none>` | Exactly these buttons are held: a byte (`0x18`, `24`), a list, or `none`. Cancels a pending tap. | ✅ Implemented |
 | `joystick tap` | | `<buttons> [frames]` | Press, hold `frames` (default 2), release on its own. A new tap replaces a pending one. | ✅ Implemented |
 | `joystick clear` | `joystick release_all` | — | Release everything, cancel a pending tap. | ✅ Implemented |
-| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port, host key bindings, pending tap. | ✅ Implemented |
+| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port (and, when not, how to fit the `kempston` card), host key bindings, pending tap. | ✅ Implemented |
 | `joystick list` | | — | The button names and their bits. | ✅ Implemented |
 | `joystick help` | | — | Subcommand help. | ✅ Implemented |
 
 **Warnings (the command still succeeds):**
 - *Not fitted* (`[INPUT] Joystick=NONE`, or feature `kempstonjoystick` off): `joystick not
   present: the guest reads 0x00 on the joystick port`.
-- *Machine does not decode the port* (Pentagon, 48K, ...): `this machine does not decode a
-  Kempston joystick port: the guest cannot see the buttons`.
+- *No Kempston interface on the machine* (48K, 128K, +2, +2A, +3, ATM Turbo 2 / 2+ without the slot card
+  `kempston`): `no Kempston joystick interface on this machine: the guest cannot see the buttons; fit the `kempston`
+  card: slots plug edge.1 kempston (...)` - the plug command for this machine
+  ([slots.md](../../../features/slots.md#the-kempston-joystick-interface)); `joystick status` adds it as `Fit:`.
 
 **Errors:** no joystick device: `Joystick device not available`; TTD replay in progress
 (the journal owns the input): `TTD replay in progress (recorded input drives the machine); live

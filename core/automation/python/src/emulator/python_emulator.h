@@ -66,6 +66,7 @@
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
 #include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screenshotter.h>
@@ -80,6 +81,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
@@ -1079,6 +1081,7 @@ namespace PythonBindings
         d["available"] = state.available;
         d["present"] = state.present;
         d["wired"] = state.wired;
+        d["fit"] = state.fit;
         d["state"] = static_cast<int>(state.state);
         d["port_value"] = static_cast<int>(state.portValue);
         d["buttons"] = buttons;
@@ -3332,18 +3335,87 @@ namespace PythonBindings
                             events.append(evts[i].format());
                         }
                     }
+                } else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name))) {
+                    auto evts = osAnalyzer->getOsEvents();
+                    size_t start = (evts.size() > limit) ? evts.size() - limit : 0;
+                    for (size_t i = start; i < evts.size(); i++) {
+                        events.append(evts[i].format());
+                    }
                 }
                 return events;
             }, "Get analyzer events", py::arg("name"), py::arg("limit") = 50)
+            .def("analyzer_state", [](Emulator& self, const std::string& name) -> py::dict {
+                py::dict state;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return state;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return state;
+
+                IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name));
+                if (!osAnalyzer) return state;
+
+                OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+                state["os"] = snapshot.os;
+                state["detected"] = snapshot.detected;
+                state["profile"] = snapshot.profile;
+                py::list tasks;
+                for (const auto& task : snapshot.tasks) {
+                    py::dict t;
+                    t["id"] = task.id;
+                    t["parent"] = task.parent;
+                    t["flags"] = task.flags;
+                    t["mainpg"] = task.mainpg;
+                    if (!task.name.empty()) t["name"] = task.name;
+                    t["stdin"] = task.stdinFd;
+                    t["stdout"] = task.stdoutFd;
+                    t["stderr"] = task.stderrFd;
+                    t["last_time"] = task.lastTime;
+                    tasks.append(t);
+                }
+                state["tasks"] = tasks;
+                py::list blocks;
+                for (const auto& block : snapshot.blocks) {
+                    py::dict b;
+                    b["index"] = block.index;
+                    b["owner"] = block.owner;
+                    blocks.append(b);
+                }
+                state["blocks"] = blocks;
+                py::list handles;
+                for (const auto& handle : snapshot.handles) {
+                    py::dict h;
+                    h["index"] = handle.index;
+                    h["owner"] = handle.owner;
+                    if (!handle.name.empty()) h["name"] = handle.name;
+                    h["position"] = handle.position;
+                    h["size"] = handle.size;
+                    handles.append(h);
+                }
+                state["handles"] = handles;
+                py::list pipes;
+                for (const auto& pipe : snapshot.pipes) {
+                    py::dict p;
+                    p["handle"] = pipe.handle;
+                    p["open_sides"] = pipe.openSides;
+                    p["reader"] = pipe.reader;
+                    p["lines"] = pipe.lines;
+                    p["queued"] = pipe.queued;
+                    pipes.append(p);
+                }
+                state["pipes"] = pipes;
+                return state;
+            }, "OS analyzer state: tasks, page/block ownership, file handles", py::arg("name"))
             .def("analyzer_clear", [](Emulator& self, const std::string& name) {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return;
                 AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
                 if (!am) return;
-                
+
                 if (name == "trdos") {
                     TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
                     if (trdos) trdos->clear();
+                } else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(am->getAnalyzer(name))) {
+                    osAnalyzer->clearOsEvents();
                 }
             }, "Clear analyzer events", py::arg("name"))
             
@@ -6411,6 +6483,38 @@ namespace PythonBindings
             return d;
         }, "Unexecuted address gaps within [start, end]",
            py::arg("start") = 0x4000, py::arg("end") = 0xFFFF, py::arg("max") = 100)
+
+        .def("coverage_export", [](Emulator& self, py::object path, const std::string& format, uint16_t start, uint16_t end,
+                                   bool merge) -> py::dict {
+            py::dict d;
+            coverageexport::Options options = {{"format", format}, {"start", std::to_string(start)},
+                                               {"end", std::to_string(end)}, {"merge", merge ? "true" : "false"}};
+            if (!path.is_none())
+                options["path"] = py::str(path).cast<std::string>();
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            const coverageexport::Result r =
+                coverageexport::Export(manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr, options);
+            if (!r.Ok()) { d["error"] = r.message; return d; }
+            d["success"] = true;
+            d["format"] = r.format;
+            d["start"] = r.start;
+            d["end"] = r.end;
+            d["count"] = r.count;
+            if (r.path.empty())
+                d["map"] = r.text;
+            else
+            {
+                d["path"] = r.path;
+                d["merged"] = r.merged;
+            }
+            d["message"] = r.message;
+            return d;
+        }, "The coverage as SkoolKit's code execution map (one $HHHH line per executed instruction start); written to "
+           "path, else returned in map",
+           py::arg("path") = py::none(), py::arg("format") = "skoolkit-map", py::arg("start") = 0, py::arg("end") = 0xFFFF,
+           py::arg("merge") = false)
 
         .def("ay_log_start", [](Emulator& self, unsigned capacity) -> py::dict {
             py::dict d;

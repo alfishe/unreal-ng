@@ -128,7 +128,7 @@ public:
     /// endregion </Board NMI>
 
     /// #1F outside shadow answers Joystick::Read()
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
     /// The card is the media manager's slot "sd.zc" (storage-manager

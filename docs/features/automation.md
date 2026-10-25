@@ -209,6 +209,7 @@ coverage start [--keep]           # Start recording (clears data unless --keep)
 coverage stop                     # Stop recording (data kept for queries)
 coverage clear                    # Clear recorded data
 coverage gaps [<start> <end>]     # Uncovered ranges (default 0x4000-0xFFFF)
+coverage export [<path>] [--merge] # SkoolKit code execution map ($HHHH per instruction start)
 aylog start [capacity]            # Start AY register-write logging
 aylog stop / clear                # Stop logging / drop the buffer
 aylog status / dump [count]       # Log stats / recent register writes
@@ -347,6 +348,7 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/coverage/clear` | Clear coverage data |
 | GET | `/api/v1/emulator/{id}/coverage` | Coverage summary |
 | GET | `/api/v1/emulator/{id}/coverage/gaps` | Uncovered ranges |
+| POST | `/api/v1/emulator/{id}/coverage/export` | SkoolKit code execution map (`format`, `start`, `end`, `path`, `merge`) |
 | POST | `/api/v1/emulator/{id}/ay/log` | AY log action (start/stop/clear) |
 | GET | `/api/v1/emulator/{id}/ay/log` | AY register-write log and stats |
 | POST | `/api/v1/emulator/{id}/audio/capture` | Audio capture action (start/stop/clear) |

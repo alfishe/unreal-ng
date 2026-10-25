@@ -90,6 +90,8 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
@@ -762,6 +764,7 @@ protected:
         t["available"] = state.available;
         t["present"] = state.present;
         t["wired"] = state.wired;
+        t["fit"] = state.fit;
         t["state"] = static_cast<int>(state.state);
         t["port_value"] = static_cast<int>(state.portValue);
         t["buttons"] = buttons;
@@ -6527,6 +6530,110 @@ public:
             return sol::make_object(ts, manager->isActive(name));
         });
 
+        // OS-aware analyzers (nedoos, dss): analyzer_events(name, limit),
+        // analyzer_state(name) - tasks, page/block ownership, file handles
+        lua.set_function("analyzer_events", [this, analyzers](const std::string& name,
+                                                              sol::optional<unsigned> limitOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            AnalyzerManager* manager = analyzers();
+            IOSAnalyzer* osAnalyzer = manager ? dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(name)) : nullptr;
+            if (!osAnalyzer) { result["error"] = "not an OS analyzer"; return result; }
+
+            auto events = osAnalyzer->getOsEvents();
+            const size_t limit = limitOpt.value_or(50);
+            size_t index = 0;
+            size_t start = events.size() > limit ? events.size() - limit : 0;
+            for (size_t i = start; i < events.size(); i++)
+            {
+                sol::table item = lua_view.create_table();
+                item["timestamp"] = events[i].timestamp;
+                item["frame"] = events[i].frameNumber;
+                item["kind"] = OsEventKindName(events[i].kind);
+                item["severity"] = OsSeverityName(events[i].severity);
+                item["formatted"] = events[i].format();
+                item["pc"] = events[i].pc;
+                item["task"] = events[i].taskId;
+                result[index + 1] = item;
+                index++;
+            }
+            return result;
+        });
+        lua.set_function("analyzer_state", [this, analyzers](const std::string& name) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            AnalyzerManager* manager = analyzers();
+            IOSAnalyzer* osAnalyzer = manager ? dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(name)) : nullptr;
+            if (!osAnalyzer) { result["error"] = "not an OS analyzer"; return result; }
+
+            OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+            result["os"] = snapshot.os;
+            result["detected"] = snapshot.detected;
+            result["profile"] = snapshot.profile;
+
+            sol::table tasks = lua_view.create_table();
+            size_t index = 0;
+            for (const auto& task : snapshot.tasks)
+            {
+                sol::table item = lua_view.create_table();
+                item["id"] = task.id;
+                item["parent"] = task.parent;
+                item["flags"] = task.flags;
+                item["mainpg"] = task.mainpg;
+                item["name"] = task.name;
+                item["stdin"] = task.stdinFd;
+                item["stdout"] = task.stdoutFd;
+                item["stderr"] = task.stderrFd;
+                item["last_time"] = task.lastTime;
+                tasks[index + 1] = item;
+                index++;
+            }
+            result["tasks"] = tasks;
+
+            sol::table blocks = lua_view.create_table();
+            index = 0;
+            for (const auto& block : snapshot.blocks)
+            {
+                sol::table item = lua_view.create_table();
+                item["index"] = block.index;
+                item["owner"] = block.owner;
+                blocks[index + 1] = item;
+                index++;
+            }
+            result["blocks"] = blocks;
+
+            sol::table handles = lua_view.create_table();
+            index = 0;
+            for (const auto& handle : snapshot.handles)
+            {
+                sol::table item = lua_view.create_table();
+                item["index"] = handle.index;
+                item["owner"] = handle.owner;
+                item["name"] = handle.name;
+                item["position"] = handle.position;
+                item["size"] = handle.size;
+                handles[index + 1] = item;
+                index++;
+            }
+            result["handles"] = handles;
+
+            sol::table pipes = lua_view.create_table();
+            index = 0;
+            for (const auto& pipe : snapshot.pipes)
+            {
+                sol::table item = lua_view.create_table();
+                item["handle"] = pipe.handle;
+                item["open_sides"] = pipe.openSides;
+                item["reader"] = pipe.reader;
+                item["lines"] = pipe.lines;
+                item["queued"] = pipe.queued;
+                pipes[index + 1] = item;
+                index++;
+            }
+            result["pipes"] = pipes;
+            return result;
+        });
+
         // Code coverage control and queries
         lua.set_function("coverage_start", [this](sol::optional<bool> keepOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
@@ -6589,6 +6696,57 @@ public:
                 index++;
             }
             result["ranges"] = ranges;
+            return result;
+        });
+
+        // coverage_export([path], [{format=, start=, ["end"]=, merge=}]) or coverage_export({path=, ...}): the coverage
+        // as SkoolKit's code execution map (coverageexport.h); without a path the map comes back in result.map
+        lua.set_function("coverage_export", [this](sol::object first, sol::object second) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            coverageexport::Options options;
+            const auto take = [&options](const sol::table& table) {
+                for (const auto& [key, value] : table)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (value.is<bool>())
+                        options[name] = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        options[name] = std::to_string(value.as<int64_t>());
+                    else if (value.is<std::string>())
+                        options[name] = value.as<std::string>();
+                }
+            };
+            if (first.is<std::string>())
+                options["path"] = first.as<std::string>();
+            else if (first.is<sol::table>())
+                take(first.as<sol::table>());
+            if (second.is<sol::table>())
+                take(second.as<sol::table>());
+
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            const coverageexport::Result r =
+                coverageexport::Export(manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr, options);
+            if (!r.Ok()) { result["error"] = r.message; return result; }
+            result["success"] = true;
+            result["format"] = r.format;
+            result["start"] = r.start;
+            result["end"] = r.end;
+            result["count"] = r.count;
+            if (r.path.empty())
+                result["map"] = r.text;
+            else
+            {
+                result["path"] = r.path;
+                result["merged"] = r.merged;
+            }
+            result["message"] = r.message;
             return result;
         });
 

@@ -110,6 +110,16 @@ inline std::string DescribeErrorBody(const Json::Value& body)
     return message.empty() ? error : message;
 }
 
+/// The automation gate refused the call (execution arbiter design §6a): another client's session holds the machine, or
+/// the user took control back. Never "already running" / "pause first"
+inline bool IsSessionRefusal(const Json::Value& body)
+{
+    if (!body.isObject())
+        return false;
+    const std::string error = body.get("error", "").asString();
+    return error == "held_by_other" || error == "revoked_by_user" || error == "revoked_cooldown";
+}
+
 /// Compact one-line register summary
 inline std::string FormatRegisters(const Json::Value& registers, bool full = false)
 {

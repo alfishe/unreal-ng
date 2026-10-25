@@ -22,6 +22,7 @@ booting through TR-DOS or tape. Use them as the entry point for
 
 ```text
 load_software  {"path":"scratch/game.sna"}                    # load (local file → uploaded automatically)
+load_software  {"path":"scratch/game.sna","paused":true}      # paused first: poke / breakpoints before its first instruction
 invoke_api    {"method":"GET","path":"/api/v1/emulator/{id}/snapshot/info"}
 inspect_state {"aspects":["registers","screen_digest"]}     # PC landed where expected? same screen?
 invoke_api    {"method":"POST","path":"/api/v1/emulator/{id}/snapshot/save",

@@ -16,3 +16,6 @@ endif()
 if (TARGET sdb)
     add_subdirectory(032-streamdeck-jpeg-encoder)
 endif ()
+# 035 is opt-in on top of BUILD_POC: -DPOC035_GUI_BENCH=ON -DPOC035_DEPS_PREFIX=<scripts/fetch-deps.sh prefix>
+# (035-debugger-gui-bench/README.md; its scripts/run_mac.sh configures and builds it).
+add_subdirectory(035-debugger-gui-bench)

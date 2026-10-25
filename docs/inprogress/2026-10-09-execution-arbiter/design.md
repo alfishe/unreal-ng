@@ -267,6 +267,23 @@ Owner decisions, 2026-10-09:
   - **The advice.** Take control explicitly before a job and release it after. An explicit take by the same client
     replaces its implicit session.
   - **After a take-back** the client is refused `revoked_by_user` until its cooldown ends.
+  - **An explicit take takes over another client's implicit session** (2026-10-24, after an agent drove one machine
+    from a host script over the WebAPI and from MCP: each plane's implicit session locked the other out for 15 s). An
+    implicit session makes an un-sessioned client visible and revocable; it reserves nothing. So `POST
+    /control/session`, MCP `take_control`, CLI `session take`, `take_control()` and a GDB attach succeed over it: it
+    gives way (`NC_RUN_CONTROL_CHANGED` "superseded", `by` = who took over; the take's reply names it in
+    `took_over`), a command of it under way finishes, and its next change meets the explicit holder. An explicit
+    session is never taken over; only the user takes control back. A client in its re-take cooldown takes nothing
+    over. Two implicit sessions still exclude each other (one holder at a time).
+  - **A refusal resolves itself.** `held_by_other` carries the holder (surface, client, peer, `implicit`,
+    `lease_seconds_left`) and says what to do: for an implicit holder, take control explicitly (which takes it over)
+    or wait for its lease; for an explicit one, wait or ask the user.
+  - **Ending one's own implicit session without its id.** The same client goes on in its implicit session without
+    the id, so the id gives it nothing new: `DELETE /control/session` without the header (or with one of a session
+    that is gone) ends the asker's own implicit session, and `GET /control/session` shows `session` (the id) and
+    `yours` only to that client. An id is a bearer token: another client never sees it.
+  - **A session header is no pass by itself.** A request whose `X-Unreal-Session` does not hold the machine it
+    changes (expired, taken over, another machine's) meets the gate like an un-sessioned one.
   - **Code.** `EmulatorContext::EnterImplicitRunControl` / `ReleaseImplicitRunControl`; the classification in
     `core/src/emulator/execution/automationgate.h`; the WebAPI sync advice; `CLIProcessor::PassAutomationGate`;
     `execution::script::Check`.

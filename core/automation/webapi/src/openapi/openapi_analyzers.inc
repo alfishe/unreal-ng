@@ -229,6 +229,32 @@
     paths["/api/v1/emulator/{id}/coverage/gaps"]["get"]["responses"]["200"]["description"] =
         "Gap ranges within the requested window (gaps[]/total_gap_bytes)";
 
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["summary"] = "Export coverage as a code execution map";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["tags"].append("Analyzers");
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["description"] =
+        "The executed instruction starts as a file another tool reads. format skoolkit-map: SkoolKit's code "
+        "execution map (sna2ctl.py -m / sna2skool.py -m), one $HHHH line per instruction start, ascending. Body: "
+        "format (default skoolkit-map), start / end (integer or \"0x...\" string, default 0x0000-0xFFFF), path (write the "
+        "file; without it the map comes back in map), merge (true: add the addresses of the file at path).";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["requestBody"]["required"] = false;
+    {
+        Json::Value& schema = paths["/api/v1/emulator/{id}/coverage/export"]["post"]["requestBody"]["content"]["application/json"]["schema"];
+        schema["type"] = "object";
+        schema["properties"]["format"]["type"] = "string";
+        schema["properties"]["format"]["enum"].append("skoolkit-map");
+        schema["properties"]["start"]["type"] = "string";
+        schema["properties"]["end"]["type"] = "string";
+        schema["properties"]["path"]["type"] = "string";
+        schema["properties"]["merge"]["type"] = "boolean";
+    }
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["responses"]["200"]["description"] =
+        "format, start, end, count; map (no path) or path + merged";
+    paths["/api/v1/emulator/{id}/coverage/export"]["post"]["responses"]["400"]["description"] = "Unknown format or option, bad address, file not writable";
+
     // AY register-write log endpoints (TurboSound tap)
     paths["/api/v1/emulator/{id}/ay/log"]["post"]["summary"] = "Control AY register-write log";
     paths["/api/v1/emulator/{id}/ay/log"]["post"]["tags"].append("Analyzers");

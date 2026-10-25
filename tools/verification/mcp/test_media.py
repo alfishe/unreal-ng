@@ -8,6 +8,7 @@ from mcplib import expect, main
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 TAPE = os.path.join(ROOT, 'testdata', 'contention', 'rak-timing-test', 'timing.tap')
+SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
 
 
 def test_slots_listed(s):
@@ -26,6 +27,15 @@ def test_load_tape(s):
     r = s.call('media', {'action': 'list'})
     expect('timing.tap' in r.text, 'the tape in its slot', r.text)
     s.call('media', {'action': 'eject', 'slot': 'tape'}, ok=False)
+
+
+def test_load_paused_leaves_the_program_unrun(s):
+    s.call('control_execution', {'action': 'resume'}, ok=False)
+    r = s.call('load_software', {'path': SNAPSHOT, 'paused': True})
+    expect(not r.is_error, 'loaded', r.text)
+    r = s.call('emulator_manage', {'action': 'status', 'response_format': 'json'})
+    expect(r.structured.get('is_paused') is True, 'the machine is paused after the load', r.text[:400])
+    s.call('control_execution', {'action': 'resume'}, ok=False)
 
 
 def test_missing_file_is_an_error(s):

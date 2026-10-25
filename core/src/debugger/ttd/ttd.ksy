@@ -608,7 +608,8 @@ types:
           21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
           22 EvoFontRam (ZX-Evo text-mode font RAM, 2 KB, and the glyph byte #0EBD reads: 2050 bytes),
           23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
-          machines whose decoder answers #1F - Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next),
+          machines whose decoder answers #1F - Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next - and any
+          machine with a Kempston interface card (69) fitted),
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
           netstate::SerialPort; without a peer only the header and the UART registers and FIFOs; with a
           peer a netstate::Tail follows when flags bit 1 is set, since 2026-10-08),
@@ -743,7 +744,9 @@ types:
           input register, u1 output register, u1 direction, u1 mask, u1 interrupt control word, u1 vector, u1 the
           peripheral's line levels, u1 flags (bit 0 IE, 1 IP, 2 IUS, 3 RDY, 4 /STB high, 5 the mode 3 match); then s2
           the pending X mickeys (+ right), s2 the pending Y mickeys (+ up), u1 the buttons (D0 left, D1 right, D2
-          middle, active low), per axis u8 frame and u4 T-state of the next strobe's earliest time; 50 bytes).
+          middle, active low), per axis u8 frame and u4 T-state of the next strobe's earliest time; 50 bytes),
+          69 KempstonInterface (a Kempston joystick interface card, slot-built, instance <slot>.kempston: u1 version 1;
+          the interface has no state, the stick byte is KempstonJoystick (23), carried while the card is fitted).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.
