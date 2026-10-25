@@ -200,8 +200,10 @@ TEST_F(TTD_ClipExport_Test, VisitComposedFramesDeliversLiveFramesAndStops)
         EXPECT_TRUE(std::equal(liveRgba.at(f.frame).begin(), liveRgba.at(f.frame).end(), f.rgba)) << "RGBA of frame " << f.frame;
         EXPECT_NE(f.planeB, nullptr);
         if (f.planeB)
+        {
             EXPECT_TRUE(std::equal(livePlaneB.at(f.frame).begin(), livePlaneB.at(f.frame).end(), f.planeB))
                 << "plane B of frame " << f.frame;
+        }
         return true;
     });
     EXPECT_TRUE(error.empty()) << error;

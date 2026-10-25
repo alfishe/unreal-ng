@@ -950,7 +950,9 @@ TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
         EXPECT_EQ(memory.RAMPageAddress(static_cast<uint16_t>(page))[0], page * 16) << "RAM page " << page;
     const bool has1FFD = param.modelCode == 7 || param.modelCode == 13 || param.modelCode == 10;
     if (param.modelCode == 7 || param.modelCode == 13)
+    {
         EXPECT_EQ(context->emulatorState.p1FFD, 0x04);
+    }
 
     const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-model.z80");
     ASSERT_TRUE(emulator->SaveSnapshot(saved));
@@ -965,7 +967,9 @@ TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
     EXPECT_EQ(bytes[34], param.modelCode) << "model byte";
     EXPECT_EQ(extended, has1FFD ? 55 : 54);
     if (has1FFD)
+    {
         EXPECT_EQ(bytes[86], context->emulatorState.p1FFD);
+    }
     // Page blocks after the header: count them
     int pages = 0;
     for (size_t at = 32 + extended; at + 3 <= bytes.size(); pages++)

@@ -311,7 +311,9 @@ TEST_F(SprinterReference_Test, Bios304_PortTraceMatchesMame)
         // microsecond rounding of the CSV
         const double shift = (unrealT[i] - unreal0) - (m.timeUs * 3.5 - mame0);
         if (i < turboRow && i > wcrRow)
+        {
             EXPECT_NEAR(shift, kWcrShift, 1.0) << "access #" << i + 1 << " PC " << std::hex << m.pc;
+        }
         else if (i <= wcrRow)
         {
             EXPECT_GE(shift, lastShift - 1.0) << "access #" << i + 1 << ": the waits only add";
@@ -358,7 +360,9 @@ TEST_F(SprinterReference_Test, Bios304_LogoPaletteMatchesMame)
         if (it != mame.end())
             expected = it->second;
         if (frame >= 58)
+        {
             ASSERT_EQ(PaletteSum(), expected) << "frame " << frame;
+        }
     }
     EXPECT_EQ(mame.at(60), 302548u);
 

@@ -307,8 +307,10 @@ protected:
             ASSERT_EQ(tsfmFramesPopped, legacyFramesPopped) << "tap frame counts differ at frame " << frame;
             ASSERT_EQ(legacyTap.size(), tsfmTap.size());
             if (!legacyTap.empty())
+            {
                 EXPECT_EQ(memcmp(legacyTap.data(), tsfmTap.data(), legacyTap.size() * sizeof(float)), 0)
                     << "native tap stream differs at frame " << frame;
+            }
 
             // FM taps: active but carrying only zeros (the raw pre-mute DAC
             // stream of an unkeyed chip). Same first-leak scan as above
@@ -407,8 +409,10 @@ TEST_F(TsfmOutput_Test, HoldNoJitter)
             // remaining driven half-tick - only replaced words pin the exact
             // hold length
             if (i < kWords - 1)
+            {
                 EXPECT_EQ(counts[i], 9) << "word " << i << " (t = " << 72 + offset + 72 * i
                                          << ") held for " << counts[i] << " half-ticks";
+            }
             else
                 EXPECT_GE(counts[i], 9) << "the last word was never consumed";
         }

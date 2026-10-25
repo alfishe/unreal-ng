@@ -332,8 +332,10 @@ TEST(IdeMachines_Test, BoardsAnswerThroughTheMachineDecoders)
                 // (the write stays paging); nothing else may be taken
                 const bool atmStatusRead = m.scheme == IDE_ATM && (row.port & 0x8202) == 0x0200;
                 if (!atmStatusRead)
+                {
                     EXPECT_FALSE(adapter.In(row.port, gate, value))
                         << m.model << ": the IDE board takes the read of #" << std::hex << row.port << " (" << row.device << ")";
+                }
                 EXPECT_FALSE(adapter.Out(row.port, gate, 0))
                     << m.model << ": the IDE board takes the write of #" << std::hex << row.port << " (" << row.device << ")";
             }

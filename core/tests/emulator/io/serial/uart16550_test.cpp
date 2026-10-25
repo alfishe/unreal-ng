@@ -486,7 +486,9 @@ TEST_F(Uart16550_Test, DlmBit7IsTheAvrDivisorFromMay2011)
         u.Write(kIer, 0x80, now);
         u.Write(kLcr, 0x03, now);
         if (firmware == Uart16550::AvrFirmware::Base2011May)
+        {
             EXPECT_EQ(u.Baud(), 115200u) << "691200 / (5 + 1)";
+        }
         else
             EXPECT_NE(u.Baud(), 115200u) << "the divisor #8005 taken as 115200 / 32773";
     }

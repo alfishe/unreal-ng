@@ -174,7 +174,9 @@ TEST_P(ComposeCommit_Test, CommitWritesWhatTheGuestSees)
     EXPECT_TRUE(reader.Stat("/NEWDIR", entry) && entry.isDirectory);
     EXPECT_TRUE(reader.Stat("/README.TXT", entry));
     if (_spill.Active())
+    {
         EXPECT_TRUE(_spill.Spilled()) << "the guest's writes were committed from a spill file";
+    }
 }
 
 TEST_P(ComposeCommit_Test, CommitRemovesTheSessionDelta)

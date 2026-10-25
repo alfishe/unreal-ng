@@ -649,7 +649,9 @@ TEST_F(SoundChip_GeneralSound_Test, CpuRegisterIntrospection_MatchesTtdLayout)
         const uint16_t fromGetter = chip->getCPUReg(e.reg);
         EXPECT_EQ(fromGetter, fromBlob) << "selector " << int(e.reg) << " vs blob offset " << e.off;
         if (e.value >= 0)
+        {
             EXPECT_EQ(fromGetter, e.value) << "selector " << int(e.reg);
+        }
     }
     EXPECT_EQ(z80[33], 1) << "halted byte";
 }

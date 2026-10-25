@@ -277,7 +277,9 @@ protected:
             if (!HasFatalFailure())
                 TapUntilTaken(ZXKEY_ENTER, 0x0D);
             if (!HasFatalFailure())
+            {
                 ASSERT_TRUE(RunUntil([&] { return ScreenHas("1982 Sinclair"); }, 300)) << Screen();
+            }
         }
         else if (editor == "Plus2-128BASIC")
         {

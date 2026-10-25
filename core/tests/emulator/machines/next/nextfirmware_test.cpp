@@ -402,6 +402,12 @@ TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
     }
     EXPECT_EQ(different, 0u) << "bytes of the ULA screen that differ from the menu";
 
+    // The host turbo draws one frame in N (the decimation): leave it and run two frames, so the picture is the menu's
+    // whatever frame the boot ended on
+    _emulator->DisableTurboMode();
+    for (int i = 0; i < 2; i++)
+        _emulator->RunFrame(true);
+
     // ScreenNext drew it: a 640 x 512 frame (the 320 x 256 grid, lines doubled) with the highlighted "Browser" bar in cyan
     const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
     ASSERT_EQ(fb.width, 640u);

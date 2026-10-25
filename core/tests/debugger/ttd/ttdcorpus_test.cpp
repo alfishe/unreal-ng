@@ -300,7 +300,9 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         // ZX-MultiSound ones) into a fresh machine of its own, with the card
         const bool pentagon = info.machine.model == "PENTAGON" && ttdtest::SlotCardsOf(info.machine).empty();
         if (!pentagon)
+        {
             ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine));
+        }
 
         // A machine with its own TSFM history (Pentagon), then the user's load
         if (pentagon)
@@ -310,8 +312,10 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         const size_t count = _ttd->GetCheckpointCount();
         ASSERT_GE(count, 60u);
         if (pentagon)
+        {
             EXPECT_NE(_ttd->GetCheckpoint(0)->peripheralBlobs.count(uint8_t(ttd::PeripheralId::TSFM)), 0u)
                 << "the Pentagon TurboSound slot is TSFM: its blob must be in every checkpoint";
+        }
 
         // Restore: first, a keyframe, a delta frame, the last
         for (const size_t idx : {size_t(0), size_t(50), size_t(51), count - 1})
@@ -355,6 +359,8 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         if (HasFailure())
             return;
         if (!pentagon)
+        {
             ASSERT_NO_FATAL_FAILURE(StartMachine(Pentagon()));
+        }
     }
 }

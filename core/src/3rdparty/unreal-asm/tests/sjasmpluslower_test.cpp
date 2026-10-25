@@ -414,7 +414,9 @@ TEST(SjasmplusLower_Test, TheRealProjectsOnEveryTargetShowedThese)
     EXPECT_NE(main.find("LIBRARY"), std::string::npos) << main;
     for (const SourceLine& l : joined.files[0].document.lines)
         if (l.text.find("INCLUDE") != std::string::npos)
+        {
             EXPECT_EQ(l.text.find_first_not_of(" \t"), l.text.find(';')) << "only as a comment: " << l.text;
+        }
     ASSERT_EQ(joined.files[1].document.lines.size(), 1u);
     EXPECT_EQ(joined.files[1].document.lines[0].text[0], ';');
 

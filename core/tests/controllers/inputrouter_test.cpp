@@ -645,9 +645,13 @@ TEST_F(InputRouter_Test, Targets_KeysMacroAndMouse)
         Sample();
         sizes.push_back(_last.keys.size());
         if (f == 0)
+        {
             EXPECT_EQ(_last.keys, j);
+        }
         if (f == 2)
+        {
             EXPECT_TRUE(std::is_permutation(_last.keys.begin(), _last.keys.end(), quote.begin()));
+        }
     }
     EXPECT_EQ(sizes, (std::vector<size_t>{1, 0, 2, 0, 0}));
 

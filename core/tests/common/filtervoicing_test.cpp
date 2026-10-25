@@ -484,6 +484,8 @@ TEST(FilterVoicing_Test, SilentFramesAtRestMatchEveryFrameFiltered)
             ASSERT_EQ(frame, other) << FilterVoicing::presetId(preset) << ": frame " << k;
         }
         if (!skipping.isBypass())
+        {
             EXPECT_TRUE(rested) << FilterVoicing::presetId(preset) << ": never at rest in the silence";
+        }
     }
 }

@@ -290,7 +290,9 @@ TEST(ZeusBackend_Test, TheLaterVersionsHaveTheirDataWordsAndOnlyV7eMultiplies)
         EXPECT_TRUE(Contains(lines, "DM /text/")) << version << text;
         EXPECT_EQ(Contains(lines, "LD B,SIZE*2"), std::string(version) == "pht") << version << text;
         if (std::string(version) != "pht")
+        {
             EXPECT_TRUE(Contains(lines, "LD B,20")) << version << text;
+        }
     }
     // 1.1 is a version of the codec: PHT's table
     const WriteAsResult written = WriteAs(SourceDocument::FromText(source, "sjasmplus"), "zeus", "1.1", "T");

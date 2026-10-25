@@ -449,7 +449,9 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseContinueFindsAnExecutedPc)
         << "reverse-continue did not find PC 0x" << std::hex << knownPc
         << " even though the machine executed it";
     if (result.matched)
+    {
         EXPECT_EQ(result.pc, knownPc) << "landed on a different PC than requested";
+    }
 }
 
 /// A PC that was never executed must report no match rather than stopping
@@ -651,7 +653,9 @@ TEST_F(TTD_CoverageIntegration_Test, HitsInTheUnindexedOpeningFramesAreFound)
     EXPECT_EQ(withIndex.matched, withoutIndex.matched)
         << "a hit in the unindexed opening frames was lost";
     if (withIndex.matched && withoutIndex.matched)
+    {
         EXPECT_EQ(withIndex.arrivedAt.frame, withoutIndex.arrivedAt.frame);
+    }
 }
 
 /// The frame numbering invariant, asserted directly rather than through a

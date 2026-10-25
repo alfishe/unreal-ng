@@ -428,7 +428,9 @@ TEST_F(TurboMode_Test, TurboSuppressesSoundSynthesisAndResumesAfter)
     EXPECT_TRUE(sound.isSynthesisSuppressed());
     EXPECT_TRUE(sound.getBeeper().isSynthesisSuppressed());
     if (sound.getCovox())
+    {
         EXPECT_TRUE(sound.getCovox()->isSynthesisSuppressed());
+    }
 
     // Turbo with audio requested (recording use case): synthesis stays on
     _emulator->DisableTurboMode();

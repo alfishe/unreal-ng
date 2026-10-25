@@ -173,7 +173,9 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
         EXPECT_TRUE(Contains(back, "ORG $8001")) << dialect << ": " << ::testing::PrintToString(back);
         // more statements after the ORG on its line: the address its value gives, not the next line's
         if (std::string(dialect) == "sjasmplus")
+        {
             EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\n        NOP\n        NOP\n        ORG $-1 : HALT : NOP\n        NOP", dialect), "ORG $8001"));
+        }
         // back to a redefinable name that holds an address (its value where the ORG is: the address the next line has;
         // STORM has no name = value)
         if (std::string(dialect) == "storm")

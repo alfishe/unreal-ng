@@ -289,7 +289,9 @@ TEST(HidrawNode_Test, Find_TheNodeOfAnEvdevNodesHidDevice)
         EXPECT_EQ(found.node, "/dev/hidraw3");
         EXPECT_EQ(found.uevent.product, 0x0B22);
         if (symlinks)
+        {
             EXPECT_EQ(fs::path(found.hidDevice).filename().string(), "0005:045E:0B22.0004");
+        }
 
         EXPECT_FALSE(FindHidrawNode(root.string(), "/dev", "event7", 0x045E, 0x091B, found)) << "another device";
         EXPECT_FALSE(FindHidrawNode(root.string(), "/dev", "event8", 0x045E, 0x0B22, found)) << "no such node";

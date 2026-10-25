@@ -144,7 +144,9 @@ TEST_F(SnapshotImageSna_Test, EveryFixtureAgreesWithItsOwnBytes)
         EXPECT_EQ(image.banks.at(5), Slice(f, 27, 16384));
         EXPECT_EQ(image.banks.at(2), Slice(f, 27 + 16384, 16384));
         if (!repeated)
+        {
             EXPECT_EQ(image.banks.at(top), Slice(f, 27 + 2 * 16384, 16384));
+        }
         else
             EXPECT_EQ(Slice(f, 27 + 2 * 16384, 16384), Slice(f, repeated && top == 5 ? 27 : 27 + 16384, 16384))
                 << "the repeated third bank";
@@ -432,7 +434,9 @@ TEST(SnapshotImageSzx_Test, EveryFixtureAgreesWithLibspectrum)
         {
             ASSERT_TRUE(image.paging.p7FFD.has_value());
             if (szx::HasAy(stage.machineId))
+            {
                 EXPECT_EQ(*image.paging.p7FFD, Int(oracle, "p7ffd"));
+            }
         }
         if (szx::HasPort1FFD(stage.machineId))
         {

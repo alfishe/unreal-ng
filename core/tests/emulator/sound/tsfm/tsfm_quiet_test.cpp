@@ -121,12 +121,16 @@ void Lockstep(bool hq)
             frames(1);
         frames(5);
         if (hq)
+        {
             EXPECT_GT(quiet.QuietTicks(), before) << "the quiet ticks never took over again (frame " << frame << ")";
+        }
     };
 
     frames(20);  // the machine's own silence
     if (hq)
+    {
         EXPECT_GT(quiet.QuietTicks(), 0u) << "a silent machine renders no quiet tick";
+    }
     EXPECT_EQ(every.QuietTicks(), 0u);
 
     // Chip 0, FM on: a tone on A, then silence

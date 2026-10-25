@@ -242,7 +242,9 @@ TEST(TTDNextUartPeers_Test, TheV1DumpNamesDevicesAboveSixtyThreeAndOlderFilesSti
     ASSERT_NO_FATAL_FAILURE(takeMask(lowMask));
     const bool hasNotRecorded = (flags & ttd::dump::kFlagsHasNotRecordedMask) != 0;
     if (hasNotRecorded)
+    {
         ASSERT_NO_FATAL_FAILURE(takeMask(lowNotRecorded));
+    }
     std::string v1 = bytes.substr(0, kFixed + 1 + idLength + 1 + 8 + 8 + 4 + 4);
     const uint16_t schema1 = 1;
     std::memcpy(v1.data() + 4, &schema1, sizeof schema1);

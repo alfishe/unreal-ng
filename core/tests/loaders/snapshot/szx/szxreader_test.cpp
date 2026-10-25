@@ -128,14 +128,20 @@ TEST(SzxReader_Test, CorpusAgreesWithLibspectrum)
         EXPECT_EQ((z.flags & kFset) != 0, Int(oracle, "setf") != 0);
         const unsigned version = (stage.versionMajor << 8) | stage.versionMinor;
         if (version >= 0x0104)
+        {
             EXPECT_EQ(z.memptr, Int(oracle, "memptr")) << "libspectrum reads MEMPTR from 1.4 only";
+        }
 
         const SpecRegs& s = *stage.spec;
         EXPECT_EQ(s.border, Int(oracle, "ula") & 0x07);
         if (HasAy(stage.machineId))
+        {
             EXPECT_EQ(s.port7FFD, Int(oracle, "p7ffd"));
+        }
         if (HasPort1FFD(stage.machineId) || HasPortEFF7(stage.machineId))
+        {
             EXPECT_EQ(s.port1FFDorEFF7, Int(oracle, "p1ffd"));
+        }
 
         if (stage.ay)
         {
@@ -148,10 +154,14 @@ TEST(SzxReader_Test, CorpusAgreesWithLibspectrum)
         // libspectrum treats a Pentagon / Scorpion as Beta-equipped even when the
         // writer left CONNECTED out (ZXMAK2 does), so only "connected => active"
         if (stage.beta && (stage.beta->flags & kBetaConnected))
+        {
             EXPECT_NE(Int(oracle, "beta_active"), 0);
+        }
         EXPECT_EQ(stage.beta.has_value() && (stage.beta->flags & kBetaPaged), Int(oracle, "beta_paged") != 0);
         if (stage.beta)
+        {
             EXPECT_EQ(stage.beta->system, Int(oracle, "beta_system"));
+        }
 
         // Every page libspectrum saw, with the same bytes
         size_t pages = 0;

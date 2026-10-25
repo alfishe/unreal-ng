@@ -862,7 +862,9 @@ TEST_P(Ym2203PairBoards_Test, ToneSurvivesEventAtAnyTState)
     }
     m.Frames(4);   // the note's attack, the decimators and the coupling settle
     if (event == Event::CoreRate)
+    {
         ASSERT_EQ(m.Rate(), 48000.0) << where;
+    }
 
     Ym2203Pair& pair = *m.Pair();
     const uint64_t anchors = pair.renderAnchors();
