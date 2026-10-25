@@ -335,11 +335,11 @@ void DssAnalyzer::handleDssCall(Z80* cpu)
     const bool isFileClose = (fn == 0x12);
     if (isFileOpen)
     {
-        event.kind = OsEventKind::FILE_OPEN;
+        event.kind = OsEventKind::FILE_OPENED;
     }
     else if (isFileClose)
     {
-        event.kind = OsEventKind::FILE_CLOSE;
+        event.kind = OsEventKind::FILE_CLOSED;
     }
     emitEvent(std::move(event));
 

@@ -18,8 +18,8 @@ enum class OsEventKind : uint8_t
     TASK_EXIT,          // A task left the task table
     PAGE_ALLOC,         // Page/block ownership changed free -> task
     PAGE_FREE,          // Page/block ownership changed task -> free
-    FILE_OPEN,          // File handle acquired by a task
-    FILE_CLOSE,         // File handle released
+    FILE_OPENED,        // File handle acquired by a task (not FILE_OPEN: a <windows.h> macro, MinGW breaks)
+    FILE_CLOSED,        // File handle released
     FINDING             // Rule violation: leak, corruption, unbalance
 };
 
@@ -41,8 +41,8 @@ inline const char* OsEventKindName(OsEventKind kind)
         case OsEventKind::TASK_EXIT: return "TASK_EXIT";
         case OsEventKind::PAGE_ALLOC: return "PAGE_ALLOC";
         case OsEventKind::PAGE_FREE: return "PAGE_FREE";
-        case OsEventKind::FILE_OPEN: return "FILE_OPEN";
-        case OsEventKind::FILE_CLOSE: return "FILE_CLOSE";
+        case OsEventKind::FILE_OPENED: return "FILE_OPEN";
+        case OsEventKind::FILE_CLOSED: return "FILE_CLOSE";
         case OsEventKind::FINDING: return "FINDING";
     }
     return "?";
