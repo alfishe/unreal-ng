@@ -1005,6 +1005,8 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         }
         const std::string client = args.size() > 1 ? args[1] : std::string("cli");
         const unreal::UUID owner = unreal::UUID::Generate();
+        // Another client's implicit session gives way to an explicit take (the reply says whose)
+        const EmulatorContext::RunControlState before = context->GetRunControlState();
         std::string reason;
         if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0),
                                      PeerAddressOf(session.GetSocket())))
@@ -1014,22 +1016,34 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         }
         _controlSession = owner;
         _controlEmulator = emulator;
+        const std::string tookOver = before.claimed && before.implicit
+                                         ? " Took over the implicit session of " + before.surfaceLabel +
+                                               (before.client.empty() ? std::string() : " (" + before.client + ")") + "."
+                                         : std::string();
         session.SendResponse(std::string("Run control taken: the user sees it at the GUI and can take it back. ") +
-                             "'session release' ends it; closing the connection does too." + NEWLINE);
+                             "'session release' ends it; closing the connection does too." + tookOver + NEWLINE);
         return;
     }
     if (sub == "release")
     {
+        const bool held = HoldsControl(context);
         if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
             _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
         _controlSession = unreal::UUID();
         _controlEmulator.reset();
-        session.SendResponse(std::string("Run control released") + NEWLINE);
+        session.SendResponse((held ? std::string("Run control released")
+                                   : "This connection holds no session here. " +
+                                         EmulatorContext::DescribeHolder(context->GetRunControlState())) +
+                             NEWLINE);
         return;
     }
     const EmulatorContext::RunControlState state = context->GetRunControlState();
     std::string text = state.claimed ? "Run control held by " + state.surfaceLabel +
                                            (state.client.empty() ? std::string() : " (" + state.client + ")") +
+                                           (state.implicit ? ", implicit" : ", explicit") +
+                                           (state.leaseMs ? ", lease ends in " +
+                                                                std::to_string((state.leaseLeftMs + 999) / 1000) + " s"
+                                                          : std::string()) +
                                            (HoldsControl(context) ? " - this connection" : std::string())
                                      : std::string("Run control: free");
     for (const auto& [key, secondsLeft] : state.cooldowns)

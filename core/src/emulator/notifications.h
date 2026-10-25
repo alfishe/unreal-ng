@@ -430,7 +430,8 @@ public:
 
 /// Payload of NC_RUN_CONTROL_CHANGED: an automation session (the run-control claim) changed. `event`: "taken",
 /// "released", "revoked" (the user took control back at the GUI or from a companion: `by`), "expired" (an HTTP session's idle lease ran out),
-/// "retake_refused" (a client tried to take control back within its cooldown after a take-back)
+/// "retake_refused" (a client tried to take control back within its cooldown after a take-back), "superseded" (an
+/// explicit take took over this implicit session: `by` names who took it)
 class RunControlChangedPayload : public MessagePayload
 {
 public:

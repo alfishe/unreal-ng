@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """control_execution: stepping and running report the registers, breakpoints are listed one per line and stop the
-machine"""
+machine; a host script over the WebAPI and an agent over MCP drive one machine (the implicit session, take-over,
+release without the id)"""
 
+import json
 import re
 import sys
+import urllib.error
+import urllib.request
 
 from mcplib import expect, main
+from test_actions import instance, release_mcp_session, webapi
 
 
 def pc_of(text):
@@ -100,6 +105,72 @@ def test_pace(s):
     r = s.call('control_execution', {'action': 'pace', 'pace_op': 'set', 'preset': 'warp'}, ok=False)
     expect(r.is_error and 'preset' in r.text, 'an unknown preset is refused', r.text)
     s.call('control_execution', {'action': 'pace', 'pace_op': 'set', 'preset': 'full'})
+
+
+def script(s, method, path, body=None, session=None):
+    """A host script's REST call (urllib's own User-Agent, as a Python script sends): (status, body, headers)"""
+    headers = {'Content-Type': 'application/json'}
+    if session:
+        headers['X-Unreal-Session'] = session
+    request = urllib.request.Request(webapi(s) + path, method=method, headers=headers,
+                                     data=json.dumps(body).encode() if body is not None else None)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode() or 'null'), response.headers
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read().decode() or 'null'), error.headers
+
+
+def test_a_host_script_and_mcp_share_one_machine(s):
+    """The cross-plane case (execution arbiter design §6a): the script's change opens an implicit session that refuses
+    MCP runs with a resolvable answer; take_control takes it over and names the id the script then sends"""
+    emu = instance(s)
+    release_mcp_session(s)
+    base = f'/api/v1/emulator/{emu}'
+    status, body, headers = script(s, 'POST', base + '/run_frames', {'frames': 1})
+    implicit = headers.get('X-Unreal-Session', '')
+    expect(status == 200 and implicit and body['automation_session']['id'] == implicit,
+           'the script\'s change opens an implicit session, its id in the header and the JSON', (status, body))
+    status, body, headers = script(s, 'POST', base + '/run_frames', {'bogus': 1})
+    expect(status == 400 and headers.get('X-Unreal-Session') == implicit and
+           body.get('automation_session', {}).get('id') == implicit, 'a 4xx reply names the session too', body)
+
+    r = s.call('control_execution', {'action': 'run_frames', 'frames': 1}, ok=False)
+    expect(r.is_error and 'held_by_other' in r.text and 'Python-urllib' in r.text and 'implicit' in r.text and
+           'take_control' in r.text, 'MCP is refused with the holder and how to resolve it', r.text)
+    r = s.call('control_execution', {'action': 'resume'}, ok=False)
+    expect(r.is_error and 'already running' not in r.text, 'a refused resume is no "already running"', r.text)
+
+    status, body, _ = script(s, 'GET', base + '/control/session')
+    expect(status == 200 and body['implicit'] and body['yours'] and body['session'] == implicit and
+           0 < body['lease_seconds_left'] <= 15, 'the script sees its own implicit session and its id', body)
+    seen = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/control/session'}).structured['body']
+    expect(seen.get('yours') is False and 'session' not in seen and seen['holder']['implicit'],
+           'another client sees the holder, never the id', seen)
+
+    r = s.call('control_execution', {'action': 'take_control', 'client': 'cross-plane check'})
+    taken = r.structured['session']
+    expect('Took over the implicit session of webapi (Python-urllib' in r.text and taken in r.text,
+           'take_control takes the implicit session over and names the id', r.text)
+    status, body, _ = script(s, 'POST', base + '/run_frames', {'frames': 1}, implicit)
+    expect(status == 409 and body['error'] == 'held_by_other' and body['holder']['implicit'] is False,
+           'the taken-over id is no pass: the gate refuses with the explicit holder', body)
+    status, body, _ = script(s, 'POST', base + '/run_frames', {'frames': 1}, taken)
+    expect(status == 200 and 'automation_session' not in body, 'the script drives with the shared id', body)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 1})
+    r = s.call('control_execution', {'action': 'release_control'})
+    expect('session ended' in r.text, 'released', r.text)
+    r = s.call('control_execution', {'action': 'release_control'})
+    expect('Nothing to release' in r.text, 'a second release says there was nothing', r.text)
+
+    # MCP's own implicit session ends without the id; so does the script's
+    s.call('control_execution', {'action': 'run_frames', 'frames': 1})
+    r = s.call('control_execution', {'action': 'release_control'})
+    expect('session ended' in r.text, 'release_control ends the implicit session of MCP', r.text)
+    script(s, 'POST', base + '/run_frames', {'frames': 1})
+    status, body, _ = script(s, 'DELETE', base + '/control/session')
+    expect(status == 200 and body['released'] and not body['held'], 'DELETE without the header ends it', body)
+    s.call('control_execution', {'action': 'pause'})
 
 
 def test_unknown_action_is_an_error(s):

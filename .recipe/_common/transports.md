@@ -32,6 +32,14 @@ Even on the MCP path, endpoints without a smart tool go through the
 | Best for | scripts, CI, curl/jq one-liners, full WebAPI surface | LLM agents, IDEs, intent-level calls, local-file upload |
 | Auth | none | none |
 | Sessions | none (state lives in emulator instances) | none (no `Mcp-Session-Id`, fully stateless) |
+| Run control | `POST .../control/session`, its id in `X-Unreal-Session`; without one a change opens an implicit session (15 s lease) | `control_execution take_control` / `release_control`; without it the same implicit session, the MCP server's own |
+
+**Both planes on one emulator** (a host script over the WebAPI and an agent over MCP): one session holds run
+control, and another client's change is refused `held_by_other`; its `message` and `holder` (`implicit`,
+`lease_seconds_left`) say who holds it and what to do. Take control explicitly once, on the MCP side
+(`take_control`; the MCP server cannot adopt a script's id): that takes over the script's implicit session. Then
+send its id (in the take's reply) from the script as `X-Unreal-Session`. `DELETE .../control/session` without the header ends a client's own
+implicit session; `GET .../control/session` shows its id (`session`) only to that client.
 
 ## WebAPI idioms
 

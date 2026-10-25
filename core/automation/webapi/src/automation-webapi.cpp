@@ -243,7 +243,8 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
     // Automation sessions (execution arbiter design §6a): a request carrying the session the user took control back
     // from is answered at once, final - the client stops, it does not retry. A live session's request renews its
     // idle lease. Ending a taken-back session (DELETE .../control/session) is let through: it is a no-op
-    if (const std::optional<unreal::UUID> session = webapi_session::SessionOf(req))
+    const std::optional<unreal::UUID> session = webapi_session::SessionOf(req);
+    if (session)
     {
         const bool ending = req->method() == drogon::HttpMethod::Delete &&
                             req->path().find("/control/session") != std::string::npos;
@@ -262,7 +263,6 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
             }
             context->TouchRunControl(*session);
         }
-        return {};
     }
 
     // The automation gate (owner decision 2026-10-11, automationgate.h): a request that changes a machine without
@@ -283,19 +283,18 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
     EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
     if (!context)
         return {};  // not an instance ("start", "create", a wrong id): the handler answers
+    // The request's session holds this machine: it goes on as the session's. A session that does not (it expired,
+    // it was taken over, it is another machine's) is no pass: the request is un-sessioned here and meets the gate
+    if (session && context->HasRunControl(*session))
+        return {};
     const webapi_session::GateClient client = webapi_session::GateClientOf(req);
     const EmulatorContext::ImplicitControl gate = context->EnterImplicitRunControl(
         client.surface, client.identity, client.client,
         std::chrono::duration_cast<std::chrono::milliseconds>(automation_gate::kImplicitLease), client.peer);
     if (!gate.allowed)
     {
-        Json::Value body = gate.error == "revoked_by_user" ? webapi_session::RevokedBody() : Json::Value();
-        if (gate.error != "revoked_by_user")
-        {
-            body["error"] = gate.error;
-            body["retry"] = false;
-            body["message"] = gate.message;
-        }
+        Json::Value body = gate.error == "revoked_by_user" ? webapi_session::RevokedBody()
+                                                           : webapi_session::HeldByOtherBody(gate.holder, gate.message);
         body["advice"] = automation_gate::kAdvice;
         auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
         resp->setStatusCode(drogon::HttpStatusCode::k409Conflict);

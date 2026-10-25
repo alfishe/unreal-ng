@@ -1303,7 +1303,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Stepping actions automatically include the new register snapshot. "
         "take_control opens an automation session (optional client: your name; lease_seconds, default 60): the user sees "
         "it in the GUI, its controls lock, and your calls run while other surfaces' runs are refused; release_control "
-        "ends it. If the user takes control back, calls answer revoked_by_user: stop, do not retry, ask the user.",
+        "ends it (yours: the explicit one, else the implicit session your changes opened). A call refused held_by_other "
+        "names the holder: take_control takes over an implicit session of another client (a host script's), never an "
+        "explicit one. If the user takes control back, calls answer revoked_by_user: stop, do not retry, ask the user.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -1331,9 +1333,19 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status == 200 && reply.isMember("session"))
                         {
                             caller.SetSession(reply["session"].asString());
-                            done(ToolResult::Ok("You hold run control of this emulator (the user sees it and can take it "
-                                                "back). release_control ends the session.",
-                                                std::move(reply)));
+                            std::string text = "You hold run control of this emulator (the user sees it and can take it "
+                                               "back). release_control ends the session. Session id " +
+                                               reply["session"].asString() +
+                                               ": a host script driving this emulator too sends it as X-Unreal-Session.";
+                            if (reply["took_over"].isObject())
+                            {
+                                const Json::Value& was = reply["took_over"];
+                                text += " Took over the implicit session of " + was["surface"].asString() +
+                                        (was["client"].asString().empty() ? std::string()
+                                                                          : " (" + was["client"].asString() + ")") +
+                                        ".";
+                            }
+                            done(ToolResult::Ok(text, std::move(reply)));
                         }
                         else
                             done(ToolResult::Error("take_control refused (HTTP " + std::to_string(status) + "): " +
@@ -1343,10 +1355,17 @@ void RegisterControlExecution(ToolRegistry& registry)
                 }
                 if (action == "release_control")
                 {
+                    // Without a session of its own the WebAPI ends the implicit session it holds for this MCP server
                     caller.Call("DELETE", Endpoint(id, "/control/session"), nullptr, [&caller, done](int status, Json::Value reply) {
                         caller.SetSession({});
-                        if (status == 200)
+                        if (status == 200 && reply.get("released", false).asBool())
                             done(ToolResult::Ok("Automation session ended: run control released.", std::move(reply)));
+                        else if (status == 200)
+                        {
+                            const std::string text = "Nothing to release: you held no session of this emulator. " +
+                                                     reply.get("message", "").asString();
+                            done(ToolResult::Ok(text, std::move(reply)));
+                        }
                         else
                             done(ToolResult::Error("release_control failed (HTTP " + std::to_string(status) + "): " +
                                                    DescribeErrorBody(reply)));
@@ -1361,6 +1380,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status >= 200 && status < 300)
                         {
                             done(ToolResult::Ok(action == "run" ? "Running (until breakpoint/pause)" : "Resumed", std::move(body)));
+                        }
+                        else if (IsSessionRefusal(body))
+                        {
+                            // The automation gate refused it (another client's session, a take-back): not "running"
+                            done(ToolResult::Error("Resume refused (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(body)));
                         }
                         else if (status == 400 || status == 409)
                         {
@@ -1808,7 +1833,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         if (status < 200 || status >= 300)
                         {
                             std::string hint;
-                            if (status == 409)
+                            if (status == 409 && !IsSessionRefusal(response))
                             {
                                 hint = " Hint: the machine may need to be paused first — use action:'pause'.";
                             }

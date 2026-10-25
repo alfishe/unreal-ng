@@ -408,7 +408,9 @@ class Emulator:
     def take_control(self, client: str = "python") -> None:
         """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
         control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control
-        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown)"""
+        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown).
+        Takes over another client's implicit session (a WebAPI or MCP client that drove without one), never an
+        explicit one: RuntimeError held_by_other names the holder"""
 
     def release_control(self) -> None:
         """End the automation session"""

@@ -103,6 +103,34 @@ inline GateClient GateClientOf(const drogon::HttpRequestPtr& req)
     return c;
 }
 
+/// Who holds run control, for a refusal or the session view: surface, client, peer, kind (implicit: the gate opened it
+/// for a client that changed the machine without taking control; an explicit take takes it over), since, the idle
+/// lease and what is left of it. Never the id: it is the session's bearer token
+inline Json::Value HolderJson(const EmulatorContext::RunControlState& state)
+{
+    Json::Value holder;
+    holder["surface"] = state.surfaceLabel;
+    holder["client"] = state.client;
+    holder["peer"] = state.peer;
+    holder["implicit"] = state.implicit;
+    holder["since_ms"] = static_cast<Json::Int64>(state.sinceMs);
+    holder["lease_seconds"] = state.leaseMs / 1000;
+    holder["lease_seconds_left"] = (state.leaseLeftMs + 999) / 1000;
+    return holder;
+}
+
+/// The 409 held_by_other body: the error, retry: false, a message saying who holds control and how to resolve it,
+/// and the holder (HolderJson)
+inline Json::Value HeldByOtherBody(const EmulatorContext::RunControlState& holder, const std::string& message)
+{
+    Json::Value body;
+    body["error"] = "held_by_other";
+    body["retry"] = false;
+    body["message"] = message.empty() ? EmulatorContext::DescribeHolder(holder) : message;
+    body["holder"] = HolderJson(holder);
+    return body;
+}
+
 /// Request attributes the gate leaves for the reply (the post-handling advice)
 constexpr const char* kImplicitSessionAttribute = "unreal.implicit_session";
 constexpr const char* kImplicitOpenedAttribute = "unreal.implicit_opened";

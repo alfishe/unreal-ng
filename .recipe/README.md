@@ -38,7 +38,12 @@ drive restrictions, pause races).
   `take_control("<name>")`. The user sees it in the GUI and can **take control
   back**. A client that changes the machine without one gets a session
   implicitly (the automation gate): the reply says so (`automation_session`, the
-  `X-Unreal-Session*` headers, an MCP note) and advises taking it explicitly. From then on the session's calls answer `revoked_by_user` (WebAPI 409,
+  `X-Unreal-Session*` headers, an MCP note) and advises taking it explicitly. An
+  explicit take takes over another client's implicit session (never an explicit
+  one); a refusal `held_by_other` names the holder and how to resolve it, and a
+  release without the id ends your own implicit session
+  ([transports](_common/transports.md)). If the user takes control back, the
+  session's calls answer `revoked_by_user` (WebAPI 409,
   `retry: false`; Python `ControlRevoked`). **Stop. Do not retry, do not take
   control again by yourself - ask the user.** A re-take by the same client is
   refused (`revoked_cooldown`) until the user allows it.
