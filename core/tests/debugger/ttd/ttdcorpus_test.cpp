@@ -16,6 +16,7 @@
 #include "_helpers/ttdmultisoundsessions.h"
 #include "_helpers/ttdslotcards.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
@@ -286,8 +287,11 @@ protected:
 
 TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
 {
-    const auto files = CorpusFiles();
-    ASSERT_GE(files.size(), 5u) << "testdata/ttd/ should hold the recorded corpus";
+    const auto corpus = CorpusFiles();
+    ASSERT_GE(corpus.size(), 5u) << "testdata/ttd/ should hold the recorded corpus";
+    // A 48K demo, the TurboSound FM on the Pentagon, a TS-Conf machine of its own; every fixture in the long tier
+    const auto files = TestTier::Sample(corpus, {"active_demo.ttd", "tsfm_tech_support.ttd", "sprites.ttd"});
+    ASSERT_EQ(files.size(), TestTier::Long() ? corpus.size() : 3u);
 
     for (const fs::path& file : files)
     {
@@ -329,7 +333,7 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         // new checkpoints - captured at the same point of the frame as the
         // original ones - with the recorded 25 that followed it
         const size_t from = 37;
-        constexpr size_t kReplay = 25;
+        const size_t kReplay = TestTier::Pick<size_t>(8, 25);
         std::vector<MachineState> expected;
         std::vector<RamImage> expectedRam;  // decoded now: resuming drops these checkpoints
         for (size_t step = 1; step <= kReplay; step++)
