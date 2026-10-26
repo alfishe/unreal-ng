@@ -70,6 +70,13 @@ public:
     /// NR #15 bit 6 (zero on top, the `control` byte) decides which of two stays. `collisions` gets the engine clock (from S_START = 1) of
     /// each write onto a pixel already there; returns true when the engine is still busy after `lineClocks` (the "too many" flag)
     bool Fill(unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks, LineBuffer& out, std::vector<uint16_t>& collisions) const;
+    struct FillCursor;
+    /// Fill in steps: run the engine up to its clock `stopTick` (from S_START = 1, a step on the clock itself included) and keep where it
+    /// stands in `cursor`, so a write to the attributes or patterns between two calls is seen by the sprites the engine reaches after it
+    /// (sprites.vhd reads a sprite's attributes when it qualifies it and the pattern bytes as it draws). A fresh cursor starts the line;
+    /// stopTick ~0u runs it to the end, and the return value is Fill's then
+    bool FillUntil(FillCursor& cursor, unsigned stopTick, unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks,
+                   LineBuffer& out, std::vector<uint16_t>& collisions) const;
     /// The output stage for grid line `y`: what is inside the clip window (NR #19) into `out` (not touched when the sprites are off: NR #15
     /// bit 0 gates the output only). `control` is NR #15
     void Output(const LineBuffer& line, unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out) const;
@@ -133,6 +140,22 @@ private:
         uint8_t pattern = 0, palette = 0, xScale = 0, yScale = 0;
     };
 
+public:
+    /// Where a line's fill stands (FillUntil)
+    struct FillCursor
+    {
+        bool started = false;
+        bool done = false;
+        bool overtime = false;
+        unsigned sprite = 0;  ///< the sprite to qualify next, or the one being drawn
+        unsigned tick = 1;    ///< the engine clock of the last step (S_START = 1)
+        int pixel = -1;       ///< the next pixel of the sprite being drawn; -1: none is
+        int rowIndex = 0;
+        Effective current;    ///< the sprite being drawn, as it was when it qualified
+        Anchor anchor;
+    };
+
+private:
     bool Extended(unsigned s) const { return (_attr[s][3] & 0x40) != 0; }
     bool Relative(unsigned s) const { return Extended(s) && (_attr[s][4] & 0xC0) == 0x40; }
     Effective Decode(unsigned s) const;

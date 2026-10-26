@@ -32,8 +32,11 @@ Planned, in this order:
   `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
   no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
 - [ ] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo)
-- [ ] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
-  engine is drawing
+- [x] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
+  engine is drawing (done 2026-10-26: `NextSprites::FillUntil` runs the engine to a clock and keeps where it stands; a write inside a pass
+  runs it to the write with the state before it (`ScreenNext::AdvanceSpritePass`), the sprites after that point qualify with the new
+  attributes and draw with the patterns and transparent index of then (sprites.vhd 971 compares each pixel as it is written); test
+  `NextSpriteFill_Test.AMoveInsideAFillReachesTheSpritesNotYetDrawn`)
 - [ ] Ports: NR #8A (propagate the port decodes to the expansion bus) is stored and read back only; nothing on the bus yet
 
 Not planned yet:
