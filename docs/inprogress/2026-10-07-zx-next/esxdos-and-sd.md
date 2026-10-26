@@ -207,7 +207,9 @@ The second implementation of section 5, for the bare machine: feature `esxdos` (
 `[NEXT] BootRom`. Then `RST $08 : DEFB call` with a call of `$80` and up is served by the emulator
 (`core/src/emulator/io/z80n/nextesxdos.cpp`) against the FAT volume of SD card 0, and a program that uses the API (a
 `.nex`, a game's loader, a tool) runs without TBBLUE.FW and NextZXOS. With a boot ROM the firmware's own esxDOS answers
-through the DivMMC automap, as on the board; a call below `$80` is the 48K ROM's error report and always runs the ROM.
+through the DivMMC automap, as on the board; a call below `$80` is the 48K ROM's error report and always runs the ROM. The
+firmware path is the supported one; this mode is an opt-in shortcut, the same idea as the tape load hooks (the host
+answers a ROM entry point instead of running it).
 
 | What | How it is served |
 |:--|:--|
