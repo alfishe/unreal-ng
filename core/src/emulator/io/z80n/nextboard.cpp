@@ -98,6 +98,10 @@ void NextBoard::Reset(bool hard)
     _video.Reset(hard);  // the palette index and control; the palette memory only with the configuration load
     RefreshLayer2Mapping();
     if (hard)
+        _xilinx.PowerOn();
+    else
+        _xilinx.Reset();
+    if (hard)
         _sprites.Reset();
     else
         _sprites.SoftReset();  // sprites.vhd reset_i: the indices, the mirror and the status; the attribute and pattern RAMs stay
@@ -125,6 +129,16 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return kCoreVersion;
         case kRegCoreVersionSub:
             return kCoreVersionSub;
+        case kRegBoardIssue:
+            return static_cast<uint8_t>(_issue);  // "0000" & g_board_issue (5920)
+        case 0xF0:
+            return Artix() ? _xilinx.ReadCommand() : 0;  // 6274-6283; the Issue 2 core ties them to 0 (gen_xper_23)
+        case 0xF8:
+            return Artix() ? _xilinx.ReadAddress() : 0;
+        case 0xF9:
+            return Artix() ? _xilinx.ReadData0() : 0;
+        case 0xFA:
+            return Artix() ? _xilinx.ReadData1() : 0;
         case kRegResetType:
             // bit 7 the expansion bus reset, bits 3:2 the NMI requests as written, bits 1:0 how the last reset happened (the VHDL's
             // nr_02_reset_type: 0 power on, then 2, then 1 for the soft resets that follow)
@@ -460,16 +474,24 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             _regs[reg] = value;
             return;
         case 0x10:
-            if (_memory->InConfigMode())  // the core id is writable in config mode only
-                _regs[reg] = value & 0x1F;
-            return;
-        case 0x11:
-            // zxnext.vhd 5208-5217 on the issue 2 core (g_video_inc "10"): written in config mode only, 7 (HDMI) is VGA 0, else bit 0
-            // picks VGA 0 / 1. A change moves the PLL to the new CLK_28 and runs the top level's power-on reset (zxnext_top_issue2.vhd
-            // 771-783): the core sees `reset` as on a soft one, NR #11 and config mode stay, so the boot ROM starts again
+            // the core id is writable in config mode only (5673-5705): 0-31 on Issue 2, 0-14 on the Artix boards (a write of bit 4 or of
+            // 15 is not taken)
             if (_memory->InConfigMode())
             {
-                const uint8_t timing = (value & 7) == 7 ? 0 : static_cast<uint8_t>(value & 1);
+                if (!Artix())
+                    _regs[reg] = value & 0x1F;
+                else if (!(value & 0x10) && (value & 0x0F) != 0x0F)
+                    _regs[reg] = value & 0x0F;
+            }
+            return;
+        case 0x11:
+            // zxnext.vhd 5208-5217: written in config mode only, 7 (HDMI) is VGA 0; the Issue 2 core (g_video_inc "10") keeps bit 0
+            // (VGA 0 / 1), the Artix ones ("11") VGA 0-6. A change moves the PLL to the new CLK_28 and runs the top level's power-on
+            // reset (zxnext_top_issue2.vhd 771-783): the core sees `reset` as on a soft one, NR #11 and config mode stay, so the boot ROM
+            // starts again
+            if (_memory->InConfigMode())
+            {
+                const uint8_t timing = (value & 7) == 7 ? 0 : static_cast<uint8_t>(value & (Artix() ? 7 : 1));
                 if (timing != _regs[reg])
                 {
                     _regs[reg] = timing;
@@ -590,8 +612,27 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             ApplyCpuSpeed();
             return;
         case kRegConfigMapping:
-            _regs[reg] = value;  // Issue 5 PCB (zxnext.vhd gen_romram_5): all 8 bits; the older boards keep 7
-            _memory->SetConfigBank(value);
+            // Issue 5 (gen_romram_5) keeps all 8 bits and drives them out as SRAM A21:A14; Issues 2 and 4 keep 7 (gen_romram_234)
+            _regs[reg] = _issue == NextBoardIssue::Issue5 ? value : static_cast<uint8_t>(value & 0x7F);
+            _memory->SetConfigBank(_regs[reg]);
+            return;
+        case kRegBoardIssue:
+            return;  // read only
+        case 0xF0:
+            if (Artix())
+                _xilinx.WriteCommand(value);
+            return;
+        case 0xF8:
+            if (Artix())
+                _xilinx.WriteAddress(value);
+            return;
+        case 0xF9:
+            if (Artix())
+                _xilinx.WriteData0(value);
+            return;
+        case 0xFA:
+            if (Artix())
+                _xilinx.WriteData1(value);
             return;
         default:
             _regs[reg] = value;

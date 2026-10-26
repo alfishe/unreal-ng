@@ -14,6 +14,9 @@ class ModuleLogger;
 /// region <Info>
 
 // See: https://worldofspectrum.org/faq/reference/formats.htm
+// .snx (NextZXOS, https://wiki.specnext.dev/File_Formats): the .sna layout; a 128K one may carry the program's private data
+// after its banks (NextZXOS leaves the file open as handle 0 for the program to read it). NextZXOS applies no legacy mode
+// (machine timing, speed) to it, and neither does this loader to any .sna
 
 /// endregion </Info>
 
@@ -91,6 +94,12 @@ protected:
     bool _fileValidated = false;
     size_t _fileSize = 0;
     SNA_MODE _snapshotMode = SNA_UNKNOWN;
+    /// A NextZXOS .snx (from the path's extension or SetSnx): a 128K file has exactly the banks #7FFD leaves, private data may follow
+    bool _snx = false;
+    /// The banks of a 128K file after its extended header
+    size_t _extraBanks = 0;
+    /// The bytes of an .snx after its banks (the program's private data; not loaded)
+    size_t _privateBytes = 0;
     bool _stagingLoaded = false;
 
     // Staging memory buffers
@@ -124,6 +133,12 @@ public:
     bool save();
     /// Write an image captured by snapshot::CaptureImage as a .sna; `error` says why not
     bool WriteImage(const snapshot::Image& image, std::string& error);
+
+    /// Read the data as a NextZXOS .snx (an in-memory image has no extension to say so)
+    void SetSnx(bool snx) { _snx = snx; }
+    bool IsSnx() const { return _snx; }
+    /// The private data an .snx carries after its banks, in bytes (valid after load / Stage)
+    size_t PrivateDataSize() const { return _privateBytes; }
 
     /// What the caller asked for (call before load(); the default lets the plan decide)
     void SetOptions(const snapshot::Options& options) { _options = options; }
@@ -179,6 +194,8 @@ public:
     using LoaderSNA::_fileValidated;
     using LoaderSNA::_fileSize;
     using LoaderSNA::_snapshotMode;
+    using LoaderSNA::_extraBanks;
+    using LoaderSNA::_privateBytes;
     using LoaderSNA::_stagingLoaded;
     using LoaderSNA::_image;
 

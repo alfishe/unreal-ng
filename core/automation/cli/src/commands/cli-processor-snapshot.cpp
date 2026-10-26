@@ -248,9 +248,9 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
     ss << "  snapshot load <file> [--switch | --no-switch] [--commit <name>]" << NEWLINE;
-    ss << "                                 Load snapshot from file (.z80, .sna, .szx; .rzx plays on this machine;" << NEWLINE;
+    ss << "                                 Load snapshot from file (.z80, .sna, .snx, .szx; .rzx plays on this machine;" << NEWLINE;
     ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch;" << NEWLINE << "                                 an .szx saved on another model is refused unless --switch or [SNAPSHOT] SwitchModel=1)" << NEWLINE;
-    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx: by extension)" << NEWLINE;
+    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx, .nex on the Next: by extension)" << NEWLINE;
     ss << "                                 --commit: who writes the machine - omitted: the machine's own policy," << NEWLINE;
     ss << "                                 else the legacy commit; 'legacy': the legacy commit always; or a policy name" << NEWLINE;
     ss << "  snapshot inspect <file> [--commit <name>]" << NEWLINE;

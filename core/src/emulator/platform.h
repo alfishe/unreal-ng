@@ -968,6 +968,7 @@ struct CONFIG
 	char next_sd_path[FILENAME_MAX];       // [NEXT] SdCard: a folder (presented as a FAT16 card) or a raw image for card 0; empty = no card
 	char next_boot_rom_path[FILENAME_MAX];  // the 8K boot ROM (cores/zxnext bootrom.vhd); empty = the bare personality
 	uint8_t next_layer_capture;             // [NEXT] LayerCapture = on|off: the screen records the layers of every frame (design-layer-capture.md); default on
+	uint8_t next_board_issue;               // [NEXT] Board = issue2|issue4|issue5 (ks1|ks2|ks3): NR #0F, NextBoardIssue; default issue4 (KS2)
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];

@@ -33,9 +33,10 @@ enum class SaveFormat : uint8_t
     Sna,
     Z80,
     Szx,
+    Nex,   ///< the ZX Spectrum Next only (LoaderNex::Capture): listed by QuerySaveFormats on the Next alone
 };
 
-/// "sna", "z80", "szx"
+/// "sna", "z80", "szx", "nex"
 const char* ToText(SaveFormat format);
 /// The extension without the dot, any case; nullopt for another
 std::optional<SaveFormat> SaveFormatFromExtension(const std::string& extension);
@@ -107,9 +108,10 @@ struct SaveFormats
     bool viewAvailable = false;
     std::string machine;   ///< what the snapshot will say: "Pentagon 128", "ZX Spectrum 128K", ...
     std::string view;      ///< how the state is taken (MachineView::note), or why not
-    std::vector<FormatStatus> formats;   ///< sna, z80, szx in this order
+    std::vector<FormatStatus> formats;   ///< sna, z80, szx in this order; nex after them on the Next
 
     const FormatStatus& For(SaveFormat format) const;
+    bool Has(SaveFormat format) const;
     StateNode ToStateNode() const;
 };
 

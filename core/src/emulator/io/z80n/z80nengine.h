@@ -87,6 +87,7 @@ private:
     void Absorb(Z80nCPU* cpu);
 
     static uint8_t MemRead(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind, void* user);
+    static int Contend(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind, void* user);
     static void MemWrite(Z80nCPU* cpu, uint16_t addr, uint8_t value, void* user);
     static uint8_t PortIn(Z80nCPU* cpu, uint16_t port, void* user);
     static void PortOut(Z80nCPU* cpu, uint16_t port, uint8_t value, void* user);

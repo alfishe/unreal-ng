@@ -1,11 +1,11 @@
-#include "stdafx.h"
-
-#include "subrangedevice.h"
+#include "unrealdisk/subrangedevice.h"
 
 #include <algorithm>
 #include <cstring>
 
-SubRangeDevice::SubRangeDevice(std::shared_ptr<IBlockDevice> base, uint64_t first, uint64_t count)
+namespace unrealdisk
+{
+SubRangeDevice::SubRangeDevice(std::shared_ptr<BlockDevice> base, uint64_t first, uint64_t count)
     : _base(std::move(base)), _first(first), _count(count)
 {
     // The base's identity and the window (FNV-1a)
@@ -52,3 +52,4 @@ std::string SubRangeDevice::Describe() const
 {
     return _base->Describe() + ", sectors " + std::to_string(_first) + "-" + std::to_string(_first + _count - 1);
 }
+}  // namespace unrealdisk

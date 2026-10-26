@@ -874,7 +874,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
     oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx; .rzx plays)" << NEWLINE;
-    oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
+    oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx, .nex on the Next: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
     oss << NEWLINE;
     oss << "RZX Playback:" << NEWLINE;

@@ -7,10 +7,12 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/loader_z80.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -25,6 +27,7 @@ const char* ToText(SaveFormat format)
         case SaveFormat::Sna: return "sna";
         case SaveFormat::Z80: return "z80";
         case SaveFormat::Szx: return "szx";
+        case SaveFormat::Nex: return "nex";
     }
     return "?";
 }
@@ -38,6 +41,8 @@ std::optional<SaveFormat> SaveFormatFromExtension(const std::string& extension)
         return SaveFormat::Z80;
     if (ext == "szx")
         return SaveFormat::Szx;
+    if (ext == "nex")
+        return SaveFormat::Nex;
     return std::nullopt;
 }
 
@@ -231,6 +236,11 @@ MachineView ExamineView(EmulatorContext& context)
     return DefaultView(context);
 }
 
+bool SaveFormats::Has(SaveFormat format) const
+{
+    return std::any_of(formats.begin(), formats.end(), [format](const FormatStatus& status) { return status.format == format; });
+}
+
 const FormatStatus& SaveFormats::For(SaveFormat format) const
 {
     for (const FormatStatus& status : formats)
@@ -286,11 +296,28 @@ SaveFormats QuerySaveFormats(EmulatorContext& context)
         }
     };
 
+    // The Next saves its programs as .nex whatever the 128K view says (the board has none: its memory is its own)
+    auto addNex = [&]() {
+        if (!dynamic_cast<NextMemory*>(context.pMemory))
+            return;
+        FormatStatus nex;
+        nex.format = SaveFormat::Nex;
+        nex.available = LoaderNex::Capturable(context, nex.reason);
+        if (nex.available)
+            nex.note = LoaderNex::kLeftOut;
+        else
+            nex.needs = "format:szx";
+        if (out.machine.empty())
+            out.machine = "ZX Spectrum Next";
+        out.formats.push_back(nex);
+    };
+
     const MachineView view = ExamineView(context);
     if (!view.available)
     {
         out.view = view.reason;
         setAll(view.reason, view.needs);
+        addNex();
         return out;
     }
     out.viewAvailable = true;
@@ -357,6 +384,7 @@ SaveFormats QuerySaveFormats(EmulatorContext& context)
     }
     else
         szx.available = true;
+    addNex();
     return out;
 }
 
@@ -451,8 +479,16 @@ SaveResult SaveSnapshotFile(EmulatorContext& context, SaveFormat format, const s
     result.path = path;
 
     const SaveFormats formats = QuerySaveFormats(context);
-    const FormatStatus& status = formats.For(format);
     result.machine = formats.machine;
+    if (!formats.Has(format))
+    {
+        // Only the Next lists .nex
+        result.reason = "a .nex is a ZX Spectrum Next program: this machine is not a Next";
+        result.needs = "model:NEXT";
+        result.text = "cannot save ." + result.format + ": " + result.reason;
+        return result;
+    }
+    const FormatStatus& status = formats.For(format);
     if (!status.available)
     {
         result.reason = status.reason;
@@ -464,7 +500,14 @@ SaveResult SaveSnapshotFile(EmulatorContext& context, SaveFormat format, const s
         result.warnings.push_back(status.note);
 
     std::string error;
-    if (format == SaveFormat::Szx)
+    if (format == SaveFormat::Nex)
+    {
+        std::vector<std::string> warnings;
+        result.ok = LoaderNex::SaveFile(context, path, warnings, error);
+        if (result.ok)
+            result.warnings = warnings;  // kLeftOut, the status note, is one of them
+    }
+    else if (format == SaveFormat::Szx)
     {
         LoaderSZX loader(&context, path);
         result.ok = loader.save();

@@ -52,6 +52,7 @@ private:
     std::vector<HapticProbe> _probes;
     std::vector<uint16_t> _ids;
     bool _debugHold = false;
+    bool _execHold = false;  ///< Z80::execProbeHold set by Arm
     std::array<uint16_t, HapticFrame::kMaxProbes> _hits{};
     std::array<uint8_t, HapticFrame::kMaxProbes> _last{};  ///< a write probe: the byte before the next write
     std::array<HapticProbeEvent, HapticFrame::kMaxProbeEvents> _events{};

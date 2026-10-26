@@ -42,6 +42,9 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"layers", {}},
         {"changes", {}},
         {"flatten", {"strategy", "plan", "force", "onConflict", "commit", "compression", "compact", "fs", "size", "vhd"}},
+        {"volumes", {}},
+        {"files", {"volume", "recursive"}},
+        {"read", {"volume", "out"}},
     };
     return actions;
 }
@@ -114,6 +117,57 @@ namespace
             }
             for (const Json::Value& w : reply["warnings"])
                 out << "\nwarning: " << w.asString();
+            return out.str();
+        }
+        if (action == "volumes")
+        {
+            out << reply["volumes"].size() << " volume(s) on " << reply["slot"].asString();
+            for (const Json::Value& v : reply["volumes"])
+            {
+                out << "\n" << v["id"].asString() << ": " << v["system"].asString() << " \"" << v["label"].asString() << "\", "
+                    << v["bytes"].asUInt64() << " bytes";
+                if (v.isMember("freeBytes"))
+                    out << ", " << v["freeBytes"].asInt64() << " free";
+                if (v["offset"].asUInt64())
+                    out << ", at byte " << v["offset"].asUInt64();
+            }
+            for (const Json::Value& n : reply["notes"])
+                out << "\nnote: " << n.asString();
+            return out.str();
+        }
+        if (action == "files")
+        {
+            out << reply["entries"].size() << " entries in " << reply["slot"].asString() << " volume "
+                << reply["volume"].asString() << " /" << reply["path"].asString();
+            for (const Json::Value& e : reply["entries"])
+            {
+                out << "\n" << e["path"].asString();
+                if (e["directory"].asBool())
+                    out << "/";
+                else
+                    out << " " << e["size"].asUInt64() << " bytes";
+                if (e["start"].asUInt())
+                    out << ", start " << e["start"].asUInt();
+                if (e.isMember("attributes"))
+                    out << " [" << e["attributes"].asString() << "]";
+                if (e.isMember("error"))
+                    out << " error: " << e["error"].asString();
+            }
+            for (const Json::Value& n : reply["notes"])
+                out << "\nnote: " << n.asString();
+            return out.str();
+        }
+        if (action == "read")
+        {
+            out << reply["path"].asString() << ": " << reply["size"].asUInt64() << " bytes";
+            if (reply.isMember("savedPath"))
+                return out.str() + " written to " + reply["savedPath"].asString();
+            // The bytes for an agent that sees only the text: base64 up to 16 KiB, else name 'out'
+            const std::string data = reply["data"].asString();
+            if (data.size() <= 16384 * 4 / 3 + 4)
+                out << "\nbase64: " << data;
+            else
+                out << "\n(too long for the text: the bytes are in structuredContent.data, or give 'out' to write a host file)";
             return out.str();
         }
         if (action == "formats")
@@ -190,13 +244,14 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
-        "or folder to place; compose: a *.ucompose.yaml descriptor";
+        "or folder to place; compose: a *.ucompose.yaml descriptor; files: a directory on the disk (empty: the root); "
+        "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe)";
     schema["properties"]["descriptor"]["type"] = "object";
     schema["properties"]["descriptor"]["description"] =
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -255,6 +310,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap: 'audio-cd' - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a "
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
         "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
+    schema["properties"]["volume"]["description"] =
+        "files / read: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
+        "iS-DOS devices of an ATM hard disk); left out: the first";
+    schema["properties"]["out"]["description"] = "read: write the file's bytes to this host file instead of answering them";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk, cdrom or cf (a CompactFlash card on an IDE adapter) - swap the unit's drive first (the unit must be empty)";
@@ -271,7 +330,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "descriptor like a file), layers (a composite medium's layers), changes (the guest's unsaved writes as file "
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
-        "the guest's file changes into the writable folder layers). Operations are synchronous (the reply "
+        "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
+        "a slot, read only: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
+        "NedoOS floppies, hard disks and SD cards). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
         "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "

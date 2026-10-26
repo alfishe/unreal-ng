@@ -477,6 +477,9 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
     // Debugger related - master switch for all features
     bool isDebugMode;
+    /// Exec breakpoints are checked at each instruction start without the debug mode: the haptic exec probes
+    /// (HapticProbes::Arm) keep the fast memory interface. Read / write probes still need the debug mode
+    bool execProbeHold = false;
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 

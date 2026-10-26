@@ -257,7 +257,7 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     /// endregion  </Ports logic>
 
     // Let debugger process step event
-    if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execProbeHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         uint16_t breakpointID = brk.HandlePCChange(pc);
@@ -383,6 +383,12 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         }
     }
 
+    // The esxDOS API without its firmware (the Next's esxDOS mode, NextEsxDos): a call served against the card
+    // replaces the DOS code. Not a tool edit for TTD: it is a function of the machine's state and the card, as the
+    // firmware's own SPI reads are, so a replay serves it again with the same result
+    if (pc == 0x0008 && _context->pRst8Trap != nullptr && _context->pRst8Trap->HandleRst8(*this))
+        return true;
+
     return false;
 }
 
@@ -395,7 +401,7 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
         return false;
 
     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
-    if (isDebugMode || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+    if (isDebugMode || execProbeHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
         return false;
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         return false;
@@ -427,7 +433,7 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
             return false;
     }
     if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
-        (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart))
+        (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart) || (pc == 0x0008 && _context->pRst8Trap))
         return false;
     if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && (ttd->IsRecording() || ttd->IsReplayActive()))
         return false;

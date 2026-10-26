@@ -14,7 +14,9 @@
 ///
 /// Verbs: list, info, formats, insert, eject, swap, save, export, discard,
 /// rescan, create, protect, compose (build a composition descriptor without
-/// inserting it: report and layout), layers (a slot's composite medium).
+/// inserting it: report and layout), layers (a slot's composite medium),
+/// volumes / files / read (the file systems on a slot's disk: TR-DOS, +3DOS,
+/// iS-DOS / TASiS, FAT of DSS and NedoOS; DiskFs).
 ///
 /// Example (what a surface does):
 /// @code
@@ -117,6 +119,8 @@ private:
     MediaReply Compose(const MediaRequest& request);
     MediaReply Layers(const MediaRequest& request);
     MediaReply Changes(const MediaRequest& request);
+    /// volumes, files, read: the file systems on a slot's disk (DiskFs)
+    MediaReply Files(const MediaRequest& request, const std::string& verb);
 
     /// The slot `insert auto` picks for `path` (§3.5)
     MediaResult ChooseSlot(const std::string& path, const std::map<std::string, std::string>& options, std::string& slotId);

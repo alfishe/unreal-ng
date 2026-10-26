@@ -412,6 +412,9 @@ index in memory once. The dialog writes user files in
 YAML; a comment a user put in such a file is not kept when the dialog rewrites it, and the file says so in its first
 line.
 
+Writing a new game profile step by step (finding the game's keys and haptic triggers, the header comment, the index,
+the tests): [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
+
 ### 7.6 Schemes: `extends`
 
 Most games of the 1980s use one of a few control schemes: Kempston, Sinclair 1 or 2, Cursor, QAOP + Space, OPQA + M,

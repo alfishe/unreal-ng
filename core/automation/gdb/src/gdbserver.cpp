@@ -896,7 +896,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
 
                 bool ok = false;
                 std::string refusal;  // B9: a TTD recording refuses a medium load; report why
-                if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx")
+                if (ext == "sna" || ext == "snx" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx")
                 {
                     ok = _emulator->LoadSnapshot(path);   // ends a TTD recording session, never refused by it
                 }
