@@ -88,6 +88,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size and free bytes ([disk file systems](../emulator/design/disk-file-systems.md)) |
 | `files` | slot, path? | the entries of a directory (`path` empty: the root) of one volume: path, name, size, start, attributes, time and the fields only that file system has; `recursive` the whole tree. Read only, under the time-travel read tap (nothing journalled) |
 | `read` | slot, path | one file's bytes: base64 `data` up to 16 MiB, or written to `out` (the answer then names `savedPath`) |
+| `write` | slot, path | a file onto the TR-DOS (`NAME.T`) or +3DOS (`NAME.TYP`) floppy in the slot, an older file of that name replaced: the bytes as base64 `data` or a host file `in`; `start` the TR-DOS start / +3DOS CODE address (`#8000`, `0x8000`, `32768`), `header` false a +3DOS file without its header. Refused on a write-protected or read-only disk and on the read-only file systems (iS-DOS, FAT, hard disks). The disk is dirty until saved; a TTD session keeps it as a tool's edit |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -554,12 +555,15 @@ curl -s -X POST $BASE/emulator/$ID/media/cd/insert -H 'Content-Type: application
 curl -s $BASE/emulator/$ID/media/hd/volumes                          # the file systems on the disk
 curl -s "$BASE/emulator/$ID/media/A/files?path=SHELL&recursive=true"  # a directory's entries
 curl -s "$BASE/emulator/$ID/media/hd/read?volume=p1&path=AUTOEXEC.BAT&raw=true" -o autoexec.bat
+curl -s -X POST "$BASE/emulator/$ID/media/A/write?path=PROG.C&start=0x8000" \
+     -H 'Content-Type: application/octet-stream' --data-binary @prog.bin  # a file onto the TR-DOS disk
 ```
 
 `POST /media/{slot}/{verb}` takes the options in the JSON body or the query string; the HTTP
 status follows the error table. The read-only verbs `volumes`, `files` and `read` also answer
 `GET /media/{slot}/{verb}` (`path`, `volume`, `recursive`, `out` in the query); `read` with
-`raw=true` answers the file itself as `application/octet-stream`. OpenAPI: tag **Media**.
+`raw=true` answers the file itself as `application/octet-stream`. `write` also takes the file as the body
+itself (`application/octet-stream`, `?path=NAME.T`). OpenAPI: tag **Media**.
 
 ### CLI
 
@@ -575,6 +579,7 @@ media targets /discs/dna_nemo.iso
 media volumes hd
 media files A SHELL --recursive
 media read hd AUTOEXEC.BAT --volume p1 --out /tmp/autoexec.bat
+media write A PROG.C --in prog.bin --start #8000
 media help
 ```
 

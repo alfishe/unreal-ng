@@ -21,7 +21,7 @@
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
-#include <unrealdisk/trdosfs.h>
+#include <emulator/io/storage/fs/diskfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <common/stringhelper.h>
 #include <json/json.h>
@@ -2549,13 +2549,15 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
     
     Json::Value ret;
     ret["drive"] = drive;
-    ret["dos_type"] = "TR-DOS";
     ret["files"] = Json::arrayValue;
-    
-    // The TR-DOS catalog through the disk library (track 0 sectors 1-8, 16 entries each; deleted ones left out)
-    std::vector<TrdosFile> entries;
+
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
+    // TR-DOS entries keep their catalog fields (type, start, length, sectors, first track / sector)
+    DiskFs fs(*diskImage);
+    std::vector<DiskFsEntry> entries;
     std::string catalogError;
-    if (!unrealdisk::TrdosFileSystem(*diskImage).List(entries, catalogError)) {
+    if (!fs.List("", "", true, entries, catalogError)) {
+        ret["dos_type"] = "TR-DOS";
         ret["error"] = catalogError;
         ret["file_count"] = 0;
         auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -2563,18 +2565,29 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
         callback(resp);
         return;
     }
-    for (const TrdosFile& entry : entries) {
+    const DiskFsVolume& volume = fs.Volumes().front();
+    ret["dos_type"] = volume.system;
+    ret["volume"] = volume.id;
+    ret["label"] = volume.label;
+    for (const DiskFsEntry& entry : entries) {
+        if (entry.directory)
+            continue;
         Json::Value file;
-        std::string name;
-        for (const char c : entry.name)
-            if (static_cast<uint8_t>(c) >= 32 && static_cast<uint8_t>(c) < 128) name += c;
-        file["name"] = name;
-        file["type"] = std::string(1, entry.type);
+        file["path"] = entry.path;
         file["start"] = entry.start;
-        file["length"] = entry.length;
-        file["sectors"] = entry.sectors;
-        file["first_sector"] = entry.firstSector;
-        file["first_track"] = entry.firstTrack;
+        file["length"] = static_cast<Json::UInt64>(entry.size);
+        if (volume.fs == "trdos") {
+            file["name"] = entry.name.substr(0, entry.name.rfind('.'));
+            file["type"] = entry.name.substr(entry.name.rfind('.') + 1);
+            file["sectors"] = static_cast<Json::Int64>(entry.Field("sectors"));
+            file["first_sector"] = static_cast<Json::Int64>(entry.Field("sector"));
+            file["first_track"] = static_cast<Json::Int64>(entry.Field("track"));
+        } else {
+            const size_t dot = entry.name.rfind('.');
+            file["name"] = entry.name;
+            file["type"] = dot == std::string::npos ? std::string() : entry.name.substr(dot + 1);  // the extension
+            file["attributes"] = entry.attributes;
+        }
         ret["files"].append(file);
     }
 

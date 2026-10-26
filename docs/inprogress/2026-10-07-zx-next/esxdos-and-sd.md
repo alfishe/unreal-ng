@@ -24,8 +24,8 @@ Consequences for the emulator:
    handles, long names and dot commands. What we provide is: memory paging with the automap, the SPI bytes, and an SD
    card that answers like a real one.
 2. The CSpect / ZEsarUX "esxDOS handler" mode (the emulator itself implements `RST $08` against a host folder, no
-   NextZXOS) is a **different product**: it can never boot the real firmware. It is out of scope as the main path
-   (open question in section 9).
+   NextZXOS) is a **different product**: it can never boot the real firmware. It is not the main path; it exists as the
+   optional esxDOS mode of the bare machine (section 5a).
 3. The card is a **block device**. The host-folder-as-card idea of the storage manager (`HostFolderFat`, FAT16
    default) is how a folder boots the real firmware: the guest reads sectors that we synthesize.
 
@@ -201,6 +201,38 @@ The +3DOS-compatible API (`DOS_OPEN` `$0106`, `IDE_SECTOR_READ` `$00AC`, `IDE_BA
 called through ROM 2 and sits on the same driver; `IDE_SECTOR_READ` / `WRITE` are the entry points that finally call
 the SPI routines of section 4.2. Both APIs are "thin layers on a lower-level API not exposed to the user".
 
+## 5a. The esxDOS mode: the API without the firmware (E1, requirements.md Q11)
+
+The second implementation of section 5, for the bare machine: feature `esxdos` (alias `esx`, off by default) and no
+`[NEXT] BootRom`. Then `RST $08 : DEFB call` with a call of `$80` and up is served by the emulator
+(`core/src/emulator/io/z80n/nextesxdos.cpp`) against the FAT volume of SD card 0, and a program that uses the API (a
+`.nex`, a game's loader, a tool) runs without TBBLUE.FW and NextZXOS. With a boot ROM the firmware's own esxDOS answers
+through the DivMMC automap, as on the board; a call below `$80` is the 48K ROM's error report and always runs the ROM. The
+firmware path is the supported one; this mode is an opt-in shortcut, the same idea as the tape load hooks (the host
+answers a ROM entry point instead of running it).
+
+| What | How it is served |
+|:--|:--|
+| the trap | `Z80::RunInstructionStartHooks` at PC `#0008` (after the RST pushed the address of the call byte), `EmulatorContext::pRst8Trap`; the DOS returns past the call byte. A call takes no time beyond the RST's 11 T |
+| parameters | IX, or HL when the call comes from a dot command's page (return address `#2000-#3FFF`); carry set and `A` = error code on failure |
+| the volume | `unrealdisk::FatFs` (FAT12 / 16 / 32, long names, the generated `NAME~N.EXT`, both FAT copies): opened per call on card 0's medium, so a card inserted, swapped or written over SPI is seen at the next call; writes reach the medium as the SPI writes do (session or persist, the media manager is told) |
+| version | `M_DOSVERSION`: NextZXOS 2.07 in its NextZXOS mode (`BC` = `"NX"`, `DE` = `$0207`, `HL` = `"en"`, `A` = 0, Z set), the choice CSpect and jnext make, so programs that test for NextZXOS take their Next path |
+| drives | C: only (`'*'`, `'$'`, `C:` in a path); another letter answers "No such drive" |
+| files | `F_OPEN` (every mode, the +3DOS header with `$40`: a new file starts with the 128-byte `PLUS3DOS` header from the 8 bytes at DE, `F_CLOSE` sets its length and checksum; an existing one hands its 8 bytes back, a headerless one type `$FF`), `F_CLOSE`, `F_SYNC`, `F_READ`, `F_WRITE`, `F_SEEK`, `F_FGETPOS`, `F_FSTAT`, `F_FTRUNCATE`; 16 handles |
+| directories | `F_OPENDIR` (short / long / both names, wildcards, +3DOS headers, the 2.07 sort and filter modes), `F_READDIR` (`.` and `..` of a subdirectory synthesized), `F_TELLDIR`, `F_SEEKDIR`, `F_REWINDDIR`, `F_GETCWD` (`"/"`, `"/GAMES/"`; `A = $FF` for a filespec's directory), `F_CHDIR`, `F_MKDIR`, `F_RMDIR` |
+| by name | `F_STAT`, `F_UNLINK`, `F_TRUNCATE`, `F_CHMOD` (A_WRITE is the inverse of the read-only bit), `F_RENAME` (an open handle follows its entry), `F_GETFREE` |
+| low level | `DISK_FILEMAP` (block addresses, card flags `$02`, runs of at most 65535 sectors), `DISK_STRMSTART` (CMD18 sent to card 0 at once, the card left initialized; the next read of `#EB` is the first data byte, or the R1 answer when A bit 7 says the program waits for the token itself), `DISK_STRMEND` (CMD12, deselect) |
+| misc | `M_GETSETDRV`, `M_GETDATE` (the DS1307's registers as MS-DOS date and time; carry when they hold no valid date), `M_SETCAPS`, `M_DRVAPI` B = 0 (the RTC), `M_GETERR` B = 1 (the message, bit 7 on the last character) |
+| not served | `M_TAPEIN` / `M_TAPEOUT`, `M_GETHANDLE`, `M_EXECCMD` (dot commands), `M_AUTOLOAD`, `M_P3DOS`, `M_ERRH`, `M_GETERR` B = 0, driver installs: "No such command" (22). They need NextZXOS itself |
+
+The state is in the Next's TTD image (`NextStateCodec`, version 16): the 16 handles (the place of their directory entry,
+position, mode, header, file map cursor), the working directory and the caps. A handle never holds a host object, so a
+restored machine goes on with the card it has. The feature cannot change while the machine is bound to a TTD timeline or
+an RZX recording plays; a served call is not a TTD tool edit (it is a function of the machine's state and the card, as
+the firmware's own SPI reads are). Tests: `core/tests/emulator/io/z80n/nextesxdos_test.cpp` (the calls on a FAT16 image,
+the card read back with `FatVolumeReader`), `core/tests/emulator/io/storage/fatfs_test.cpp` (the file system on FAT16
+and FAT32).
+
 ## 6. The start-to-finish boot, with what the emulator must supply
 
 | # | What happens | Emulator part | If it is wrong, the symptom |
@@ -284,7 +316,7 @@ run under test.
 
 | # | Question | Recommendation |
 |:--|:--|:--|
-| E1 | Offer a host-side "esxDOS handler" (no firmware, like CSpect's folder mode)? | **Decided (owner 2026-10-08): yes, as a separate optional mode in a late phase**, after the real firmware chain works (L6); it will be a second implementation of the API, so it gets its own conformance tests against the L7 programs |
+| E1 | Offer a host-side "esxDOS handler" (no firmware, like CSpect's folder mode)? | **Decided (owner 2026-10-08): yes, as a separate optional mode in a late phase**, after the real firmware chain works (L6); it will be a second implementation of the API, so it gets its own conformance tests against the L7 programs. **Done 2026-10-26:** feature `esxdos`, section 5a |
 | E2 | The 16-clock rule: drop the late byte exactly as the FPGA does, or be forgiving? | **Default taken:** exactly as the FPGA (a byte begun before the previous one ended is dropped; counter + warning in the report) |
 | E3 | Original esxDOS 0.8.x on the Spectrum personalities: its ROM is closed and not in any collection we hold | **Default taken:** hardware path supported; the original esxDOS ROM is a user-provided input, tests skip without it |
 | E4 | `DISK_FILEMAP` / streaming consumers read the card at full speed through `IN`: do we need a fast path? | **Default taken:** no fast path; measure the real streaming player first |

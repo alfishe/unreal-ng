@@ -70,6 +70,7 @@ struct ReadResult
     uint8_t drivers = 0;    ///< devices that drove the bus (the board counts as one)
     bool nobody = true;     ///< nobody drove the bus: the machine applies its floating-bus rule
     bool busFight = false;  ///< more than one driver: the value is the bus's read rule (a modeling choice, reported)
+    uint8_t cardsValue = 0xFF;  ///< the cards' own value, ANDed (0xFF when no card drove)
 };
 
 /// Bus signals the table consults only when an entry needs them (ROM-fetch lock, DOS-gated claims)
@@ -186,25 +187,27 @@ public:
     }
 
     /// A write cycle: every card that sees it gets the value; `board(BoardCycle)` is called unless the board is
-    /// hidden (architecture.md §4.3 steps 1-4)
+    /// hidden (architecture.md §4.3 steps 1-4). `iorqMasked`: the board masks /IORQ to the slots for this cycle
+    /// whatever its board ports (the Next's expansion connector), so only the RD / WR cards see it
     template <typename BoardOut>
-    void Write(uint16_t port, uint8_t value, BoardOut&& board) const
+    void Write(uint16_t port, uint8_t value, BoardOut&& board, bool iorqMasked = false) const
     {
         BoardCycle cycle = BoardCycle::Full;
         if (IsClaimed(port)) [[unlikely]]
-            cycle = WriteCards(port, value);
+            cycle = WriteCards(port, value, iorqMasked);
         if (cycle != BoardCycle::Hidden)
             board(cycle);
     }
 
     /// A read cycle: `bool board(BoardCycle, uint8_t& value)` returns true when the board drove the bus (called unless
-    /// the board is hidden). The drivers combine by the bus's read rule (architecture.md §4.3 step 5)
+    /// the board is hidden). The drivers combine by the bus's read rule (architecture.md §4.3 step 5). `iorqMasked`: as
+    /// Write's
     template <typename BoardIn>
-    ReadResult Read(uint16_t port, BoardIn&& board) const
+    ReadResult Read(uint16_t port, BoardIn&& board, bool iorqMasked = false) const
     {
         CardReads cards;
         if (IsClaimed(port)) [[unlikely]]
-            cards = ReadCards(port);
+            cards = ReadCards(port, iorqMasked);
         uint8_t boardValue = 0xFF;
         const bool boardDrives = cards.board != BoardCycle::Hidden && board(cards.board, boardValue);
         return Combine(cards, boardDrives, boardValue);
@@ -259,8 +262,8 @@ private:
         uint8_t count = 0;          ///< cards that drove the bus
     };
 
-    BoardCycle WriteCards(uint16_t port, uint8_t value) const;
-    CardReads ReadCards(uint16_t port) const;
+    BoardCycle WriteCards(uint16_t port, uint8_t value, bool iorqMasked) const;
+    CardReads ReadCards(uint16_t port, bool iorqMasked) const;
     ReadResult Combine(const CardReads& cards, bool boardDrives, uint8_t boardValue) const;
 
     /// Whether the entry sees this cycle by its own rules (direction, gate, ROM-fetch lock, board-port masking)

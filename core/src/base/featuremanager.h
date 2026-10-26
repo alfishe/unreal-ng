@@ -46,6 +46,7 @@ constexpr const char* const kGSLightweight = "gs_lightweight";
 constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
 constexpr const char* const kTTDRestart = "ttdrestart";
+constexpr const char* const kEsxDos = "esxdos";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -73,6 +74,7 @@ constexpr const char* const kGSLightweightAlias = "gslw";
 constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
 constexpr const char* const kTTDRestartAlias = "ttdre";
+constexpr const char* const kEsxDosAlias = "esx";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -131,6 +133,12 @@ constexpr const char* const kContentionDesc =
     "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
     "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
+
+constexpr const char* const kEsxDosDesc =
+    "ZX Spectrum Next esxDOS mode: without a boot ROM (the bare machine) the emulator serves the esxDOS API (RST $08 "
+    "calls #80 and up: files, directories, the file map and stream, the date) against the FAT volume of SD card 0, so "
+    "a program that uses it runs without NextZXOS. Off: RST $08 runs the ROM as on the board. Cannot change while the "
+    "machine is bound to a TTD timeline or an RZX recording plays.";
 
 constexpr const char* const kTTDRestartDesc =
     "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "
@@ -214,13 +222,14 @@ public:
     /// instrumented memory path whatever the 'debugmode' feature says: the manager holds debug mode on while the
     /// machine replays and gives the feature its say back after. The one writer of Z80::isDebugMode (M4)
     void OnModeChanged(const coordinator::ModeState& from, const coordinator::ModeState& to) override;
-    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, or the haptic probes' hold
+    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, or the taps' hold
     bool debugModeInEffect() const;
-    /// @brief The haptic feed armed exec / read / write probes (controller manager haptics.md §5): the CPU runs the
-    /// debug path and memory breakpoints are checked while it holds, whatever 'debugmode' and 'breakpoints' say (a
-    /// breakpoint the user set while they were off takes effect too). Emulation thread or CPU held
-    void setProbeDebugHold(bool on);
-    bool probeDebugHold() const;
+    /// @brief Read taps are armed, or write taps on a machine without the fast write's hook
+    /// (BreakpointManager::ApplyTapDemand, breakpoint-taps §4): the CPU runs the debug path and memory breakpoints are
+    /// checked while it holds, whatever 'debugmode' and 'breakpoints' say (a breakpoint the user set while they were
+    /// off takes effect too). Emulation thread or CPU held
+    void setTapDebugHold(bool on);
+    bool tapDebugHold() const;
     /// @brief A collector that runs on the debug path is on (memory tracking, call trace, opcode profiler): with
     /// debug mode off it stops and the tracker frees what it gathered. Whoever gives debug mode back without having
     /// asked for these (a TTD recording that stops, the BASIC editor monitor, the Qt debugger window going away)
@@ -250,7 +259,7 @@ private:
     /// @brief Z80::isDebugMode from debugModeInEffect(), then the memory interface and the caches that follow it
     void applyDebugMode();
     bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
-    bool _probeDebugHold = false;   ///< haptic probes are armed (setProbeDebugHold)
+    bool _tapDebugHold = false;     ///< taps need the debug path (setTapDebugHold)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

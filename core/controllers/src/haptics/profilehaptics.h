@@ -6,6 +6,8 @@
 /// watched bytes at the frame end (IHapticFeed::Watches); `exec`, `read`, `port-in`, `port-out` and `write` with
 /// `each_write` are breakpoint probes (IHapticFeed::Probes), which see every access, so a change undone within one frame
 /// fires too. `envelope`, `lowband` and `onset` filter the sample streams the feed asks for (IHapticFeed::Streams).
+/// The sources' levels are also the game's events (IHapticFeed::TakeGameEvents, gameevents.h): a profile without rules
+/// or a machine without a haptic device still publishes them.
 
 #include <atomic>
 #include <functional>
@@ -37,6 +39,10 @@ public:
     std::vector<HapticProbe> Probes() const override;
     /// A replay or seek: the game effects on the targets stop now, frames are ignored until the hold ends
     void OnHapticHold(bool held) override;
+    /// Every source is a game event (the profile's `events:` and `haptics.sources`), with or without a device
+    std::vector<GameEventInfo> GameEvents() const override;
+    std::string GameEventsProfile() const override;
+    bool TakeGameEvents(GameEventFrame& frame) override;
 
     const std::string& Name() const
     {
@@ -59,6 +65,7 @@ private:
         bool seen = false;
         uint8_t last = 0;
         float level = 0;  ///< after the release (ay-noise)
+        int32_t value = -1;  ///< the watched byte (a word: the word) the last frame; -1: not a watch
     };
     float Evaluate(const HapticSource& source, State& state, const HapticFrame& frame);
 
@@ -72,6 +79,8 @@ private:
     std::vector<HapticProbe> _probes;
     std::atomic<bool> _held{false};
     std::vector<State> _states;  ///< per source
+    std::vector<float> _frameLevels;  ///< per source, the last frame's (emulator thread)
+    bool _frameReady = false;         ///< OnHapticFrame evaluated a frame TakeGameEvents has not taken
     mutable std::mutex _levelsMutex;
     std::vector<std::pair<std::string, float>> _levels;
 };

@@ -1,0 +1,31 @@
+# Dizzy X on a Pentagon (128K snapshot), Sinclair joystick only: 6 left, 7 right, 9 jumps, 0 opens the pocket menu
+# (take, drop). Haptics (haptics.md §13 H5): the game asks for a sound by writing its number to #767D (the routine at
+# #89E6 plays it and writes #FF back), so every writer is an event. Checked by play on a Pentagon: #795A starts a jump
+# (sound 0, once per jump), #7A97 lands from a fall (sound 1, once per landing; the code skips a fall slower than 2),
+# #847A takes energy (once per contact; the water then drains the rest), #8B80 loses a life once the energy runs out
+# ("Dizzy fell into the water and drowned"). The `events` are the game's facts (the game.events monitor), the haptics
+# rules play them. Found by the code but not played, so left out: #84AC takes a coin (sound 3, the counter at #86B4),
+# #8FBE drops an item (sound 2), #8794 moves the energy bar (sound 4, every third frame while it moves).
+schema: 1
+kind: play
+id: builtin/game/dizzy-x
+label: Dizzy X
+extends: [scheme/sinclair-1]
+match:
+  machines: [PENTAGON]
+  file_sha256: ["0173041bd8c3c9d71d2a46065c8381c5e084e5b8ef931a074788dede4ba2227f"]
+layers:
+  play:
+    south:        { key: "9", label: Jump }
+    west:         { key: "0", label: Pockets }
+events:
+  jump:   { probe: exec, address: "0x795A" }
+  land:   { probe: exec, address: "0x7A97" }
+  hurt:   { probe: exec, address: "0x847A" }
+  died:   { probe: exec, address: "0x8B80" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: hurt, play: hit }
+    - { on: died, play: life-lost }

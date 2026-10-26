@@ -22,6 +22,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/z80n/z80nengine.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "loaders/nex/loadernex.h"
@@ -41,6 +42,7 @@ protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     PortDecoder_Next* _ports = nullptr;
+    bool _zilogFlags = false;  ///< run with the T80N persona off: the Zilog NMOS die's undocumented flags
 
     void TearDown() override
     {
@@ -48,7 +50,7 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
 
-    /// Loads release/<name> (copied as .sna) and runs `frames`; keys = {key, frame} pairs pressed for 3 frames
+    /// Loads release/<name> (.snx / .sna) and runs `frames`; keys = {key, frame} pairs pressed for 3 frames
     bool Run(const std::string& name, int frames, const std::vector<std::pair<char, int>>& keys = {})
     {
         const std::filesystem::path source = Release() / name;
@@ -60,14 +62,14 @@ protected:
         _context = _emulator->GetContext();
         _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
         _context->pFeatureManager->setFeature(Features::kScreenHQ, true);  // the borders and copper follow the beam
-        const std::filesystem::path sna = std::filesystem::temp_directory_path() / ("nextrealboard-" + name + ".sna");
-        std::filesystem::copy_file(source, sna, std::filesystem::copy_options::overwrite_existing);
-        if (!_emulator->LoadSnapshot(sna.string()))
+        if (!_emulator->LoadSnapshot(source.string()))
             return false;
         _context->emulatorState.p7FFD = 0x30;
         dynamic_cast<NextMemory*>(_context->pMemory)->ApplyClassicPaging(0x30, 0);
         _ports->Board().SetCoreId(0);
         LoaderNex::FillUlaPalette(_ports->Board());
+        if (_zilogFlags)
+            Z80nCpuSetT80Persona(_ports->Engine()->Cpu(), 0);
         for (int i = 0; i < frames; i++)
         {
             for (const auto& key : keys)
@@ -106,7 +108,10 @@ TEST_F(NextRealBoard_Test, NextRegDefaultsShowNoErrorCell)
                 std::snprintf(buffer, sizeof buffer, " %02X", row * 16 + col);
                 where += buffer;
             }
-    EXPECT_EQ(redCells, 0u) << "NextReg cells in error:" << where;
+    // #0A: the program (core 3.1.5) writes #07 and expects it back; core 3.02.03 reads bit 2 as 0 (zxnext.vhd 5912:
+    // mf_type & sd_swap & automap_en & button_reverse & '0' & dpi), so its board shows this one cell red
+    EXPECT_EQ(where, " 0A") << "NextReg cells in error:" << where;
+    EXPECT_EQ(redCells, 1u);
 }
 
 // NextReg #69 and the ports it aliases (#123B bit 1, #7FFD bit 3, #FF): 10 checks both ways; the border turns green when all pass
@@ -136,20 +141,33 @@ TEST_F(NextRealBoard_Test, Z80NInstructionsAllPass)
     EXPECT_GT(okRows, 0u);
 }
 
-// Z80 block instruction flags (F of INIR / INDR / OTxR / LDxR / CPxR interrupted by IM2): the program colours a mismatch red. It
-// reads the Kempston port #1F, which the Next has built in (0 with nothing pressed); on a machine without one it skips itself
-TEST_F(NextRealBoard_Test, BlockInstructionFlagsInterruptedByImTwoMatchTheBoard)
+// Z80 block instruction flags (F of INIR / INDR / OTxR / LDxR / CPxR interrupted by IM2): the program colours a mismatch with the
+// NMOS die red (its reference photos are of a 128K and a Spectrum+). It reads the Kempston port #1F, which the Next has built in (0
+// with nothing pressed); on a machine without one it skips itself. The Next's CPU is T80 v0247, which has no repeat-specific flag
+// logic (design-cpu.md section 1a): with the T80N persona the rows are red, as on the board; with the Zilog flags all are green
+TEST_F(NextRealBoard_Test, BlockInstructionFlagsInterruptedByImTwoAreTheT80sOnTheNext)
 {
+    auto count = [this](unsigned& red, unsigned& green) {
+        red = green = 0;
+        for (unsigned y = 64; y < 400; y++)
+            for (unsigned x = 64; x < 576; x++)
+            {
+                const uint32_t p = Pixel(x, y);
+                red += (p == 0xFF0000FF || p == 0xFF0000B6) ? 1 : 0;   // R G B A bytes: bright red (255,0,0) / red (182,0,0)
+                green += (p == 0xFF00B600) ? 1 : 0;                     // green (0,182,0)
+            }
+    };
     if (!Run("z80bltst.sna", 500))
         GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/z80bltst.sna) is not set";
     unsigned red = 0, green = 0;
-    for (unsigned y = 64; y < 400; y++)
-        for (unsigned x = 64; x < 576; x++)
-        {
-            const uint32_t p = Pixel(x, y);
-            red += (p == 0xFF0000FF || p == 0xFF0000B6) ? 1 : 0;   // R G B A bytes: bright red (255,0,0) / red (182,0,0)
-            green += (p == 0xFF00B600) ? 1 : 0;                     // green (0,182,0)
-        }
+    count(red, green);
+    EXPECT_GT(red, 0u) << "the T80 sets no PC-based F5 / F3 on an interrupted repeat";
+
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
+    _zilogFlags = true;
+    ASSERT_TRUE(Run("z80bltst.sna", 500));
+    count(red, green);
     EXPECT_EQ(red, 0u) << "red = a flag byte differs from the one the NMOS board shows";
     EXPECT_GT(green, 100u);
 }

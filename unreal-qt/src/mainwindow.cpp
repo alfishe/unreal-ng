@@ -2755,6 +2755,7 @@ void MainWindow::openSnapshotDialog()
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
                      buildFilterGroup(tr("SPG Programs (TS-Conf)"), {"spg"}) + ";;" +
                      buildFilterGroup(tr("NEX Programs (ZX Spectrum Next)"), {"nex"}) + ";;" +
+                     buildFilterGroup(tr("SNX Snapshots (NextZXOS)"), {"snx"}) + ";;" +
                      buildFilterGroup(tr("RZX Recordings"), {"rzx"}) + ";;" +
                      tr("All Files (*)");
 

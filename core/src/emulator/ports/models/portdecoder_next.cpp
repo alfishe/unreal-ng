@@ -6,6 +6,7 @@
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 
+#include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
@@ -28,6 +29,7 @@
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
 {
     _board = std::make_unique<NextBoard>(&Mem());
+    _board->SetIssue(static_cast<NextBoardIssue>(_context->config.next_board_issue));
     _board->SetMachine(this);
     // The Next's keyboard controller: the physical host keys reach the extended keys and the pad's extra buttons (NR #B0-#B2)
     if (_context->pKeyboard)
@@ -118,6 +120,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         e.basicRom = Mem().BasicRomVisible();
     };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
+    _esxDos = std::make_unique<NextEsxDos>(_esxDosHost);
     _m1Chain.owner = this;
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
@@ -197,6 +200,8 @@ PortDecoder_Next::~PortDecoder_Next()
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
     if (_context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetInterruptSource(nullptr);
+    if (_context->pRst8Trap == _esxDos.get())
+        _context->pRst8Trap = nullptr;
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
@@ -222,6 +227,8 @@ void PortDecoder_Next::reset()
     _dma.Reset();
     BindDma();
     _i2c.Reset();
+    _esxDos->Reset();
+    UpdateModelFeatureCache();
     _divMmc->Reset();
     _multiface->Reset();
     if (Z80* z80 = _context->pCore->GetZ80(); z80 && !z80->machineM1Hook)
@@ -283,6 +290,95 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
     Mem().SetExtendedBank(value);
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
 }
+
+/// region <esxDOS mode>
+
+void PortDecoder_Next::UpdateModelFeatureCache()
+{
+    // Only the bare machine: with a boot ROM the firmware's own esxDOS answers (through the DivMMC)
+    const FeatureManager* features = _context->pFeatureManager;
+    const bool serve = features && features->isEnabled(Features::kEsxDos) && _context->config.next_boot_rom_path[0] == '\0';
+    if (serve)
+        _context->pRst8Trap = _esxDos.get();
+    else if (_context->pRst8Trap == _esxDos.get())
+        _context->pRst8Trap = nullptr;
+}
+
+void PortDecoder_Next::EsxDosHost::CardWritten()
+{
+    if (owner._context->pMediaManager)
+        owner._context->pMediaManager->NoteWrite(owner._sdSlot0.Descriptor().id);
+}
+
+void PortDecoder_Next::SelectCard0ForHost()
+{
+    // The byte in flight is over; the select pattern names card 0's line (NR #0A bit 5 swaps the lines)
+    if (_spiPendingValid)
+    {
+        _spiRx = _spiPending;
+        _spiPendingValid = false;
+    }
+    _spiBusyUntil = 0;
+    SpiSelect(_board->SdSwap() ? 0xFD : 0xFE);
+}
+
+bool PortDecoder_Next::HostStreamStart(uint32_t block, bool userWaits)
+{
+    SdCardSpi& card = _sd[0];
+    if (!card.present())
+        return false;
+    // No firmware set the card up: it is left initialized and idle, as a DOS that read from it leaves it
+    card.LeaveForProgram();
+    SelectCard0ForHost();
+    // CMD18 READ_MULTIPLE_BLOCK at the block address (the Next's cards are SDHC), a dummy CRC
+    card.exchange(0xFF);
+    const uint8_t command[6] = {0x52, static_cast<uint8_t>(block >> 24), static_cast<uint8_t>(block >> 16),
+                                static_cast<uint8_t>(block >> 8), static_cast<uint8_t>(block), 0xFF};
+    for (uint8_t b : command)
+        card.exchange(b);
+    uint8_t answer = 0xFF;
+    for (unsigned i = 0; i < 16 && (answer & 0x80); i++)
+        answer = card.exchange(0xFF);
+    if (answer != 0x00)
+        return false;
+    if (!userWaits)
+    {
+        // The DOS waits for the data token: the read after it is the first data byte
+        constexpr unsigned kTokenWait = 1u << 20;
+        for (unsigned i = 0; i < kTokenWait && answer != 0xFE; i++)
+            answer = card.exchange(0xFF);
+        if (answer != 0xFE)
+            return false;
+        answer = card.exchange(0xFF);
+    }
+    _spiRx = answer;
+    return true;
+}
+
+bool PortDecoder_Next::HostStreamEnd()
+{
+    SdCardSpi& card = _sd[0];
+    if (!card.present())
+        return false;
+    SelectCard0ForHost();
+    // CMD12 STOP_TRANSMISSION, its stuff byte, the R1 answer and the busy time, then the card is deselected
+    const uint8_t command[6] = {0x4C, 0, 0, 0, 0, 0xFF};
+    for (uint8_t b : command)
+        card.exchange(b);
+    card.exchange(0xFF);
+    uint8_t answer = 0xFF;
+    for (unsigned i = 0; i < 16 && (answer & 0x80); i++)
+        answer = card.exchange(0xFF);
+    constexpr unsigned kBusyWait = 1u << 20;
+    for (unsigned i = 0; i < kBusyWait && card.exchange(0xFF) != 0xFF; i++)
+    {
+    }
+    SpiSelect(0xFF);
+    _spiRx = 0xFF;
+    return (answer & 0x80) == 0;
+}
+
+/// endregion </esxDOS mode>
 
 void PortDecoder_Next::BeforeRelease()
 {
@@ -668,13 +764,125 @@ bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
     const unsigned leftMode = JoystickMode(true), rightMode = JoystickMode(false);
     const bool leftOn = leftMode == first || leftMode == md, rightOn = rightMode == first || rightMode == md;
     value = 0;
-    if (!(_board->Stored(kRegPortEnable0) & (port37 ? kPortEnable37 : kPortEnable1F)) || !(leftOn || rightOn))
+    if (!(_board->Stored(kRegPortEnable0) & (port37 ? kPortEnable37 : kPortEnable1F)) || !JoystickPortWired(port37))
         return false;
     if (leftOn)
         value = static_cast<uint8_t>(Default_Port_KempstonJoystick_In() & (leftMode == md ? (kPadBits | kStickBits) : kStickBits));
     if (rightOn)  // the right connector: whatever a tool put on it (it has no host keys); the two sides are ORed (port_1f_dat <= joyL_1f or joyR_1f)
         value |= static_cast<uint8_t>(_extendedInput.Right() & (rightMode == md ? (kPadBits | kStickBits) : kStickBits));
     return true;
+}
+
+bool PortDecoder_Next::JoystickPortWired(bool port37) const
+{
+    const unsigned first = port37 ? kJoyKempston2 : kJoyKempston1, md = port37 ? kJoyMd2 : kJoyMd1;
+    const unsigned leftMode = JoystickMode(true), rightMode = JoystickMode(false);
+    return leftMode == first || leftMode == md || rightMode == first || rightMode == md;
+}
+
+namespace
+{
+
+/// The paging ports as zxnext.vhd 2609-2620 decodes them (port_fd = A1:A0 = 01), before their enable bits
+struct NextPagingDecode
+{
+    bool p7ffd = false, pdffd = false, p1ffd = false, p2ffd3ffd = false, p3Float = false;
+};
+
+NextPagingDecode DecodePaging(uint16_t port, bool p3Timing, bool enable1ffd)
+{
+    NextPagingDecode d;
+    const bool fd = (port & 0x0003) == 0x0001;
+    const bool xffd = fd && (port & 0xC000) == 0;
+    d.p1ffd = xffd && (port & 0x3000) == 0x1000 && enable1ffd;
+    d.p7ffd = fd && !(port & 0x8000) && ((port & 0x4000) || !p3Timing) && !d.p1ffd;
+    d.pdffd = fd && (port & 0xF000) == 0xD000;
+    d.p2ffd3ffd = xffd && (port & 0x2000);
+    d.p3Float = fd && (port & 0xF000) == 0 && p3Timing;
+    return d;
+}
+
+} // namespace
+
+bool PortDecoder_Next::InternalResponse(uint16_t port) const
+{
+    const uint8_t low = static_cast<uint8_t>(port);
+    const unsigned high = port >> 8;
+    if (!(port & 0x0001) || low == 0xFF)
+        return true;  // port_fe (A0 = 0: every even port), port_ff
+    const NextPagingDecode paging = DecodePaging(port, _board->Timing() == 3, PortEnabled(3));
+    if ((paging.p3Float && PortEnabled(4)) || (paging.p7ffd && PortEnabled(1)) || (paging.pdffd && PortEnabled(2)) || paging.p1ffd)
+        return true;
+    if (paging.p2ffd3ffd && (_board->Stored(0xD8) & 0x01))
+        return true;  // the FDC ports while NR #D8 traps them
+    if ((low == 0xF7 && (high & 0xF0) == 0xE0 && PortEnabled(26)) || (low == 0xE3 && PortEnabled(8)))
+        return true;  // #EFF7, the DivMMC control
+    if (PortEnabled(9) && (low == _multiface->EnablePort() || low == _multiface->DisablePort()))
+        return true;
+    if ((low == 0xE7 || low == 0xEB) && PortEnabled(11))
+        return true;  // SPI
+    if (low == 0x3B)
+    {
+        switch (high)
+        {
+            case 0x24:
+            case 0x25: return true;                     // the NextREG pair
+            case 0x10:
+            case 0x11: return PortEnabled(10);          // I2C
+            case 0x12: return PortEnabled(15);          // Layer 2
+            case 0x30: return PortEnabled(14);          // sprites
+            case 0xBF:
+            case 0xFF: return PortEnabled(24);          // ULA+
+            default: break;
+        }
+        if ((high >> 3) == 0x02 && (((high >> 2) ^ ((high >> 1) & high)) & 1))
+            return PortEnabled(12);                     // the UARTs
+        return (high >> 3) == 0x03 && PortEnabled(27);  // the CTC
+    }
+    if ((low == 0x6B && PortEnabled(5)) || (low == 0x0B && PortEnabled(25)))
+        return true;  // the DMA
+    if ((port & 0x8007) == 0x8005 && PortEnabled(16))
+        return true;  // #FFFD, #BFFD
+    if (DacChannelsAt(low))
+        return true;
+    if (uint8_t reg = 0; MouseRegisterOf(port, reg) && PortEnabled(13))
+        return true;
+    if ((low == 0x1F || (low == 0xDF && PortEnabled(23) && !PortEnabled(13))) && PortEnabled(6) && JoystickPortWired(false))
+        return true;
+    if (low == 0x37 && PortEnabled(7) && JoystickPortWired(true))
+        return true;
+    return (low == 0x57 || low == 0x5B) && PortEnabled(14);  // the sprite attributes and patterns
+}
+
+bool PortDecoder_Next::PropagatedToBus(uint16_t port) const
+{
+    const uint8_t nr8a = _board->Stored(0x8A);
+    if (!nr8a)
+        return false;
+    const NextPagingDecode paging = DecodePaging(port, _board->Timing() == 3, PortEnabled(3));
+    return ((nr8a & 0x01) && !(port & 0x0001)) || ((nr8a & 0x02) && paging.p7ffd && PortEnabled(1)) ||
+           ((nr8a & 0x04) && paging.pdffd && PortEnabled(2)) || ((nr8a & 0x08) && paging.p1ffd) ||
+           ((nr8a & 0x10) && (port & 0x00FF) == 0x00FF) || ((nr8a & 0x20) && (port & 0xF0FF) == 0xE0F7 && PortEnabled(26));
+}
+
+PortDecoder::SlotCycleGate PortDecoder_Next::SlotCardGate(uint16_t port, bool isRead) const
+{
+    const uint8_t nr80 = _board->Stored(0x80);
+    const bool busOn = (nr80 & 0x80) != 0, ioDisabled = (nr80 & 0x20) != 0;
+    const bool propagated = PropagatedToBus(port);
+    SlotCycleGate gate;
+    gate.byReadRule = false;
+    gate.connected = busOn;
+    gate.iorq = propagated || (!ioDisabled && !InternalResponse(port));  // bus_iorq_n
+    if (!isRead)
+        return gate;
+    // cpu_di: the board's response, #FE with the connector's data ANDed in (port_fe_bus) and replaced by it under NR #81 bit 6 for
+    // A7:A4 = 0 (port_fe_override); a port the board does not answer takes the connector's data unless NR #80 bit 5 masks it
+    const bool fe = !(port & 0x0001) && propagated;
+    gate.cardsWithBoard = fe;
+    gate.boardData = !(fe && (_board->Stored(0x81) & 0x40) && (port & 0x00F0) == 0);
+    gate.cardsAlone = !ioDisabled;
+    return gate;
 }
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
@@ -915,23 +1123,25 @@ void PortDecoder_Next::DacMirrorWrite(uint8_t reg, uint8_t value)
 /// The DAC ports of the VHDL (zxnext.vhd 2429-2435, 2658-2664), gated by NR #84
 bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 {
-    const uint8_t low = static_cast<uint8_t>(port), en = _board->Stored(0x84);
-    const bool sd1 = en & 0x02, sd2 = en & 0x04, stereoAD = en & 0x08, stereoBC = en & 0x10, monoADfb = (en & 0x20) && !sd2, monoBC = en & 0x40, monoADdf = en & 0x80;
+    const uint8_t channels = DacChannelsAt(static_cast<uint8_t>(port));
+    for (unsigned channel = 0; channel < 4; channel++)
+        if (channels & (1u << channel))
+            _audio->WriteDac(channel, value);
+    return channels != 0;
+}
+
+uint8_t PortDecoder_Next::DacChannelsAt(uint8_t low) const
+{
+    // internal_port_enable 17-23: NR #84 bits 1-7, and NR #88's with the expansion bus on
+    const bool sd1 = PortEnabled(17), sd2 = PortEnabled(18), stereoAD = PortEnabled(19), stereoBC = PortEnabled(20);
+    const bool monoADfb = PortEnabled(21) && !sd2, monoBC = PortEnabled(22), monoADdf = PortEnabled(23);
     const bool mAD = (low == 0xFB && monoADfb) || (low == 0xDF && monoADdf);
     const bool mBC = low == 0xB3 && monoBC;
     const bool a = mAD || (low == 0x1F && sd1) || (low == 0xF1 && sd2) || (low == 0x3F && stereoAD);
     const bool b = mBC || (low == 0x0F && (sd1 || stereoBC)) || (low == 0xF3 && sd2);
     const bool c = mBC || (low == 0x4F && (sd1 || stereoBC)) || (low == 0xF9 && sd2);
     const bool d = mAD || (low == 0x5F && (sd1 || stereoAD)) || (low == 0xFB && sd2);
-    if (a)
-        _audio->WriteDac(0, value);
-    if (b)
-        _audio->WriteDac(1, value);
-    if (c)
-        _audio->WriteDac(2, value);
-    if (d)
-        _audio->WriteDac(3, value);
-    return a || b || c || d;
+    return static_cast<uint8_t>((a ? 1 : 0) | (b ? 2 : 0) | (c ? 4 : 0) | (d ? 8 : 0));
 }
 
 /// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/platform.h"
 
 namespace
@@ -60,6 +61,34 @@ bool ProfiPlusSupported(std::string* reason)
     return true;
 }
 
+/// The ZX Spectrum Next on its other boards (research-variants.md; NEXT itself is the KS2, Issue 4): the KS1's Issue 2 (Spartan-6:
+/// two video timings, no DNA / XADC) with its 1 MB, the KS3's Issue 5 (Artix-7, NR #04 drives SRAM A21)
+void ApplyNextKs1(CONFIG& config)
+{
+    config.next_board_issue = static_cast<uint8_t>(NextBoardIssue::Issue2);
+}
+
+bool IsNextKs1(const CONFIG& config)
+{
+    return config.mem_model == MM_NEXT && config.next_board_issue == static_cast<uint8_t>(NextBoardIssue::Issue2);
+}
+
+void ApplyNextKs3(CONFIG& config)
+{
+    config.next_board_issue = static_cast<uint8_t>(NextBoardIssue::Issue5);
+}
+
+bool IsNextKs3(const CONFIG& config)
+{
+    return config.mem_model == MM_NEXT && config.next_board_issue == static_cast<uint8_t>(NextBoardIssue::Issue5);
+}
+
+bool NextBoardSupported(std::string* reason)
+{
+    (void)reason;
+    return true;
+}
+
 const std::vector<MachineVariant> kVariants = {
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
@@ -67,6 +96,12 @@ const std::vector<MachineVariant> kVariants = {
     {"PROFI-PLUS", "ZX Profi+ (BIOS Plus, PQ-DOS)",
      "ZX Profi v5 with the V0.03 port decoder and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, IDE", "PROFI", 1024,
      ApplyProfiPlus, IsProfiPlus, ProfiPlusSupported},
+    {"NEXT-KS1", "ZX Spectrum Next KS1 (Issue 2)",
+     "ZX Spectrum Next on the Kickstarter 1 board: Spartan-6, video timings VGA 0 / 1 only, no DNA / XADC, 1 MB", "NEXT", 1024,
+     ApplyNextKs1, IsNextKs1, NextBoardSupported},
+    {"NEXT-KS3", "ZX Spectrum Next KS3 (Issue 5)",
+     "ZX Spectrum Next on the Kickstarter 3 board: Artix-7, NR #04 reaches SRAM A21 in config mode", "NEXT", 2048,
+     ApplyNextKs3, IsNextKs3, NextBoardSupported},
 };
 
 /// Other names a create request may use for a variant
@@ -78,6 +113,8 @@ struct Alias
 const Alias kAliases[] = {
     {"TSCONF-VDAC2", "TSL-VDAC2"},
     {"PROFIPLUS", "PROFI-PLUS"},
+    {"NEXT-ISSUE2", "NEXT-KS1"},
+    {"NEXT-ISSUE5", "NEXT-KS3"},
 };
 
 bool SameName(const std::string& a, const char* b)

@@ -15,7 +15,7 @@ little as possible. **The base Z80 and the native interpreter are not touched.**
 | Bus | callback bus only: the host owns memory (slot table, overlays, DMA, contention) |
 | New | the `ED`-page extension in `opcodes-ed.inc`: the entries of research-z80n.md; callbacks `Z80nCpuSetNextRegWrite(reg, value)` and `Z80nCpuSetNextRegRead(reg)` for `NEXTREG` (no port cycle: the hook is called, the host does not see an `OUT`), and `Z80nCpuSetStacklessNmi(bool)` + a `RETN`-seen callback for NR `#C0` bit 3 (MAME has the same two) |
 | Timing | the library reports T-states in CPU clocks; the adapter turns them into the machine time base (section 3) |
-| Variant | the T80-based hardware CPU is not an NMOS Z80: the library keeps unreal-z80's NMOS core first and records each behavior where the real core differs (undocumented flags, `LD A,I` P/V quirk, `OUT (C),0` value) in `README.md`. Which differences the Next shows is open (Q12), found by the FUSE/z80test style suites run against the library and by ZXSpectrumNextTests |
+| Variant | the T80-based hardware CPU is not an NMOS Z80: the library keeps unreal-z80's NMOS core first and records each behavior where the real core differs (undocumented flags, `LD A,I` P/V quirk, `OUT (C),0` value) in `README.md`. The Next shows the T80's own behavior (Q12, closed 2026-10-26): the Next machine runs the library's T80N persona, verified by a GHDL run of every opcode against the core |
 | Tests | the library has its own `core/tests/` target-independent tests: every Z80N opcode (table-driven), flags, T-states from the wiki, the `LDIX` family flag rule (jnext's citation of `t80n.vhd`: S, Z, C preserved; H = N = 0; P/V = BC != 0; X/Y from the sum), `NEXTREG` without a port cycle, and the base-Z80 suites (ZEXALL style) to show nothing regressed from the fork |
 | Upstream fixes | because opcode bodies differ from unreal-z80 only by the renames and the additions, upstream fixes apply by diff (as for z84c15) |
 
@@ -95,7 +95,7 @@ instruction to shared code.
 | Surface | Work |
 |:--|:--|
 | Disassembler | the Z80N entries added to the shared disassembler table behind a "Z80N" flag set for `MM_NEXT` (zero cost for others: a different table pointer, selected at model init) |
-| `unreal-asm` | a `ZXN` instruction-set option exists in sjasmplus-class assemblers; whether `unreal-asm` has it is checked in N12 (Q10) |
+| `unreal-asm` | `unreal-asm` reads the Next mnemonics after `DEVICE ZXSPECTRUMNEXT` / `OPT --zxnext` (`--z80n`) and writes them for sjasmplus and z88dk (Q10, closed 2026-10-26) |
 | Breakpoints, step, call trace | unchanged: the engine seam keeps `RunInstructionStartHooks` |
 | Opcode profiler | the profiler counts `ED xx` in its own table; extra entries for Z80N in N1 |
 | DeZog | `dzrptypes.h` already has `ZXNEXT = 4` and bank/sprite commands ([design-automation.md](design-automation.md)) |

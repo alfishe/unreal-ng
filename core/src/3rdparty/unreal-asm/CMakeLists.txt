@@ -247,10 +247,14 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/fromsource_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/live_test.cpp
         ${UNREAL_ASM_DIR}/tests/sync_test.cpp
+        ${UNREAL_ASM_DIR}/tests/diskfiles_test.cpp
     )
-    target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
+    target_link_libraries(unreal-asm-tests PRIVATE unreal-asm unreal-asm-tools-common gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)
-    target_compile_definitions(unreal-asm-tests PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata")
+    # The repository's disk images (testdata/loaders/...) when embedded in unreal-ng; the tests needing them skip outside
+    get_filename_component(UNREAL_ASM_REPO_TESTDATA ${UNREAL_ASM_DIR}/../../../../testdata ABSOLUTE)
+    target_compile_definitions(unreal-asm-tests PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata"
+                               UNREAL_ASM_REPO_TESTDATA_DIR="${UNREAL_ASM_REPO_TESTDATA}")
     target_compile_options(unreal-asm-tests PRIVATE ${UNREAL_ASM_WARNINGS_LIST})
 endfunction()
 

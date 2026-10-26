@@ -189,6 +189,7 @@ media_volumes("hd")                                     -- the file systems: TR-
 media_files("A", "SHELL", {recursive = true})           -- a directory's entries; {volume = "p1"} picks a volume
 media_read("A", "read_me.txt", {out = "/tmp/r.txt"})    -- base64 data, or written to out
 local bytes, why = media_read_bytes("hd", "AUTOEXEC.BAT", "p1")  -- the bytes as a string, or nil and the reason
+media_write("A", "PROG.C", "\243\201", {start = 0x8000})  -- onto a TR-DOS / +3DOS floppy; nil, {["in"] = "prog.bin"} a host file
 media(verb, slot, path, opts)                           -- any verb
 ```
 

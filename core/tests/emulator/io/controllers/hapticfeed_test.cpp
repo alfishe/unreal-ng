@@ -218,7 +218,7 @@ TEST_F(HapticFeed_Test, ProbesSeeEveryAccessAndNeverStop)
     _manager->SetHapticFeed(nullptr);
     _emulator->RunNFrames(1, false);
     EXPECT_TRUE(ProbeCount(breakpoints) == 0) << "detached: disarmed";
-    EXPECT_FALSE(_emulator->GetFeatureManager()->probeDebugHold());
+    EXPECT_FALSE(_emulator->GetFeatureManager()->tapDebugHold());
 }
 
 TEST_F(HapticFeed_Test, ExecProbesFireOnTheInstructionStartOnly)
@@ -243,7 +243,57 @@ TEST_F(HapticFeed_Test, ExecProbesFireOnTheInstructionStartOnly)
     EXPECT_EQ(frame.probeHits[2], 0u) << "the operand's high byte";
 }
 
-TEST_F(HapticFeed_Test, ProbeDebugHoldSwitchesWithTheCpuHeld)
+TEST_F(HapticFeed_Test, ExecProbesKeepTheFastMemoryPath)
+{
+    // Exec probes need the instruction start's check only (Z80::execTapHold): no debug mode, the fast memory
+    // interface stays, and the probe still sees its instruction once a frame
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->probes.resize(1);
+    feed->probes[0].kind = HapticProbeKind::Exec;
+    feed->probes[0].address = feed->probes[0].end = kAfterHalt;
+    _manager->SetHapticFeed(feed);
+    Z80* z80 = _context->pCore->GetZ80();
+    _emulator->RunNFrames(3, false);
+    EXPECT_TRUE(z80->execTapHold);
+    EXPECT_FALSE(z80->isDebugMode);
+    EXPECT_FALSE(_emulator->GetFeatureManager()->debugModeInEffect()) << "an exec probe holds no debug path";
+    EXPECT_TRUE(z80->MemIf == z80->FastMemIf || z80->MemIf == z80->FastContendedMemIf) << "the fast memory interface";
+    ASSERT_FALSE(feed->frames.empty());
+    EXPECT_EQ(feed->frames.back().probeHits[0], 1u) << "exec: once a frame";
+
+    _manager->SetHapticFeed(nullptr);
+    _emulator->RunNFrames(1, false);
+    EXPECT_FALSE(z80->execTapHold) << "detached: released";
+}
+
+TEST_F(HapticFeed_Test, WriteProbesKeepTheFastMemoryPath)
+{
+    // A write probe that sees every write is a write tap: the fast write's hook tells it (breakpoint-taps §5), no debug
+    // mode, and the change undone within the frame still arrives with the byte before and after
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->probes.resize(1);
+    feed->probes[0].kind = HapticProbeKind::Write;
+    feed->probes[0].address = feed->probes[0].end = kByte;
+    _manager->SetHapticFeed(feed);
+    Z80* z80 = _context->pCore->GetZ80();
+    _emulator->RunNFrames(3, false);
+    EXPECT_FALSE(z80->isDebugMode);
+    EXPECT_FALSE(_emulator->GetFeatureManager()->tapDebugHold()) << "a write probe holds no debug path";
+    EXPECT_TRUE(z80->MemIf == z80->FastMemIf || z80->MemIf == z80->FastContendedMemIf) << "the fast memory interface";
+    ASSERT_FALSE(feed->frames.empty());
+    const HapticFrame& frame = feed->frames.back();
+    EXPECT_EQ(frame.probeHits[0], 2u) << "both writes";
+    ASSERT_EQ(frame.probeEventCount, 2u);
+    EXPECT_EQ(frame.probeEvents[0].before, kLives);
+    EXPECT_EQ(frame.probeEvents[0].value, kLives - 1);
+    EXPECT_EQ(frame.probeEvents[1].value, kLives);
+
+    _manager->SetHapticFeed(nullptr);
+    _emulator->RunNFrames(1, false);
+    EXPECT_FALSE(_context->pDebugManager->GetBreakpointsManager()->GetTapDemand().write) << "detached: released";
+}
+
+TEST_F(HapticFeed_Test, TapDebugHoldSwitchesWithTheCpuHeld)
 {
     // Arming the probes from another thread (the GUI, a WebAPI request) switches the CPU's debug flag, the memory
     // interface and the tracker's caches, all read by the running loop without locks: the switch holds the CPU, as a
@@ -260,7 +310,7 @@ TEST_F(HapticFeed_Test, ProbeDebugHoldSwitchesWithTheCpuHeld)
     {
         const uint64_t applied = _emulator->GetArbiter().GetSnapshot().applied;
         const uint64_t before = frame;
-        features->setProbeDebugHold(i % 2 == 0);
+        features->setTapDebugHold(i % 2 == 0);
         held += _emulator->GetArbiter().GetSnapshot().applied > applied ? 1 : 0;
         EXPECT_EQ(_context->pCore->GetZ80()->isDebugMode, features->debugModeInEffect());
         ran += TestWait::For([&] { return frame > before; }) ? 1 : 0;
@@ -268,7 +318,7 @@ TEST_F(HapticFeed_Test, ProbeDebugHoldSwitchesWithTheCpuHeld)
     _emulator->Stop();
     EXPECT_EQ(held, 6) << "every switch went through the arbiter";
     EXPECT_EQ(ran, 6) << "the machine ran on between the switches";
-    EXPECT_FALSE(features->probeDebugHold());
+    EXPECT_FALSE(features->tapDebugHold());
 }
 
 TEST_F(HapticFeed_Test, Haptics_NotJournaled)

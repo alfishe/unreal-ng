@@ -626,6 +626,50 @@ StateNode Controllers(Emulator& emulator)
     });
 }
 
+StateNode GameEvents(Emulator& emulator)
+{
+    controllers::ControllerManager* manager = emulator.GetContext()->pControllerManager;
+    if (manager == nullptr)
+    {
+        StateNode node = StateNode::Object();
+        node["available"] = false;
+        return node;
+    }
+    const controllers::GameEventLog& log = manager->GameEvents();
+    return CachedValue("game.events", emulator.GetId(), log.Revision(), 5.0, [&log] {
+        const controllers::GameEventLog::Snapshot snapshot = log.Read();
+        StateNode node = StateNode::Object();
+        node["available"] = snapshot.defined;
+        node["profile"] = snapshot.profile;
+        node["frame"] = static_cast<int64_t>(snapshot.frame);
+        node["seq"] = static_cast<int64_t>(snapshot.seq);
+        // By name, so a readout path reaches one (a deck key's `show: {readout: game.events.events.lives.value}`)
+        StateNode& events = node["events"];
+        events = StateNode::Object();
+        for (const controllers::GameEventLog::Event& event : snapshot.events)
+        {
+            StateNode& entry = events[event.name];
+            entry = StateNode::Object();
+            entry["kind"] = std::string(event.level ? "level" : "event");
+            entry["fires"] = static_cast<int64_t>(event.fires);
+            entry["last_frame"] = static_cast<int64_t>(event.lastFrame);
+            entry["level"] = std::round(static_cast<double>(event.current) * 1000.0) / 1000.0;
+            entry["value"] = event.value >= 0 ? StateNode(static_cast<int64_t>(event.value)) : StateNode();
+        }
+        StateNode& recent = node["recent"];
+        recent = StateNode::Array();
+        for (const controllers::GameEventLog::Fired& fired : snapshot.recent)
+        {
+            StateNode entry = StateNode::Object();
+            entry["seq"] = static_cast<int64_t>(fired.seq);
+            entry["frame"] = static_cast<int64_t>(fired.frame);
+            entry["name"] = fired.name;
+            recent.push(std::move(entry));
+        }
+        return node;
+    });
+}
+
 /// endregion </An instance>
 
 /// region <Verbs>
@@ -701,7 +745,7 @@ const std::vector<std::string>& InstanceNames()
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
-                                                   "analysis.progress", "analysis.ready"};
+                                                   "game.events",     "analysis.progress", "analysis.ready"};
     return names;
 }
 
@@ -749,6 +793,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Buffers(emulator);
     if (name == "controllers.state")
         return Controllers(emulator);
+    if (name == "game.events")
+        return GameEvents(emulator);
     if (name == "analysis.progress")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")

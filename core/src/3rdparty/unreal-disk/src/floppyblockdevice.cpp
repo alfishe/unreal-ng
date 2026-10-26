@@ -1,13 +1,15 @@
-#include "emulator/io/storage/fs/floppyblockdevice.h"
+#include "unrealdisk/floppyblockdevice.h"
 
 #include <algorithm>
 #include <cstring>
 
 #include "unrealdisk/diskimage.h"
 
-FloppyBlockDevice::FloppyBlockDevice(unrealdisk::DiskImage& image) : _image(image)
+namespace unrealdisk
 {
-    unrealdisk::DiskImage::Track* track = image.getTrackForCylinderAndSide(0, 0);
+FloppyBlockDevice::FloppyBlockDevice(DiskImage& image) : _image(image)
+{
+    DiskImage::Track* track = image.getTrackForCylinderAndSide(0, 0);
     if (!track || track->sectorCount() == 0)
         return;
     uint8_t low = 0xFF;
@@ -33,7 +35,7 @@ bool FloppyBlockDevice::ReadSector(uint64_t lba, uint8_t* dst)
     if (lba >= _sectorCount)
         return false;
     const uint64_t track = lba / _sectorsPerTrack;
-    unrealdisk::DiskImage::Track* t = _image.getTrackForCylinderAndSide(static_cast<uint8_t>(track / _sides),
+    DiskImage::Track* t = _image.getTrackForCylinderAndSide(static_cast<uint8_t>(track / _sides),
                                                                          static_cast<uint8_t>(track % _sides));
     const auto* sector = t ? t->findSector(static_cast<uint8_t>(_firstId + lba % _sectorsPerTrack)) : nullptr;
     if (!sector || !sector->data || sector->dataSize < kSectorSize)
@@ -41,3 +43,4 @@ bool FloppyBlockDevice::ReadSector(uint64_t lba, uint8_t* dst)
     std::memcpy(dst, sector->data, kSectorSize);
     return true;
 }
+}  // namespace unrealdisk

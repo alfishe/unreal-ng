@@ -11,6 +11,7 @@
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextdivmmc.h"
+#include "emulator/io/z80n/nextesxdos.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
@@ -98,6 +99,8 @@ public:
     /// that is Kempston 1 / MD 1 feeds #1F, Kempston 2 / MD 2 feeds #37, bits 7:6 only for an MD pad; the port also needs its bit in
     /// NR #82 (6 and 7). The host joystick is the LEFT connector; the right one is set by a tool (NextExtendedInput::Right). False: the read is not answered (the bus idles at #FF)
     bool JoystickPortAnswers(bool port37, uint8_t& value) const;
+    /// port_1f_hw_en / port_37_hw_en: a connector in the mode that answers the port (Kempston 1 / 2 or the MD pad)
+    bool JoystickPortWired(bool port37) const;
     NextDma& Dma() { return _dma; }
     void BindDma();
     uint8_t ReadMemoryMapping() const override;
@@ -168,6 +171,10 @@ public:
     NextDivMmc& DivMmc() { return *_divMmc; }
     NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
+    /// The esxDOS mode (feature "esxdos", nextesxdos.h): it serves RST $08 while the feature is on and no boot ROM is set
+    NextEsxDos& EsxDos() { return *_esxDos; }
+    bool EsxDosServing() const { return _context->pRst8Trap == _esxDos.get(); }
+    void UpdateModelFeatureCache() override;
     /// The 28 MHz system clock since the machine started
     uint64_t Now28() const;
     Z80NEngine* Engine() { return _engine.get(); }
@@ -180,6 +187,16 @@ public:
     /// +3 port (A15:12 = 0, A1:0 = 01) under the +3 timing with NR #82 bit 4; every other undecoded port reads #FF
     bool FloatingBusDrives(uint16_t port) const override;
     bool OddPortContended(uint16_t port) const;
+    /// The expansion connector (zxnext.vhd 1886-1893, 2230-2242, 3471-3480): a port of the board's own decode (port_internal_response)
+    /// reaches the cards' /IORQ only when NR #8A propagates it, any other port unless NR #80 bit 5 masks the bus's I/O (RD / WR still
+    /// reach the connector); nothing reaches them while the bus is off (NR #80 bit 7: modeling choice, the Next drives no data onto
+    /// the connector then and takes none from it; a card's side effects of a bare strobe are not modelled). A read takes the
+    /// board's response first, #FE ANDs the connector's data in when propagated, any other port takes the connector's data
+    SlotCycleGate SlotCardGate(uint16_t port, bool isRead) const override;
+    /// port_internal_response (zxnext.vhd 2714): the ports the board's own decode answers, with their enable bits
+    bool InternalResponse(uint16_t port) const;
+    /// port_propagate (zxnext.vhd 2230-2237): an internal port NR #8A passes to the expansion bus (#FE, #7FFD, #DFFD, #1FFD, #FF, #EFF7)
+    bool PropagatedToBus(uint16_t port) const;
     bool SixtyHzWanted(uint8_t timing) const;
     void BeforeRelease() override;
 
@@ -332,6 +349,29 @@ private:
     bool _dmaRequestLate = false;  // the enable came in this instruction: the bus goes over after the next one's M1
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);
+    /// The DAC channels (bit 0 = A ... bit 3 = D) a port's low byte writes, by the enables of NR #84
+    uint8_t DacChannelsAt(uint8_t low) const;
     NextI2c _i2c;
+    /// What the esxDOS mode reaches of the machine: card 0, the RTC, the CPU's view of memory, the SPI port for a stream
+    struct EsxDosHost final : NextEsxDos::Host
+    {
+        explicit EsxDosHost(PortDecoder_Next& owner) : owner(owner) {}
+        IBlockDevice* Card() override { return owner._sd[0].media(); }
+        void CardWritten() override;
+        bool StreamStart(uint32_t block, bool userWaits) override { return owner.HostStreamStart(block, userWaits); }
+        bool StreamEnd() override { return owner.HostStreamEnd(); }
+        uint8_t RtcRegister(unsigned index) override { return owner._i2c.Rtc().Reg(index); }
+        uint8_t Peek(uint16_t address) override { return owner.Mem().PeekSlot(address); }
+        void Poke(uint16_t address, uint8_t value) override { owner.Mem().DmaWrite(address, value); }
+        PortDecoder_Next& owner;
+    };
+    EsxDosHost _esxDosHost{*this};
+    std::unique_ptr<NextEsxDos> _esxDos;
+    /// DISK_STRMSTART / DISK_STRMEND for the esxDOS mode: the commands go to card 0 at once (the DOS's bytes take no time),
+    /// the port is left as the DOS leaves it - card 0 selected and the first data byte (or the R1 answer, when the program
+    /// waits for the token itself) as the next read of #EB
+    bool HostStreamStart(uint32_t block, bool userWaits);
+    bool HostStreamEnd();
+    void SelectCard0ForHost();
     std::unique_ptr<Z80NEngine> _engine;
 };

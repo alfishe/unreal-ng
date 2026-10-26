@@ -47,4 +47,31 @@ read say. Everything else is open.
 
 Only fields that change behavior a program can observe are added. The default board is **Issue 4 / KS2 with
 2 MB**, because that is the machine the NEXT row in the model table already promises (2048K). The config key is
-`[NEXT] Board=issue2|issue4|ks3|emulator` and the first phases implement `issue4` only (phase N12 adds the rest).
+`[NEXT] Board=issue2|issue4|ks3|emulator` and the first phases implement `issue4` only (phase N12 adds the rest). Built as
+section 4 says (2026-10-26): `issue2|issue4|issue5`, no `emulator` board.
+
+## 4. As built (2026-10-26, core 3.02.03)
+
+The VHDL settles what section 2 left open. `zxnext.vhd` is one design built three ways: `g_board_issue` is 0 for Issue 2
+(KS1, Spartan-6, `zxnext_top_issue2.vhd`), 2 for Issue 4 (KS2, Artix-7, `zxnext_top_issue4.vhd`) and 3 for Issue 5 (KS3,
+Artix-7, `zxnext_top_issue5.vhd`). What a program can see:
+
+| Register | Issue 2 | Issue 4 | Issue 5 | Source |
+|:--|:--|:--|:--|:--|
+| NR `#0F` | 0 | 2 | 3 | `"0000" & g_board_issue` |
+| NR `#10` core id (config mode) | 5 bits | 0-14 only, bit 4 = 0 | as Issue 4 | `gen_coreid_23` / `gen_coreid_45` |
+| NR `#11` video timing | bit 0: 28 MHz or 28.571429 MHz | 0-6, the MMCM's seven clocks (28.000000, 28.583333, 29.437500, 30.000000, 31.000000, 32.000000, 33.000000 MHz) | as Issue 4 | `g_video_inc`, the top levels' clock generators; 7 means 0 everywhere |
+| NR `#04` (config mode) | 7 bits | 7 bits | 8 bits (SRAM A21) | `nr_04_romram_bank` |
+| NR `#F0`, `#F8`-`#FA` | read 0 | the DNA_PORT and the XADC | as Issue 4 | `gen_xper_23` / `gen_xper_44` |
+| +3 FDC lines on the expansion bus (NR `#81` bit 3) | none | none | driven | `zxnext_top_issue5.vhd`; not modelled (no expansion bus FDC) |
+
+Nothing else differs: NR `#00` is `#0A` on all three, the RAM the core addresses is 2048K on all three (the 4096K KS3 is
+MAME's alone, Q3 / Q4). The firmware's `.XPER` dot command (`c/DotCommands/xper/xper.c`) reads the DNA and the XADC the way
+`NextBoardIssue_Test` does and stops with "ISSUE 4 REQUIRED" on Issue 2.
+
+Implementation: `NextBoardIssue` (`core/src/emulator/io/z80n/nextboardissue.h`) on `NextBoard`, the Artix peripherals in
+`NextXilinx` (the DNA reads the core's `SIM_DNA_VALUE`; the XADC is a fixed die at 45 C with the nominal supplies, so every host
+reads the same). The config key is `[NEXT] Board=issue2|issue4|issue5` (also `ks1|ks2|ks3`, default `issue4`); the machine
+variants `NEXT-KS1` (1024K) and `NEXT-KS3` (2048K) set it and are offered on every surface with the other variants. The board is
+part of the TTD state image: an image from one board does not load into another. The Mini and the emulators id `#08` stay open
+(Q1); `keyboardIssue2Default` and `rtcFitted` are not board facts in the VHDL.

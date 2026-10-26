@@ -12,6 +12,7 @@
 #include "emulator/io/z80n/nextcopper.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextdma.h"
+#include "emulator/io/z80n/nextesxdos.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextmultiface.h"
@@ -26,7 +27,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 14;  // 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 16;  // 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -227,6 +228,33 @@ static void LoadCopper(Reader& r, NextCopper& c)
     c._idleUntil = 0;  // derived: the next run works it out again
 }
 
+static void SaveXilinx(Writer& w, const NextXilinx& x)
+{
+    w.Put(x._select);
+    w.Put(x._dnaEnabled);
+    w.Put(x._adcEnabled);
+    w.Put(x._dnaOut);
+    w.Put(x._dnaShifted);
+    w.Put(x._drpWrite);
+    w.Put(x._drpAddress);
+    w.Put(x._d0);
+    w.Put(x._d1);
+    w.PutArray(x._control);
+}
+static void LoadXilinx(Reader& r, NextXilinx& x)
+{
+    r.Get(x._select);
+    r.Get(x._dnaEnabled);
+    r.Get(x._adcEnabled);
+    r.Get(x._dnaOut);
+    r.Get(x._dnaShifted);
+    r.Get(x._drpWrite);
+    r.Get(x._drpAddress);
+    r.Get(x._d0);
+    r.Get(x._d1);
+    r.GetArray(x._control);
+}
+
 static void SaveBoard(Writer& w, const NextBoard& b)
 {
     w.Put(b._selected);
@@ -239,6 +267,7 @@ static void SaveBoard(Writer& w, const NextBoard& b)
         w.Put(b._keyJoystick.Entry(i));
     w.Put(b._keyJoystick.Address());
     w.Put(b._keyJoystick.Selected());
+    SaveXilinx(w, b._xilinx);
 }
 static void LoadBoard(Reader& r, NextBoard& b)
 {
@@ -260,6 +289,7 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(address);
     r.Get(selected);
     b._keyJoystick.Restore(address, selected);
+    LoadXilinx(r, b._xilinx);
 }
 
 static void SaveMemory(Writer& w, const NextMemory& m)
@@ -685,6 +715,46 @@ static void LoadSd(Reader& r, SdCardSpi& card)
     card.loadState(state.data());
 }
 
+static void SaveEsxDos(Writer& w, const NextEsxDos& x)
+{
+    for (const NextEsxDos::Handle& h : x._handles)
+    {
+        w.Put(h.kind);
+        w.Put(h.mode);
+        w.Put(h.filter);
+        w.Put(h.headerSize);
+        w.Put(h.headerDirty);
+        w.Put(h.root);
+        w.Put(h.entryOffset);
+        w.Put(h.entryLba);
+        w.Put(h.position);
+        w.Put(h.mapped);
+    }
+    w.PutArray(x._cwd);
+    w.Put(x._caps);
+}
+static void LoadEsxDos(Reader& r, NextEsxDos& x)
+{
+    for (NextEsxDos::Handle& h : x._handles)
+    {
+        r.Get(h.kind);
+        r.Get(h.mode);
+        r.Get(h.filter);
+        r.Get(h.headerSize);
+        r.Get(h.headerDirty);
+        r.Get(h.root);
+        r.Get(h.entryOffset);
+        r.Get(h.entryLba);
+        r.Get(h.position);
+        r.Get(h.mapped);
+    }
+    r.GetArray(x._cwd);
+    x._cwd[sizeof(x._cwd) - 1] = '\0';
+    if (x._cwd[0] != '/')
+        x._cwd[0] = '/';
+    r.Get(x._caps);
+}
+
 static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
 {
     w.Put(e.PcKeys());
@@ -755,6 +825,7 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
 {
     Writer w;
     w.Put(kImageVersion);
+    w.Put(p._board->_issue);  // another board is another FPGA image: its state does not load
     Impl::SaveBoard(w, *p._board);
     Impl::SaveMemory(w, *static_cast<const NextMemory*>(p._context->pMemory));
     Impl::SaveVideo(w, p._board->_video);
@@ -772,17 +843,20 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
     Impl::SaveSd(w, p._sd[0]);
     Impl::SaveSd(w, p._sd[1]);
     Impl::SaveUart(w, p._uart);
+    Impl::SaveEsxDos(w, *p._esxDos);
     return w.Take();
 }
 
 bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
 {
     // The length is fixed for a machine: an image of another length is another machine's
-    if (!data || size != Save(p).size() || data[0] != kImageVersion)
+    if (!data || size != Save(p).size() || data[0] != kImageVersion || data[1] != static_cast<uint8_t>(p._board->_issue))
         return false;
     Reader r(data, size);
     uint8_t version = 0;
     r.Get(version);
+    NextBoardIssue issue{};
+    r.Get(issue);
     Impl::LoadBoard(r, *p._board);
     NextMemory& memory = *static_cast<NextMemory*>(p._context->pMemory);
     Impl::LoadMemory(r, memory);
@@ -801,6 +875,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadSd(r, p._sd[0]);
     Impl::LoadSd(r, p._sd[1]);
     Impl::LoadUart(r, p._uart);
+    Impl::LoadEsxDos(r, *p._esxDos);
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
     p.SyncPiLine();            // and UART 1's pins NR #A0
     p.ApplySystemClock();      // CLK_28 is NR #11's

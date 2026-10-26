@@ -1,6 +1,7 @@
-# unreal-disk - ZX Spectrum floppy disk images: the track and sector model, the format drivers (TRD, SCL, FDI, UDI, TD0,
-# DSK / EDSK, MGT, raw PC, HFE, SCP, hobeta) and the TR-DOS file system. Standard C++ only: the emulator's media
-# manager and the standalone tools (zxasm, symconv) both build on it.
+# unreal-disk - ZX Spectrum disks: the floppy track and sector model, the format drivers (TRD, SCL, FDI, UDI, TD0,
+# DSK / EDSK, MGT, raw PC, HFE, SCP, hobeta), the block device seam of hard disks and cards, and the file systems
+# (TR-DOS, +3DOS, iS-DOS / TASiS, FAT) behind one interface, DiskFs. Standard C++ only: the emulator's media manager
+# and the standalone tools (zxdisk, zxasm, symconv) all build on it.
 # Design: docs/inprogress/2026-10-10-unreal-disk/ (in the unreal-ng repository).
 #
 # Embedded use: add_subdirectory(3rdparty/unreal-disk) and link `unreal-disk`. Standalone:
@@ -33,6 +34,12 @@ add_library(unreal-disk STATIC
     src/trdosfs.cpp
     src/plus3fs.cpp
     src/isdosfs.cpp
+    src/unicode.cpp
+    src/subrangedevice.cpp
+    src/fatvolumereader.cpp
+    src/fatfs.cpp
+    src/floppyblockdevice.cpp
+    src/diskfs.cpp
     src/flux/flux_pll.cpp
     src/flux/mfm_decoder.cpp
     src/flux/mfm_encoder.cpp
@@ -51,6 +58,11 @@ add_library(unreal-disk STATIC
 target_include_directories(unreal-disk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-disk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(unreal-disk PRIVATE ${UNREAL_DISK_WARNINGS})
+
+# Command-line tool: zxdisk, the files of any disk image (volumes, ls, cat, put) through DiskFs
+add_executable(zxdisk tools/zxdisk/zxdisk.cpp)
+target_link_libraries(zxdisk PRIVATE unreal-disk)
+target_compile_options(zxdisk PRIVATE ${UNREAL_DISK_WARNINGS})
 
 set(UNREAL_DISK_DIR ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "unreal-disk source directory")
 set(UNREAL_DISK_WARNINGS_LIST "${UNREAL_DISK_WARNINGS}" CACHE INTERNAL "unreal-disk warning options")

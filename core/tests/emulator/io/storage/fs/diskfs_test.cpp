@@ -232,3 +232,63 @@ TEST(DiskFs_Test, MediaVerbsOnADrive)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// media write on a Pentagon's drive A: a file onto a blank TR-DOS disk read back, the refusals
+TEST(DiskFs_Test, MediaWriteOnADrive)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    MediaControl control(emulator->GetContext());
+    auto run = [&](std::string verb, std::string path, std::map<std::string, std::string> options = {}) {
+        return control.Execute(MediaRequest{std::move(verb), "A", std::move(path), std::move(options)});
+    };
+    const std::vector<uint8_t> code = {0xF3, 0xC9, 0x00, 0x01};
+
+    MediaReply reply = run("write", "HELLO.C", {{"data", base64::Encode(code)}});
+    EXPECT_EQ(reply.result.error, MediaError::NotSupported);  // empty drive
+    reply = run("create", "", {{"format", "trdos"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+
+    reply = run("write", "HELLO.C", {{"data", base64::Encode(code)}, {"start", "#8000"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("volume")->s, "trdos");
+    EXPECT_EQ(reply.body.find("size")->i, 4);
+    EXPECT_FALSE(reply.body.find("changes")->s.empty());
+    reply = run("files", "");
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    ASSERT_EQ(reply.body.find("entries")->items.size(), 1u);
+    EXPECT_EQ(reply.body.find("entries")->items[0].find("start")->i, 0x8000);
+    reply = run("read", "HELLO.C");
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(base64::Decode(reply.body.find("data")->s, data));
+    EXPECT_EQ(data, code);
+    reply = run("info", "");
+    const StateNode* medium = reply.body.find("info") ? reply.body.find("info")->find("medium") : nullptr;
+    ASSERT_NE(medium, nullptr);
+    EXPECT_TRUE(medium->find("dirty")->b);
+
+    // A host file, over the older file of that name
+    const std::string in = TestPathHelper::GetUniqueTestScratchPath("hello.bin");
+    std::ofstream(in, std::ios::binary) << "hello";
+    reply = run("write", "HELLO.C", {{"in", in}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(run("files", "").body.find("entries")->items.size(), 1u);
+    EXPECT_EQ(run("read", "HELLO.C").body.find("size")->i, 5);
+
+    EXPECT_EQ(run("write", "HELLO.C", {}).result.error, MediaError::BadRequest);  // no bytes
+    EXPECT_EQ(run("write", "HELLO.C", {{"data", "AA=="}, {"in", in}}).result.error, MediaError::BadRequest);
+    EXPECT_EQ(run("write", "HELLO.C", {{"data", "AA=="}, {"start", "70000"}}).result.error, MediaError::BadRequest);
+    EXPECT_EQ(run("write", "TOOLONGNAME.C", {{"data", "AA=="}}).result.error, MediaError::BadRequest);
+    ASSERT_TRUE(run("protect", "", {{"on", "true"}}).result.Ok());
+    EXPECT_EQ(run("write", "NEW.C", {{"data", "AA=="}}).result.error, MediaError::NotSupported);
+    ASSERT_TRUE(run("protect", "", {{"on", "false"}}).result.Ok());
+
+    // iS-DOS reads, does not write
+    ASSERT_TRUE(run("insert", TestPathHelper::GetTestDataPath("loaders/isdos/ISDOS50.FDI"), {{"discard", "true"}}).result.Ok());
+    reply = run("write", "new.txt", {{"data", "AA=="}});
+    EXPECT_EQ(reply.result.error, MediaError::NotSupported);
+    EXPECT_NE(reply.result.message.find("read only"), std::string::npos) << reply.result.message;
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

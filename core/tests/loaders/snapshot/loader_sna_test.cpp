@@ -978,3 +978,77 @@ TEST(LoaderSNA_Memory_Test, TruncatedMemoryIsRefused)
     EXPECT_FALSE(tiny.load());
     manager->RemoveEmulator(emulator->GetId());
 }
+
+namespace
+{
+    /// A 128K .sna layout: header, banks 5 / 2 / the one at #C000, the extended header, then `extraBanks` banks (each filled with
+    /// 0x80 + its order in the file) and `privateBytes` of 0xEE
+    std::vector<uint8_t> Make128kSnx(uint8_t p7ffd, size_t extraBanks, size_t privateBytes)
+    {
+        std::vector<uint8_t> file(sizeof(snaHeader), 0);
+        file[23] = 0x00;
+        file[24] = 0x80;  // SP #8000
+        for (const uint8_t fill : {uint8_t{0x05}, uint8_t{0x02}, static_cast<uint8_t>(p7ffd & 0x07)})
+            file.insert(file.end(), PAGE_SIZE, fill);
+        file.insert(file.end(), {0x00, 0x80, p7ffd, 0x00});  // PC #8000, #7FFD, no TR-DOS
+        for (size_t i = 0; i < extraBanks; i++)
+            file.insert(file.end(), PAGE_SIZE, static_cast<uint8_t>(0x80 + i));
+        file.insert(file.end(), privateBytes, 0xEE);
+        return file;
+    }
+}  // namespace
+
+/// A NextZXOS .snx (~1 ms): a 128K one has the five banks #7FFD leaves, then the program's private data; the same bytes as an .sna
+/// are refused (a partial page)
+TEST_F(LoaderSNA_Test, snx128kTakesTheBanksAndLeavesThePrivateData)
+{
+    const std::vector<uint8_t> file = Make128kSnx(0x03, 5, 1000);
+    LoaderSNACUT snx(_context, file, "memory");
+    snx.SetSnx(true);
+    ASSERT_TRUE(snx.validate());
+    EXPECT_EQ(snx._snapshotMode, SNA_128);
+    EXPECT_EQ(snx._extraBanks, 5u);
+    EXPECT_EQ(snx.PrivateDataSize(), 1000u);
+    ASSERT_TRUE(snx.loadToStaging());
+    EXPECT_EQ(snx._memoryPages[3][0], 0x03) << "the bank at #C000 goes to #7FFD's bank";
+    const uint8_t order[] = {0, 1, 4, 6, 7};  // the rest in ascending order
+    for (size_t i = 0; i < 5; i++)
+    {
+        EXPECT_TRUE(snx._memoryPagesUsed[order[i]]);
+        EXPECT_EQ(snx._memoryPages[order[i]][PAGE_SIZE - 1], 0x80 + i) << "bank " << int(order[i]);
+    }
+    EXPECT_EQ(snx.BuildImage().format, "snx");
+
+    LoaderSNACUT sna(_context, file, "memory");
+    EXPECT_FALSE(sna.validate()) << "an .sna has whole banks only";
+}
+
+/// An .snx with bank 5 or 2 at #C000 (~1 ms) has six banks after its header; fewer is a truncated file
+TEST_F(LoaderSNA_Test, snx128kWithBank5AtTheTopHasSixBanks)
+{
+    LoaderSNACUT six(_context, Make128kSnx(0x15, 6, 0), "memory");
+    six.SetSnx(true);
+    ASSERT_TRUE(six.validate());
+    EXPECT_EQ(six._extraBanks, 6u);
+    EXPECT_EQ(six.PrivateDataSize(), 0u);
+    ASSERT_TRUE(six.loadToStaging());
+    EXPECT_EQ(six._memoryPages[7][0], 0x85);
+
+    LoaderSNACUT truncated(_context, Make128kSnx(0x15, 5, 100), "memory");
+    truncated.SetSnx(true);
+    EXPECT_FALSE(truncated.validate());
+}
+
+/// A 48K .snx (~1 ms): exactly 49179 bytes, read as a 48K .sna; the extension makes it one
+TEST_F(LoaderSNA_Test, snx48kIsA48kSna)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("snx48k.snx");
+    ScopedTestFile cleanup(path);
+    std::vector<uint8_t> file(sizeof(snaHeader) + 3 * PAGE_SIZE, 0x11);
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(path, file.data(), file.size()));
+    LoaderSNACUT loader(_context, path);
+    EXPECT_TRUE(loader.IsSnx());
+    ASSERT_TRUE(loader.validate());
+    EXPECT_EQ(loader._snapshotMode, SNA_48);
+    EXPECT_EQ(loader.BuildImage().format, "snx");
+}

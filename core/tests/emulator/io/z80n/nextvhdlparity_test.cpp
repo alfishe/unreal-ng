@@ -189,10 +189,13 @@ TEST_F(NextVhdlParity_Test, N6Nr8eBankChangeClearsDffdBits31)
 
 // ---- N7 ----------------------------------------------------------------------------------------------------------------
 
-TEST_F(NextVhdlParity_Test, N7Nr04IsEightBitsAndReadsZeroNr0aMasksItsReadback)
+TEST_F(NextVhdlParity_Test, N7Nr04IsSevenBitsOrEightOnIssue5AndReadsZeroNr0aMasksItsReadback)
 {
     Nr(kRegConfigMapping, 0xC5);
-    EXPECT_EQ(Board().Stored(kRegConfigMapping), 0xC5) << "the Issue 5 board keeps all 8 bits";
+    EXPECT_EQ(Board().Stored(kRegConfigMapping), 0x45) << "Issues 2 and 4 keep 7 bits (gen_romram_234)";
+    Board().SetIssue(NextBoardIssue::Issue5);
+    Nr(kRegConfigMapping, 0xC5);
+    EXPECT_EQ(Board().Stored(kRegConfigMapping), 0xC5) << "the Issue 5 board keeps all 8 bits (gen_romram_5)";
     EXPECT_EQ(Board().Read(kRegConfigMapping), 0x00) << "no read case in zxnext.vhd";
     Mem().SetConfigMode(true);
     Nr(kRegPeripheral3, 0xFF);

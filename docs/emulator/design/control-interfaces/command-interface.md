@@ -1315,6 +1315,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
 | `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
+| `esxdos` | `esx` | OFF | ZX Spectrum Next esxDOS mode: on the bare machine (no `[NEXT] BootRom`) the emulator serves the esxDOS API itself (`RST $08` calls `$80` and up: files, directories, +3DOS headers, `DISK_FILEMAP` and the stream, the date from the RTC) against the FAT volume of SD card 0, so a program that uses it runs without NextZXOS. Off: `RST $08` runs the ROM as on the board. Design: [esxdos-and-sd.md](../../../inprogress/2026-10-07-zx-next/esxdos-and-sd.md) section 5a | None (one compare at `#0008`) |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
 **Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
@@ -1322,6 +1323,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | Feature | Held off while |
 | :--- | :--- |
 | `turbomode` | a recording is active |
+| `esxdos` | cannot change either way while the machine is bound to a TTD timeline or an RZX recording plays: it changes what `RST $08` does |
 | `contention` | cannot change either way while the machine is bound to a TTD timeline (recording, replay, positioned in history): the timeline replays only with the timing it was recorded with |
 | `fasttape`, `turbotape`, `fastdisk` | a recording is active, a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`) |
 
@@ -2227,7 +2229,7 @@ Inspect disk drive status, disk geometry, data contents, and current operations.
 | `disk write <drv> <cyl> <side> <sec> <hex> [--offset N]` | | `[A-D]` `cyl` `0-1` `ID>=1` `hex bytes` | A debugger's write into the sector's data field (the WebAPI `PUT /disk/{drive}/sector/...`): the bytes go in at `--offset` (default 0) as the WD1793 WRITE SECTOR puts them, the data CRC is recalculated, the image counts as modified, a TTD tool edit. Refused with the reason: empty drive, write-protected disk, missing track / sector, ID-only sector, past the data field. Example: `disk write A 0 0 9 4D594449534B --offset 245` renames a TR-DOS disk | ✅ |
 | `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
 | `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
-| `disk catalog [drv]` | `disk dir` | `[A-D]` | Show disk catalog (file list):<br/>• **TR-DOS**: name, type, length, start<br/>• **+3DOS**: CP/M directory<br/>• **ESXDOS**: FAT listing | ✅ WebAPI |
+| `disk catalog [drv]` | `disk dir` | `[A-D]` | Show the disk's files (unreal-disk DiskFs, the first file system):<br/>• **TR-DOS**: name, type, length, track / sector<br/>• **+3DOS, iS-DOS, FAT** (Sprinter DSS): path, size, start | ✅ WebAPI |
 
 ##### 6.5.3 Raw Data Access (Byte-Level)
 
@@ -4247,6 +4249,7 @@ by its manager's revision.
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
 | `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
+| `monitor game.events` | `[instance=]` | The game's events: the play profile's `events:` (and `haptics.sources`) as the haptic feed found them in live frames, with or without a haptic device ([breakpoint taps §7](../../../inprogress/2026-10-26-breakpoint-taps/README.md#7-game-events-the-profile-names-events-consumers-subscribe)): `available`, `profile`, `frame`, `seq`, `events` {`<name>`: {`kind` (`event` / `level`), `fires`, `last_frame`, `level`, `value` (the watched byte or word, else null)}}, `recent` [{`seq`, `frame`, `name`}] (the last 64 fired; a poller keeps the last `seq` it saw) | ✅ Implemented |
 
 `instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
 `Not Found` (404: no such name, no such instance).
@@ -4255,7 +4258,7 @@ by its manager's revision.
 | :--- | :--- | :--- | :--- |
 | CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
 | WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` (per instance); the same names as surface readouts |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`, `game.events` (per instance); the same names as surface readouts |
 | MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
 | Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
 | Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |
@@ -4463,7 +4466,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
 | `media save <slot> [path] [--compression ..]`, `media export <slot> <path> [--compression none\|default\|zlib,lzma,huff,flac,zstd] [--parent <base.chd>]`, `media discard <slot>` | keep or drop the writes; a `.chd` path writes a MAME CHD (hard disks, cards; `--parent` makes a delta CHD on a base image) |
 | `media rescan <slot>`, `media create <slot> [--size bytes]`, `media protect <slot> --on true\|false` | |
-| `media volumes <slot>`, `media files <slot> [dir] [--volume id] [--recursive]`, `media read <slot> <file> [--volume id] [--out path]` | the files of a floppy, hard disk or card, any file system: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS); volumes `trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`; read only ([disk-file-systems.md](../disk-file-systems.md)) |
+| `media volumes <slot>`, `media files <slot> [dir] [--volume id] [--recursive]`, `media read <slot> <file> [--volume id] [--out path]`, `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false]` | the files of a floppy, hard disk or card, any file system: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS); volumes `trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`; `write` onto TR-DOS and +3DOS floppies ([disk-file-systems.md](../disk-file-systems.md)) |
 | `--async`, `--json` | return at once; print the WebAPI body |
 
 The `disk` commands below keep working for drive-letter scripts.
@@ -4476,7 +4479,7 @@ The `disk` commands below keep working for drive-letter scripts.
 | `disk insert <drive> <file> [autostart]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
-| `disk catalog <drive>` | `<A\|B\|C\|D>` | List files on disk (TRDOS, CP/M format parsing). Any file system: `media files <drive>`. | 🔮 Planned |
+| `disk catalog <drive>` | `<A\|B\|C\|D>` | List the files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT) through DiskFs; every volume and directory: `media files <drive>`. | ✅ Implemented |
 | `disk protect <drive> <on\|off>` | `<A\|B\|C\|D> on\|off` | Toggle write protection. | 🔮 Planned |
 
 ### 5. Audio & Video Capture

@@ -7,6 +7,7 @@
 class MemoryAccessTracker;
 class HostBusOverlay;
 class Screen;
+struct BreakpointHotState;
 class Z80;
 class FeatureManager;
 class UlaContention;
@@ -172,6 +173,16 @@ protected:
 
     // A screen on the event rule (ScreenZX::CatchUpToStepStart): told before a CPU write into RAM page 5 or 7 lands
     Screen* _videoWatch = nullptr;
+
+    // The fast write's hooks (docs/inprogress/2026-10-26-breakpoint-taps §5): one byte, zero when none is on, so
+    // MemoryWriteFast tests one load. Kept by RefreshWriteHooks
+    static constexpr uint8_t kWriteHookVideo = 0x01;  // _videoWatch is set
+    static constexpr uint8_t kWriteHookTap = 0x02;    // write taps are armed: test _tapFilter's write bit
+    uint8_t _writeHooks = 0;
+    bool _writeTapDemand = false;
+    const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
+    void RefreshWriteHooks();
+    void MemoryWriteTapped(uint16_t addr);
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
@@ -436,7 +447,17 @@ public:
     /// Core::SelectMemoryInterface keeps this in step with the Z80's interface
     void SetBusOverlay(HostBusOverlay* overlay) { _busOverlay = overlay; }
     /// The screen that catches up before a write into the ZX screen pages (5 and 7); nullptr: none
-    void SetVideoWatch(Screen* screen) { _videoWatch = screen; }
+    void SetVideoWatch(Screen* screen)
+    {
+        _videoWatch = screen;
+        RefreshWriteHooks();
+    }
+    /// Write taps are armed (BreakpointManager::ApplyTapDemand): the fast write tests @p filter's write bit and tells
+    /// the breakpoint manager of a marked address. Emulation thread or CPU held
+    void SetWriteTapDemand(bool on, const BreakpointHotState* filter);
+    /// Whether MemoryWriteFast is this machine's write (the hook lives there); a model with its own write interface
+    /// answers false and its write taps take the debug path
+    virtual bool SupportsWriteTapHook() const { return true; }
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// endregion </Emulation memory interface methods>

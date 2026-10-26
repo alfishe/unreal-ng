@@ -477,6 +477,9 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
     // Debugger related - master switch for all features
     bool isDebugMode;
+    /// Exec breakpoints are checked at each instruction start without the debug mode while exec taps are armed
+    /// (BreakpointManager::ApplyTapDemand): the memory keeps the fast interface
+    bool execTapHold = false;
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 

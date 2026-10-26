@@ -187,7 +187,7 @@ void EmulatorAPI::getMediaFiles(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief POST /api/v1/emulator/{id}/media/{slot}/{verb}
 /// verb: insert, swap, eject, save, export, discard, rescan, create, protect, layers, changes, flatten, volumes,
-/// files, read.
+/// files, read, write (the bytes as base64 'data', a host file 'in', or an application/octet-stream body).
 /// insert / swap also take the file itself (multipart/form-data or a raw body
 /// with X-Filename), staged like the /disk upload and deleted on eject
 void EmulatorAPI::postMediaVerb(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -231,6 +231,14 @@ void EmulatorAPI::postMediaVerb(const HttpRequestPtr& req, std::function<void(co
         {
             request.path = content.path;
         }
+    }
+
+    // write: the file's bytes as the body itself (application/octet-stream), ?path=NAME.T
+    if (verb == "write" && req->contentType() == CT_APPLICATION_OCTET_STREAM && !request.options.count("data") &&
+        !request.options.count("in"))
+    {
+        const std::string_view body = req->body();
+        request.options["data"] = base64::Encode(std::vector<uint8_t>(body.begin(), body.end()));
     }
 
     RespondReply(callback, MediaControl(emulator->GetContext()).Execute(request));

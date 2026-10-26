@@ -47,7 +47,7 @@
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["tags"].append("Snapshot Control");
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["description"] =
-        "Save the machine's snapshot view to a file (.sna, .z80 or .szx, chosen by the extension). The emulator is stopped first "
+        "Save the machine's snapshot view to a file (.sna, .z80 or .szx, .nex on the Next, chosen by the extension). The emulator is stopped first "
         "and the call waits until it has parked (refused if it does not stop within a second). A snapshot holds what a "
         "Spectrum 128K program sees (RAM banks 0-7, #7FFD, CPU, AY): the Sprinter in a ZX mode gives its banks in Spectrum "
         "order and is named by the mode ('Pentagon 128' for P128.ZX, ...); TS-Conf and the ATMs give it while their memory "
@@ -62,7 +62,7 @@
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["path"]["description"] = "Path to save snapshot file (.sna, .z80, .szx)";
+         ["properties"]["path"]["description"] = "Path to save snapshot file (.sna, .z80, .szx; .nex on the Next)";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["force"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
@@ -81,7 +81,7 @@
         op["summary"] = "Which snapshot formats this machine can be saved in";
         op["tags"].append("Snapshot Control");
         op["description"] =
-            "Ask before saving: for each of sna, z80 and szx whether the machine can be saved in it right now, and when not "
+            "Ask before saving: for each of sna, z80 and szx (and nex on the Next) whether the machine can be saved in it right now, and when not "
             "why ('reason') and what would work ('needs': format:szx, format:z80, zx_mode, mode:128k, ...). 'machine' = what "
             "the file will say it was made on, 'view' = how the state is taken (the Sprinter's mode, the 128K window map). "
             "The answer follows the machine's current mode, so ask again after a mode change.";

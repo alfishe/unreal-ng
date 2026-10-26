@@ -303,6 +303,19 @@ layers:
 The `dpad.*` and `lstick` shorthands expand to the four directions. `kempston:dpad` expands to `up down left right`.
 A key with a dot or a star is a plain YAML key; a target with a colon is quoted.
 
+A game profile names the game's facts under `events:` (the sources of [haptics.md §5](haptics.md), the
+`game.events` monitor of [breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) and plays them under
+`haptics.rules`; `haptics.sources` stays accepted, both lists are one (a name in both is an error):
+
+```yaml
+events:
+  jump:  { probe: exec, address: "0x795A" }
+  lives: { probe: value, address: "0x767F" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+```
+
 ### 7.2 Play profile: a Next MD6 game, two pads
 
 ```yaml
@@ -411,6 +424,9 @@ again). When the index lies (a checkout changed the line ends, so the offsets mo
 index in memory once. The dialog writes user files in
 YAML; a comment a user put in such a file is not kept when the dialog rewrites it, and the file says so in its first
 line.
+
+Writing a new game profile step by step (finding the game's keys and haptic triggers, the header comment, the index,
+the tests): [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
 
 ### 7.6 Schemes: `extends`
 

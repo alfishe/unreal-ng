@@ -138,6 +138,11 @@ public:
     /// is told at once (IHapticFeed::OnHapticHold), not at the next live frame. The TTD controllers call it when they
     /// enter and leave replay mode, OnFrame when replay takes input or gives it back. Any thread
     void UpdateHapticHold();
+    /// The game's events as the haptic feed reports them (gameevents.h): the game.events monitor. Any thread
+    const GameEventLog& GameEvents() const
+    {
+        return _gameEvents;
+    }
     bool HapticHeld() const
     {
         return _hapticHeld.load(std::memory_order_acquire);
@@ -235,6 +240,8 @@ private:
     std::unique_ptr<HapticProbes> _hapticProbes;  ///< its breakpoint probes (emulator thread)
     std::atomic<bool> _hapticHeld{false};      ///< replay or seek: the feed was told (UpdateHapticHold)
     std::mutex _holdMutex;                     ///< UpdateHapticHold from the control thread and the frame boundary
+    GameEventLog _gameEvents;                  ///< what _hapticFed reports
+    bool _gameEventsOn = false;                ///< _hapticFed defined events (emulator thread)
     void FeedHaptics(uint64_t frame);
     void AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed);
     void DetachHapticFeed();

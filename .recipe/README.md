@@ -82,6 +82,7 @@ matches; it names the recipe(s) for that action.
 | Typing, key presses, key combos, macros, the host-keyboard gate | [input/keyboard.md](input/keyboard.md) | joystick, mouse |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | keyboard, joystick |
+| Making a game's controller vibrate on its events: finding the trigger code, writing and testing its profile | [input/game-haptics.md](input/game-haptics.md) (+ [code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md)) | keyboard, joystick, mouse |
 | Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
 | How a running program keeps its state: its buffers, pointers, flags and the code that changes them | [articles/program-state-reverse.md](articles/program-state-reverse.md) | trying keys and diffing screenshots |
 | Reverse-engineering a whole program into annotated sources that rebuild byte for byte (coverage, code/data split, naming, relocation proof, SkoolKit / zx-reaper interop) | [articles/game-reverse-pipeline.md](articles/game-reverse-pipeline.md) | reading the code to answer what a run can show |
@@ -162,6 +163,7 @@ call.
 |:--|:--|
 | [input/joystick.md](input/joystick.md) | Kempston joystick: press / release / set / tap / status on MCP, WebAPI, CLI, Lua and Python; which models decode `IN #1F`; the paused-machine queueing; reading the byte from a guest loop |
 | [input/mouse.md](input/mouse.md) | Mouse: move / press / release / click / buttons / wheel / counters / status on MCP, WebAPI, CLI, Lua and Python; which mouse each machine has (Kempston interface, ZX-Evo / TS-Conf AVR PS/2 mouse, Sprinter board mouse); host capture and the toolbar gate |
+| [input/game-haptics.md](input/game-haptics.md) | Game haptics: which probe kind to use and what it costs, finding the event code by per-frame coverage and a sound-request byte, proving it by play, the profile, the index, the tests (Dizzy X worked example) |
 
 ### `analysis/` — instrumenting the machine
 
