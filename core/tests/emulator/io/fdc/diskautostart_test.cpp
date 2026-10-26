@@ -19,6 +19,7 @@
 #include "debugger/ttd/timetravelcontroller.h"
 
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -265,6 +266,71 @@ TEST_F(DiskAutostart_Test, Plan_PerDiskContent)
 
     DiskImage blank(80, 2);
     EXPECT_EQ(autostart->MakePlan(blank).action, DiskAutostart::Action::MountOnly);
+}
+
+namespace
+{
+/// Track 0 of an iS-DOS disk as iS-DOS formats it: sectors 1, 2, 3, 4, 9 of 1024 bytes (four 256-byte blocks each),
+/// the descriptor in block 0, the root catalogue in block 4 and boot.sys at block 16, which is sector 9: the sector
+/// TR-DOS RUN loads, so its code takes over (ISDOS50.FDI, TASiS 5.40 and the other images of the iS-DOS collection)
+void FormatIsdosTrack0(DiskImage& image, bool chic)
+{
+    DiskImage::TrackFormatSpec spec = DiskImage::TrackFormatSpec::ibm(5, DiskImage::SectorSizeEnum::SECTOR_SIZE_1024);
+    spec.sectorNumbers = {1, 2, 3, 4, 9};
+    spec.dataFill = 0x00;  // ibm() fills with #E5: the high bytes of block numbers must be 0
+    image.getTrack(0)->formatTrack(0, 0, spec);
+
+    uint8_t* desc = image.getTrack(0)->findSector(1)->data;
+    std::memcpy(desc + (chic ? 13 : 10), "DSK", 3);
+    desc[20] = 4;  // root catalogue block
+    desc[24] = 4;  // blocks per sector
+    desc[25] = 5;  // sectors per track
+    const uint8_t sectorTable[5] = {0, 1, 2, 3, 8};
+    std::memcpy(desc + 64, sectorTable, sizeof(sectorTable));
+
+    uint8_t* bootSys = image.getTrack(0)->findSector(2)->data + 32;  // root catalogue entry 1
+    std::memcpy(bootSys, "boot    sys", 11);
+    bootSys[11] = 0x01;  // live
+    bootSys[17] = 16;    // first block
+    bootSys[19] = 0xFF;
+}
+}  // namespace
+
+/// Owner test 2026-10-25: iS-DOS / TASiS floppies (no TR-DOS catalogue) were "not TR-DOS formatted - mounted only",
+/// while TR-DOS starts them with RUN
+TEST_F(DiskAutostart_Test, Plan_IsdosBootDisk)
+{
+    DiskAutostart* autostart = _context->pDiskAutostart;
+    ASSERT_NE(autostart, nullptr);
+
+    for (bool chic : {true, false})
+    {
+        DiskImage image(80, 2);
+        FormatIsdosTrack0(image, chic);
+        const DiskAutostart::Plan plan = autostart->MakePlan(image);
+        EXPECT_EQ(plan.action, DiskAutostart::Action::Boot) << (chic ? "Chic" : "Classic");
+        EXPECT_EQ(plan.message, "Autostart: iS-DOS boot.sys");
+    }
+
+    auto variant = [&](auto&& damage) {
+        DiskImage image(80, 2);
+        FormatIsdosTrack0(image, true);
+        damage(image.getTrack(0)->findSector(1)->data, image.getTrack(0)->findSector(2)->data + 32);
+        return autostart->MakePlan(image).action;
+    };
+    EXPECT_EQ(variant([](uint8_t* desc, uint8_t*) { desc[13] = 'X'; }), DiskAutostart::Action::MountOnly);
+    EXPECT_EQ(variant([](uint8_t*, uint8_t* bootSys) { bootSys[0] = 'B'; }), DiskAutostart::Action::MountOnly);
+    EXPECT_EQ(variant([](uint8_t*, uint8_t* bootSys) { bootSys[11] = 0x00; }), DiskAutostart::Action::MountOnly);
+    EXPECT_EQ(variant([](uint8_t*, uint8_t* bootSys) { bootSys[17] = 17; }), DiskAutostart::Action::MountOnly);
+    // boot.sys at block 16, but block 16 is not sector 9: RUN would load something else
+    EXPECT_EQ(variant([](uint8_t* desc, uint8_t*) { desc[68] = 3; }), DiskAutostart::Action::MountOnly);
+
+    // Same sectors, but 256 bytes: not iS-DOS
+    DiskImage small(80, 2);
+    DiskImage::TrackFormatSpec spec = DiskImage::TrackFormatSpec::ibm(5, DiskImage::SectorSizeEnum::SECTOR_SIZE_256);
+    spec.sectorNumbers = {1, 2, 3, 4, 9};
+    small.getTrack(0)->formatTrack(0, 0, spec);
+    EXPECT_EQ(autostart->MakePlan(small).action, DiskAutostart::Action::MountOnly);
 }
 
 TEST_F(DiskAutostart_Test, Plan_UnsupportedMachine)

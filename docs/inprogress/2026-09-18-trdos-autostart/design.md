@@ -184,11 +184,14 @@ Non-deleted entries only; `boot` means the exact 8-byte name `"boot    "` with t
 
 | Disk | Action |
 |---|---|
+| iS-DOS / TASiS boot disk (no TR-DOS catalogue) | Boot it as is: TR-DOS reads sector 9 to find `boot`, the 1024-byte iS-DOS sector overruns its 256-byte buffer and the `boot.sys` loader takes over (added 2026-10-25) |
 | Not TR-DOS format | Mount only |
 | Has `boot.B` | Boot it as is |
 | No `B` files | Mount only (D2) |
 | Exactly one `B` file, no `boot` | Quick reset + direct entry, the one-shot hook turns the cold-start `RUN "boot"` into `RUN "<name>"` (§9.3); disk untouched. Fallback if the hook cannot be applied: tiny generated `boot.B` (§8.2) |
 | Several `B` files, no `boot` | Inject the bundled Unreal commander as `boot.B`, boot it (§8.3) (D3) |
+
+**iS-DOS boot disk** (`IsIsdosBootDisk`, `diskautostart.cpp`): track 0 holds sectors 1, 2, 3, 4, 9 of 1024 bytes; the descriptor in block 0 has `DSK` at +13 (Chic) or +10 (Classic), 4 blocks per sector (+24) and 5 sectors per track (+25); the root catalogue (block at +20) has a live `boot    sys` with first block 16 (+17), and the sector table at +64 maps block 16 to sector 9. All 88 iS-DOS / TASiS images of the collection match. Test: `DiskAutostart_Test.Plan_IsdosBootDisk`.
 
 "Boot it" always means the same thing: quick reset and direct entry into TR-DOS (§9.3). The direct entry (plus the one-shot name hook, or the injected boot file) is what makes TR-DOS run the right thing, so **no key typing is needed anywhere**.
 

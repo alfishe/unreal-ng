@@ -1116,11 +1116,21 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                         return;
                     }
 
-                    // Disk
+                    // Disk. An agent may see only the text: say whether the autostart ran and why not
+                    auto diskDone = [done](ToolResult result) {
+                        if (!result.isError && result.structured.isObject() && result.structured.isMember("autostarted"))
+                        {
+                            const std::string message = result.structured.get("autostart_message", "").asString();
+                            result.text += result.structured["autostarted"].asBool() ? "; autostarted" : "; not autostarted";
+                            if (!message.empty())
+                                result.text += " (" + message + ")";
+                        }
+                        done(std::move(result));
+                    };
                     if (isLocalFile)
                     {
                         ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
-                                       "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
+                                       "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, diskDone);
                     }
                     else
                     {
@@ -1131,7 +1141,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                             body["autostart"] = true;
                         }
                         ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
-                                    "Inserted disk " + path + " into drive " + drive + " of " + id, done);
+                                    "Inserted disk " + path + " into drive " + drive + " of " + id, diskDone);
                     }
                 };
                 if (!pausedFirst)
