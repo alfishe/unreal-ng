@@ -257,7 +257,7 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     /// endregion  </Ports logic>
 
     // Let debugger process step event
-    if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execProbeHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         uint16_t breakpointID = brk.HandlePCChange(pc);
@@ -401,7 +401,7 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
         return false;
 
     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
-    if (isDebugMode || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+    if (isDebugMode || execProbeHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
         return false;
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         return false;

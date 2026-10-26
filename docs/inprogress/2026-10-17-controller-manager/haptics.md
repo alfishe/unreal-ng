@@ -183,11 +183,19 @@ Built (2026-10-23):
   restore in the same frame fires. A frame-end watch never sees it.
 - **Port probes.** `port-in` / `port-out` take `port` and `port_mask`. `port-out` can also take `value` / `mask` on the
   written byte: `{probe: port-out, port: 0xFE, port_mask: 0x01, value: 2, mask: 7}` is a red border.
-- **Cost.**
-  - With nothing armed the feed costs the frame-end call only.
+- **Cost.** Measured in §12.
+  - With nothing armed the feed costs the frame-end call only: no probe, no debug mode, the fast memory interface.
+  - Frame-end watches (`value`, `frame`, a plain `write`) read their byte once a frame: nothing on the CPU.
   - Port probes use the port path's existing gate.
-  - Exec / read / write probes need the CPU's debug path. `FeatureManager::setProbeDebugHold` holds it on while they
-    are armed, and the memory's breakpoint cache follows it. The cost is measured in §12.
+  - Exec probes (2026-10-26) set `Z80::execProbeHold`: the instruction start checks the exec filter bit
+    (`BreakpointManager::HandlePCChange`, one load and one bit) as it does in the debug mode, and nothing else
+    changes. No debug mode, the memory stays on the fast interface; only the idle-step skip (`Z80::IdleStepsInert`)
+    is off while they are armed, so no instruction start is skipped.
+  - Read and write-each probes need the debug memory path. `FeatureManager::setProbeDebugHold` holds the debug mode
+    on while they are armed (with the CPU held, §8), and the memory's breakpoint cache follows it.
+  - How a frame's hits reach the feed: the breakpoint's hit calls `HapticProbes::OnProbeHit` on the emulation thread
+    (a counter per probe, the write's bytes); the frame end hands the counters to the feed (`TakeFrame`) and clears
+    them; the feed turns them into its rules' effects on the controllers' thread.
 - **A 16-bit value.** `value` takes `word: true`: the little-endian word at `address` and `address + 1` (two
   frame-end watches), scaled as a byte is (`value * scale / 255`), so a speed of 0 to 511 takes `scale: 0.5`.
 - **During replay.** The breakpoint manager skips memory and port breakpoints while `ttdReplayActive`, and
@@ -529,8 +537,23 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 | `Haptics_Fallback` | `trigger.right\|handle.high` plays on handle.high for a device without trigger motors |
 | `Haptics_NoCostWhenIdle` | no ring pushes when no device with actuators is bound |
 
-Benchmarks: probe overhead per `write` with 0, 1 and 16 probes armed; the A/B rule of the performance guidelines
-applies to the hooks on the memory and port paths.
+| `ExecProbesKeepTheFastMemoryPath` | an exec probe fires once a frame with no debug mode and the fast memory interface; detaching releases `Z80::execProbeHold` |
+| `DizzyXJumpsAndLandsOnce` | the real Dizzy X (testdata): its profile found by the file's hash, one jump fires `jump` and `land` in one frame each and nothing else |
+
+Benchmarks: `core/benchmarks/debugger/hapticprobe_frame_benchmark.cpp`, one frame per iteration (`RunFramePublic`),
+600 iterations, three interleaved rounds on an M-series Mac (release, LTO), the median:
+
+| Benchmark | Before (debug hold for exec) | Now (`execProbeHold`) |
+|:--|:--|:--|
+| `BM_HapticProbeFrame/0`: 48K in BASIC, the feed, no probe | 224 µs | 224 µs |
+| `BM_HapticProbeFrame/1` and `/16`: write-each probes on FRAMES | 310 µs (+38 %) | 306 µs (+38 %, unchanged: the debug memory path) |
+| `BM_HapticExecProbeFrame/1` and `/16`: exec probes from #0038 | 314 µs (+40 %) | 228 µs (+2 %, within noise) |
+| `BM_HapticProbeDizzy/-1`: Dizzy X on a Pentagon, no feed | 625 µs | 575-610 µs |
+| `BM_HapticProbeDizzy/4`: the profile's four exec probes | 720 µs (+13 %) | 566-595 µs (within noise) |
+
+A 20 ms frame keeps over 96 % of the core free in every case; the write-each cost is the debug memory path as a whole
+(every read and write through `ReadDebugEffects` / `WriteDebugEffects`), not the probe's filter bit. Open: a "probe"
+memory interface (the fast read, a write with the write filter bit only) would take it to the exec probes' level.
 
 ## 13. Phases and open points
 
@@ -542,12 +565,14 @@ applies to the hooks on the memory and port paths.
 | H4 | HD haptics (DualSense, Switch), adaptive triggers, AHAP patterns |
 | H5 | first built-in game profiles with haptics, chosen by signature (`core/swsignature`) |
 
-Built (2026-10-23, widened 2026-10-24), H5: game profiles in `data/controllers/profiles/games/pentagon/`, found by
-the SHA-256 of the disk image (no signature library yet) on a Pentagon with TR-DOS. Each file is a bundle: one
-document per address set, each listing the hashes of the releases that share it. Every address was checked by play
+Built (2026-10-23, widened 2026-10-24 and 2026-10-26 with Dizzy X), H5: game profiles in
+`data/controllers/profiles/games/pentagon/`, found by the SHA-256 of the image (no signature library yet) on a
+Pentagon with TR-DOS (Dizzy X: of the snapshot). Each file is a bundle: one document per address set, each listing the
+hashes of the releases that share it. Every address was checked by play
 through the WebAPI: an exec counter or breakpoint hit at the moment, and the game's state changed as expected. The
 surveys covered every release on disk: the collection in `/Volumes/TB4-4Tb/Data/zx-spectrum/software/games/haptics/`
-and the vtrd mirror. All of them are TR-DOS images: no tape image of the three games is on disk.
+and the vtrd mirror. All of them are TR-DOS images: no tape image of the first three games is on disk. How to find
+and prove a game's triggers: [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
 
 | Profile | Releases | Sources → effects |
 |:--|:--|:--|
@@ -559,12 +584,13 @@ and the vtrd mirror. All of them are TR-DOS images: no tape image of the three g
 | `builtin/game/chase-hq` | 16 part-1 releases, among them CHHQ+2_T (bugfix), the 48K beeper build CHASHQMK and CHHQ_FSS (boots on a Profi only, so the document lists PROFI too) | the speed word #A24A (0 to 511 with turbo) → `engine` on the low motor; exec #A4B1 (crash into the roadside) → `thump`; #A78A (the criminal's car hit) → `hit`; #889C (turbo start) → `explosion` at 0.6; #B076 (landing after a hill crest, effect id 2) → `knock`; #A437 (scraping a tunnel wall, id 6) → `rumble-strip` |
 | `builtin/game/chase-hq-gs` | CHASE_GS (General Sound version) | the speed, crash, hit and turbo above; its effect requests go to the GS |
 | `builtin/game/chase-hq-demo` | CHASEHQD (Sinclair User demo, variables #514 lower) | the speed word #9D36, #9F8E, #A1B0, #8327, as above; the pad drives its Sinclair joystick keys |
+| `builtin/game/dizzy-x` | `testdata/loaders/sna/Dizzy X.sna` (2026-10-26; Sinclair 6 7 8 9 0 only) | exec #795A (jump starts) → `tick` on the high motor; #7A97 (lands from a fall) → `knock` on the low motor; #847A (energy taken) → `hit`; #8B80 (life lost) → `life-lost`. The game requests a sound by writing its number to #767D: every writer is an event (the method: [game-haptics recipe](../../../.recipe/input/game-haptics.md)) |
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
 
 - Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
   once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.
-- The tests do not use the games (they are not in the repository). A test program on a Pentagon calls each address
+- The tests do not use the games (they are not in the repository; Dizzy X is, and `DizzyXJumpsAndLandsOnce` plays it). A test program on a Pentagon calls each address
   instead, at a RET stub (`GameHapticsGames_Test`, one row per address set, plus a release that only shares one).
 - Not used, because they were not confirmed by play:
   - Manic Miner: the title tune (#92F8; it plays once on entering the title, not wanted as haptics). Kong's fall ran in
@@ -572,6 +598,9 @@ Each profile also binds the pad: the game's keys on the d-pad, the left stick an
     JSW64-engine releases (ULT_M_M, JSWJBOND; death #8C01, jump #8F96 played) have no profile: their keys were not
     checked.
   - Exolon: the demo's pickups and enemy sounds.
+  - Dizzy X: the coin (#84AC, sound 3) and dropping an item (#8FBE, sound 2) were found by the code but not played (the
+    coin next to the start sits over water); the energy bar's sound (#8794) plays every third frame while the bar
+    moves; #9257 (sound 0 with a jump's speed) is not identified.
   - Chase H.Q.: effect id 5 (game over screens only), id 7 (requested every frame while accelerating), id 8 (the
     hidden test mode only). CHASE.SCL boots on no model.
 - Most non-bugfix Exolon builds kill Vitorc again and again near a zone's start (the bug the 2024 fix clamps at

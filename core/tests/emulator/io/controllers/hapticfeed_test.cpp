@@ -243,6 +243,29 @@ TEST_F(HapticFeed_Test, ExecProbesFireOnTheInstructionStartOnly)
     EXPECT_EQ(frame.probeHits[2], 0u) << "the operand's high byte";
 }
 
+TEST_F(HapticFeed_Test, ExecProbesKeepTheFastMemoryPath)
+{
+    // Exec probes need the instruction start's check only (Z80::execProbeHold): no debug mode, the fast memory
+    // interface stays, and the probe still sees its instruction once a frame
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->probes.resize(1);
+    feed->probes[0].kind = HapticProbeKind::Exec;
+    feed->probes[0].address = feed->probes[0].end = kAfterHalt;
+    _manager->SetHapticFeed(feed);
+    Z80* z80 = _context->pCore->GetZ80();
+    _emulator->RunNFrames(3, false);
+    EXPECT_TRUE(z80->execProbeHold);
+    EXPECT_FALSE(z80->isDebugMode);
+    EXPECT_FALSE(_emulator->GetFeatureManager()->debugModeInEffect()) << "an exec probe holds no debug path";
+    EXPECT_TRUE(z80->MemIf == z80->FastMemIf || z80->MemIf == z80->FastContendedMemIf) << "the fast memory interface";
+    ASSERT_FALSE(feed->frames.empty());
+    EXPECT_EQ(feed->frames.back().probeHits[0], 1u) << "exec: once a frame";
+
+    _manager->SetHapticFeed(nullptr);
+    _emulator->RunNFrames(1, false);
+    EXPECT_FALSE(z80->execProbeHold) << "detached: released";
+}
+
 TEST_F(HapticFeed_Test, ProbeDebugHoldSwitchesWithTheCpuHeld)
 {
     // Arming the probes from another thread (the GUI, a WebAPI request) switches the CPU's debug flag, the memory
