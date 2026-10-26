@@ -196,9 +196,10 @@ std::string ReviewSheet(const Finding& f, const ReviewItem& item, const L1Result
     for (size_t i = 0; i < f.evidence.size() && i < 4; ++i)
         sheet += "  - " + Clip(f.evidence[i], 110) + "\n";
 
-    // The bytes at the start (the start's image)
-    std::string bytes;
-    const uint32_t count = std::min<uint32_t>(16, static_cast<uint32_t>(f.end - f.start) + 1u);
+    // The bytes at the start (the start's image), as text too when most of them print (a 32-character name)
+    std::string bytes, text;
+    uint32_t printable = 0;
+    const uint32_t count = std::min<uint32_t>(32, static_cast<uint32_t>(f.end - f.start) + 1u);
     for (uint32_t i = 0; i < count; ++i)
     {
         uint8_t v = 0;
@@ -207,9 +208,14 @@ std::string ReviewSheet(const Finding& f, const ReviewItem& item, const L1Result
         char hex[4];
         std::snprintf(hex, sizeof(hex), "%02X", v);
         bytes += (bytes.empty() ? "" : " ") + std::string(hex);
+        const bool prints = v >= 0x20 && v < 0x7F;
+        printable += prints ? 1u : 0u;
+        text += prints ? static_cast<char>(v) : '.';
     }
     if (!bytes.empty())
         sheet += "bytes " + Hex4(f.start) + ": " + bytes + "\n";
+    if (!text.empty() && printable * 4 >= text.size() * 3)
+        sheet += "text  \"" + text + "\"\n";
 
     // The code: a routine's L1 sheet, or a few instructions at the start (or at the instruction a bug names)
     if (f.kind == FindingKind::Routine && tools.routineSheet)

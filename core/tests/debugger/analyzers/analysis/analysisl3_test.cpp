@@ -267,6 +267,27 @@ TEST_F(AnalysisL3_Test, ReviewQueueSelectsDecisionsCapsAndDropsResolved)
     EXPECT_EQ(after.resolved, queue.resolved + 1);
 }
 
+TEST_F(AnalysisL3_Test, ReviewSheetShowsPrintableBytesAsText)
+{
+    const Built& b = Fixture("print-font.asm");
+    Finding f;
+    f.id = "F1";
+    f.kind = FindingKind::Unknown;
+    f.start = b.symbols.at("plain");
+    f.end = static_cast<uint16_t>(f.start + 4);
+    ReviewItem item;
+    item.id = f.id;
+    item.reason = "unknown";
+    ReviewTools tools;
+    tools.disassemble = [](const uint8_t*, uint16_t) { return std::string("nop"); };
+    const std::string sheet = ReviewSheet(f, item, b.l1, b.l2, tools);
+    EXPECT_NE(sheet.find("text  \"HELLO\""), std::string::npos) << sheet;
+    // Code is not text
+    f.start = b.symbols.at("glyph");
+    f.end = static_cast<uint16_t>(f.start + 7);
+    EXPECT_EQ(ReviewSheet(f, item, b.l1, b.l2, tools).find("text  \""), std::string::npos);
+}
+
 TEST_F(AnalysisL3_Test, ExperimentObservedAndRefuted)
 {
     const Built& b = Fixture("poke-flip.asm");
@@ -751,12 +772,26 @@ TEST_F(AnalysisL3_Test, ReviewEntryCandidatesAndKindChangesReachTheDraft)
     const Reply both = Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"verdict", "ok"}, {"kind", "text"}});
     EXPECT_EQ(both.error, Error::BadRequest) << "ok confirms the claim's kind, a kind replaces it";
     EXPECT_NE(both.message.find("verdict wrong with the kind"), std::string::npos) << both.message;
-    ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "text"}}).Ok());
+    ASSERT_TRUE(
+        Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "text"}, {"label", "Counter"}}).Ok());
     EXPECT_NE(ctl().find("\nt " + n), std::string::npos) << ctl();
     const Reply retyped = Execute(emulator, "findings", {{"kind", "claim"}, {"range", n.substr(1) + "-" + n.substr(1)}});
     for (const StateNode& f : Member(retyped.body, "findings").items)
         if (Member(f, "id").s == nId)
             EXPECT_EQ(Member(f, "status").s, "refuted") << "a kind alone decides the claim: it is not what it said";
+    // The naming batch of n: the label the finding gave is kept, not skipped
+    std::string nBatch;
+    const Reply names = Execute(emulator, "review", {{"op", "list"}, {"reason", "name"}, {"limit", "1000"}});
+    for (const StateNode& item : Member(names.body, "items").items)
+        for (const StateNode& s : Member(item, "subjects").items)
+            if (Member(s, "at").s == n)
+                nBatch = Member(item, "id").s;
+    ASSERT_FALSE(nBatch.empty()) << names.text;
+    const Reply batch = Execute(emulator, "review", {{"op", "resolve"}, {"id", nBatch}, {"verdict", "skip"}});
+    ASSERT_TRUE(batch.Ok()) << batch.message;
+    EXPECT_NE(batch.text.find("kept: " + n + " Counter"), std::string::npos) << batch.text;
+    for (const StateNode& at : Member(batch.body, "skippedAt").items)
+        EXPECT_NE(at.s, n) << batch.text;
 
     // Paging: offset 1 shows the second item of the same queue
     const Reply all = Execute(emulator, "review", {{"op", "list"}, {"limit", "1000"}});

@@ -436,9 +436,14 @@ Reply ResolveNames(const std::string& id, const NamingBatch& batch, const Option
     for (const NamingSubject& s : batch.subjects)
         if (std::none_of(names.begin(), names.end(), [&](const GivenName& n) { return n.z80 == s.z80; }))
         {
-            // A subject named by an earlier resolve of the batch keeps that name
+            // A subject named by an earlier resolve, of the batch or of a finding there, keeps that name
+            const auto labelled = std::find_if(findings.begin(), findings.end(), [&](const Finding& f) {
+                return f.start == s.z80 && !f.label.empty();
+            });
             if (const auto earlier = given.find(s.z80); earlier != given.end())
                 kept.push_back(earlier->second);
+            else if (labelled != findings.end())
+                kept.push_back(GivenName{s.z80, labelled->label, labelled->title});
             else
                 skipped.push_back(s.z80);
         }

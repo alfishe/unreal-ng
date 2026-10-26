@@ -80,8 +80,8 @@ returned it: both still need a decision, so filter on "not resolved", not on `qu
 analysis {"action":"review"}                         # op next: the next open item and its fact sheet
 ```
 
-The sheet: the finding, its evidence, the first 16 bytes, a 4-line disassembly or the routine's L1 fact sheet, and
-the resolve line to copy. Decide and resolve:
+The sheet: the finding, its evidence, the first 32 bytes (as `text` too when most of them print), a 4-line
+disassembly or the routine's L1 fact sheet, and the resolve line to copy. Decide and resolve:
 
 ```text
 analysis {"action":"review","op":"resolve","id":"F57","verdict":"ok","label":"DrawSprite",
@@ -91,10 +91,10 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
 ```
 
 - `verdict`: `ok` (the finding is confirmed), `wrong` (refuted), `skip` (out of the queue, undecided).
-- `label`: an identifier (letters, digits, `_`; not a digit first; at most 32 characters), unique in the draft; it
-  names the entry starting at the finding (or the point inside an entry). `title` replaces the entry title; `comment`
-  goes first in the entry description. A resolve without a verdict, label, title, comment, kind or experiment is
-  refused.
+- `label`: an identifier (letters, digits, `_`; not a digit first; at most 32 characters), unique in the draft (a
+  pattern repeated per level gets one name each: `CavernName1`, `CavernName2`); it names the entry starting at the
+  finding (or the point inside an entry). `title` replaces the entry title; `comment` goes first in the entry
+  description. A resolve without a verdict, label, title, comment, kind or experiment is refused.
 - `kind`: when the claim's kind is wrong, say what the range is: `code`, `data`, `text`, `font`, `sprite`, `tile`,
   `screen`, `variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`. The export
   makes the range one entry of that kind (code decoded from the start image) and drops the old claim's geometry and
@@ -103,20 +103,22 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
 
   ```text
   analysis {"action":"review","op":"resolve","id":"F88","verdict":"wrong","kind":"text","label":"CavernName"}
+  analysis {"action":"review","op":"resolve","id":"F90","verdict":"ok","kind":"music","label":"InGameTune"}   # unknown
   ```
 - Per reason:
   - `unnamed-hot`: read the routine sheet (inputs, outputs, loops, callers). Give a label and a title.
   - `conflict`: the sheet names both claims. `wrong` on the one that is not right (resolve each id).
   - `low-confidence`: `ok` when the sheet shows the kind, else `wrong` plus a comment with what it is.
   - `unknown`: `explain` the first byte; if it is graphics, `gallery` with the address; then a comment
-    (`"leftover source text"`, `"unused buffer"`), or skip.
+    (`"leftover source text"`, `"unused buffer"`), or skip with a `comment` saying what is missing.
   - `bug`: decide whether the game really does it. A quick experiment usually answers (next section).
   - `entry`: the sheet shows the jump sites and the code there (marked `not executed` when the replay never ran it).
     `ok` when it is a routine of its own (the draft splits the entry there; give a `label`), `wrong` when it is a
     part of the routine before it.
   - `name`: one item, up to 10 draft labels of one class (code or data) with a few facts each (callers, callees, the
     data a routine uses, a 4-line head; reads, writes, values, users and the first bytes of data). Name them all in
-    one call (every subject: see the rules above); the ones you leave out are skipped (the reply lists them):
+    one call (every subject: see the rules above); the ones you leave out are skipped (the reply lists them), except a
+    subject you labelled before through its finding or an earlier resolve: it keeps that label (the reply's `kept:`):
 
     ```text
     analysis {"action":"review","op":"show","id":"N3"}

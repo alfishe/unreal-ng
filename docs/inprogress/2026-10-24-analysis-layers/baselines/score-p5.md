@@ -298,3 +298,32 @@ Fixed after C5: an L2 variable inside data scores as a data entry, the cap is 48
 that starts inside an entry no longer seems to overlap the one before). Replaying C5's queue decisions on the fixed
 build: 43 batches, the variables in N7-N9, `name_capped` 0. Recipe: give an experiment `finding` only when it tests
 that claim (a failed check refutes it); do not rerun `cover` when it already ran.
+
+## Run C6: variables over the cap (2026-10-26)
+
+The C5 fixes in (variables score as data entries, the cap 48, the batch head line), a fresh session and a fresh
+sonnet agent: 159 queue items resolved (43 naming batches), no experiment, 164,845 tokens, 36 tool calls, 12.1 min.
+
+| Measure | Run C6 | Run C5 | Run C4 | Run B |
+| --- | ---: | ---: | ---: | ---: |
+| gate: make, make test, shift +$100 / +$101 | pass | pass | pass | pass |
+| byte categories (by entry) | 98.03 % | 98.03 % | 98.03 % | 92.3 % |
+| code entries | **33 / 33** | 32 / 33 | 33 / 33 | 33 / 33 |
+| graphics covered / right geometry | 106 / 106 | 106 / 106 | 106 / 104 | 106 / n/a |
+| records | **5 / 5** | 5 / 5 | 4 / 5 | 5 / 5 |
+| names: exact + normalized | 37 / 142 | 26 / 142 | 37 / 142 | 50 / 142 |
+| names: + a blind judge (sonnet, mixed with B, 156 pairs) | **120 / 142 (84.5 %)** | n/a | 99 / 142 | 108 / 142 (76.1 %) |
+| names left generated / missing | 5 / 5 | 26 / 5 | 11 / 5 | 0 / 31 |
+| subagent tokens | 164,845 | 154,780 | 153,140 | 2,034,851 |
+
+The judge agreed with the first one on 58 of run B's 61 pairs (B stays 108). It was lenient on a few C6 pairs
+(WILLYATTRS / DrawWilly, SBMSB / DrawTileRow, MOVEWILLY2 / CheckFatalFallAndReadKeys and about three more) and strict
+on one ($DC00, the right cavern layout): read strictly, C6 is about 114 / 142, above B either way. Of the 5
+generated names, 3 have no reference name ($841B, $845E untouched; the reference names $934C only). `run_ab`'s
+verdict stays "fail" on its deterministic names alone (37 < 50); every other measure is at or above run B at 8 % of
+its tokens.
+
+Fixed after C6 (the agent's notes): a naming batch reports a subject labelled through its finding as kept, not
+skipped; the review sheet shows 32 bytes and a `text` line when most of them print (the cavern names are 32
+characters); recipe: an `ok` + `kind` + `label` example for `unknown`, one label per address (a pattern repeated
+per level gets one name each), a skip carries a comment.

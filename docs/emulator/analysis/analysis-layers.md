@@ -347,14 +347,14 @@ but may give the findings other ids.
 | 6 | `name` | a naming batch: up to 10 draft labels named after their address ([naming batches](#naming-batches)) |
 
 In each priority by address. A decided finding (a verdict, label, title, comment or kind) leaves the queue. At most
-40 items (`limit`) from `offset` (0); the rest is one summary line by reason. `reason` shows one reason only (the
-counts by reason stay those of the whole queue). `review next` gives the next open item and its fact sheet (at most
-1 KB: the finding, its evidence, 16 bytes, a 4-line disassembly or the routine's L1 fact sheet, the resolve line; code
-the replay never ran is decoded from the start image and marked `not executed`). `review resolve` takes `verdict`
-(`ok`: confirmed, `wrong`: refuted, `skip`: out of the queue), `label` (an identifier, unique), `title`, `comment`,
-`kind` (what the draft makes of the finding's range: `code`, `data`, `text`, `font`, `sprite`, `tile`, `screen`,
-`variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`), and optionally an
-`experiment` (a spec as for `analysis experiment`) whose result is recorded on the finding:
+40 items (`limit`) from `offset` (0); the rest is one summary line by reason. `reason` shows one reason only (the counts
+by reason stay those of the whole queue). `review next` gives the next open item and its fact sheet (at most 1 KB: the
+finding, its evidence, 32 bytes (as text too when most print), a 4-line disassembly or the routine's L1 fact sheet, the
+resolve line; code the replay never ran is decoded from the start image and marked `not executed`). `review resolve`
+takes `verdict` (`ok`: confirmed, `wrong`: refuted, `skip`: out of the queue), `label` (an identifier, unique), `title`,
+`comment`, `kind` (what the draft makes of the finding's range: `code`, `data`, `text`, `font`, `sprite`, `tile`,
+`screen`, `variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`), and optionally
+an `experiment` (a spec as for `analysis experiment`) whose result is recorded on the finding:
 
 ```text
 analysis review op=resolve id=F12 experiment='{"poke": {"$8100": 5}, "frames": 50, "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}}'
