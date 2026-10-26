@@ -17,7 +17,9 @@ side files). Measures, over the program range [start, end):
      reference geometry comes from the section's own image macros (#UDG,
      #UDGARRAY, #SCR, #FONT, after expanding the game's #DEF macros from the
      .ref next to the reference skool or --ref), or from the expected file's
-     `graphics` list when it names the section;
+     `graphics` list when it names the section. A section whose picture reads
+     only from outside it (an entity definition drawn with the sprite it
+     names) shows graphics stored elsewhere and is skipped;
   4. record field lists against the checked-in expected list (--expected), when
      the draft provides fields (--fields, the future export's format); "n/a"
      otherwise.
@@ -42,7 +44,10 @@ CATEGORIES = ['code', 'data', 'text', 'unused', 'unknown']
 CATEGORIES_VARS = ['code', 'data', 'vars', 'text', 'unused', 'unknown']
 ASM_BLOCKS = ('isub', 'ssub', 'rsub', 'ofix', 'bfix', 'rfix')
 # SkoolKit image macros: a section whose comment holds one of these shows graphics
-GRAPHIC_MACROS = re.compile(r'#(UDGARRAY|UDG|FONT|SCR|SPRITE|CAVERN|TILES|PORTAL|ITEM|FRAMES)(?![A-Za-z])')
+GRAPHIC_MACROS = re.compile(r'#(UDGARRAY|UDG|FONT|SCR|SPRITE|CAVERN|ROOM|GUARDIAN|TILES|PORTAL|ITEM|FRAMES)'
+                            r'(?![A-Za-z])')
+# Map kinds: width and height in cells, frames not compared
+MAP_KINDS = ('map', 'attribute_map', 'level_map')
 ADDR = r'(\$[0-9A-Fa-f]+|0x[0-9A-Fa-f]+|\d+)'
 SKOOL_INSTR = re.compile(r'^([bcgistuw *!|>])' + ADDR + r'(?:\s+(.*))?$')
 CTL_ENTRY = re.compile(r'^([bcgistuw])\s+' + ADDR + r'(?:\s+(.*))?$')
@@ -641,12 +646,50 @@ def image_macros(text):
     return images
 
 
+def image_reads(text):
+    """The address ranges [(first, last)] the image macros of an expanded comment read; None when one of them
+    is not a plain number (#PEEK, #SCR, #FONT, a frame the game's own code builds)."""
+    reads = []
+    for m in re.finditer(r'#(UDGARRAY|UDG|SCR|FONT)(?![A-Za-z])', text):
+        name = m.group(1)
+        params, j = macro_params(text, m.end())
+        if name == 'UDG':
+            first = eval_int(params[0]) if params else None
+            if first is None:
+                return None
+            reads.append((first, first + 7))
+            continue
+        if name != 'UDGARRAY' or j >= len(text) or text[j] != '(':
+            return None
+        e = balanced(text, j)
+        if e is None:
+            return None
+        for item in split_top(text[j + 1:e - 1], ';'):
+            item = split_top(split_top(item, ':')[0], ',')[0].strip()
+            item = re.sub(r'x\d+$', '', item)
+            parts = [eval_int(p) for p in split_top(item, '-')[:2]] if item else [None]
+            if None in parts:
+                return None
+            reads.append((parts[0], max(parts) + 7))
+    return reads
+
+
+def shows_graphics_elsewhere(text, start, end, defs):
+    """True when every image in the section's (first table) picture reads from outside [start, end): the
+    section only shows graphics stored elsewhere (a definition drawn with the sprite it names), it holds none."""
+    expanded = expand_macros(text, defs)
+    first_table = re.search(r'#UDGTABLE(.*?)TABLE#', expanded, re.S)
+    reads = image_reads(first_table.group(1) if first_table else expanded)
+    return bool(reads) and all(last < start or first >= end for first, last in reads)
+
+
 def section_geometry(text, size, defs):
     """The reference geometry of one graphics section: {"kind", "width", "height", "frames"} or None.
 
     One kind of image repeated n times: n frames of its width x height (pixels). #SCR parts stacked
     vertically are one picture. A composite picture (#OVER / #COPY onto a background #UDGARRAY of w cells)
-    is a map of one byte per cell: w x size / w cells. Only the first image table counts when there is one."""
+    is a map of one byte per cell: w x size / w cells; one #COPY-ing a frame with no such background (built by
+    the game's own Python macro) has no macro geometry. Only the first image table counts when there is one."""
     expanded = expand_macros(text, defs)
     # The first image table describes the data; later ones are extra views (unused patterns revealed in
     # another colour, a cavern drawn with its guardians).
@@ -661,6 +704,8 @@ def section_geometry(text, size, defs):
         if cells:
             w = cells[0][3]['cells']
             return {'kind': 'map', 'width': w, 'height': size // w, 'frames': 1}
+        if re.search(r'#COPY\(', expanded):
+            return None     # copies a frame the game's own code builds (a room picture): not measurable
     first = images[0]
     if first[0] == 'SCR':
         scr = [x for x in images if x[0] == 'SCR']
@@ -759,18 +804,22 @@ def geometry_lookup(geometry, start, end):
 
 def geometry_matches(draft_g, ref_g):
     """Width, height and frames equal (a map: width and height in cells)."""
-    keys = ['width', 'height'] if ref_g.get('kind') in ('map', 'attribute_map') else ['width', 'height', 'frames']
+    keys = ['width', 'height'] if ref_g.get('kind') in MAP_KINDS else ['width', 'height', 'frames']
     return all(draft_g.get(k) == ref_g[k] for k in keys if k in ref_g)
 
 
 def graphics_scores(draft, ref, lo, hi, geometry, expected_geometry, defs=None):
     regions = []
+    views = 0
     for start, end, macro in sorted(ref.graphic_claims):
         if not (lo <= start < hi):
             continue
         end = min(end, hi)
         size = end - start
         if size <= 0:
+            continue
+        if shows_graphics_elsewhere(ref.graphic_text.get(start, ''), start, end, defs):
+            views += 1
             continue
         data = sum(1 for a in range(start, end) if draft.entry_cat.get(a) == 'data')
         line_data = sum(1 for a in range(start, end) if draft.line_cat.get(a) == 'data')
@@ -806,6 +855,7 @@ def graphics_scores(draft, ref, lo, hi, geometry, expected_geometry, defs=None):
     return {
         'regions': regions,
         'total': len(regions),
+        'views_skipped': views,     # sections that only show graphics stored elsewhere
         'covered': covered,
         'partial': sum(1 for r in regions if r['status'] == 'partial'),
         'missed': sum(1 for r in regions if r['status'] == 'missed'),
@@ -1094,6 +1144,8 @@ def report_text(rep, out, verbose=False):
                   ('%d of %d right (%s %%; %d stated by the draft)' % (
                       g['geometry_match'], g['geometry_known'], g['geometry_match_pct'], g['geometry_checked']))
                   if g['geometry_checked'] else g['geometry_source']))
+    if g.get('views_skipped'):
+        out.write('Skipped %d sections that only show graphics stored elsewhere.\n\n' % g['views_skipped'])
     groups = {}
     for r in g['regions']:
         x = groups.setdefault(r['macro'], {'n': 0, 'covered': 0, 'partial': 0, 'missed': 0, 'boundary': 0,

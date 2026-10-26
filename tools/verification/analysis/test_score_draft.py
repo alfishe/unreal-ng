@@ -125,8 +125,25 @@ class ExpectedFileTest(unittest.TestCase):
                     pos += f['size']
                 self.assertEqual(pos, rec['size'], rec['name'])
 
+    def test_jet_set_willy_fields_stay_inside_each_record(self):
+        exp = sd.load_json(os.path.join(HERE, 'expected', 'jet-set-willy-records.json'))
+        self.assertEqual([r['name'] for r in exp['records']],
+                         ['room_buffer', 'conveyor', 'ramp', 'room_exits', 'entity_specs', 'entity_buffer',
+                          'items', 'willy_state', 'writetyper'])
+        for rec in exp['records']:
+            for layout in rec['layouts']:
+                pos = 0
+                for f in layout['fields']:
+                    self.assertGreaterEqual(f['offset'], pos, (rec['name'], f))   # sorted, no overlap
+                    pos = f['offset'] + f['size']
+                # tiles the record exactly, or ends at the layout's stated span (the rope, the item table)
+                self.assertEqual(pos, layout.get('span', rec['size']), (rec['name'], layout['name']))
+                if 'span' not in layout:
+                    self.assertEqual(sum(f['size'] for f in layout['fields']), rec['size'], rec['name'])
+
 
 MM_SKOOL = '/Volumes/TB4-4Tb/Projects/emulators/github/skoolkid-manicminer/sources/mm.skool'
+JSW_SKOOL = '/Volumes/TB4-4Tb/Projects/emulators/github/skoolkid-jetsetwilly/sources/jsw.skool'
 
 
 class MacroGeometryTest(unittest.TestCase):
@@ -173,6 +190,45 @@ class MacroGeometryTest(unittest.TestCase):
             self.assertIsNotNone(got, g['start'])
             self.assertEqual((got['width'], got['height'], got['frames']),
                              (g['width'], g['height'], g['frames']), g['start'])
+
+    def test_picture_of_graphics_stored_elsewhere_is_no_region(self):
+        defs = sd.parse_defs('#DEF(#GUARD(page,index)\n  #LET(a=$page*256+$index*32)\n'
+                             '  #UDGARRAY(2,7,,2)(({a})-({a}+17)-1-16)(g*)\n)\n')
+        page = '#UDGTABLE { #GUARD171,0 | #GUARD171,1 } TABLE#'
+        self.assertEqual(sd.image_reads(sd.expand_macros(page, defs)), [(43776, 43800), (43808, 43832)])
+        # the sprite page holds the data; an 8-byte definition elsewhere only draws it
+        self.assertFalse(sd.shows_graphics_elsewhere(page, 43776, 43840, defs))
+        self.assertTrue(sd.shows_graphics_elsewhere(page, 40976, 40984, defs))
+        # unknown reads (#PEEK, a frame the game's own code builds) keep the region
+        self.assertIsNone(sd.image_reads('#UDG(#PEEK(30000))'))
+        self.assertFalse(sd.shows_graphics_elsewhere('#UDGTABLE { #ROOM0(r) } TABLE#', 49152, 49280, defs))
+        self.assertIsNone(sd.section_geometry('#RFRAME(0) #COPY(0,0,32,17,2)(0,room) #UDG(49377)(*item) '
+                                              '#OVER(1,2)(room,item)', 128, {}))
+        self.assertTrue(sd.GRAPHIC_MACROS.search('{ #ROOM12(tree_top) }'))
+        self.assertTrue(sd.GRAPHIC_MACROS.search('{ #GUARDIAN171,0,5 }'))
+
+    def test_level_map_matches_on_cells(self):
+        ref = {'kind': 'level_map', 'width': 32, 'height': 16, 'frames': 1}
+        self.assertTrue(sd.geometry_matches({'width': 32, 'height': 16, 'frames': 2}, ref))
+        self.assertFalse(sd.geometry_matches({'width': 32, 'height': 4, 'frames': 1}, ref))
+
+    @unittest.skipUnless(os.path.exists(JSW_SKOOL), 'skoolkid Jet Set Willy sources not present')
+    def test_jet_set_willy_regions_and_geometry(self):
+        expected = os.path.join(HERE, 'expected', 'jet-set-willy-records.json')
+        exp = sd.load_json(expected)
+        rep = sd.score(JSW_SKOOL, JSW_SKOOL, expected_path=expected)
+        g = rep['graphics']
+        self.assertEqual((g['total'], g['covered'], g['views_skipped']), (224, 224, 106))
+        self.assertEqual([r['start'] for r in g['regions']], [x['start'] for x in exp['graphics']])
+        for r, x in zip(g['regions'], exp['graphics']):
+            self.assertEqual(sd.addr_of(r['end']) + 1, sd.addr_of(x['end']), x['start'])
+            if x['kind'] == 'level_map':
+                # the room picture is a frame the game's Python macro builds: no macro geometry
+                self.assertNotIn('macro_geometry', r, x['start'])
+                continue
+            m = r['macro_geometry']
+            self.assertEqual((m['width'], m['height'], m['frames']), (x['width'], x['height'], x['frames']),
+                             x['start'])
 
     def test_macro_geometry_mode_scores_without_expected(self):
         rep = sd.score(path('draft.ctl'), path('ref.skool'), geometry_path=path('geometry.json'), ref_files=[])

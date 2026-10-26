@@ -13,7 +13,7 @@ Compares a draft (SkoolKit `.ctl` or `.skool`, hex or decimal addresses) with a 
 | --- | --- |
 | byte categories | code / data (`b`, `w`, `g`, `s`) / text (`t`) / unused (`u`) / unknown (`i`, no entry), per byte, once by entry type and once by line (skool `DEFB`/`DEFM` lines, ctl sub-blocks); agreement % and a confusion table |
 | code entries | reference `c` entries the draft starts exactly; misses and draft-only starts |
-| graphics regions | reference sections (entry or mid-block comment) with an image macro (`#UDGARRAY`, `#SPRITE`, `#SCR`, `#FONT`, the game's own `#CAVERN` / `#TILES` / ...): covered by draft data bytes, starting at a draft boundary, and with the right geometry when the draft states one (`--geometry`) |
+| graphics regions | reference sections (entry or mid-block comment) with an image macro (`#UDGARRAY`, `#SPRITE`, `#SCR`, `#FONT`, the game's own `#CAVERN` / `#ROOM` / `#GUARDIAN` / `#TILES` / ...): covered by draft data bytes, starting at a draft boundary, and with the right geometry when the draft states one (`--geometry`) |
 | record field lists | the draft's fields (`--fields`) against a checked-in expected list (`--expected`); "n/a" when the draft gives none |
 | names | each reference entry and `@label` in the range against the draft's label at the same address: `exact` (case and `_` aside), `normalized` (every meaningful word of the draft's label, CamelCase / `_` split, stemmed, synonyms of `name_vocabulary.json`, is in the reference label or title), `judge` (named, no deterministic match), `auto` (a generated `sub_8ABB` / `L8029` / `var_8068`), `missing`; "the same" = exact + normalized (+ judge rows marked same / close with `--names-judged`) |
 
@@ -44,11 +44,23 @@ The reference geometry of a section is the expected file's `graphics` entry; wit
 wrap at the width, `a-b-c-d` steps), `#UDG`, `#FONT`, `#SCR` (parts stacked vertically), composite `#OVER` / `#COPY`
 maps, with the game's `#DEF` macros expanded (`#LET`, `#EVAL`, `#FOR`) from the `.ref` file next to the reference
 (`--ref` adds more). Only the first `#UDGTABLE` of a section counts. For Manic Miner the macros give the same 106
-shapes as the handwritten list.
+shapes as the handwritten list; for Jet Set Willy the same 163 of 224 (the 61 room pictures are frames built by the
+game's Python `#RFRAME`, so they have no macro geometry and take it from the expected file only). A section whose
+picture reads only from outside it (an entity definition drawn with the guardian sprite it names) shows graphics
+stored elsewhere: it is no region (`views_skipped`, 106 in Jet Set Willy).
 
 `expected/manic-miner-records.json`: the program range, the five Manic Miner record types (cavern buffer, guardians
 horizontal / vertical, items, conveyor, Willy state) with their fields, bases and the 20 cavern-record copies,
 written once from the reference comments; and the geometry of the 106 reference graphics regions.
+
+`expected/jet-set-willy-records.json`: the same for `jsw.skool`: nine record types, written once from the reference
+comments: the room buffer at `$8000` (256 bytes, the 61 room definitions at `$C000` + `$100` n as instances) and its
+parts (conveyor, ramp, room exits, entity specifications), the entity buffer at `$8100` (8 x 8 bytes, terminator
+`$FF`) with one layout per entity type (horizontal / vertical guardian, arrow, rope) whose instances are the entity
+definitions at `$A000` of that type, the item table (two byte tables 256 bytes apart), Willy's state (copy at
+`$85D7`) and the WRITETYPER key table; a layout's `span` is the extent its fields cover when it exceeds the record
+size (the rope uses two bytes of the next buffer). Graphics: the 224 regions (61 room layouts as `level_map` 32 x 16
+cells of 2 bits, 60 tile sets, 60 item graphics, 36 guardian sprite blocks, 7 other sprites).
 
 Baselines: [score-p0.md](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/score-p0.md).
 
