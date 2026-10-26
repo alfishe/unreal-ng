@@ -4,7 +4,8 @@
 /// @brief The ZX Next's machine state as one byte image, for the time-travel debugger (design-ttd.md section 3, blob NextState):
 /// the board (NextREG file, latches, reset bits), the memory map (MMU slots, paging bits, the DivMMC / Multiface / Layer 2 views), the
 /// video registers (clip windows, palettes), sprites (attributes, patterns), the copper, the DMA, the CTC, the interrupt controller, the
-/// I2C bus with its RTC, the Multiface, the DivMMC and the UARTs (registers, FIFOs, shifters; not their peers). NOT in the image yet:
+/// I2C bus with its RTC, the Multiface, the DivMMC, the UARTs (registers, FIFOs, shifters; not their peers) and the esxDOS mode (open
+/// handles, working directory). NOT in the image yet:
 /// the SD cards' protocol state, the DivMMC / config-bank RAM of the system area. A restore re-derives the slot table from the image.
 ///
 /// The image has a fixed length for the life of a machine (every array is whole), as the TTD serializer contract needs.

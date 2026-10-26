@@ -514,6 +514,8 @@ void PortDecoder::UpdateFeatureCache()
 
     // Release: a thread that sees the flag set also sees the recorder
     _portTraceFeatureCache.store(enabled, std::memory_order_release);
+
+    UpdateModelFeatureCache();
 }
 
 /// Build and push exactly one PortTraceEvent per Z80 I/O operation.

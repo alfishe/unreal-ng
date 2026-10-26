@@ -12,6 +12,7 @@
 #include "emulator/io/z80n/nextcopper.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextdma.h"
+#include "emulator/io/z80n/nextesxdos.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextmultiface.h"
@@ -26,7 +27,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 15;  // 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 16;  // 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -714,6 +715,46 @@ static void LoadSd(Reader& r, SdCardSpi& card)
     card.loadState(state.data());
 }
 
+static void SaveEsxDos(Writer& w, const NextEsxDos& x)
+{
+    for (const NextEsxDos::Handle& h : x._handles)
+    {
+        w.Put(h.kind);
+        w.Put(h.mode);
+        w.Put(h.filter);
+        w.Put(h.headerSize);
+        w.Put(h.headerDirty);
+        w.Put(h.root);
+        w.Put(h.entryOffset);
+        w.Put(h.entryLba);
+        w.Put(h.position);
+        w.Put(h.mapped);
+    }
+    w.PutArray(x._cwd);
+    w.Put(x._caps);
+}
+static void LoadEsxDos(Reader& r, NextEsxDos& x)
+{
+    for (NextEsxDos::Handle& h : x._handles)
+    {
+        r.Get(h.kind);
+        r.Get(h.mode);
+        r.Get(h.filter);
+        r.Get(h.headerSize);
+        r.Get(h.headerDirty);
+        r.Get(h.root);
+        r.Get(h.entryOffset);
+        r.Get(h.entryLba);
+        r.Get(h.position);
+        r.Get(h.mapped);
+    }
+    r.GetArray(x._cwd);
+    x._cwd[sizeof(x._cwd) - 1] = '\0';
+    if (x._cwd[0] != '/')
+        x._cwd[0] = '/';
+    r.Get(x._caps);
+}
+
 static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
 {
     w.Put(e.PcKeys());
@@ -802,6 +843,7 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
     Impl::SaveSd(w, p._sd[0]);
     Impl::SaveSd(w, p._sd[1]);
     Impl::SaveUart(w, p._uart);
+    Impl::SaveEsxDos(w, *p._esxDos);
     return w.Take();
 }
 
@@ -833,6 +875,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadSd(r, p._sd[0]);
     Impl::LoadSd(r, p._sd[1]);
     Impl::LoadUart(r, p._uart);
+    Impl::LoadEsxDos(r, *p._esxDos);
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
     p.SyncPiLine();            // and UART 1's pins NR #A0
     p.ApplySystemClock();      // CLK_28 is NR #11's

@@ -87,6 +87,19 @@ public:
     virtual void RequestHardReset() = 0;
 };
 
+class Z80;
+
+/// A machine's handler of the RST $08 restart (the Next's esxDOS API without its firmware, NextEsxDos): asked at the
+/// instruction start at #0008, after the RST was taken
+class IRst8Trap
+{
+public:
+    virtual ~IRst8Trap() = default;
+    /// True: the call was served (registers, memory and PC past the call byte as the DOS leaves them), the instruction
+    /// at #0008 does not run
+    virtual bool HandleRst8(Z80& cpu) = 0;
+};
+
 class EmulatorContext
 {
     /// region <Child object references>
@@ -183,6 +196,9 @@ public:
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;
     DiskAutostart* pDiskAutostart = nullptr;
+
+    // RST $08 handler (the Next's esxDOS mode, feature "esxdos"); nullptr while nothing serves it
+    IRst8Trap* pRst8Trap = nullptr;
 
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;

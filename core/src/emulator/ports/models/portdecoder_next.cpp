@@ -6,6 +6,7 @@
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 
+#include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
@@ -119,6 +120,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         e.basicRom = Mem().BasicRomVisible();
     };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
+    _esxDos = std::make_unique<NextEsxDos>(_esxDosHost);
     _m1Chain.owner = this;
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
@@ -198,6 +200,8 @@ PortDecoder_Next::~PortDecoder_Next()
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
     if (_context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetInterruptSource(nullptr);
+    if (_context->pRst8Trap == _esxDos.get())
+        _context->pRst8Trap = nullptr;
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
@@ -223,6 +227,8 @@ void PortDecoder_Next::reset()
     _dma.Reset();
     BindDma();
     _i2c.Reset();
+    _esxDos->Reset();
+    UpdateModelFeatureCache();
     _divMmc->Reset();
     _multiface->Reset();
     if (Z80* z80 = _context->pCore->GetZ80(); z80 && !z80->machineM1Hook)
@@ -284,6 +290,95 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
     Mem().SetExtendedBank(value);
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
 }
+
+/// region <esxDOS mode>
+
+void PortDecoder_Next::UpdateModelFeatureCache()
+{
+    // Only the bare machine: with a boot ROM the firmware's own esxDOS answers (through the DivMMC)
+    const FeatureManager* features = _context->pFeatureManager;
+    const bool serve = features && features->isEnabled(Features::kEsxDos) && _context->config.next_boot_rom_path[0] == '\0';
+    if (serve)
+        _context->pRst8Trap = _esxDos.get();
+    else if (_context->pRst8Trap == _esxDos.get())
+        _context->pRst8Trap = nullptr;
+}
+
+void PortDecoder_Next::EsxDosHost::CardWritten()
+{
+    if (owner._context->pMediaManager)
+        owner._context->pMediaManager->NoteWrite(owner._sdSlot0.Descriptor().id);
+}
+
+void PortDecoder_Next::SelectCard0ForHost()
+{
+    // The byte in flight is over; the select pattern names card 0's line (NR #0A bit 5 swaps the lines)
+    if (_spiPendingValid)
+    {
+        _spiRx = _spiPending;
+        _spiPendingValid = false;
+    }
+    _spiBusyUntil = 0;
+    SpiSelect(_board->SdSwap() ? 0xFD : 0xFE);
+}
+
+bool PortDecoder_Next::HostStreamStart(uint32_t block, bool userWaits)
+{
+    SdCardSpi& card = _sd[0];
+    if (!card.present())
+        return false;
+    // No firmware set the card up: it is left initialized and idle, as a DOS that read from it leaves it
+    card.LeaveForProgram();
+    SelectCard0ForHost();
+    // CMD18 READ_MULTIPLE_BLOCK at the block address (the Next's cards are SDHC), a dummy CRC
+    card.exchange(0xFF);
+    const uint8_t command[6] = {0x52, static_cast<uint8_t>(block >> 24), static_cast<uint8_t>(block >> 16),
+                                static_cast<uint8_t>(block >> 8), static_cast<uint8_t>(block), 0xFF};
+    for (uint8_t b : command)
+        card.exchange(b);
+    uint8_t answer = 0xFF;
+    for (unsigned i = 0; i < 16 && (answer & 0x80); i++)
+        answer = card.exchange(0xFF);
+    if (answer != 0x00)
+        return false;
+    if (!userWaits)
+    {
+        // The DOS waits for the data token: the read after it is the first data byte
+        constexpr unsigned kTokenWait = 1u << 20;
+        for (unsigned i = 0; i < kTokenWait && answer != 0xFE; i++)
+            answer = card.exchange(0xFF);
+        if (answer != 0xFE)
+            return false;
+        answer = card.exchange(0xFF);
+    }
+    _spiRx = answer;
+    return true;
+}
+
+bool PortDecoder_Next::HostStreamEnd()
+{
+    SdCardSpi& card = _sd[0];
+    if (!card.present())
+        return false;
+    SelectCard0ForHost();
+    // CMD12 STOP_TRANSMISSION, its stuff byte, the R1 answer and the busy time, then the card is deselected
+    const uint8_t command[6] = {0x4C, 0, 0, 0, 0, 0xFF};
+    for (uint8_t b : command)
+        card.exchange(b);
+    card.exchange(0xFF);
+    uint8_t answer = 0xFF;
+    for (unsigned i = 0; i < 16 && (answer & 0x80); i++)
+        answer = card.exchange(0xFF);
+    constexpr unsigned kBusyWait = 1u << 20;
+    for (unsigned i = 0; i < kBusyWait && card.exchange(0xFF) != 0xFF; i++)
+    {
+    }
+    SpiSelect(0xFF);
+    _spiRx = 0xFF;
+    return (answer & 0x80) == 0;
+}
+
+/// endregion </esxDOS mode>
 
 void PortDecoder_Next::BeforeRelease()
 {

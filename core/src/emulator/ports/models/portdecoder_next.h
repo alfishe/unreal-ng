@@ -11,6 +11,7 @@
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextdivmmc.h"
+#include "emulator/io/z80n/nextesxdos.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
@@ -170,6 +171,10 @@ public:
     NextDivMmc& DivMmc() { return *_divMmc; }
     NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
+    /// The esxDOS mode (feature "esxdos", nextesxdos.h): it serves RST $08 while the feature is on and no boot ROM is set
+    NextEsxDos& EsxDos() { return *_esxDos; }
+    bool EsxDosServing() const { return _context->pRst8Trap == _esxDos.get(); }
+    void UpdateModelFeatureCache() override;
     /// The 28 MHz system clock since the machine started
     uint64_t Now28() const;
     Z80NEngine* Engine() { return _engine.get(); }
@@ -347,5 +352,26 @@ private:
     /// The DAC channels (bit 0 = A ... bit 3 = D) a port's low byte writes, by the enables of NR #84
     uint8_t DacChannelsAt(uint8_t low) const;
     NextI2c _i2c;
+    /// What the esxDOS mode reaches of the machine: card 0, the RTC, the CPU's view of memory, the SPI port for a stream
+    struct EsxDosHost final : NextEsxDos::Host
+    {
+        explicit EsxDosHost(PortDecoder_Next& owner) : owner(owner) {}
+        IBlockDevice* Card() override { return owner._sd[0].media(); }
+        void CardWritten() override;
+        bool StreamStart(uint32_t block, bool userWaits) override { return owner.HostStreamStart(block, userWaits); }
+        bool StreamEnd() override { return owner.HostStreamEnd(); }
+        uint8_t RtcRegister(unsigned index) override { return owner._i2c.Rtc().Reg(index); }
+        uint8_t Peek(uint16_t address) override { return owner.Mem().PeekSlot(address); }
+        void Poke(uint16_t address, uint8_t value) override { owner.Mem().DmaWrite(address, value); }
+        PortDecoder_Next& owner;
+    };
+    EsxDosHost _esxDosHost{*this};
+    std::unique_ptr<NextEsxDos> _esxDos;
+    /// DISK_STRMSTART / DISK_STRMEND for the esxDOS mode: the commands go to card 0 at once (the DOS's bytes take no time),
+    /// the port is left as the DOS leaves it - card 0 selected and the first data byte (or the R1 answer, when the program
+    /// waits for the token itself) as the next read of #EB
+    bool HostStreamStart(uint32_t block, bool userWaits);
+    bool HostStreamEnd();
+    void SelectCard0ForHost();
     std::unique_ptr<Z80NEngine> _engine;
 };

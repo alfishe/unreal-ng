@@ -1314,6 +1314,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
 | `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
+| `esxdos` | `esx` | OFF | ZX Spectrum Next esxDOS mode: on the bare machine (no `[NEXT] BootRom`) the emulator serves the esxDOS API itself (`RST $08` calls `$80` and up: files, directories, +3DOS headers, `DISK_FILEMAP` and the stream, the date from the RTC) against the FAT volume of SD card 0, so a program that uses it runs without NextZXOS. Off: `RST $08` runs the ROM as on the board. Design: [esxdos-and-sd.md](../../../inprogress/2026-10-07-zx-next/esxdos-and-sd.md) section 5a | None (one compare at `#0008`) |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
 **Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
@@ -1321,6 +1322,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | Feature | Held off while |
 | :--- | :--- |
 | `turbomode` | a recording is active |
+| `esxdos` | cannot change either way while the machine is bound to a TTD timeline or an RZX recording plays: it changes what `RST $08` does |
 | `contention` | cannot change either way while the machine is bound to a TTD timeline (recording, replay, positioned in history): the timeline replays only with the timing it was recorded with |
 | `fasttape`, `turbotape`, `fastdisk` | a recording is active, a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`) |
 

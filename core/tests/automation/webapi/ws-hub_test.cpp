@@ -173,6 +173,13 @@ protected:
                 body["params"] = call.value.params;
                 return ActionResult::Success(std::move(body), "echoed");
             });
+        // test.press: a press that answers what it got (pressed, the params), as set.speed takes {value}
+        Add({"test.press", "Press", "Test", ValueKind::Press, false, false, "value?"}, [](const ActionCall& call) {
+            StateNode body = StateNode::Object();
+            body["pressed"] = StateNode(call.value.pressed);
+            body["params"] = call.value.params;
+            return ActionResult::Success(std::move(body), "pressed");
+        });
         // test.rewind: needs the rewind scope (the narrow companion has run only)
         ActionRules rewind;
         rewind.scope = ActionRules::Fixed(automation_gate::ScopeRewind);
@@ -469,6 +476,72 @@ TEST_F(WsHub_Test, ARefusalIsTheResultsErrorOrAnErrorWithoutARid)
     EXPECT_EQ(narrow.Last()["op"].asString(), "result");
     EXPECT_EQ(narrow.Last()["error"].asString(), "companion_forbidden");
     EXPECT_EQ(narrow.Last()["body"]["required"].asString(), "rewind");
+}
+
+TEST_F(WsHub_Test, APressTakesABoolOrNamedParamsAndRefusesABareNumberAsRestDoes)
+{
+    Inbox inbox;
+    Join(inbox);
+    // A bare number is a parameter without its name: refused, the action does not run ("next" for set.speed)
+    for (const char* value : {"4", "0", "1.5"})
+    {
+        inbox.Clear();
+        Send(inbox, std::string(R"({"op":"action","id":"test.press","value":)") + value + R"(,"rid":1})");
+        ASSERT_TRUE(TestWait::ForAtLeast(inbox.Count(), 1)) << value;
+        EXPECT_EQ(inbox.Last()["op"].asString(), "error") << value;
+        EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << value;
+        EXPECT_NE(inbox.Last()["message"].asString().find("params"), std::string::npos) << value;
+        EXPECT_EQ(inbox.Last()["rid"].asInt(), 1) << value;
+    }
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","id":"test.press","value":[4],"rid":1})");
+    ASSERT_TRUE(TestWait::ForAtLeast(inbox.Count(), 1));
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "an array";
+
+    struct Case
+    {
+        const char* value;
+        bool pressed;
+        int param;  // params.value, -1: none
+    };
+    const Case cases[] = {
+        {"null", true, -1},
+        {"true", true, -1},
+        {"false", false, -1},
+        {R"({"p":false})", false, -1},
+        {R"({"p":1})", true, -1},
+        {R"({"pressed":true})", true, -1},
+        {R"({"params":{"value":4}})", true, 4},
+        {R"({"value":8})", true, 8},
+        {R"({"p":true,"params":{"value":2}})", true, 2},
+    };
+    int rid = 10;
+    for (const Case& c : cases)
+    {
+        inbox.Clear();
+        const std::string body = std::string(R"({"op":"action","id":"test.press","value":)") + c.value +
+                                 R"(,"rid":)" + std::to_string(++rid) + "}";
+        Send(inbox, body);
+        ASSERT_TRUE(TestWait::ForAtLeast(inbox.Count(), 1)) << c.value;
+        const Json::Value result = inbox.Last();
+        ASSERT_EQ(result["op"].asString(), "result") << c.value << ": " << result.toStyledString();
+        EXPECT_TRUE(result["ok"].asBool()) << c.value;
+        EXPECT_EQ(result["rid"].asInt(), rid) << c.value;
+        EXPECT_EQ(result["body"]["pressed"].asBool(), c.pressed) << c.value;
+        if (c.param < 0)
+            EXPECT_FALSE(result["body"]["params"].isMember("value")) << c.value;
+        else
+            EXPECT_EQ(result["body"]["params"]["value"].asInt(), c.param) << c.value;
+    }
+
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","id":"test.press","value":{"p":"yes"},"rid":30})");
+    ASSERT_TRUE(TestWait::ForAtLeast(inbox.Count(), 1));
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "p is a bool";
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","id":"test.press","value":{"params":4},"rid":31})");
+    ASSERT_TRUE(TestWait::ForAtLeast(inbox.Count(), 1));
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "params is an object";
 }
 
 TEST_F(WsHub_Test, DeltasQueuedBehindARunningOneMergeAndEveryRidGetsTheMergedResult)

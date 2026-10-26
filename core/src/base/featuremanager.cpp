@@ -357,12 +357,14 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
 std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool enabled) const
 {
     std::string id;
+    bool current = false;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
         const auto* feature = findFeature(idOrAlias);
         if (!feature)
             return {};
         id = feature->id;
+        current = feature->enabled;
     }
 
     // Either direction swaps the fitted General Sound card (FR-4)
@@ -375,6 +377,13 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         coordinator::MachineOp op;
         op.kind = coordinator::OpKind::GsCardSwitch;
         return ops->WouldRefuse(op).reason;
+    }
+
+    // The esxDOS mode changes what RST $08 does in both directions: a recorded run replays only with the same one
+    if (id == Features::kEsxDos && enabled != current && (isTtdTimelineBound() || isRzxPlaying()))
+    {
+        return "Cannot change " + id + " while TTD is recording or replaying history, or an RZX recording plays: it "
+               "changes what the guest code does. Stop the recording, or leave the history, first.";
     }
 
     // Switching timetravel or debugmode off is never refused: setFeature stops a
@@ -652,6 +661,14 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+
+    registerFeature({Features::kEsxDos,
+                     Features::kEsxDosAlias,
+                     Features::kEsxDosDesc,
+                     false,  // OFF by default - the board runs RST $08 through its ROM
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     registerFeature({Features::kGSLightweight,
                      Features::kGSLightweightAlias,
