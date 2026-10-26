@@ -85,6 +85,9 @@ on a +3) is `unknown-slot`, never drive A.
 | `layers` | slot | a composite's layers (and partitions) |
 | `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image), `write-back` (the guest's file changes into the writable folder layers); `plan` reports and writes nothing |
 | `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
+| `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size and free bytes ([disk file systems](../emulator/design/disk-file-systems.md)) |
+| `files` | slot, path? | the entries of a directory (`path` empty: the root) of one volume: path, name, size, start, attributes, time and the fields only that file system has; `recursive` the whole tree. Read only, under the time-travel read tap (nothing journalled) |
+| `read` | slot, path | one file's bytes: base64 `data` up to 16 MiB, or written to `out` (the answer then names `savedPath`) |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -108,6 +111,9 @@ on a +3) is `unknown-slot`, never drive A.
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
+| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`), a file system (`fat16`) or an index | the first | files, read |
+| `recursive` | bool | false | files |
+| `out` | a host file | — | read: write the bytes there instead of answering them |
 | `vhd` | `fixed`, `dynamic` | `fixed` | save to a path, export, flatten `flat` of a hard disk or card to a `.vhd`: `dynamic` stores only the 2 MiB blocks that hold data (a dynamic VHD in a slot is written in place: a new block goes at the end) |
 | `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
 | `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
@@ -545,10 +551,15 @@ curl -s -X POST $BASE/emulator/$ID/media/A/swap -H 'Content-Type: application/js
 curl -s -X POST $BASE/emulator/$ID/media/C/insert -F "file=@game.trd"   # upload (up to 1 MB)
 curl -s -X POST $BASE/emulator/$ID/media/cd/insert -H 'Content-Type: application/json' \
      -d '{"path":"/home/me/music/album","format":"audio-cd"}'          # report: the tracks; info: medium.disc
+curl -s $BASE/emulator/$ID/media/hd/volumes                          # the file systems on the disk
+curl -s "$BASE/emulator/$ID/media/A/files?path=SHELL&recursive=true"  # a directory's entries
+curl -s "$BASE/emulator/$ID/media/hd/read?volume=p1&path=AUTOEXEC.BAT&raw=true" -o autoexec.bat
 ```
 
 `POST /media/{slot}/{verb}` takes the options in the JSON body or the query string; the HTTP
-status follows the error table. OpenAPI: tag **Media**.
+status follows the error table. The read-only verbs `volumes`, `files` and `read` also answer
+`GET /media/{slot}/{verb}` (`path`, `volume`, `recursive`, `out` in the query); `read` with
+`raw=true` answers the file itself as `application/octet-stream`. OpenAPI: tag **Media**.
 
 ### CLI
 
@@ -561,6 +572,9 @@ media swap A /games/elite-2.trd --save
 media eject B --export /tmp/b-saved.trd
 media info sd --json
 media targets /discs/dna_nemo.iso
+media volumes hd
+media files A SHELL --recursive
+media read hd AUTOEXEC.BAT --volume p1 --out /tmp/autoexec.bat
 media help
 ```
 
@@ -572,6 +586,8 @@ One tool, `media`, with `action` and the same argument names:
 {"action": "insert", "slot": "auto", "path": "/games/dizzy.trd"}
 {"action": "swap", "slot": "A", "path": "/games/elite-2.trd", "save": true}
 {"action": "list"}
+{"action": "files", "slot": "A", "path": "SHELL", "recursive": true}
+{"action": "read", "slot": "hd", "path": "AUTOEXEC.BAT", "volume": "p1"}
 {"action": "targets", "path": "/cards/nedoos.img"}
 {"action": "insert", "slot": "cd", "path": "/home/me/music/album", "format": "audio-cd"}
 ```

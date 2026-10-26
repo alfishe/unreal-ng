@@ -63,6 +63,46 @@
         info["parameters"][2]["description"] = "targets: the file or folder to place; compose: the descriptor";
         replyRef(info);
 
+        Json::Value& files = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["get"];
+        files["summary"] = "The files on a slot's disk: volumes / files / read (read only)";
+        files["description"] =
+            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS and iS-DOS / TASiS floppies, "
+            "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
+            "the iS-DOS / TASiS devices of an ATM-Turbo hard disk (a descriptor at a cylinder boundary). "
+            "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
+            "files?path=<dir>[&volume=<id>][&recursive=true]: field 'entries' (path, name, directory, size, start, "
+            "attributes, mtime, error, and the file system's own fields), 'notes' (loops cut, stale entries). "
+            "read?path=<file>[&volume=<id>][&out=<host file>]: field 'size' and 'data' (base64, at most 16 MiB) or "
+            "'savedPath'; raw=true answers the bytes themselves (application/octet-stream). The same verbs are POST "
+            "with a JSON body. The emulator is parked while the disk is read";
+        files["tags"].append("Media");
+        idParameter(files, 0);
+        slotParameter(files, 1);
+        files["parameters"][2]["name"] = "verb";
+        files["parameters"][2]["in"] = "path";
+        files["parameters"][2]["required"] = true;
+        files["parameters"][2]["schema"]["type"] = "string";
+        for (const char* v : {"volumes", "files", "read"})
+            files["parameters"][2]["schema"]["enum"].append(v);
+        const char* fileParameters[][2] = {
+            {"path", "files: a directory on the disk (empty: the root); read: a file (SHELL/HELP/exit.hlp, BOOT.B)"},
+            {"volume", "the volume id from volumes (trdos, plus3, isdos, fat, p1-p4, isdos-<cylinder>); left out: the first"},
+            {"recursive", "files: the whole tree under the directory"},
+            {"out", "read: write the bytes to this host file"},
+            {"raw", "read: answer the bytes as application/octet-stream"},
+        };
+        for (const auto& [name, description] : fileParameters)
+        {
+            Json::Value parameter;
+            parameter["name"] = name;
+            parameter["in"] = "query";
+            parameter["required"] = false;
+            parameter["schema"]["type"] = std::string(name) == "recursive" || std::string(name) == "raw" ? "boolean" : "string";
+            parameter["description"] = description;
+            files["parameters"].append(parameter);
+        }
+        replyRef(files);
+
         std::string verbs;
         for (const std::string& v : MediaControl::Verbs())
         {
@@ -74,7 +114,9 @@
             verbs += "\n- **" + v + "**: " + (options.empty() ? "no options" : options);
         }
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
-        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten";
+        post["summary"] =
+            "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten / "
+            "volumes / files / read";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -97,7 +139,13 @@
         Json::Value& body = post["requestBody"]["content"]["application/json"]["schema"];
         body["type"] = "object";
         body["properties"]["path"]["type"] = "string";
-        body["properties"]["path"]["description"] = "insert / swap: the source; save / export: the target";
+        body["properties"]["path"]["description"] =
+            "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk";
+        body["properties"]["volume"]["type"] = "string";
+        body["properties"]["volume"]["description"] = "files / read: the volume id from volumes; left out: the first";
+        body["properties"]["recursive"]["type"] = "boolean";
+        body["properties"]["out"]["type"] = "string";
+        body["properties"]["out"]["description"] = "read: write the file's bytes to this host file";
         body["properties"]["descriptor"]["type"] = "object";
         body["properties"]["descriptor"]["description"] =
             "insert / swap: a composition descriptor inline (the *.ucompose.json body) instead of a path";

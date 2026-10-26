@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/base64.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
@@ -1790,7 +1791,8 @@ public:
         // media_export(slot, path), media_discard(slot [, opts]),
         // media_rescan(slot [, opts]), media_create(slot [, opts]),
         // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
-        // and media(verb, slot, path, opts).
+        // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
+        // media_read_bytes(slot, file [, volume]), and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -2208,6 +2210,35 @@ public:
         // The guest's unsaved writes as file operations, with the layer each touched
         lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "changes", slot, "", sol::nullopt);
+        });
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+        lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "volumes", slot, "", sol::nullopt);
+        });
+        lua.set_function("media_files", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                    sol::optional<sol::table> opts) {
+            return mediaCall(s, "files", slot, path.value_or(""), opts);
+        });
+        lua.set_function("media_read", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                   sol::optional<sol::table> opts) {
+            return mediaCall(s, "read", slot, path, opts);
+        });
+        // A file's bytes as a Lua string, or nil and the reason
+        lua.set_function("media_read_bytes", [this](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<std::string> volume) -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(s);
+            MediaRequest request{"read", slot, path, {}};
+            if (volume && !volume->empty())
+                request.options["volume"] = *volume;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(view, sol::lua_nil), sol::make_object(view, "no emulator selected")};
+            const MediaReply reply = MediaControl(emulator->GetContext()).Execute(request);
+            if (!reply.result.Ok())
+                return {sol::make_object(view, sol::lua_nil), sol::make_object(view, reply.result.message)};
+            std::vector<uint8_t> bytes;
+            base64::Decode(reply.body.find("data")->s, bytes);
+            return {sol::make_object(view, std::string(bytes.begin(), bytes.end())), sol::make_object(view, sol::lua_nil)};
         });
         for (const char* verb : {"insert", "swap"})
         {

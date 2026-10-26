@@ -14,6 +14,7 @@ controllers use it, and so do the unreal-asm tools (`zxasm`, `symconv`). Design:
 | registry | `unrealdisk/floppyformats.h` | `Probe` / `ProbeData` (marks, then sizes, then the extension), `Load` / `LoadData`, `Save` (the format the path names, with a lossless UDI fallback), `CreateBlank` |
 | TR-DOS | `unrealdisk/trdoscatalog.h`, `trdosfs.h` | `TrdosCatalog` reads the catalog; `TrdosFileSystem` lists, reads, writes and deletes files on any image with TR-DOS tracks |
 | +3DOS | `unrealdisk/plus3fs.h` | `Plus3FileSystem` lists, reads, writes and deletes files on a +3DOS (CP/M 2.2 layout) disk: the geometry from the disk's first sector, else the +3 standard; the +3DOS header read and written |
+| iS-DOS / TASiS | `unrealdisk/isdosfs.h` | `IsdosFileSystem` lists and reads the files of an iS-DOS Chic / Classic or TASiS disk (floppy, or an HDD device through a block reader): the descriptor, the catalogue tree, continuous and segmented files, the free-block bitmap; read only |
 | host settings | `unrealdisk/options.h` | `LoaderOptions` (the TR-DOS sector interleave) |
 
 ## Example
