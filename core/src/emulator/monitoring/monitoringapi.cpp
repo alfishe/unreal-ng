@@ -160,6 +160,19 @@ StateNode HostClients()
         entry["requests"] = static_cast<int64_t>(counts.requests);
         entry["dropped"] = static_cast<int64_t>(counts.dropped);
     }
+    // MCP calls per tool and action ("" = a call without an action argument)
+    StateNode& tools = node[ClientPlaneName(ClientPlane::Mcp)]["tools"];
+    tools = StateNode::Object();
+    for (const auto& [tool, calls] : ClientStats::Instance().ReadToolCalls())
+    {
+        StateNode& entry = tools[tool];
+        entry = StateNode::Object();
+        entry["calls"] = static_cast<int64_t>(calls.calls);
+        StateNode& actions = entry["actions"];
+        actions = StateNode::Object();
+        for (const auto& [action, count] : calls.actions)
+            actions[action.empty() ? "(none)" : action] = static_cast<int64_t>(count);
+    }
     node["companions"] = static_cast<int64_t>(companion::CompanionRegistry::Instance().List().size());
     node["instances"] = static_cast<int64_t>(EmulatorManager::GetInstance()->GetEmulatorIds().size());
     return node;

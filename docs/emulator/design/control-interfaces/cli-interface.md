@@ -601,6 +601,29 @@ reference: [command-interface.md](./command-interface.md).
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |
 
+### Analysis layers
+
+The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
+as every other plane (`analysis::Execute`), so the lines below are also the `text` of the REST and MCP answers.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `analysis start [facts\|counters] [z80\|physical]` | Switch on memory tracking at level `facts` (default) or `counters`, mode `z80` (default) or `physical`, and start a fresh session (`level=`, `mode=` work too). |
+| `analysis stop` | Stop the session; the facts stay readable. |
+| `analysis status` (`analysis`) | State, level, mode, frame, what the facts hold. |
+| `analysis explain <addr> [page]` | What L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
+
+`--json` prints the fields instead of the lines. Example:
+
+```text
+> analysis start
+analysis: capturing, level facts, mode z80, frame 120; facts 1024 KB, 0 Z80 addresses touched
+> analysis explain $0038
+$0038 [ROM 0]: OpcodeFetch
+  frames 121..170
+  counters: 0 reads, 0 writes, 50 executes
+```
+
 ## Connection Examples
 
 ### Using Telnet

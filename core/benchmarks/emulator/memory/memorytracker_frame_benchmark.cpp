@@ -18,14 +18,15 @@
 /// the game snapshot into a fresh machine, runs the warm-up frames with the tracker off, switches the level and
 /// then measures the same emulated frames for every level: the workload does not depend on the level.
 ///
-///   BM_MemoryTrackerFrame/machine:<0..2>/level:<0..3>
+///   BM_MemoryTrackerFrame/machine:<0..2>/level:<0..5>
 ///
-/// Levels (the argument is the enum value; a new level, such as L0's `facts`, is one more enum value and one more
-/// Args row per machine):
+/// Levels (the argument is the enum value):
 ///   0 off              debug mode off: the fast memory interface, what a user runs
 ///   1 debug            debug mode on, memory tracking off: the debug memory interface alone (counters need it)
 ///   2 counters-z80     tracking on, TrackingMode::Z80AddressSpace: Z80 64K counters plus the physical ones
 ///   3 counters-phys    tracking on, TrackingMode::PhysicalMemory: the physical counters only
+///   4 facts-z80        counters-z80 plus the L0 access facts (TrackerLevel::Facts, the Z80's access context on)
+///   5 facts-phys       counters-phys plus the L0 access facts per physical page
 ///
 /// Workloads (testdata/, all tracked in git):
 ///   0 48K       loaders/rzx/oracle/garfield-300.z80     Garfield, SkoolKit state after 300 recorded frames
@@ -38,12 +39,14 @@
 /// Results and method: docs/inprogress/2026-10-24-analysis-layers/baselines/memorytracker-p0.md
 namespace
 {
-enum class TrackerLevel : int
+enum class BenchLevel : int
 {
     Off = 0,
     Debug = 1,
     CountersZ80 = 2,
     CountersPhysical = 3,
+    FactsZ80 = 4,
+    FactsPhysical = 5,
 };
 
 struct Workload
@@ -62,18 +65,22 @@ constexpr int kWorkloadCount = static_cast<int>(sizeof(kWorkloads) / sizeof(kWor
 
 constexpr int kWarmupFrames = 50;
 
-const char* LevelName(TrackerLevel level)
+const char* LevelName(BenchLevel level)
 {
     switch (level)
     {
-        case TrackerLevel::Off:
+        case BenchLevel::Off:
             return "off";
-        case TrackerLevel::Debug:
+        case BenchLevel::Debug:
             return "debug";
-        case TrackerLevel::CountersZ80:
+        case BenchLevel::CountersZ80:
             return "counters-z80";
-        case TrackerLevel::CountersPhysical:
+        case BenchLevel::CountersPhysical:
             return "counters-phys";
+        case BenchLevel::FactsZ80:
+            return "facts-z80";
+        case BenchLevel::FactsPhysical:
+            return "facts-phys";
     }
     return "?";
 }
@@ -81,11 +88,13 @@ const char* LevelName(TrackerLevel level)
 /// The features of a level, through FeatureManager as the REST / MCP start routes do (setFeature refreshes the
 /// memory interface and the Memory / Z80 / tracker caches). The other debug features stay off, whatever the
 /// unreal.ini next to the binary says, so that only the tracker differs between levels
-void ApplyLevel(EmulatorContext* context, TrackerLevel level)
+void ApplyLevel(EmulatorContext* context, BenchLevel level)
 {
     FeatureManager* features = context->pFeatureManager;
-    const bool debug = level != TrackerLevel::Off;
-    const bool tracking = level == TrackerLevel::CountersZ80 || level == TrackerLevel::CountersPhysical;
+    const bool debug = level != BenchLevel::Off;
+    const bool tracking = level >= BenchLevel::CountersZ80;
+    const bool physical = level == BenchLevel::CountersPhysical || level == BenchLevel::FactsPhysical;
+    const bool facts = level == BenchLevel::FactsZ80 || level == BenchLevel::FactsPhysical;
     features->setFeature(Features::kBreakpoints, false);
     features->setFeature(Features::kCallTrace, false);
     features->setFeature(Features::kOpcodeProfiler, false);
@@ -93,10 +102,13 @@ void ApplyLevel(EmulatorContext* context, TrackerLevel level)
     features->setFeature(Features::kDebugMode, debug);
 
     if (!tracking)
+    {
+        context->pMemory->GetAccessTracker().SetLevel(TrackerLevel::Counters);
         return;
+    }
     MemoryAccessTracker& tracker = context->pMemory->GetAccessTracker();
-    tracker.SetTrackingMode(level == TrackerLevel::CountersPhysical ? TrackingMode::PhysicalMemory
-                                                                    : TrackingMode::Z80AddressSpace);
+    tracker.SetTrackingMode(physical ? TrackingMode::PhysicalMemory : TrackingMode::Z80AddressSpace);
+    tracker.SetLevel(facts ? TrackerLevel::Facts : TrackerLevel::Counters);
     tracker.StartMemorySession();
 }
 
@@ -130,7 +142,7 @@ CounterSums SumCounters(const MemoryAccessTracker& tracker, bool physical)
 static void BM_MemoryTrackerFrame(benchmark::State& state)
 {
     const int workloadIndex = static_cast<int>(state.range(0));
-    const auto level = static_cast<TrackerLevel>(state.range(1));
+    const auto level = static_cast<BenchLevel>(state.range(1));
     if (workloadIndex < 0 || workloadIndex >= kWorkloadCount)
     {
         state.SkipWithError("no such workload");
@@ -148,7 +160,7 @@ static void BM_MemoryTrackerFrame(benchmark::State& state)
     MainLoopCUT* mainLoop = reinterpret_cast<MainLoopCUT*>(context->pMainLoop);
 
     // A failed load would measure the ROM idle loop and look like a valid result: fail the run instead
-    ApplyLevel(context, TrackerLevel::Off);
+    ApplyLevel(context, BenchLevel::Off);
     if (!emulator->LoadSnapshot(snapshot))
         BenchmarkPathHelper::FailSetup("cannot load " + snapshot + " on " + workload.model);
 
@@ -161,32 +173,39 @@ static void BM_MemoryTrackerFrame(benchmark::State& state)
     for (auto _ : state)
         mainLoop->RunFramePublic();
 
-    const bool tracking = level == TrackerLevel::CountersZ80 || level == TrackerLevel::CountersPhysical;
+    const bool tracking = level >= BenchLevel::CountersZ80;
     if (tracking)
     {
-        const CounterSums sums =
-            SumCounters(context->pMemory->GetAccessTracker(), level == TrackerLevel::CountersPhysical);
+        const bool physical = level == BenchLevel::CountersPhysical || level == BenchLevel::FactsPhysical;
+        const CounterSums sums = SumCounters(context->pMemory->GetAccessTracker(), physical);
         const double frames = static_cast<double>(state.iterations());
         state.counters["reads_per_frame"] = static_cast<double>(sums.reads) / frames;
         state.counters["writes_per_frame"] = static_cast<double>(sums.writes) / frames;
         state.counters["executes_per_frame"] = static_cast<double>(sums.executes) / frames;
-        if (level == TrackerLevel::CountersZ80 && sums.executes > 0)
+        if (!physical && sums.executes > 0)
             state.counters["ram_exec_share"] =
                 static_cast<double>(sums.ramExecutes) / static_cast<double>(sums.executes);
         if (sums.reads + sums.writes + sums.executes == 0)
             state.SkipWithError("the tracker counted nothing");
+        if (level == BenchLevel::FactsZ80 || level == BenchLevel::FactsPhysical)
+        {
+            const MemoryAccessTracker::FactsSummary facts = context->pMemory->GetAccessTracker().SummarizeFacts();
+            state.counters["facts_bytes"] = static_cast<double>(facts.bytes);
+            if (facts.z80Touched == 0 && facts.pages.empty())
+                state.SkipWithError("the facts level recorded nothing");
+        }
     }
 
     state.SetLabel(std::string(workload.model) + " " + workload.game + " " + LevelName(level));
     state.SetItemsProcessed(state.iterations());
 
     emulator->DisableTurboMode();
-    ApplyLevel(context, TrackerLevel::Off);
+    ApplyLevel(context, BenchLevel::Off);
     manager->RemoveEmulator(emulator->GetUUID());
 }
 
 BENCHMARK(BM_MemoryTrackerFrame)
     ->ArgNames({"machine", "level"})
-    ->ArgsProduct({{0, 1, 2}, {0, 1, 2, 3}})
+    ->ArgsProduct({{0, 1, 2}, {0, 1, 2, 3, 4, 5}})
     ->Iterations(500)
     ->Unit(benchmark::kMicrosecond);

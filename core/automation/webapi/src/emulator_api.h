@@ -249,6 +249,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getCoverageGaps, "/api/v1/emulator/{id}/coverage/gaps", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::exportCoverage, "/api/v1/emulator/{id}/coverage/export", drogon::Post);
 
+    // Analysis layers through analysis::Execute (implementation: api/analysis_api.cpp; L0 access facts in phase P1)
+    ADD_METHOD_TO(EmulatorAPI::analysisStart, "/api/v1/emulator/{id}/analysis/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisStop, "/api/v1/emulator/{id}/analysis/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisStatus, "/api/v1/emulator/{id}/analysis/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisExplain, "/api/v1/emulator/{id}/analysis/explain", drogon::Get);
+
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getAYLog, "/api/v1/emulator/{id}/ay/log", drogon::Get);
@@ -1143,6 +1149,16 @@ public:
     /// @brief POST /api/v1/emulator/{id}/coverage/export - body: {"format":"skoolkit-map","start","end","path","merge"}
     void exportCoverage(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Analysis layers (api/analysis_api.cpp): POST start {level, mode} / stop, GET status / explain?address=&page=
+    void analysisStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void analysisStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void analysisStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void analysisExplain(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,

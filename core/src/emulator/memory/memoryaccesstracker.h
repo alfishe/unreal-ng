@@ -20,6 +20,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/calltrace.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccessfacts.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
 
@@ -40,6 +41,14 @@ enum class TrackingMode : uint8_t
 {
     Z80AddressSpace,  // Track accesses in Z80 64KB address space
     PhysicalMemory    // Track accesses in physical memory pages
+};
+
+/// What the tracker keeps per byte while a memory session captures (the analysis layers' L0,
+/// docs/emulator/analysis/analysis-layers.md). Orthogonal to TrackingMode: the mode picks the address space
+enum class TrackerLevel : uint8_t
+{
+    Counters,  ///< read / write / execute counters (what the tracker always kept)
+    Facts      ///< the counters plus the L0 access facts (MemoryAccessFacts): kinds, last reader / writer, frames, values
 };
 
 // Event types for segmented tracking
@@ -162,6 +171,12 @@ private:
     // Tracking mode
     TrackingMode _currentMode = TrackingMode::Z80AddressSpace;
 
+    // Level: counters only, or the L0 facts on top (allocated with the counters while the level is Facts)
+    TrackerLevel _level = TrackerLevel::Counters;
+    MemoryAccessFacts _facts;
+    // The class of the running instruction (AccessContext), stored by the Z80 while the level is Facts
+    uint8_t _accessContext = 0;
+
     // Monitored regions and ports
     std::vector<MonitoredRegion> _monitoredRegions;
     std::vector<MonitoredPort> _monitoredPorts;
@@ -232,6 +247,31 @@ public:
 
     // Update feature cache (call when features change at runtime)
     void UpdateFeatureCache();
+
+    /// region <Level (L0 access facts)>
+    /// @brief Counters only, or the L0 access facts on top. Facts: allocated now when the counters are (else with
+    /// them), the Z80 told to store the access context; Counters: the facts freed. Call with the CPU held
+    void SetLevel(TrackerLevel level);
+    TrackerLevel GetLevel() const { return _level; }
+    static const char* LevelName(TrackerLevel level);
+
+    /// @brief The facts of a Z80 address (Z80 mode) or of a byte of a physical page (physical mode), copied under the
+    /// counters' lock. False when there are none (another level, not allocated, the page never touched)
+    bool ReadZ80Facts(uint16_t address, ByteFacts& out) const;
+    bool ReadPhysicalFacts(uint16_t page, uint16_t offset, ByteFacts& out) const;
+
+    struct FactsSummary
+    {
+        bool allocated = false;
+        size_t bytes = 0;                 ///< allocated now
+        size_t z80Touched = 0;            ///< Z80 addresses with a fact
+        std::vector<uint16_t> pages;      ///< physical pages with facts
+    };
+    FactsSummary SummarizeFacts() const;
+
+    /// The byte the Z80 stores the access context into (tests drive it without a CPU)
+    uint8_t* AccessContextSink() { return &_accessContext; }
+    /// endregion </Level (L0 access facts)>
 
     /// region <Session Control - Memory Tracking>
     /// @brief Start a memory tracking session (clears previous data)
@@ -507,6 +547,14 @@ private:
     // Allocate counter vectors (lazy allocation - called when tracking is first enabled)
     void AllocateCounters();
 
+    // Point the Z80's access context store at this tracker (level Facts) or nowhere
+    void AttachAccessContext(bool attach);
+
+    // The facts update of one access (level Facts, capturing); physOffset as the counters computed it
+    void TrackFactsRead(uint16_t address, size_t physOffset, uint8_t value, uint16_t callerAddress);
+    void TrackFactsWrite(uint16_t address, size_t physOffset, uint8_t value, uint16_t callerAddress);
+    void TrackFactsExecute(uint16_t address, size_t physOffset, uint16_t callerAddress);
+
     // Deallocate counter vectors (called when tracking is disabled to free memory)
     void DeallocateCounters();
     /// endregion </Helper Methods>
@@ -533,6 +581,8 @@ public:
     using MemoryAccessTracker::_z80ExecuteCounters;
     using MemoryAccessTracker::_z80ReadCounters;
     using MemoryAccessTracker::_z80WriteCounters;
+    using MemoryAccessTracker::_facts;
+    using MemoryAccessTracker::_accessContext;
 };
 
 #endif  // _CODE_UNDER_TEST

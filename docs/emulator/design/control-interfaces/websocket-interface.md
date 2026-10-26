@@ -73,6 +73,17 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 `PUT …/sessions/{id}/pin`, `readouts`, `activity`) are calls as well; the `surface` topic (S4) pushes `target` on
 `NC_SURFACE_TARGET`, the readouts and `activity` from the core's `ActivityFeed`.
 
+### Analysis layers
+
+The routes of the [analysis layers](../../analysis/analysis-layers.md) are calls like every REST route; no topic
+yet (P2 adds `analysis.progress` and `analysis.ready` for the replay build):
+
+```json
+→ {"op":"call","rid":4,"method":"POST","path":"/api/v1/emulator/0/analysis/start","body":{"level":"facts"}}
+→ {"op":"call","rid":5,"method":"GET","path":"/api/v1/emulator/0/analysis/explain?address=0x0038"}
+← {"op":"result","t":"call","rid":5,"status":200,"body":{"address":"$0038","kinds":["OpcodeFetch"],…,"text":"$0038 [ROM 0]: OpcodeFetch\n…"}}
+```
+
 ## 3. Topics
 
 ```json

@@ -17,6 +17,7 @@ openapi/
 ├── AGENTS.md              # This file
 ├── openapi_analysis.inc   # Beam position, screen digest, frame cost
 ├── openapi_analyzers.inc  # Analyzer management, coverage, AY log
+├── openapi_analysislayers.inc # Analysis layers: start / stop / status / explain (analysis::Execute)
 ├── openapi_assembly.inc   # In-process assembler + source listings
 ├── openapi_basic.inc      # BASIC interpreter control
 ├── openapi_breakpoints.inc # Breakpoint management
@@ -101,6 +102,7 @@ Includes are grouped by category:
 #include "openapi/openapi_state.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"
+#include "openapi/openapi_analysislayers.inc"
 
 // Debug Commands
 #include "openapi/openapi_stepping.inc"

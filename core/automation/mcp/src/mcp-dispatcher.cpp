@@ -172,6 +172,12 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
             done(MakeRpcError(id, kInvalidParams, "Unknown tool: " + name));
             return;
         }
+        if (_toolCallObserver)
+        {
+            const Json::Value& arguments = params["arguments"];
+            const bool hasAction = arguments.isObject() && arguments.isMember("action") && arguments["action"].isString();
+            _toolCallObserver(name, hasAction ? arguments["action"].asString() : std::string());
+        }
 
         // Tool execution problems are reported through the tool result
         // (isError: true), never as JSON-RPC errors, per the MCP spec

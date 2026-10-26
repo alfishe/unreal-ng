@@ -735,6 +735,23 @@ Or use hex string format:
 
 While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) and a physical page write (`PUT /memory/{type}/{page}/{offset}`) record a `debugger_edit` marker, a replay barrier, and briefly pause a running emulator for the edit so the recording sees it. No marker is written when no recording runs.
 
+### Analysis layers
+
+The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md) (`analysis_api.cpp` over the shared
+core handler `analysis::Execute`; OpenAPI tag `Analyzers`). Every answer carries `text`, the CLI's lines; refusals
+are `{"error", "message"}` with 400 (unknown option, bad value), 404 (no such label), 409 (`explain` at level
+`counters`), 503 (no tracker).
+
+```
+POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?: "z80"|"physical"}: status
+POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable: status
+GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, facts {allocated, bytes, z80_bytes_touched, pages}, text}
+GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3]
+                                              {address, mode, bank | page, label, accessed, kinds, kinds_mask,
+                                               first_frame, last_frame, last_reader, multi_reader, last_writer,
+                                               multi_writer, written {distinct, min, max}, counters, text}
+```
+
 ### Settings Management
 ```
 GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, turbo_active, turbo_audio

@@ -148,3 +148,31 @@ TEST_F(MonitoringApi_Test, HostClientsCountWhatThePlanesReport)
     EXPECT_EQ(clients.Read(monitoring::ClientPlane::Cli).connections, before.connections) << "closed";
     EXPECT_EQ(clients.Read(monitoring::ClientPlane::Cli).opened, before.opened + 1);
 }
+
+/// MCP tool calls per tool and action (the dispatcher's observer feeds ClientStats::ToolCall): host.clients.mcp.tools
+TEST_F(MonitoringApi_Test, HostClientsCountMcpToolCallsPerAction)
+{
+    monitoring::ClientStats& clients = monitoring::ClientStats::Instance();
+    const auto before = clients.ReadToolCalls();
+    const uint64_t explainsBefore =
+        before.count("analysis") && before.at("analysis").actions.count("explain") ? before.at("analysis").actions.at("explain") : 0;
+    clients.ToolCall("analysis", "explain");
+    clients.ToolCall("analysis", "explain");
+    clients.ToolCall("analysis", "status");
+    clients.ToolCall("search_api", "");
+
+    const monitoring::Reply reply = monitoring::Call("host.clients", StateNode::Object());
+    const StateNode* mcp = reply.body.find("mcp");
+    ASSERT_NE(mcp, nullptr);
+    const StateNode* tools = mcp->find("tools");
+    ASSERT_NE(tools, nullptr);
+    const StateNode* analysis = tools->find("analysis");
+    ASSERT_NE(analysis, nullptr);
+    const StateNode* actions = analysis->find("actions");
+    ASSERT_NE(actions, nullptr);
+    EXPECT_EQ(Int(*actions, "explain"), static_cast<int64_t>(explainsBefore) + 2);
+    EXPECT_GE(Int(*analysis, "calls"), 3);
+    const StateNode* search = tools->find("search_api");
+    ASSERT_NE(search, nullptr);
+    EXPECT_GE(Int(*search->find("actions"), "(none)"), 1);
+}

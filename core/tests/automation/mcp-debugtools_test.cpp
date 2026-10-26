@@ -245,3 +245,61 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_GsPortTraceControlsThroughTheContr
     EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs/porttrace"), nullptr);
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/state/audio/gs/porttrace"), nullptr);
 }
+
+/// analysis: one tool, the action picks the route; the core answer's text is the tool's text (content[] carries it)
+TEST_F(McpDebugTools_Test, Analysis_ActionsGoToTheirRoutesAndCarryTheText)
+{
+    Json::Value explainBody;
+    explainBody["text"] = "$80BC [RAM 2]: OpcodeFetch\n  frames 1..2";
+    explainBody["kinds"].append("OpcodeFetch");
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/explain?address=%2480BC&page=ram%3A1"] = {200, explainBody};
+
+    Json::Value args;
+    args["action"] = "explain";
+    args["address"] = "$80BC";
+    args["page"] = "ram:1";
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("OpcodeFetch\n  frames 1..2"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["kinds"][0].asString(), "OpcodeFetch");
+
+    args = Json::Value();
+    args["action"] = "explain";
+    args["address"] = 32956;  // an integer works too
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=32956"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "start";
+    args["level"] = "facts";
+    args["mode"] = "physical";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* start = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_EQ(start->body["level"].asString(), "facts");
+    EXPECT_EQ(start->body["mode"].asString(), "physical");
+
+    args = Json::Value();
+    args["action"] = "status";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/status"), nullptr);
+    args["action"] = "stop";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/analysis/stop"), nullptr);
+}
+
+TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
+{
+    Json::Value args;
+    args["action"] = "explain";
+    EXPECT_TRUE(Run("analysis", args).isError) << "explain needs an address";
+
+    Json::Value conflict;
+    conflict["error"] = "Conflict";
+    conflict["message"] = "no access facts: the tracker level is counters";
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/explain?address=0x8000"] = {409, conflict};
+    args["address"] = "0x8000";
+    const mcp::ToolResult result = Run("analysis", args);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("409"), std::string::npos) << result.text;
+}

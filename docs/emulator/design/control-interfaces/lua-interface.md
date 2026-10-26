@@ -1475,6 +1475,23 @@ emu.listing_step_line()              -- run until the source line changes (~2 s 
 emu.listing_run_to_line(120)         -- run to first code byte of line 120 (~10 s budget)
 ```
 
+### Analysis layers
+
+The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md) through the shared core handler
+(`analysis::Execute`): the answer is a table of its fields plus `text` (the CLI's lines); a refusal is
+`{ ok = false, error = <why> }`.
+
+```lua
+emu.analysis("start")                                -- level facts, mode z80, a fresh session
+emu.analysis("start", {level = "counters", mode = "physical"})
+emu.analysis("start", "counters")                    -- a string: the level
+emu.analysis("status")                               -- { state, level, mode, frame, facts, text }
+local r = emu.analysis("explain", "$80BC")           -- a string: the address (or a label)
+print(r.text)
+emu.analysis("explain", {address = 0xC000, page = "ram:3"})   -- physical mode: the page
+emu.analysis("stop")                                 -- the facts stay readable
+```
+
 ## Usage Examples
 
 ### Register Dump Macro

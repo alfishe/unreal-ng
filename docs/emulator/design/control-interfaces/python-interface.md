@@ -1891,6 +1891,22 @@ emu.listing_step_line()              # run until the source line changes (~2 s b
 emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s budget)
 ```
 
+### Analysis layers
+
+The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md) through the shared core handler
+(`analysis::Execute`): the answer is a dict of its fields plus `text` (the CLI's lines); a refusal is
+`{"ok": False, "error": <why>}`.
+
+```python
+emu.analysis("start")                                  # level facts, mode z80, a fresh session
+emu.analysis("start", level="counters", mode="physical")
+emu.analysis("status")                                 # {state, level, mode, frame, facts {...}, text}
+r = emu.analysis("explain", address="$80BC")           # or address=0x80BC, a label name
+print(r["text"]); r["kinds"], r["last_writer"], r["written"]
+emu.analysis("explain", address=0xC000, page="ram:3")  # physical mode: the page
+emu.analysis("stop")                                   # the facts stay readable
+```
+
 ### Enumerations
 
 ```python

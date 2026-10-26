@@ -76,6 +76,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
+#include "debugger/analyzers/analysis/analysiscontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -6492,6 +6493,29 @@ public:
             StateNode value = reply.body;
             if (!reply.Ok())
             {
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
+        // stop | status | explain; opts a table ({level=, mode=} / {address=, page=}) or, for explain, the address and
+        // for start the level. The answer: the reply's fields plus text; a refusal: ok = false, error = why
+        lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
+                                            sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            analysis::Reply reply;
+            if (!emulator)
+                reply.error = analysis::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = analysis::Execute(*emulator, verb,
+                                          opts ? SymbolOptions(*opts, verb == "explain" ? "address" : verb == "start" ? "level" : "")
+                                               : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
                 value["ok"] = false;
                 value["error"] = reply.message;
             }

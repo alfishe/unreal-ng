@@ -1201,6 +1201,7 @@ through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, 
 | Clear all, reset hits | `bpclear all`, `bphits reset` | `bp_clear`, `bp_reset_hits` | the same | `bp_clear`, `bp_reset_hits` | `DELETE /breakpoints`, `POST /breakpoints/hits/reset` | `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset` |
 | Profiler / trace start, stop, pause, resume, clear | `profiler`, `coverage`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `audiocapture` | `trace(name, op, opts)` (+ `porttrace_*`, `gs_porttrace_*`, `coverage_*`, `ay_log_*`, `pc_history*`, `audio_capture_*`) | `trace(name, op, **opts)` (+ the per-profiler functions) | `analyze_performance` `profiler` {profiler, op}, `gs_trace`, `aylog`, `pchist`, `coverage_*`, `profile_*`; `capture_media` audio | `/profiler/{opcode,memory,calltrace,porttrace}/*`, `/profiler/*`, `/coverage/*`, `/control/audio/gs/porttrace`, `/debug/pchist`, `/ay/log`, `/audio/capture` | `prof.toggle`, `prof.pause_toggle`, `prof.clear` (state `toggle.profiler.<name>`, `toggle.profiler_paused.<name>`) |
 | Analyzers on / off, clear | `analyzer` | `analyzer_list/enable/disable/active` | `analyzer_*` | `analyze_performance` `analyzers` {op, name} | `GET /analyzers`, `PUT /analyzer/{name}`, `DELETE /analyzer/{name}/events` | `analyzer.toggle` (state `toggle.analyzer.<name>`), `analyzer.clear` |
+| Analysis layers: start, stop, status, explain an address (L0 access facts) | `analysis start [facts\|counters] [z80\|physical]`, `analysis stop\|status`, `analysis explain <addr> [page]` | `analysis(action, opts)` | `analysis(action, **opts)` | `analysis` {action: start, stop, status, explain} | `POST /analysis/start`, `POST /analysis/stop`, `GET /analysis/status`, `GET /analysis/explain?address=&page=` | - |
 | Set a register | `reg <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
 | Write / fill memory | `memory write`, `memory fill` | `mem_write*` | `mem_write*` | `memory_access` `write` | `PUT /memory/{addr}`, `POST /memory/write` | `mem.write` (bytes, or value + count) |
 | Port OUT | `out` | `port_out` | `port_out` | `control_execution` `port_out` | `POST /ports/out` | `port.out` (port or a preset, value) |
@@ -1561,6 +1562,28 @@ ranges and gaps.
 | `coverage gaps [start] [end]` | `[<from> <to>]` | List executed ranges and unexecuted gaps within a window (default 0x0000-0xFFFF). |
 | `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
 | `coverage export [path]` | `[<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]` | Write the executed instruction starts as SkoolKit's code execution map (`$HHHH` lines, for `sna2ctl.py -m` / `sna2skool.py -m`); no path: the map is returned. `--merge` adds the addresses of the map already at the path. REST/WebSocket `POST /coverage/export`, MCP `analyze_performance` `coverage_export`, Lua / Python `coverage_export`. Recipe: [SkoolKit code execution map](../../../../.recipe/analysis/code-coverage-and-analyzers.md#skoolkit-code-execution-map). |
+
+#### 5.5a Analysis Layers (L0 access facts)
+
+Per-byte facts of how the program uses memory, recorded by the memory tracker at level `facts` on top of its
+counters: the access kinds (`OpcodeFetch`, `OperandFetch`, `DataRead`, `DataWrite`, `StackRead`, `StackWrite`,
+`BlockAccess`, `WrittenWhileCode`), the last reader and writer PC, the first and last frame, the smallest and largest
+value written and how many distinct values (1, 2, 3+), and whether several instructions read or wrote the byte. One
+core handler (`analysis::Execute`, `core/src/debugger/analyzers/analysis/analysiscontrol.h`) serves every plane; the
+module doc is [analysis layers](../../analysis/analysis-layers.md).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `analysis start` | `[facts\|counters] [z80\|physical]` (or `level=`, `mode=`) | Switch on debug mode and memory tracking, set the level (default `facts`) and mode (default `z80`; `physical` keeps facts per RAM / ROM page, a page allocated when first touched) and start a fresh session. |
+| `analysis stop` | | Stop the session; the facts stay readable until the next start. |
+| `analysis status` | | State, level, mode, frame, bytes allocated, Z80 addresses touched, pages with facts. |
+| `analysis explain <addr>` | `<addr> [page]` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal, a label; page: index, `ram:N`, `rom:N`) | What L0 knows of one byte, as lines: kinds, last writer and the values, last reader, frames, counters, labels. Refused (409) at level `counters`. |
+
+All commands take `--json` for the fields. REST / WebSocket `call`: `POST /api/v1/emulator/{id}/analysis/start`
+`{level?, mode?}`, `POST .../analysis/stop`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=`
+(every answer has `text`, the CLI's lines). MCP: one tool `analysis` {action, level, mode, address, page}; its calls
+are counted per action in `host.clients.mcp.tools`. Lua `analysis(action, opts)`, Python
+`emu.analysis(action, **opts)`.
 
 #### 5.6 AY Register Log
 

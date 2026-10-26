@@ -6462,6 +6462,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterSignatureInfo(*registry);
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
+    // analysis: the analysis layers (docs/emulator/analysis/analysis-layers.md), calls counted per action
+    RegisterAnalysis(*registry);
     RegisterCaptureMedia(*registry);
     RegisterMediaSlots(*registry);
     // controllers: connectors and retro devices (docs/inprogress/2026-10-17-controller-manager/surfaces.md §7)

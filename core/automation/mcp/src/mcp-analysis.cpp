@@ -24,6 +24,13 @@
 //   pchist {op}                         → POST /debug/pchist {enabled}, GET /debug/pchist?depth=
 //   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
 //
+// analysis actions (the analysis layers, core analysis::Execute behind the routes):
+//   start {level?, mode?} → POST /analysis/start
+//   stop                  → POST /analysis/stop
+//   status                → GET  /analysis/status
+//   explain {address, page?} → GET /analysis/explain?address=&page=
+// The answer's "text" (shared with the CLI) is the tool's text.
+//
 // Drogon-free; all calls go through the loopback IApiCaller.
 
 #include "mcp-analysis.h"
@@ -1023,5 +1030,92 @@ void RegisterAnalyzePerformance(ToolRegistry& registry)
 }
 
 /// endregion </analyze_performance>
+
+/// region <analysis>
+
+void RegisterAnalysis(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"start", "stop", "status", "explain"})
+        schema["properties"]["action"]["enum"].append(action);
+    schema["properties"]["action"]["description"] =
+        "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode); stop: "
+        "end it, the facts stay readable; status: what the session holds; explain: what is known of one byte - how it "
+        "was accessed (opcode or operand fetch, data or stack read / write, block instruction, written while code), the "
+        "last instruction that read and wrote it, the frames, the values written, the counters and the labels";
+    schema["properties"]["level"]["type"] = "string";
+    schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["level"]["enum"].append("facts");
+    schema["properties"]["level"]["enum"].append("counters");
+    schema["properties"]["level"]["description"] = "start: facts (default) or counters only";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["mode"]["enum"].append("z80");
+    schema["properties"]["mode"]["enum"].append("physical");
+    schema["properties"]["mode"]["description"] =
+        "start: z80 (default, the 64K address space) or physical (per RAM / ROM page: banked code apart)";
+    schema["properties"]["address"]["type"] = "string";  // an integer works too (AddressArg)
+    schema["properties"]["address"]["description"] = "explain: $80BC, #80BC, 0x80BC, 80BCh, decimal or a label name";
+    schema["properties"]["page"]["type"] = "string";
+    schema["properties"]["page"]["description"] =
+        "explain, physical mode: the page (absolute index, ram:N or rom:N); default the page mapped at the address now";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["required"].append("action");
+
+    registry.Register(
+        "analysis",
+        "Program analysis from what the emulated CPU does: per-byte access facts (code vs operand vs data vs stack, "
+        "who reads and writes a byte, which values, when, self-modified code). start, then run the program, then "
+        "explain addresses; status shows what was recorded.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            // The core answer's text is the readable answer; the target goes in front
+            auto withText = [done](ToolResult result) {
+                if (!result.isError && result.structured.isObject() && result.structured.isMember("text"))
+                    result.text = result.text + "\n" + result.structured["text"].asString();
+                done(std::move(result));
+            };
+            if (action == "start")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"level", "mode"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                ResolveAndForward(args, "POST", "/analysis/start", &body, caller, "Analysis started", withText);
+                return;
+            }
+            if (action == "stop")
+            {
+                ResolveAndForward(args, "POST", "/analysis/stop", nullptr, caller, "Analysis stopped", withText);
+                return;
+            }
+            if (action == "status")
+            {
+                ResolveAndForward(args, "GET", "/analysis/status", nullptr, caller, "Analysis status", withText);
+                return;
+            }
+            if (action == "explain")
+            {
+                if (!args.isMember("address") || AddressArg(args["address"]).empty())
+                {
+                    done(ToolResult::Error("explain needs address ($80BC, 0x80BC, decimal or a label)"));
+                    return;
+                }
+                std::string suffix = "/analysis/explain?address=" + UrlEncodeSegment(AddressArg(args["address"]));
+                if (args.isMember("page") && !AddressArg(args["page"]).empty())
+                    suffix += "&page=" + UrlEncodeSegment(AddressArg(args["page"]));
+                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Analysis explain", withText);
+                return;
+            }
+            done(ToolResult::Error("unknown action '" + action + "': start, stop, status or explain"));
+        });
+}
+
+/// endregion </analysis>
 
 } // namespace mcp
