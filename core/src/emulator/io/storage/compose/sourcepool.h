@@ -17,8 +17,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include "emulator/io/storage/iblockdevice.h"
 
-class IBlockDevice;
 
 class SourcePool
 {

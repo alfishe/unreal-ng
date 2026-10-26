@@ -5,10 +5,10 @@
 #include <filesystem>
 #include <memory>
 
+#include "unrealdisk/diskfs.h"
+#include "unrealdisk/diskimage.h"
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/loaders/loader_trd.h"
-#include "unrealdisk/plus3fs.h"
-#include "unrealdisk/trdosfs.h"
 
 namespace unrealasm::tools
 {
@@ -31,6 +31,40 @@ std::string Extension(const std::string& path)
     const size_t slash = path.find_last_of("/\\");
     const size_t dot = path.find_last_of('.');
     return dot == std::string::npos || (slash != std::string::npos && dot < slash) ? std::string() : Lower(path.substr(dot + 1));
+}
+
+/// TR-DOS name bytes as DiskFs names them: printable ASCII as is, any other byte as \\xNN
+std::string Escape(const std::string& raw)
+{
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (const char ch : raw)
+    {
+        const uint8_t c = static_cast<uint8_t>(ch);
+        if (c >= 0x20 && c < 0x7F)
+            out += ch;
+        else
+            out += std::string("\\x") + hex[c >> 4] + hex[c & 0x0F];
+    }
+    return out;
+}
+
+/// The reverse of Escape: the bytes as stored
+std::string Unescape(const std::string& text)
+{
+    std::string out;
+    for (size_t i = 0; i < text.size(); i++)
+    {
+        if (text[i] == '\\' && i + 3 < text.size() && text[i + 1] == 'x' && std::isxdigit(static_cast<unsigned char>(text[i + 2])) &&
+            std::isxdigit(static_cast<unsigned char>(text[i + 3])))
+        {
+            out += static_cast<char>(std::stoi(text.substr(i + 2, 2), nullptr, 16));
+            i += 3;
+        }
+        else
+            out += text[i];
+    }
+    return out;
 }
 }  // namespace
 
@@ -57,48 +91,76 @@ bool ReadImageFiles(const std::string& name, const std::vector<uint8_t>& bytes, 
         error = loaded.message;
         return false;
     }
-    unrealdisk::TrdosFileSystem fs(*disk);
-    std::vector<unrealdisk::TrdosFile> entries;
-    if (!fs.List(entries, error))
+    return ReadDiskFiles(*disk, out, error);
+}
+
+bool ReadDiskFiles(unrealdisk::DiskImage& disk, std::vector<containers::TrdosFile>& out, std::string& error)
+{
+    out.clear();
+    unrealdisk::DiskFs fs(disk);
+    std::vector<unrealdisk::DiskFsEntry> entries;
+    if (!fs.List("", "", true, entries, error))
+        return false;
+    const bool trdos = fs.Volumes().front().fs == "trdos";
+    for (const unrealdisk::DiskFsEntry& entry : entries)
     {
-        // a +3DOS disk: each file's data (after its header), the type as an extension, a CODE file's address as its start
-        unrealdisk::Plus3FileSystem plus3(*disk);
-        std::vector<unrealdisk::Plus3File> files;
-        std::string plus3Error;
-        if (!plus3.List(files, plus3Error))
-            return false;
-        error.clear();
-        for (const unrealdisk::Plus3File& entry : files)
+        if (entry.directory)
+            continue;
+        containers::TrdosFile file;
+        const size_t dot = entry.path.rfind('.');
+        const bool hasExtension = dot != std::string::npos && entry.path.find('/', dot) == std::string::npos;
+        file.name = hasExtension ? entry.path.substr(0, dot) : entry.path;
+        file.start = static_cast<uint16_t>(entry.start);
+        if (trdos)
         {
-            containers::TrdosFile file;
-            file.name = entry.name;
-            file.name.resize(8, ' ');
-            file.type = 0;
-            file.extension = entry.type;
-            for (char& c : file.extension)
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            file.start = entry.header && entry.basicType == 3 ? entry.param1 : 0;
-            if (!plus3.Read(entry, file.data, error))
+            file.name = Unescape(file.name);
+            // TR-DOS: the type letter, the catalog's length and sectors, the rest of the last sector kept
+            file.type = static_cast<char>(entry.Field("type"));
+            file.length = static_cast<uint16_t>(entry.size);
+            file.sectors = static_cast<uint8_t>(entry.Field("sectors"));
+            if (!fs.Read("", entry.path, file.data, error, &file.tail))
+                return false;
+        }
+        else
+        {
+            // +3DOS, iS-DOS, FAT: the type as an extension, the data's size as the length
+            file.extension = hasExtension ? Lower(entry.path.substr(dot + 1)) : std::string();
+            if (!fs.Read("", entry.path, file.data, error))
                 return false;
             file.length = static_cast<uint16_t>(std::min<size_t>(file.data.size(), 0xFFFF));
             file.sectors = static_cast<uint8_t>(std::min<size_t>((file.data.size() + 255) / 256, 255));
-            out.push_back(std::move(file));
         }
-        return true;
-    }
-    for (const unrealdisk::TrdosFile& entry : entries)
-    {
-        containers::TrdosFile file;
-        file.name = entry.name;
-        file.type = entry.type;
-        file.start = entry.start;
-        file.length = entry.length;
-        file.sectors = entry.sectors;
-        if (!fs.Read(entry, file.data, &file.tail, error))
-            return false;
+        if (file.name.size() < 8)
+            file.name.resize(8, ' ');
         out.push_back(std::move(file));
     }
     return true;
+}
+
+bool PutDiskFile(unrealdisk::DiskImage& disk, const containers::TrdosFile& file, std::string& error)
+{
+    unrealdisk::DiskFs fs(disk);
+    std::string name = file.name;
+    while (!name.empty() && name.back() == ' ')
+        name.pop_back();
+    if (fs.Volumes().empty())
+    {
+        error = "no file system found on the disk";
+        return false;
+    }
+    unrealdisk::DiskFsWriteOptions options;
+    options.start = file.start;
+    if (fs.Volumes().front().fs == "trdos")
+    {
+        // NAME.T: the length field 0 when the file has none (as XAS saves), whole sectors then
+        options.lengthField = file.length != 0 || file.data.empty();
+        std::vector<uint8_t> body = file.data;
+        body.insert(body.end(), file.tail.begin(), file.tail.end());
+        return fs.Write("", Escape(name) + "." + Escape(std::string(1, file.type)), file.length ? file.data : body, options, error);
+    }
+    // +3DOS: NAME.TYP (the type letter for a TR-DOS one) with a +3DOS header, CODE at its start
+    const std::string type = !file.extension.empty() ? file.extension : file.type ? std::string(1, file.type) : std::string();
+    return fs.Write("", type.empty() ? name : name + "." + type, file.data, options, error);
 }
 
 bool PutImageFile(const std::string& path, const std::string& output, const containers::TrdosFile& file, std::string& error)
@@ -125,28 +187,8 @@ bool PutImageFile(const std::string& path, const std::string& output, const cont
             return false;
         }
     }
-    std::string name = file.name;
-    while (!name.empty() && name.back() == ' ')
-        name.pop_back();
-    if (unrealdisk::Plus3FileSystem plus3(*disk); !unrealdisk::TrdosFileSystem(*disk).IsTrdos() && plus3.IsPlus3())
-    {
-        // a +3DOS disk: NAME.TYP (the type letter for a TR-DOS one) with a +3DOS header, CODE at its start
-        unrealdisk::Plus3FileSystem::WriteOptions options;
-        options.param1 = file.start;
-        const std::string type = !file.extension.empty() ? file.extension : file.type ? std::string(1, file.type) : std::string();
-        if (!plus3.Write(type.empty() ? name : name + "." + type, file.data, options, error))
-            return false;
-    }
-    else
-    {
-        unrealdisk::TrdosFileSystem::WriteOptions options;
-        options.start = file.start;
-        options.lengthField = file.length != 0 || file.data.empty();
-        std::vector<uint8_t> body = file.data;
-        body.insert(body.end(), file.tail.begin(), file.tail.end());
-        if (!unrealdisk::TrdosFileSystem(*disk).Write(name, file.type, file.length ? file.data : body, options, error))
-            return false;
-    }
+    if (!PutDiskFile(*disk, file, error))
+        return false;
     const unrealdisk::FloppySaveResult saved = unrealdisk::FloppyFormats::Save({}, *disk, output, false);
     if (!saved.saved)
     {

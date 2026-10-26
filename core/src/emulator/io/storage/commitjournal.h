@@ -21,8 +21,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "emulator/io/storage/iblockdevice.h"
 
-class IBlockDevice;
 
 class CommitJournal
 {

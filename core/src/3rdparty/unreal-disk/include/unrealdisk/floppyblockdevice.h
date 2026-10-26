@@ -1,24 +1,23 @@
 #pragma once
 
 /// @file floppyblockdevice.h
-/// @brief A floppy of uniform 512-byte sectors (a PC / MS-DOS format: Sprinter DSS, 720K / 1.44M) as an IBlockDevice,
+/// @brief A floppy of uniform 512-byte sectors (a PC / MS-DOS format: Sprinter DSS, 720K / 1.44M) as a BlockDevice,
 /// so the FAT reader works on it as on a hard disk: LBA = (cylinder * sides + side) * sectors per track + the sector's
 /// position, sector ids counted from the lowest id of track 0. Read only; the image must outlive the device.
 
 #include <cstdint>
 #include <string>
 
-#include "emulator/io/storage/iblockdevice.h"
+#include "unrealdisk/blockdevice.h"
 
 namespace unrealdisk
 {
 class DiskImage;
-}
 
-class FloppyBlockDevice : public IBlockDevice
+class FloppyBlockDevice : public BlockDevice
 {
 public:
-    explicit FloppyBlockDevice(unrealdisk::DiskImage& image);
+    explicit FloppyBlockDevice(DiskImage& image);
 
     /// Track 0 holds 512-byte sectors with consecutive ids (the device has sectors)
     bool IsUniform() const { return _sectorsPerTrack != 0; }
@@ -32,9 +31,10 @@ public:
     uint64_t ContentId() const override { return 0; }
 
 private:
-    unrealdisk::DiskImage& _image;
+    DiskImage& _image;
     uint32_t _sides = 1;
     uint32_t _sectorsPerTrack = 0;
     uint8_t _firstId = 1;
     uint64_t _sectorCount = 0;
 };
+}  // namespace unrealdisk

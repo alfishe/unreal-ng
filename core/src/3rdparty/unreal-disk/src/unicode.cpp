@@ -1,10 +1,10 @@
-#include "stdafx.h"
-
-#include "unicodehelper.h"
+#include "unrealdisk/unicode.h"
 
 #include <algorithm>
 #include <cctype>
 
+namespace unrealdisk
+{
 namespace
 {
     /// CP866 bytes #80-#FF as Unicode code points (IBM code page 866)
@@ -266,3 +266,4 @@ char32_t UnicodeHelper::ToUpper(char32_t cp)
         return 0x0490;
     return cp;
 }
+}  // namespace unrealdisk

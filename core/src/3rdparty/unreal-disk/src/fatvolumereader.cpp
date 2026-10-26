@@ -1,12 +1,12 @@
-#include "stdafx.h"
-
-#include "fatvolumereader.h"
+#include "unrealdisk/fatvolumereader.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 
+namespace unrealdisk
+{
 namespace
 {
     constexpr uint32_t kSector = 512;
@@ -81,7 +81,7 @@ uint64_t FatVolumeReader::DataStart() const
     return _reservedSectors + static_cast<uint64_t>(_fats) * _fatSectors + _rootDirSectors;
 }
 
-bool FatVolumeReader::FindPartition(IBlockDevice& device, uint32_t number, FatPartition& partition, std::string* error)
+bool FatVolumeReader::FindPartition(BlockDevice& device, uint32_t number, FatPartition& partition, std::string* error)
 {
     auto fail = [error](const std::string& text) {
         if (error)
@@ -145,7 +145,7 @@ void FatVolumeReader::UnixToDos(int64_t unixSeconds, uint16_t& date, uint16_t& t
     time = static_cast<uint16_t>(((secondsOfDay / 3600) << 11) | (((secondsOfDay / 60) % 60) << 5) | ((secondsOfDay % 60) / 2));
 }
 
-bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* error)
+bool FatVolumeReader::Open(BlockDevice& device, CodePage page, std::string* error)
 {
     auto fail = [error](const char* text) {
         if (error)
@@ -628,3 +628,4 @@ bool FatVolumeReader::ReadFile(const std::string& path, std::vector<uint8_t>& da
         return true;
     return ReadClusterChain(file.firstCluster, file.size, data, error);
 }
+}  // namespace unrealdisk

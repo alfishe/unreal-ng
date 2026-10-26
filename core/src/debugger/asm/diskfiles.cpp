@@ -9,10 +9,10 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
-#include "emulator/io/fdc/trdoscatalog.h"
+#include "3rdparty/unreal-asm/tools/common/diskfiles.h"
 #include "loaders/disk/diskloaderoptions.h"
+#include "unrealdisk/diskfs.h"
 #include "unrealdisk/floppyformats.h"
-#include "unrealdisk/trdosfs.h"
 
 namespace
 {
@@ -48,24 +48,12 @@ bool Drive(EmulatorContext* context, uint8_t drive, FDD*& fdd, DiskImage*& image
         error = std::string("no disk in drive ") + letter;
         return false;
     }
-    if (!TrdosCatalog::IsTrdos(*image))
+    if (unrealdisk::DiskFs(*image).Volumes().empty())
     {
-        error = std::string("the disk in drive ") + letter + " has no TR-DOS file system";
+        error = std::string("the disk in drive ") + letter + " has no file system (TR-DOS, +3DOS, iS-DOS, FAT)";
         return false;
     }
     return true;
-}
-
-/// A catalog entry and its bytes as unreal-asm's TR-DOS file
-bool ToContainerFile(DiskImage& image, const TrdosFile& entry, unrealasm::containers::TrdosFile& out, std::string& error)
-{
-    out = {};
-    out.name = entry.name;
-    out.type = entry.type;
-    out.start = entry.start;
-    out.length = entry.length;
-    out.sectors = entry.sectors;
-    return unrealdisk::TrdosFileSystem(image).Read(entry, out.data, &out.tail, error);
 }
 }  // namespace
 
@@ -109,17 +97,7 @@ bool ReadDiskFiles(EmulatorContext* context, uint8_t drive, std::vector<unrealas
             DiskImage* image = nullptr;
             if (!Drive(context, drive, fdd, image, error))
                 return;
-            std::vector<TrdosFile> entries;
-            if (!unrealdisk::TrdosFileSystem(*image).List(entries, error))
-                return;
-            for (const TrdosFile& entry : entries)
-            {
-                unrealasm::containers::TrdosFile file;
-                if (!ToContainerFile(*image, entry, file, error))
-                    return;
-                out.push_back(std::move(file));
-            }
-            ok = true;
+            ok = unrealasm::tools::ReadDiskFiles(*image, out, error);
         }, error) || !ok)
         return false;
     return true;
@@ -144,8 +122,7 @@ bool ReadDiskFile(EmulatorContext* context, const DiskFileRef& ref, unrealasm::c
 namespace
 {
 /// The write itself, at a coherent moment
-bool WriteNow(EmulatorContext* context, uint8_t drive, const std::string& name, char type, const unrealdisk::TrdosFileSystem::WriteOptions& options,
-              const std::vector<uint8_t>& bytes, std::string& error)
+bool WriteNow(EmulatorContext* context, uint8_t drive, const unrealasm::containers::TrdosFile& file, std::string& error)
 {
     FDD* fdd = nullptr;
     DiskImage* image = nullptr;
@@ -156,7 +133,7 @@ bool WriteNow(EmulatorContext* context, uint8_t drive, const std::string& name, 
         error = std::string("the disk in drive ") + static_cast<char>('A' + drive) + " is write-protected";
         return false;
     }
-    return unrealdisk::TrdosFileSystem(*image).Write(name, type, bytes, options, error);
+    return unrealasm::tools::PutDiskFile(*image, file, error);
 }
 }  // namespace
 
@@ -173,9 +150,13 @@ bool WriteDiskFile(EmulatorContext* context, const DiskFileRef& ref, uint16_t st
         return false;
     }
     bool ok = false;
-    unrealdisk::TrdosFileSystem::WriteOptions options;
-    options.start = start;
-    const bool reached = Coherent(context, [&]() { ok = WriteNow(context, ref.drive, ref.name, ref.type, options, bytes, error); }, error);
+    unrealasm::containers::TrdosFile file;
+    file.name = ref.name;
+    file.type = ref.type;
+    file.start = start;
+    file.length = static_cast<uint16_t>(bytes.size());
+    file.data = bytes;
+    const bool reached = Coherent(context, [&]() { ok = WriteNow(context, ref.drive, file, error); }, error);
     return reached && ok;
 }
 
@@ -186,10 +167,7 @@ bool WriteDiskFileNow(EmulatorContext* context, uint8_t drive, const unrealasm::
         error = "a TR-DOS file holds at most 65535 bytes";
         return false;
     }
-    unrealdisk::TrdosFileSystem::WriteOptions options;
-    options.start = file.start;
-    options.lengthField = file.length != 0 || file.data.empty();
-    return WriteNow(context, drive, file.TrimmedName(), file.type, options, file.data, error);
+    return WriteNow(context, drive, file, error);
 }
 
 bool IsImageExtension(const std::string& extension)
@@ -219,15 +197,5 @@ bool ReadImageFiles(EmulatorContext* context, const std::string& name, const std
         error = loaded.message;
         return false;
     }
-    std::vector<TrdosFile> entries;
-    if (!unrealdisk::TrdosFileSystem(*disk).List(entries, error))
-        return false;
-    for (const TrdosFile& entry : entries)
-    {
-        unrealasm::containers::TrdosFile file;
-        if (!ToContainerFile(*disk, entry, file, error))
-            return false;
-        out.push_back(std::move(file));
-    }
-    return true;
+    return unrealasm::tools::ReadDiskFiles(*disk, out, error);
 }
