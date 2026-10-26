@@ -39,6 +39,19 @@ from the Sprinter's DSS system disk (DNTBLINK, ROTOZOOM, PLASMA2, BADAPPLE).
 They need `UNREAL_SPRINTER_HDD` (the raw `sp_hdd_sys.img` from the MAME pack); without it they are skipped with
 an error. Details, method and results: [emulator/machines/README.md](emulator/machines/README.md).
 
+## Memory Tracker Frame Benchmark
+
+`emulator/memory/memorytracker_frame_benchmark.cpp`: `BM_MemoryTrackerFrame/machine:<m>/level:<l>`. It measures one
+turbo frame of a real game (48K Garfield, 128K Green Beret, Pentagon Dizzy X, from `testdata/`) at each
+`MemoryAccessTracker` level:
+- 0: off;
+- 1: debug mode without tracking;
+- 2: counters in Z80 mode;
+- 3: counters in physical mode.
+
+Run it with `--benchmark_repetitions=15 --benchmark_enable_random_interleaving=true`. Baseline and method:
+[memorytracker-p0.md](../../docs/inprogress/2026-10-24-analysis-layers/baselines/memorytracker-p0.md).
+
 ## Next Layer Capture Benchmark
 
 `emulator/video/nextlayercapture_benchmark.cpp`: what recording the layers of a ZX Spectrum Next frame costs (design: `docs/inprogress/2026-10-07-zx-next/design-layer-capture.md`

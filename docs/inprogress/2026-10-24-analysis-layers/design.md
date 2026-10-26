@@ -88,9 +88,11 @@ sequenceDiagram
 
 - The caller PC is already a parameter of every `Track*` call. Today it is dropped unless the address is in a
   monitored region; at level `facts` it is stored.
-- Stack and block accesses look like plain reads and writes to the memory code. The Z80 marks them by setting a
-  one-byte access context while it decodes the instruction (PUSH, CALL, LDIR, ...). The tracker reads it with
-  one load. Phase 0 checks whether the predecoder already has this class.
+- Stack and block accesses look like plain reads and writes to the memory code. The core has no predecoder and
+  no instruction class (checked in P0, [memorytracker-p0.md](baselines/memorytracker-p0.md)), so the context is
+  new: a 256-entry class table per prefix, read after `FetchM1` only at level `facts`, sets a one-byte access
+  context (stack, block, plain). Interrupt and NMI acceptance push through `MemoryWrite` directly and set the
+  stack context themselves. The tracker reads it with one load.
 - An address that was executed and is later written gets `WrittenWhileCode`.
 
 ### Cost
@@ -101,7 +103,7 @@ class update. All of it lands on cache lines next to the counters.
 | Configuration | Budget |
 |---------------|--------|
 | tracker off | no change (A/A noise is about 1.8 %) |
-| level `counters` (today) | baseline, measured first |
+| level `counters` (today) | baseline, measured in P0: 1.8-2.2x a turbo frame with the tracker off, of which the debug memory path is +46-79 % and the counters +19-35 % on top |
 | level `facts` | at most 25 % slower than `counters` |
 
 If the access context costs too much, the stack and block kinds move into the replay tracer, and L0 keeps only
