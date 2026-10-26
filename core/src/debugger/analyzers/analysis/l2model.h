@@ -60,6 +60,12 @@ enum class DetectorId : uint8_t
     Records,
     PointerTables,
     Variables,
+    Graphics,   ///< fonts, sprites, tiles: what blit loops drew
+    LevelMaps,  ///< the maps a tile loop walked
+    Screens,    ///< pictures and back buffers copied to the screen
+    Rng,
+    Unpackers,
+    Music,      ///< player signatures and the data an AY player read
 };
 const char* DetectorName(DetectorId id);
 
@@ -103,10 +109,10 @@ struct Field
 
 struct Geometry
 {
-    uint16_t width = 0;   ///< glyph / sprite width in pixels; text: characters; table: entries
-    uint16_t height = 0;
+    uint16_t width = 0;   ///< glyph / sprite width in pixels; text: characters; table: entries; maps: cells
+    uint16_t height = 0;  ///< graphics: pixel rows; maps: cells
     uint16_t frames = 0;
-    uint16_t stride = 0;  ///< records: the step; tables: the entry size
+    uint16_t stride = 0;  ///< records: the step; tables: the entry size; graphics: the step from frame to frame
     uint16_t count = 0;   ///< records / entries
     std::vector<Field> fields;
     std::vector<uint16_t> instances;  ///< records / buffers: the Z80 bases of the other copies (sorted)
@@ -116,6 +122,13 @@ struct Geometry
     VarRole role = VarRole::None;
     uint8_t minValue = 0;             ///< variables: the values seen
     uint8_t maxValue = 0;
+    /// Graphics: a mask byte before each graphic byte (mask, graphic, mask, graphic ...)
+    bool mask = false;
+    /// Graphics: bytes before each frame's pixel rows (a tile's attribute)
+    uint16_t prefix = 0;
+    /// Graphics and screens: how the bytes are laid out: "rows" (row by row, width / 8 bytes a row), "screen" (the
+    /// display file's order), "attributes" (one byte a cell, 32 a row), "cells" (a map: one byte a cell)
+    std::string layout;
 };
 
 struct Region

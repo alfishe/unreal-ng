@@ -184,4 +184,38 @@
         exportDraft["responses"]["200"]["description"] = "format, entries, bytes, ranges, path, content, text";
         exportDraft["responses"]["400"]["description"] = "No or an unknown format, bad ranges or width";
         exportDraft["responses"]["409"]["description"] = "No L2 yet (build first), or the path could not be written";
+
+        Json::Value& gallery = paths["/api/v1/emulator/{id}/analysis/gallery"]["post"];
+        gallery["summary"] = "Graphics found by L2, drawn as PNG";
+        gallery["tags"].append("Analyzers");
+        gallery["description"] =
+            "Without an address: the graphics regions L2 claimed (fonts, sprites, tiles, screens and back buffers, "
+            "level maps) with their geometry (width, height, frames, stride, mask, prefix, layout). With an address "
+            "(or a label): the region starting there (else the first covering it) drawn from the memory at the end of "
+            "the replay - frames in a grid, black ink on white paper (a tile's attribute colours it, a mask's "
+            "transparent pixels light grey), screens in the display file's row order, attributes and map cells as "
+            "8x8 colour cells - zoomed scale times, as a PNG: base64 in png, or written to path.";
+        idParameter(gallery);
+        {
+            Json::Value& schema = gallery["requestBody"]["content"]["application/json"]["schema"];
+            schema["type"] = "object";
+            schema["properties"]["address"]["type"] = "string";
+            schema["properties"]["address"]["description"] = "$8200, 0x8200, decimal or a label (none: the list)";
+            schema["properties"]["kind"]["type"] = "string";
+            for (const char* kind : {"all", "font", "sprite", "tile", "screen", "level_map"})
+                schema["properties"]["kind"]["enum"].append(kind);
+            schema["properties"]["scale"]["type"] = "integer";
+            schema["properties"]["scale"]["description"] = "Integer zoom 1..8 (default 2)";
+            schema["properties"]["path"]["type"] = "string";
+            schema["properties"]["path"]["description"] = "Write the PNG here (none: base64 in png)";
+            schema["properties"]["limit"]["type"] = "integer";
+            schema["properties"]["limit"]["description"] = "The most regions listed (default 200)";
+        }
+        gallery["responses"]["200"]["description"] =
+            "list: regions, count, truncated, text; one: region, width, height, frames, scale, bytes, mime_type, "
+            "png, path, text";
+        gallery["responses"]["400"]["description"] = "An unknown kind, a bad scale or limit";
+        gallery["responses"]["404"]["description"] = "No graphics region at the address, or no such label";
+        gallery["responses"]["409"]["description"] =
+            "No L2 yet (build first), a geometry with no picture, or the path could not be written";
     }

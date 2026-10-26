@@ -72,6 +72,8 @@ const std::vector<Signature>& Builtin()
         std::vector<Signature> out;
         const std::vector<Signature>& rom48 = Rom48();
         out.insert(out.end(), rom48.begin(), rom48.end());
+        const std::vector<Signature>& players = Players();
+        out.insert(out.end(), players.begin(), players.end());
         return out;
     }();
     return all;

@@ -16,6 +16,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "common/base64.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/assembler/z80textassembler.h"
@@ -81,6 +82,14 @@ TEST(AnalysisControl_Test, CliWords)
     EXPECT_EQ(action, "export");
     EXPECT_EQ(options, (std::map<std::string, std::string>{
                            {"format", "skool"}, {"path", "out/mm.skool"}, {"ranges", "8000-FFFF"}, {"width", "16"}}));
+
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"gallery", "sprite", "$8200", "out/s.png", "scale=4"}, action, options, json,
+                                       error));
+    EXPECT_EQ(action, "gallery");
+    EXPECT_EQ(options, (std::map<std::string, std::string>{
+                           {"kind", "sprite"}, {"address", "$8200"}, {"path", "out/s.png"}, {"scale", "4"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"gallery", "$8200"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"address", "$8200"}}));
 
     EXPECT_FALSE(CliAnalysis::ParseArgs({"start", "fast"}, action, options, json, error));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"explain", "1", "2", "3"}, action, options, json, error));
@@ -318,4 +327,64 @@ TEST_F(AnalysisControlL1_Test, QueryAndExportTheStructure)
         << "overlapping ranges";
     EXPECT_EQ(analysis::Execute(*_emulator, "export", {{"format", "skool"}, {"width", "0"}}).error,
               analysis::Error::BadRequest);
+}
+
+/// The gallery (P4): before an L1 it refuses; then the list of the graphics and one drawn as a PNG (base64 in the
+/// answer, or a file), the refusals on a bad kind, scale or an address with no graphics
+TEST_F(AnalysisControlL1_Test, GalleryListsAndDrawsTheGraphics)
+{
+    EXPECT_EQ(analysis::Execute(*_emulator, "gallery").error, analysis::Error::Conflict) << "no L1 yet";
+
+    std::ifstream fixture(TestPathHelper::GetTestDataPath("analysis/fixtures/sprite-16x16.asm"), std::ios::binary);
+    std::stringstream source;
+    source << fixture.rdbuf();
+    const AsmResult code = Z80TextAssembler().Assemble(source.str(), 0x8000);
+    ASSERT_TRUE(code.ok) << code.error.message;
+    for (const AsmSourceLine& line : code.lines)
+        for (size_t i = 0; i < line.bytes.size(); ++i)
+            _emulator->GetMemory()->DirectWriteToZ80Memory(static_cast<uint16_t>(line.address + i), line.bytes[i]);
+    const uint16_t sprites = static_cast<uint16_t>(code.symbols.at("sprites"));
+    Z80* z80 = _emulator->GetContext()->pCore->GetZ80();
+    z80->pc = static_cast<uint16_t>(code.symbols.at("start"));
+    z80->sp = 0x9F00;
+
+    ASSERT_TRUE(analysis::Execute(*_emulator, "start", {{"record", "true"}}).Ok());
+    _emulator->RunNFrames(3);
+    const analysis::Reply built = analysis::Execute(*_emulator, "build", {{"wait", "20000"}});
+    ASSERT_TRUE(built.Ok()) << built.message;
+    ASSERT_EQ(Member(built.body, "state").s, "done") << built.text;
+
+    const analysis::Reply list = analysis::Execute(*_emulator, "gallery");
+    ASSERT_TRUE(list.Ok()) << list.message;
+    EXPECT_GE(Member(list.body, "count").i, 1u);
+    EXPECT_NE(list.text.find("sprite"), std::string::npos) << list.text;
+    const analysis::Reply onlySprites = analysis::Execute(*_emulator, "gallery", {{"kind", "sprite"}});
+    ASSERT_TRUE(onlySprites.Ok());
+    for (size_t i = 0; i < Member(onlySprites.body, "regions").size(); ++i)
+        EXPECT_EQ(Member(Member(onlySprites.body, "regions").items[i], "kind").s, "sprite");
+
+    const analysis::Reply one = analysis::Execute(*_emulator, "gallery", {{"address", std::to_string(sprites)}});
+    ASSERT_TRUE(one.Ok()) << one.message;
+    EXPECT_EQ(Member(one.body, "frames").i, 4u);
+    std::vector<uint8_t> png;
+    ASSERT_TRUE(base64::Decode(Member(one.body, "png").s, png));
+    ASSERT_GT(png.size(), 8u);
+    EXPECT_EQ(png[1], 'P');
+    EXPECT_EQ(png.size(), Member(one.body, "bytes").i);
+    EXPECT_NE(one.text.find("PNG"), std::string::npos) << one.text;
+
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("sprite.png");
+    const analysis::Reply file =
+        analysis::Execute(*_emulator, "gallery", {{"address", std::to_string(sprites)}, {"path", path}, {"scale", "1"}});
+    ASSERT_TRUE(file.Ok()) << file.message;
+    EXPECT_EQ(Member(file.body, "path").s, path);
+    EXPECT_TRUE(Member(file.body, "png").s.empty());
+    std::ifstream written(path, std::ios::binary);
+    EXPECT_TRUE(written.good());
+    std::remove(path.c_str());
+
+    EXPECT_EQ(analysis::Execute(*_emulator, "gallery", {{"kind", "code"}}).error, analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "gallery", {{"scale", "9"}}).error, analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "gallery", {{"address", "$0000"}}).error, analysis::Error::NotFound);
+    EXPECT_EQ(analysis::Execute(*_emulator, "gallery", {{"width", "8"}}).error, analysis::Error::BadRequest);
 }

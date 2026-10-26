@@ -19,6 +19,9 @@ constexpr uint32_t kNone = 0xFFFFFFFFu;
 constexpr size_t kMaxIntervals = 8;     ///< per instruction and direction; nearest neighbours merge beyond
 constexpr size_t kMaxPorts = 16;
 constexpr size_t kMaxBases = 64;
+constexpr size_t kMaxRanges = 64;
+/// Copy provenance is kept coarse: runs of origins merge across gaps of up to 7 bytes (a strided reader's skips)
+constexpr uint32_t kOriginSlack = 7;       ///< exact runs per instruction and direction (Stride::ranges, ::origins)
 constexpr size_t kMaxSuccessors = 256;  ///< per instruction (a JP (HL) table, a RET to many places)
 constexpr size_t kMaxStack = 256;       ///< shadow call frames (the oldest go first)
 constexpr size_t kMaxActiveLoops = 32;
@@ -63,7 +66,48 @@ struct StrideSlot
     int32_t stride = 0;
     bool hasDelta = false;
     bool varied = false;
+    std::vector<uint16_t> starts;  ///< the first address seen in each instance (the loop's second pass: corrected by
+                                   ///< the stride when Build writes it out)
+    uint32_t startsSeen = 0;
 };
+
+/// Exactly merged, sorted runs of physical keys (no nearest-neighbour merging: a run that does not fit is dropped and
+/// `more` set)
+/// Add @p key to sorted runs: a run absorbs it when the gap to it is at most @p slack bytes (0: exact runs), in one
+/// page; at most kMaxRanges runs (@p more when one did not fit)
+void AddRange(std::vector<Interval>& v, bool& more, PhysKey key, uint16_t z80, uint32_t slack = 0)
+{
+    auto it = std::lower_bound(v.begin(), v.end(), key, [](const Interval& iv, PhysKey k) { return iv.hi < k; });
+    if (it != v.end() && it->lo <= key)
+        return;  // inside
+    const auto samePage = [](PhysKey a, PhysKey b) { return (a >> 14) == (b >> 14); };
+    if (it != v.begin())
+    {
+        auto prev = it - 1;
+        if (key <= prev->hi + 1 + slack && samePage(prev->hi, key))
+        {
+            prev->hi = key;
+            if (it != v.end() && it->lo <= prev->hi + 1 + slack && samePage(prev->hi, it->lo))
+            {
+                prev->hi = it->hi;
+                v.erase(it);
+            }
+            return;
+        }
+    }
+    if (it != v.end() && it->lo <= key + 1 + slack && samePage(key, it->lo))
+    {
+        it->lo = key;
+        it->z80 = z80;
+        return;
+    }
+    if (v.size() >= kMaxRanges)
+    {
+        more = true;
+        return;
+    }
+    v.insert(it, Interval{key, key, z80});
+}
 
 struct Node
 {
@@ -109,6 +153,10 @@ struct Node
     bool baseWrite = false;
 
     StrideSlot stride[2];  ///< the first data read, the first data write
+    std::vector<Interval> ranges[2];  ///< every data read / write, exact runs (Stride::ranges)
+    bool rangesMore[2] = {false, false};
+    std::vector<Interval> origins;    ///< where the bytes it read were copied from (Stride::origins)
+    bool originsMore = false;
     uint16_t baseDataReg = 0;      ///< the 8-bit register the base + offset access loaded / stored (0: none yet)
     bool baseDataMixed = false;    ///< more than one register was seen
 
@@ -427,6 +475,8 @@ struct UseAcc
     uint32_t lastFrame = 0;
     uint32_t reads = 0;
     uint32_t writes = 0;
+    PhysKey origin = 0xFFFFFFFFu;  ///< the byte a block copy brought here (the first source of a chain); none: kNoKey
+    uint16_t originZ80 = 0;
 };
 
 /// Where the value of an 8-bit register came from (the pointer provenance: kept until the register is overwritten)
@@ -570,6 +620,15 @@ struct L1Builder::Impl
 
     void NoteCopy(uint32_t node, uint16_t src, uint16_t dst)
     {
+        {
+            // Provenance: the destination now holds the source's byte (or what the source byte was copied from)
+            const UseAcc& from = UseOf(pageOf(src), src);
+            const PhysKey origin = from.origin != kNoKey ? from.origin : MakeKey(pageOf(src), src);
+            const uint16_t originZ80 = from.origin != kNoKey ? from.originZ80 : src;
+            UseAcc& to = UseOf(pageOf(dst), dst);
+            to.origin = origin;
+            to.originZ80 = originZ80;
+        }
         CopyRun& c = copyRun;
         if (c.node != kNone)
         {
@@ -682,8 +741,12 @@ struct L1Builder::Impl
         if (!read && op.mem != MemForm::Block)
             flags |= op.cls == OpClass::IncDec ? use::kIncDec : use::kOtherWrite;
         u.flags |= flags;
+        Node& n = nodes[node];
+        AddRange(n.ranges[read ? 0 : 1], n.rangesMore[read ? 0 : 1], MakeKey(page, address), address);
         if (read)
         {
+            if (u.origin != kNoKey)
+                AddRange(n.origins, n.originsMore, u.origin, u.originZ80, kOriginSlack);
             if (u.reads != 0xFFFFFFFFu)
                 ++u.reads;
             if (u.firstReader == kNone)
@@ -693,6 +756,7 @@ struct L1Builder::Impl
             u.lastReader = node;
             return;
         }
+        u.origin = kNoKey;  // a block copy sets it again (NoteCopy, after the accesses)
         if (u.writes != 0xFFFFFFFFu)
             ++u.writes;
         if (u.firstWriter == kNone)
@@ -1123,6 +1187,8 @@ struct L1Builder::Impl
                     s.varied = true;
             }
         }
+        if (s.instance != loop.instance && AddSorted(s.starts, address, kMaxBases))
+            ++s.startsSeen;
         s.instance = loop.instance;
         s.pass = loop.passes;
         s.lastAddress = address;
@@ -2180,7 +2246,25 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
             const auto it = loopIndex.find(s.loop);
             if (it == loopIndex.end())
                 continue;
-            out.loops[it->second].strides.push_back(Stride{n.key, n.z80, slot == 1, s.stride, !s.varied});
+            Stride stride;
+            stride.instruction = n.key;
+            stride.z80 = n.z80;
+            stride.write = slot == 1;
+            stride.stride = s.stride;
+            stride.constant = !s.varied;
+            stride.ranges = n.ranges[slot];
+            stride.rangesMore = n.rangesMore[slot];
+            // The first address of an instance is seen on the loop's second pass: one stride back is where it began
+            const int32_t back = stride.constant ? s.stride : 0;
+            for (const uint16_t a : s.starts)
+                AddSorted(stride.starts, static_cast<uint16_t>(a - back), kMaxBases);
+            stride.startsSeen = s.startsSeen;
+            if (slot == 0)
+            {
+                stride.origins = n.origins;
+                stride.originsMore = n.originsMore;
+            }
+            out.loops[it->second].strides.push_back(std::move(stride));
         }
     }
 

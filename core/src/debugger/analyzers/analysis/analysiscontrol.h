@@ -30,6 +30,10 @@
 ///   export  format [path ranges width]  the L2 draft (l2export.h): ctl, skool, fields, geometry, layout, symbols or
 ///                          map, of the Z80 ranges (hex, comma separated; default 4000-FFFF), DEFB lines of width
 ///                          bytes (8); written to path, or answered in "content" (and the text)
+///   gallery [address kind scale path limit]  L2 (P4): the graphics regions (fonts, sprites, tiles, screens, level
+///                          maps; kind filters them) with their geometry; with an address (or a label), the region
+///                          starting there (else covering it) drawn as a PNG (l2gallery.h) zoomed scale times (2,
+///                          1..8): written to path, or answered base64 in "png"
 ///
 /// @code
 ///   analysis::Reply reply = analysis::Execute(emulator, "explain", {{"address", "$80BC"}});
@@ -75,7 +79,7 @@ struct Reply
     int HttpStatus() const { return ErrorHttpStatus(error); }
 };
 
-/// "start", "stop", "status", "build", "cancel", "explain", "query", "export"
+/// "start", "stop", "status", "build", "cancel", "explain", "query", "export", "gallery"
 const std::vector<std::string>& Actions();
 /// The option names an action takes (empty for an unknown action)
 const std::vector<std::string>& OptionsFor(const std::string& action);

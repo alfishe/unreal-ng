@@ -110,6 +110,12 @@ L2Result RunDetectors(const L1Result& l1, const DetectorOptions& options)
     DetectRecords(context);
     DetectVariables(context);
     FinishBufferFields(context);
+    DetectGraphics(context);
+    DetectLevelMaps(context);
+    DetectScreens(context);
+    DetectRng(context);
+    DetectUnpackers(context);
+    DetectMusic(context);
     out.store.Finish();
     // One name per entry: the first detector's non-empty one (signatures before roles); empty: the export's sub_XXXX
     std::stable_sort(out.entries.begin(), out.entries.end(),

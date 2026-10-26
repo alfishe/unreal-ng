@@ -28,12 +28,20 @@ Options: `--start` / `--end` (default: the expected file's `range`), `-v` lists 
 `--split-vars` counts `g` as its own category, `--isub` reads `@isub+begin` blocks as SkoolKit's `@isub` mode does
 (by default they are skipped, like `skool2html`).
 
-Side files for the future export (P3 / P4), both optional:
+Side files of the analysis export (`draft.fields.json`, `draft.geometry.json`), both optional:
 
 - `--fields`: `{"records": [{"name", "base", "layout"?, "fields": [{"offset", "size", "name"?}]}]}`. A record matches
   an expected layout by base address (the live copy or any instance) or by name; a field matches on offset and size.
-- `--geometry`: `{"regions": [{"start", "end", "kind", "width", "height", "frames"}]}`, compared with the expected
-  file's `graphics` list by start address.
+- `--geometry`: `{"regions": [{"start", "end", "kind", "width", "height", "frames", ...}]}` (the export adds
+  `stride`, `mask`, `prefix`, `layout`, `detector`, `confidence`). Of the draft regions starting inside a reference
+  section, the one covering most of it is compared: width, height and frames (a map: width and height in cells).
+
+The reference geometry of a section is the expected file's `graphics` entry; without one (or with
+`--macro-geometry`) it comes from the section's own image macros: `#UDGARRAY` (SkoolKit's address-range rules: rows
+wrap at the width, `a-b-c-d` steps), `#UDG`, `#FONT`, `#SCR` (parts stacked vertically), composite `#OVER` / `#COPY`
+maps, with the game's `#DEF` macros expanded (`#LET`, `#EVAL`, `#FOR`) from the `.ref` file next to the reference
+(`--ref` adds more). Only the first `#UDGTABLE` of a section counts. For Manic Miner the macros give the same 106
+shapes as the handwritten list.
 
 `expected/manic-miner-records.json`: the program range, the five Manic Miner record types (cavern buffer, guardians
 horizontal / vertical, items, conveyor, Willy state) with their fields, bases and the 20 cavern-record copies,

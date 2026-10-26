@@ -33,6 +33,8 @@
 //   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
 //   query {kind?, range?, limit?}   → GET /analysis/query?kind=&range=&limit=      (L2 claims, P3)
 //   export {format, path?, ranges?, width?} → POST /analysis/export                (the L2 draft)
+//   gallery {address?, kind?, scale?, path?, limit?} → POST /analysis/gallery     (P4: graphics, one as a PNG:
+//                                                    an MCP image content block)
 // The answer's "text" (shared with the CLI) is the tool's text.
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
@@ -1043,7 +1045,8 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"start", "stop", "status", "build", "cancel", "explain", "query", "export"})
+    for (const char* action : {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
+                               "gallery"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode; "
@@ -1057,7 +1060,9 @@ void RegisterAnalysis(ToolRegistry& registry)
         "query: L2 regions (what the bytes are: code, text, records with fields, tables, variables, unused source, "
         "each with geometry, users, evidence and a confidence 0..1000) as a compact table; export: the L2 draft as a "
         "SkoolKit ctl (sna2skool.py -c) or a relocatable skool, the record fields / geometry JSON, the relocation "
-        "layout, a symbol file or the region map";
+        "layout, a symbol file or the region map; gallery: the graphics L2 found (fonts, sprites, tiles, screens and "
+        "back buffers, level maps) with their geometry, or with an address the one there drawn as a PNG (an image "
+        "block: check the width, height, frames and mask by eye)";
     schema["properties"]["level"]["type"] = "string";
     schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["level"]["enum"].append("facts");
@@ -1075,15 +1080,19 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["frames"]["description"] = "build: replay at most this many frames (default: the whole recording)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "build: write the L1 JSON to this file; export: write the draft there (none: the answer carries it)";
+        "build: write the L1 JSON to this file; export: write the draft there; gallery: the PNG (none: the answer "
+        "carries it)";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] =
-        "query: all (default), conflicts, or a region kind (code, data, text, font, buffer, init_table, records, "
-        "variable, pointer_table, handler_table, unused, untouched, ...)";
+        "query: all (default), conflicts, or a region kind (code, data, text, font, sprite, tile, screen, level_map, "
+        "buffer, init_table, records, variable, pointer_table, handler_table, rng_state, music_data, packed, unused, "
+        "untouched, ...); gallery: all, font, sprite, tile, screen or level_map";
     schema["properties"]["range"]["type"] = "string";
     schema["properties"]["range"]["description"] = "query: hex start-end, e.g. 8000-83FF (default the whole 64K)";
     schema["properties"]["limit"]["type"] = "integer";
-    schema["properties"]["limit"]["description"] = "query: the most rows (default 200)";
+    schema["properties"]["limit"]["description"] = "query, gallery: the most rows (default 200)";
+    schema["properties"]["scale"]["type"] = "integer";
+    schema["properties"]["scale"]["description"] = "gallery: integer zoom of the PNG, 1..8 (default 2)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* format : {"ctl", "skool", "fields", "geometry", "layout", "symbols", "map"})
@@ -1103,7 +1112,8 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["what"]["description"] =
         "explain: auto (default; the routine when L1 has one at the address), routine (L1 fact sheet) or byte (L0)";
     schema["properties"]["address"]["type"] = "string";  // an integer works too (AddressArg)
-    schema["properties"]["address"]["description"] = "explain: $80BC, #80BC, 0x80BC, 80BCh, decimal or a label name";
+    schema["properties"]["address"]["description"] =
+        "explain, gallery: $80BC, #80BC, 0x80BC, 80BCh, decimal or a label name (gallery: the region to draw)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
         "explain: the page (absolute index, ram:N or rom:N); L0 in physical mode (default the page mapped at the "
@@ -1118,8 +1128,8 @@ void RegisterAnalysis(ToolRegistry& registry)
         "who reads and writes a byte, which values, when, self-modified code) and L1 code behaviour built from a "
         "recording (routines with their data ranges, ports, time share and registers; call graph; loops; record "
         "fields); L2 structure from L1 (regions with kinds, fields and confidence) to query and export as a SkoolKit "
-        "draft. start (record=true for L1), run the program, build, then explain addresses, query regions, export the "
-        "draft; status shows what was recorded.",
+        "draft, see the graphics it found (gallery); start (record=true for L1), run the program, build, then explain "
+        "addresses, query regions, export the draft; status shows what was recorded.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -1212,8 +1222,32 @@ void RegisterAnalysis(ToolRegistry& registry)
                 ResolveAndForward(args, "POST", "/analysis/export", &body, caller, "Analysis export", withText);
                 return;
             }
+            if (action == "gallery")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"kind", "path"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                if (args.isMember("address") && !AddressArg(args["address"]).empty())
+                    body["address"] = AddressArg(args["address"]);
+                for (const char* name : {"scale", "limit"})
+                    if (args.isMember(name))
+                        body[name] = args[name];
+                // The PNG goes out as an image content block (the model sees it); structuredContent keeps the rest
+                auto withImage = [withText](ToolResult result) {
+                    if (!result.isError && result.structured.isObject() && !result.structured["png"].asString().empty())
+                    {
+                        result.imageData = result.structured["png"].asString();
+                        result.imageMimeType = "image/png";
+                        result.structured["png"] = "[base64 picture: see the image content block]";
+                    }
+                    withText(std::move(result));
+                };
+                ResolveAndForward(args, "POST", "/analysis/gallery", &body, caller, "Analysis gallery", withImage);
+                return;
+            }
             done(ToolResult::Error("unknown action '" + action +
-                                   "': start, stop, status, build, cancel, explain, query or export"));
+                                   "': start, stop, status, build, cancel, explain, query, export or gallery"));
         });
 }
 

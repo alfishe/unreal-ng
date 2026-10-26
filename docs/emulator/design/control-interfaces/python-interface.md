@@ -1919,6 +1919,9 @@ q = emu.analysis("query", kind="records", range="8000-83FF", limit=20)  # {kind,
 emu.analysis("query", kind="conflicts")                # pairs {a, b} of clashing claims
 ctl = emu.analysis("export", format="ctl")["content"]  # the control file in the answer
 emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000-FFFF", width=8)
+g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
+png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
+emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
 ```
 
 ### Enumerations

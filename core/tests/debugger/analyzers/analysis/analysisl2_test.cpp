@@ -25,6 +25,7 @@
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l1model.h"
 #include "debugger/analyzers/analysis/l2export.h"
+#include "debugger/analyzers/analysis/l2gallery.h"
 #include "debugger/analyzers/analysis/l2model.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/assembler/z80textassembler.h"
@@ -37,6 +38,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/soundmanager.h"
+#include "3rdparty/lodepng/lodepng.h"
 #include "unrealasm/symbols/codec.h"
 
 using namespace analysis;
@@ -589,6 +591,261 @@ TEST(AnalysisConfidence_Test, ConfidenceFixedPoint)
     EXPECT_EQ(confidence::FromCount(800, 600, 9, 1), 800);
     EXPECT_EQ(confidence::Clamp(-5), 0);
     EXPECT_EQ(confidence::Clamp(5000), 1000);
+}
+
+// ---------------------------------------------------------------------------------------------------- media
+
+/// Every claim of the media detectors, one a line (the failure message of the media tests)
+static std::string MediaClaims(const L2Result& l2)
+{
+    std::ostringstream out;
+    for (const Region& r : l2.store.Regions())
+        if (r.detector >= DetectorId::Graphics)
+            out << DetectorName(r.detector) << " " << RegionKindName(r.kind) << " $" << std::hex << r.z80 << "-$"
+                << r.Z80End() << std::dec << " " << r.geometry.width << "x" << r.geometry.height << "x"
+                << r.geometry.frames << " stride " << r.geometry.stride << " prefix " << r.geometry.prefix
+                << (r.geometry.mask ? " mask" : "") << " " << r.geometry.layout << " conf " << r.confidence
+                << " " << r.label << "\n";
+    return out.str();
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_Test)
+{
+    const Built& b = Run("sprite-16x16.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    // 2 bytes a row, 16 rows, a mask byte before each graphic byte: 64 bytes a frame, the four frames drawn
+    EXPECT_EQ(sprite->geometry.width, 16u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.height, 16u);
+    EXPECT_TRUE(sprite->geometry.mask);
+    EXPECT_EQ(sprite->geometry.stride, 64u);
+    EXPECT_EQ(sprite->geometry.frames, 4u);
+    EXPECT_EQ(sprite->Size(), 256u);
+    EXPECT_EQ(sprite->geometry.layout, "rows");
+    EXPECT_GE(sprite->confidence, confidence::kReview);
+    // Negative: the same bytes only summed
+    EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 63), RegionKind::Sprite))
+        << MediaClaims(b.l2);
+}
+
+/// The mutation the geometry has to catch: the object loop around the blit runs 3 times; a width (or height) taken
+/// from it instead of the row loop's source stride is not 16 x 16, and no claim may span the object records
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_WidthNotFromTheOuterLoop)
+{
+    const Built& b = Run("sprite-16x16.asm");
+    ASSERT_FALSE(HasFailure());
+    size_t sprites = 0;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::Sprite)
+        {
+            ++sprites;
+            EXPECT_EQ(r.geometry.width, 16u) << MediaClaims(b.l2);
+            EXPECT_EQ(r.geometry.height, 16u);
+            EXPECT_NE(r.geometry.width, 3u * 8u);
+            EXPECT_NE(r.geometry.height, 3u);
+        }
+    EXPECT_EQ(sprites, 1u) << MediaClaims(b.l2);
+    EXPECT_TRUE(Claims(At("objects"), RegionKind::Sprite).empty());
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_Test)
+{
+    const Built& b = Run("tiles-level.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const Region* tile = StartsAt(At("tiles"), RegionKind::Tile, DetectorId::Graphics);
+    ASSERT_NE(tile, nullptr) << MediaClaims(b.l2);
+    // An attribute, then 8 rows: 9 bytes a tile, the four tiles the map uses
+    EXPECT_EQ(tile->geometry.width, 8u) << MediaClaims(b.l2);
+    EXPECT_EQ(tile->geometry.height, 8u);
+    EXPECT_EQ(tile->geometry.stride, 9u);
+    EXPECT_EQ(tile->geometry.prefix, 1u);
+    EXPECT_EQ(tile->geometry.frames, 4u);
+    EXPECT_FALSE(tile->geometry.mask);
+    EXPECT_EQ(tile->Size(), 36u);
+    // Negative: the copy only summed
+    EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 35), RegionKind::Tile))
+        << MediaClaims(b.l2);
+    EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 35), RegionKind::Sprite));
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_Test)
+{
+    const Built& b = Run("tiles-level.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const Region* map = StartsAt(At("level"), RegionKind::LevelMap, DetectorId::LevelMaps);
+    ASSERT_NE(map, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(map->Size(), 512u);
+    EXPECT_EQ(map->geometry.width, 32u);
+    EXPECT_EQ(map->geometry.height, 16u);
+    EXPECT_EQ(map->geometry.layout, "cells");
+    // Negative: the map's first 64 bytes again, only summed
+    EXPECT_TRUE(NoStrongClaim(static_cast<uint16_t>(At("plain") + 36), static_cast<uint16_t>(At("plain") + 99),
+                              RegionKind::LevelMap))
+        << MediaClaims(b.l2);
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorScreens_Test)
+{
+    const Built& b = Run("tiles-level.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const Region* pixels = StartsAt(0xA000, RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(pixels, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(pixels->Size(), 4096u);
+    EXPECT_EQ(pixels->geometry.width, 256u);
+    EXPECT_EQ(pixels->geometry.height, 128u);
+    EXPECT_EQ(pixels->geometry.layout, "screen");
+    const Region* attributes = StartsAt(0xB000, RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(attributes, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(attributes->Size(), 512u);
+    EXPECT_EQ(attributes->geometry.width, 32u);
+    EXPECT_EQ(attributes->geometry.height, 16u);
+    EXPECT_EQ(attributes->geometry.layout, "attributes");
+    // Negative: the screen itself is not a back buffer, the map (read by the tile loop) is not a picture
+    EXPECT_TRUE(Claims(0x4000, RegionKind::Screen).empty());
+    EXPECT_TRUE(NoStrongClaim(At("level"), static_cast<uint16_t>(At("level") + 511), RegionKind::Screen));
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_Test)
+{
+    const Built& b = Run("print-font.asm");
+    ASSERT_FALSE(HasFailure());
+    // The glyph loop drew characters of the message from the ROM set: the printable 96 from the text's codes
+    const Region* font = StartsAt(0x3D00, RegionKind::Font, DetectorId::Graphics);
+    ASSERT_NE(font, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(font->geometry.width, 8u);
+    EXPECT_EQ(font->geometry.height, 8u);
+    EXPECT_EQ(font->geometry.frames, 96u);
+    EXPECT_EQ(font->Size(), 768u);
+    // Negative: the summed copy of the characters is no font
+    EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 4), RegionKind::Font));
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorRng_Test)
+{
+    const Built& b = Run("rng.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* seed = StartsAt(At("seed"), RegionKind::RngState, DetectorId::Rng);
+    ASSERT_NE(seed, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(seed->Size(), 2u);
+    EXPECT_TRUE(std::any_of(b.l2.entries.begin(), b.l2.entries.end(),
+                            [&](const auto& e) { return e.first == At("random") && e.second == "RANDOM"; }));
+    // Negative: a counter only incremented, the result only stored
+    EXPECT_TRUE(Claims(At("counter"), RegionKind::RngState).empty()) << MediaClaims(b.l2);
+    EXPECT_TRUE(Claims(At("last"), RegionKind::RngState).empty());
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorUnpackers_Test)
+{
+    const Built& b = Run("unpack-lz.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* packed = StartsAt(At("packed"), RegionKind::Packed, DetectorId::Unpackers);
+    ASSERT_NE(packed, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(packed->Size(), static_cast<uint32_t>(At("packed_end") - At("packed")));
+    EXPECT_TRUE(std::any_of(b.l2.entries.begin(), b.l2.entries.end(),
+                            [&](const auto& e) { return e.first == At("unpack") && e.second == "UNPACK"; }));
+    EXPECT_TRUE(std::any_of(b.l2.entries.begin(), b.l2.entries.end(),
+                            [&](const auto& e) { return e.first == 0xA000 && e.second == "UNPACKED"; }));
+    // Negative: the same bytes block-copied to $B000 and read there
+    EXPECT_TRUE(NoStrongClaim(0xB000, 0xB019, RegionKind::Packed)) << MediaClaims(b.l2);
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_Test)
+{
+    const Built& b = Run("ay-pt3.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const Region* player = StartsAt(0xC000, RegionKind::Code, DetectorId::Signatures);
+    ASSERT_NE(player, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(player->label, "VTII_INIT");
+    EXPECT_TRUE(std::any_of(b.l2.entries.begin(), b.l2.entries.end(),
+                            [](const auto& e) { return e.first == 0xC005 && e.second == "VTII_PLAY"; }));
+    const Region* module = StartsAt(0xC86E, RegionKind::MusicData, DetectorId::Music);
+    ASSERT_NE(module, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(module->label, "VTII_MODULE");
+    EXPECT_GE(module->Size(), 256u);
+    // Negative: the player's first bytes again, only summed: no signature, no music
+    for (const Region& r : b.l2.store.Regions())
+        EXPECT_FALSE(r.z80 == At("header_copy") && r.detector == DetectorId::Signatures) << r.label;
+    EXPECT_TRUE(NoStrongClaim(At("header_copy"), static_cast<uint16_t>(At("header_copy") + 33),
+                              RegionKind::MusicData));
+}
+
+/// The export states the graphics: an image macro SkoolKit draws (in #UDGTABLE, which skool2asm drops) and the
+/// geometry JSON with stride, mask, prefix and layout
+TEST_F(AnalysisL2_Test, GraphicsGeometryInTheDraft)
+{
+    Run("sprite-16x16.asm");
+    ASSERT_FALSE(HasFailure());
+    const uint16_t sprites = At("sprites");
+    const ExportResult skool = ExportDraft("skool");
+    ASSERT_TRUE(skool.ok) << skool.error;
+    const std::string first = std::to_string(sprites + 1) + "-" + std::to_string(sprites + 3 + 32) + "-2-32";
+    const std::string mask = std::to_string(sprites) + "-" + std::to_string(sprites + 2 + 32) + "-2-32";
+    EXPECT_NE(skool.text.find("#UDGTABLE { #UDGARRAY2,56,4,4(" + first + ":" + mask + ")"), std::string::npos)
+        << skool.text.substr(0, 4000);
+    EXPECT_NE(skool.text.find("16x16 sprites, 4 frames, masked"), std::string::npos);
+    const ExportResult geometry = ExportDraft("geometry");
+    ASSERT_TRUE(geometry.ok) << geometry.error;
+    char start[8];
+    std::snprintf(start, sizeof(start), "$%04X", sprites);
+    EXPECT_NE(geometry.text.find(std::string("\"start\": \"") + start + "\""), std::string::npos) << geometry.text;
+    EXPECT_NE(geometry.text.find("\"width\": 16, \"height\": 16, \"frames\": 4, \"stride\": 64, \"mask\": true"),
+              std::string::npos)
+        << geometry.text;
+}
+
+/// The gallery draws what the claims say: the frames in a grid at the scale, the same bytes every time
+TEST_F(AnalysisL2_Test, GalleryDrawsTheClaims)
+{
+    const Built& b = Run("sprite-16x16.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite);
+    ASSERT_NE(sprite, nullptr);
+    const std::vector<const Region*> drawable = GalleryRegions(b.l2);
+    EXPECT_NE(std::find(drawable.begin(), drawable.end(), sprite), drawable.end());
+    GalleryImage image;
+    std::string error;
+    ASSERT_TRUE(RenderGallery(b.l1, *sprite, GalleryOptions{}, image, error)) << error;
+    // 4 frames of 16 x 16 with a 1-pixel gap around each, zoomed 2 times
+    EXPECT_EQ(image.frames, 4u);
+    EXPECT_EQ(image.width, (4u * 17u + 1u) * 2u);
+    EXPECT_EQ(image.height, 18u * 2u);
+    ASSERT_GT(image.png.size(), 8u);
+    EXPECT_EQ(image.png[1], 'P');
+    std::vector<unsigned char> rgba;
+    unsigned w = 0, h = 0;
+    ASSERT_EQ(lodepng::decode(rgba, w, h, image.png), 0u);
+    EXPECT_EQ(w, image.width);
+    // Frame 0 row 0: mask $0E, graphic $F1: pixel 0 is ink (black), pixel 4 is mask-clear and no ink (light grey)
+    const auto pixel = [&](unsigned x, unsigned y) {
+        const unsigned char* p = rgba.data() + (static_cast<size_t>(y) * w + x) * 4u;
+        return static_cast<uint32_t>(p[0]) | (p[1] << 8) | (p[2] << 16);
+    };
+    EXPECT_EQ(pixel(2, 2), 0x000000u);
+    EXPECT_EQ(pixel(2 + 4 * 2, 2), 0xC0C0C0u);
+    GalleryImage again;
+    ASSERT_TRUE(RenderGallery(b.l1, *sprite, GalleryOptions{}, again, error));
+    EXPECT_EQ(again.png, image.png);
+
+    // A screen back buffer and a level map: 256 pixels wide; 8 x 8 cells
+    const Built& t = Run("tiles-level.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const Region* pixels = StartsAt(0xA000, RegionKind::Screen);
+    const Region* map = StartsAt(At("level"), RegionKind::LevelMap);
+    ASSERT_NE(pixels, nullptr);
+    ASSERT_NE(map, nullptr);
+    GalleryOptions one;
+    one.scale = 1;
+    ASSERT_TRUE(RenderGallery(t.l1, *pixels, one, image, error)) << error;
+    EXPECT_EQ(image.width, 256u);
+    EXPECT_EQ(image.height, 128u);
+    ASSERT_TRUE(RenderGallery(t.l1, *map, one, image, error)) << error;
+    EXPECT_EQ(image.width, 32u * 8u);
+    EXPECT_EQ(image.height, 16u * 8u);
+    // Negative: code is not drawn
+    const std::vector<const Region*> claims = Claims(At("start"), RegionKind::Code);
+    ASSERT_FALSE(claims.empty());
+    EXPECT_FALSE(RenderGallery(t.l1, *claims.front(), one, image, error));
 }
 
 // ---------------------------------------------------------------------------------------------------- the export

@@ -370,6 +370,46 @@ TEST_F(McpDebugTools_Test, Analysis_QueryAndExportGoToTheirRoutes)
     EXPECT_TRUE(Run("analysis", args).isError) << "export needs a format";
 }
 
+/// analysis gallery (P4): the options go into the body; the PNG comes back as an image content block, not as base64
+/// in the structured answer
+TEST_F(McpDebugTools_Test, Analysis_GalleryAnswersAnImage)
+{
+    Json::Value galleryBody;
+    galleryBody["png"] = "iVBORw0KGgo=";
+    galleryBody["width"] = 70;
+    galleryBody["text"] = "L2 gallery $8200-$82FF sprite 16x16x8: 8 frames, 290x70 PNG, 400 bytes";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/gallery"] = {200, galleryBody};
+
+    Json::Value args;
+    args["action"] = "gallery";
+    args["address"] = "$8200";
+    args["scale"] = 4;
+    args["kind"] = "sprite";
+    const mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("16x16x8"), std::string::npos) << result.text;
+    EXPECT_EQ(result.imageData, "iVBORw0KGgo=");
+    EXPECT_EQ(result.imageMimeType, "image/png");
+    EXPECT_EQ(result.structured["png"].asString().find("iVBOR"), std::string::npos);
+    const FakeCaller::RecordedCall* gallery = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/gallery");
+    ASSERT_NE(gallery, nullptr);
+    EXPECT_EQ(gallery->body["address"].asString(), "$8200");
+    EXPECT_EQ(gallery->body["scale"].asUInt64(), 4u);
+    EXPECT_EQ(gallery->body["kind"].asString(), "sprite");
+
+    // The list: no image
+    galleryBody = Json::Value();
+    galleryBody["count"] = 2;
+    galleryBody["text"] = "L2 gallery: 2 graphics regions";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/gallery"] = {200, galleryBody};
+    args = Json::Value();
+    args["action"] = "gallery";
+    const mcp::ToolResult list = Run("analysis", args);
+    ASSERT_FALSE(list.isError) << list.text;
+    EXPECT_TRUE(list.imageData.empty());
+    EXPECT_NE(list.text.find("2 graphics regions"), std::string::npos) << list.text;
+}
+
 TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
 {
     Json::Value args;

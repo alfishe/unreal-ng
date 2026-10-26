@@ -177,6 +177,19 @@ struct Stride
     bool write = false;
     int32_t stride = 0;
     bool constant = false;  ///< false: the address moved by different amounts
+    /// The addresses the instruction accessed in this direction over the whole replay (exactly merged, sorted; at
+    /// most 64 runs, `rangesMore` when there were more)
+    std::vector<Interval> ranges;
+    bool rangesMore = false;
+    /// The address of its first access in each instance of the loop (distinct, sorted, at most 64): where each
+    /// walk began. `startsSeen` counts them all
+    std::vector<uint16_t> starts;
+    uint32_t startsSeen = 0;
+    /// Reads: where the bytes it read had been copied from by LDI / LDIR / LDD / LDDR (through chains of copies: the
+    /// first source), sorted runs merged across gaps of up to 7 bytes (a strided reader's skips), at most 64 runs.
+    /// Empty: none of them came from a copy
+    std::vector<Interval> origins;
+    bool originsMore = false;
 };
 
 struct Loop

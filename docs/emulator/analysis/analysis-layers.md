@@ -189,6 +189,20 @@ gives the same bytes everywhere.
 | `pointer_tables` | word tables whose words the code used as addresses (`LD E,(HL) / INC HL / LD D,(HL)`, `LD A,(HL) / INC HL / LD H,(HL) / LD L,A`, then an access, `JP (rr)` or `PUSH` + `RET`); handler tables (words jumped to) grow over the neighbouring words that point at code, their targets become entries | L1 word pointers |
 | `records` | record arrays from a base + offset pattern on one lattice (`(IX+d)`, `(IY+d)`, an `(HL)` walk): size the step, count the bases, a terminator test ends it; buffers (block copy destinations the code used) with the copy sources as instances | L1 patterns, block copies |
 | `variables` | bytes and words addressed directly that nothing else explains, with a role (counter, flag, pointer, word, value); then strided variables (four or more one-byte variables a constant step apart: an array of records) and groups (adjacent variables that share a routine, routines touching more than an eighth of the surroundings aside: one record) | L1 uses, profiles |
+| `graphics` | fonts, sprites and tiles drawn by blit loops (below): width, height, frames, the step from frame to frame, an interleaved mask, the bytes before each frame (a tile's attribute); a font when the glyphs drawn are the characters of the printed text (96 characters from the space); copied to the buffers of the records detector (observed where the replay read the copy, inferred elsewhere) | L1 loop strides, block copies, text claims |
+| `level_maps` | maps the loop around a tile blit walked one byte a cell: 32 cells a row when the map is (or is copied to) attributes, else the walk's trip count | L1 loops |
+| `screens` | pictures and back buffers block-copied to the screen (or to a buffer copied there): pixels 256 wide in display file order, attributes 32 cells a row | L1 block copies |
+| `rng` | the state of a random number generator: a byte or word one short routine (64 instructions at most) reads and writes with three or more values, with `LD A,R` or an XOR and a rotate; the routine is `RANDOM` | L1 uses, routines |
+| `unpackers` | packed data: a routine that writes at least 32 bytes (at least 5/4 of what it reads, read once each) and copies back references from its own output, whose output is then executed or read; the routine is `UNPACK`, the output `UNPACKED` | L1 uses, block copies |
+| `music` | player code by signature (Vortex Tracker II PT3 player r.7: `VTII_INIT`, `VTII_PLAY`, the module as `VTII_MODULE` up to the last byte the player read) and the read-only data an AY writer (`OUT ($FFFD)` / `($BFFD)`) and its callees read | signatures, L1 ports, uses |
+
+A blit loop: a loop whose writes go to the display set (the screen and the buffers copied to it) one pixel row a pass
+(not ±1: a horizontal copy is no blit) and whose reads of one source stream (one base register, one constant stride
+of 1..16) load A or an ALU operand from outside the display set (a stream that loads an address register, or reads
+a table another detector claimed, is no graphics). Height = the loop's dominant trip count; bytes a row = the source
+stride (half of it with a mask: twice as many reads as display writes, with an AND); the frames are where the loop's
+instances began reading (`Stride::starts`), grouped by shape and laid on one lattice (the first gap up to one frame
+past the frame size sets the step; frames drawn between two seen ones are filled in, inferred).
 
 At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
 its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).
@@ -205,10 +219,32 @@ are containers whose owners inside become sub-blocks.
 | `ctl` | SkoolKit control file for `sna2skool.py -c`: one directive per entry, sub-blocks, labels, `i` after each range |
 | `skool` | a skool draft: comments state replay facts only (users, copies, loops, fields, confidence); `@label` on every referenced address (skool2asm then puts it into the operands), `@isub` where an operand points inside an instruction (`label+1`) or names a page (`label/256`), `@keep` on a constant equal to an address, `ALIGN 256` before a page-aligned table and the ORG of a range start or the fixed tail as `@isub=+` on the instruction before (an instruction inserted at an entry start breaks `skool2asm -c`), `#R$xxxx` for entry addresses in comments, DEFB lines of `width` bytes split at field starts |
 | `fields` | JSON: every record array and buffer with base, stride, count, instances and fields (offset, size, name, values) |
-| `geometry` | JSON: graphics geometry (empty until the media detectors of P4) |
+| `geometry` | JSON: the graphics regions (fonts, sprites, tiles, screens, level maps) with start, exclusive end, kind, width, height, frames, stride, mask, prefix, layout, detector, confidence |
 | `layout` | zx-reaper `re/layout.mk` lines: `REGION_START` (the start of the range with the most code: it moves), `SHIFT_END` (the fixed tail: after the last unused block of at least $101 bytes in it, which the moved code grows into) |
 | `symbols` | the entry labels through the unreal-asm symbol codec (`skoolkit-ctl` by default) |
 | `map` | one line per claim: range, kind, detector, confidence, status, title |
+
+A graphics entry's description starts with a SkoolKit image macro inside `#UDGTABLE { ... } TABLE#` (skool2asm
+drops the table: the assembly does not change; skool2html draws it): one `#UDGARRAY` a frame (at most 16; the mask
+taken as the byte before each graphic byte, a tile's attribute from its prefix byte), `#FONT` for a font, `#SCR` for
+pixels in display file order. Addresses are decimal (the export turns `$nnnn` in comments into `#R` references).
+
+### The gallery
+
+`analysis gallery` shows what the media detectors found (`l2gallery.h`). Without an address it lists the graphics
+regions with their geometry; with an address (or a label) it draws the region starting there (else the first covering
+it) from the memory at the end of the replay (the start's when the page was not mapped then) and answers a PNG:
+
+| Kind | Drawn as |
+|------|----------|
+| sprite, tile, font | the frames in a grid (8 a row, 16 for a font) with a 1-pixel grey gap; black ink on white paper, a tile's attribute byte colours its frame, a mask's transparent pixels (mask bit set, no ink) light grey |
+| screen (pixels) | 256 pixels wide, the rows in display file order, black on white |
+| screen (attributes), level map | each byte an 8x8 cell: its paper colour with a 4x4 ink square in the middle |
+
+`scale` (1..8, default 2) zooms by whole pixels. The same claims and memory give the same PNG bytes everywhere
+(integer drawing, lodepng). The answer: `region` (the claim as in `query`), `width`, `height`, `frames`, `scale`,
+`bytes`, `mime_type`, and `png` (base64) or, with `path`, the file. The MCP tool sends the PNG as an image content
+block (the model sees the picture; `structuredContent` keeps the rest).
 
 ### Manic Miner gate (P3)
 
@@ -217,6 +253,13 @@ builds and exports; `reaper_gate.py` puts the draft into a fresh zx-reaper proje
 against skoolkid's mm.skool. Result 2026-10-26: byte categories 99.98 %, code entries 31 of 33, all five record field
 lists complete, `make` identical, `make test` and both shift tests (+$100, +$101) pass
 ([score-p3.md](../../inprogress/2026-10-24-analysis-layers/baselines/score-p3.md)).
+
+### Manic Miner gate (P4)
+
+The same session and gate with the media detectors: all 106 reference graphics regions get the right geometry (width,
+height, frames; target 96), and the P3 numbers stay (categories 99.98 %, entries 31 of 33, records 5 of 5, `make`, `make
+test` and both shift tests pass). The draft grows from 103 to 303 entries
+([score-p4.md](../../inprogress/2026-10-24-analysis-layers/baselines/score-p4.md)).
 
 ### Where P3 differs from design.md
 
@@ -231,7 +274,18 @@ lists complete, `make` identical, `make test` and both shift tests (+$100, +$101
 - zx-reaper needed three fixes for the gate (branch `unreal-ng-fixes`): `zxq asm` moves only the ORGs in
   `REGION_START..SHIFT_END-1` and reads `#` hex ORGs; the shifted build saves `REGION_START..REGION_END`; the shift test
   finds the entry through the shifted build's symbols (an ALIGN moves code by more than the shift).
-- No review queue, findings or gallery yet (P4 / P5); `geometry` is empty until the media detectors.
+- No review queue or findings yet (P5); the gallery and the media detectors came in P4 (the next sections).
+
+### Where P4 differs from design.md
+
+- Media are found from blit loops (one source stream, one pixel row a pass), not from the screen writes back to a
+  source: the loop's stride, trip count and instance starts give the geometry without a pixel model.
+- A tile's attribute byte is the frame's prefix and the region starts there (Manic Miner's portals: the reference
+  starts one byte later at the graphic).
+- The image macros assume the mask before each graphic byte; horizontal blits (±1 writes a pass) are not graphics.
+- The music detector has one player signature (Vortex Tracker II PT3 r.7) and no beeper signature; RNG and unpackers
+  are mechanism rules proven on fixtures only.
+- The gallery draws from the memory at the end of the replay, in fixed colours (no per-frame attributes).
 
 ## The `analysis` verbs
 
@@ -249,11 +303,12 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `explain` | `address` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label), `page` (index, `ram:N`, `rom:N`), `what` (`auto`, default, `routine` or `byte`) | a routine of L1 at the address (`what` auto or routine): `what` = routine, `entry`, `page`, `page_name`, `kinds`, `instructions`, `blocks`, `profile`, `callers`, `callees`, `loops`, `fields`, `sheet_bytes`, and the fact sheet as `text`. Otherwise the byte (L0): `what` = byte, `address`, `mode`, `bank` or `page` {page, name, offset}, `label`, `accessed`, `kinds`, `kinds_mask`, `first_frame`, `last_frame`, `last_reader` {pc, label} or null, `multi_reader`, `last_writer`, `multi_writer`, `written` {distinct, min, max}, `counters` {reads, writes, executes} |
 | `query` | `kind` (`all`, default, `conflicts` or a region kind: `code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...), `range` (`8000-83FF`, `$8000-$83FF`; default all), `limit` (default 200, at most 100000) | `kind`, `range`, `regions` [{start, end, page, size, kind, detector, confidence, status, label, title, stride, count, ...}] or `conflicts` [{a, b}], `count`, `truncated`; the text one line per claim |
 | `export` | `format` (`ctl`, `skool`, `fields`, `geometry`, `layout`, `symbols`, `map`), `path` (write the file there), `ranges` (`5900-59FF,8000-FFFF`, no overlap; default `4000-FFFF`), `width` (DEFB bytes per line, 1..64, default 8) | `format`, `entries`, `bytes`, `ranges`, `path`; without `path` the file in `content` and the text (up to 16 KB) |
+| `gallery` | `address` (as `explain`; none: the list), `kind` (`all`, default, `font`, `sprite`, `tile`, `screen`, `level_map`), `scale` (1..8, default 2), `path` (write the PNG there), `limit` (default 200) | the list: `regions` [...], `count`, `truncated`, the text one line per region (range, kind, shape, detector, confidence, title); one region: `region`, `width`, `height`, `frames`, `scale`, `bytes`, `mime_type`, `png` (base64; empty with `path`), `path` ([the gallery](#the-gallery)) |
 
 Refusals: an unknown action or option, a value that does not parse (400); no such label, `what=routine` where no
 routine runs (404); `explain` of a byte at level `counters`, `what=routine` before a build, `build` with no recording
-or while one runs, `cancel` with none running, `query` / `export` before a build, a file `export` cannot write
-(409); no memory tracker, `record` without a time travel engine
+or while one runs, `cancel` with none running, `query` / `export` / `gallery` before a build, a file `export` or
+`gallery` cannot write, a region the gallery cannot draw (409); no graphics region at the gallery's address (404); no memory tracker, `record` without a time travel engine
 (503).
 
 The long operation has two WebSocket state topics (monitoring names, also `GET /api/v1/monitor/{name}`):
@@ -277,12 +332,12 @@ $80BC (score) [RAM 2]: DataRead, DataWrite
 
 | Plane | Shape | Doc |
 |-------|-------|-----|
-| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
-| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
+| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
+| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
 | WebSocket | every route as a `call` on `/api/v1/ws`; state topics `analysis.progress`, `analysis.ready` | [websocket-interface.md](../design/control-interfaces/websocket-interface.md#analysis-layers) |
 | Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason) | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
-| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
-| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text | [docs/features/mcp/README.md](../../features/mcp/README.md) |
+| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
+| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
 
 The MCP tool calls are counted per tool and action in `host.clients.mcp.tools` (`GET /api/v1/monitor/host.clients`):
 `{"analysis": {"calls": N, "actions": {"explain": n, ...}}}`, every tool alike (`(none)` for a call without an

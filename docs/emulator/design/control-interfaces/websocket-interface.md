@@ -88,10 +88,12 @@ is a job whose progress and result are the topics `analysis.progress` and `analy
 ← {"t":"analysis.ready","op":"state","instance":"0f3a…","value":{"ready":true,"job":1,"routines":29,"blocks":263,"loops":46,…}}
 → {"op":"call","rid":7,"method":"GET","path":"/api/v1/emulator/0/analysis/query?kind=records"}
 → {"op":"call","rid":8,"method":"POST","path":"/api/v1/emulator/0/analysis/export","body":{"format":"skool","path":"game.skool","ranges":"8000-FFFF"}}
+→ {"op":"call","rid":9,"method":"POST","path":"/api/v1/emulator/0/analysis/gallery","body":{"address":"$8200","scale":4}}
 ```
 
-The L2 structure the build made is read with `query` and written with `export` (the draft); they are calls, there is no
-L2 topic (`analysis.ready` tells when a new structure is there).
+The L2 structure the build made is read with `query`, written with `export` (the draft) and drawn with `gallery` (a PNG
+of one graphics region, base64 in `png`); they are calls, there is no L2 topic (`analysis.ready` tells when a new
+structure is there).
 
 ## 3. Topics
 

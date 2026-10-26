@@ -371,6 +371,22 @@ StateNode LoopNode(const Loop& loop)
         entry["access"] = s.write ? "write" : "read";
         entry["stride"] = static_cast<int64_t>(s.stride);
         entry["constant"] = s.constant;
+        if (!s.ranges.empty())
+            entry["ranges"] = IntervalList(s.ranges);
+        if (s.rangesMore)
+            entry["ranges_more"] = true;
+        if (!s.starts.empty())
+        {
+            StateNode starts = StateNode::Array();
+            for (const uint16_t a : s.starts)
+                starts.push(Hex4(a));
+            entry["starts"] = std::move(starts);
+            entry["starts_seen"] = static_cast<uint64_t>(s.startsSeen);
+        }
+        if (!s.origins.empty())
+            entry["origins"] = IntervalList(s.origins);
+        if (s.originsMore)
+            entry["origins_more"] = true;
         strides.push(std::move(entry));
     }
     node["strides"] = std::move(strides);

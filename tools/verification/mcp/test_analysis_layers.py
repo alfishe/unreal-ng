@@ -2,8 +2,8 @@
 """analysis: the L0 access facts of the analysis layers (docs/emulator/analysis/analysis-layers.md) over a run - start,
 status, explain an address the ROM runs every frame and a stack byte, the refusals, stop; the L1 build from a
 recording (start record=true, build, the analysis.ready topic's value) and a routine's fact sheet; the L2 structure
-(query by kind and range, conflicts, the refusals) and the draft export (ctl / skool / fields in the answer, skool to a
-file); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
+(query by kind and range, conflicts, the refusals), the draft export (ctl / skool / fields in the answer, skool to a
+file) and the gallery (the list, one region as a PNG image block or a file); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
 
 import os
 import re
@@ -145,6 +145,58 @@ def test_build_and_explain_routine(s):
     expect(r.is_error and '400' in r.text, 'export: an unknown format is refused with 400', r.text)
     r = s.call('analysis', {'action': 'export', 'format': 'ctl', 'ranges': '0000-3FFF,3000-4000'}, ok=False)
     expect(r.is_error and '400' in r.text, 'export: overlapping ranges are refused with 400', r.text)
+
+    s.call('analysis', {'action': 'stop'})
+
+
+def test_gallery(s):
+    """The sprite fixture (16 x 16, 4 frames, an interleaved mask) assembled and run: the gallery lists its sprite,
+    draws it as one PNG image block (not as base64 in structuredContent) or into a file, and refuses bad options"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, '..', '..', '..', 'testdata', 'analysis', 'fixtures', 'sprite-16x16.asm')) as f:
+        source = f.read()
+    r = s.call('debug_code', {'action': 'assemble', 'code': source, 'address': '0x8000'})
+    s.call('control_execution', {'action': 'set_register', 'name': 'pc', 'value': '0x8000'})
+    s.call('analysis', {'action': 'start', 'record': True})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 3})
+    r = s.call('analysis', {'action': 'build'})
+    expect((r.structured or {}).get('state') == 'done', 'build of the sprite fixture: done', r.text[:300])
+
+    r = s.call('analysis', {'action': 'gallery', 'kind': 'sprite'})
+    expect('L2 gallery:' in r.text and 'graphics regions' in r.text, 'gallery: the list in the text', r.text[:600])
+    regions = (r.structured or {}).get('regions', [])
+    sprite = next((g for g in regions if g.get('geometry', {}).get('width') == 16), None)
+    expect(sprite is not None, 'gallery: the 16 x 16 sprite listed', r.text[:600])
+    if sprite:
+        geometry = sprite['geometry']
+        expect(geometry.get('height') == 16 and geometry.get('frames') == 4 and geometry.get('mask') is True,
+               'gallery: 16 x 16, 4 frames, masked', geometry)
+        expect('16x16x4 mask' in r.text, 'gallery: the shape in the text', r.text[:600])
+        r = s.call('analysis', {'action': 'gallery', 'address': sprite['start'], 'scale': 1})
+        expect('PNG' in r.text and '4 frames' in r.text, 'gallery address=: the picture in the text', r.text[:300])
+        images = r.blocks('image')
+        expect(len(images) == 1 and images[0].get('mimeType') == 'image/png' and
+               images[0].get('data', '').startswith('iVBOR'), 'gallery: one PNG image block', str(images)[:200])
+        expect('iVBOR' not in str((r.structured or {}).get('png', '')), 'gallery: no base64 in structuredContent',
+               str(r.structured)[:300])
+        expect((r.structured or {}).get('width') == 4 * 17 + 1, 'gallery: 4 frames a row at scale 1',
+               r.structured)
+        scratch = os.path.join(here, '..', '..', '..', 'scratch', 'mcp-verify')
+        os.makedirs(scratch, exist_ok=True)
+        png = os.path.abspath(os.path.join(scratch, 'analysis-gallery.png'))
+        r = s.call('analysis', {'action': 'gallery', 'address': sprite['start'], 'path': png})
+        expect('written to ' + png in r.text and not r.blocks('image'), 'gallery path=: written, no image block',
+               r.text[:300])
+        if os.path.exists(png):  # the emulator runs on this host
+            with open(png, 'rb') as f:
+                expect(f.read(8) == b'\x89PNG\r\n\x1a\n', 'the PNG file')
+            os.remove(png)
+    r = s.call('analysis', {'action': 'gallery', 'kind': 'code'}, ok=False)
+    expect(r.is_error and '400' in r.text, 'gallery: a kind with no picture is refused with 400', r.text)
+    r = s.call('analysis', {'action': 'gallery', 'scale': 9}, ok=False)
+    expect(r.is_error and '400' in r.text, 'gallery: scale 9 is refused with 400', r.text)
+    r = s.call('analysis', {'action': 'gallery', 'address': '$0000'}, ok=False)
+    expect(r.is_error and '404' in r.text, 'gallery: no graphics at $0000: 404', r.text)
     s.call('analysis', {'action': 'stop'})
 
 
@@ -156,7 +208,7 @@ def test_calls_counted_per_action(s):
     tools = clients.get('mcp', {}).get('tools', {})
     actions = tools.get('analysis', {}).get('actions', {})
     expect(actions.get('status', 0) >= 2 and actions.get('explain', 0) >= 1 and actions.get('query', 0) >= 1 and
-           actions.get('export', 0) >= 1, 'host.clients.mcp.tools counts the actions',
+           actions.get('export', 0) >= 1 and actions.get('gallery', 0) >= 1, 'host.clients.mcp.tools counts the actions',
            str(body)[:600])
 
 

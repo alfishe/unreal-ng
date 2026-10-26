@@ -126,5 +126,61 @@ class ExpectedFileTest(unittest.TestCase):
                 self.assertEqual(pos, rec['size'], rec['name'])
 
 
+MM_SKOOL = '/Volumes/TB4-4Tb/Projects/emulators/github/skoolkid-manicminer/sources/mm.skool'
+
+
+class MacroGeometryTest(unittest.TestCase):
+    def test_udgarray_counts_like_skoolkit(self):
+        self.assertEqual(sd.udg_count('32771-32786-1-16', 2), 2)
+        self.assertEqual(sd.udg_count('32768-32799-1-16', 2), 4)
+        self.assertEqual(sd.udg_count('100;101;102x3', 2), 5)
+        self.assertEqual(sd.udg_count('40000-40031-8', 1), 4)
+
+    def test_defs_for_and_let_expand(self):
+        defs = sd.parse_defs('#DEF(#PAIR(a)\n  #LET(b=$a+8)\n  #UDG({b}) | #UDG({b}+8)\n)\n'
+                             '#DEF(#ROW(n) #FOR(1,$n)(k,#UDG(k), | ))\n')
+        self.assertEqual(set(defs), {'PAIR', 'ROW'})
+        text = sd.expand_macros('{ #PAIR1000 }', defs)
+        self.assertEqual(text.count('#UDG('), 2)
+        self.assertIn('#UDG(1008)', text)
+        self.assertEqual(sd.expand_macros('#ROW3', defs).count('#UDG'), 3)
+
+    def test_section_shapes(self):
+        self.assertEqual(sd.section_geometry('#UDGTABLE { #UDG1 | #UDG9 | #UDG17 } TABLE#', 24, {}),
+                         {'kind': 'graphic', 'width': 8, 'height': 8, 'frames': 3})
+        self.assertEqual(sd.section_geometry('#UDGTABLE { #UDG1 } TABLE# #UDGTABLE { #UDG2 | #UDG3 } TABLE#', 8, {}),
+                         {'kind': 'graphic', 'width': 8, 'height': 8, 'frames': 1})
+        self.assertEqual(sd.section_geometry('#SCR(1,0,0,32,8) #SCR(1,0,8,32,8)', 4096, {}),
+                         {'kind': 'screen', 'width': 256, 'height': 128, 'frames': 1})
+        self.assertEqual(sd.section_geometry('#UDGARRAY32,,,(1-512)(*bg) #OVER(0,0)(sprite)', 512, {}),
+                         {'kind': 'map', 'width': 32, 'height': 16, 'frames': 1})
+        self.assertIsNone(sd.section_geometry('no picture', 8, {}))
+
+    def test_geometry_lookup_prefers_largest_overlap(self):
+        geometry = [{'start': '$5E00', 'end': '$5E02'}, {'start': '$5E00', 'end': '$6000', 'width': 32}]
+        self.assertEqual(sd.geometry_lookup(geometry, 0x5E00, 0x6000)['width'], 32)
+
+    @unittest.skipUnless(os.path.exists(MM_SKOOL), 'skoolkid Manic Miner sources not present')
+    def test_manic_miner_macros_give_the_handwritten_geometry(self):
+        ref = sd.build_skool(MM_SKOOL)
+        defs = sd.load_defs(sd.default_refs(MM_SKOOL), MM_SKOOL)
+        exp = sd.load_json(os.path.join(HERE, 'expected', 'manic-miner-records.json'))['graphics']
+        self.assertEqual(len(exp), 106)
+        self.assertEqual(len(ref.graphic_claims), 106)
+        for g in exp:
+            start, end = sd.addr_of(g['start']), sd.addr_of(g['end'])
+            got = sd.section_geometry(ref.graphic_text.get(start, ''), end - start, defs)
+            self.assertIsNotNone(got, g['start'])
+            self.assertEqual((got['width'], got['height'], got['frames']),
+                             (g['width'], g['height'], g['frames']), g['start'])
+
+    def test_macro_geometry_mode_scores_without_expected(self):
+        rep = sd.score(path('draft.ctl'), path('ref.skool'), geometry_path=path('geometry.json'), ref_files=[])
+        g = rep['graphics']
+        self.assertEqual((g['geometry_known'], g['geometry_match']), (2, 1))
+        self.assertEqual(g['geometry_match_pct'], 50.0)
+        self.assertEqual(g['regions'][1]['reference_geometry']['width'], 16)
+
+
 if __name__ == '__main__':
     unittest.main()

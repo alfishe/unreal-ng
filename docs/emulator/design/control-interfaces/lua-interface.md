@@ -1504,6 +1504,9 @@ emu.analysis("query", {kind = "records", range = "8000-83FF", limit = 20})  -- {
 emu.analysis("query", "conflicts")                   -- a string: the kind
 local ctl = emu.analysis("export", "ctl")            -- a string: the format; ctl.content is the file
 emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59FF,8000-FFFF", width = 8})
+emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
+local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
+emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
 ```
 
 ## Usage Examples

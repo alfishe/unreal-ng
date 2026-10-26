@@ -2,9 +2,10 @@
 
 /// @file detectors.h
 /// @brief The L2 structural detectors (docs/emulator/analysis/analysis-layers.md, "L2: structure"), in their fixed
-/// order: signatures, code map, text, init tables, pointer / handler tables, records, variables. Each reads L1 (the
-/// replay's code behaviour, per-byte uses, block copies, the memory at the start and the end) and the claims made
-/// before it, and adds its own to the region store. One file per detector; RunDetectors runs them in order.
+/// order: signatures, code map, text, init tables, pointer / handler tables, records, variables; then the media
+/// detectors (P4): graphics (fonts, sprites, tiles), level maps, screens, RNG state, unpackers, music. Each reads
+/// L1 (the replay's code behaviour, per-byte uses, block copies, the memory at the start and the end) and the claims
+/// made before it, and adds its own to the region store. One file per detector; RunDetectors runs them in order.
 ///
 /// @code
 ///   analysis::L2Result l2 = analysis::RunDetectors(l1);
@@ -86,6 +87,13 @@ void DetectPointerTables(DetectorContext& context);
 void DetectVariables(DetectorContext& context);
 /// After the seven: each buffer's field list from the claims made inside it (records.cpp)
 void FinishBufferFields(DetectorContext& context);
+/// The media detectors, after the buffers' fields (their claims are not fields): media.h has what they share
+void DetectGraphics(DetectorContext& context);
+void DetectLevelMaps(DetectorContext& context);
+void DetectScreens(DetectorContext& context);
+void DetectRng(DetectorContext& context);
+void DetectUnpackers(DetectorContext& context);
+void DetectMusic(DetectorContext& context);
 
 /// Init-table generators the init table detector checks (exposed for the tests): the name of the generator the
 /// @p size bytes at @p data follow ("screen-rows", "screen-rows-lo", "screen-rows-hi", "x*N", "shift", "sine8",

@@ -130,6 +130,20 @@ const char* LabelPrefix(const Region& r)
             return "table_";
         case RegionKind::Font:
             return "font_";
+        case RegionKind::Sprite:
+            return "sprite_";
+        case RegionKind::Tile:
+            return "tile_";
+        case RegionKind::Screen:
+            return "screen_";
+        case RegionKind::LevelMap:
+            return "map_";
+        case RegionKind::MusicData:
+            return "music_";
+        case RegionKind::Packed:
+            return "packed_";
+        case RegionKind::RngState:
+            return "rng_";
         case RegionKind::Variable:
             return "var_";
         case RegionKind::Untouched:
@@ -183,7 +197,28 @@ std::string TitleOf(const Region& r, uint32_t size)
             return "Table, " + std::to_string(size) + " bytes" +
                    (g.generator.empty() ? "" : " (" + g.generator + ")") + users;
         case RegionKind::Font:
-            return "Font" + users;
+            return g.frames != 0 ? "Font, " + Plural(g.frames, "character", "characters") + " of " +
+                                       std::to_string(g.width) + "x" + std::to_string(g.height) + users
+                                 : "Font" + users;
+        case RegionKind::Sprite:
+        case RegionKind::Tile:
+            return std::to_string(g.width) + "x" + std::to_string(g.height) +
+                   (r.kind == RegionKind::Sprite ? " sprite" : " tile") + (g.frames == 1 ? "" : "s") +
+                   (g.frames > 1 ? ", " + Plural(g.frames, "frame", "frames") : std::string()) +
+                   (g.mask ? ", masked" : "") +
+                   (g.prefix != 0 ? ", " + Plural(g.prefix, "byte", "bytes") + " before each" : std::string()) +
+                   users;
+        case RegionKind::Screen:
+            return (g.layout == "attributes" ? "Attributes, " : "Screen pixels, ") + std::to_string(g.width) + "x" +
+                   std::to_string(g.height) + users;
+        case RegionKind::LevelMap:
+            return "Level map, " + std::to_string(g.width) + "x" + std::to_string(g.height) + " cells" + users;
+        case RegionKind::MusicData:
+            return "Music data, " + std::to_string(size) + " bytes" + users;
+        case RegionKind::Packed:
+            return "Packed data, " + std::to_string(size) + " bytes" + users;
+        case RegionKind::RngState:
+            return "Random number generator state" + users;
         case RegionKind::Variable:
         {
             std::string role = VarRoleName(g.role);
@@ -201,6 +236,71 @@ std::string TitleOf(const Region& r, uint32_t size)
         default:
             return std::string(RegionKindName(r.kind)) + users;
     }
+}
+
+/// The SkoolKit image macro showing a graphics claim's frames inside [start, end] (Z80), wrapped in #UDGTABLE (which
+/// skool2asm drops: the draft's assembly does not change); empty when the geometry has no picture SkoolKit can draw.
+/// Sprites and tiles: one #UDGARRAY a frame (at most 16), the mask (when interleaved) assumed before each graphic
+/// byte, a tile's attribute from the byte before its rows; fonts: #FONT over the characters; screen pixels: #SCR on
+/// the buffer as the display file. Decimal addresses: the export turns $nnnn into #R references.
+std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
+{
+    const Geometry& g = r.geometry;
+    const std::string name = [&] {
+        std::string text = HexName(LabelPrefix(r), static_cast<uint16_t>(start));
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }();
+    if (r.kind == RegionKind::Font)
+    {
+        const uint32_t chars = std::min<uint32_t>(96u, (end - start + 1u) / 8u);
+        if (g.width != 8 || g.height != 8 || chars == 0)
+            return std::string();
+        return "#UDGTABLE { #FONT" + std::to_string(start) + "," + std::to_string(chars) + "(" + name + ") } TABLE#";
+    }
+    if (r.kind == RegionKind::Screen)
+    {
+        if (g.layout != "screen" || g.height < 8 || g.height % 8 != 0 || end - start + 1u < 2048u)
+            return std::string();
+        return "#UDGTABLE { #SCR2,0,0,32," + std::to_string(std::min<uint32_t>(g.height / 8u, 24u)) + "," +
+               std::to_string(start) + "(" + name + ") } TABLE#";
+    }
+    if (r.kind != RegionKind::Sprite && r.kind != RegionKind::Tile)
+        return std::string();
+    if (g.width == 0 || g.width % 8 != 0 || g.height == 0 || g.height % 8 != 0 || g.width > 64)
+        return std::string();
+    const uint32_t columns = g.width / 8u;
+    const uint32_t rowStep = columns * (g.mask ? 2u : 1u);
+    const uint32_t frameBytes = rowStep * g.height + g.prefix;
+    const uint32_t stride = g.stride != 0 ? g.stride : frameBytes;
+    const uint32_t scale = g.width <= 16 ? 4u : 2u;
+    std::string cells;
+    uint32_t shown = 0;
+    for (uint32_t base = r.z80; base + frameBytes - 1u <= std::min<uint32_t>(end, 0xFFFFu) && shown < 16;
+         base += stride)
+    {
+        if (base < start)
+            continue;
+        const uint32_t pixels = base + g.prefix;
+        const uint32_t across = g.mask ? 2u : 1u;
+        const uint32_t down = 8u * rowStep;
+        const uint32_t first = pixels + (g.mask ? 1u : 0u);
+        const uint32_t last = first + (columns - 1u) * across + (g.height / 8u - 1u) * down;
+        std::string spec = std::to_string(first) + "-" + std::to_string(last) + "-" + std::to_string(across) + "-" +
+                           std::to_string(down);
+        if (g.mask)
+            spec += ":" + std::to_string(first - 1u) + "-" + std::to_string(last - 1u) + "-" + std::to_string(across) +
+                    "-" + std::to_string(down);
+        std::string attrs;
+        if (g.prefix != 0)
+            attrs = "[" + std::to_string(base) + "]";
+        cells += std::string(shown == 0 ? "" : " | ") + "#UDGARRAY" + std::to_string(columns) + ",56," +
+                 std::to_string(scale) + "," + std::to_string(rowStep) + "(" + spec + ")" + attrs + "(" + name + "_" +
+                 std::to_string(shown) + ")";
+        ++shown;
+    }
+    return cells.empty() ? std::string() : "#UDGTABLE { " + cells + " } TABLE#";
 }
 
 /// The 16-bit immediate of an instruction (op.immBytes == 2)
@@ -472,6 +572,8 @@ struct Exporter
             if (e.region == nullptr)
                 continue;
             const Region& r = *e.region;
+            if (const std::string image = ImageMacro(r, e.start, e.end); !image.empty())
+                e.description.push_back(image);
             if (e.ctl == 'c')
             {
                 const auto it = callers.find(e.start);
@@ -1046,13 +1148,17 @@ struct Exporter
         for (const Region& r : l2.store.Regions())
         {
             const bool graphic = r.kind == RegionKind::Font || r.kind == RegionKind::Sprite ||
-                                 r.kind == RegionKind::Tile || r.kind == RegionKind::Screen;
+                                 r.kind == RegionKind::Tile || r.kind == RegionKind::Screen ||
+                                 r.kind == RegionKind::LevelMap;
             if (!graphic || !InRanges(plan.ranges, r.z80))
                 continue;
+            const struct Geometry& g = r.geometry;
             out << (first ? "\n" : ",\n") << "  {\"start\": \"" << Hex4(r.z80) << "\", \"end\": \""
-                << Hex4(r.z80 + r.Size()) << "\", \"kind\": \"" << RegionKindName(r.kind)
-                << "\", \"width\": " << r.geometry.width << ", \"height\": " << r.geometry.height
-                << ", \"frames\": " << r.geometry.frames << "}";
+                << (r.z80 + r.Size() > 0xFFFFu ? std::string("$10000") : Hex4(r.z80 + r.Size()))
+                << "\", \"kind\": \"" << RegionKindName(r.kind) << "\", \"width\": " << g.width << ", \"height\": " << g.height << ", \"frames\": " << g.frames
+                << ", \"stride\": " << g.stride << ", \"mask\": " << (g.mask ? "true" : "false")
+                << ", \"prefix\": " << g.prefix << ", \"layout\": \"" << g.layout << "\", \"detector\": \""
+                << DetectorName(r.detector) << "\", \"confidence\": " << r.confidence << "}";
             first = false;
         }
         out << "\n]}\n";

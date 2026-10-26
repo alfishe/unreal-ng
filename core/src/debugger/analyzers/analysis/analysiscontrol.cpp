@@ -8,8 +8,10 @@
 #include <optional>
 
 #include "base/featuremanager.h"
+#include "common/base64.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/l2export.h"
+#include "debugger/analyzers/analysis/l2gallery.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -78,7 +80,8 @@ StateNode Reply::ToValue() const
 
 const std::vector<std::string>& Actions()
 {
-    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain", "query", "export"};
+    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
+                                                      "gallery"};
     return actions;
 }
 
@@ -90,6 +93,7 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> explain = {"address", "page", "what"};
     static const std::vector<std::string> query = {"kind", "range", "limit"};
     static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
+    static const std::vector<std::string> gallery = {"address", "kind", "scale", "path", "limit"};
     if (action == "start")
         return start;
     if (action == "build")
@@ -100,6 +104,8 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
         return query;
     if (action == "export")
         return exportOptions;
+    if (action == "gallery")
+        return gallery;
     return none;
 }
 
@@ -940,13 +946,144 @@ Reply ExportDraft(Emulator& emulator, const Options& options)
     return reply;
 }
 
+/// analysis gallery [address kind scale path limit]: the graphics L2 found; with an address, its PNG preview
+Reply Gallery(Emulator& emulator, const Options& options)
+{
+    const std::shared_ptr<const L1Result> l1 = L1Jobs::Instance().Result(emulator.GetId());
+    const std::shared_ptr<const L2Result> l2 = L1Jobs::Instance().Structure(emulator.GetId());
+    if (!l1 || !l2)
+        return NoStructure();
+    std::optional<RegionKind> kind;
+    if (const auto it = options.find("kind"); it != options.end() && !it->second.empty() && Lower(it->second) != "all")
+    {
+        RegionKind parsed = RegionKind::Data;
+        if (!ParseRegionKind(Lower(it->second), parsed) ||
+            (parsed != RegionKind::Font && parsed != RegionKind::Sprite && parsed != RegionKind::Tile &&
+             parsed != RegionKind::Screen && parsed != RegionKind::LevelMap))
+            return Refuse(Error::BadRequest, "kind: all, font, sprite, tile, screen or level_map");
+        kind = parsed;
+    }
+    uint64_t scale = 2;
+    if (const auto it = options.find("scale"); it != options.end() && (!ParseCount(it->second, 8, scale) || scale == 0))
+        return Refuse(Error::BadRequest, "scale: an integer zoom, 1 to 8");
+    uint64_t limit = 200;
+    if (const auto it = options.find("limit"); it != options.end() && !ParseCount(it->second, 100000, limit))
+        return Refuse(Error::BadRequest, "limit: the most regions to answer, 0 to 100000");
+    std::vector<const Region*> regions;
+    for (const Region* r : GalleryRegions(*l2))
+        if (!kind || r->kind == *kind)
+            regions.push_back(r);
+    const auto shape = [](const Region& r) {
+        const Geometry& g = r.geometry;
+        std::string text = std::to_string(g.width) + "x" + std::to_string(g.height);
+        if (g.frames > 1)
+            text += "x" + std::to_string(g.frames);
+        if (g.mask)
+            text += " mask";
+        if (g.prefix != 0)
+            text += " +" + std::to_string(g.prefix);
+        return text;
+    };
+
+    const auto addressIt = options.find("address");
+    if (addressIt == options.end() || addressIt->second.empty())
+    {
+        Reply reply;
+        StateNode list = StateNode::Array();
+        std::string text;
+        char line[200];
+        uint64_t shown = 0;
+        for (const Region* r : regions)
+        {
+            if (shown++ >= limit)
+                break;
+            list.push(RegionNode(*r));
+            const std::string name = !r->label.empty() ? r->label : r->title;
+            std::snprintf(line, sizeof(line), "%04X-%04X %-10s %-16s %-10s %4u %s\n", r->z80, r->Z80End(),
+                          RegionKindName(r->kind), shape(*r).c_str(), DetectorName(r->detector),
+                          static_cast<unsigned>(r->confidence), name.c_str());
+            text += line;
+        }
+        reply.body["regions"] = list;
+        reply.body["count"] = static_cast<uint64_t>(regions.size());
+        reply.body["truncated"] = regions.size() > limit;
+        reply.text = "L2 gallery: " + std::to_string(regions.size()) + " graphics regions" +
+                     (regions.size() > limit ? " (first " + std::to_string(limit) + ")" : "") +
+                     " (address=<start> draws one as a PNG)\n" +
+                     (text.empty() ? "" : "range     kind       shape            detector   conf label / title\n" + text);
+        return reply;
+    }
+
+    uint16_t address = 0;
+    if (!ParseAddress(addressIt->second, address))
+    {
+        LabelManager* labels = LabelsOf(emulator);
+        const std::shared_ptr<Label> label = labels != nullptr ? labels->GetLabelByName(addressIt->second) : nullptr;
+        if (!label)
+            return Refuse(Error::NotFound, "no address or label '" + addressIt->second + "'");
+        address = label->address;
+    }
+    // The region starting there, else the first one covering it
+    const Region* picked = nullptr;
+    for (const Region* r : regions)
+        if (r->z80 == address)
+        {
+            picked = r;
+            break;
+        }
+    for (const Region* r : regions)
+        if (picked == nullptr && r->z80 <= address && r->Z80End() >= address)
+            picked = r;
+    if (picked == nullptr)
+        return Refuse(Error::NotFound, "no graphics region at " + Hex4(address) +
+                                           " (gallery without an address lists them)");
+    GalleryOptions galleryOptions;
+    galleryOptions.scale = static_cast<uint16_t>(scale);
+    GalleryImage image;
+    std::string error;
+    if (!RenderGallery(*l1, *picked, galleryOptions, image, error))
+        return Refuse(Error::Conflict, error);
+
+    Reply reply;
+    reply.body["region"] = RegionNode(*picked);
+    reply.body["width"] = static_cast<uint64_t>(image.width);
+    reply.body["height"] = static_cast<uint64_t>(image.height);
+    reply.body["frames"] = static_cast<uint64_t>(image.frames);
+    reply.body["scale"] = scale;
+    reply.body["bytes"] = static_cast<uint64_t>(image.png.size());
+    reply.body["mime_type"] = "image/png";
+    const std::string what = "L2 gallery " + Hex4(picked->z80) + "-" + Hex4(picked->Z80End()) + " " +
+                             RegionKindName(picked->kind) + " " + shape(*picked) + ": " +
+                             std::to_string(image.frames) + (image.frames == 1 ? " frame, " : " frames, ") +
+                             std::to_string(image.width) + "x" + std::to_string(image.height) + " PNG, " +
+                             std::to_string(image.png.size()) + " bytes";
+    const auto pathIt = options.find("path");
+    if (pathIt != options.end() && !pathIt->second.empty())
+    {
+        std::ofstream file(pathIt->second, std::ios::binary | std::ios::trunc);
+        if (file)
+            file.write(reinterpret_cast<const char*>(image.png.data()), static_cast<std::streamsize>(image.png.size()));
+        if (!file)
+            return Refuse(Error::Conflict, "could not write " + pathIt->second);
+        reply.body["path"] = pathIt->second;
+        reply.body["png"] = "";
+        reply.text = what + " written to " + pathIt->second;
+        return reply;
+    }
+    reply.body["path"] = "";
+    reply.body["png"] = base64::Encode(image.png);
+    reply.text = what + " (base64 in png; or give a path)";
+    return reply;
+}
+
 }  // namespace
 
 Reply Execute(Emulator& emulator, const std::string& action, const Options& options)
 {
     const std::vector<std::string>& actions = Actions();
     if (std::find(actions.begin(), actions.end(), action) == actions.end())
-        return Refuse(Error::BadRequest, "unknown action '" + action + "' (start, stop, status, build, cancel, explain, query, export)");
+        return Refuse(Error::BadRequest, "unknown action '" + action +
+                                              "' (start, stop, status, build, cancel, explain, query, export, gallery)");
     const std::vector<std::string>& known = OptionsFor(action);
     for (const auto& [name, value] : options)
     {
@@ -979,6 +1116,8 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         return Query(emulator, options);
     if (action == "export")
         return ExportDraft(emulator, options);
+    if (action == "gallery")
+        return Gallery(emulator, options);
     return Explain(emulator, *tracker, options);
 }
 

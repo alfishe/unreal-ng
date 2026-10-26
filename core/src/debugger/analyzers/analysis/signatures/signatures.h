@@ -3,7 +3,7 @@
 /// @file signatures.h
 /// @brief The signature catalog of the L2 signature detector: masked byte patterns (MemorySearch syntax: hex bytes,
 /// "??" any byte, "A?" a nibble) with a check at the match, one file per family (rom48.cpp: the 48K ROM routines
-/// and its character set; players and packers follow). A match claims the pattern's bytes (or `size` bytes) as
+/// and its character set; players.cpp: music players). A match claims the pattern's bytes (or `size` bytes) as
 /// `kind`, labelled.
 
 #include <cstdint>
@@ -38,6 +38,8 @@ namespace signatures
 {
 /// The 48K ROM family
 const std::vector<Signature>& Rom48();
+/// Music players (players.cpp)
+const std::vector<Signature>& Players();
 /// Every family, in a fixed order
 const std::vector<Signature>& Builtin();
 }  // namespace signatures

@@ -2887,7 +2887,9 @@ namespace PythonBindings
                "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
                "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
                "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
-               "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft). "
+               "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft) | "
+               "gallery (kind='sprite' | 'tile' | 'font' | 'screen' | 'level_map', address='$8200' or a label, "
+               "scale=2, path='sprite.png', limit=200: the L2 graphics, one drawn as a PNG, base64 in png). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")

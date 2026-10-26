@@ -91,6 +91,18 @@ const char* DetectorName(DetectorId id)
             return "pointer_tables";
         case DetectorId::Variables:
             return "variables";
+        case DetectorId::Graphics:
+            return "graphics";
+        case DetectorId::LevelMaps:
+            return "level_maps";
+        case DetectorId::Screens:
+            return "screens";
+        case DetectorId::Rng:
+            return "rng";
+        case DetectorId::Unpackers:
+            return "unpackers";
+        case DetectorId::Music:
+            return "music";
     }
     return "?";
 }
@@ -266,6 +278,12 @@ StateNode RegionNode(const Region& region)
         geometry["stride"] = static_cast<uint64_t>(g.stride);
     if (g.count != 0)
         geometry["count"] = static_cast<uint64_t>(g.count);
+    if (g.mask)
+        geometry["mask"] = true;
+    if (g.prefix != 0)
+        geometry["prefix"] = static_cast<uint64_t>(g.prefix);
+    if (!g.layout.empty())
+        geometry["layout"] = g.layout;
     if (!g.terminator.empty())
         geometry["terminator"] = g.terminator;
     if (!g.generator.empty())

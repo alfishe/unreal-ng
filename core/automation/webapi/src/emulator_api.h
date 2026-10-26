@@ -258,6 +258,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::analysisExplain, "/api/v1/emulator/{id}/analysis/explain", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::analysisQuery, "/api/v1/emulator/{id}/analysis/query", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::analysisExport, "/api/v1/emulator/{id}/analysis/export", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisGallery, "/api/v1/emulator/{id}/analysis/gallery", drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -1173,6 +1174,9 @@ public:
                        const std::string& id) const;
     void analysisExport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
+    // L2 (P4): POST gallery {address, kind, scale, path, limit}: the graphics regions, one as a PNG
+    void analysisGallery(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,

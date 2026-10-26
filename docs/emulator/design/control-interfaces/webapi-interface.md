@@ -768,6 +768,11 @@ GET  /api/v1/emulator/{id}/analysis/query?kind=records&range=8000-83FF&limit=20
 POST /api/v1/emulator/{id}/analysis/export    {format: ctl|skool|fields|geometry|layout|symbols|map, path?,
                                                ranges?: "5900-59FF,8000-FFFF", width?: 1..64}: the L2 draft
                                               {format, entries, bytes, ranges, path, content (no path), text}
+POST /api/v1/emulator/{id}/analysis/gallery   {address?, kind?: all|font|sprite|tile|screen|level_map, scale?: 1..8,
+                                               path?, limit?}: the L2 graphics; no address: {regions [...], count,
+                                               truncated, text}; an address (or a label): the region starting there
+                                               (else covering it) drawn as a PNG {region, width, height, frames,
+                                               scale, bytes, mime_type, png (base64; empty with a path), path, text}
 ```
 
 ### Settings Management
