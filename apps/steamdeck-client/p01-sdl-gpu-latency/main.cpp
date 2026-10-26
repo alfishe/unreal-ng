@@ -12,7 +12,7 @@
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
 //                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
-//                       [--headless] [--boot]
+//                       [--headless] [--boot] [--sound-haptics]
 //
 // Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
 // (UNREAL_WEBAPI_PORT). --headless runs the emulator and automation only, no window and no GPU (a container, an
@@ -21,8 +21,9 @@
 //
 // With --boot or --file the controllers library drives the machine (deckcontrollers.h): the Deck's own controller
 // through hidraw (every button, paddle, trackpad, the motion sensors, both motors), any other
-// pad through evdev, the play and game profiles, haptics. SDL's gamepad layer stays off then, so nothing else writes
-// the Deck's feature reports; the border test keeps the SDL gamepad (A / D-pad on Kempston).
+// pad through evdev, the play and game profiles, the game profiles' haptics (their events; --sound-haptics: the motors
+// follow the sound when no game profile has haptics). SDL's gamepad layer stays off then, so nothing else writes the
+// Deck's feature reports; the border test keeps the SDL gamepad (A / D-pad on Kempston).
 //
 // Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: Esc; the border test also View + Menu, --boot / --file the Steam menu.
 
@@ -57,6 +58,7 @@ struct Options
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
     bool headless = false;   // no window, no GPU: the emulator and automation only
     bool boot = false;       // the ROM boots: no border test program
+    bool soundHaptics = false;   // no game profile: the motors follow the sound (off: the game profiles' events only)
 };
 
 struct Rect { uint32_t x, y, w, h; };
@@ -89,7 +91,7 @@ int main(int argc, char** argv)
     Options opt;
     auto isFlag = [](const char* arg) {
         return std::strcmp(arg, "--windowed") == 0 || std::strcmp(arg, "--headless") == 0 ||
-               std::strcmp(arg, "--boot") == 0;
+               std::strcmp(arg, "--boot") == 0 || std::strcmp(arg, "--sound-haptics") == 0;
     };
     for (int i = 1; i < argc; i++)
     {
@@ -99,6 +101,8 @@ int main(int argc, char** argv)
             opt.headless = true;
         if (std::strcmp(argv[i], "--boot") == 0)
             opt.boot = true;
+        if (std::strcmp(argv[i], "--sound-haptics") == 0)
+            opt.soundHaptics = true;
     }
     for (int i = 1; i + 1 < argc; i += 2)
     {
@@ -139,7 +143,11 @@ int main(int argc, char** argv)
     // Before the file loads: its NC_FILE_LOADED picks the game profile
     std::unique_ptr<deckpoc::DeckControllers> controllers;
     if (hosted)
-        controllers = std::make_unique<deckpoc::DeckControllers>(*emu.Get(), deckpoc::DeckControllers::Options{});
+    {
+        deckpoc::DeckControllers::Options options;
+        options.soundHaptics = opt.soundHaptics;
+        controllers = std::make_unique<deckpoc::DeckControllers>(*emu.Get(), options);
+    }
     if (!opt.file.empty())
     {
         if (!emu.LoadFile(opt.file, &error))

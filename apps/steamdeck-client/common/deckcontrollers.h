@@ -31,7 +31,10 @@ class DeckControllers
 public:
     struct Options
     {
-        bool soundHaptics = true;  ///< no game profile with haptics: the motors follow the sound (AY, beeper)
+        /// No game profile with haptics: the motors follow the sound (AY, beeper). Off by default, as in unreal-qt
+        /// (Controllers/SoundHaptics): a tune's bass line keeps the motors running; the haptics come from the game
+        /// profiles' events (hits, explosions, a life lost)
+        bool soundHaptics = false;
     };
 
     DeckControllers(Emulator& emulator, Options options);
