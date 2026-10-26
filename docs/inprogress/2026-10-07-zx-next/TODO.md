@@ -74,8 +74,10 @@ Not planned yet:
   reads (60 frames; the long tier 1800, through the soft reset into the personality) and seeks back to sampled frames. The
   divergence harness now seeks to the live run's in-frame position: the Next's reset leaves z80.t at 3 and `Emulator::RunFrame` keeps
   that phase, so a frame-aligned seek compared a different instruction
-- [ ] Media: the KS3 board variant; the
-  esxDOS-only mode (requirements.md Q11); decide Q9 / Q10 and close Q12 (the T80N persona) in requirements.md; refresh phases.md
+- [x] requirements.md Q9 (TTD checkpoint now, UNS later), Q10 (disassembler, `unreal-asm`, DZRP know Z80N; GDB needs nothing) and
+  Q12 (the T80N persona) closed 2026-10-26
+- [ ] Media: the KS3 board variant (with the NR #11 video timing clocks); the esxDOS-only mode (requirements.md Q11); refresh
+  phases.md
 - [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
   the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
