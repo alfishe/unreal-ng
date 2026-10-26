@@ -1,6 +1,6 @@
 # 028 — next-video-pipeline-alignment
 
-Feature: ZX Next copper picture latency ([TODO.md](../../../docs/inprogress/2026-10-07-zx-next/DONE.md), "Copper picture latency of the
+Feature: ZX Next copper picture latency ([TODO.md](../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "Copper picture latency of the
 registers that are fetch-stage inputs"; counted chains in `scratch/cosim-copper/LATENCY.md`, `ScreenNext::PixelLatencyClocks`).
 
 Status: **concluded 2026-10-12** - [measurements](measurements-2026-10-12-register-sweep.md), [analysis](analysis.md),

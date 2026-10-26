@@ -64,7 +64,7 @@ Partly or missing, ranked by the value to a Next software developer or an emulat
 | D1 | UART / ESP / Pi (ports `#133B`-`#163B`, FIFO, baud, NR `#A8`/`#A9`) | **UARTs landed** (`NextUart`: FIFOs, prescaler, frame, flow control, interrupts; peers `ComPort=` / `ComPort2=`; report `next_uart`); the ESP module is fitted on UART 0 (AT, shipped default) and NR `#A8`/`#A9` drive its GPIO0 (download mode at a boot with it low); the joystick-port UART and the Pi's GPIO routing are registers only | **yes**: the report follows the device |
 | D2 | Kempston mouse (`#FADF`/`#FBDF`/`#FFDF`), ULA+ / Radastan modes | not modelled | **yes** |
 
-Out of scope here (device work, tracked in [DONE.md](DONE.md)): D1, D2. The reports for them are written with the devices, on the same
+Out of scope here (device work, tracked in [TODO.md](TODO.md)): D1, D2. The reports for them are written with the devices, on the same
 pattern.
 
 ## 4. Plan of changes
@@ -92,7 +92,7 @@ Documents updated **with each phase** (never ahead of the code):
 | `core/automation/mcp/README.md`, `mcp-tools.cpp` aspects and parameters | new aspects and `nr_` parameters; MCP live check `tools/verification/mcp/run_all.py` ([MCP testing](../../guidelines/mcp-testing-guidelines.md)) |
 | `core/automation/cli/README.md` | command list |
 | `.recipe/machines/next.md` | recipes: "what does the card see", "why did the DivMMC page in", "stop at the write of NR x" |
-| `docs/inprogress/2026-10-07-zx-next/{README.md,DONE.md,design-automation-coverage.md,esxdos-and-sd.md}` | status marks, links |
+| `docs/inprogress/2026-10-07-zx-next/{README.md,TODO.md,design-automation-coverage.md,esxdos-and-sd.md}` | status marks, links |
 | `tools/verification/webapi/src/test_api_next.py` | live checks of the new routes |
 
 ## 5. Tests (written first)

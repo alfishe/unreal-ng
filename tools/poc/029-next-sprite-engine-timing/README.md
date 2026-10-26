@@ -1,6 +1,6 @@
 # 029 - next-sprite-engine-timing
 
-Feature: ZX Next sprites ([TODO.md](../../../docs/inprogress/2026-10-07-zx-next/DONE.md), "Sprites: ... sprites_overtime / too-many flag
+Feature: ZX Next sprites ([TODO.md](../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "Sprites: ... sprites_overtime / too-many flag
 timing"; `NextSprites::DrawLine`, `core/src/emulator/io/z80n/nextsprites.cpp`).
 
 Status: **concluded 2026-10-12**. Run: `run.sh <cores/zxnext/src>` (GHDL, VHDL-2008, `-fsynopsys`; about a minute).
