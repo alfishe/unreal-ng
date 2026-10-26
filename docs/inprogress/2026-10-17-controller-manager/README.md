@@ -32,6 +32,7 @@ before launch just works in the game that is loaded.
 | [mapping-and-profiles.md](mapping-and-profiles.md) | Bindings, layers, analog handling, autofire, keyboard and mouse mappings, profile layering, signature → port heuristic → manual, the JSON format, defaults |
 | [debug-and-ttd.md](debug-and-ttd.md) | The developer layer: debugger and TTD actions, Elite paddles, scrub, device roles, Stream Deck, debug feedback |
 | [haptics.md](haptics.md) | Rumble, impulse triggers, HD haptics; audio filters and game-event probes mapped to effects per game profile; never journaled, muted on seek and replay |
+| [game-haptics recipe](../../../.recipe/input/game-haptics.md) | How to write a game's profile: the probe kind and its cost, finding the event code, proving it by play, the index and the tests |
 | [ui-ux.md](ui-ux.md) | The Qt dialog: three panes and patch cords, Simple and Advanced, the controller picture with callouts, test, learn and wizard flows |
 | [device-database.md](device-database.md) | VID/PID identification, the device database, images and hotspot maps, the photo pipeline |
 | [surface-dial.md](surface-dial.md) | The Surface Dial: reports, clicks, the late touch sensor and the inferred touch, per OS |

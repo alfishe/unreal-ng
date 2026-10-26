@@ -4,6 +4,8 @@
 
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
@@ -43,7 +45,8 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
     if (breakpoints == nullptr || probes.empty())
         return;
     _probes.assign(probes.begin(), probes.begin() + std::min<size_t>(probes.size(), HapticFrame::kMaxProbes));
-    bool memory = false;
+    bool data = false;  // a read or write probe: the debug memory path
+    bool exec = false;
     for (size_t index = 0; index < _probes.size(); index++)
     {
         const HapticProbe& probe = _probes[index];
@@ -61,7 +64,10 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
         }
         else
         {
-            memory = true;
+            if (probe.kind == HapticProbeKind::Exec)
+                exec = true;
+            else
+                data = true;
             descriptor->type = BRK_MEMORY;
             descriptor->memoryType = probe.kind == HapticProbeKind::Exec   ? BRK_MEM_EXECUTE
                                      : probe.kind == HapticProbeKind::Read ? BRK_MEM_READ
@@ -84,11 +90,17 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
         _ids.push_back(breakpoints->AddBreakpoint(descriptor));
     }
     breakpoints->SetProbeSink(this);
-    // Exec / read / write breakpoints are checked on the CPU's debug path only: held on while the probes are armed
-    if (memory && _context->pFeatureManager != nullptr)
+    // Read / write breakpoints are checked on the debug memory path only: held on while the probes are armed. Exec
+    // breakpoints need the instruction start's check only (Z80::execProbeHold), the memory stays on the fast path
+    if (data && _context->pFeatureManager != nullptr)
     {
         _context->pFeatureManager->setProbeDebugHold(true);
         _debugHold = true;
+    }
+    if (exec && _context->pCore != nullptr)
+    {
+        _context->pCore->GetZ80()->execProbeHold = true;
+        _execHold = true;
     }
     Clear();
 }
@@ -108,6 +120,9 @@ void HapticProbes::Disarm()
     if (_debugHold && _context != nullptr && _context->pFeatureManager != nullptr)
         _context->pFeatureManager->setProbeDebugHold(false);
     _debugHold = false;
+    if (_execHold && _context != nullptr && _context->pCore != nullptr)
+        _context->pCore->GetZ80()->execProbeHold = false;
+    _execHold = false;
     Clear();
 }
 
