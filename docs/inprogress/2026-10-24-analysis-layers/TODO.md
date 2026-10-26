@@ -1,0 +1,29 @@
+# TODO: analysis layers
+
+**Status:** proposal, no code. PLAN.md row **#111** (T2). It is the umbrella for #29 (2026-01-14 analyzers) and
+#75 (font finder). Owner decisions of 2026-10-25 in [plan.md](plan.md#owner-decisions-2026-10-25): built in a worktree, landed when the A/B run proves it.
+
+## Documents
+
+| File | Topic |
+|:--|:--|
+| [README.md](README.md) | **Start here.** The problem, the four layers, what each module gives and why, savings |
+| [design.md](design.md) | How each module is built, with diagrams and data structures |
+| [plan.md](plan.md) | Order of work, how we measure, tests, risks, open questions |
+
+## Tasks
+
+| Phase | Task | Status |
+|:--|:--|:--|
+| - | Owner review of the proposal and the open questions | done 2026-10-25 |
+| P0 | `memorytracker_frame_benchmark` baseline (off / counters) on 48K, 128K and Pentagon | open |
+| P0 | `tools/verification/analysis/score_draft.py` against mm.skool; baseline from `sna2ctl -m` | open |
+| P0 | Run B token ledger checked in as the baseline | open |
+| P1 | L0 level `facts` + tests + A/B | open |
+| P1 | `analysis start/stop/status/explain` on every plane, MCP `analysis` | open |
+| P2 | `TraceBundle`, `ReplayTracer`, L1 structures, fact sheet | open |
+| P3 | Structural detectors, ROM signatures, ctl / skool export, `query` | open |
+| P4 | Media detectors, gallery | open |
+| P5 | Findings register, review queue, experiment runner, directed coverage, candidate bugs | open |
+| P5 | Recipe `.recipe/analysis/analysis-layers.md`, module doc, plane docs | open |
+| P6 | Hold-out: Jet Set Willy + one 128K title, the plan.md targets | open |
