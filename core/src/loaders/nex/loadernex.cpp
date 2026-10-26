@@ -2,10 +2,13 @@
 
 #include "loadernex.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
 
+#include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextboard.h"
@@ -333,4 +336,103 @@ bool LoaderNex::LoadFile(const std::string& path)
         return Fail("NEX: cannot open " + path);
     std::vector<uint8_t> image((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     return Load(image);
+}
+
+const char* LoaderNex::kLeftOut = "a .nex holds RAM, PC, SP and the border: the other CPU registers, IM, the interrupts (the program starts "
+                                  "with them off) and the NextREG / device state are not in it (byte 134 asks the loader to keep its registers)";
+
+bool LoaderNex::Capturable(EmulatorContext& context, std::string& reason)
+{
+    auto* memory = dynamic_cast<NextMemory*>(context.pMemory);
+    if (!memory || !dynamic_cast<PortDecoder_Next*>(context.pPortDecoder) || !context.pCore)
+    {
+        reason = "a .nex is a ZX Spectrum Next program: this machine is not a Next";
+        return false;
+    }
+    // The loader puts the entry bank's two 8K pages in slots 6-7: an MMU there that is no such pair cannot come back
+    const uint8_t mmu6 = memory->GetMmu(6), mmu7 = memory->GetMmu(7);
+    if (mmu6 == 0xFF || (mmu6 & 1) || mmu7 != mmu6 + 1 || mmu6 / 2 >= 112)
+    {
+        reason = StringHelper::Format("slots 6-7 (MMU #%02X #%02X) are not one 16K bank, which the NEX loader puts at #C000; page a bank "
+                                      "there (or save as .szx)",
+                                      mmu6, mmu7);
+        return false;
+    }
+    return true;
+}
+
+bool LoaderNex::Capture(EmulatorContext& context, std::vector<uint8_t>& out, std::vector<std::string>& warnings, std::string& error)
+{
+    if (!Capturable(context, error))
+        return false;
+    auto* memory = dynamic_cast<NextMemory*>(context.pMemory);
+    const uint8_t entryBank = static_cast<uint8_t>(memory->GetMmu(6) / 2);
+
+    // What the loader rebuilds differently: ROM in slots 0-1, banks 5 and 2 in slots 2-5
+    const uint8_t loaderMmu[6] = {0xFF, 0xFF, 10, 11, 4, 5};
+    std::string slots;
+    for (unsigned slot = 0; slot < 6; slot++)
+        if (memory->GetMmu(slot) != loaderMmu[slot])
+            slots += StringHelper::Format(" %u=#%02X", slot, memory->GetMmu(slot));
+    if (!slots.empty())
+        warnings.push_back("the NEX loader maps ROM, bank 5 and bank 2 in slots 0-5; this machine has" + slots);
+
+    const unsigned ramBanks = std::min(112u, static_cast<unsigned>(std::max<uint32_t>(context.config.ramsize, 1024u) / 16));
+    std::vector<uint8_t> header(kHeaderSize, 0);
+    std::memcpy(header.data(), "NextV1.2", 8);
+    std::vector<unsigned> saved;
+    for (unsigned bank : BankOrder())
+    {
+        if (bank >= ramBanks)
+            continue;
+        const uint8_t* data = memory->RAMPageAddress(static_cast<uint16_t>(bank));
+        const bool used = bank == 5 || bank == 2 || bank == entryBank ||
+                          std::any_of(data, data + kBankSize, [](uint8_t b) { return b != 0; });
+        if (!used)
+            continue;
+        header[18 + bank] = 1;
+        saved.push_back(bank);
+    }
+    const bool needs1792 = std::any_of(saved.begin(), saved.end(), [](unsigned b) { return b >= 48; });
+    const Z80* z80 = context.pCore->GetZ80();
+    const uint8_t border = static_cast<uint8_t>(context.emulatorState.pFE & 7);
+    header[8] = needs1792 ? 1 : 0;
+    header[9] = static_cast<uint8_t>(saved.size());
+    header[10] = 0;  // no loading screen: bank 5 is the program's
+    header[11] = border;
+    header[12] = static_cast<uint8_t>(z80->sp);
+    header[13] = static_cast<uint8_t>(z80->sp >> 8);
+    header[14] = static_cast<uint8_t>(z80->pc);
+    header[15] = static_cast<uint8_t>(z80->pc >> 8);
+    header[134] = 1;  // keep the NextREG state: the program runs in the registers it was saved in, not the loader's reset
+    header[139] = entryBank;
+
+    out = std::move(header);
+    out.reserve(kHeaderSize + saved.size() * kBankSize);
+    for (unsigned bank : saved)
+    {
+        const uint8_t* data = memory->RAMPageAddress(static_cast<uint16_t>(bank));
+        out.insert(out.end(), data, data + kBankSize);
+    }
+
+    warnings.push_back(kLeftOut);
+    if (needs1792)
+        warnings.push_back("banks above 47 are in use: the file needs a 2 MB Next (byte 8)");
+    return true;
+}
+
+bool LoaderNex::SaveFile(EmulatorContext& context, const std::string& path, std::vector<std::string>& warnings, std::string& error)
+{
+    std::vector<uint8_t> image;
+    if (!Capture(context, image, warnings, error))
+        return false;
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file || !file.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size())))
+    {
+        file.close();
+        std::remove(path.c_str());  // a refusal leaves no partial file
+        error = "cannot write '" + path + "'";
+        return false;
+    }
+    return true;
 }

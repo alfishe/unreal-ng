@@ -28,7 +28,7 @@ bool SnapshotLauncher::RequiredModel(const std::string& path, std::string& model
         model = LoaderSPG::kModel;
         ramKb = LoaderSPG::kRamKb;
     }
-    else if (ext == "nex")
+    else if (ext == "nex" || ext == "snx")
     {
         model = LoaderNex::kModel;
         ramKb = LoaderNex::kRamKb;
@@ -53,7 +53,7 @@ bool SnapshotLauncher::NeedOf(const std::string& path, MEM_MODEL runningModel, u
         const TMemModel* tsconf = Config::FindModelByShortName(need.model);
         need.differs = tsconf && runningModel != tsconf->Model;
     }
-    else if (ext == "nex")
+    else if (ext == "nex" || ext == "snx")
     {
         need.model = LoaderNex::kModel;
         need.ramKb = LoaderNex::kRamKb;

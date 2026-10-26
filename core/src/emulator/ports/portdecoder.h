@@ -1134,6 +1134,24 @@ public:
     /// on the Sprinter, whose ISA ZX-bus adapter passes I/O cycles only (ISA open question Q7)
     virtual bool ZxBusMemoryCycles() const { return ZxBusPresent(); }
 
+    /// What the machine's expansion connector passes of one I/O cycle to its slot-built cards (ReadSlotCardCycle /
+    /// WriteSlotCardCycle). The default: the cards see every cycle and a read combines by the bus's read rule
+    struct SlotCycleGate
+    {
+        bool connected = true;        ///< the connector carries the cycle at all (false: the cards see nothing)
+        bool iorq = true;             ///< its /IORQ reaches the cards (false: only the cards that detect RD / WR see it)
+        bool byReadRule = true;       ///< a read combines the board and the cards by the bus's read rule; else the three below
+        bool boardData = true;        ///< (a board that drives) its data counts; false: #FF in its place
+        bool cardsWithBoard = false;  ///< (a board that drives) the cards' data is ANDed into it
+        bool cardsAlone = true;       ///< (a board that does not drive) the cards' data is the value; false: #FF
+    };
+    virtual SlotCycleGate SlotCardGate(uint16_t port, bool isRead) const
+    {
+        (void)port;
+        (void)isRead;
+        return {};
+    }
+
     /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
     /// machines that keep none. The video change log lists the events of its frames (/video/changes)
     virtual MachineEventJournal* GetMachineEventJournal() { return nullptr; }

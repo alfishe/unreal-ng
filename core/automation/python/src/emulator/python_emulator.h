@@ -2737,7 +2737,7 @@ namespace PythonBindings
                 return StateNodeToPy(self.LastSnapshotReport().ToStateNode());
             }, "What the snapshot pipeline did with the last load (None before the first)")
             .def("snapshot_save", &Emulator::SaveSnapshot,
-                 "Save snapshot file (.sna, .z80, .szx); False = refused or failed, snapshot_save_report() says why", py::arg("path"))
+                 "Save snapshot file (.sna, .z80, .szx; .nex on the Next); False = refused or failed, snapshot_save_report() says why", py::arg("path"))
             .def("snapshot_save_report", [](Emulator& self) -> py::object {
                 if (self.LastSaveResult().path.empty())
                     return py::none();

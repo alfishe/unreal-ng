@@ -52,6 +52,17 @@ public:
     /// The ULA palette as the firmware fills it: the 16 default colours repeated through all 256 entries
     static void FillUlaPalette(NextBoard& board);
 
+    /// The running Next as a V1.2 NEX (the save side): every RAM bank the file can name (0-111) that is not all zero, banks 5
+    /// and 2 always, the bank in slots 6-7 as the entry bank, SP, PC, the border, "keep the NextREG state" (byte 134). A NEX
+    /// starts a program, it does not restore a machine: what it cannot carry goes into `warnings`. False with `error` on
+    /// another machine or an MMU the loader cannot rebuild at #C000
+    /// Whether Capture would succeed (the machine and the slots 6-7 check, no copy): false with `reason`
+    static bool Capturable(EmulatorContext& context, std::string& reason);
+    /// What every .nex leaves out of the machine (the note of the save formats)
+    static const char* kLeftOut;
+    static bool Capture(EmulatorContext& context, std::vector<uint8_t>& out, std::vector<std::string>& warnings, std::string& error);
+    static bool SaveFile(EmulatorContext& context, const std::string& path, std::vector<std::string>& warnings, std::string& error);
+
     const NexHeader& Header() const { return _header; }
     const std::string& Error() const { return _error; }
 
