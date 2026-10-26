@@ -5,7 +5,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
-#include <unrealdisk/trdosfs.h>
+#include <emulator/io/storage/fs/diskfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/platform.h>
@@ -667,29 +667,55 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    // The TR-DOS catalog through the disk library (deleted entries left out, the list ends at the end mark)
-    std::vector<TrdosFile> entries;
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT): unreal-disk's DiskFs, as `media files`
+    DiskFs fs(*diskImage);
+    std::vector<DiskFsEntry> entries;
     std::string error;
-    if (!unrealdisk::TrdosFileSystem(*diskImage).List(entries, error))
+    if (!fs.List("", "", true, entries, error))
     {
         session.SendResponse("Error: " + error + NEWLINE);
         return;
     }
+    const DiskFsVolume& volume = fs.Volumes().front();
+    const bool trdos = volume.fs == "trdos";
 
     std::stringstream ss;
-    ss << "Disk Catalog (Drive " << static_cast<char>('A' + drive) << "):" << NEWLINE;
-    ss << "  Name      Ext  Size   Start" << NEWLINE;
-    ss << "  --------  ---  -----  -----" << NEWLINE;
-
-    int fileCount = 0;
-    for (const TrdosFile& entry : entries)
+    ss << "Disk Catalog (Drive " << static_cast<char>('A' + drive) << ", " << volume.system
+       << (volume.label.empty() ? "" : " \"" + volume.label + "\"") << "):" << NEWLINE;
+    if (trdos)
     {
-        ss << "  " << std::left << std::setw(8) << entry.TrimmedName() << "  " << entry.type << "   " << std::right << std::setw(5)
-           << entry.length << "  T" << std::setw(2) << static_cast<int>(entry.firstTrack) << "/S" << static_cast<int>(entry.firstSector) << NEWLINE;
-        fileCount++;
+        ss << "  Name      Ext  Size   Start" << NEWLINE;
+        ss << "  --------  ---  -----  -----" << NEWLINE;
+    }
+    else
+    {
+        ss << "  Size      Start  Path" << NEWLINE;
+        ss << "  --------  -----  ----" << NEWLINE;
     }
 
-    if (fileCount == 0)
+    int fileCount = 0;
+    for (const DiskFsEntry& entry : entries)
+    {
+        if (trdos)
+        {
+            const std::string name = entry.name.substr(0, entry.name.rfind('.'));
+            ss << "  " << std::left << std::setw(8) << name << "  " << entry.name.substr(entry.name.rfind('.') + 1) << "   "
+               << std::right << std::setw(5) << entry.size << "  T" << std::setw(2) << entry.Field("track") << "/S"
+               << entry.Field("sector") << NEWLINE;
+        }
+        else
+        {
+            std::ostringstream start;
+            if (entry.start)
+                start << "#" << std::hex << std::uppercase << entry.start;
+            ss << "  " << std::left << std::setw(8) << (entry.directory ? std::string("<dir>") : std::to_string(entry.size)) << "  "
+               << std::setw(5) << start.str() << "  " << entry.path << (entry.directory ? "/" : "") << NEWLINE;
+        }
+        if (!entry.directory)
+            fileCount++;
+    }
+
+    if (entries.empty())
     {
         ss << "  (empty)" << NEWLINE;
     }
@@ -697,6 +723,8 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
     {
         ss << NEWLINE << "  " << fileCount << " file(s)" << NEWLINE;
     }
+    for (const std::string& note : fs.Notes())
+        ss << "  note: " << note << NEWLINE;
 
     session.SendResponse(ss.str());
 }

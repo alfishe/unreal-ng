@@ -25,8 +25,8 @@
 #include <vector>
 
 #include "emulator/media/mediatypes.h"
+#include "emulator/io/storage/iblockdevice.h"
 
-class IBlockDevice;
 
 /// What sector 0 of a block image holds, by the same rules as the advisory:
 /// a FAT boot sector (the SD card layout) or an MBR partition table (the

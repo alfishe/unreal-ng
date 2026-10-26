@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -14,6 +15,8 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/cpu/z80.h"
@@ -24,6 +27,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
 #include "loaders/nex/loadernex.h"
+#include "loaders/snapshot/snapshotcapture.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 
 namespace
@@ -231,6 +235,98 @@ TEST_F(LoaderNex_Test, RefusesWhatIsNotNex)
     EXPECT_FALSE(loader.Load(truncated)) << "the file ends inside a bank";
 }
 
+/// The save side (~20 ms): the running Next as a .nex - the used banks, the entry bank from slots 6-7, PC, SP, the border, "keep the
+/// registers" - which the loader puts back into another Next
+TEST_F(LoaderNex_Test, ASavedNexLoadsBackIntoAnotherNext)
+{
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    ASSERT_NE(memory, nullptr);
+    memory->SetMmu(6, 40);  // bank 20 at #C000
+    memory->SetMmu(7, 41);
+    memory->RAMPageAddress(5)[0x100] = 0x55;
+    memory->RAMPageAddress(20)[0x123] = 0xC9;
+    memory->RAMPageAddress(60)[0x3FFF] = 0x60;  // above 768K: the file asks for the 2 MB board
+    _z80->pc = 0xC123;
+    _z80->sp = 0xBF00;
+    _context->emulatorState.pFE = 0xE4;
+
+    std::vector<uint8_t> image;
+    std::vector<std::string> warnings;
+    std::string error;
+    ASSERT_TRUE(LoaderNex::Capture(*_context, image, warnings, error)) << error;
+    LoaderNex parser(_context);
+    NexHeader header;
+    ASSERT_TRUE(parser.Parse(image, header)) << parser.Error();
+    EXPECT_EQ(header.version, "V1.2");
+    EXPECT_EQ(header.entryBank, 20);
+    EXPECT_EQ(header.pc, 0xC123);
+    EXPECT_EQ(header.sp, 0xBF00);
+    EXPECT_EQ(header.border, 4);
+    EXPECT_EQ(header.keepRegisters, 1);
+    EXPECT_EQ(header.ramRequired, 1);
+    for (unsigned bank : {2u, 5u, 20u, 60u})
+        EXPECT_TRUE(header.banksPresent[bank]) << bank;
+    EXPECT_FALSE(header.banksPresent[30]) << "an all-zero bank is left out";
+    EXPECT_EQ(image.size(), 512u + header.bankCount * 0x4000u);
+    EXPECT_FALSE(warnings.empty()) << "what a .nex does not hold is said";
+
+    Emulator* other = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(other, nullptr);
+    LoaderNex loader(other->GetContext());
+    EXPECT_TRUE(loader.Load(image)) << loader.Error();
+    auto* loaded = dynamic_cast<NextMemory*>(other->GetContext()->pMemory);
+    EXPECT_EQ(loaded->GetMmu(6), 40);
+    EXPECT_EQ(loaded->PeekSlot(0xC123), 0xC9);
+    EXPECT_EQ(loaded->PeekSlot(0x4100), 0x55);
+    EXPECT_EQ(loaded->RAMPageAddress(60)[0x3FFF], 0x60);
+    EXPECT_EQ(other->GetContext()->pCore->GetZ80()->pc, 0xC123);
+    EXPECT_EQ(other->GetContext()->pCore->GetZ80()->sp, 0xBF00);
+    EmulatorTestHelper::CleanupEmulator(other);
+}
+
+/// The save is refused (~10 ms) when slots 6-7 hold no 16K bank (the loader cannot rebuild them); only the Next lists .nex
+TEST_F(LoaderNex_Test, SavingANexNeedsABankAtC000AndTheNext)
+{
+    snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    ASSERT_TRUE(formats.Has(snapshot::SaveFormat::Nex));
+    EXPECT_TRUE(formats.For(snapshot::SaveFormat::Nex).available) << formats.For(snapshot::SaveFormat::Nex).reason;
+
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    memory->SetMmu(7, 0xFF);
+    formats = _emulator->SnapshotSaveFormats();
+    EXPECT_FALSE(formats.For(snapshot::SaveFormat::Nex).available);
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("refused.nex");
+    EXPECT_FALSE(_emulator->SaveSnapshot(path));
+    EXPECT_FALSE(FileHelper::FileExists(path)) << "a refusal writes nothing";
+
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    EXPECT_FALSE(pentagon->SnapshotSaveFormats().Has(snapshot::SaveFormat::Nex));
+    const snapshot::SaveResult refused = snapshot::SaveSnapshotFile(*pentagon->GetContext(), snapshot::SaveFormat::Nex, path);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_EQ(refused.needs, "model:NEXT");
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+/// Emulator::SaveSnapshot by the extension (~20 ms): the .nex on disk loads back through LoadSnapshot
+TEST_F(LoaderNex_Test, SaveSnapshotWritesANexByItsExtension)
+{
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    memory->RAMPageAddress(0)[0] = 0x18;  // JR $ at #C000 (bank 0)
+    memory->RAMPageAddress(0)[1] = 0xFE;
+    _z80->pc = 0xC000;
+    _z80->sp = 0xBFFE;
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("saved.nex");
+    ASSERT_TRUE(_emulator->SaveSnapshot(path)) << _emulator->LastSaveResult().text;
+    EXPECT_EQ(_emulator->LastSaveResult().format, "nex");
+    memory->RAMPageAddress(0)[0] = 0x00;
+    _z80->pc = 0;
+    ASSERT_TRUE(_emulator->LoadSnapshot(path));
+    EXPECT_EQ(memory->PeekSlot(0xC000), 0x18);
+    EXPECT_EQ(_z80->pc, 0xC000);
+    std::remove(path.c_str());
+}
+
 // Bring-up: run a NEX file and write the frame
 TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
 {
@@ -300,15 +396,7 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             if (std::atoi(turbo))
                 if (auto* next = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
                     next->Board().Write(0x07, 0x03);
-        std::string sna = loadName;
-        if (sna.substr(sna.size() - 4) == ".snx")
-        {
-            sna = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/nexrun.sna";
-            std::ifstream in(loadName, std::ios::binary);
-            std::ofstream out(sna, std::ios::binary);
-            out << in.rdbuf();
-        }
-        ASSERT_TRUE(emulator->LoadSnapshot(sna)) << "the snapshot loader refused " << loadName;
+        ASSERT_TRUE(emulator->LoadSnapshot(loadName)) << "the snapshot loader refused " << loadName;
         // The state the real-board programs were photographed in: after the boot into ZX48 mode - 48K machine type (7FFD locked),
         // core id 0 (the firmware leaves it), the ULA palette filled with the 16 defaults
         auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);

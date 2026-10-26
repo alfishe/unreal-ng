@@ -24,9 +24,9 @@
 #include <string>
 
 #include "emulator/media/mediatypes.h"
+#include "emulator/io/storage/iblockdevice.h"
 
 class ChdImage;
-class IBlockDevice;
 class Medium;
 
 struct BlockWriteOptions

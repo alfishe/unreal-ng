@@ -571,7 +571,7 @@ MediaReply MediaControl::Files(const MediaRequest& request, const std::string& v
 
     // The guest cannot write while the files are read
     ParkedEmulator parked(_context);
-    std::unique_ptr<DiskFs> fs = DiskFs::Open(*medium);
+    std::unique_ptr<DiskFs> fs = OpenDiskFs(*medium);
     if (!fs)
         return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' holds no disk (a tape or a CD has no file system here)");
 

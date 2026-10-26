@@ -26,8 +26,8 @@
 #include "emulator/media/composedescriptor.h"
 #include "emulator/media/mediatypes.h"
 #include "emulator/media/sessiondelta.h"
+#include "emulator/io/storage/iblockdevice.h"
 
-class IBlockDevice;
 class Medium;
 struct OpenRequest;
 

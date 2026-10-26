@@ -20,10 +20,13 @@ std::vector<Choice> Build(const snapshot::SaveFormats& formats)
         {snapshot::SaveFormat::Szx, "szx", "SZX Snapshots (*.szx)", "Save the machine to an SZX snapshot (the most state)"},
         {snapshot::SaveFormat::Z80, "z80", "Z80 Snapshots (*.z80)", "Save the machine to a Z80 v3 snapshot"},
         {snapshot::SaveFormat::Sna, "sna", "SNA Snapshots (*.sna)", "Save the machine to an SNA snapshot"},
+        {snapshot::SaveFormat::Nex, "nex", "NEX Programs (*.nex)", "Save the Next's program as a NEX file (RAM, PC, SP, border)"},
     };
     std::vector<Choice> out;
     for (const Row& row : rows)
     {
+        if (row.format == snapshot::SaveFormat::Nex && !formats.Has(row.format))
+            continue;  // the Next's own format: not offered on another machine
         Choice choice;
         choice.format = row.format;
         choice.extension = row.extension;

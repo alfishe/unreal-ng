@@ -115,6 +115,12 @@ TEST_F(SnapshotLauncher_Test, WhatAFileNeeds)
     EXPECT_TRUE(need.model.empty()) << "an SNA loads on any machine";
     EXPECT_FALSE(need.differs);
 
+    // A NextZXOS .snx is made for the Next (the name alone decides; the file is not read)
+    ASSERT_TRUE(SnapshotLauncher::NeedOf("program.SNX", MM_PENTAGON, 128, need, error));
+    EXPECT_EQ(need.model, "NEXT");
+    EXPECT_TRUE(need.programOnly);
+    EXPECT_TRUE(need.differs);
+
     EXPECT_FALSE(SnapshotLauncher::NeedOf("missing.szx", MM_PENTAGON, 128, need, error));
     EXPECT_FALSE(error.empty());
 }

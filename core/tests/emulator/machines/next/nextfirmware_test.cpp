@@ -19,6 +19,10 @@
 #include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
+#include "_helpers/ttddivergenceharness.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -198,6 +202,42 @@ TEST_F(NextFirmware_Test, FirmwareWritesTheRegistersAndSoftResetsIntoThePersonal
     ASSERT_EQ(divmmc.size(), 8192u);
     // DivMMC ROM: SRAM #010000 = the first half of ROM page 4
     EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(4), divmmc.data(), 8192), 0) << "the DivMMC ROM";
+}
+
+// TTD over the boot (N11 "seek test over a NextZXOS boot"): recorded from power-on, every sampled frame a seek reaches has the live run's
+// CPU, latches, peripherals (the board, the SPI card), RAM and picture. The short run (~0.5 s) covers the boot ROM reading TBBLUE.FW over
+// SPI and the firmware's start at #6000; the long tier (UNREAL_LONG_TESTS=1) goes on through the soft reset to NextZXOS's welcome screen
+TEST_F(NextFirmware_Test, SeeksOverTheBootGiveTheLiveRunsState)
+{
+    _emulator->DisableTurboMode();  // a turbo frame is not drawn: the live picture must be the one a replay draws
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* controller = _context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
+    ASSERT_TRUE(controller->StartRecording()) << controller->GetUnavailableReason();
+
+    const size_t frames = TestTier::Long() ? 1800 : 60;
+    ttd::TTDDivergenceHarness harness(_emulator);
+    ttd::DivergenceHistory live = harness.RunLiveAndCapture(frames);
+    controller->StopRecording();
+    ASSERT_EQ(live.Size(), frames);
+    ASSERT_GT(_ports->SdCard(0).blocksRead(), 20u) << "the boot ROM read the card while recording";
+    if (TestTier::Long())
+        EXPECT_FALSE(_memory->InConfigMode()) << "the firmware's soft reset into the personality is in the recording";
+
+    // The reset leaves the CPU 3 T-states into frame 0 and the recording starts there: the picture of frame 0 holds
+    // what was drawn before the first checkpoint, which no replay has. Its state is still compared
+    live.frames.front().framebufferDigest = 0;
+
+    // Newest first: a seek that restored nothing would keep the end state and fail the older frames
+    std::vector<size_t> samples = harness.PickSampleFrames(frames, TestTier::Long() ? 100 : 20);
+    std::reverse(samples.begin(), samples.end());
+    for (size_t i : samples)
+    {
+        std::string failure;
+        EXPECT_TRUE(harness.VerifyReplayMatchesLive(i, live, &failure)) << "frame " << i << ": " << failure;
+    }
 }
 
 // Bring-up: run the personality ROM after the firmware's soft reset and list what it asks of the machine. Not a

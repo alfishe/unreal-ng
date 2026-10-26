@@ -1650,6 +1650,11 @@ void MenuManager::updateSaveSnapshotMenu(const std::shared_ptr<Emulator>& active
     bool any = false;
     for (const SaveSnapshotChoices::Choice& choice : choices)
     {
+        if (choice.format == snapshot::SaveFormat::Nex)
+        {
+            any = any || choice.enabled;  // offered by the Save Snapshot dialog only
+            continue;
+        }
         QAction* action = choice.format == snapshot::SaveFormat::Szx   ? _saveSnapshotSZXAction
                           : choice.format == snapshot::SaveFormat::Z80 ? _saveSnapshotZ80Action
                                                                        : _saveSnapshotSNAAction;

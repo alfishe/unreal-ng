@@ -82,8 +82,8 @@ something that can be shipped and checked from every automation surface.
   `PortJournalUnsupportedReason` in both TTD files. Recording works (state checkpoints); the sealed
   replay uses the live devices. The design keeps that and says what a later isolation needs
   ([design-ttd.md](design-ttd.md)).
-- **SNX is a 128K `.sna` in disguise** (ZEsarUX `snap.c`, quoting the NextZXOS documentation): the `.sna`
-  loader already covers it. NEX is a different, simple format with its own loader.
+- **SNX is an `.sna` in disguise** (the wiki's File_Formats page): a 128K one may carry private data after its banks, which
+  the `.sna` loader's SNX mode leaves out. NEX is a different, simple format with its own loader.
 - **Unverified and left as open questions:** the existence and hardware of a "Next Mini", which Issue-2 /
   Issue-4 differences matter to software, Whether the Next Mini exists. The 128K line count (311) and the contention rules are **settled** by the FPGA VHDL
   read in N0 ([research-fpga-vhdl.md](research-fpga-vhdl.md)).
@@ -104,6 +104,6 @@ something that can be shipped and checked from every automation surface.
 | **Machine timing** | NR `#03` bits 6:4: 48K, 128K, +3 or Pentagon video timing |
 | **Personality** | a ROM set and machine type chosen by `TBBLUE.FW`'s menu (`menu.def`) |
 | **NEX** | the Next's executable format: a header, optional loading screen and 16K banks |
-| **SNX** | a 128K `.sna` that NextZXOS loads keeping a file handle open |
+| **SNX** | an `.sna` that NextZXOS loads keeping the file open as handle 0 (a 128K one may carry private data after its banks) |
 
 - [findings-2026-10-12-uart-esp-copper-d2.md](findings-2026-10-12-uart-esp-copper-d2.md): UART / ESP, port gating, copper picture latency (POC 028), the mouse, ULA+ and Radastan: the facts and where they live

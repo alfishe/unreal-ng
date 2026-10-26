@@ -2174,8 +2174,16 @@ bool PortDecoder::IsBuiltInShadowed(const char* builtInId) const
 /// it, IORQGE, the bus arbitration, the read rule); the board's decode is its board side
 uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove)
 {
+    const SlotCycleGate gate = SlotCardGate(port, true);
+    if (!gate.connected)
+    {
+        // The connector carries nothing: the board's alone, as on a port no card claims
+        cardDrove = false;
+        return DecodePortIn(port, pc);
+    }
     bool boardRan = false;
     bool boardDrove = false;
+    uint8_t boardValue = 0xFF;
     const slots::ReadResult read = _fullDecodeClaims.Read(port, [&](slots::BoardCycle, uint8_t& value) {
         // The board decodes as if no card were fitted (no machine with an UlaOnly bus fits slot-built cards yet:
         // UlaSilenced runs the whole decode too). Its claim override must not stand down for the card's low-byte
@@ -2191,9 +2199,20 @@ uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDro
             boardDrove = false;
             _lastPortDecoded = false;
         }
+        boardValue = value;
         return boardDrove;
-    });
+    }, !gate.iorq);
     cardDrove = read.drivers > (boardDrove ? 1 : 0);
+    uint8_t value = read.value;
+    if (!gate.byReadRule && boardRan)
+    {
+        // The machine's own read mux (the Next's: the board's response first, the connector's data ANDed in or alone)
+        const uint8_t cards = cardDrove ? read.cardsValue : 0xFF;
+        const bool cardsUsed = boardDrove ? gate.cardsWithBoard : gate.cardsAlone;
+        value = boardDrove ? static_cast<uint8_t>((gate.boardData ? boardValue : 0xFF) & (cardsUsed ? cards : 0xFF))
+                           : (cardsUsed ? cards : 0xFF);
+        cardDrove = cardDrove && cardsUsed;
+    }
     if (!boardRan)
     {
         // A card's IORQGE hid the cycle from the board (CardWins): the board saw nothing, the CPU's access is still
@@ -2204,21 +2223,27 @@ uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDro
         OnPortInComplete(port, read.value, pc, disp);
     }
     _lastFullDecodeInPort = port;
-    _lastFullDecodeInValue = read.value;
-    return read.value;
+    _lastFullDecodeInValue = value;
+    return value;
 }
 
 /// WriteCycle, a port whose first claim is a slot-built card's: every card that sees the write gets it, the board
 /// unless a card's IORQGE hides the cycle
 void PortDecoder::WriteSlotCardCycle(uint16_t port, uint8_t value, uint16_t pc)
 {
+    const SlotCycleGate gate = SlotCardGate(port, false);
+    if (!gate.connected)
+    {
+        DecodePortOut(port, value, pc);
+        return;
+    }
     bool boardRan = false;
     _fullDecodeClaims.Write(port, value, [&](slots::BoardCycle) {
         boardRan = true;
         _claimCycle = { port, true, false };
         DecodePortOut(port, value, pc);
         _claimCycle.active = false;
-    });
+    }, !gate.iorq);
     if (!boardRan)
     {
         PortDecodeDisposition disp;

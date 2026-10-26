@@ -256,19 +256,19 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
 
     const DivergenceFrame& exp = expected.frames[frameIndex];
 
-    // Build the target TTDTimePoint from the captured frame counter.
+    // Build the target TTDTimePoint from the captured position.
     // frameIndex == 0 is the first captured frame; the timeline stores
     // checkpoints at the post-RunFrame boundary, so frameIndex maps 1:1.
     TTDTimePoint target;
     target.frame    = exp.frameCounter;
-    target.tInFrame = 0;
+    target.tInFrame = exp.tInFrame;
 
     if (!_context->pTimeTravelController->SeekTo(target))
     {
         if (failureMsg)
             *failureMsg = StringHelper::Format(
-                "SeekTo({frame=%llu, tInFrame=0}) returned false",
-                static_cast<unsigned long long>(target.frame));
+                "SeekTo({frame=%llu, tInFrame=%u}) returned false",
+                static_cast<unsigned long long>(target.frame), static_cast<unsigned>(target.tInFrame));
         return false;
     }
 
@@ -387,6 +387,7 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     f.hash = composite;
 
     f.frameCounter = _context->emulatorState.frame_counter;
+    f.tInFrame     = _context->emulatorState.TtdTInFrame(static_cast<uint32_t>(z80->t));
     f.tStates      = _context->emulatorState.t_states;
 
     // Framebuffer digest — catches restore bugs that leave the renderer
