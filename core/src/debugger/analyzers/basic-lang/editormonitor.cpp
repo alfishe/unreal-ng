@@ -54,7 +54,7 @@ void EditorMonitor::Disarm()
     {
         if (_restoreBreakpoints)
             features->setFeature(Features::kBreakpoints, false);
-        if (_restoreDebugMode)
+        if (_restoreDebugMode && !features->debugCaptureOn())
             features->setFeature(Features::kDebugMode, false);
     }
     _restoreBreakpoints = false;

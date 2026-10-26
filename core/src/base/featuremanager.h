@@ -221,6 +221,11 @@ public:
     /// breakpoint the user set while they were off takes effect too). Emulation thread or CPU held
     void setProbeDebugHold(bool on);
     bool probeDebugHold() const;
+    /// @brief A collector that runs on the debug path is on (memory tracking, call trace, opcode profiler): with
+    /// debug mode off it stops and the tracker frees what it gathered. Whoever gives debug mode back without having
+    /// asked for these (a TTD recording that stops, the BASIC editor monitor, the Qt debugger window going away)
+    /// leaves it on while this holds. Breakpoints do not hold it: they gather nothing
+    bool debugCaptureOn() const;
 
     EmulatorContext* context() const
     {

@@ -125,6 +125,18 @@ bool FeatureManager::probeDebugHold() const
     return _probeDebugHold;
 }
 
+bool FeatureManager::debugCaptureOn() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    for (const char* id : {Features::kCallTrace, Features::kMemoryTracking, Features::kOpcodeProfiler})
+    {
+        auto it = _features.find(id);
+        if (it != _features.end() && it->second.enabled)
+            return true;
+    }
+    return false;
+}
+
 void FeatureManager::applyDebugMode()
 {
     if (!_context || !_context->pCore)

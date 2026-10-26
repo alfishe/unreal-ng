@@ -4034,9 +4034,12 @@ void MainWindow::applyDebugInstrumentation(bool enabled)
 {
     if (_emulator)
     {
+        // Off keeps a capture an automation client started (an analysis session's memory tracking): it would stop
+        // and lose what it gathered
+        FeatureManager* features = _emulator->GetFeatureManager();
         if (enabled)
             _emulator->DebugOn();
-        else
+        else if (!features || !features->debugCaptureOn())
             _emulator->DebugOff();
     }
 }
