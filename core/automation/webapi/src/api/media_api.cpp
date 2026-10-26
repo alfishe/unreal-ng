@@ -12,6 +12,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/media/mediacontrol.h>
+#include <common/base64.h>
 
 using namespace drogon;
 using namespace api::v1;
@@ -142,8 +143,51 @@ void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(con
     RespondReply(callback, MediaControl(emulator->GetContext()).Execute(request));
 }
 
+/// @brief GET /api/v1/emulator/{id}/media/{slot}/{verb}: the read-only file verbs
+/// volumes, files (?path=<dir>&volume=&recursive=true) and read (?path=<file>&volume=[&out=<host file>]);
+/// read with raw=true answers the file's bytes (application/octet-stream) instead of base64 in the envelope
+void EmulatorAPI::getMediaFiles(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& slot, const std::string& verb) const
+{
+    auto emulator = FindEmulator(id, callback);
+    if (!emulator)
+        return;
+    if (verb != "volumes" && verb != "files" && verb != "read")
+    {
+        MediaReply bad;
+        bad.result = MediaResult::Fail(MediaError::BadRequest, "GET takes volumes, files and read; '" + verb + "' is a POST");
+        RespondReply(callback, bad);
+        return;
+    }
+    MediaRequest request;
+    request.verb = verb;
+    request.selector = slot;
+    CollectOptions(req, request);
+    bool raw = false;
+    if (auto it = request.options.find("raw"); it != request.options.end())
+    {
+        raw = verb == "read" && (it->second.empty() || it->second == "true" || it->second == "1");
+        request.options.erase(it);
+    }
+    const MediaReply reply = MediaControl(emulator->GetContext()).Execute(request);
+    const StateNode* data = reply.body.find("data");
+    if (!raw || !reply.result.Ok() || !data)
+    {
+        RespondReply(callback, reply);
+        return;
+    }
+    std::vector<uint8_t> bytes;
+    base64::Decode(data->s, bytes);
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+    resp->setBody(std::string(bytes.begin(), bytes.end()));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief POST /api/v1/emulator/{id}/media/{slot}/{verb}
-/// verb: insert, swap, eject, save, export, discard, rescan, create, protect, layers, changes, flatten.
+/// verb: insert, swap, eject, save, export, discard, rescan, create, protect, layers, changes, flatten, volumes,
+/// files, read.
 /// insert / swap also take the file itself (multipart/form-data or a raw body
 /// with X-Filename), staged like the /disk upload and deleted on eject
 void EmulatorAPI::postMediaVerb(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

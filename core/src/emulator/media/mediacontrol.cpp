@@ -6,6 +6,8 @@
 #include "emulator/media/recentfiles.h"
 
 #include "emulator/media/mediachanges.h"
+#include "emulator/io/storage/fs/diskfs.h"
+#include "common/base64.h"
 #include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/partitioneddisk.h"
@@ -21,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <set>
@@ -299,7 +302,8 @@ const std::vector<std::string>& MediaControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
-                                                   "compose", "layers", "changes", "flatten"};
+                                                   "compose", "layers", "changes", "flatten", "volumes", "files",
+                                                   "read"};
     return verbs;
 }
 
@@ -324,6 +328,9 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"layers", {}},
         {"changes", {}},
         {"flatten", {"strategy", "plan", "force", "onConflict", "commit", "compression", "compact", "fs", "size", "vhd"}},
+        {"volumes", {}},
+        {"files", {"volume", "recursive"}},
+        {"read", {"volume", "out"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -399,6 +406,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Layers(request);
     else if (verb == "changes")
         reply = Changes(request);
+    else if (verb == "volumes" || verb == "files" || verb == "read")
+        reply = Files(request, verb);
     else
         reply = Protect(request);
     return reply;
@@ -502,6 +511,125 @@ MediaReply MediaControl::Changes(const MediaRequest& request)
 }
 
 /// endregion <Composite media>
+
+/// region <Files on a medium>
+
+namespace
+{
+    StateNode VolumeValue(const DiskFsVolume& v)
+    {
+        StateNode n = StateNode::Object();
+        n["id"] = v.id;
+        n["fs"] = v.fs;
+        n["system"] = v.system;
+        n["label"] = v.label;
+        n["offset"] = v.offset;
+        n["bytes"] = v.bytes;
+        if (v.freeBytes >= 0)
+            n["freeBytes"] = v.freeBytes;
+        return n;
+    }
+
+    StateNode EntryValue(const DiskFsEntry& e)
+    {
+        StateNode n = StateNode::Object();
+        n["path"] = e.path;
+        n["name"] = e.name;
+        n["directory"] = e.directory;
+        n["size"] = e.size;
+        n["start"] = static_cast<uint64_t>(e.start);
+        if (!e.attributes.empty())
+            n["attributes"] = e.attributes;
+        if (e.mtime)
+            n["mtime"] = e.mtime;
+        if (!e.error.empty())
+            n["error"] = e.error;
+        for (const auto& [key, value] : e.fields)
+            n[key] = value;
+        return n;
+    }
+}  // namespace
+
+MediaReply MediaControl::Files(const MediaRequest& request, const std::string& verb)
+{
+    /// A file larger than this comes back only through `out` (a host file)
+    constexpr size_t kInlineLimit = 16 * 1024 * 1024;
+
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    const Options& o = request.options;
+    bool recursive = false;
+    if (auto it = o.find("recursive"); it != o.end() && !ParseBool(it->second, recursive))
+        return Fail(MediaError::BadRequest, "option 'recursive': expected true or false, got '" + it->second + "'");
+    const std::string volume = o.count("volume") ? Trim(o.at("volume")) : std::string();
+
+    Medium* medium = _manager->GetMedium(reply.slot);
+    if (!medium)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' is empty");
+
+    // The guest cannot write while the files are read
+    ParkedEmulator parked(_context);
+    std::unique_ptr<DiskFs> fs = DiskFs::Open(*medium);
+    if (!fs)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' holds no disk (a tape or a CD has no file system here)");
+
+    if (verb == "volumes")
+    {
+        StateNode volumes = StateNode::Array();
+        for (const DiskFsVolume& v : fs->Volumes())
+            volumes.push(VolumeValue(v));
+        reply.body["volumes"] = std::move(volumes);
+        reply.body["notes"] = Strings(fs->Notes());
+        return reply;
+    }
+
+    std::string error;
+    if (fs->Volumes().empty())
+        return Fail(MediaError::UnreadableSource, "slot '" + reply.slot + "': no file system found on the disk");
+    if (verb == "files")
+    {
+        std::vector<DiskFsEntry> entries;
+        if (!fs->List(volume, request.path, recursive, entries, error))
+            return Fail(MediaError::UnreadableSource, "slot '" + reply.slot + "': " + error);
+        StateNode list = StateNode::Array();
+        for (const DiskFsEntry& e : entries)
+            list.push(EntryValue(e));
+        reply.body["volume"] = volume.empty() ? fs->Volumes().front().id : volume;
+        reply.body["path"] = request.path;
+        reply.body["entries"] = std::move(list);
+        reply.body["notes"] = Strings(fs->Notes());
+        return reply;
+    }
+
+    // read
+    if (Trim(request.path).empty())
+        return Fail(MediaError::BadRequest, "name the file to read");
+    std::vector<uint8_t> data;
+    if (!fs->Read(volume, request.path, data, error))
+        return Fail(MediaError::UnreadableSource, "slot '" + reply.slot + "': " + error +
+                                                      (data.empty() ? "" : " (" + std::to_string(data.size()) + " bytes readable)"));
+    reply.body["volume"] = volume.empty() ? fs->Volumes().front().id : volume;
+    reply.body["path"] = request.path;
+    reply.body["size"] = static_cast<uint64_t>(data.size());
+    if (auto it = o.find("out"); it != o.end() && !Trim(it->second).empty())
+    {
+        std::ofstream out(FileHelper::ToFsPath(Trim(it->second)), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        if (!out)
+            return Fail(MediaError::IoError, "cannot write '" + it->second + "'");
+        reply.body["savedPath"] = Trim(it->second);
+        return reply;
+    }
+    if (data.size() > kInlineLimit)
+        return Fail(MediaError::DoesNotFit, request.path + ": " + std::to_string(data.size()) +
+                                                " bytes, more than an answer carries: give 'out' (a host file)");
+    reply.body["data"] = base64::Encode(data);
+    return reply;
+}
+
+/// endregion <Files on a medium>
 
 /// region <Selectors>
 

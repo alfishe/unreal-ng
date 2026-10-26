@@ -32,6 +32,7 @@ add_library(unreal-disk STATIC
     src/floppyformats.cpp
     src/trdosfs.cpp
     src/plus3fs.cpp
+    src/isdosfs.cpp
     src/flux/flux_pll.cpp
     src/flux/mfm_decoder.cpp
     src/flux/mfm_encoder.cpp

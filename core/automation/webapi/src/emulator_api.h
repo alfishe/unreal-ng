@@ -89,6 +89,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getMediaList, "/api/v1/emulator/{id}/media", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMediaSlot, "/api/v1/emulator/{id}/media/{slot}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postMediaVerb, "/api/v1/emulator/{id}/media/{slot}/{verb}", drogon::Post);
+    // The files on a slot's disk: volumes, files, read (DiskFs); read?raw=true answers the bytes themselves
+    ADD_METHOD_TO(EmulatorAPI::getMediaFiles, "/api/v1/emulator/{id}/media/{slot}/{verb}", drogon::Get);
 
     // Controllers: the machine's connectors and their retro devices through ControllerControl
     // (implementation: api/controllers_api.cpp; controller-manager surfaces.md §6)
@@ -858,6 +860,8 @@ public:
     void getMediaSlot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id, const std::string& slot) const;
     void postMediaVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& slot, const std::string& verb) const;
+    void getMediaFiles(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id, const std::string& slot, const std::string& verb) const;
     // endregion Media
 
