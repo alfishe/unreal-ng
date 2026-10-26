@@ -564,7 +564,7 @@ TEST_F(AnalysisL3_Test, NamingBatchesPickAddressNamesInBatchesOfOneClass)
     ASSERT_FALSE(naming.batches.empty());
     EXPECT_EQ(naming.capped, 0u);
     uint32_t subjects = 0;
-    bool point = false, data = false;
+    bool point = false, data = false, operand = false;
     for (size_t i = 0; i < naming.batches.size(); ++i)
     {
         const NamingBatch& batch = naming.batches[i];
@@ -577,11 +577,13 @@ TEST_F(AnalysisL3_Test, NamingBatchesPickAddressNamesInBatchesOfOneClass)
             EXPECT_TRUE(IsAddressName(s.label, s.z80)) << s.label;
             point = point || !s.entry;
             data = data || !s.code;
+            operand = operand || (!s.code && s.variable);
             ++subjects;
         }
     }
     EXPECT_EQ(subjects, naming.subjects);
     EXPECT_TRUE(data) << "the variable n";
+    EXPECT_TRUE(operand) << "n is a variable: over the cap it ranks as a data entry";
     // rj: an absolute JP reaches it (a point); main: only `jr main` does (a loop label), a subject too
     const uint16_t rj = b.symbols.at("rj");
     const uint16_t loop = b.symbols.at("main");

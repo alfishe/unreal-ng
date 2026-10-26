@@ -270,3 +270,31 @@ The judge agreed with the first one on 58 of run B's 61 pairs. What C4 found:
   `kind: variable`. The claim now says "One record: N fields the same routines use together" and the recipe says
   `ok` keeps the record and its fields.
 - Recipe: a `findings` jsonl line, and that a resolve may be repeated (the last word counts).
+
+## Run C5: the batch priority over the cap (2026-10-26)
+
+The C4 fixes in (the naming-batch priority over the cap, the record claim's title, the recipe additions), a fresh
+session and a fresh sonnet agent: 156 queue items resolved, one experiment, 154,780 tokens, 25 tool calls, 9.1 min.
+
+| Measure | Run C5 | Run C4 | Run B |
+| --- | ---: | ---: | ---: |
+| gate: make, make test, shift +$100 / +$101 | pass | pass | pass |
+| byte categories (by entry) | 98.03 % | 98.03 % | 92.3 % |
+| code entries | 32 / 33 | 33 / 33 | 33 / 33 |
+| graphics covered / right geometry | 106 / 106 | 106 / 104 | 106 / n/a |
+| records | **5 / 5** | 4 / 5 | 5 / 5 |
+| names: exact + normalized | 26 / 142 | 37 / 142 | 50 / 142 |
+| names left generated / missing | 26 / 5 | 11 / 5 | 0 / 31 |
+| subagent tokens | 154,780 | 153,140 | 2,034,851 |
+
+The record claim's new title worked (the conveyor record kept, 5 / 5). The names got worse, from the priority
+itself: the game's variables are fields inside the cavern buffer at $8000, points inside data, scored 0, so their
+three batches ($8056-$80CB) fell past the cap while the screen and buffer positions at $4000-$7FFF, batches with an
+entry each, stayed; 21 variables kept their generated names. Not judged (the cause is known). The lost code entry is
+the reviewer's: `wrong` on the prologue candidate $8684 (C4 said `ok`).
+
+Fixed after C5: an L2 variable inside data scores as a data entry, the cap is 48 batches (the Manic Miner draft has
+43 with the loop labels in, so none is dropped), and a batch's head line gives its first and last subject (a batch
+that starts inside an entry no longer seems to overlap the one before). Replaying C5's queue decisions on the fixed
+build: 43 batches, the variables in N7-N9, `name_capped` 0. Recipe: give an experiment `finding` only when it tests
+that claim (a failed check refutes it); do not rerun `cover` when it already ran.

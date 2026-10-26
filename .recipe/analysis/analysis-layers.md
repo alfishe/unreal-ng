@@ -130,7 +130,8 @@ The queue's next item moves on after each `review` call; `review {"op":"show","i
 ### 4. Experiments and coverage
 
 An experiment runs on a muted clone from the recording, never on your instance: poke bytes, set registers, press
-keys, run N frames, check. The result marks the finding `observed` (every check held) or `refuted`.
+keys, run N frames, check. The result marks the finding `observed` (every check held) or `refuted`, so give
+`finding` only when the spec tests that finding's claim; a run that only explores goes without it.
 
 ```text
 analysis {"action":"experiment","finding":"F12","spec":{
@@ -161,7 +162,8 @@ analysis {"action":"cover"}                          # budget 64 experiments, 8 
 analysis {"action":"findings","kind":"coverage"}
 ```
 
-Run it once, after the first pass over the queue; new code it reached shows up in the next `review list`.
+Run it once, after the first pass over the queue; new code it reached shows up in the next `review list`. When it
+already ran (`findings kind=coverage` lists its flips), do not run it again.
 
 ### 5. Export and finish in zx-reaper
 

@@ -265,8 +265,8 @@ std::string ReviewSheet(const Finding& f, const ReviewItem& item, const L1Result
 
 std::string NamingItemClaim(const NamingBatch& batch)
 {
-    std::string text = std::to_string(batch.subjects.size()) + " draft labels " + Hex4(batch.start) + "-" +
-                       Hex4(batch.end) + " (" + (batch.code ? "code" : "data") + "):";
+    std::string text = std::to_string(batch.subjects.size()) + " draft labels " + Hex4(batch.subjects.front().z80) +
+                       "-" + Hex4(batch.subjects.back().z80) + " (" + (batch.code ? "code" : "data") + "):";
     for (const NamingSubject& s : batch.subjects)
         text += " " + s.label;
     return text;

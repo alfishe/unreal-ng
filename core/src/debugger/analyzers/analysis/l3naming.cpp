@@ -267,6 +267,10 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
         if (r.kind == RegionKind::Buffer)
             for (const uint16_t i : r.geometry.instances)
                 sources.push_back(ExportRange{i, static_cast<uint16_t>(std::min<uint32_t>(0xFFFF, i + r.Size() - 1))});
+    std::set<uint16_t> variables;
+    for (const Region& r : l2.store.Regions())
+        if (r.kind == RegionKind::Variable)
+            variables.insert(r.z80);
     const auto inSource = [&](uint16_t z80) {
         return std::any_of(sources.begin(), sources.end(),
                            [z80](const ExportRange& s) { return s.start <= z80 && z80 <= s.end; });
@@ -288,6 +292,7 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
         s.code = e->ctl == 'c';
         s.entry = e->start == z80;
         s.entryStart = e->start;
+        s.variable = variables.count(z80) != 0;
         const bool referenced = plan.refs.count(z80) != 0;
         if (s.entry)
         {
@@ -344,8 +349,8 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
     }
     close();
 
-    // Over the cap: the batches that name the most go first (a routine's entry, then a data entry, then a point
-    // inside code; a point inside data, a position in a buffer, the least), in address order among the kept ones
+    // Over the cap: the batches that name the most go first (a routine's entry, then a data entry or a variable, then
+    // a point inside code; a position in data no claim names, the least), in address order among the kept ones
     std::vector<size_t> order(all.size());
     for (size_t i = 0; i < order.size(); ++i)
         order[i] = i;
@@ -354,7 +359,7 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
         const auto score = [](const NamingBatch& b) {
             uint32_t sum = 0;
             for (const NamingSubject& s : b.subjects)
-                sum += s.entry ? (s.code ? 4u : 2u) : (s.code ? 1u : 0u);
+                sum += s.code ? (s.entry ? 4u : 1u) : (s.entry || s.variable ? 2u : 0u);
             return sum;
         };
         std::stable_sort(order.begin(), order.end(),
@@ -377,8 +382,8 @@ std::string NamingSheet(const NamingBatch& batch, const L1Result& l1, const L2Re
 {
     const std::map<uint16_t, std::vector<std::string>> accesses = Accesses(plan);
     std::string sheet = batch.id + " name " + std::to_string(batch.subjects.size()) + " draft labels " +
-                        Hex4(batch.start) + "-" + Hex4(batch.end) + " (" + (batch.code ? "code" : "data") +
-                        "): give each a name (and a title) that says what it is for\n";
+                        Hex4(batch.subjects.front().z80) + "-" + Hex4(batch.subjects.back().z80) + " (" +
+                        (batch.code ? "code" : "data") + "): give each a name (and a title) that says what it is for\n";
     const std::string resolve = ResolveLine(batch);
     for (const NamingSubject& s : batch.subjects)
     {
