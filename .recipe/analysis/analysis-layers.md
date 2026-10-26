@@ -91,12 +91,15 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
 ```
 
 - `verdict`: `ok` (the finding is confirmed), `wrong` (refuted), `skip` (out of the queue, undecided).
-- `label`: an identifier (letters, digits, `_`; not a digit first), unique in the draft; it names the entry starting
-  at the finding (or the point inside an entry). `title` replaces the entry title; `comment` goes first in the entry
-  description. A resolve without a verdict, label, title, comment, kind or experiment is refused.
+- `label`: an identifier (letters, digits, `_`; not a digit first; at most 32 characters), unique in the draft; it
+  names the entry starting at the finding (or the point inside an entry). `title` replaces the entry title; `comment`
+  goes first in the entry description. A resolve without a verdict, label, title, comment, kind or experiment is
+  refused.
 - `kind`: when the claim's kind is wrong, say what the range is: `code`, `data`, `text`, `font`, `sprite`, `tile`,
   `screen`, `variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`. The export
-  makes the range one entry of that kind (code decoded from the start image) and drops the old claim's geometry:
+  makes the range one entry of that kind (code decoded from the start image) and drops the old claim's geometry and
+  fields. On a claim it goes with `wrong` (`ok` with another kind is refused: `ok` keeps the claim, its fields too);
+  on an `unknown` item, with `ok`:
 
   ```text
   analysis {"action":"review","op":"resolve","id":"F88","verdict":"wrong","kind":"text","label":"CavernName"}
@@ -113,7 +116,7 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
     part of the routine before it.
   - `name`: one item, up to 10 draft labels of one class (code or data) with a few facts each (callers, callees, the
     data a routine uses, a 4-line head; reads, writes, values, users and the first bytes of data). Name them all in
-    one call (every subject: see the rules above); the ones you leave out are skipped:
+    one call (every subject: see the rules above); the ones you leave out are skipped (the reply lists them):
 
     ```text
     analysis {"action":"review","op":"show","id":"N3"}

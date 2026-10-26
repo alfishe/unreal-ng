@@ -664,6 +664,13 @@ TEST_F(AnalysisL3_Test, ReviewNamesABatchIntoTheDraft)
     ASSERT_TRUE(resolved.Ok()) << resolved.message;
     EXPECT_EQ(static_cast<size_t>(Member(resolved.body, "skipped").i), subjects.size() - 1)
         << "the subjects left out are skipped";
+    if (subjects.size() > 1)
+    {
+        const std::string second = Member(subjects[1], "at").s;
+        EXPECT_EQ(Member(resolved.body, "skippedAt").items.size(), subjects.size() - 1);
+        EXPECT_NE(resolved.text.find("skipped: " + second), std::string::npos)
+            << "the reply lists the skipped addresses: " << resolved.text;
+    }
     const Reply after = Execute(emulator, "review", {{"op", "list"}, {"reason", "name"}, {"limit", "1000"}});
     EXPECT_EQ(static_cast<uint64_t>(Member(Member(after.body, "queue"), "open").i) + 1, open) << "the batch is decided";
     // A second batch may not take the name
@@ -727,6 +734,9 @@ TEST_F(AnalysisL3_Test, ReviewEntryCandidatesAndKindChangesReachTheDraft)
             nId = Member(f, "id").s;
     ASSERT_FALSE(nId.empty()) << claims.text;
     EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "buffer"}}).error, Error::BadRequest);
+    const Reply both = Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"verdict", "ok"}, {"kind", "text"}});
+    EXPECT_EQ(both.error, Error::BadRequest) << "ok confirms the claim's kind, a kind replaces it";
+    EXPECT_NE(both.message.find("verdict wrong with the kind"), std::string::npos) << both.message;
     ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "text"}}).Ok());
     EXPECT_NE(ctl().find("\nt " + n), std::string::npos) << ctl();
 

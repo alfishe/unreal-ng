@@ -215,3 +215,30 @@ The categories fall from 99.98 % because the review made the 20 cavern names (64
 the reference keeps them inside each cavern's data entry. The names gap is mostly the 56 subjects the agent left out
 of its batches ("skip rather than guess" in the recipe): the recipe now asks for a name for every subject from its
 facts, a skip only for empty facts, one MCP connection for `take_control`, and the harness's file names.
+
+## Run C3: the review agent on the revised recipe (2026-10-26)
+
+A fresh sonnet agent on the revised recipe: 137,491 tokens, 31 tool calls, 8.3 min. Its first export failed the shift
+test (+$101) and found 3 of 5 records: the review retyped the tile table inside the cavern buffer ($8020-$8067,
+`level_map`), and the export moved the buffer's `ALIGN 256` to the next plan entry and dropped the field lists of the
+claims the range overlapped. The export now takes the alignment from the outermost page-aligned buffer and a kind
+replaces only the claims inside it (`ReviewKindInsideABufferKeepsItsAlignAndFields`). The decisions replayed on a
+fresh session of the fixed build (the finding ids are the same, 624 of 624):
+
+| Measure | Run C3 | Run B |
+| --- | ---: | ---: |
+| gate: make, make test, shift +$100 / +$101 | pass | pass |
+| byte categories (by entry) | 98.03 % | 92.3 % |
+| code entries | 33 / 33 | 33 / 33 |
+| graphics / records | 106 / 106, 4 / 5 | 106 / 106, 5 / 5 |
+| names: exact + normalized | 50 / 142 | 50 / 142 |
+| names: + a blind judge (sonnet, both runs mixed, 129 pairs) | **108 / 142 (76.1 %)** | **107 / 142 (75.4 %)** |
+| names left generated / missing | 19 / 5 | 0 / 31 |
+| subagent tokens | **137,491** | 2,034,851 |
+
+The judge agreed with the C2 judge on 57 of run B's 61 pairs. The missing record is the conveyor ($806F, 4 bytes):
+the review answered `ok` with `kind: variable` ("three adjacent game variables"), which confirmed the claim and
+replaced it at once, so its fields went. A claim now refuses `ok` with another kind (`wrong` with the kind, or `ok`
+without it). Other fixes from the agent's notes: the recipe gives the 32-character label limit, a naming batch's reply
+lists the skipped addresses, and `take_control` by the session's holder (a new MCP connection of the same server, a
+restarted script) keeps the session instead of being refused as held by another.

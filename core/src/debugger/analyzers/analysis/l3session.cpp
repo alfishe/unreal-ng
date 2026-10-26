@@ -452,9 +452,18 @@ Reply ResolveNames(const std::string& id, const NamingBatch& batch, const Option
     }
     reply.body["batch"] = batch.id;
     reply.body["named"] = list;
+    StateNode skippedAt = StateNode::Array();
+    std::string skippedLine;
+    for (uint16_t z80 : skipped)
+    {
+        skippedAt.push(Hex4(z80));
+        skippedLine += " " + Hex4(z80);
+    }
     reply.body["skipped"] = static_cast<uint64_t>(skipped.size());
+    reply.body["skippedAt"] = skippedAt;
     reply.text = batch.id + " resolved: " + std::to_string(names.size()) + " named, " +
-                 std::to_string(skipped.size()) + " skipped" + lines + "\nThe draft export carries them.";
+                 std::to_string(skipped.size()) + " skipped" + lines +
+                 (skippedLine.empty() ? "" : "\n  skipped:" + skippedLine) + "\nThe draft export carries them.";
     return reply;
 }
 
@@ -545,6 +554,11 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
                                              "pointer_table, handler_table, rng, music, packed, level_map or unused");
         if (!kind.empty() && (f->start >> 14) != (f->end >> 14))
             return Refuse(Error::BadRequest, "kind: the finding's range crosses a 16 KB page");
+        // ok confirms a claim's kind, a kind replaces it (and drops its fields and geometry): not both
+        if (!kind.empty() && verdict == "ok" && f->kind == FindingKind::Claim && Lower(f->subject) != kind)
+            return Refuse(Error::BadRequest, "verdict ok confirms " + f->id + " as " + f->subject + "; kind " + kind +
+                                                 " says it is not (its fields and geometry go): verdict wrong with "
+                                                 "the kind, or ok without it");
         const std::string specText = Option(options, "experiment");
         if (verdict.empty() && label.empty() && Option(options, "title").empty() && Option(options, "comment").empty() &&
             specText.empty() && kind.empty())
