@@ -459,6 +459,29 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     }
 }
 
+void PortDecoder::OnPortWriteWithoutBusCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    if (_context->pDebugManager != nullptr)
+    {
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandlePortOut(port, value);
+        if (breakpointID != BRK_INVALID)
+            _context->pEmulator->OnBreakpointHit(breakpointID, port, BreakpointHitKind::PortOut);
+    }
+
+    if (_memory && _memory->_memoryAccessTracker)
+        _memory->_memoryAccessTracker->TrackPortWrite(port, value, pc);
+
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        PortDecodeDisposition disp;
+        disp.decodedPort = port;
+        disp.decodeRuleIndex = PortTraceRule::kNoBusCycle;
+        disp.wasDecoded = true;
+        RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
+    }
+}
+
 /// region <Port trace (runtime feature "porttrace")>
 
 /// Re-read the porttrace feature flag and instantiate/release the recorder.

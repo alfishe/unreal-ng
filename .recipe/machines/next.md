@@ -68,8 +68,9 @@ type_input {"action":"tap","key":"enter","frames":6}      # open the directory
 
 ### 3. Who wrote this register? (the NextREG journal)
 
-The port trace, port breakpoints and the TTD I/O journal see port cycles only; the `NEXTREG` instruction and the copper write
-registers without one. The NextREG journal sees every write. It is off by default.
+The `NEXTREG` instruction makes no port cycle; the port trace and port breakpoints show it as the pair `OUT #243B,reg` /
+`OUT #253B,value` at the instruction's pc (`decode_rule` 252: no bus cycle). The copper writes registers with no CPU part at all: only
+the NextREG journal sees its writes, and it sees every write with its source. It is off by default.
 
 ```text
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/reg-journal","body":{"enabled":true,"clear":true}}

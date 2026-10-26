@@ -981,6 +981,14 @@ protected:
     void OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc,
                            const PortDecodeDisposition& disp = {});
 
+public:
+    /// A port write the CPU makes without a port cycle: the Z80N NEXTREG instruction writes a register the way OUT #243B,reg then
+    /// OUT #253B,value would, and is reported as that pair (one call per port). Port breakpoints, the port access tracker and the port trace
+    /// (rule PortTraceRule::kNoBusCycle) see it; no hardware is written here (the caller writes the register) and nothing goes to the TTD
+    /// journals (Z80NEngine::NextReg journals the pair itself)
+    void OnPortWriteWithoutBusCycle(uint16_t port, uint8_t value, uint16_t pc);
+
+protected:
     /// Build and push one PortTraceEvent. Only called when _portTraceFeatureCache is true.
     /// Exactly ONE event is recorded per Z80 I/O operation (single-event invariant) —
     /// inline handlers must never call this directly.

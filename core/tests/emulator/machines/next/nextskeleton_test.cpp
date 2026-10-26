@@ -23,6 +23,9 @@
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/ports/portdiagrecorder.h"
+#include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 
 class NextSkeleton_Test : public ::testing::Test
 {
@@ -229,6 +232,60 @@ TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
     // page 68 is bank 34, low half
     EXPECT_EQ(_memory->PeekSlot(0xC000), 0x5A);
     EXPECT_EQ(_memory->RAMPageAddress(34)[0], 0x5A);
+}
+
+// NEXTREG has no port cycle, yet the port trace shows it as the register interface's pair: OUT #243B,reg then OUT #253B,value at the
+// instruction's pc, marked as no bus cycle
+TEST_F(NextSkeleton_Test, NextRegInstructionIsInThePortTrace)
+{
+    ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = _ports->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+    Load(0x8000, {0x3E, 0x44,                // LD A,#44
+                  0xED, 0x92, 0x56});        // NEXTREG #56,A
+    _z80->pc = 0x8000;
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_EQ(_memory->GetMmu(6), 0x44);
+
+    const std::vector<PortTraceEvent> events = recorder->getLast(16);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].rawPort, 0x243B);
+    EXPECT_EQ(events[0].value, 0x56);
+    EXPECT_EQ(events[1].rawPort, 0x253B);
+    EXPECT_EQ(events[1].value, 0x44);
+    for (const PortTraceEvent& e : events)
+    {
+        EXPECT_TRUE(e.isOut());
+        EXPECT_EQ(e.pc, 0x8002);
+        EXPECT_EQ(e.decodeRuleIndex, PortTraceRule::kNoBusCycle);
+    }
+}
+
+// A port breakpoint on #253B stops on NEXTREG as on OUT (#253B),A: after the instruction, which has written the register
+TEST_F(NextSkeleton_Test, PortBreakpointFiresOnNextReg)
+{
+    _emulator->DebugOn();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    auto* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_OUT;
+    breakpoint->z80address = 0x253B;
+    const uint16_t id = _emulator->GetBreakpointManager()->AddBreakpoint(breakpoint);
+
+    Load(0x8000, {0x00,                      // NOP
+                  0xED, 0x91, 0x56, 0x44,    // NEXTREG #56,#44
+                  0x00, 0x00});              // NOP, NOP
+    _z80->pc = 0x8000;
+    _z80->iff1 = _z80->iff2 = 0;
+    EXPECT_EQ(_emulator->RunNCPUCycles(4, false), 2u) << "NOP / NEXTREG, then the run ends";
+    EXPECT_EQ(_z80->pc, 0x8005);
+    EXPECT_EQ(_memory->GetMmu(6), 0x44);
+    EXPECT_EQ(_emulator->LastDirectStop().breakpointId, id);
+    EXPECT_EQ(_emulator->LastDirectStop().kind, BreakpointHitKind::PortOut);
+    EXPECT_EQ(_emulator->LastDirectStop().address, 0x253B);
 }
 
 // Next3D Elite Wireframe draws into Layer 2 through MMU slot 0 (NEXTREG #50 = #12 + y/32, then writes at #0000-#1FFF): a RAM page in slot 0
