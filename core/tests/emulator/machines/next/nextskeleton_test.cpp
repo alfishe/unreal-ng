@@ -165,7 +165,8 @@ TEST_F(NextSkeleton_Test, CpuWritesLandInTheSlotsAndRomIsReadOnly)
 }
 
 /// A continuous DMA fill of `length` bytes at `destination`: port A is the fixed byte at #8000, port B counts up (zxnext.vhd: the DMA drives
-/// the same address bus as the CPU, so it sees the same slot table, ROM protection and Layer 2 write mapping)
+/// the same address bus as the CPU, so it sees the same slot table, ROM protection and Layer 2 write mapping). The writes stand for the
+/// instruction that enables the DMA: the bus goes over after the next instruction's M1, so the transfer runs after the second step
 static void DmaFill(PortDecoder_Next* ports, uint16_t destination, uint16_t length)
 {
     for (uint8_t b : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x80), uint8_t(length & 0xFF), uint8_t(length >> 8), uint8_t(0x24), uint8_t(0x10), uint8_t(0xAD), uint8_t(destination & 0xFF),
@@ -182,6 +183,7 @@ TEST_F(NextSkeleton_Test, DmaWritesFollowTheSlotTableNotThe16KWindows)
     _memory->PokeSlot(0x8000, 0xAA);
     DmaFill(_ports, 0xE000, 16);
     _z80->EngineStep();
+    _z80->EngineStep();
     EXPECT_EQ(_memory->PeekSlot(0xE000), 0xAA) << "the byte is at the slot's own page";
     EXPECT_EQ(_memory->RAMPageAddress(40)[0x2000], 0xAA);
     EXPECT_EQ(_memory->RAMPageAddress(24)[0x2000], 0x00) << "not the second half of the page the even slot shows";
@@ -194,11 +196,13 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
     ASSERT_NE(rom0, 0x55);
     DmaFill(_ports, 0x0000, 16);
     _z80->EngineStep();
+    _z80->EngineStep();
     EXPECT_EQ(_memory->PeekSlot(0x0000), rom0) << "ROM is read-only for the DMA too";
     // port #123B bit 0: the write mapping of Layer 2 (bank NR #12 = 9) over #0000-#3FFF; reads still show the ROM
     _ports->Board().Write(0x12, 9);
     Out(0x123B, 0x01);
     DmaFill(_ports, 0x0000, 16);
+    _z80->EngineStep();
     _z80->EngineStep();
     EXPECT_EQ(_memory->RAMPageAddress(9)[0], 0x55);
     EXPECT_EQ(_memory->RAMPageAddress(9)[15], 0x55);
@@ -206,29 +210,31 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
 }
 
 // The DMA runs on the CPU's clock, which the video logic holds on a contended access whoever drives the bus: a fill of bank 5 in the
-// paper area takes the waits a CPU write there would, so does a block to port #FE; bank 2 and contention switched off (NR #08 bit 6)
-// take none
-TEST_F(NextSkeleton_Test, DmaCyclesWaitOnContendedMemoryAndPorts)
+// paper area takes the waits a CPU write there would; bank 2 and contention switched off (NR #08 bit 6) take none, and so does a block
+// from bank 2 to port #FE: the DMA drops IORQ on a falling edge, past the port rule's moment (the RTL in GHDL, POC 036)
+TEST_F(NextSkeleton_Test, DmaCyclesWaitOnContendedMemoryNotOnPorts)
 {
     UlaContention* ula = _context->pUlaContention;
     ASSERT_NE(ula, nullptr);
     ASSERT_TRUE(ula->IsContentionEnabled());
-    Load(0x9000, {0x00});  // NOP: the instruction the DMA runs after
+    Load(0x9000, {0x00, 0x00});  // NOPs: the DMA takes the bus after the first one (the port writes stand for the enabling instruction)
     const uint32_t paper = 16300;
     auto fillTime = [&](uint16_t destination) {
         DmaFill(_ports, destination, 64);
         _z80->pc = 0x9000;
         _z80->t = paper;
         _z80->EngineStep();
+        _z80->EngineStep();
         return _z80->t - paper;
     };
-    // memory -> the ULA port #FE (port B: I/O, fixed): a contended port waits at IORQ
+    // bank 2 -> the ULA port #FE (port B: I/O, fixed)
     auto borderTime = [&]() {
         for (uint8_t v : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x80), uint8_t(64), uint8_t(0x00), uint8_t(0x24), uint8_t(0x28), uint8_t(0xAD),
                           uint8_t(0xFE), uint8_t(0x00), uint8_t(0xCF), uint8_t(0x87)})
             _ports->DecodePortOut(0x6B, v, 0);
         _z80->pc = 0x9000;
         _z80->t = paper;
+        _z80->EngineStep();
         _z80->EngineStep();
         return _z80->t - paper;
     };
@@ -241,7 +247,7 @@ TEST_F(NextSkeleton_Test, DmaCyclesWaitOnContendedMemoryAndPorts)
     ASSERT_FALSE(ula->IsContentionEnabled());
     const uint32_t off = fillTime(0x4000);
     EXPECT_EQ(bank2, off) << "bank 2 is not contended";
-    EXPECT_GT(border, borderTime() + 32) << "port #FE is contended";
+    EXPECT_EQ(border, borderTime()) << "the DMA's write to port #FE takes no port contention";
     EXPECT_GT(bank5, off + 32) << "64 writes into bank 5 in paper lines wait (" << bank5 << " T against " << off << ")";
 }
 
@@ -256,6 +262,7 @@ TEST_F(NextSkeleton_Test, DmaReadsOfThePortEbWaitForTheSpiByte)
                       uint8_t(0xCF), uint8_t(0x87)})
         _ports->DecodePortOut(0x6B, b, 0);
     const double before = _ports->Now28();
+    _z80->EngineStep();
     _z80->EngineStep();
     EXPECT_EQ(_ports->SpiTooFastCount(), 0u);
     EXPECT_GE(_ports->Now28() - before, 7 * 16 * 8.0) << "eight bytes, one SPI byte (16 clocks) between two reads";

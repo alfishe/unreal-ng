@@ -329,6 +329,7 @@ private:
     NextCtc _ctc;
     NextUart _uart;
     NextDma _dma;
+    bool _dmaRequestLate = false;  // the enable came in this instruction: the bus goes over after the next one's M1
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);
     NextI2c _i2c;
