@@ -1477,7 +1477,7 @@ emu.listing_run_to_line(120)         -- run to first code byte of line 120 (~10 
 
 ### Analysis layers
 
-The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md) through the shared core handler
+The L0 access facts and the L1 build of the [analysis layers](../../analysis/analysis-layers.md) through the shared core handler
 (`analysis::Execute`): the answer is a table of its fields plus `text` (the CLI's lines); a refusal is
 `{ ok = false, error = <why> }`.
 
@@ -1490,6 +1490,14 @@ local r = emu.analysis("explain", "$80BC")           -- a string: the address (o
 print(r.text)
 emu.analysis("explain", {address = 0xC000, page = "ram:3"})   -- physical mode: the page
 emu.analysis("stop")                                 -- the facts stay readable
+
+-- L1: record, build from the recording (a job), then routine fact sheets
+emu.analysis("start", {record = true})               -- also a TTD recording
+emu.analysis("build", {wait = 20000})                -- { job, state, bundle, progress, ready, text }; frames, path
+emu.analysis("build", "500")                         -- a string: the frames to replay
+local sheet = emu.analysis("explain", "$0038")       -- L1 ready: { what = "routine", routine, text = the sheet }
+emu.analysis("explain", {address = 0x38, what = "byte"})
+emu.analysis("cancel")                               -- a running build; refused when none runs
 ```
 
 ## Usage Examples

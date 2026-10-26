@@ -603,15 +603,17 @@ reference: [command-interface.md](./command-interface.md).
 
 ### Analysis layers
 
-The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
+The L0 access facts and the L1 code behaviour of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
 as every other plane (`analysis::Execute`), so the lines below are also the `text` of the REST and MCP answers.
 
 | CLI Command | Description |
 | :--- | :--- |
-| `analysis start [facts\|counters] [z80\|physical]` | Switch on memory tracking at level `facts` (default) or `counters`, mode `z80` (default) or `physical`, and start a fresh session (`level=`, `mode=` work too). |
-| `analysis stop` | Stop the session; the facts stay readable. |
+| `analysis start [facts\|counters] [z80\|physical] [record]` | Switch on memory tracking at level `facts` (default) or `counters`, mode `z80` (default) or `physical`, and start a fresh session (`level=`, `mode=` work too); `record` (`record=true`) also starts a TTD recording for the L1 build. |
+| `analysis stop` | Stop the session (and the recording `record` started); the facts stay readable. |
+| `analysis build [frames] [path=F] [wait=MS]` | L1: capture the recording, replay it on a muted analysis instance and build routines, CFG, call graph, loops, patterns, data flow, branches, paging. A job: the answer has its id and state; `frames` caps the replay, `path` writes the L1 JSON, `wait` (at most 30000 ms) waits for the end. Progress: topics `analysis.progress`, `analysis.ready`. |
+| `analysis cancel` | Cancel the running build (409 when none runs). |
 | `analysis status` (`analysis`) | State, level, mode, frame, what the facts hold. |
-| `analysis explain <addr> [page]` | What L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
+| `analysis explain <addr> [page] [routine\|byte]` | With an L1 build, the fact sheet of the routine holding the address (at most 1 KB, 24 disassembly lines); `byte` (or no L1): what L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
 
 `--json` prints the fields instead of the lines. Example:
 

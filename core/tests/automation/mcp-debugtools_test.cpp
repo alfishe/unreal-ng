@@ -288,6 +288,47 @@ TEST_F(McpDebugTools_Test, Analysis_ActionsGoToTheirRoutesAndCarryTheText)
     EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/analysis/stop"), nullptr);
 }
 
+/// analysis build / cancel / explain what=routine (P2): the long build waits 20 s by default, record goes to start
+TEST_F(McpDebugTools_Test, Analysis_BuildCancelAndRoutineExplainGoToTheirRoutes)
+{
+    Json::Value buildBody;
+    buildBody["job"] = 3;
+    buildBody["state"] = "done";
+    buildBody["text"] = "L1 build job 3: replaying 50 recorded frames on an analysis instance; done";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/build"] = {200, buildBody};
+
+    Json::Value args;
+    args["action"] = "start";
+    args["record"] = true;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* start = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_TRUE(start->body["record"].asBool());
+
+    args = Json::Value();
+    args["action"] = "build";
+    args["frames"] = 100;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("L1 build job 3"), std::string::npos) << result.text;
+    const FakeCaller::RecordedCall* build = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/build");
+    ASSERT_NE(build, nullptr);
+    EXPECT_EQ(build->body["frames"].asUInt64(), 100u);
+    EXPECT_EQ(build->body["wait"].asUInt64(), 20000u) << "one call answers the result";
+
+    args = Json::Value();
+    args["action"] = "cancel";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/analysis/cancel"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "explain";
+    args["address"] = "$8000";
+    args["what"] = "routine";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=%248000&what=routine"), nullptr);
+}
+
 TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
 {
     Json::Value args;

@@ -334,6 +334,28 @@ TEST_F(AnalysisL0_Test, PhysicalModePages)
     _memory->SetRAMPageToBank3(0);  // the machine is shared by the suite
 }
 
+/// Physical mode keeps no Z80 view: the facts are the page table and the touched pages only (no 1 MB table); back in
+/// the Z80 mode the view is there again
+TEST_F(AnalysisL0_Test, PhysicalModeHasNoZ80View)
+{
+    constexpr size_t kZ80View = 65536 * sizeof(ByteFacts);
+    Load(0x8000, {0x32, 0x00, 0xC0});  // LD ($C000),A
+    Start({{"mode", "physical"}});
+    Run(0x8000, 1);
+    MemoryAccessTracker::FactsSummary facts = _tracker->SummarizeFacts();
+    EXPECT_TRUE(facts.allocated);
+    EXPECT_LT(facts.bytes, kZ80View) << "physical mode allocates the 1 MB Z80 view";
+    EXPECT_EQ(facts.z80Touched, 0u);
+    ByteFacts none{};
+    EXPECT_FALSE(_tracker->ReadZ80Facts(0x8000, none));
+
+    Start({{"mode", "z80"}});
+    Run(0x8000, 1);
+    facts = _tracker->SummarizeFacts();
+    EXPECT_GE(facts.bytes, kZ80View);
+    EXPECT_GT(facts.z80Touched, 0u);
+}
+
 /// The counters level keeps no facts and the counters as before; explain refuses
 TEST_F(AnalysisL0_Test, LevelCountersUnchanged)
 {

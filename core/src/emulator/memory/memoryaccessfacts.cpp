@@ -16,15 +16,29 @@ MemoryAccessFacts::~MemoryAccessFacts()
     Free();
 }
 
-void MemoryAccessFacts::Allocate(size_t pageCount)
+void MemoryAccessFacts::Allocate(size_t pageCount, bool z80View)
 {
-    if (_z80)
+    if (_pages)
+    {
+        SetZ80View(z80View);
         return;
-    _z80.reset(new ByteFacts[kZ80Size]());
+    }
+    if (z80View)
+        _z80.reset(new ByteFacts[kZ80Size]());
     _pages.reset(new std::atomic<ByteFacts*>[pageCount]);
     for (size_t i = 0; i < pageCount; i++)
         _pages[i].store(nullptr, std::memory_order_relaxed);
     _pageCount = pageCount;
+}
+
+void MemoryAccessFacts::SetZ80View(bool z80View)
+{
+    if (!_pages)
+        return;
+    if (z80View && !_z80)
+        _z80.reset(new ByteFacts[kZ80Size]());
+    else if (!z80View)
+        _z80.reset();
 }
 
 void MemoryAccessFacts::Free()
@@ -41,9 +55,10 @@ void MemoryAccessFacts::Free()
 
 void MemoryAccessFacts::Clear()
 {
-    if (!_z80)
+    if (!_pages)
         return;
-    std::fill_n(_z80.get(), kZ80Size, ByteFacts{});
+    if (_z80)
+        std::fill_n(_z80.get(), kZ80Size, ByteFacts{});
     for (size_t i = 0; i < _pageCount; i++)
         if (ByteFacts* entries = _pages[i].load(std::memory_order_acquire))
             std::fill_n(entries, kPageSize, ByteFacts{});
@@ -87,9 +102,9 @@ std::vector<uint16_t> MemoryAccessFacts::TouchedPages() const
 
 size_t MemoryAccessFacts::BytesAllocated() const
 {
-    if (!_z80)
+    if (!_pages)
         return 0;
-    return kZ80Size * sizeof(ByteFacts) + _pageCount * sizeof(std::atomic<ByteFacts*>) +
+    return (_z80 ? kZ80Size * sizeof(ByteFacts) : 0) + _pageCount * sizeof(std::atomic<ByteFacts*>) +
            TouchedPages().size() * kPageSize * sizeof(ByteFacts);
 }
 

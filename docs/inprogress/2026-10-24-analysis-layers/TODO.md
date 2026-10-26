@@ -21,7 +21,9 @@
 | P0 | Run B token ledger checked in as the baseline | done 2026-10-25 |
 | P1 | L0 level `facts` + tests + A/B | done 2026-10-26 in the worktree, awaits review: [memorytracker-p1.md](baselines/memorytracker-p1.md) |
 | P1 | `analysis start/stop/status/explain` on every plane, MCP `analysis` | done 2026-10-26 in the worktree, awaits review: module doc [analysis-layers.md](../../emulator/analysis/analysis-layers.md), live block `tools/verification/mcp/test_analysis_layers.py`, MCP calls per action in `host.clients.mcp.tools` |
-| P2 | `TraceBundle`, `ReplayTracer`, L1 structures, fact sheet | open |
+| P2 | `TraceBundle`, `ReplayTracer`, L1 structures, fact sheet | done 2026-10-26 in the worktree, awaits review: module doc [analysis-layers.md](../../emulator/analysis/analysis-layers.md) "L1: code behaviour", tests `AnalysisL1_Test.*` (fixtures `testdata/analysis/fixtures/`), [replay-p2.md](baselines/replay-p2.md) (gate >= 5x real time met), Manic Miner check in replay-p2.md |
+| P2 | `analysis build` / `cancel` as a job (topics `analysis.progress`, `analysis.ready`), `explain` routine sheets, `start record=true`, on every plane and MCP `analysis` | done 2026-10-26 in the worktree, awaits review: plane docs, live block `test_analysis_layers.py` |
+| P2 | P1 leftover: physical mode without the 64 K Z80 fact table | done 2026-10-26 (`AnalysisL0_Test.PhysicalModeHasNoZ80View`) |
 | P3 | Structural detectors, ROM signatures, ctl / skool export, `query` | open |
 | P4 | Media detectors, gallery | open |
 | P5 | Findings register, review queue, experiment runner, directed coverage, candidate bugs | open |

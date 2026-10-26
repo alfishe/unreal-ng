@@ -23,6 +23,8 @@
 /// | `debug.buffers` | an instance | How full each trace buffer is, at most once a second: `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent} (a buffer not allocated is absent); `ttd` {history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, write_journal_bytes} |
 /// | `debug.analyzers` | an instance | opcode, memory, calltrace (stopped / capturing / paused), coverage {available, recording, instructions}, pchist (armed / off) |
 /// | `controllers.state` | an instance | available, connectors [{id, kind, device, plugged, fixed}], plugged |
+/// | `analysis.progress` | an instance | The `analysis build` job (analysisjobs.h): job, state (none, running, done, failed, cancelled), frames_done, frames_total, percent, error |
+/// | `analysis.ready` | an instance | The L1 the last build made: ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path |
 ///
 /// One more verb, not a topic: `breakpoint_groups` (instance) {groups: [{name, total, active, ids}]}, also WebAPI
 /// `GET /api/v1/emulator/{id}/breakpoints/groups`, Lua / Python `bp_groups()`.

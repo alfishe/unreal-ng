@@ -6,10 +6,10 @@
 /// MemoryAccessTracker at its level `facts`, on top of the counters, from the same Track* calls.
 ///
 /// Storage: one 16-byte ByteFacts per byte, so one access touches one cache line.
-///   - Z80 address space mode: 64K entries (1 MB), allocated with the level.
+///   - Z80 address space mode: 64K entries (1 MB), allocated with the level (the Z80 view).
 ///   - Physical mode: 16K entries (256 KB) per physical page, allocated when the page is first touched (a 128K game
-///     touches 8-10 pages). The page table is atomic: the emulation thread publishes a new page, a reader on another
-///     thread (explain, status) sees either nothing or the zeroed page.
+///     touches 8-10 pages); no Z80 view. The page table is atomic: the emulation thread publishes a new page, a reader
+///     on another thread (explain, status) sees either nothing or the zeroed page.
 ///
 /// The access context (stack / block / plain) comes from the Z80: after the opcode fetch of every instruction, while
 /// the level is `facts`, it stores the instruction's class (a 256-entry table per prefix) into the tracker's context
@@ -155,15 +155,19 @@ public:
     MemoryAccessFacts(const MemoryAccessFacts&) = delete;
     MemoryAccessFacts& operator=(const MemoryAccessFacts&) = delete;
 
-    /// The Z80 view (64K) and the page table (pageCount pointers, no page yet). Callers hold the CPU
-    void Allocate(size_t pageCount);
+    /// The page table (pageCount pointers, no page yet) and, with @p z80View, the Z80 view (64K entries, 1 MB: only
+    /// the Z80 address space mode reads it). Callers hold the CPU
+    void Allocate(size_t pageCount, bool z80View);
+    /// The Z80 view allocated (zeroed) or freed, the pages kept: the tracking mode changed. Callers hold the CPU
+    void SetZ80View(bool z80View);
+    bool HasZ80View() const { return _z80 != nullptr; }
     /// Everything freed. Callers hold the CPU
     void Free();
     /// Every fact back to "never accessed"; touched pages are kept (zeroed). Callers hold the CPU
     void Clear();
-    bool IsAllocated() const { return _z80 != nullptr; }
+    bool IsAllocated() const { return _pages != nullptr; }
 
-    /// The entry of a Z80 address (allocated)
+    /// The entry of a Z80 address (the Z80 view allocated)
     ByteFacts& Z80At(uint16_t address) { return _z80[address]; }
     /// The entry of a physical byte; the page is allocated on first touch (emulation thread). Null past the table
     ByteFacts* PhysicalAt(size_t physicalOffset)

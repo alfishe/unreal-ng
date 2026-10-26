@@ -737,17 +737,25 @@ While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) 
 
 ### Analysis layers
 
-The L0 access facts of the [analysis layers](../../analysis/analysis-layers.md) (`analysis_api.cpp` over the shared
-core handler `analysis::Execute`; OpenAPI tag `Analyzers`). Every answer carries `text`, the CLI's lines; refusals
-are `{"error", "message"}` with 400 (unknown option, bad value), 404 (no such label), 409 (`explain` at level
-`counters`), 503 (no tracker).
+The L0 access facts and the L1 code behaviour of the [analysis layers](../../analysis/analysis-layers.md)
+(`analysis_api.cpp` over the shared core handler `analysis::Execute`; OpenAPI tag `Analyzers`). Every answer carries
+`text`, the CLI's lines; refusals are `{"error", "message"}` with 400 (unknown option, bad value), 404 (no such label,
+no routine there), 409 (`explain` at level `counters`, a build already running, no recording, `cancel` with no
+build), 503 (no tracker, no TTD engine).
 
 ```
-POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?: "z80"|"physical"}: status
-POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable: status
-GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, facts {allocated, bytes, z80_bytes_touched, pages}, text}
-GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3]
-                                              {address, mode, bank | page, label, accessed, kinds, kinds_mask,
+POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?: "z80"|"physical", record?: bool}: status
+POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable (a recording start made stops): status
+GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, recording, facts {allocated, bytes,
+                                               z80_bytes_touched, pages}, l1 {progress, ready}, text}
+POST /api/v1/emulator/{id}/analysis/build     {frames?, path?, wait?: ms <= 30000}: the L1 build job
+                                              {job, state, bundle, progress, ready, text}
+POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
+GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]
+                                              routine (L1 ready, auto or what=routine): {what: "routine", address,
+                                               routine {entry, page, kinds, ...}, sheet_bytes, text: the fact sheet}
+                                              byte (what=byte or no L1): {what: "byte",
+                                               address, mode, bank | page, label, accessed, kinds, kinds_mask,
                                                first_frame, last_frame, last_reader, multi_reader, last_writer,
                                                multi_writer, written {distinct, min, max}, counters, text}
 ```

@@ -1201,7 +1201,7 @@ through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, 
 | Clear all, reset hits | `bpclear all`, `bphits reset` | `bp_clear`, `bp_reset_hits` | the same | `bp_clear`, `bp_reset_hits` | `DELETE /breakpoints`, `POST /breakpoints/hits/reset` | `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset` |
 | Profiler / trace start, stop, pause, resume, clear | `profiler`, `coverage`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `audiocapture` | `trace(name, op, opts)` (+ `porttrace_*`, `gs_porttrace_*`, `coverage_*`, `ay_log_*`, `pc_history*`, `audio_capture_*`) | `trace(name, op, **opts)` (+ the per-profiler functions) | `analyze_performance` `profiler` {profiler, op}, `gs_trace`, `aylog`, `pchist`, `coverage_*`, `profile_*`; `capture_media` audio | `/profiler/{opcode,memory,calltrace,porttrace}/*`, `/profiler/*`, `/coverage/*`, `/control/audio/gs/porttrace`, `/debug/pchist`, `/ay/log`, `/audio/capture` | `prof.toggle`, `prof.pause_toggle`, `prof.clear` (state `toggle.profiler.<name>`, `toggle.profiler_paused.<name>`) |
 | Analyzers on / off, clear | `analyzer` | `analyzer_list/enable/disable/active` | `analyzer_*` | `analyze_performance` `analyzers` {op, name} | `GET /analyzers`, `PUT /analyzer/{name}`, `DELETE /analyzer/{name}/events` | `analyzer.toggle` (state `toggle.analyzer.<name>`), `analyzer.clear` |
-| Analysis layers: start, stop, status, explain an address (L0 access facts) | `analysis start [facts\|counters] [z80\|physical]`, `analysis stop\|status`, `analysis explain <addr> [page]` | `analysis(action, opts)` | `analysis(action, **opts)` | `analysis` {action: start, stop, status, explain} | `POST /analysis/start`, `POST /analysis/stop`, `GET /analysis/status`, `GET /analysis/explain?address=&page=` | - |
+| Analysis layers: start (optionally recording), stop, status, the L1 build and cancel, explain an address (L0 byte facts or the L1 routine fact sheet) | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop\|status\|cancel`, `analysis build [frames] [path=] [wait=]`, `analysis explain <addr> [page] [routine\|byte]` | `analysis(action, opts)` | `analysis(action, **opts)` | `analysis` {action: start, stop, status, build, cancel, explain} | `POST /analysis/start`, `POST /analysis/stop`, `GET /analysis/status`, `POST /analysis/build`, `POST /analysis/cancel`, `GET /analysis/explain?address=&page=&what=` | topics `analysis.progress`, `analysis.ready` |
 | Set a register | `reg <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
 | Write / fill memory | `memory write`, `memory fill` | `mem_write*` | `mem_write*` | `memory_access` `write` | `PUT /memory/{addr}`, `POST /memory/write` | `mem.write` (bytes, or value + count) |
 | Port OUT | `out` | `port_out` | `port_out` | `control_execution` `port_out` | `POST /ports/out` | `port.out` (port or a preset, value) |
@@ -1563,7 +1563,7 @@ ranges and gaps.
 | `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
 | `coverage export [path]` | `[<path>] [--format skoolkit-map] [--start A] [--end B] [--merge]` | Write the executed instruction starts as SkoolKit's code execution map (`$HHHH` lines, for `sna2ctl.py -m` / `sna2skool.py -m`); no path: the map is returned. `--merge` adds the addresses of the map already at the path. REST/WebSocket `POST /coverage/export`, MCP `analyze_performance` `coverage_export`, Lua / Python `coverage_export`. Recipe: [SkoolKit code execution map](../../../../.recipe/analysis/code-coverage-and-analyzers.md#skoolkit-code-execution-map). |
 
-#### 5.5a Analysis Layers (L0 access facts)
+#### 5.5a Analysis Layers (L0 access facts, L1 code behaviour)
 
 Per-byte facts of how the program uses memory, recorded by the memory tracker at level `facts` on top of its
 counters: the access kinds (`OpcodeFetch`, `OperandFetch`, `DataRead`, `DataWrite`, `StackRead`, `StackWrite`,
@@ -1574,14 +1574,18 @@ module doc is [analysis layers](../../analysis/analysis-layers.md).
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `analysis start` | `[facts\|counters] [z80\|physical]` (or `level=`, `mode=`) | Switch on debug mode and memory tracking, set the level (default `facts`) and mode (default `z80`; `physical` keeps facts per RAM / ROM page, a page allocated when first touched) and start a fresh session. |
-| `analysis stop` | | Stop the session; the facts stay readable until the next start. |
+| `analysis start` | `[facts\|counters] [z80\|physical] [record]` (or `level=`, `mode=`, `record=true`) | Switch on debug mode and memory tracking, set the level (default `facts`) and mode (default `z80`; `physical` keeps facts per RAM / ROM page, a page allocated when first touched, and no 64 KB Z80 table) and start a fresh session. `record` also starts a TTD recording (the input of `build`); 409 when it cannot start. |
+| `analysis stop` | | Stop the session and the recording `record` started; the facts stay readable until the next start. |
+| `analysis build` | `[frames] [path=<file>] [wait=<ms>]` | L1: capture the recording as a trace bundle (the recording stops), replay it on a muted analysis instance (a clone of the machine, never the live one) with per-instruction hooks, build the L1 structures. A job: `{job, state, bundle, progress, ready}`; `frames` caps the replay, `path` writes the L1 JSON, `wait` (at most 30000 ms) blocks until the end. 409 while a build runs or without a recording. Topics `analysis.progress` and `analysis.ready` report the job. |
+| `analysis cancel` | | Cancel the running build; 409 when none runs. |
 | `analysis status` | | State, level, mode, frame, bytes allocated, Z80 addresses touched, pages with facts. |
-| `analysis explain <addr>` | `<addr> [page]` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal, a label; page: index, `ram:N`, `rom:N`) | What L0 knows of one byte, as lines: kinds, last writer and the values, last reader, frames, counters, labels. Refused (409) at level `counters`. |
+| `analysis explain <addr>` | `<addr> [page] [routine\|byte\|auto]` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal, a label; page: index, `ram:N`, `rom:N`; `what=`) | `auto` (default): the L1 fact sheet of the routine holding the address when a build is ready (entries, callers, callees, time, reads / writes, loops, patterns, branches, at most 1 KB with at most 24 disassembly lines), otherwise the byte. `byte`: what L0 knows of one byte, as lines: kinds, last writer and the values, last reader, frames, counters, labels; refused (409) at level `counters`. `routine`: 404 when no routine holds it, 409 without an L1 build. |
 
 All commands take `--json` for the fields. REST / WebSocket `call`: `POST /api/v1/emulator/{id}/analysis/start`
-`{level?, mode?}`, `POST .../analysis/stop`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=`
-(every answer has `text`, the CLI's lines). MCP: one tool `analysis` {action, level, mode, address, page}; its calls
+`{level?, mode?, record?}`, `POST .../analysis/stop`, `GET .../analysis/status`, `POST .../analysis/build`
+`{frames?, path?, wait?}`, `POST .../analysis/cancel`, `GET .../analysis/explain?address=&page=&what=` (every answer has
+`text`, the CLI's lines). MCP: one tool `analysis` {action, level, mode, record, frames, path, wait, address, page,
+what}; `build` waits 20 s by default; its calls
 are counted per action in `host.clients.mcp.tools`. Lua `analysis(action, opts)`, Python
 `emu.analysis(action, **opts)`.
 

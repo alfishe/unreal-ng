@@ -2882,9 +2882,11 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 }
                 return StateNodeToPy(value);
-            }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical') | "
-               "stop | status | explain (address='$80BC' or a label, page='ram:3' in physical mode). The reply's "
-               "fields plus text (the readable answer); a refusal: ok = False, error = why",
+            }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
+               "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
+               "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
+               "'byte': a routine's fact sheet or a byte's facts). The reply's fields plus text (the readable answer); "
+               "a refusal: ok = False, error = why",
                py::arg("action") = "status")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
                 tracecontrol::Options options;

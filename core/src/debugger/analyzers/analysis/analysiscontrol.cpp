@@ -7,7 +7,12 @@
 #include <optional>
 
 #include "base/featuremanager.h"
+#include "debugger/analyzers/analysis/analysisjobs.h"
+#include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/labels/labelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -71,17 +76,20 @@ StateNode Reply::ToValue() const
 
 const std::vector<std::string>& Actions()
 {
-    static const std::vector<std::string> actions = {"start", "stop", "status", "explain"};
+    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain"};
     return actions;
 }
 
 const std::vector<std::string>& OptionsFor(const std::string& action)
 {
     static const std::vector<std::string> none;
-    static const std::vector<std::string> start = {"level", "mode"};
-    static const std::vector<std::string> explain = {"address", "page"};
+    static const std::vector<std::string> start = {"level", "mode", "record"};
+    static const std::vector<std::string> build = {"frames", "path", "wait"};
+    static const std::vector<std::string> explain = {"address", "page", "what"};
     if (action == "start")
         return start;
+    if (action == "build")
+        return build;
     if (action == "explain")
         return explain;
     return none;
@@ -140,6 +148,27 @@ std::string Lower(std::string text)
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
+}
+
+bool ParseBool(const std::string& text, bool& value)
+{
+    const std::string v = Lower(text);
+    if (v == "true" || v == "1" || v == "yes" || v == "on")
+        value = true;
+    else if (v == "false" || v == "0" || v == "no" || v == "off")
+        value = false;
+    else
+        return false;
+    return true;
+}
+
+bool ParseCount(const std::string& text, uint64_t limit, uint64_t& value)
+{
+    if (text.empty() || text.size() > 12 ||
+        !std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+        return false;
+    value = std::strtoull(text.c_str(), nullptr, 10);
+    return value <= limit;
 }
 
 Reply Refuse(Error error, const std::string& message)
@@ -275,6 +304,32 @@ StateNode StatusBody(Emulator& emulator, MemoryAccessTracker& tracker, std::stri
     }
     else
         text += "; no facts recorded";
+
+    // The recording that feeds L1 and the last build
+    ttd::TimeTravelController* ttd = context != nullptr ? context->pTimeTravelController : nullptr;
+    body["recording"] = ttd != nullptr && ttd->IsRecording();
+    if (ttd != nullptr && ttd->IsRecording())
+        text += "; recording";
+    const JobView view = L1Jobs::Instance().View(emulator.GetId());
+    StateNode& l1 = body["l1"];
+    l1 = StateNode::Object();
+    l1["progress"] = view.ProgressNode();
+    l1["ready"] = view.ReadyNode();
+    if (view.id != 0)
+    {
+        text += "\nL1 build job " + std::to_string(view.id) + ": " + view.state;
+        if (view.state == "running")
+            text += " " + std::to_string(view.framesDone) + "/" + std::to_string(view.framesTotal) + " frames";
+        if (!view.error.empty())
+            text += " (" + view.error + ")";
+    }
+    if (view.ready)
+        text += "\nL1 ready (job " + std::to_string(view.readyJob) + "): " + std::to_string(view.routines) +
+                " routines, " + std::to_string(view.blocks) + " blocks, " + std::to_string(view.loops) + " loops, " +
+                std::to_string(view.instructions) + " instructions over " + std::to_string(view.frames) + " frames" +
+                (view.diverged != 0 ? ", " + std::to_string(view.diverged) + " of " + std::to_string(view.checked) +
+                                          " keyframes diverged"
+                                    : "");
     return body;
 }
 
@@ -296,6 +351,9 @@ Reply Start(Emulator& emulator, MemoryAccessTracker& tracker, const Options& opt
         else if (value != "facts")
             return Refuse(Error::BadRequest, "level: facts or counters");
     }
+    bool record = false;
+    if (const auto it = options.find("record"); it != options.end() && !ParseBool(it->second, record))
+        return Refuse(Error::BadRequest, "record: true or false");
     TrackingMode mode = TrackingMode::Z80AddressSpace;
     if (const auto it = options.find("mode"); it != options.end())
     {
@@ -325,9 +383,26 @@ Reply Start(Emulator& emulator, MemoryAccessTracker& tracker, const Options& opt
     if (!tracker.IsMemoryCapturing())
         return Refuse(Error::Conflict, "memory tracking could not start (debug mode or memory tracking is off)");
 
+    if (record)
+    {
+        // The TTD recording L1 replays (the engine: TimeTravelController, through the TTD verbs)
+        EmulatorContext* context = emulator.GetContext();
+        if (FeatureManager* features = emulator.GetFeatureManager())
+            features->setFeature(Features::kTimeTravel, true);
+        if (context == nullptr || context->pTimeTravelController == nullptr)
+            return Refuse(Error::NotAvailable, "no time travel engine on this instance: start without record");
+        const bool already = context->pTimeTravelController->IsRecording();
+        const ttd::TTDReply started = ttd::TTDControl(context).Execute({"start", {}});
+        if (!started.Ok())
+            return Refuse(Error::Conflict, "the recording did not start: " + started.message);
+        if (!already)
+            L1Jobs::Instance().NoteRecording(emulator.GetId(), true);
+    }
+
     Reply reply = Status(emulator, tracker);
     reply.text = std::string("Analysis started: level ") + MemoryAccessTracker::LevelName(level) + ", mode " +
-                 ModeName(mode) + ". Run the program, then explain an address.\n" + reply.text;
+                 ModeName(mode) + (record ? ", recording" : "") + ". Run the program, then " +
+                 (record ? "build L1 or " : "") + "explain an address.\n" + reply.text;
     return reply;
 }
 
@@ -336,6 +411,14 @@ Reply Stop(Emulator& emulator, MemoryAccessTracker& tracker)
     {
         Emulator::CpuHold hold(emulator, "analysis stop");
         tracker.StopMemorySession();
+    }
+    // The recording 'start record=true' began ends with the session (the history stays for build)
+    if (L1Jobs::Instance().OwnsRecording(emulator.GetId()))
+    {
+        L1Jobs::Instance().NoteRecording(emulator.GetId(), false);
+        if (EmulatorContext* context = emulator.GetContext())
+            if (context->pTimeTravelController != nullptr && context->pTimeTravelController->IsRecording())
+                (void)ttd::TTDControl(context).Execute({"stop", {}});
     }
     Reply reply = Status(emulator, tracker);
     reply.text = "Analysis stopped; the facts stay readable until the next start.\n" + reply.text;
@@ -358,6 +441,91 @@ std::string DistinctName(uint8_t distinct)
     }
 }
 
+Reply Build(Emulator& emulator, const Options& options)
+{
+    ReplayOptions replay;
+    if (const auto it = options.find("frames"); it != options.end() && !ParseCount(it->second, 100000000, replay.maxFrames))
+        return Refuse(Error::BadRequest, "frames: the most frames to replay, an integer (0: the whole recording)");
+    uint64_t wait = 0;
+    if (const auto it = options.find("wait"); it != options.end() && !ParseCount(it->second, 30000, wait))
+        return Refuse(Error::BadRequest, "wait: milliseconds to wait for the build, 0 to 30000");
+    const auto pathIt = options.find("path");
+    const std::string path = pathIt != options.end() ? pathIt->second : std::string();
+
+    const std::string id = emulator.GetId();
+    L1Jobs& jobs = L1Jobs::Instance();
+    if (const JobView view = jobs.View(id); view.state == "running")
+        return Refuse(Error::Conflict, "a build is running (job " + std::to_string(view.id) +
+                                           "): wait for analysis.ready, or cancel it");
+    TraceBundle bundle;
+    std::string error;
+    bool captured = false;
+    {
+        // The session file is written from the source's history: its CPU stands still meanwhile
+        Emulator::CpuHold hold(emulator, "analysis build");
+        captured = TraceBundle::Capture(emulator, bundle, error);
+    }
+    if (!captured)
+        return Refuse(Error::Conflict, error);
+    jobs.NoteRecording(id, false);  // Capture ended the recording
+    const StateNode bundleNode = bundle.ToStateNode();
+    const uint64_t frames = bundle.endFrame > bundle.firstFrame ? bundle.endFrame - bundle.firstFrame : 0;
+    uint64_t job = 0;
+    if (!jobs.Start(id, std::move(bundle), std::move(replay), path, job, error))
+        return Refuse(Error::Conflict, error);
+    if (wait != 0)
+        jobs.Wait(id, static_cast<int>(wait));
+
+    const JobView view = jobs.View(id);
+    Reply reply;
+    reply.body["job"] = job;
+    reply.body["state"] = view.state;
+    reply.body["bundle"] = bundleNode;
+    reply.body["progress"] = view.ProgressNode();
+    reply.body["ready"] = view.ReadyNode();
+    reply.text = "L1 build job " + std::to_string(job) + ": replaying " + std::to_string(frames) +
+                 " recorded frames on an analysis instance";
+    if (view.state == "running")
+        reply.text += "; follow analysis.progress, the result comes with analysis.ready (or 'analysis status')";
+    else if (view.state == "done")
+        reply.text += "; done: " + std::to_string(view.routines) + " routines, " + std::to_string(view.blocks) +
+                      " blocks, " + std::to_string(view.loops) + " loops, " + std::to_string(view.instructions) +
+                      " instructions" + (view.path.empty() ? "" : ", written to " + view.path) +
+                      ". Explain a routine's address for its fact sheet";
+    else
+        reply.text += "; " + view.state + (view.error.empty() ? "" : ": " + view.error);
+    return reply;
+}
+
+Reply Cancel(Emulator& emulator, MemoryAccessTracker& tracker)
+{
+    if (!L1Jobs::Instance().Cancel(emulator.GetId()))
+        return Refuse(Error::Conflict, "no build is running");
+    L1Jobs::Instance().Wait(emulator.GetId(), 5000);
+    Reply reply = Status(emulator, tracker);
+    reply.text = "Build cancelled.\n" + reply.text;
+    return reply;
+}
+
+Reply ExplainRoutine(Emulator& emulator, const L1Result& l1, const Routine& routine, uint16_t address, LabelManager* labels)
+{
+    Reply reply;
+    reply.body = l1.RoutineNode(routine);
+    reply.body["what"] = "routine";
+    reply.body["address"] = Hex4(address);
+    Z80Disassembler disassembler(emulator.GetContext());
+    reply.text = l1.FactSheet(
+        routine,
+        [&disassembler](const Instruction& ins) {
+            const std::vector<uint8_t> bytes(ins.bytes, ins.bytes + sizeof(ins.bytes));
+            uint8_t length = 0;
+            return disassembler.disassembleSingleCommand(bytes, ins.z80, &length);
+        },
+        [labels](uint16_t z80) { return LabelAt(labels, z80); });
+    reply.body["sheet_bytes"] = static_cast<uint64_t>(reply.text.size());
+    return reply;
+}
+
 Reply Explain(Emulator& emulator, MemoryAccessTracker& tracker, const Options& options)
 {
     const auto addressIt = options.find("address");
@@ -372,6 +540,34 @@ Reply Explain(Emulator& emulator, MemoryAccessTracker& tracker, const Options& o
         if (!label)
             return Refuse(Error::NotFound, "no address or label '" + addressIt->second + "'");
         address = label->address;
+    }
+
+    // what: byte (L0), routine (L1) or auto (the routine when L1 has one running there)
+    std::string what = "auto";
+    if (const auto it = options.find("what"); it != options.end() && !it->second.empty())
+    {
+        what = Lower(it->second);
+        if (what != "auto" && what != "byte" && what != "routine")
+            return Refuse(Error::BadRequest, "what: byte, routine or auto");
+    }
+    if (what != "byte")
+    {
+        const std::shared_ptr<const L1Result> l1 = L1Jobs::Instance().Result(emulator.GetId());
+        int routinePage = -1;
+        if (const auto it = options.find("page"); it != options.end() && !it->second.empty())
+        {
+            uint16_t parsed = 0;
+            if (!ParsePage(it->second, parsed))
+                return Refuse(Error::BadRequest, "page: an absolute page index, ram:N or rom:N");
+            routinePage = parsed;
+        }
+        const Routine* routine = l1 ? l1->RoutineAtZ80(address, routinePage) : nullptr;
+        if (routine != nullptr)
+            return ExplainRoutine(emulator, *l1, *routine, address, labels);
+        if (what == "routine")
+            return l1 ? Refuse(Error::NotFound, "no L1 routine runs at " + Hex4(address))
+                      : Refuse(Error::Conflict, "no L1 yet: 'analysis start record=true', run the program, then "
+                                                "'analysis build'");
     }
 
     if (tracker.GetLevel() != TrackerLevel::Facts)
@@ -402,6 +598,7 @@ Reply Explain(Emulator& emulator, MemoryAccessTracker& tracker, const Options& o
 
     Reply reply;
     StateNode& body = reply.body;
+    body["what"] = "byte";
     body["address"] = Hex4(address);
     body["mode"] = ModeName(mode);
     const std::string where = physical ? PageName(tracker, page) : memory->GetBankNameForAddress(address);
@@ -521,7 +718,7 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
 {
     const std::vector<std::string>& actions = Actions();
     if (std::find(actions.begin(), actions.end(), action) == actions.end())
-        return Refuse(Error::BadRequest, "unknown action '" + action + "' (start, stop, status, explain)");
+        return Refuse(Error::BadRequest, "unknown action '" + action + "' (start, stop, status, build, cancel, explain)");
     const std::vector<std::string>& known = OptionsFor(action);
     for (const auto& [name, value] : options)
     {
@@ -546,6 +743,10 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         return Stop(emulator, *tracker);
     if (action == "status")
         return Status(emulator, *tracker);
+    if (action == "build")
+        return Build(emulator, options);
+    if (action == "cancel")
+        return Cancel(emulator, *tracker);
     return Explain(emulator, *tracker, options);
 }
 

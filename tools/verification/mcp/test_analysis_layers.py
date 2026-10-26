@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """analysis: the L0 access facts of the analysis layers (docs/emulator/analysis/analysis-layers.md) over a run - start,
-status, explain an address the ROM runs every frame and a stack byte, the refusals, stop; the readable answer in
-content[] text, the calls counted per action in host.clients.mcp.tools"""
+status, explain an address the ROM runs every frame and a stack byte, the refusals, stop; the L1 build from a
+recording (start record=true, build, the analysis.ready topic's value) and a routine's fact sheet; the readable answer
+in content[] text, the calls counted per action in host.clients.mcp.tools"""
 
+import re
 import sys
 
 from mcplib import expect, main
+
+
+def any_ready(node):
+    """True when a value of the answer (per instance, however nested) has ready = true"""
+    if isinstance(node, dict):
+        return node.get('ready') is True or any(any_ready(v) for v in node.values())
+    if isinstance(node, list):
+        return any(any_ready(v) for v in node)
+    return False
 
 
 def test_start_status_explain_stop(s):
@@ -59,6 +70,36 @@ def test_physical_mode_pages(s):
     expect(len(pages) > 0, 'pages with facts', r.text)
     r = s.call('analysis', {'action': 'explain', 'address': '$0038'})
     expect('ROM' in r.text and 'OpcodeFetch' in r.text, 'the ROM page of $0038', r.text)
+    s.call('analysis', {'action': 'stop'})
+
+
+def test_build_and_explain_routine(s):
+    r = s.call('analysis', {'action': 'start', 'record': True})
+    expect('recording' in r.text, 'start record=true: the recording in the text', r.text)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 50})
+
+    r = s.call('analysis', {'action': 'build'})
+    expect('done' in r.text and 'routines' in r.text, 'build: done with routines in the text', r.text)
+    expect((r.structured or {}).get('state') == 'done', 'build: state done in structuredContent', r.structured)
+    expect((r.structured or {}).get('job', 0) > 0, 'build: a job id', r.structured)
+
+    r = s.call('analysis', {'action': 'status'})
+    expect('L1 ready' in r.text, 'status: L1 ready in the text', r.text)
+
+    # The 48K ROM's IM 1 handler: an interrupt entry, explained as a routine with its fact sheet
+    r = s.call('analysis', {'action': 'explain', 'address': '$0038'})
+    expect('Routine' in r.text and 'interrupt' in r.text, 'explain $0038: the routine fact sheet', r.text)
+    sheet = r.text[r.text.find('Routine'):]
+    expect(len(sheet.encode()) <= 1024, 'the fact sheet within 1 KB', len(sheet.encode()))
+    expect((r.structured or {}).get('what') == 'routine', 'explain: what = routine', r.structured)
+    r = s.call('analysis', {'action': 'explain', 'address': '$0038', 'what': 'byte'})
+    expect('OpcodeFetch' in r.text, 'what=byte: the L0 facts of the byte', r.text)
+
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/monitor/analysis.ready'})
+    expect(any_ready(r.structured) or re.search(r'"ready"\s*:\s*true', r.text) is not None, 'the analysis.ready value',
+           r.text[:600])
+    r = s.call('analysis', {'action': 'cancel'}, ok=False)
+    expect(r.is_error and '409' in r.text, 'cancel with no build running: 409', r.text)
     s.call('analysis', {'action': 'stop'})
 
 

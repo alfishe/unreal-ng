@@ -109,7 +109,19 @@ void MemoryAccessTracker::ResetCounters()
 // Set the current tracking mode
 void MemoryAccessTracker::SetTrackingMode(TrackingMode mode)
 {
+    // The facts' Z80 view (1 MB) exists only in the Z80 address space mode: allocated before the mode needs it, freed
+    // after it no longer does
+    if (mode == TrackingMode::Z80AddressSpace)
+    {
+        std::lock_guard<std::shared_mutex> lock(_allocationMutex);
+        _facts.SetZ80View(true);
+    }
     _currentMode = mode;
+    if (mode != TrackingMode::Z80AddressSpace)
+    {
+        std::lock_guard<std::shared_mutex> lock(_allocationMutex);
+        _facts.SetZ80View(false);
+    }
 }
 
 // Get the current tracking mode
@@ -130,7 +142,7 @@ void MemoryAccessTracker::SetLevel(TrackerLevel level)
     {
         std::lock_guard<std::shared_mutex> lock(_allocationMutex);
         if (level == TrackerLevel::Facts && _isAllocated.load(std::memory_order_relaxed))
-            _facts.Allocate(MAX_PAGES);
+            _facts.Allocate(MAX_PAGES, _currentMode == TrackingMode::Z80AddressSpace);
         else if (level == TrackerLevel::Counters)
             _facts.Free();
         _level = level;
@@ -309,7 +321,7 @@ void MemoryAccessTracker::AllocateCounters()
 
     // The L0 facts with the counters, at their level
     if (_level == TrackerLevel::Facts)
-        _facts.Allocate(MAX_PAGES);
+        _facts.Allocate(MAX_PAGES, _currentMode == TrackingMode::Z80AddressSpace);
 
     _isAllocated.store(true, std::memory_order_release);
 }

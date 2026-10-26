@@ -25,10 +25,12 @@
 //   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
 //
 // analysis actions (the analysis layers, core analysis::Execute behind the routes):
-//   start {level?, mode?} → POST /analysis/start
+//   start {level?, mode?, record?} → POST /analysis/start
 //   stop                  → POST /analysis/stop
 //   status                → GET  /analysis/status
-//   explain {address, page?} → GET /analysis/explain?address=&page=
+//   build {frames?, path?, wait?}  → POST /analysis/build (wait default 20000 ms: one call answers the result)
+//   cancel                → POST /analysis/cancel
+//   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
 // The answer's "text" (shared with the CLI) is the tool's text.
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
@@ -1039,12 +1041,16 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"start", "stop", "status", "explain"})
+    for (const char* action : {"start", "stop", "status", "build", "cancel", "explain"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
-        "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode); stop: "
-        "end it, the facts stay readable; status: what the session holds; explain: what is known of one byte - how it "
-        "was accessed (opcode or operand fetch, data or stack read / write, block instruction, written while code), the "
+        "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode; "
+        "record=true also starts the recording build needs); stop: end it, the facts stay readable; status: what the "
+        "session holds and the L1 build; build: replay the recording on a muted analysis instance into L1 (routines, "
+        "call graph, loops, fields, data flow; waits up to 'wait' ms, default 20000, then answers the job state); "
+        "cancel: stop a running build; explain: a routine's fact sheet (profile, loops, fields, callers, registers, a "
+        "disassembly excerpt) when L1 has a routine at the address, otherwise what is known of one byte - how it was "
+        "accessed (opcode or operand fetch, data or stack read / write, block instruction, written while code), the "
         "last instruction that read and wrote it, the frames, the values written, the counters and the labels";
     schema["properties"]["level"]["type"] = "string";
     schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
@@ -1057,11 +1063,26 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["mode"]["enum"].append("physical");
     schema["properties"]["mode"]["description"] =
         "start: z80 (default, the 64K address space) or physical (per RAM / ROM page: banked code apart)";
+    schema["properties"]["record"]["type"] = "boolean";
+    schema["properties"]["record"]["description"] = "start: also start the TTD recording that build replays";
+    schema["properties"]["frames"]["type"] = "integer";
+    schema["properties"]["frames"]["description"] = "build: replay at most this many frames (default: the whole recording)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "build: write the L1 JSON to this file";
+    schema["properties"]["wait"]["type"] = "integer";
+    schema["properties"]["wait"]["description"] = "build: milliseconds to wait for the result (0..30000, default 20000)";
+    schema["properties"]["what"]["type"] = "string";
+    schema["properties"]["what"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* what : {"auto", "routine", "byte"})
+        schema["properties"]["what"]["enum"].append(what);
+    schema["properties"]["what"]["description"] =
+        "explain: auto (default; the routine when L1 has one at the address), routine (L1 fact sheet) or byte (L0)";
     schema["properties"]["address"]["type"] = "string";  // an integer works too (AddressArg)
     schema["properties"]["address"]["description"] = "explain: $80BC, #80BC, 0x80BC, 80BCh, decimal or a label name";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "explain, physical mode: the page (absolute index, ram:N or rom:N); default the page mapped at the address now";
+        "explain: the page (absolute index, ram:N or rom:N); L0 in physical mode (default the page mapped at the "
+        "address now), L1 picks the routine of that page";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["required"].append("action");
@@ -1069,8 +1090,10 @@ void RegisterAnalysis(ToolRegistry& registry)
     registry.Register(
         "analysis",
         "Program analysis from what the emulated CPU does: per-byte access facts (code vs operand vs data vs stack, "
-        "who reads and writes a byte, which values, when, self-modified code). start, then run the program, then "
-        "explain addresses; status shows what was recorded.",
+        "who reads and writes a byte, which values, when, self-modified code) and L1 code behaviour built from a "
+        "recording (routines with their data ranges, ports, time share and registers; call graph; loops; record "
+        "fields). start (record=true for L1), run the program, build, then explain addresses; status shows what was "
+        "recorded.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -1086,7 +1109,27 @@ void RegisterAnalysis(ToolRegistry& registry)
                 for (const char* name : {"level", "mode"})
                     if (args.isMember(name))
                         body[name] = args[name].asString();
+                if (args.isMember("record"))
+                    body["record"] = args["record"];
                 ResolveAndForward(args, "POST", "/analysis/start", &body, caller, "Analysis started", withText);
+                return;
+            }
+            if (action == "build")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"frames", "wait"})
+                    if (args.isMember(name))
+                        body[name] = args[name];  // a number or its text: the core checks it
+                if (!args.isMember("wait"))
+                    body["wait"] = 20000;
+                if (args.isMember("path"))
+                    body["path"] = args["path"].asString();
+                ResolveAndForward(args, "POST", "/analysis/build", &body, caller, "Analysis build", withText);
+                return;
+            }
+            if (action == "cancel")
+            {
+                ResolveAndForward(args, "POST", "/analysis/cancel", nullptr, caller, "Analysis build cancelled", withText);
                 return;
             }
             if (action == "stop")
@@ -1109,10 +1152,12 @@ void RegisterAnalysis(ToolRegistry& registry)
                 std::string suffix = "/analysis/explain?address=" + UrlEncodeSegment(AddressArg(args["address"]));
                 if (args.isMember("page") && !AddressArg(args["page"]).empty())
                     suffix += "&page=" + UrlEncodeSegment(AddressArg(args["page"]));
+                if (args.isMember("what") && !args["what"].asString().empty())
+                    suffix += "&what=" + UrlEncodeSegment(args["what"].asString());
                 ResolveAndForward(args, "GET", suffix, nullptr, caller, "Analysis explain", withText);
                 return;
             }
-            done(ToolResult::Error("unknown action '" + action + "': start, stop, status or explain"));
+            done(ToolResult::Error("unknown action '" + action + "': start, stop, status, build, cancel or explain"));
         });
 }
 

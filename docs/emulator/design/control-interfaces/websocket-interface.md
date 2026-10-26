@@ -75,13 +75,17 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 
 ### Analysis layers
 
-The routes of the [analysis layers](../../analysis/analysis-layers.md) are calls like every REST route; no topic
-yet (P2 adds `analysis.progress` and `analysis.ready` for the replay build):
+The routes of the [analysis layers](../../analysis/analysis-layers.md) are calls like every REST route; the L1 build
+is a job whose progress and result are the topics `analysis.progress` and `analysis.ready` (table below):
 
 ```json
 → {"op":"call","rid":4,"method":"POST","path":"/api/v1/emulator/0/analysis/start","body":{"level":"facts"}}
 → {"op":"call","rid":5,"method":"GET","path":"/api/v1/emulator/0/analysis/explain?address=0x0038"}
 ← {"op":"result","t":"call","rid":5,"status":200,"body":{"address":"$0038","kinds":["OpcodeFetch"],…,"text":"$0038 [ROM 0]: OpcodeFetch\n…"}}
+→ {"op":"subscribe","topics":["analysis.*"]}
+→ {"op":"call","rid":6,"method":"POST","path":"/api/v1/emulator/0/analysis/build","body":{}}
+← {"t":"analysis.progress","op":"state","instance":"0f3a…","value":{"job":1,"state":"running","frames_done":400,"frames_total":3600,"percent":11,…}}
+← {"t":"analysis.ready","op":"state","instance":"0f3a…","value":{"ready":true,"job":1,"routines":29,"blocks":263,"loops":46,…}}
 ```
 
 ## 3. Topics
@@ -107,6 +111,8 @@ yet (P2 adds `analysis.progress` and `analysis.ready` for the replay build):
 | `cap.record` | per instance the video recording `{available, recording, paused, frames, seconds, bytes, output}` (`GET /video/record/status`) | none | implemented (2026-10-21) |
 | `machine.switches` | per instance the front-panel switches `{switches: [{name, on}]}` (`GET /switches`) | none | implemented (2026-10-21) |
 | `input.connectors` | per instance the joystick connectors `{connectors: [{id, kind, device, fixed, port?}]}` (`GET /controllers/connectors`) | none | implemented (2026-10-21) |
+| `analysis.progress` | per instance the `analysis build` job of the [analysis layers](../../analysis/analysis-layers.md) `{job, state: none \| running \| done \| failed \| cancelled, frames_done, frames_total, percent, error}` | none | implemented (P2, 2026-10-26) |
+| `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
 | `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |

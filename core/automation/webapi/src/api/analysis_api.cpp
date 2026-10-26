@@ -1,9 +1,12 @@
 /// @file analysis_api.cpp
 /// @brief WebAPI routes of the analysis layers (docs/emulator/analysis/analysis-layers.md):
-///   POST /analysis/start   {level?: facts | counters, mode?: z80 | physical}
+///   POST /analysis/start   {level?: facts | counters, mode?: z80 | physical, record?: bool}
 ///   POST /analysis/stop
+///   POST /analysis/build   {frames?, path?, wait?}   (a long operation: the job id at once, then the WebSocket topics
+///                                                    analysis.progress / analysis.ready; wait blocks up to 30 s)
+///   POST /analysis/cancel
 ///   GET  /analysis/status
-///   GET  /analysis/explain?address=&page=
+///   GET  /analysis/explain?address=&page=&what=
 ///
 /// Every route turns its request into an analysis::Execute action (core/src/debugger/analyzers/analysis/
 /// analysiscontrol.h): the checks, the answer and its "text" are shared with the CLI, MCP, Lua and Python. A WebSocket
@@ -123,6 +126,24 @@ void EmulatorAPI::analysisStop(const HttpRequestPtr& req, std::function<void(con
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondAnalysis(id, "stop", options, callback);
+}
+
+void EmulatorAPI::analysisBuild(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "build", options, callback);
+}
+
+void EmulatorAPI::analysisCancel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "cancel", options, callback);
 }
 
 void EmulatorAPI::analysisStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

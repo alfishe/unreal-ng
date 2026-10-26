@@ -6,15 +6,24 @@
 /// reply. Options, defaults, refusals, the answer's fields and its text live here, so the surfaces cannot drift apart
 /// (the SymbolControl / tracecontrol pattern).
 ///
-/// Actions (phase P1: L0 access facts only):
-///   start   [level mode]   switch on debug mode and memory tracking, set the tracker level (facts, the default, or
-///                          counters) and the mode (z80, the default, or physical), and start a fresh memory session
-///   stop                   stop the session; the facts stay readable until the next start
-///   status                 session state, level, mode, what the facts hold (bytes, touched addresses and pages)
-///   explain address [page] what L0 knows of one byte: access kinds, last reader and writer, frames, the values
-///                          written, the counters and the symbol names. address: $80BC, #80BC, 0x80BC, 80BCh,
-///                          decimal or a label; page (physical mode): absolute index, ram:N or rom:N (default: the
-///                          page mapped at the address now)
+/// Actions (L0 access facts, P1; L1 code behaviour, P2):
+///   start   [level mode record]  switch on debug mode and memory tracking, set the tracker level (facts, the
+///                          default, or counters) and the mode (z80, the default, or physical), and start a fresh
+///                          memory session; record=true also starts the TTD recording L1 is built from
+///   stop                   stop the session (and the recording start began); the facts stay readable until the next
+///                          start, the recording until the next one
+///   status                 session state, level, mode, what the facts hold, the recording, the L1 job and result
+///   build   [frames path wait]  the long operation: capture the recording (TraceBundle) and replay it on a muted
+///                          analysis instance into L1 on a worker thread (analysisjobs.h). Answers at once with the
+///                          job id; WebSocket topics analysis.progress / analysis.ready follow it. frames: replay at
+///                          most that many; path: write the L1 JSON there; wait: block up to that many ms (<= 30000)
+///   cancel                 stop the running build
+///   explain address [page what]  a routine's fact sheet (<= 1 KB, <= 24 disassembly lines) when L1 has a routine
+///                          running at the address (what=auto, the default, or routine), otherwise what L0 knows of
+///                          one byte (what=byte): access kinds, last reader and writer, frames, the values written,
+///                          the counters and the symbol names. address: $80BC, #80BC, 0x80BC, 80BCh, decimal or a
+///                          label; page: absolute index, ram:N or rom:N (L0: physical mode only, default the page
+///                          mapped at the address now; L1: picks the routine of that page)
 ///
 /// @code
 ///   analysis::Reply reply = analysis::Execute(emulator, "explain", {{"address", "$80BC"}});
@@ -60,12 +69,12 @@ struct Reply
     int HttpStatus() const { return ErrorHttpStatus(error); }
 };
 
-/// "start", "stop", "status", "explain"
+/// "start", "stop", "status", "build", "cancel", "explain"
 const std::vector<std::string>& Actions();
 /// The option names an action takes (empty for an unknown action)
 const std::vector<std::string>& OptionsFor(const std::string& action);
 
-/// Check the action and its options, then run it. start / stop hold the CPU for the switch
+/// Check the action and its options, then run it. start / stop / build hold the CPU for the switch or the capture
 Reply Execute(Emulator& emulator, const std::string& action, const Options& options = {});
 
 /// "$80BC", "#80BC", "0x80BC", "80BCh", "32956": false when it is none of these or above 0xFFFF

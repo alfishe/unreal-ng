@@ -10,6 +10,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/processstats.h"
+#include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
@@ -699,7 +700,8 @@ const std::vector<std::string>& InstanceNames()
 {
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
-                                                   "debug.analyzers", "controllers.state", "debug.buffers"};
+                                                   "debug.analyzers", "controllers.state", "debug.buffers",
+                                                   "analysis.progress", "analysis.ready"};
     return names;
 }
 
@@ -747,6 +749,10 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Buffers(emulator);
     if (name == "controllers.state")
         return Controllers(emulator);
+    if (name == "analysis.progress")
+        return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
+    if (name == "analysis.ready")
+        return analysis::L1Jobs::Instance().View(emulator.GetId()).ReadyNode();
     return {};
 }
 
