@@ -4,10 +4,12 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <optional>
 
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
+#include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -76,7 +78,7 @@ StateNode Reply::ToValue() const
 
 const std::vector<std::string>& Actions()
 {
-    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain"};
+    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain", "query", "export"};
     return actions;
 }
 
@@ -86,12 +88,18 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> start = {"level", "mode", "record"};
     static const std::vector<std::string> build = {"frames", "path", "wait"};
     static const std::vector<std::string> explain = {"address", "page", "what"};
+    static const std::vector<std::string> query = {"kind", "range", "limit"};
+    static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
     if (action == "start")
         return start;
     if (action == "build")
         return build;
     if (action == "explain")
         return explain;
+    if (action == "query")
+        return query;
+    if (action == "export")
+        return exportOptions;
     return none;
 }
 
@@ -330,6 +338,9 @@ StateNode StatusBody(Emulator& emulator, MemoryAccessTracker& tracker, std::stri
                 (view.diverged != 0 ? ", " + std::to_string(view.diverged) + " of " + std::to_string(view.checked) +
                                           " keyframes diverged"
                                     : "");
+    if (view.ready)
+        text += "\nL2: " + std::to_string(view.regions) + " regions, " + std::to_string(view.conflicts) +
+                " conflicts (analysis query, analysis export)";
     return body;
 }
 
@@ -712,13 +723,230 @@ Reply Explain(Emulator& emulator, MemoryAccessTracker& tracker, const Options& o
     return reply;
 }
 
+
+/// "8000-83FF", "$8000-$83FF", "0x8000..0x83FF", one address: that byte
+bool ParseRange(const std::string& text, ExportRange& range)
+{
+    std::string a = text, b;
+    size_t at = text.find("..");
+    size_t skip = 2;
+    if (at == std::string::npos)
+    {
+        at = text.find('-');
+        skip = 1;
+    }
+    if (at != std::string::npos)
+    {
+        a = text.substr(0, at);
+        b = text.substr(at + skip);
+    }
+    const auto parse = [](std::string t, uint16_t& v) {
+        if (!t.empty() && t[0] != '$' && t[0] != '#' && !(t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X')) &&
+            !(t.back() == 'h' || t.back() == 'H'))
+            t = "$" + t;  // a range is hex
+        return ParseAddress(t, v);
+    };
+    if (!parse(a, range.start))
+        return false;
+    range.end = range.start;
+    if (!b.empty() && !parse(b, range.end))
+        return false;
+    return range.end >= range.start;
+}
+
+bool ParseRanges(const std::string& text, std::vector<ExportRange>& ranges)
+{
+    size_t from = 0;
+    while (from <= text.size())
+    {
+        const size_t comma = text.find(',', from);
+        const std::string part = text.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+        ExportRange range;
+        if (!ParseRange(part, range))
+            return false;
+        ranges.push_back(range);
+        if (comma == std::string::npos)
+            break;
+        from = comma + 1;
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const ExportRange& x, const ExportRange& y) { return x.start < y.start; });
+    for (size_t i = 1; i < ranges.size(); ++i)
+        if (ranges[i].start <= ranges[i - 1].end)
+            return false;
+    return !ranges.empty();
+}
+
+Reply NoStructure()
+{
+    return Refuse(Error::Conflict, "no L2 yet: 'analysis start record=true', run the program, then 'analysis build'");
+}
+
+/// analysis query [kind range limit]: the claims of one kind (all: every claim; conflicts: the clashing pairs)
+Reply Query(Emulator& emulator, const Options& options)
+{
+    const std::shared_ptr<const L2Result> l2 = L1Jobs::Instance().Structure(emulator.GetId());
+    if (!l2)
+        return NoStructure();
+    std::string kindText = "all";
+    if (const auto it = options.find("kind"); it != options.end() && !it->second.empty())
+        kindText = Lower(it->second);
+    RegionKind kind = RegionKind::Data;
+    const bool all = kindText == "all";
+    const bool conflicts = kindText == "conflicts";
+    if (!all && !conflicts && !ParseRegionKind(kindText, kind))
+    {
+        std::string list;
+        for (int k = 0; k <= static_cast<int>(RegionKind::Untouched); ++k)
+            list += std::string(list.empty() ? "" : ", ") + RegionKindName(static_cast<RegionKind>(k));
+        return Refuse(Error::BadRequest, "kind: all, conflicts or a region kind (" + list + ")");
+    }
+    ExportRange range{0x0000, 0xFFFF};
+    if (const auto it = options.find("range"); it != options.end() && !it->second.empty() && !ParseRange(it->second, range))
+        return Refuse(Error::BadRequest, "range: start-end in hex (8000-83FF, $8000-$83FF)");
+    uint64_t limit = 200;
+    if (const auto it = options.find("limit"); it != options.end() && !ParseCount(it->second, 100000, limit))
+        return Refuse(Error::BadRequest, "limit: the most regions to answer, 0 to 100000");
+
+    const std::vector<Region>& regions = l2->store.Regions();
+    std::vector<size_t> picked;
+    std::vector<RegionStore::Conflict> clashes;
+    const auto inRange = [&](const Region& r) { return r.Z80End() >= range.start && r.z80 <= range.end; };
+    if (conflicts)
+    {
+        for (const RegionStore::Conflict& c : l2->store.Conflicts())
+            if (inRange(regions[c.a]) || inRange(regions[c.b]))
+                clashes.push_back(c);
+    }
+    else
+        for (size_t i = 0; i < regions.size(); ++i)
+            if ((all || regions[i].kind == kind) && inRange(regions[i]))
+                picked.push_back(i);
+
+    Reply reply;
+    reply.body["kind"] = kindText;
+    reply.body["range"] = Hex4(range.start) + "-" + Hex4(range.end);
+    StateNode list = StateNode::Array();
+    char line[200];
+    std::string text;
+    const auto row = [&](const Region& r) {
+        const std::string name = !r.label.empty() ? r.label : r.title;
+        std::snprintf(line, sizeof(line), "%04X-%04X %-13s %-14s %4u %-8s %s\n", r.z80, r.Z80End(),
+                      RegionKindName(r.kind), DetectorName(r.detector), static_cast<unsigned>(r.confidence),
+                      RegionStatusName(r.status), name.c_str());
+        text += line;
+    };
+    uint64_t shown = 0;
+    const uint64_t total = conflicts ? clashes.size() : picked.size();
+    if (conflicts)
+    {
+        for (const RegionStore::Conflict& c : clashes)
+        {
+            if (shown++ >= limit)
+                break;
+            StateNode pair = StateNode::Object();
+            pair["a"] = RegionNode(regions[c.a]);
+            pair["b"] = RegionNode(regions[c.b]);
+            list.push(pair);
+            row(regions[c.a]);
+            text += "  vs ";
+            row(regions[c.b]);
+        }
+    }
+    else
+        for (const size_t i : picked)
+        {
+            if (shown++ >= limit)
+                break;
+            list.push(RegionNode(regions[i]));
+            row(regions[i]);
+        }
+    reply.body[conflicts ? "conflicts" : "regions"] = list;
+    reply.body["count"] = total;
+    reply.body["truncated"] = total > limit;
+    reply.text = "L2 " + kindText + " in " + Hex4(range.start) + "-" + Hex4(range.end) + ": " + std::to_string(total) +
+                 (conflicts ? " conflicts" : " regions") +
+                 (total > limit ? " (first " + std::to_string(limit) + ")" : "") + "\n" +
+                 (text.empty() ? "" : "range     kind          detector       conf status   label / title\n" + text);
+    return reply;
+}
+
+/// analysis export format [path ranges width]: the draft (ctl, skool, fields, geometry, layout, symbols, map)
+Reply ExportDraft(Emulator& emulator, const Options& options)
+{
+    const std::shared_ptr<const L1Result> l1 = L1Jobs::Instance().Result(emulator.GetId());
+    const std::shared_ptr<const L2Result> l2 = L1Jobs::Instance().Structure(emulator.GetId());
+    if (!l1 || !l2)
+        return NoStructure();
+    std::string formats;
+    for (const std::string& f : ExportFormats())
+        formats += (formats.empty() ? "" : ", ") + f;
+    const auto formatIt = options.find("format");
+    if (formatIt == options.end() || formatIt->second.empty())
+        return Refuse(Error::BadRequest, "export needs a format (" + formats + ")");
+    const std::string format = Lower(formatIt->second);
+    ExportOptions exportOptions;
+    if (const auto it = options.find("ranges"); it != options.end() && !it->second.empty() &&
+                                                !ParseRanges(it->second, exportOptions.ranges))
+        return Refuse(Error::BadRequest, "ranges: hex ranges without overlap, comma separated (5900-59FF,8000-FFFF)");
+    if (const auto it = options.find("width"); it != options.end())
+    {
+        uint64_t width = 0;
+        if (!ParseCount(it->second, 64, width) || width == 0)
+            return Refuse(Error::BadRequest, "width: bytes per DEFB line, 1 to 64");
+        exportOptions.defbWidth = static_cast<uint16_t>(width);
+    }
+    Z80Disassembler disassembler(emulator.GetContext());
+    exportOptions.disassemble = [&disassembler](const uint8_t* bytes, uint16_t z80) {
+        const std::vector<uint8_t> code(bytes, bytes + 4);
+        uint8_t length = 0;
+        return disassembler.disassembleSingleCommand(code, z80, &length);
+    };
+    // Plain addresses: the draft names its own entries (@label), and a debugger label in an operand (a ROM symbol,
+    // "VR-CONT-$0003 ($0800)") is no assembler text
+    const Z80Disassembler::NoLabelsScope plainAddresses;
+    const ExportResult result = Export(*l1, *l2, format, exportOptions);
+    if (!result.ok)
+        return Refuse(Error::BadRequest, result.error);
+
+    Reply reply;
+    reply.body["format"] = format;
+    reply.body["entries"] = static_cast<uint64_t>(result.entries);
+    reply.body["bytes"] = static_cast<uint64_t>(result.text.size());
+    std::string ranges;
+    for (const ExportRange& r : exportOptions.ranges.empty() ? std::vector<ExportRange>{{0x4000, 0xFFFF}} : exportOptions.ranges)
+        ranges += (ranges.empty() ? "" : ",") + Hex4(r.start).substr(1) + "-" + Hex4(r.end).substr(1);
+    reply.body["ranges"] = ranges;
+    const auto pathIt = options.find("path");
+    if (pathIt != options.end() && !pathIt->second.empty())
+    {
+        std::ofstream file(pathIt->second, std::ios::binary | std::ios::trunc);
+        if (file)
+            file << result.text;
+        if (!file)
+            return Refuse(Error::Conflict, "could not write " + pathIt->second);
+        reply.body["path"] = pathIt->second;
+        reply.text = "L2 " + format + " (" + ranges + "): " + std::to_string(result.entries) + " entries, " +
+                     std::to_string(result.text.size()) + " bytes written to " + pathIt->second;
+        return reply;
+    }
+    reply.body["path"] = "";
+    reply.body["content"] = result.text;
+    // The text carries the file up to 16 KB (an agent may read only the text); "content" always all of it
+    constexpr size_t kTextMax = 16384;
+    reply.text = "L2 " + format + " (" + ranges + "): " + std::to_string(result.entries) + " entries, " +
+                 std::to_string(result.text.size()) + " bytes" +
+                 (result.text.size() > kTextMax ? " (the first 16 KB here, all in content; or give a path)" : "") + "\n" +
+                 result.text.substr(0, kTextMax);
+    return reply;
+}
+
 }  // namespace
 
 Reply Execute(Emulator& emulator, const std::string& action, const Options& options)
 {
     const std::vector<std::string>& actions = Actions();
     if (std::find(actions.begin(), actions.end(), action) == actions.end())
-        return Refuse(Error::BadRequest, "unknown action '" + action + "' (start, stop, status, build, cancel, explain)");
+        return Refuse(Error::BadRequest, "unknown action '" + action + "' (start, stop, status, build, cancel, explain, query, export)");
     const std::vector<std::string>& known = OptionsFor(action);
     for (const auto& [name, value] : options)
     {
@@ -747,6 +975,10 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         return Build(emulator, options);
     if (action == "cancel")
         return Cancel(emulator, *tracker);
+    if (action == "query")
+        return Query(emulator, options);
+    if (action == "export")
+        return ExportDraft(emulator, options);
     return Explain(emulator, *tracker, options);
 }
 

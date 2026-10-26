@@ -127,4 +127,61 @@
         explain["responses"]["404"]["description"] = "No such label; what=routine: no L1 routine runs there";
         explain["responses"]["409"]["description"] =
             "The tracker level is counters: no facts (analysis start first); what=routine: no L1 built yet";
+        Json::Value& query = paths["/api/v1/emulator/{id}/analysis/query"]["get"];
+        query["summary"] = "L2 regions: what the bytes are";
+        query["tags"].append("Analyzers");
+        query["description"] =
+            "The claims the L2 detectors made from the last L1 (signatures, code map, text, init tables, records, "
+            "pointer / handler tables, variables, in that order): each region with its range (physical and Z80), kind, "
+            "geometry (fields, instances, stride, terminator, generator, role), the routines that use it, the evidence "
+            "and an integer confidence 0..1000. A byte may carry several claims; kind=conflicts lists the pairs that "
+            "cannot both hold. text is a compact table.";
+        idParameter(query);
+        query["parameters"][1]["name"] = "kind";
+        query["parameters"][1]["in"] = "query";
+        query["parameters"][1]["required"] = false;
+        query["parameters"][1]["schema"]["type"] = "string";
+        query["parameters"][1]["description"] = "all (default), conflicts or a region kind (code, text, records, ...)";
+        query["parameters"][2]["name"] = "range";
+        query["parameters"][2]["in"] = "query";
+        query["parameters"][2]["required"] = false;
+        query["parameters"][2]["schema"]["type"] = "string";
+        query["parameters"][2]["description"] = "Hex start-end (8000-83FF); default the whole 64K";
+        query["parameters"][3]["name"] = "limit";
+        query["parameters"][3]["in"] = "query";
+        query["parameters"][3]["required"] = false;
+        query["parameters"][3]["schema"]["type"] = "integer";
+        query["parameters"][3]["description"] = "The most regions answered (default 200)";
+        query["responses"]["200"]["description"] = "kind, range, regions (or conflicts), count, truncated, text";
+        query["responses"]["400"]["description"] = "An unknown kind, a bad range or limit";
+        query["responses"]["409"]["description"] = "No L2 yet (build first)";
+
+        Json::Value& exportDraft = paths["/api/v1/emulator/{id}/analysis/export"]["post"];
+        exportDraft["summary"] = "Export the L2 draft";
+        exportDraft["tags"].append("Analyzers");
+        exportDraft["description"] =
+            "Writes the L2 regions as a SkoolKit control file (ctl, for sna2skool.py -c), a skool draft that builds "
+            "relocatable (labels on referenced addresses, @isub inside instructions and on page operands, @keep on "
+            "constants, ALIGN 256 before page tables, @org at range starts and the fixed tail), the record field lists "
+            "(fields) and graphics geometry (geometry) as JSON, the relocation layout (layout: REGION_START, "
+            "SHIFT_END), a symbol file through the skoolkit-ctl codec (symbols) or the region map (map). With a path "
+            "the file goes there; without, the answer's content carries it.";
+        idParameter(exportDraft);
+        {
+            Json::Value& schema = exportDraft["requestBody"]["content"]["application/json"]["schema"];
+            schema["type"] = "object";
+            schema["required"].append("format");
+            schema["properties"]["format"]["type"] = "string";
+            for (const char* format : {"ctl", "skool", "fields", "geometry", "layout", "symbols", "map"})
+                schema["properties"]["format"]["enum"].append(format);
+            schema["properties"]["path"]["type"] = "string";
+            schema["properties"]["path"]["description"] = "Write the file here (none: content in the answer)";
+            schema["properties"]["ranges"]["type"] = "string";
+            schema["properties"]["ranges"]["description"] = "Hex Z80 ranges, comma separated (default 4000-FFFF)";
+            schema["properties"]["width"]["type"] = "integer";
+            schema["properties"]["width"]["description"] = "Bytes per DEFB line (default 8)";
+        }
+        exportDraft["responses"]["200"]["description"] = "format, entries, bytes, ranges, path, content, text";
+        exportDraft["responses"]["400"]["description"] = "No or an unknown format, bad ranges or width";
+        exportDraft["responses"]["409"]["description"] = "No L2 yet (build first), or the path could not be written";
     }

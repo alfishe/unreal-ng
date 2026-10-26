@@ -41,6 +41,27 @@ written once from the reference comments; and the geometry of the 106 reference 
 
 Baselines: [score-p0.md](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/score-p0.md).
 
+## mm_session.py
+
+Records an input-script session on a snapshot through MCP (unreal-qt offscreen on its own ports, a Kempston card, the
+mixer muted), builds L1 + L2 and writes every `analysis export` format into `--out` (`draft.ctl`, `draft.skool`,
+`draft.fields.json`, `draft.geometry.json`, `draft.layout.mk`, `draft.symbols`, `draft.map.txt`), plus `l1.json`,
+`conflicts.txt` and `session.json`. The scripts are zx-reaper's `tests/inputs` format. Example in the docstring.
+
+## reaper_gate.py
+
+The P3 gate: a fresh zx-reaper project from the tape (`zxinit.py`), the input scripts and their expected hashes
+copied in, zxinit's skool replaced by the draft, `re/layout.mk` taking the draft's `REGION_START` / `SHIFT_END`, then
+`make` (tape identical), `make test`, `make shift-test` at +$100 and +$101 and `score_draft.py` with the draft's
+fields. Nothing is edited by hand. `gate.json`, `gate.log`, `score.txt`, `score.json` go into `--work`; exit 0 when
+every step passed. Result and commands: [score-p3.md](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/score-p3.md).
+
+## make_rom48_signatures.py
+
+Prints the 48K ROM signature catalog entries (`core/src/debugger/analyzers/analysis/signatures/rom48.cpp`) from a 48K
+ROM image: the first bytes of each listed routine, with the absolute operands of JP / CALL / LD (nn) masked out (a
+relocated copy matches too). Needs SkoolKit (its disassembler finds the instruction boundaries).
+
 ## Tests
 
 ```bash

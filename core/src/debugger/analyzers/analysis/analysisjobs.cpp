@@ -3,6 +3,8 @@
 #include <chrono>
 #include <fstream>
 
+#include "debugger/analyzers/analysis/detectors/detectors.h"
+
 namespace analysis
 {
 
@@ -30,6 +32,8 @@ StateNode JobView::ReadyNode() const
     node["frames"] = frames;
     node["checked"] = static_cast<uint64_t>(checked);
     node["diverged"] = static_cast<uint64_t>(diverged);
+    node["regions"] = regions;
+    node["conflicts"] = conflicts;
     node["path"] = path;
     return node;
 }
@@ -99,6 +103,13 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceB
     auto result = std::make_shared<L1Result>();
     std::string error;
     const bool ok = ReplayBuild(bundle, options, *result, error);
+    std::shared_ptr<const L2Result> structure;
+    uint64_t conflicts = 0;
+    if (ok)
+    {
+        structure = std::make_shared<const L2Result>(RunDetectors(*result));
+        conflicts = structure->store.Conflicts().size();
+    }
     if (ok && !j.path.empty())
     {
         std::ofstream file(j.path, std::ios::binary | std::ios::trunc);
@@ -113,6 +124,9 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceB
         if (ok && it != _slots.end() && it->second.job == job)
         {
             it->second.result = result;
+            it->second.structure = structure;
+            it->second.regions = structure->store.Size();
+            it->second.conflicts = conflicts;
             it->second.resultJob = j.id;
         }
     }
@@ -147,6 +161,8 @@ JobView L1Jobs::View(const std::string& emulatorId) const
             return view;
         job = it->second.job;
         result = it->second.result;
+        view.regions = it->second.regions;
+        view.conflicts = it->second.conflicts;
         view.readyJob = it->second.resultJob;
     }
     if (job)
@@ -181,6 +197,13 @@ std::shared_ptr<const L1Result> L1Jobs::Result(const std::string& emulatorId) co
     std::lock_guard<std::mutex> lock(_mutex);
     const auto it = _slots.find(emulatorId);
     return it != _slots.end() ? it->second.result : nullptr;
+}
+
+std::shared_ptr<const L2Result> L1Jobs::Structure(const std::string& emulatorId) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _slots.find(emulatorId);
+    return it != _slots.end() ? it->second.structure : nullptr;
 }
 
 bool L1Jobs::Wait(const std::string& emulatorId, int timeoutMs) const

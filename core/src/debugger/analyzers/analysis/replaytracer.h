@@ -27,6 +27,7 @@
 
 class Emulator;
 struct CONFIG;
+struct SlotConfig;
 
 namespace analysis
 {
@@ -39,6 +40,9 @@ struct TraceBundle
     std::string sourceId;
     std::string model;                         ///< short model name ("48K")
     std::shared_ptr<const CONFIG> config;      ///< the source's configuration (the clone is made to match it)
+    /// The source's fitted slot set as it ran (a card plugged at run time, a Kempston for a game's joystick, is in
+    /// it; the configuration's [SLOTS] is the set the machine was created with). Null: no slot manager
+    std::shared_ptr<const SlotConfig> slots;
     std::shared_ptr<const std::string> session;  ///< the TTD session file, in memory
     uint64_t firstFrame = 0;                   ///< the first keyframe
     uint64_t endFrame = 0;                     ///< the frame the recording ended in

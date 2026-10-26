@@ -8,6 +8,8 @@
 ///   analysis stop | status | cancel
 ///   analysis build [<frames>] [path=<file>] [wait=<ms>]
 ///   analysis explain <address> [<page>] [routine|byte]          (also page=<p> what=<w>)
+///   analysis query [<kind>] [<range>] [limit=<n>]               (L2 claims: kind all | conflicts | records | ...)
+///   analysis export <format> [<path>] [ranges=<r,...>] [width=<n>]   (ctl, skool, fields, geometry, layout, ...)
 
 #include <map>
 #include <string>
@@ -17,7 +19,8 @@ namespace CliAnalysis
 {
 inline constexpr const char* kUsage =
     "Usage: analysis start [facts|counters] [z80|physical] [record] | stop | status | build [frames] [path=F] "
-    "[wait=MS] | cancel | explain <address> [page] [routine|byte] [--json]";
+    "[wait=MS] | cancel | explain <address> [page] [routine|byte] | query [kind] [range] [limit=N] | export <format> "
+    "[path] [ranges=5900-59FF,8000-FFFF] [width=N] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name
 inline bool ParseArgs(const std::vector<std::string>& args, std::string& action, std::map<std::string, std::string>& options,
@@ -68,6 +71,14 @@ inline bool ParseArgs(const std::vector<std::string>& args, std::string& action,
             options["address"] = word;
         else if (action == "explain" && !options.count("page"))
             options["page"] = word;
+        else if (action == "query" && !options.count("kind"))
+            options["kind"] = word;
+        else if (action == "query" && !options.count("range"))
+            options["range"] = word;
+        else if (action == "export" && !options.count("format"))
+            options["format"] = word;
+        else if (action == "export" && !options.count("path"))
+            options["path"] = word;
         else
         {
             error = action + ": unexpected '" + word + "'";

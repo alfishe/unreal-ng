@@ -5,6 +5,7 @@
 #include <deque>
 #include <map>
 #include <random>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 
@@ -108,6 +109,12 @@ struct Node
     bool baseWrite = false;
 
     StrideSlot stride[2];  ///< the first data read, the first data write
+    uint16_t baseDataReg = 0;      ///< the 8-bit register the base + offset access loaded / stored (0: none yet)
+    bool baseDataMixed = false;    ///< more than one register was seen
+
+    // Pointer uses through registers it loaded (indices into Impl::ptrs; kNone: none)
+    uint32_t ptrImm = 0xFFFFFFFFu;
+    uint32_t ptrHigh = 0xFFFFFFFFu;
 
     // DataFlow
     uint16_t immValue = 0;
@@ -254,6 +261,12 @@ int PairOfMem(MemForm form)
     }
 }
 
+/// The pair of a register-indirect memory operand (no block instructions): 0 BC .. 4 IY, -1 none
+int memPairOf(MemForm form)
+{
+    return form == MemForm::Block ? -1 : PairOfMem(form);
+}
+
 /// 8-bit provenance slots: A B C D E H L (reg bits 0, 2..7)
 int ProvSlot(int bit)
 {
@@ -397,6 +410,88 @@ bool AddSorted(std::vector<uint16_t>& values, uint16_t value, size_t cap)
     return true;
 }
 
+/// What the replay saw of one byte (ByteUse, with node indices until Build)
+struct UseAcc
+{
+    uint16_t flags = 0;
+    uint8_t minWritten = 0xFF;
+    uint8_t maxWritten = 0;
+    uint8_t distinct = 0;
+    bool multiReader = false;
+    bool multiWriter = false;
+    uint32_t firstReader = 0xFFFFFFFFu;
+    uint32_t lastReader = 0xFFFFFFFFu;
+    uint32_t firstWriter = 0xFFFFFFFFu;
+    uint32_t lastWriter = 0xFFFFFFFFu;
+    uint32_t firstFrame = 0;
+    uint32_t lastFrame = 0;
+    uint32_t reads = 0;
+    uint32_t writes = 0;
+};
+
+/// Where the value of an 8-bit register came from (the pointer provenance: kept until the register is overwritten)
+constexpr uint8_t kOriginNone = 0;
+
+struct Origin
+{
+    uint8_t kind = kOriginNone;
+    uint32_t node = 0xFFFFFFFFu;
+    uint16_t value = 0;   ///< imm16: nn; imm8: n; memory: the Z80 address it was loaded from
+    PhysKey key = 0;      ///< memory: the byte's physical key
+};
+constexpr uint8_t kOriginImm16Lo = 1;
+constexpr uint8_t kOriginImm16Hi = 2;
+constexpr uint8_t kOriginImm8 = 3;
+constexpr uint8_t kOriginMemory = 4;
+
+/// Register slots of the provenance: B C D E H L IXH IXL IYH IYL (a pair p: slots 2p, 2p + 1), then A (a byte
+/// LD A,(HL) read that LD L,A or LD E,A moves into a pair: LD A,(HL) / INC HL / LD H,(HL) / LD L,A / JP (HL))
+int OriginSlot(uint16_t bit)
+{
+    switch (bit)
+    {
+        case reg::kB:
+            return 0;
+        case reg::kC:
+            return 1;
+        case reg::kD:
+            return 2;
+        case reg::kE:
+            return 3;
+        case reg::kH:
+            return 4;
+        case reg::kL:
+            return 5;
+        case reg::kIXH:
+            return 6;
+        case reg::kIXL:
+            return 7;
+        case reg::kIYH:
+            return 8;
+        case reg::kIYL:
+            return 9;
+        case reg::kA:
+            return 10;
+        default:
+            return -1;
+    }
+}
+constexpr int kOriginSlots = 11;
+constexpr uint16_t kOriginBits[kOriginSlots] = {reg::kB,   reg::kC,   reg::kD,   reg::kE,   reg::kH,  reg::kL,
+                                                reg::kIXH, reg::kIXL, reg::kIYH, reg::kIYL, reg::kA};
+
+bool SingleBit(uint16_t mask)
+{
+    return mask != 0 && (mask & (mask - 1)) == 0;
+}
+
+/// A PointerUse being folded
+struct PointerAcc
+{
+    PointerUse use;
+    bool seen = false;
+};
+
 }  // namespace
 
 struct L1Builder::Impl
@@ -429,6 +524,77 @@ struct L1Builder::Impl
         uint16_t value = 0;
     } lastPush;
 
+    // Per physical byte: what the code did with it
+    std::vector<std::unique_ptr<UseAcc[]>> usePages;
+    uint64_t firstFrameSeen = 0;
+    bool frameBaseSet = false;
+    // Pointer provenance of the 8-bit registers, and the pointer uses it found
+    Origin origins[kOriginSlots];
+    std::vector<PointerAcc> ptrs;
+    std::unordered_map<uint16_t, Origin> stackOrigins;  ///< stack slot -> the provenance a PUSH left there
+    /// The block copy in progress, and the runs seen: (first node, src, dst, length, dir) -> count
+    struct CopyRun
+    {
+        uint32_t node = kNone;
+        uint16_t src = 0;
+        uint16_t dst = 0;
+        uint16_t lastSrc = 0;
+        uint16_t lastDst = 0;
+        uint32_t length = 0;
+        int dir = 0;
+        PhysKey srcKey = 0;
+        PhysKey dstKey = 0;
+    } copyRun;
+    struct CopySeen
+    {
+        uint64_t count = 0;
+        PhysKey srcKey = 0;
+        PhysKey dstKey = 0;
+    };
+    std::map<std::tuple<uint32_t, uint16_t, uint16_t, uint32_t, int>, CopySeen> copyRuns;
+    static constexpr size_t kMaxCopies = 4096;
+
+    void FlushCopy()
+    {
+        if (copyRun.node != kNone && copyRun.length != 0)
+        {
+            const auto key = std::make_tuple(copyRun.node, copyRun.src, copyRun.dst, copyRun.length, copyRun.dir);
+            const auto it = copyRuns.find(key);
+            if (it != copyRuns.end())
+                ++it->second.count;
+            else if (copyRuns.size() < kMaxCopies)
+                copyRuns.emplace(key, CopySeen{1, copyRun.srcKey, copyRun.dstKey});
+        }
+        copyRun = CopyRun{};
+    }
+
+    void NoteCopy(uint32_t node, uint16_t src, uint16_t dst)
+    {
+        CopyRun& c = copyRun;
+        if (c.node != kNone)
+        {
+            const int dir = c.length == 1 ? static_cast<int16_t>(static_cast<uint16_t>(src - c.lastSrc)) : c.dir;
+            if ((dir == 1 || dir == -1) && static_cast<uint16_t>(c.lastSrc + dir) == src &&
+                static_cast<uint16_t>(c.lastDst + dir) == dst)
+            {
+                c.dir = dir;
+                c.lastSrc = src;
+                c.lastDst = dst;
+                ++c.length;
+                return;
+            }
+            FlushCopy();
+        }
+        c.node = node;
+        c.src = c.lastSrc = src;
+        c.dst = c.lastDst = dst;
+        c.length = 1;
+        c.dir = 1;
+        c.srcKey = MakeKey(pageOf(src), src);
+        c.dstKey = MakeKey(pageOf(dst), dst);
+    }
+    std::unordered_map<PhysKey, uint32_t, SaltedHash> wordPtrs;
+
     Pending pending;
     bool first = true;
     uint64_t instructions = 0;
@@ -436,7 +602,7 @@ struct L1Builder::Impl
     uint64_t tstates = 0;
 
     Impl(PageOf pageOfIn, uint64_t saltIn)
-        : pageOf(std::move(pageOfIn)), salt(saltIn), loops(64, SaltedHash{saltIn})
+        : pageOf(std::move(pageOfIn)), salt(saltIn), loops(64, SaltedHash{saltIn}), wordPtrs(64, SaltedHash{saltIn})
     {
         Frame root;
         stack.push_back(root);
@@ -478,6 +644,245 @@ struct L1Builder::Impl
         if (page >= dataPages.size())
             dataPages.resize(static_cast<size_t>(page) + 1, 0);
         dataPages[page] = 1;
+    }
+
+    UseAcc& UseOf(uint16_t page, uint16_t address)
+    {
+        if (page >= usePages.size())
+            usePages.resize(static_cast<size_t>(page) + 1);
+        std::unique_ptr<UseAcc[]>& table = usePages[page];
+        if (!table)
+            table.reset(new UseAcc[0x4000]);
+        return table[address & 0x3FFF];
+    }
+
+    /// One data or stack access of the pending instruction
+    void NoteUse(uint16_t page, uint16_t address, bool read, uint8_t value, uint32_t node, const OpInfo& op,
+                 uint64_t frame, bool word)
+    {
+        UseAcc& u = UseOf(page, address);
+        const auto rel = static_cast<uint32_t>(frame - firstFrameSeen);
+        if (u.flags == 0 && u.reads == 0 && u.writes == 0)
+            u.firstFrame = rel;
+        u.lastFrame = rel;
+        if (op.mem == MemForm::Stack)
+        {
+            u.flags |= read ? use::kStackRead : use::kStackWrite;
+            return;
+        }
+        uint16_t flags = read ? use::kRead : use::kWrite;
+        if (op.mem == MemForm::Block)
+            flags |= read ? use::kBlockRead : use::kBlockWrite;
+        else if (op.mem == MemForm::Abs)
+            flags |= use::kAbsolute;
+        else if (op.mem != MemForm::None)
+            flags |= use::kIndexed;
+        if (word)
+            flags |= read ? use::kWordRead : use::kWordWrite;
+        if (!read && op.mem != MemForm::Block)
+            flags |= op.cls == OpClass::IncDec ? use::kIncDec : use::kOtherWrite;
+        u.flags |= flags;
+        if (read)
+        {
+            if (u.reads != 0xFFFFFFFFu)
+                ++u.reads;
+            if (u.firstReader == kNone)
+                u.firstReader = node;
+            else if (u.firstReader != node)
+                u.multiReader = true;
+            u.lastReader = node;
+            return;
+        }
+        if (u.writes != 0xFFFFFFFFu)
+            ++u.writes;
+        if (u.firstWriter == kNone)
+            u.firstWriter = node;
+        else if (u.firstWriter != node)
+            u.multiWriter = true;
+        u.lastWriter = node;
+        if (u.distinct == 0)
+        {
+            u.minWritten = u.maxWritten = value;
+            u.distinct = 1;
+        }
+        else if (value < u.minWritten || value > u.maxWritten)
+        {
+            u.minWritten = std::min(u.minWritten, value);
+            u.maxWritten = std::max(u.maxWritten, value);
+            u.distinct = static_cast<uint8_t>(std::min(3, u.distinct + 1));
+        }
+        else if (u.distinct == 1 && value != u.minWritten)
+            u.distinct = 3;  // a third value inside the range
+        else if (u.distinct == 2 && value != u.minWritten && value != u.maxWritten)
+            u.distinct = 3;
+    }
+
+    PointerAcc& NewPointer(PointerForm form, PhysKey origin, uint16_t z80, uint8_t pair)
+    {
+        ptrs.emplace_back();
+        PointerAcc& acc = ptrs.back();
+        acc.use.form = form;
+        acc.use.origin = origin;
+        acc.use.z80 = z80;
+        acc.use.pair = pair;
+        return acc;
+    }
+
+    static void CountPointer(PointerAcc& acc, int32_t delta, uint16_t pc, bool code)
+    {
+        if (!acc.seen)
+        {
+            acc.seen = true;
+            acc.use.minDelta = acc.use.maxDelta = delta;
+            acc.use.useZ80 = pc;
+        }
+        acc.use.minDelta = std::min(acc.use.minDelta, delta);
+        acc.use.maxDelta = std::max(acc.use.maxDelta, delta);
+        ++acc.use.uses;
+        acc.use.code |= code;
+    }
+
+    /// An access to @p address through register pair @p pair (0 BC .. 4 IY), whose value was @p value
+    void PointerAccess(int pair, uint16_t address, uint16_t value, uint16_t pc, bool code)
+    {
+        PointerFrom(origins[2 * pair], origins[2 * pair + 1], pair, address, value, pc, code);
+    }
+
+    /// The same for a value whose halves came from @p hi and @p lo (a register pair, or two stack slots)
+    void PointerFrom(const Origin& hi, const Origin& lo, int pair, uint16_t address, uint16_t value, uint16_t pc,
+                     bool code)
+    {
+        if (hi.kind == kOriginImm16Hi && hi.node != kNone)
+        {
+            Node& n = nodes[hi.node];
+            if (n.ptrImm == kNone)
+            {
+                n.ptrImm = static_cast<uint32_t>(ptrs.size());
+                NewPointer(PointerForm::Immediate, n.key, n.z80, static_cast<uint8_t>(pair)).use.value = hi.value;
+            }
+            CountPointer(ptrs[n.ptrImm], static_cast<int32_t>(address) - static_cast<int32_t>(hi.value), pc, code);
+        }
+        else if (hi.kind == kOriginImm8 && hi.node != kNone)
+        {
+            Node& n = nodes[hi.node];
+            if (n.ptrHigh == kNone)
+            {
+                n.ptrHigh = static_cast<uint32_t>(ptrs.size());
+                NewPointer(PointerForm::ImmediateHigh, n.key, n.z80, static_cast<uint8_t>(pair)).use.value = hi.value;
+            }
+            CountPointer(ptrs[n.ptrHigh], static_cast<int32_t>(address) - static_cast<int32_t>(hi.value << 8), pc,
+                         code);
+        }
+        else if (hi.kind == kOriginMemory && lo.kind == kOriginMemory &&
+                 static_cast<uint16_t>(lo.value + 1) == hi.value && SamePage(lo.key, hi.key))
+        {
+            auto [it, added] = wordPtrs.emplace(lo.key, static_cast<uint32_t>(ptrs.size()));
+            if (added)
+            {
+                PointerAcc& acc = NewPointer(PointerForm::Word, lo.key, lo.value, static_cast<uint8_t>(pair));
+                acc.use.minValue = acc.use.maxValue = value;
+            }
+            PointerAcc& acc = ptrs[it->second];
+            acc.use.value = value;
+            acc.use.minValue = std::min(acc.use.minValue, value);
+            acc.use.maxValue = std::max(acc.use.maxValue, value);
+            CountPointer(acc, static_cast<int32_t>(address) - static_cast<int32_t>(value), pc, code);
+        }
+    }
+
+    /// The provenance after the pending instruction: what it loaded into which register. @p stackRead: the two
+    /// stack slots a POP / RET read (lo, hi), @p stackWrite: the slots a PUSH wrote
+    void DefineOrigins(const OpInfo& op, const uint8_t* b, uint32_t node, int reads, const uint16_t* readZ80,
+                       const PhysKey* readKey, int stackReads, const uint16_t* stackRead, int stackWrites,
+                       const uint16_t* stackWrite, uint16_t nextPc, uint16_t pc)
+    {
+        const uint16_t w = op.regsWritten;
+        const uint16_t wNoF = static_cast<uint16_t>(w & ~reg::kF);
+        // The stack: a PUSH keeps its register's provenance in the slots, a POP takes it back, a RET that pops a
+        // value loaded from memory used a code pointer (PUSH + RET dispatch)
+        if (op.mem == MemForm::Stack)
+        {
+            const auto slot = [this](uint16_t address) {
+                const auto it = stackOrigins.find(address);
+                return it != stackOrigins.end() ? it->second : Origin{};
+            };
+            if (stackWrites == 2)
+            {
+                const int pair = PairOfMask(static_cast<uint16_t>(op.regsRead & ~reg::kSP));
+                const bool push = op.flow == Flow::None && op.cls == OpClass::Stack && pair >= 0 && pair <= 4;
+                // The high byte is written first, one below SP; the low byte below it
+                const bool downward = static_cast<uint16_t>(stackWrite[0] - 1) == stackWrite[1];
+                const uint16_t loSlot = downward ? stackWrite[1] : stackWrite[0];
+                const uint16_t hiSlot = downward ? stackWrite[0] : stackWrite[1];
+                stackOrigins[loSlot] = push ? origins[2 * pair + 1] : Origin{};
+                stackOrigins[hiSlot] = push ? origins[2 * pair] : Origin{};
+            }
+            if (stackReads == 2 && (op.flow == Flow::Ret || op.flow == Flow::Reti || op.flow == Flow::Retn))
+            {
+                const Origin lo = slot(stackRead[0]);
+                const Origin hi = slot(stackRead[1]);
+                if (lo.kind == kOriginMemory && hi.kind == kOriginMemory)
+                    PointerFrom(hi, lo, 2, nextPc, nextPc, pc, true);
+                return;
+            }
+            if (stackReads == 2 && op.flow == Flow::None && PairOfMask(op.loadDest) >= 0 && stackWrites == 0)
+            {
+                const int pair = PairOfMask(op.loadDest);
+                if (pair <= 4)
+                {
+                    origins[2 * pair + 1] = slot(stackRead[0]);
+                    origins[2 * pair] = slot(stackRead[1]);
+                    return;
+                }
+            }
+        }
+        if (op.cls == OpClass::Exchange && w == (reg::kDE | reg::kHL))
+        {
+            std::swap(origins[2], origins[4]);
+            std::swap(origins[3], origins[5]);
+            return;
+        }
+        // INC rr / DEC rr / ADD HL,rr, INC / DEC of one half: the register still holds its pointer
+        if ((op.cls == OpClass::IncDec || op.cls == OpClass::Alu) && op.mem == MemForm::None && op.immBytes == 0 &&
+            (PairOfMask(wNoF) >= 0 || (op.cls == OpClass::IncDec && SingleBit(wNoF))))
+            return;
+        if (op.cls == OpClass::Load && op.immBytes == 2 && !op.immIsAddress && PairOfMask(op.immDest) >= 0)
+        {
+            const int pair = PairOfMask(op.immDest);
+            const auto value = static_cast<uint16_t>(b[op.immOffset & 3] | (b[(op.immOffset + 1) & 3] << 8));
+            origins[2 * pair] = Origin{kOriginImm16Hi, node, value, 0};
+            origins[2 * pair + 1] = Origin{kOriginImm16Lo, node, value, 0};
+            return;
+        }
+        if (op.cls == OpClass::Load && op.immBytes == 1 && SingleBit(op.immDest) && OriginSlot(op.immDest) >= 0)
+        {
+            origins[OriginSlot(op.immDest)] = Origin{kOriginImm8, node, b[op.immOffset & 3], 0};
+            return;
+        }
+        if (op.loadDest != 0 && op.mem != MemForm::Stack && reads > 0)
+        {
+            const int pair = PairOfMask(op.loadDest);
+            if (pair >= 0 && reads >= 2)
+            {
+                origins[2 * pair + 1] = Origin{kOriginMemory, kNone, readZ80[0], readKey[0]};
+                origins[2 * pair] = Origin{kOriginMemory, kNone, readZ80[1], readKey[1]};
+                return;
+            }
+            if (SingleBit(op.loadDest) && OriginSlot(op.loadDest) >= 0)
+            {
+                origins[OriginSlot(op.loadDest)] = Origin{kOriginMemory, kNone, readZ80[0], readKey[0]};
+                return;
+            }
+        }
+        if (op.copyDest != 0 && SingleBit(op.copyDest) && OriginSlot(op.copyDest) >= 0)
+        {
+            const int src = SingleBit(op.copySrc) ? OriginSlot(op.copySrc) : -1;
+            origins[OriginSlot(op.copyDest)] = src >= 0 ? origins[src] : Origin{};
+            return;
+        }
+        for (int slot = 0; slot < kOriginSlots; ++slot)
+            if ((w & kOriginBits[slot]) != 0)
+                origins[slot] = Origin{};
     }
 
     void AddSucc(Node& from, uint32_t to, EdgeKind kind)
@@ -824,6 +1229,14 @@ struct L1Builder::Impl
         uint16_t readAddress = 0, portIn = 0;
         uint16_t pushLo = 0, pushHi = 0;
         int pushBytes = 0;
+        const bool wordAccess =
+            op.mem == MemForm::Abs && (PairOfMask(op.loadDest) >= 0 || (op.memWrite && PairOfMask(op.regsRead) >= 0));
+        int reads = 0, stackReads = 0, stackWrites = 0;
+        uint16_t stackRead[2] = {0, 0}, stackWrite[2] = {0, 0};
+        uint16_t readZ80[2] = {0, 0};
+        PhysKey readKey[2] = {0, 0};
+        bool ptrRead = false, ptrWrite = false;
+        uint16_t ptrReadAddress = 0, ptrWriteAddress = 0;
         for (int i = dataStart; i < count; ++i)
         {
             const BusEvent& e = events[i];
@@ -832,6 +1245,11 @@ struct L1Builder::Impl
                 const bool read = e.type == 'R';
                 if (op.mem == MemForm::Stack)
                 {
+                    NoteUse(pageOf(e.address), e.address, read, e.value, p.node, op, p.frame, false);
+                    if (read && stackReads < 2)
+                        stackRead[stackReads++] = e.address;
+                    else if (!read && stackWrites < 2)
+                        stackWrite[stackWrites++] = e.address;
                     if (!read)
                     {
                         if (e.address == after.sp)
@@ -843,6 +1261,23 @@ struct L1Builder::Impl
                 }
                 const uint16_t page = pageOf(e.address);
                 NoteDataPage(page);
+                NoteUse(page, e.address, read, e.value, p.node, op, p.frame, wordAccess);
+                if (read && reads < 2)
+                {
+                    readZ80[reads] = e.address;
+                    readKey[reads] = MakeKey(page, e.address);
+                    ++reads;
+                }
+                if (read && !ptrRead)
+                {
+                    ptrRead = true;
+                    ptrReadAddress = e.address;
+                }
+                else if (!read && !ptrWrite)
+                {
+                    ptrWrite = true;
+                    ptrWriteAddress = e.address;
+                }
                 AddInterval(read ? n.reads : n.writes, MakeKey(page, e.address), e.address);
                 if (accessLoop)
                     accessLoop->access = true;
@@ -862,7 +1297,23 @@ struct L1Builder::Impl
                 {
                     firstData = false;
                     if (op.mem == MemForm::IX || op.mem == MemForm::IY || op.mem == MemForm::HL)
+                    {
                         BaseAccess(n, op, p.regs, b, read);
+                        // The register the field went to / came from (a word field is two halves of one pair)
+                        const uint16_t addressRegs = op.mem == MemForm::IX   ? reg::kIX
+                                                     : op.mem == MemForm::IY ? reg::kIY
+                                                                             : reg::kHL;
+                        const uint16_t eight = reg::kA | reg::kBC | reg::kDE | reg::kHL;
+                        const uint16_t data = read ? static_cast<uint16_t>(op.loadDest & eight)
+                                                   : static_cast<uint16_t>(op.regsRead & eight & ~addressRegs);
+                        if (SingleBit(data))
+                        {
+                            if (n.baseDataReg == 0)
+                                n.baseDataReg = data;
+                            else if (n.baseDataReg != data)
+                                n.baseDataMixed = true;
+                        }
+                    }
                 }
             }
             else if (e.type == 'I' || e.type == 'O')
@@ -912,6 +1363,30 @@ struct L1Builder::Impl
             }
             f.defined |= writes;
         }
+
+        // Pointer provenance: the accesses through a register pair, then what this instruction loaded
+        if (op.mem == MemForm::Block)
+        {
+            if (ptrRead)
+                PointerAccess(2, ptrReadAddress, p.regs.hl, p.pc, false);
+            if (ptrWrite)
+                PointerAccess(op.memRead ? 1 : 2, ptrWriteAddress, op.memRead ? p.regs.de : p.regs.hl, p.pc, false);
+        }
+        else if (memPairOf(op.mem) >= 0 && (ptrRead || ptrWrite))
+        {
+            const int pair = memPairOf(op.mem);
+            const uint16_t base = static_cast<uint16_t>(RegValue(p.regs, pair));
+            PointerAccess(pair, ptrRead ? ptrReadAddress : ptrWriteAddress, base, p.pc, false);
+        }
+        else if (op.flow == Flow::JpIndirect)
+        {
+            const int pair = (op.regsRead & reg::kIX) != 0 ? 3 : (op.regsRead & reg::kIY) != 0 ? 4 : 2;
+            PointerAccess(pair, nextPc, static_cast<uint16_t>(RegValue(p.regs, pair)), p.pc, true);
+        }
+        DefineOrigins(op, b, p.node, reads, readZ80, readKey, stackReads, stackRead, stackWrites, stackWrite, nextPc,
+                      p.pc);
+        if (op.cls == OpClass::Block && op.mem == MemForm::Block && op.memRead && op.memWrite && ptrRead && ptrWrite)
+            NoteCopy(p.node, ptrReadAddress, ptrWriteAddress);
 
         // DataFlow: the uses first (the tags before this instruction), then its definitions
         const auto window = [this](uint64_t seq) { return seq != 0 && blockSeq - seq <= 1; };
@@ -1255,6 +1730,7 @@ struct L1Builder::Impl
         {
             nodes[current].entryKinds |= entry::kRoot;
             first = false;
+            firstFrameSeen = frame;
         }
         if (interrupted)
         {
@@ -1328,6 +1804,10 @@ size_t L1Builder::MemoryBytes() const
         if (table)
             bytes += 0x4000 * sizeof(uint32_t);
     bytes += impl.loops.size() * (sizeof(LoopStats) + 32) + impl.stack.capacity() * sizeof(Frame);
+    for (const auto& table : impl.usePages)
+        if (table)
+            bytes += 0x4000 * sizeof(UseAcc);
+    bytes += impl.ptrs.capacity() * sizeof(PointerAcc) + impl.wordPtrs.size() * 16;
     return bytes;
 }
 
@@ -1713,6 +2193,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         bool reads = false;
         bool writes = false;
         std::vector<uint16_t> instructions;
+        std::map<int, uint16_t> regsAt;                  ///< offset -> the 8-bit registers its accesses used
+        std::map<uint16_t, std::set<int>> offsetsByBase;  ///< IX / IY: base -> offsets accessed there
     };
     std::map<std::pair<uint32_t, uint8_t>, PatternAcc> patterns;
     for (const uint32_t u : order)
@@ -1730,6 +2212,22 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         acc.writes |= n.baseWrite;
         if (acc.instructions.size() < kMaxPatternInstructions)
             AddSorted(acc.instructions, n.z80, kMaxPatternInstructions);
+        int single = -1;
+        int bitsSet = 0;
+        for (int bit = 0; bit < 256; ++bit)
+            if ((n.disp[bit >> 6] >> (bit & 63)) & 1u)
+            {
+                single = bit - 128;
+                ++bitsSet;
+            }
+        if (bitsSet == 1)
+        {
+            if (n.baseDataReg != 0 && !n.baseDataMixed)
+                acc.regsAt[single] |= n.baseDataReg;
+            if (n.baseKind != static_cast<uint8_t>(BaseReg::HL))
+                for (const uint16_t base : n.bases)
+                    acc.offsetsByBase[base].insert(single);
+        }
     }
     for (const auto& [key, acc] : patterns)
     {
@@ -1746,6 +2244,28 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         pattern.instructions = acc.instructions;
         if (pattern.base == BaseReg::HL && pattern.offsets.size() < 2 && pattern.bases.size() < 2)
             continue;
+        // Word fields: the low half of a pair at d, its high half at d + 1
+        static const std::pair<uint16_t, uint16_t> kHalves[] = {
+            {reg::kC, reg::kB}, {reg::kE, reg::kD}, {reg::kL, reg::kH}};
+        for (const auto& [offset, regs] : acc.regsAt)
+        {
+            const auto next = acc.regsAt.find(offset + 1);
+            if (next == acc.regsAt.end())
+                continue;
+            for (const auto& [low, high] : kHalves)
+                if ((regs & low) != 0 && (next->second & high) != 0)
+                {
+                    pattern.wordOffsets.push_back(static_cast<int16_t>(offset));
+                    break;
+                }
+        }
+        if (pattern.base != BaseReg::HL)
+            for (const uint16_t base : pattern.bases)
+            {
+                const auto it = acc.offsetsByBase.find(base);
+                const size_t n = it != acc.offsetsByBase.end() ? it->second.size() : 0;
+                pattern.offsetsAtBase.push_back(static_cast<uint8_t>(std::min<size_t>(n, 255)));
+            }
         // The step: the most common distance between consecutive bases (the smallest of equals)
         std::map<int32_t, uint32_t> gaps;
         for (size_t i = 1; i < pattern.bases.size(); ++i)
@@ -1799,6 +2319,104 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         ins.selfModified = n.smc;
         out.instructions.push_back(ins);
         out.instructionRoutine.push_back(routineOf[u]);
+    }
+
+    // Block copies
+    FlushCopy();
+    for (const auto& [key, seen] : copyRuns)
+    {
+        const auto& [node, src, dst, length, dir] = key;
+        BlockCopy c;
+        c.instruction = nodes[node].key;
+        c.z80 = nodes[node].z80;
+        c.src = src;
+        c.dst = dst;
+        c.srcKey = seen.srcKey;
+        c.dstKey = seen.dstKey;
+        c.length = length;
+        c.dir = static_cast<int8_t>(dir);
+        c.count = seen.count;
+        out.copies.push_back(c);
+    }
+    std::sort(out.copies.begin(), out.copies.end(), [](const BlockCopy& a, const BlockCopy& b) {
+        return std::make_tuple(a.instruction, a.src, a.dst, a.length) < std::make_tuple(b.instruction, b.src, b.dst, b.length);
+    });
+
+    // Pointer uses, sorted by form and origin
+    for (const PointerAcc& acc : ptrs)
+        if (acc.seen)
+            out.pointers.push_back(acc.use);
+    std::sort(out.pointers.begin(), out.pointers.end(), [](const PointerUse& a, const PointerUse& b) {
+        return std::make_pair(static_cast<int>(a.form), a.origin) < std::make_pair(static_cast<int>(b.form), b.origin);
+    });
+
+    // Byte uses: the data accesses, the instruction bytes, the words used as pointers
+    {
+        const auto keyOf = [this](uint32_t node) { return node == kNone ? kNoKey : nodes[node].key; };
+        std::vector<uint16_t> usedPages;
+        for (uint16_t page = 0; page < usePages.size(); ++page)
+            if (usePages[page])
+                usedPages.push_back(page);
+        for (uint16_t page = 0; page < pageIndex.size(); ++page)
+            if (pageIndex[page])
+                usedPages.push_back(page);
+        std::sort(usedPages.begin(), usedPages.end());
+        usedPages.erase(std::unique(usedPages.begin(), usedPages.end()), usedPages.end());
+        for (const uint16_t page : usedPages)
+        {
+            BytePage bp;
+            bp.page = page;
+            bp.bytes.resize(0x4000);
+            if (page < usePages.size() && usePages[page])
+            {
+                const UseAcc* acc = usePages[page].get();
+                for (uint32_t i = 0; i < 0x4000; ++i)
+                {
+                    const UseAcc& a = acc[i];
+                    ByteUse& u = bp.bytes[i];
+                    u.flags = a.flags;
+                    u.minWritten = a.minWritten;
+                    u.maxWritten = a.maxWritten;
+                    u.distinct = a.distinct;
+                    u.multiReader = a.multiReader;
+                    u.multiWriter = a.multiWriter;
+                    u.firstReader = keyOf(a.firstReader);
+                    u.lastReader = keyOf(a.lastReader);
+                    u.firstWriter = keyOf(a.firstWriter);
+                    u.lastWriter = keyOf(a.lastWriter);
+                    u.firstFrame = a.firstFrame;
+                    u.lastFrame = a.lastFrame;
+                    u.reads = a.reads;
+                    u.writes = a.writes;
+                }
+            }
+            out.bytePages.push_back(std::move(bp));
+        }
+        const auto useAt = [&out](PhysKey key) -> ByteUse* {
+            for (BytePage& bp : out.bytePages)
+                if (bp.page == KeyPage(key))
+                    return &bp.bytes[KeyOffset(key)];
+            return nullptr;
+        };
+        for (const uint32_t u : order)
+        {
+            const Node& n = nodes[u];
+            for (uint8_t i = 0; i < n.length; ++i)
+            {
+                if (KeyOffset(n.key) + i >= 0x4000)
+                    break;
+                ByteUse* b = useAt(n.key + i);
+                if (b == nullptr)
+                    continue;
+                b->flags |= i == 0 ? use::kOpcode : use::kOperand;
+                if ((b->flags & use::kWrite) != 0 || n.smc)
+                    b->flags |= use::kSmc;
+            }
+        }
+        for (const PointerUse& p : out.pointers)
+            if (p.form == PointerForm::Word)
+                if (ByteUse* b = useAt(p.origin))
+                    b->flags |= use::kPointer;
     }
 
     // Pages, named

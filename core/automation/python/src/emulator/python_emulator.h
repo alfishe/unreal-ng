@@ -2885,7 +2885,10 @@ namespace PythonBindings
             }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
                "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
                "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
-               "'byte': a routine's fact sheet or a byte's facts). The reply's fields plus text (the readable answer); "
+               "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
+               "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
+               "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft). "
+               "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {

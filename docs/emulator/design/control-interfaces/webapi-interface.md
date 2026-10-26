@@ -737,11 +737,11 @@ While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) 
 
 ### Analysis layers
 
-The L0 access facts and the L1 code behaviour of the [analysis layers](../../analysis/analysis-layers.md)
+The L0 access facts, the L1 code behaviour and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md)
 (`analysis_api.cpp` over the shared core handler `analysis::Execute`; OpenAPI tag `Analyzers`). Every answer carries
 `text`, the CLI's lines; refusals are `{"error", "message"}` with 400 (unknown option, bad value), 404 (no such label,
 no routine there), 409 (`explain` at level `counters`, a build already running, no recording, `cancel` with no
-build), 503 (no tracker, no TTD engine).
+build, `query` / `export` before a build, a file `export` cannot write), 503 (no tracker, no TTD engine).
 
 ```
 POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?: "z80"|"physical", record?: bool}: status
@@ -758,6 +758,16 @@ GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=aut
                                                address, mode, bank | page, label, accessed, kinds, kinds_mask,
                                                first_frame, last_frame, last_reader, multi_reader, last_writer,
                                                multi_writer, written {distinct, min, max}, counters, text}
+GET  /api/v1/emulator/{id}/analysis/query?kind=records&range=8000-83FF&limit=20
+                                              L2 claims: kind all (default) | conflicts | a region kind (code, data,
+                                               text, buffer, init_table, records, variable, pointer_table,
+                                               handler_table, ...); {kind, range, regions [{start, end, page, size, kind,
+                                               detector, confidence, status, label, title, stride, count, ...}] |
+                                               conflicts [{a, b}], count,
+                                               truncated, text}
+POST /api/v1/emulator/{id}/analysis/export    {format: ctl|skool|fields|geometry|layout|symbols|map, path?,
+                                               ranges?: "5900-59FF,8000-FFFF", width?: 1..64}: the L2 draft
+                                              {format, entries, bytes, ranges, path, content (no path), text}
 ```
 
 ### Settings Management

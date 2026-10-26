@@ -603,7 +603,7 @@ reference: [command-interface.md](./command-interface.md).
 
 ### Analysis layers
 
-The L0 access facts and the L1 code behaviour of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
+The L0 access facts, the L1 code behaviour and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
 as every other plane (`analysis::Execute`), so the lines below are also the `text` of the REST and MCP answers.
 
 | CLI Command | Description |
@@ -614,6 +614,8 @@ as every other plane (`analysis::Execute`), so the lines below are also the `tex
 | `analysis cancel` | Cancel the running build (409 when none runs). |
 | `analysis status` (`analysis`) | State, level, mode, frame, what the facts hold. |
 | `analysis explain <addr> [page] [routine\|byte]` | With an L1 build, the fact sheet of the routine holding the address (at most 1 KB, 24 disassembly lines); `byte` (or no L1): what L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
+| `analysis query [kind] [range] [limit=N]` | L2: the claims of the detectors (signatures, code map, text, init tables, pointer / handler tables, records, variables) that cover the range (hex `8000-83FF`, `$8000-$83FF`; default all memory): `kind` `all` (default), `conflicts` (pairs of clashing claims) or a region kind (`code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...); `limit` (default 200) caps the list, `truncated` says when it cut. One line per claim: range, kind, detector, confidence, status, label or title. 409 before an L1 build. |
+| `analysis export <format> [path] [ranges=R,...] [width=N]` | The L2 draft: `ctl` (SkoolKit control file for `sna2skool.py -c`), `skool` (a skool file that assembles relocatable: `@label` on referenced addresses, `@isub` where an operand points inside an instruction or names a page, `@keep` on constants equal to an address, ALIGN 256 and the ORG of a range start after the instruction before), `fields` / `geometry` (JSON: record field lists, graphics geometry), `layout` (zx-reaper `re/layout.mk` lines `REGION_START`, `SHIFT_END`), `symbols` (the unreal-asm symbol codec), `map` (one line per claim). `ranges` (comma separated, no overlap; default `4000-FFFF`) are the Z80 ranges written, `width` (1-64, default 8) the bytes per DEFB line; with `path` the file is written there, without it the answer carries it (`content`; the text up to 16 KB). |
 
 `--json` prints the fields instead of the lines. Example:
 
@@ -624,6 +626,15 @@ analysis: capturing, level facts, mode z80, frame 120; facts 1024 KB, 0 Z80 addr
 $0038 [ROM 0]: OpcodeFetch
   frames 121..170
   counters: 0 reads, 0 writes, 50 executes
+> analysis query conflicts limit=2
+L2 conflicts in $0000-$FFFF: 117 conflicts (first 2)
+range     kind          detector       conf status   label / title
+8418-841A data          code_map        700 observed 
+  vs 8418-841A text          text            800 observed 
+841F-845D data          code_map        700 observed 
+  vs 842F-8457 text          text            800 observed 
+> analysis export skool scratch/game.skool ranges=5900-59FF,8000-FFFF
+L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
 ```
 
 ## Connection Examples

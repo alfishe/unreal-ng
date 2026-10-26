@@ -2,7 +2,7 @@
 
 /// @file analysisjobs.h
 /// @brief The long operation of the analysis layers: `analysis build` replays a TraceBundle on a worker thread
-/// (ReplayBuild, replaytracer.h) and keeps the L1 it made, one job and one result per source instance. The verbs
+/// (ReplayBuild, replaytracer.h), runs the L2 detectors on it (detectors/detectors.h) and keeps both, one job and one result per source instance. The verbs
 /// (analysiscontrol.h) start it and read it; the WebSocket topics `analysis.progress` and `analysis.ready`
 /// (monitoringapi.h) read JobView, which is published state only (a short lock, no wait for the worker).
 
@@ -16,6 +16,7 @@
 #include <string>
 #include <thread>
 
+#include "debugger/analyzers/analysis/l2model.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 
 namespace analysis
@@ -40,6 +41,8 @@ struct JobView
     uint64_t frames = 0;
     uint32_t checked = 0;
     uint32_t diverged = 0;
+    uint64_t regions = 0;         ///< L2 claims (the detectors ran after the replay)
+    uint64_t conflicts = 0;
     StateNode bundle;             ///< TraceBundle::ToStateNode of the job
 
     /// The `analysis.progress` / `analysis.ready` values
@@ -58,6 +61,8 @@ public:
                uint64_t& id, std::string& error);
     JobView View(const std::string& emulatorId) const;
     std::shared_ptr<const L1Result> Result(const std::string& emulatorId) const;
+    /// The L2 the detectors made from that L1 (on the worker, right after the replay)
+    std::shared_ptr<const L2Result> Structure(const std::string& emulatorId) const;
     /// Wait for the running build (true: it ended within @p timeoutMs)
     bool Wait(const std::string& emulatorId, int timeoutMs) const;
     bool Cancel(const std::string& emulatorId);
@@ -89,6 +94,9 @@ private:
     {
         std::shared_ptr<Job> job;
         std::shared_ptr<const L1Result> result;
+        std::shared_ptr<const L2Result> structure;
+        uint64_t regions = 0;
+        uint64_t conflicts = 0;
         uint64_t resultJob = 0;
     };
 

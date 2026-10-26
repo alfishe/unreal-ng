@@ -178,6 +178,58 @@ std::string L1Result::RegNames(uint16_t mask)
     return text.empty() ? "-" : text;
 }
 
+const char* PointerFormName(PointerForm form)
+{
+    switch (form)
+    {
+        case PointerForm::Immediate:
+            return "immediate";
+        case PointerForm::ImmediateHigh:
+            return "immediate_high";
+        case PointerForm::Word:
+            return "word";
+    }
+    return "";
+}
+
+const ByteUse* L1Result::UseAt(PhysKey key) const
+{
+    const uint16_t page = KeyPage(key);
+    const auto it = std::lower_bound(bytePages.begin(), bytePages.end(), page,
+                                     [](const BytePage& p, uint16_t value) { return p.page < value; });
+    if (it == bytePages.end() || it->page != page || it->bytes.size() <= KeyOffset(key))
+        return nullptr;
+    return &it->bytes[KeyOffset(key)];
+}
+
+namespace
+{
+const PageImage* ImageOf(const std::vector<PageImage>& images, uint16_t page)
+{
+    const auto it = std::lower_bound(images.begin(), images.end(), page,
+                                     [](const PageImage& p, uint16_t value) { return p.page < value; });
+    return it != images.end() && it->page == page ? &*it : nullptr;
+}
+}  // namespace
+
+bool L1Result::StartByte(PhysKey key, uint8_t& value) const
+{
+    const PageImage* image = ImageOf(images, KeyPage(key));
+    if (image == nullptr || image->start.size() <= KeyOffset(key))
+        return false;
+    value = image->start[KeyOffset(key)];
+    return true;
+}
+
+bool L1Result::EndByte(PhysKey key, uint8_t& value) const
+{
+    const PageImage* image = ImageOf(images, KeyPage(key));
+    if (image == nullptr || image->end.size() <= KeyOffset(key))
+        return false;
+    value = image->end[KeyOffset(key)];
+    return true;
+}
+
 void L1Result::BuildIndex()
 {
     byZ80.resize(instructions.size());
@@ -347,6 +399,14 @@ StateNode PatternNode(const BaseOffsetPattern& p)
     for (const uint16_t a : p.instructions)
         at.push(Hex4(a));
     node["instructions"] = std::move(at);
+    StateNode words = StateNode::Array();
+    for (const int16_t o : p.wordOffsets)
+        words.push(static_cast<int64_t>(o));
+    node["word_offsets"] = std::move(words);
+    StateNode atBase = StateNode::Array();
+    for (const uint8_t n : p.offsetsAtBase)
+        atBase.push(static_cast<unsigned>(n));
+    node["offsets_at_base"] = std::move(atBase);
     return node;
 }
 
@@ -603,6 +663,42 @@ StateNode L1Result::ToStateNode() const
         tables.push(std::move(node));
     }
     flow["page_tables"] = std::move(tables);
+    StateNode pointerList = StateNode::Array();
+    for (const PointerUse& u : pointers)
+    {
+        StateNode node = StateNode::Object();
+        node["form"] = PointerFormName(u.form);
+        node["at"] = Hex4(u.z80);
+        node["page"] = static_cast<unsigned>(KeyPage(u.origin));
+        node["value"] = Hex4(u.value);
+        if (u.form == PointerForm::Word)
+        {
+            node["min"] = Hex4(u.minValue);
+            node["max"] = Hex4(u.maxValue);
+        }
+        node["used_at"] = Hex4(u.useZ80);
+        node["uses"] = u.uses;
+        node["min_delta"] = static_cast<int64_t>(u.minDelta);
+        node["max_delta"] = static_cast<int64_t>(u.maxDelta);
+        node["code"] = u.code;
+        static const char* const kPairs[] = {"BC", "DE", "HL", "IX", "IY"};
+        node["pair"] = kPairs[u.pair < 5 ? u.pair : 0];
+        pointerList.push(std::move(node));
+    }
+    flow["pointers"] = std::move(pointerList);
+    StateNode copyList = StateNode::Array();
+    for (const BlockCopy& c : copies)
+    {
+        StateNode node = StateNode::Object();
+        node["at"] = Hex4(c.z80);
+        node["src"] = Hex4(c.src);
+        node["dst"] = Hex4(c.dst);
+        node["length"] = static_cast<uint64_t>(c.length);
+        node["dir"] = static_cast<int64_t>(c.dir);
+        node["count"] = c.count;
+        copyList.push(std::move(node));
+    }
+    flow["copies"] = std::move(copyList);
 
     StateNode branchList = StateNode::Array();
     for (const BranchCondition& b : branches)

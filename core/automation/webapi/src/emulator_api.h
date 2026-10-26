@@ -256,6 +256,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::analysisCancel, "/api/v1/emulator/{id}/analysis/cancel", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::analysisStatus, "/api/v1/emulator/{id}/analysis/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::analysisExplain, "/api/v1/emulator/{id}/analysis/explain", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisQuery, "/api/v1/emulator/{id}/analysis/query", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisExport, "/api/v1/emulator/{id}/analysis/export", drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -1166,6 +1168,11 @@ public:
                         const std::string& id) const;
     void analysisExplain(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& id) const;
+    // L2 (P3): GET query?kind=&range=&limit=, POST export {format, path, ranges, width}
+    void analysisQuery(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void analysisExport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,

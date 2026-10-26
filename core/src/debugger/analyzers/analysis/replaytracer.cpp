@@ -1,5 +1,6 @@
 #include "debugger/analyzers/analysis/replaytracer.h"
 
+#include <algorithm>
 #include <chrono>
 #include <sstream>
 
@@ -15,6 +16,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/platform.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/snapshot/machinestatetransfer.h"
 
@@ -53,6 +55,8 @@ bool TraceBundle::Capture(Emulator& source, TraceBundle& out, std::string& error
     out.session = bytes;
     out.sourceId = source.GetId();
     out.config = std::make_shared<const CONFIG>(context->config);
+    if (context->pSlotManager != nullptr)
+        out.slots = std::make_shared<const SlotConfig>(SlotManager::ConfigOf(context->pSlotManager->Current()));
     const TMemModel* model = Config::FindModelByEnum(context->config.mem_model);
     out.model = model != nullptr && model->ShortName != nullptr ? model->ShortName : "";
     out.firstFrame = ttd->GetCheckpoint(0)->time.frame;
@@ -108,7 +112,13 @@ struct Clone
         const CONFIG source = *bundle.config;
         emulator = std::make_unique<Emulator>("analysis-replay", LoggerLevel::LogError);
         emulator->SetPreferredModel(source.mem_model, source.ramsize);
-        emulator->SetConfigOverride([source](CONFIG& config) { MachineStateTransfer::FitSourceDevices(source, config); });
+        // The same model: the source's cards, and its slot set as it is (a card plugged at run time, a Kempston for
+        // a game's joystick, is part of what the recording checks before it loads)
+        emulator->SetConfigOverride([source, slots = bundle.slots](CONFIG& config) {
+            MachineStateTransfer::FitSourceDevices(source, config);
+            if (slots)
+                SlotManager::UseSlots(*slots, config);
+        });
         bool initialized = false;
         try
         {
@@ -216,6 +226,22 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         return false;
     }
 
+    // The memory the replay starts from, per mapped bank (the detectors read initial values and the unread bytes)
+    std::vector<PageImage> images;
+    uint16_t startBanks[4] = {};
+    const auto snap = [memory](uint8_t bank) {
+        std::vector<uint8_t> bytes(0x4000);
+        for (uint32_t i = 0; i < 0x4000; ++i)
+            bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>((bank << 14) | i));
+        return bytes;
+    };
+    for (uint8_t bank = 0; bank < 4; ++bank)
+    {
+        startBanks[bank] = memory->GetPageForBank(bank);
+        if (std::none_of(images.begin(), images.end(), [&](const PageImage& i) { return i.page == startBanks[bank]; }))
+            images.push_back(PageImage{startBanks[bank], snap(bank), {}});
+    }
+
     L1Builder builder([memory](uint16_t address) { return memory->GetPageForBank(static_cast<uint8_t>(address >> 14)); },
                       options.salt);
     Tap tap;
@@ -294,6 +320,18 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
             }
         }
         builder.Flush(RegsOf(*z80, z80->pc), context->emulatorState.t_states + z80->t);
+        for (uint8_t bank = 0; bank < 4; ++bank)
+        {
+            const uint16_t page = memory->GetPageForBank(bank);
+            auto it = std::find_if(images.begin(), images.end(), [&](const PageImage& i) { return i.page == page; });
+            if (it == images.end())
+            {
+                images.push_back(PageImage{page, {}, {}});
+                it = images.end() - 1;
+            }
+            if (it->end.empty())
+                it->end = snap(bank);
+        }
         z80->m1TraceHook = nullptr;
         z80->busTraceHook = nullptr;
     }
@@ -319,6 +357,9 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         return info.pageType == 3 ? std::string(type) : std::string(type) + " " + std::to_string(info.logicalPageNum);
     });
     out.replay.builderBytes = builderBytes;
+    std::sort(images.begin(), images.end(), [](const PageImage& a, const PageImage& b) { return a.page < b.page; });
+    out.images = std::move(images);
+    std::copy(std::begin(startBanks), std::end(startBanks), std::begin(out.startBanks));
     out.replay.hostMicros = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
     return true;

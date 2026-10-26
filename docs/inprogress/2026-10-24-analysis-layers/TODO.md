@@ -24,7 +24,9 @@
 | P2 | `TraceBundle`, `ReplayTracer`, L1 structures, fact sheet | done 2026-10-26 in the worktree, awaits review: module doc [analysis-layers.md](../../emulator/analysis/analysis-layers.md) "L1: code behaviour", tests `AnalysisL1_Test.*` (fixtures `testdata/analysis/fixtures/`), [replay-p2.md](baselines/replay-p2.md) (gate >= 5x real time met), Manic Miner check in replay-p2.md |
 | P2 | `analysis build` / `cancel` as a job (topics `analysis.progress`, `analysis.ready`), `explain` routine sheets, `start record=true`, on every plane and MCP `analysis` | done 2026-10-26 in the worktree, awaits review: plane docs, live block `test_analysis_layers.py` |
 | P2 | P1 leftover: physical mode without the 64 K Z80 fact table | done 2026-10-26 (`AnalysisL0_Test.PhysicalModeHasNoZ80View`) |
-| P3 | Structural detectors, ROM signatures, ctl / skool export, `query` | open |
+| P3 | Region store, structural detectors (signatures with the 48K ROM catalog, code map, text, init tables, pointer / handler tables, records, variables), one file each | done 2026-10-26 in the worktree, awaits review: module doc [analysis-layers.md](../../emulator/analysis/analysis-layers.md) "L2 structure and the draft", tests `AnalysisL2_Test.*` (fixtures `testdata/analysis/fixtures/`) |
+| P3 | Export ctl / skool / fields / geometry / layout / symbols / map; `analysis query` / `export` on every plane and MCP | done 2026-10-26 in the worktree, awaits review: plane docs, live block `test_analysis_layers.py` |
+| P3 | Manic Miner gate through zx-reaper (`mm_session.py`, `reaper_gate.py`) | done 2026-10-26: [score-p3.md](baselines/score-p3.md): categories 99.98 %, entries 31 / 33, records 5 / 5, make / make test / shift +$100 / +$101 pass; zx-reaper fixes on its branch `unreal-ng-fixes` |
 | P4 | Media detectors, gallery | open |
 | P5 | Findings register, review queue, experiment runner, directed coverage, candidate bugs | open |
 | P5 | Recipe `.recipe/analysis/analysis-layers.md`, module doc, plane docs | module doc and plane docs started in P1 (L0 + the verbs); recipe open |

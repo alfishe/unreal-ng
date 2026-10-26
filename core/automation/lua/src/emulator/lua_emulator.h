@@ -6499,8 +6499,9 @@ public:
             return StateNodeToLua(ts, value);
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
-        // stop | status | build | cancel | explain; opts a table ({level=, mode=, record=} / {frames=, path=, wait=} /
-        // {address=, page=, what=}) or, for explain, the address, for start the level and for build the frames. The
+        // stop | status | build | cancel | explain | query | export; opts a table ({level=, mode=, record=} / {frames=,
+        // path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=, width=}) or, for
+        // explain, the address, for start the level, for build the frames, for query the kind, for export the format. The
         // answer: the reply's fields plus text; a refusal: ok = false, error = why
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
@@ -6514,6 +6515,8 @@ public:
                                           opts ? SymbolOptions(*opts, verb == "explain" ? "address"
                                                              : verb == "start" ? "level"
                                                              : verb == "build" ? "frames"
+                                                             : verb == "query" ? "kind"
+                                                             : verb == "export" ? "format"
                                                                                : "")
                                                : analysis::Options{});
             StateNode value = reply.ToValue();

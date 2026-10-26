@@ -216,6 +216,109 @@ struct BaseOffsetPattern
     bool reads = false;
     bool writes = false;
     std::vector<uint16_t> instructions;  ///< Z80 addresses of the accesses (sorted, at most 16)
+    /// Offsets that start a 16-bit field: (base+d) and (base+d+1) went to / came from the low and the high half of
+    /// one register pair (LD L,(IX+1) / LD H,(IX+2)), sorted
+    std::vector<int16_t> wordOffsets;
+    /// IX / IY: per entry of `bases`, how many distinct offsets were accessed at that base (a terminator test reads
+    /// one); empty for HL walks (their offsets are relative to where the walk started)
+    std::vector<uint8_t> offsetsAtBase;
+};
+
+/// What the code did with one byte over the replay (the replay's own access facts, per physical byte; the input of
+/// the L2 detectors). Bits of ByteUse::flags
+namespace use
+{
+constexpr uint16_t kRead = 1u << 0;         ///< a data read (not a fetch, not the stack)
+constexpr uint16_t kWrite = 1u << 1;        ///< a data write
+constexpr uint16_t kStackRead = 1u << 2;    ///< POP, RET, EX (SP)
+constexpr uint16_t kStackWrite = 1u << 3;   ///< PUSH, CALL, RST, an interrupt
+constexpr uint16_t kBlockRead = 1u << 4;    ///< LDI.. / CPI.. / OUTI.. source
+constexpr uint16_t kBlockWrite = 1u << 5;   ///< LDI.. / INI.. destination
+constexpr uint16_t kOpcode = 1u << 6;       ///< the first byte of an executed instruction
+constexpr uint16_t kOperand = 1u << 7;      ///< another byte of an executed instruction
+constexpr uint16_t kWordRead = 1u << 8;     ///< read by LD rr,(nn) (either byte)
+constexpr uint16_t kWordWrite = 1u << 9;    ///< written by LD (nn),rr
+constexpr uint16_t kPointer = 1u << 10;     ///< the low byte of a word that was used as an address
+constexpr uint16_t kIndexed = 1u << 11;     ///< accessed through a register: (HL), (DE), (BC), (IX+d), (IY+d)
+constexpr uint16_t kAbsolute = 1u << 12;    ///< accessed through (nn)
+constexpr uint16_t kIncDec = 1u << 13;      ///< written by INC / DEC
+constexpr uint16_t kOtherWrite = 1u << 14;  ///< written by anything but INC / DEC and a block instruction
+constexpr uint16_t kSmc = 1u << 15;         ///< written after it was executed: self-modifying code
+}  // namespace use
+
+struct ByteUse
+{
+    uint16_t flags = 0;
+    uint8_t minWritten = 0xFF;
+    uint8_t maxWritten = 0;
+    uint8_t distinct = 0;            ///< distinct values written: 0, 1, 2, 3 (3 or more)
+    bool multiReader = false;        ///< a second instruction read it
+    bool multiWriter = false;
+    PhysKey firstReader = kNoKey;    ///< instructions (physical keys)
+    PhysKey lastReader = kNoKey;
+    PhysKey firstWriter = kNoKey;
+    PhysKey lastWriter = kNoKey;
+    uint32_t firstFrame = 0;         ///< frames since the replay's first (any access)
+    uint32_t lastFrame = 0;
+    uint32_t reads = 0;              ///< saturating
+    uint32_t writes = 0;
+};
+
+/// One physical page's ByteUse (16 K entries)
+struct BytePage
+{
+    uint16_t page = 0;
+    std::vector<ByteUse> bytes;
+};
+
+/// One physical page's contents at the start and at the end of the replay (the pages mapped at either moment)
+struct PageImage
+{
+    uint16_t page = 0;
+    std::vector<uint8_t> start;  ///< empty: the page was not mapped at the start
+    std::vector<uint8_t> end;
+};
+
+/// A pointer seen used: an immediate, the high byte of an 8-bit immediate (a page), or a word in memory whose value
+/// later addressed memory (any distance: the register keeps its origin until it is overwritten; INC / DEC / ADD rr
+/// and INC / DEC of a half keep it)
+enum class PointerForm : uint8_t
+{
+    Immediate,      ///< LD rr,nn: nn (or its high byte) formed the address
+    ImmediateHigh,  ///< LD H,n / LD D,n / LD B,n: n was the high byte of the address (a page: n * 256)
+    Word,           ///< LD rr,(nn) or two byte loads from nn, nn+1: the word at nn
+};
+const char* PointerFormName(PointerForm form);
+
+struct PointerUse
+{
+    PointerForm form = PointerForm::Immediate;
+    PhysKey origin = 0;     ///< the instruction (Immediate, ImmediateHigh) or the word's first byte (Word)
+    uint16_t z80 = 0;
+    uint16_t value = 0;     ///< Immediate: nn; ImmediateHigh: n; Word: the value last seen
+    uint16_t minValue = 0;  ///< Word: the values seen
+    uint16_t maxValue = 0;
+    uint16_t useZ80 = 0;    ///< the first instruction that used it
+    uint64_t uses = 0;
+    int32_t minDelta = 0;   ///< address - value (ImmediateHigh: address - n * 256), the smallest and largest seen
+    int32_t maxDelta = 0;
+    bool code = false;      ///< used as a jump target (JP (rr))
+    uint8_t pair = 0;       ///< 0 BC, 1 DE, 2 HL, 3 IX, 4 IY
+};
+
+/// One block copy as it ran: LDIR / LDDR, or a chain of LDI / LDD, from src to dst (the run of consecutive
+/// LDx steps whose addresses moved on together; an interrupt between steps does not split it)
+struct BlockCopy
+{
+    PhysKey instruction = 0;  ///< the first LDx of the run
+    uint16_t z80 = 0;
+    uint16_t src = 0;         ///< the first byte read (LDD runs: the highest)
+    uint16_t dst = 0;
+    PhysKey srcKey = 0;
+    PhysKey dstKey = 0;
+    uint32_t length = 0;
+    int8_t dir = 1;           ///< +1 LDI / LDIR, -1 LDD / LDDR
+    uint64_t count = 0;       ///< runs with this source, destination and length
 };
 
 /// DataFlow answers, one block plus one hop
@@ -301,6 +404,13 @@ struct L1Result
     std::vector<ConstantCompare> constantCompares;
     std::vector<PageTable> pageTables;
     std::vector<BranchCondition> branches;
+    std::vector<PointerUse> pointers;       ///< sorted by (form, origin)
+    std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 4096
+    /// Per physical byte: what the code did with it (pages with a data access or code, sorted by page). Not in ToJson
+    std::vector<BytePage> bytePages;
+    /// The mapped pages' contents at the start and the end of the replay (sorted by page). Not in ToJson
+    std::vector<PageImage> images;
+    uint16_t startBanks[4] = {0, 0, 0, 0};  ///< the page mapped in each 16 K bank at the start
     /// page index -> the Z80 bank it was last seen mapped at (for showing physical ranges as Z80 ones)
     std::vector<std::pair<uint16_t, std::string>> pageNames;
 
@@ -314,6 +424,13 @@ struct L1Result
     const Routine* RoutineOf(PhysKey key) const;
     /// The routine that owns the instruction last executed at Z80 address @p z80 (any page; the lowest page wins)
     const Routine* RoutineAtZ80(uint16_t z80, int page = -1) const;
+    /// The use of one physical byte (nullptr: the page was never touched)
+    const ByteUse* UseAt(PhysKey key) const;
+    /// The byte at @p key at the start / the end of the replay (false: the page was not mapped then)
+    bool StartByte(PhysKey key, uint8_t& value) const;
+    bool EndByte(PhysKey key, uint8_t& value) const;
+    /// The physical key of Z80 address @p z80 through the start's paging
+    PhysKey StartKey(uint16_t z80) const { return MakeKey(startBanks[z80 >> 14], z80); }
     uint32_t IndexOf(const Routine& routine) const { return static_cast<uint32_t>(&routine - routines.data()); }
 
     /// Everything, deterministic (no host times)

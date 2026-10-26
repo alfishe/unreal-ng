@@ -4,7 +4,9 @@ Typed program analysis built from what the emulated CPU does. The design and the
 [docs/inprogress/2026-10-24-analysis-layers](../../inprogress/2026-10-24-analysis-layers/README.md); this page
 describes what is built. Phase P1 is in: the **L0 access facts** and the `analysis` verbs on every plane. Phase P2
 adds **L1 code behaviour**: `analysis build` replays a recording on an analysis instance and folds every instruction
-into routines, a call graph, loops, record fields and data flow; `explain` gives a routine's fact sheet.
+into routines, a call graph, loops, record fields and data flow; `explain` gives a routine's fact sheet. Phase P3
+adds the **L2 structure** (detectors over L1, a region store) and the **draft**: `query` lists the claims, `export`
+writes a SkoolKit ctl / skool that builds relocatable, the record fields, a relocation layout and symbols.
 
 ## L0 access facts
 
@@ -162,8 +164,74 @@ instructions a second, 1.2 MB held by the builder, no divergence from the record
 - Data intervals of one instruction are capped at 8.
 - `analysis.progress` and `analysis.ready` are monitoring state topics (sent on change, rate-limited by `max_hz`),
   not events.
-- REST `wait` blocks the request (at most 30 s); MCP `build` waits 20 s by default. The other verbs of design.md
-  (`query`, `export`, detectors) are later phases.
+- REST `wait` blocks the request (at most 30 s); MCP `build` waits 20 s by default. `query`, `export` and the detectors came in P3
+  (L2 above).
+
+## L2 structure and the draft
+
+The build runs the structural detectors on its L1 right after the replay (`analysis::RunDetectors`,
+`core/src/debugger/analyzers/analysis/detectors/`, one file per detector). Each reads L1 (routines, per-byte uses,
+block copies, pointer uses, the memory at the start and the end of the replay) and the claims made before it, and adds
+its own to the **region store** (`l2model.h`): a claim is a range with a kind, a detector, a confidence (fixed point
+0..1000, integer arithmetic only, the same on every compiler), a status (`observed`, `inferred`), its geometry (stride,
+count, fields, instances, terminator, generator) and the evidence that made it. Claims that clash are all kept
+(`query kind=conflicts`); the store is sorted by address, then detector, then the claim's own order, so one recording
+gives the same bytes everywhere.
+
+### Detectors, in their order
+
+| Detector | Claims | From |
+|----------|--------|------|
+| `signatures` | ROM routines (the 48K ROM catalog, `signatures/rom48.cpp`; masked patterns matched with `MemorySearch`, a check at the entry) as code with their names | the start image |
+| `code_map` | executed code (observed); code reached from it over a branch never taken, a call never made or a fall-through never seen (inferred, decoded until executed code, an unconditional transfer or a data byte); self-modifying code; data and untouched fallbacks. Entries: L1's, the call targets in inferred code, and a jump target after an unconditional transfer that only a tail jump or a backward branch reaches | L1 uses, the start image |
+| `text` | printed text (printable runs read by a routine on a print path: a font read or the ROM print, two calls deep; terminator zero, bit 7, a length byte or the count in code); source remnants (untouched tokenized assembler source) as `unused` with the decoded lines | L1 readers, call graph |
+| `init_tables` | tables one routine built and others read, and tables as loaded (a page table read as `LD H,n / LD L,A / LD A,(HL)`, a run read through a pointer), checked against the generators (screen rows, `x*n`, shifts, sine shape, bit reverse) | L1 writers, data flow |
+| `pointer_tables` | word tables whose words the code used as addresses (`LD E,(HL) / INC HL / LD D,(HL)`, `LD A,(HL) / INC HL / LD H,(HL) / LD L,A`, then an access, `JP (rr)` or `PUSH` + `RET`); handler tables (words jumped to) grow over the neighbouring words that point at code, their targets become entries | L1 word pointers |
+| `records` | record arrays from a base + offset pattern on one lattice (`(IX+d)`, `(IY+d)`, an `(HL)` walk): size the step, count the bases, a terminator test ends it; buffers (block copy destinations the code used) with the copy sources as instances | L1 patterns, block copies |
+| `variables` | bytes and words addressed directly that nothing else explains, with a role (counter, flag, pointer, word, value); then strided variables (four or more one-byte variables a constant step apart: an array of records) and groups (adjacent variables that share a routine, routines touching more than an eighth of the surroundings aside: one record) | L1 uses, profiles |
+
+At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
+its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).
+
+### Export
+
+`analysis export <format>` writes the draft from the store (`l2export.h`); the ctl and the skool share one plan
+(entries, sub-blocks, labels, `@org` points), where one owner wins each byte: executed code, text, unused, records,
+tables, init tables, media, inferred code, terminators, variables, other data, then the higher confidence; buffers
+are containers whose owners inside become sub-blocks.
+
+| Format | Content |
+|--------|---------|
+| `ctl` | SkoolKit control file for `sna2skool.py -c`: one directive per entry, sub-blocks, labels, `i` after each range |
+| `skool` | a skool draft: comments state replay facts only (users, copies, loops, fields, confidence); `@label` on every referenced address (skool2asm then puts it into the operands), `@isub` where an operand points inside an instruction (`label+1`) or names a page (`label/256`), `@keep` on a constant equal to an address, `ALIGN 256` before a page-aligned table and the ORG of a range start or the fixed tail as `@isub=+` on the instruction before (an instruction inserted at an entry start breaks `skool2asm -c`), `#R$xxxx` for entry addresses in comments, DEFB lines of `width` bytes split at field starts |
+| `fields` | JSON: every record array and buffer with base, stride, count, instances and fields (offset, size, name, values) |
+| `geometry` | JSON: graphics geometry (empty until the media detectors of P4) |
+| `layout` | zx-reaper `re/layout.mk` lines: `REGION_START` (the start of the range with the most code: it moves), `SHIFT_END` (the fixed tail: after the last unused block of at least $101 bytes in it, which the moved code grows into) |
+| `symbols` | the entry labels through the unreal-asm symbol codec (`skoolkit-ctl` by default) |
+| `map` | one line per claim: range, kind, detector, confidence, status, title |
+
+### Manic Miner gate (P3)
+
+`tools/verification/analysis/mm_session.py` records the four zx-reaper input scripts of run B (27536 frames) through MCP,
+builds and exports; `reaper_gate.py` puts the draft into a fresh zx-reaper project with no hand fixes and scores it
+against skoolkid's mm.skool. Result 2026-10-26: byte categories 99.98 %, code entries 31 of 33, all five record field
+lists complete, `make` identical, `make test` and both shift tests (+$100, +$101) pass
+([score-p3.md](../../inprogress/2026-10-24-analysis-layers/baselines/score-p3.md)).
+
+### Where P3 differs from design.md
+
+- Pointer / handler tables run before records (design: after): a table whose words the code used as addresses is a
+  table even where its walk also fits an array of 2-byte records; a record walk inside a table is not claimed.
+- Strided variables and variable groups are record claims of the variables detector that the ctl / skool do not own
+  (their variables are written one by one); they appear in the fields JSON and in the buffer field lists.
+- The skool's `ALIGN 256` and the ORG of a range start are `@isub=+` on the instruction before, not `@isub=>` on the
+  entry (skool2asm `-c` fails on an inserted first instruction); the ORG is in `#` hex (skool2asm turns a `$` address
+  in an inserted instruction into a label). The first entry keeps a plain `@org`.
+- The export disassembles with the debugger's labels off: the draft names its own entries.
+- zx-reaper needed three fixes for the gate (branch `unreal-ng-fixes`): `zxq asm` moves only the ORGs in
+  `REGION_START..SHIFT_END-1` and reads `#` hex ORGs; the shifted build saves `REGION_START..REGION_END`; the shift test
+  finds the entry through the shifted build's symbols (an ALIGN moves code by more than the shift).
+- No review queue, findings or gallery yet (P4 / P5); `geometry` is empty until the media detectors.
 
 ## The `analysis` verbs
 
@@ -179,10 +247,13 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `build` | `frames` (replay at most that many), `path` (write the L1 JSON there), `wait` (ms to wait for the result, at most 30000) | a long operation: captures the recording and starts the replay on a worker thread; `job`, `state` (running, done, failed, cancelled), `bundle` {source, model, first_frame, end_frame, frames, checkpoints, session_bytes, facts, facts_mode, coverage, calltrace}, `progress`, `ready` |
 | `cancel` | - | cancels the running build; the status |
 | `explain` | `address` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label), `page` (index, `ram:N`, `rom:N`), `what` (`auto`, default, `routine` or `byte`) | a routine of L1 at the address (`what` auto or routine): `what` = routine, `entry`, `page`, `page_name`, `kinds`, `instructions`, `blocks`, `profile`, `callers`, `callees`, `loops`, `fields`, `sheet_bytes`, and the fact sheet as `text`. Otherwise the byte (L0): `what` = byte, `address`, `mode`, `bank` or `page` {page, name, offset}, `label`, `accessed`, `kinds`, `kinds_mask`, `first_frame`, `last_frame`, `last_reader` {pc, label} or null, `multi_reader`, `last_writer`, `multi_writer`, `written` {distinct, min, max}, `counters` {reads, writes, executes} |
+| `query` | `kind` (`all`, default, `conflicts` or a region kind: `code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...), `range` (`8000-83FF`, `$8000-$83FF`; default all), `limit` (default 200, at most 100000) | `kind`, `range`, `regions` [{start, end, page, size, kind, detector, confidence, status, label, title, stride, count, ...}] or `conflicts` [{a, b}], `count`, `truncated`; the text one line per claim |
+| `export` | `format` (`ctl`, `skool`, `fields`, `geometry`, `layout`, `symbols`, `map`), `path` (write the file there), `ranges` (`5900-59FF,8000-FFFF`, no overlap; default `4000-FFFF`), `width` (DEFB bytes per line, 1..64, default 8) | `format`, `entries`, `bytes`, `ranges`, `path`; without `path` the file in `content` and the text (up to 16 KB) |
 
 Refusals: an unknown action or option, a value that does not parse (400); no such label, `what=routine` where no
 routine runs (404); `explain` of a byte at level `counters`, `what=routine` before a build, `build` with no recording
-or while one runs, `cancel` with none running (409); no memory tracker, `record` without a time travel engine
+or while one runs, `cancel` with none running, `query` / `export` before a build, a file `export` cannot write
+(409); no memory tracker, `record` without a time travel engine
 (503).
 
 The long operation has two WebSocket state topics (monitoring names, also `GET /api/v1/monitor/{name}`):
@@ -206,12 +277,12 @@ $80BC (score) [RAM 2]: DataRead, DataWrite
 
 | Plane | Shape | Doc |
 |-------|-------|-----|
-| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
-| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=` | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
+| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
+| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
 | WebSocket | every route as a `call` on `/api/v1/ws`; state topics `analysis.progress`, `analysis.ready` | [websocket-interface.md](../design/control-interfaces/websocket-interface.md#analysis-layers) |
 | Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason) | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
-| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain`, the level for `start`, the frames for `build`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
-| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain; level, mode, record, frames, path, wait, address, page, what}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text | [docs/features/mcp/README.md](../../features/mcp/README.md) |
+| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
+| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text | [docs/features/mcp/README.md](../../features/mcp/README.md) |
 
 The MCP tool calls are counted per tool and action in `host.clients.mcp.tools` (`GET /api/v1/monitor/host.clients`):
 `{"analysis": {"calls": N, "actions": {"explain": n, ...}}}`, every tool alike (`(none)` for a call without an

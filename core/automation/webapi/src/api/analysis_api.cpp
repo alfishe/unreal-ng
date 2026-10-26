@@ -7,6 +7,9 @@
 ///   POST /analysis/cancel
 ///   GET  /analysis/status
 ///   GET  /analysis/explain?address=&page=&what=
+///   GET  /analysis/query?kind=&range=&limit=       (L2 claims, P3)
+///   POST /analysis/export  {format, path?, ranges?, width?}   (the L2 draft: ctl, skool, fields, geometry, layout,
+///                                                    symbols, map)
 ///
 /// Every route turns its request into an analysis::Execute action (core/src/debugger/analyzers/analysis/
 /// analysiscontrol.h): the checks, the answer and its "text" are shared with the CLI, MCP, Lua and Python. A WebSocket
@@ -156,6 +159,21 @@ void EmulatorAPI::analysisExplain(const HttpRequestPtr& req, std::function<void(
                                   const std::string& id) const
 {
     RespondAnalysis(id, "explain", OptionsFromQuery(req, "explain"), callback);
+}
+
+void EmulatorAPI::analysisQuery(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    RespondAnalysis(id, "query", OptionsFromQuery(req, "query"), callback);
+}
+
+void EmulatorAPI::analysisExport(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "export", options, callback);
 }
 
 }  // namespace v1

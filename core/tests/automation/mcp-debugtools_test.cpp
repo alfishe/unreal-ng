@@ -329,6 +329,47 @@ TEST_F(McpDebugTools_Test, Analysis_BuildCancelAndRoutineExplainGoToTheirRoutes)
     EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=%248000&what=routine"), nullptr);
 }
 
+/// analysis query / export (P3): the query's options go into the URL, the export's into the body; export needs a format
+TEST_F(McpDebugTools_Test, Analysis_QueryAndExportGoToTheirRoutes)
+{
+    Json::Value queryBody;
+    queryBody["count"] = 1;
+    queryBody["text"] = "8000-80FF code           code-map       1000 observed";
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/query?kind=code&range=8000-80FF&limit=5"] = {200, queryBody};
+
+    Json::Value args;
+    args["action"] = "query";
+    args["kind"] = "code";
+    args["range"] = "8000-80FF";
+    args["limit"] = 5;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("code-map"), std::string::npos) << result.text;
+
+    args = Json::Value();
+    args["action"] = "query";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/query"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "export";
+    args["format"] = "skool";
+    args["path"] = "/tmp/x.skool";
+    args["ranges"] = "8000-FFFF";
+    args["width"] = 16;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* exported = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/export");
+    ASSERT_NE(exported, nullptr);
+    EXPECT_EQ(exported->body["format"].asString(), "skool");
+    EXPECT_EQ(exported->body["path"].asString(), "/tmp/x.skool");
+    EXPECT_EQ(exported->body["ranges"].asString(), "8000-FFFF");
+    EXPECT_EQ(exported->body["width"].asUInt64(), 16u);
+
+    args = Json::Value();
+    args["action"] = "export";
+    EXPECT_TRUE(Run("analysis", args).isError) << "export needs a format";
+}
+
 TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
 {
     Json::Value args;

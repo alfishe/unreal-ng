@@ -6,7 +6,7 @@
 /// reply. Options, defaults, refusals, the answer's fields and its text live here, so the surfaces cannot drift apart
 /// (the SymbolControl / tracecontrol pattern).
 ///
-/// Actions (L0 access facts, P1; L1 code behaviour, P2):
+/// Actions (L0 access facts, P1; L1 code behaviour, P2; L2 structure, P3):
 ///   start   [level mode record]  switch on debug mode and memory tracking, set the tracker level (facts, the
 ///                          default, or counters) and the mode (z80, the default, or physical), and start a fresh
 ///                          memory session; record=true also starts the TTD recording L1 is built from
@@ -24,6 +24,12 @@
 ///                          the counters and the symbol names. address: $80BC, #80BC, 0x80BC, 80BCh, decimal or a
 ///                          label; page: absolute index, ram:N or rom:N (L0: physical mode only, default the page
 ///                          mapped at the address now; L1: picks the routine of that page)
+///   query   [kind range limit]  L2 (P3): the claims of one region kind (all, the default; conflicts: the clashing
+///                          pairs) overlapping range (hex start-end), at most limit (200) rows; the text is a compact
+///                          table (range, kind, detector, confidence, status, label or title)
+///   export  format [path ranges width]  the L2 draft (l2export.h): ctl, skool, fields, geometry, layout, symbols or
+///                          map, of the Z80 ranges (hex, comma separated; default 4000-FFFF), DEFB lines of width
+///                          bytes (8); written to path, or answered in "content" (and the text)
 ///
 /// @code
 ///   analysis::Reply reply = analysis::Execute(emulator, "explain", {{"address", "$80BC"}});
@@ -69,7 +75,7 @@ struct Reply
     int HttpStatus() const { return ErrorHttpStatus(error); }
 };
 
-/// "start", "stop", "status", "build", "cancel", "explain"
+/// "start", "stop", "status", "build", "cancel", "explain", "query", "export"
 const std::vector<std::string>& Actions();
 /// The option names an action takes (empty for an unknown action)
 const std::vector<std::string>& OptionsFor(const std::string& action);

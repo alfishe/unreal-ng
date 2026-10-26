@@ -5,12 +5,16 @@
 
 #include "pch.h"
 
+#include <cstdio>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "../../../../automation/cli/src/commands/cli-analysis.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
@@ -69,8 +73,18 @@ TEST(AnalysisControl_Test, CliWords)
     ASSERT_TRUE(CliAnalysis::ParseArgs({"explain", "$8000", "routine"}, action, options, json, error));
     EXPECT_EQ(options, (std::map<std::string, std::string>{{"address", "$8000"}, {"what", "routine"}}));
 
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"query", "records", "8000-83FF", "limit=5"}, action, options, json, error));
+    EXPECT_EQ(action, "query");
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"kind", "records"}, {"range", "8000-83FF"}, {"limit", "5"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"export", "skool", "out/mm.skool", "ranges=8000-FFFF", "width=16"}, action,
+                                       options, json, error));
+    EXPECT_EQ(action, "export");
+    EXPECT_EQ(options, (std::map<std::string, std::string>{
+                           {"format", "skool"}, {"path", "out/mm.skool"}, {"ranges", "8000-FFFF"}, {"width", "16"}}));
+
     EXPECT_FALSE(CliAnalysis::ParseArgs({"start", "fast"}, action, options, json, error));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"explain", "1", "2", "3"}, action, options, json, error));
+    EXPECT_FALSE(CliAnalysis::ParseArgs({"export", "ctl", "a.ctl", "extra"}, action, options, json, error));
 }
 
 class AnalysisControlEmu_Test : public ::testing::Test
@@ -164,6 +178,7 @@ protected:
 start:  ld sp,$9F00
         di
 main:   ld hl,$A000
+        ld de,$5C00
         call fill
         jr main
 fill:   ld b,8
@@ -242,4 +257,65 @@ TEST_F(AnalysisControlL1_Test, BuildThenExplainARoutine)
                      "what")
                   .s,
               "byte");
+}
+
+/// The L2 verbs (P3): query the claims (a kind, a range, conflicts, the limit) and export the draft (the text in the
+/// answer, or a file), the refusals before an L1 and on bad options
+TEST_F(AnalysisControlL1_Test, QueryAndExportTheStructure)
+{
+    EXPECT_EQ(analysis::Execute(*_emulator, "query").error, analysis::Error::Conflict) << "no L1 yet";
+    EXPECT_EQ(analysis::Execute(*_emulator, "export", {{"format", "ctl"}}).error, analysis::Error::Conflict);
+
+    ASSERT_TRUE(analysis::Execute(*_emulator, "start", {{"record", "true"}}).Ok());
+    _emulator->RunNFrames(2);
+    const analysis::Reply built = analysis::Execute(*_emulator, "build", {{"wait", "20000"}});
+    ASSERT_TRUE(built.Ok()) << built.message;
+    ASSERT_EQ(Member(built.body, "state").s, "done") << built.text;
+    const analysis::Reply status = analysis::Execute(*_emulator, "status");
+    EXPECT_NE(status.text.find("L2: "), std::string::npos) << status.text;
+
+    const analysis::Reply all = analysis::Execute(*_emulator, "query");
+    ASSERT_TRUE(all.Ok()) << all.message;
+    EXPECT_GT(Member(all.body, "count").i, 0u);
+    const analysis::Reply code = analysis::Execute(*_emulator, "query", {{"kind", "code"}, {"range", "8000-80FF"}});
+    ASSERT_TRUE(code.Ok()) << code.message;
+    EXPECT_EQ(Member(code.body, "range").s, "$8000-$80FF");
+    ASSERT_GT(Member(code.body, "regions").size(), 0u) << code.text;
+    for (size_t i = 0; i < Member(code.body, "regions").size(); ++i)
+        EXPECT_EQ(Member(Member(code.body, "regions").items[i], "kind").s, "code");
+    EXPECT_NE(code.text.find("8000-"), std::string::npos) << code.text;
+    const analysis::Reply one = analysis::Execute(*_emulator, "query", {{"limit", "1"}});
+    ASSERT_TRUE(one.Ok());
+    EXPECT_EQ(Member(one.body, "regions").size(), 1u);
+    EXPECT_TRUE(Member(one.body, "truncated").b);
+    EXPECT_TRUE(analysis::Execute(*_emulator, "query", {{"kind", "conflicts"}}).Ok());
+    EXPECT_EQ(analysis::Execute(*_emulator, "query", {{"kind", "sprites?"}}).error, analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "query", {{"range", "9000-8000"}}).error, analysis::Error::BadRequest);
+
+    // The draft in the answer, then into a file
+    const analysis::Reply ctl = analysis::Execute(*_emulator, "export", {{"format", "ctl"}, {"ranges", "8000-80FF"}});
+    ASSERT_TRUE(ctl.Ok()) << ctl.message;
+    EXPECT_NE(Member(ctl.body, "content").s.find("c $8000"), std::string::npos) << Member(ctl.body, "content").s;
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("draft.skool");
+    const analysis::Reply skool =
+        analysis::Execute(*_emulator, "export", {{"format", "skool"}, {"path", path}, {"ranges", "8000-80FF"}});
+    ASSERT_TRUE(skool.Ok()) << skool.message;
+    EXPECT_EQ(Member(skool.body, "path").s, path);
+    std::ifstream file(path);
+    std::stringstream text;
+    text << file.rdbuf();
+    EXPECT_NE(text.str().find("@start"), std::string::npos);
+    EXPECT_NE(text.str().find("DJNZ"), std::string::npos) << text.str();
+    // Plain addresses in the operands: no debugger label (the 48K symbols name $5C00 KSTATE)
+    EXPECT_NE(text.str().find("LD DE,$5C00"), std::string::npos) << text.str();
+    EXPECT_EQ(text.str().find("KSTATE"), std::string::npos) << text.str();
+    std::remove(path.c_str());
+
+    EXPECT_EQ(analysis::Execute(*_emulator, "export").error, analysis::Error::BadRequest) << "no format";
+    EXPECT_EQ(analysis::Execute(*_emulator, "export", {{"format", "pdf"}}).error, analysis::Error::BadRequest);
+    EXPECT_EQ(analysis::Execute(*_emulator, "export", {{"format", "ctl"}, {"ranges", "8000-9000,8800-8900"}}).error,
+              analysis::Error::BadRequest)
+        << "overlapping ranges";
+    EXPECT_EQ(analysis::Execute(*_emulator, "export", {{"format", "skool"}, {"width", "0"}}).error,
+              analysis::Error::BadRequest);
 }

@@ -1893,8 +1893,8 @@ emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s
 
 ### Analysis layers
 
-The L0 access facts and the L1 build of the [analysis layers](../../analysis/analysis-layers.md) through the shared core handler
-(`analysis::Execute`): the answer is a dict of its fields plus `text` (the CLI's lines); a refusal is
+The L0 access facts, the L1 build and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md) through the shared
+core handler (`analysis::Execute`): the answer is a dict of its fields plus `text` (the CLI's lines); a refusal is
 `{"ok": False, "error": <why>}`.
 
 ```python
@@ -1913,6 +1913,12 @@ job = emu.analysis("build", wait=20000)                # {job, state, bundle, pr
 sheet = emu.analysis("explain", address=0x0038)        # L1 ready: {what: "routine", routine {...}, text: the sheet}
 emu.analysis("explain", address=0x0038, what="byte")   # the L0 byte facts as before
 emu.analysis("cancel")                                 # a running build; refused when none runs
+
+# L2 (made by the build): the detectors' claims and the draft
+q = emu.analysis("query", kind="records", range="8000-83FF", limit=20)  # {kind, range, regions [...], count, truncated, text}
+emu.analysis("query", kind="conflicts")                # pairs {a, b} of clashing claims
+ctl = emu.analysis("export", format="ctl")["content"]  # the control file in the answer
+emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000-FFFF", width=8)
 ```
 
 ### Enumerations
