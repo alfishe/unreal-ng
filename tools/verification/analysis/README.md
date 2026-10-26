@@ -88,8 +88,8 @@ python3 tools/verification/analysis/run_ab.py --draft scratch/p5/mm1 --work scra
     --bin scratch/reaper-mm/bin [--run-b-skool scratch/reaper-mm/compare/B.skool]
 ```
 
-The verdict (plan.md, P5): every gate step passes, quality at least run B's (byte categories by entry, code entries
-matched, graphics covered, names the same; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
+The verdict (plan.md, P5): every gate step passes, quality at least run B's (byte categories by line, code entries
+matched, graphics covered, names the same; by entry is reported too; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
 numbers), subagent tokens at most `--token-target` (200000). `ab.json` and `ab.md` go into `--work`; exit 0 pass,
 1 fail, 2 when the gate did not run through. The name pairs of the draft go into `<work>/names-pairs.tsv`. `--skip-gate` reuses `<work>/gate`.
 

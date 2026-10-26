@@ -327,3 +327,10 @@ Fixed after C6 (the agent's notes): a naming batch reports a subject labelled th
 skipped; the review sheet shows 32 bytes and a `text` line when most of them print (the cavern names are 32
 characters); recipe: an `ok` + `kind` + `label` example for `unknown`, one label per address (a pattern repeated
 per level gets one name each), a skip carries a comment.
+
+## The categories measure: by line first (2026-10-26)
+
+From C2 on the by-entry categories read 98.03 % against the draft's 99.98 %: the review makes the 20 cavern names
+(640 bytes) text entries, the reference keeps them as `T` sub-blocks inside each cavern's data entry, and by entry
+takes the whole entry's type. By line the same reviews read 99.93 % (the draft before the review: 97.98 %), so
+`run_ab.py` now judges the categories by line and reports by entry below it. Run B is 92.3 % either way.

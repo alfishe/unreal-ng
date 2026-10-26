@@ -19,14 +19,16 @@ that is not run_a / run_b is taken (--run picks one). Without --ledger, or with 
 "no ledger" and only the quality side is judged.
 
 Quality of run B: its final skool scored the same way (--run-b-skool), else the P0 baseline's numbers (score-p0.md:
-categories 92.3 %, code entries 33 / 33, graphics covered 106 / 106; names from score-p5.md: 50 of 142 the same).
+categories 92.3 % by line and by entry, code entries 33 / 33, graphics covered 106 / 106; names from score-p5.md: 50 of 142 the same).
 
 Names (score_draft.py, "Names"): each reference entry and @label in the range against the draft's label at the same
 address: auto (generated), exact, normalized (the same words), needs a judge, missing. The deterministic `same`
 (exact + normalized) is compared; the judge rows are listed, not counted (names-pairs.tsv in --work for a judge).
 
 The verdict (plan.md P5 row): subagent tokens <= --token-target (200000) and quality at least run B's (byte
-categories by entry, code entries matched, graphics regions covered, names the same) with every gate step passing. ab.json and
+categories by line, code entries matched, graphics regions covered, names the same) with every gate step passing. By
+line counts each reference sub-block (a cavern name is text inside a data entry); by entry, reported too, takes the
+whole entry's type. ab.json and
 ab.md go into --work; exit 0 when the verdict passes, 1 when it fails, 2 when the gate could not run.
 """
 
@@ -41,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 BASELINE = os.path.join(ROOT, 'docs', 'inprogress', '2026-10-24-analysis-layers', 'baselines',
                         'run-b-token-ledger.json')
-RUN_B_QUALITY = {'categories': 92.3, 'entries_matched': 33, 'entries_reference': 33, 'graphics_covered': 106,
+RUN_B_QUALITY = {'categories': 92.3, 'categories_entry': 92.3, 'entries_matched': 33, 'entries_reference': 33, 'graphics_covered': 106,
                  'graphics_total': 106, 'names_same': 50, 'names_total': 142, 'names_judge': 61, 'names_auto': 0,
                  'names_missing': 31, 'source': 'score-p0.md, score-p5.md (run B final skool)'}
 
@@ -58,8 +60,8 @@ def quality(score):
     graphics = score.get('graphics', {}).get('regions', [])
     records = score.get('records', {})
     out = {
-        'categories': agreement(score['categories_entry']),
-        'categories_line': agreement(score['categories_line']),
+        'categories': agreement(score['categories_line']),
+        'categories_entry': agreement(score['categories_entry']),
         'entries_matched': score['code_entries']['matched'],
         'entries_reference': score['code_entries']['reference'],
         'entries_extra': len(score['code_entries'].get('extra', [])),
@@ -204,7 +206,8 @@ def main():
         short = ' '.join(re.sub(r'/\S*/', '', w) for w in step['cmd'].split())  # paths to their base names
         lines.append(f'- `{short[-90:]}`: {"ok" if step["status"] == 0 else "status " + str(step["status"])}')
     lines += ['', '| Measure | This run | Run B |', '| --- | ---: | ---: |',
-              f'| byte categories (by entry) | {mine["categories"]} % | {theirs["categories"]} % |',
+              f'| byte categories (by line) | {mine["categories"]} % | {theirs["categories"]} % |',
+              f'| ... by entry | {mine["categories_entry"]} % | {fmt(theirs.get("categories_entry"))} % |',
               f'| code entries | {mine["entries_matched"]} / {mine["entries_reference"]} | '
               f'{theirs["entries_matched"]} / {theirs["entries_reference"]} |',
               f'| graphics covered | {mine["graphics_covered"]} / {mine["graphics_total"]} | '
