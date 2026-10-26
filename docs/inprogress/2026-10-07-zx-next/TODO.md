@@ -42,7 +42,13 @@ Planned, in this order:
   runs it to the write with the state before it (`ScreenNext::AdvanceSpritePass`), the sprites after that point qualify with the new
   attributes and draw with the patterns and transparent index of then (sprites.vhd 971 compares each pixel as it is written); test
   `NextSpriteFill_Test.AMoveInsideAFillReachesTheSpritesNotYetDrawn`)
-- [ ] Ports: NR #8A (propagate the port decodes to the expansion bus) is stored and read back only; nothing on the bus yet
+- [x] Ports: NR #8A (propagate the port decodes to the expansion bus) (done 2026-10-26: `PortDecoder_Next::SlotCardGate` gives the
+  slot-built cards on the edge connector the RTL's view (zxnext.vhd 1886-1893, 2230-2242, 3471-3480): nothing while NR #80 bit 7 is off,
+  a port of the board's own decode (`port_internal_response`, `PortDecoder_Next::InternalResponse`) reaches a card's /IORQ only when
+  NR #8A propagates it, NR #80 bit 5 masks the rest, a read of #FE ANDs the connector's data in (NR #81 bit 6: the connector's alone for
+  A7:A4 = 0); the DAC ports follow the bus's port enables NR #88; tests `NextExpansionBus_Test`)
+- [ ] Ports: IORQULA from a card on the connector (zxnext.vhd 2242, `bus_iorq_ula`: a card that disables the ULA's #FE takes its reads
+  and gets the cycle propagated); no card of the catalog drives it yet
 
 Not planned yet:
 

@@ -269,9 +269,9 @@ bool PortClaimTable::Sees(const ClaimEntry& entry, uint16_t port, bool isRead, b
     return true;
 }
 
-BoardCycle PortClaimTable::WriteCards(uint16_t port, uint8_t value) const
+BoardCycle PortClaimTable::WriteCards(uint16_t port, uint8_t value, bool iorqMasked) const
 {
-    const bool boardPort = IsBoardPort(port, Dir::Out);
+    const bool boardPort = iorqMasked || IsBoardPort(port, Dir::Out);
     BoardCycle board = BoardCycle::Full;
     const PortDevice* lastOwner = nullptr;
     const uint8_t low = static_cast<uint8_t>(port);
@@ -297,10 +297,10 @@ BoardCycle PortClaimTable::WriteCards(uint16_t port, uint8_t value) const
     return board;
 }
 
-PortClaimTable::CardReads PortClaimTable::ReadCards(uint16_t port) const
+PortClaimTable::CardReads PortClaimTable::ReadCards(uint16_t port, bool iorqMasked) const
 {
     CardReads reads;
-    const bool boardPort = IsBoardPort(port, Dir::In);
+    const bool boardPort = iorqMasked || IsBoardPort(port, Dir::In);
     const PortDevice* lastOwner = nullptr;
     const uint8_t low = static_cast<uint8_t>(port);
     for (uint32_t i = _bucketBegin[low], end = _bucketBegin[low + 1u]; i < end; i++)
@@ -339,6 +339,7 @@ ReadResult PortClaimTable::Combine(const CardReads& cards, bool boardDrives, uin
     result.drivers = static_cast<uint8_t>(cards.count + (boardDrives ? 1 : 0));
     result.nobody = result.drivers == 0;
     result.busFight = result.drivers > 1;
+    result.cardsValue = cards.value;
     if (result.nobody)
         return result;
 
