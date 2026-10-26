@@ -6,7 +6,7 @@
 /// reply. Options, defaults, refusals, the answer's fields and its text live here, so the surfaces cannot drift apart
 /// (the SymbolControl / tracecontrol pattern).
 ///
-/// Actions (L0 access facts, P1; L1 code behaviour, P2; L2 structure, P3):
+/// Actions (L0 access facts, P1; L1 code behaviour, P2; L2 structure, P3, P4; L3 review, P5):
 ///   start   [level mode record]  switch on debug mode and memory tracking, set the tracker level (facts, the
 ///                          default, or counters) and the mode (z80, the default, or physical), and start a fresh
 ///                          memory session; record=true also starts the TTD recording L1 is built from
@@ -34,6 +34,8 @@
 ///                          maps; kind filters them) with their geometry; with an address (or a label), the region
 ///                          starting there (else covering it) drawn as a PNG (l2gallery.h) zoomed scale times (2,
 ///                          1..8): written to path, or answered base64 in "png"
+///   findings, review, experiment, cover  L3 (P5): the findings register, the review queue and its decisions, the
+///                          experiment runner on muted clones and directed coverage (l3session.h lists their options)
 ///
 /// @code
 ///   analysis::Reply reply = analysis::Execute(emulator, "explain", {{"address", "$80BC"}});
@@ -45,6 +47,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/analyzers/analysis/l2export.h"
 #include "emulator/state/statenode.h"
 
 class Emulator;
@@ -89,5 +92,10 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
 
 /// "$80BC", "#80BC", "0x80BC", "80BCh", "32956": false when it is none of these or above 0xFFFF
 bool ParseAddress(const std::string& text, uint16_t& address);
+
+/// "8000-83FF", "$8000-$83FF", "0x8000..0x83FF" (hex), one address: that byte
+bool ParseZ80Range(const std::string& text, ExportRange& range);
+/// Comma-separated ranges without overlap, sorted
+bool ParseZ80Ranges(const std::string& text, std::vector<ExportRange>& ranges);
 
 }  // namespace analysis

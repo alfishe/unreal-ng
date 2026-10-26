@@ -143,6 +143,8 @@ struct Node
     uint16_t liveIn = 0;
     uint16_t liveOut = 0;
     uint16_t written = 0;
+    uint64_t abandoned = 0;       ///< its frames left without a return (the stack reset or unwound under them)
+    uint64_t patchedReturns = 0;  ///< its frames ended by a RET to another address than the pushed one
 
     // Base + offset (the first memory operand)
     uint8_t baseKind = 0xFF;  ///< BaseReg
@@ -180,6 +182,8 @@ struct Node
     // BranchCondition
     uint64_t taken = 0;
     uint64_t notTaken = 0;
+    uint32_t branchFirstFrame = 0;  ///< frames since the replay's first, the branch's first and last run
+    uint32_t branchLastFrame = 0;
     bool hasProducer = false;
     bool varies = false;
     uint16_t producerZ80 = 0;
@@ -1020,6 +1024,8 @@ struct L1Builder::Impl
         entry.inclusiveT += now >= frame.tEntry ? now - frame.tEntry : 0;
         entry.liveIn |= frame.liveIn;
         entry.written |= frame.defined;
+        if (!normal && frame.kind != kInterruptFrame)
+            ++entry.abandoned;
         if (frame.kind == kInterruptFrame || !normal)
             return;
         Frame& caller = stack.back();
@@ -1666,6 +1672,10 @@ struct L1Builder::Impl
         // Conditional branches: the outcome and what was tested
         if ((op.cond != kAlways || op.flow == Flow::Djnz) && op.flow != Flow::None)
         {
+            const auto rel = static_cast<uint32_t>(p.frame - firstFrameSeen);
+            if (n.taken + n.notTaken == 0)
+                n.branchFirstFrame = rel;
+            n.branchLastFrame = rel;
             if (moved)
                 ++n.taken;
             else
@@ -1760,6 +1770,7 @@ struct L1Builder::Impl
         if (stack.size() > 1 && stack.back().retSlot == spBefore)
         {
             // The return address was changed: a patched return goes somewhere else
+            ++nodes[stack.back().entry].patchedReturns;
             PopFrame(now, true);
             nodes[succNode].entryKinds |= entry::kDispatch;
             AddSucc(n, succNode, EdgeKind::Dispatch);
@@ -2173,6 +2184,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
             prof.tstatesInclusive = n.inclusiveT;
             prof.minDepth = n.minDepth;
             prof.maxDepth = n.maxDepth;
+            prof.abandoned = n.abandoned;
+            prof.patchedReturns = n.patchedReturns;
         }
     }
     // Entered counts the jumps in as well: a tail call enters without a frame of its own
@@ -2383,6 +2396,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
             bc.cond = n.op != nullptr && n.op->flow == Flow::Djnz ? 8 : (n.op != nullptr ? n.op->cond : kAlways);
             bc.taken = n.taken;
             bc.notTaken = n.notTaken;
+            bc.firstFrame = n.branchFirstFrame;
+            bc.lastFrame = n.branchLastFrame;
             bc.producerZ80 = n.producerZ80;
             bc.producerClass = n.producerClass;
             bc.tested = n.hasProducer ? n.tested : SourceKind::None;

@@ -773,6 +773,18 @@ POST /api/v1/emulator/{id}/analysis/gallery   {address?, kind?: all|font|sprite|
                                                truncated, text}; an address (or a label): the region starting there
                                                (else covering it) drawn as a PNG {region, width, height, frames,
                                                scale, bytes, mime_type, png (base64; empty with a path), path, text}
+GET|POST /api/v1/emulator/{id}/analysis/findings  {op?: list|add, kind?, status?, range?, limit?, format?: table|markdown|
+                                               jsonl, path?; add: claim, evidence?, by?, title?}: the L3 findings
+                                               register {count, total, by_kind, by_status, findings [...], content, text}
+GET|POST /api/v1/emulator/{id}/analysis/review    {op?: next|list|show|resolve, id?, verdict?: ok|wrong|skip, label?,
+                                               title?, comment?, by?, experiment? (a spec object), ranges?, limit?}:
+                                               the review queue {item, sheet, sheet_bytes, queue | items | finding, text}
+POST /api/v1/emulator/{id}/analysis/experiment  {spec: an object or an array (or their JSON text), path?, parallel?,
+                                               finding?}: runs on muted clones {results [...], observed, refuted,
+                                               errors, workers, peak_concurrency, seeks, micros, text}
+POST /api/v1/emulator/{id}/analysis/cover      {budget?, per_branch?, frames?, parallel?, limit?, ranges?}: directed
+                                               coverage {candidates, tried, flipped, attempts, new_code, branches [...],
+                                               text}
 ```
 
 ### Settings Management

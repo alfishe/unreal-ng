@@ -77,6 +77,7 @@ matches; it names the recipe(s) for that action.
 | First call of the session / no instance yet | [_common/setup.md](_common/setup.md) | everything else until the instance exists |
 | Loading a disk/tape/snapshot | the matching [media/](media/) file for that format | the other media files |
 | Making loaded software actually run (autostart/`RUN`/tape play) | the matching [run/](run/) file for the load path you used | machines/peripherals, unless the model itself matters |
+| Reviewing a game's automatic disassembly draft (findings, review queue, experiments, coverage, zx-reaper build) | [analysis/analysis-layers.md](analysis/analysis-layers.md) | the other analysis recipes until a sheet asks for more |
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
 | Typing, key presses, key combos, macros, the host-keyboard gate | [input/keyboard.md](input/keyboard.md) | joystick, mouse |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
@@ -166,6 +167,7 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
+| [analysis/analysis-layers.md](analysis/analysis-layers.md) | The review-only workflow on the analysis layers: build, findings register, review queue and resolve, experiments on muted clones, directed coverage, export, zx-reaper make / test / shift-test, the token ledger |
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, write journal on demand, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-write-journal.md](analysis/ttd-write-journal.md) | The write journal on demand: record it, switch it during a recording, build it later for any span by replay |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |

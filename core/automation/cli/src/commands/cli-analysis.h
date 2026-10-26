@@ -11,6 +11,10 @@
 ///   analysis query [<kind>] [<range>] [limit=<n>]               (L2 claims: kind all | conflicts | records | ...)
 ///   analysis export <format> [<path>] [ranges=<r,...>] [width=<n>]   (ctl, skool, fields, geometry, layout, ...)
 ///   analysis gallery [<kind>] [<address> [<path>]] [scale=<n>] [limit=<n>]   (L2 graphics; one as a PNG)
+///   analysis findings [list|add] [kind=<k>] [status=<s>] [range=<r>] [format=table|markdown|jsonl] [path=<file>]
+///   analysis review [next|list|show|resolve] [<id>] [ok|wrong|skip] [label=<l>] [title=<t>] [comment=<c>]
+///   analysis experiment <spec.json | {json}> [finding=<id>] [parallel=<n>]   (L3 experiments, l3experiment.h)
+///   analysis cover [<budget>] [frames=<n>] [ranges=<r,...>]                 (L3 directed coverage)
 
 #include <map>
 #include <string>
@@ -22,7 +26,9 @@ inline constexpr const char* kUsage =
     "Usage: analysis start [facts|counters] [z80|physical] [record] | stop | status | build [frames] [path=F] "
     "[wait=MS] | cancel | explain <address> [page] [routine|byte] | query [kind] [range] [limit=N] | export <format> "
     "[path] [ranges=5900-59FF,8000-FFFF] [width=N] | gallery [font|sprite|tile|screen|level_map] [address [path.png]] "
-    "[scale=N] [limit=N] [--json]";
+    "[scale=N] [limit=N] | findings [list|add] [kind=K] [status=S] [format=table|markdown|jsonl] [path=F] | review "
+    "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] | experiment <spec.json|{json}> "
+    "[finding=ID] | cover [budget] [frames=N] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name
 inline bool ParseArgs(const std::vector<std::string>& args, std::string& action, std::map<std::string, std::string>& options,
@@ -45,6 +51,11 @@ inline bool ParseArgs(const std::vector<std::string>& args, std::string& action,
     for (size_t i = 1; i < words.size(); i++)
     {
         const std::string& word = words[i];
+        if (action == "experiment" && !word.empty() && (word[0] == '{' || word[0] == '[') && !options.count("spec"))
+        {
+            options["spec"] = word;  // JSON text may hold '=' (">=1")
+            continue;
+        }
         const size_t equals = word.find('=');
         if (equals != std::string::npos && equals > 0)
         {
@@ -89,6 +100,19 @@ inline bool ParseArgs(const std::vector<std::string>& args, std::string& action,
             options["address"] = word;
         else if (action == "gallery" && !options.count("path"))
             options["path"] = word;
+        else if (action == "findings" && !options.count("op") && (word == "list" || word == "add"))
+            options["op"] = word;
+        else if (action == "review" && !options.count("op") && !options.count("id") &&
+                 (word == "next" || word == "list" || word == "show" || word == "resolve"))
+            options["op"] = word;
+        else if (action == "review" && !options.count("verdict") && (word == "ok" || word == "wrong" || word == "skip"))
+            options["verdict"] = word;
+        else if (action == "review" && !options.count("id"))
+            options["id"] = word;
+        else if (action == "experiment" && !options.count("spec") && !options.count("path"))
+            options["path"] = word;
+        else if (action == "cover" && !options.count("budget"))
+            options["budget"] = word;
         else
         {
             error = action + ": unexpected '" + word + "'";

@@ -35,6 +35,12 @@
 //   export {format, path?, ranges?, width?} → POST /analysis/export                (the L2 draft)
 //   gallery {address?, kind?, scale?, path?, limit?} → POST /analysis/gallery     (P4: graphics, one as a PNG:
 //                                                    an MCP image content block)
+//   findings {op?, kind?, status?, range?, limit?, format?, path?, claim?, evidence?, by?, title?}
+//                         → POST /analysis/findings  (P5: the L3 findings register; op add: a note)
+//   review {op?, id?, verdict?, label?, title?, comment?, by?, experiment?, ranges?, limit?}
+//                         → POST /analysis/review    (P5: the review queue; next, list, show, resolve)
+//   experiment {spec | path, finding?, parallel?} → POST /analysis/experiment (P5: spec an object or an array)
+//   cover {budget?, per_branch?, frames?, parallel?, limit?, ranges?} → POST /analysis/cover (P5: directed coverage)
 // The answer's "text" (shared with the CLI) is the tool's text.
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
@@ -42,6 +48,10 @@
 #include "mcp-analysis.h"
 
 #include "mcp-tool-utils.h"
+
+#include <map>
+#include <string>
+#include <vector>
 
 namespace mcp
 {
@@ -1046,7 +1056,7 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
-                               "gallery"})
+                               "gallery", "findings", "review", "experiment", "cover"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode; "
@@ -1062,7 +1072,15 @@ void RegisterAnalysis(ToolRegistry& registry)
         "SkoolKit ctl (sna2skool.py -c) or a relocatable skool, the record fields / geometry JSON, the relocation "
         "layout, a symbol file or the region map; gallery: the graphics L2 found (fonts, sprites, tiles, screens and "
         "back buffers, level maps) with their geometry, or with an address the one there drawn as a PNG (an image "
-        "block: check the width, height, frames and mask by eye)";
+        "block: check the width, height, frames and mask by eye); findings: the L3 register, every L2 claim, conflict, "
+        "candidate bug, unnamed hot routine, unknown area, note and experiment with evidence and a status (observed, "
+        "inferred, refuted, confirmed), ids F1.. in a fixed order (op add: a note of yours); review: the queue of "
+        "findings that need a decision (op next, the default: the next item with a fact sheet under 1 KB; list; show "
+        "id; resolve id with verdict ok / wrong / skip and a label, title or comment that go into the draft export, "
+        "optionally with an experiment); experiment: poke bytes / set registers / press keys on a muted clone from "
+        "the recording, run N frames, check memory, the screen, watched addresses or new code (the source machine is "
+        "never touched; the result marks the finding observed or refuted); cover: flip branches the session took one "
+        "way only by holding the byte they test or pressing the keys they read, and report the new code";
     schema["properties"]["level"]["type"] = "string";
     schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["level"]["enum"].append("facts");
@@ -1077,7 +1095,8 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["record"]["type"] = "boolean";
     schema["properties"]["record"]["description"] = "start: also start the TTD recording that build replays";
     schema["properties"]["frames"]["type"] = "integer";
-    schema["properties"]["frames"]["description"] = "build: replay at most this many frames (default: the whole recording)";
+    schema["properties"]["frames"]["description"] =
+        "build: replay at most this many frames (default: the whole recording); cover: frames per attempt (default 50)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "build: write the L1 JSON to this file; export: write the draft there; gallery: the PNG (none: the answer "
@@ -1090,17 +1109,21 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["range"]["type"] = "string";
     schema["properties"]["range"]["description"] = "query: hex start-end, e.g. 8000-83FF (default the whole 64K)";
     schema["properties"]["limit"]["type"] = "integer";
-    schema["properties"]["limit"]["description"] = "query, gallery: the most rows (default 200)";
+    schema["properties"]["limit"]["description"] =
+        "query, gallery, findings: the most rows (default 200); review: the queue's cap (default 40); cover: branches";
     schema["properties"]["scale"]["type"] = "integer";
     schema["properties"]["scale"]["description"] = "gallery: integer zoom of the PNG, 1..8 (default 2)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* format : {"ctl", "skool", "fields", "geometry", "layout", "symbols", "map"})
+    for (const char* format : {"ctl", "skool", "fields", "geometry", "layout", "symbols", "map", "table", "markdown",
+                               "jsonl"})
         schema["properties"]["format"]["enum"].append(format);
-    schema["properties"]["format"]["description"] = "export: the file to write";
+    schema["properties"]["format"]["description"] =
+        "export: the file to write (ctl ... map); findings: table (default), markdown (zx-reaper re/findings.md) or "
+        "jsonl";
     schema["properties"]["ranges"]["type"] = "string";
     schema["properties"]["ranges"]["description"] =
-        "export: hex Z80 ranges, comma separated (default 4000-FFFF), e.g. 5900-59FF,8000-FFFF";
+        "export, review, cover: hex Z80 ranges, comma separated (default 4000-FFFF), e.g. 5900-59FF,8000-FFFF";
     schema["properties"]["width"]["type"] = "integer";
     schema["properties"]["width"]["description"] = "export: bytes per DEFB line (default 8)";
     schema["properties"]["wait"]["type"] = "integer";
@@ -1118,6 +1141,55 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["page"]["description"] =
         "explain: the page (absolute index, ram:N or rom:N); L0 in physical mode (default the page mapped at the "
         "address now), L1 picks the routine of that page";
+    schema["properties"]["op"]["type"] = "string";
+    schema["properties"]["op"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* op : {"list", "add", "next", "show", "resolve"})
+        schema["properties"]["op"]["enum"].append(op);
+    schema["properties"]["op"]["description"] =
+        "findings: list (default) or add (a note: claim, range, status, evidence, by); review: next (default), list, "
+        "show (id) or resolve (id + verdict / label / title / comment)";
+    schema["properties"]["id"]["type"] = "string";
+    schema["properties"]["id"]["description"] = "review show / resolve: the finding, e.g. F12";
+    schema["properties"]["verdict"]["type"] = "string";
+    schema["properties"]["verdict"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* verdict : {"ok", "wrong", "skip"})
+        schema["properties"]["verdict"]["enum"].append(verdict);
+    schema["properties"]["verdict"]["description"] =
+        "review resolve: ok (the finding is confirmed), wrong (refuted) or skip (out of the queue, undecided)";
+    schema["properties"]["label"]["type"] = "string";
+    schema["properties"]["label"]["description"] = "review resolve: the routine's / entry's label in the draft (an identifier)";
+    schema["properties"]["title"]["type"] = "string";
+    schema["properties"]["title"]["description"] = "review resolve: the entry title in the draft; findings add: the note's title";
+    schema["properties"]["comment"]["type"] = "string";
+    schema["properties"]["comment"]["description"] = "review resolve: a comment the draft puts in the entry";
+    schema["properties"]["by"]["type"] = "string";
+    schema["properties"]["by"]["description"] = "findings add, review resolve: who decided (default agent)";
+    schema["properties"]["status"]["type"] = "string";
+    schema["properties"]["status"]["description"] =
+        "findings: list only this status, or the status of a note added (observed, inferred, refuted, confirmed)";
+    schema["properties"]["claim"]["type"] = "string";
+    schema["properties"]["claim"]["description"] = "findings add: the note's sentence";
+    schema["properties"]["evidence"]["type"] = "string";
+    schema["properties"]["evidence"]["description"] = "findings add: evidence, ';' separated";
+    for (const char* name : {"spec", "experiment"})
+        for (const char* type : {"object", "array", "string"})
+            schema["properties"][name]["type"].append(type);
+    schema["properties"]["spec"]["description"] =
+        "experiment: one spec or an array of them (or their JSON text): {\"poke\": {\"$8100\": 5}, \"regs\": "
+        "{\"a\": 1}, \"input\": [{\"frame\": 0, \"key\": \"q\"}], \"from\": \"start\" | \"end\" | "
+        "\"frame:N\", \"frames\": 50, \"watch\": [{\"pc\": \"$8130\", \"as\": \"rare\"}, {\"write\": "
+        "\"$8101\"}], \"expect\": {\"rare\": \"reached\", \"mem:$8101\": \"$AA\", \"screen\": "
+        "\"changed\", \"new_code\": \">0\"}, \"finding\": \"F12\"}";
+    schema["properties"]["experiment"]["description"] =
+        "review resolve: an experiment spec (as for spec) whose result marks the finding";
+    schema["properties"]["finding"]["type"] = "string";
+    schema["properties"]["finding"]["description"] = "experiment: the finding the result marks (none: a new experiment finding)";
+    schema["properties"]["parallel"]["type"] = "integer";
+    schema["properties"]["parallel"]["description"] = "experiment, cover: clones run at once (1..8, default by the cores)";
+    schema["properties"]["budget"]["type"] = "integer";
+    schema["properties"]["budget"]["description"] = "cover: experiments in all (default 64)";
+    schema["properties"]["per_branch"]["type"] = "integer";
+    schema["properties"]["per_branch"]["description"] = "cover: attempts per branch (default 8)";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["required"].append("action");
@@ -1129,7 +1201,9 @@ void RegisterAnalysis(ToolRegistry& registry)
         "recording (routines with their data ranges, ports, time share and registers; call graph; loops; record "
         "fields); L2 structure from L1 (regions with kinds, fields and confidence) to query and export as a SkoolKit "
         "draft, see the graphics it found (gallery); start (record=true for L1), run the program, build, then explain "
-        "addresses, query regions, export the draft; status shows what was recorded.",
+        "addresses, query regions, export the draft; status shows what was recorded. L3 review: findings (the "
+        "register), review (the queue of decisions; resolve writes into the draft), experiment (poke / keys / regs "
+        "on a muted clone, then checks), cover (flip one-sided branches).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -1246,8 +1320,35 @@ void RegisterAnalysis(ToolRegistry& registry)
                 ResolveAndForward(args, "POST", "/analysis/gallery", &body, caller, "Analysis gallery", withImage);
                 return;
             }
+            if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
+            {
+                // Every option goes through as given (numbers, strings, booleans; spec / experiment objects or arrays):
+                // the core checks them
+                static const std::map<std::string, std::vector<const char*>> kOptions = {
+                    {"findings", {"op", "kind", "status", "range", "limit", "format", "path", "claim", "evidence", "by",
+                                  "title"}},
+                    {"review", {"op", "id", "verdict", "label", "title", "comment", "by", "experiment", "ranges", "limit"}},
+                    {"experiment", {"spec", "path", "parallel", "finding"}},
+                    {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges"}},
+                };
+                Json::Value body(Json::objectValue);
+                for (const char* name : kOptions.at(action))
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                if (action == "experiment" && !body.isMember("spec") && !body.isMember("path"))
+                {
+                    done(ToolResult::Error("experiment needs spec (an object, an array or their JSON text) or path"));
+                    return;
+                }
+                static const std::map<std::string, std::string> kTitles = {
+                    {"findings", "Analysis findings"}, {"review", "Analysis review"},
+                    {"experiment", "Analysis experiment"}, {"cover", "Analysis coverage"}};
+                ResolveAndForward(args, "POST", "/analysis/" + action, &body, caller, kTitles.at(action), withText);
+                return;
+            }
             done(ToolResult::Error("unknown action '" + action +
-                                   "': start, stop, status, build, cancel, explain, query, export or gallery"));
+                                   "': start, stop, status, build, cancel, explain, query, export, gallery, findings, "
+                                   "review, experiment or cover"));
         });
 }
 

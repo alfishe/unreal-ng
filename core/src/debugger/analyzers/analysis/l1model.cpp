@@ -331,6 +331,8 @@ StateNode ProfileNode(const RoutineProfile& p, uint64_t totalT)
     node["written"] = L1Result::RegNames(p.written);
     node["min_depth"] = static_cast<unsigned>(p.minDepth);
     node["max_depth"] = static_cast<unsigned>(p.maxDepth);
+    node["abandoned"] = p.abandoned;
+    node["patched_returns"] = p.patchedReturns;
     return node;
 }
 
@@ -440,6 +442,8 @@ StateNode BranchNode(const BranchCondition& b)
     node["address"] = Hex4(b.address);
     node["constant"] = Hex2(b.constant);
     node["varies"] = b.varies;
+    node["first_frame"] = static_cast<uint64_t>(b.firstFrame);
+    node["last_frame"] = static_cast<uint64_t>(b.lastFrame);
     return node;
 }
 

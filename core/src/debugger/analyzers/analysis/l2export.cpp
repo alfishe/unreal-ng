@@ -501,7 +501,9 @@ struct Exporter
                           (e.region->status == RegionStatus::Observed ? "" : " (not executed in the replay)");
             reloc.labels[e.start] = name;
         }
+        ApplyNoteLabels();
         Describe();
+        ApplyNoteComments();
     }
 
     /// Sub-blocks of a plain entry: words for tables and word variables, a record's fields per record
@@ -558,6 +560,53 @@ struct Exporter
                 reloc.labels.emplace(static_cast<uint16_t>(a),
                                      o->label.empty() ? HexName(LabelPrefix(*o), static_cast<uint16_t>(a)) : o->label);
             a = b + 1;
+        }
+    }
+
+    /// L3: the labels and titles the review gave entry starts (a label another entry has stays the draft's)
+    void ApplyNoteLabels()
+    {
+        if (options.notes.empty())
+            return;
+        std::set<std::string> taken;
+        for (const DraftEntry& e : plan.entries)
+            taken.insert(e.label);
+        for (DraftEntry& e : plan.entries)
+        {
+            const auto it = options.notes.find(e.start);
+            if (it == options.notes.end())
+                continue;
+            const ExportNote& note = it->second;
+            if (!note.label.empty() && note.label != e.label && taken.count(note.label) == 0)
+            {
+                taken.erase(e.label);
+                taken.insert(note.label);
+                e.label = note.label;
+                reloc.labels[e.start] = note.label;
+            }
+            if (!note.title.empty())
+                e.title = note.title;
+        }
+    }
+
+    /// L3: the comments, first in an entry's description; a note inside an entry names its address
+    void ApplyNoteComments()
+    {
+        if (options.notes.empty())
+            return;
+        for (DraftEntry& e : plan.entries)
+        {
+            std::vector<std::string> lines;
+            for (auto it = options.notes.lower_bound(e.start); it != options.notes.end() && it->first <= e.end; ++it)
+            {
+                const bool atStart = it->first == e.start;
+                for (const std::string& comment : it->second.comments)
+                    lines.push_back(atStart ? comment : Hex4(it->first) + ": " + comment);
+                if (!atStart && !it->second.label.empty())
+                    lines.push_back(Hex4(it->first) + ": named " + it->second.label + " in the review.");
+            }
+            if (!lines.empty())
+                e.description.insert(e.description.begin(), lines.begin(), lines.end());
         }
     }
 
@@ -1354,6 +1403,11 @@ std::vector<std::pair<uint16_t, uint16_t>> SplitLines(uint16_t start, uint16_t l
         a = stop;
     }
     return out;
+}
+
+std::string RegionTitle(const Region& region)
+{
+    return TitleOf(region, region.Size());
 }
 
 DraftPlan MakePlan(const L1Result& l1, const L2Result& l2, const ExportOptions& options)

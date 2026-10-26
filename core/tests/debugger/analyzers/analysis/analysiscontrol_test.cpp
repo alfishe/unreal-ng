@@ -91,6 +91,24 @@ TEST(AnalysisControl_Test, CliWords)
     ASSERT_TRUE(CliAnalysis::ParseArgs({"gallery", "$8200"}, action, options, json, error));
     EXPECT_EQ(options, (std::map<std::string, std::string>{{"address", "$8200"}}));
 
+    // L3
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"findings", "format=markdown"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"format", "markdown"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"review", "resolve", "F12", "ok", "label=Main"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{
+                           {"op", "resolve"}, {"id", "F12"}, {"verdict", "ok"}, {"label", "Main"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"review", "F3"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"id", "F3"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"experiment", R"({"frames":2,"expect":{"w":">=1"}})", "finding=F4"}, action,
+                                       options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"spec", R"({"frames":2,"expect":{"w":">=1"}})"},
+                                                           {"finding", "F4"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"experiment", "e.json"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"path", "e.json"}}));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"cover", "16", "frames=10"}, action, options, json, error));
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"budget", "16"}, {"frames", "10"}}));
+    EXPECT_FALSE(CliAnalysis::ParseArgs({"cover", "16", "17"}, action, options, json, error));
+
     EXPECT_FALSE(CliAnalysis::ParseArgs({"start", "fast"}, action, options, json, error));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"explain", "1", "2", "3"}, action, options, json, error));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"export", "ctl", "a.ctl", "extra"}, action, options, json, error));

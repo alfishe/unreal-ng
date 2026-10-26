@@ -3,7 +3,8 @@
 status, explain an address the ROM runs every frame and a stack byte, the refusals, stop; the L1 build from a
 recording (start record=true, build, the analysis.ready topic's value) and a routine's fact sheet; the L2 structure
 (query by kind and range, conflicts, the refusals), the draft export (ctl / skool / fields in the answer, skool to a
-file) and the gallery (the list, one region as a PNG image block or a file); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
+file) and the gallery (the list, one region as a PNG image block or a file); L3 (findings, review and resolve,
+experiments, coverage); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
 
 import os
 import re
@@ -200,6 +201,78 @@ def test_gallery(s):
     s.call('analysis', {'action': 'stop'})
 
 
+def test_review_experiment_cover(s):
+    """L3 (P5) on the poke-flip fixture (a mode byte the loop compares with CP 5, never 5 in the session): the findings
+    register (table, markdown), the review queue (next with its sheet, resolve with a label the skool draft carries),
+    an observed and a refuted experiment (spec as an object, as an array), the coverage driver flipping the jr z,
+    the refusals"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, '..', '..', '..', 'testdata', 'analysis', 'fixtures', 'poke-flip.asm')) as f:
+        source = f.read()
+    s.call('debug_code', {'action': 'assemble', 'code': source, 'address': '0x8000'})
+    # The fixture's layout at $8000: main $8004, jr z,rare $800D, rare $8011, mode $801C, seen $801D, ticks $801E
+    rare, mode, seen = '$8011', '$801C', '$801D'
+    s.call('control_execution', {'action': 'set_register', 'name': 'pc', 'value': '0x8000'})
+    s.call('analysis', {'action': 'start', 'record': True})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 3})
+    r = s.call('analysis', {'action': 'build'})
+    expect((r.structured or {}).get('state') == 'done', 'build of the poke-flip fixture: done', r.text[:300])
+
+    r = s.call('analysis', {'action': 'findings'})
+    expect('Findings:' in r.text and re.search(r'\bF1\b', r.text), 'findings: the register as a table in the text',
+           r.text[:600])
+    bugs = [f for f in (r.structured or {}).get('findings', []) if f.get('kind') == 'bug']
+    expect(any(b.get('subject') == 'counter-wrap' and b.get('start') == '$801E' for b in bugs),
+           'findings: the wrapping counter is a candidate bug', str(bugs)[:400])
+    r = s.call('analysis', {'action': 'findings', 'format': 'markdown'})
+    expect('| ID | Status | Claim | Evidence | Refs |' in (r.structured or {}).get('content', ''),
+           'findings format=markdown: the zx-reaper findings table', r.text[:400])
+
+    r = s.call('analysis', {'action': 'review'})
+    item = (r.structured or {}).get('item') or {}
+    expect(item.get('id', '').startswith('F') and 'op=resolve id=' + item.get('id', '') in r.text,
+           'review: the next item with its sheet and the resolve hint in the text', r.text[:800])
+    expect(0 < (r.structured or {}).get('sheet_bytes', 0) <= 1024, 'review: the sheet is at most 1 KB', r.structured)
+
+    claims = s.call('analysis', {'action': 'findings', 'kind': 'claim', 'range': '8000-80FF'}).structured or {}
+    code = next((f for f in claims.get('findings', []) if f.get('start') == rare and f.get('subject') == 'code'), None)
+    expect(code is not None, 'findings: a code claim at the rare routine', str(claims)[:600])
+    if code:
+        r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': code['id'], 'verdict': 'ok',
+                                'label': 'RareMode', 'title': 'Mode 5 handler'})
+        expect(((r.structured or {}).get('finding') or {}).get('status') == 'confirmed', 'review resolve ok: confirmed',
+               r.text[:300])
+        r = s.call('analysis', {'action': 'export', 'format': 'skool', 'ranges': '8000-80FF'})
+        content = (r.structured or {}).get('content', '')
+        expect('@label=RareMode' in content and 'Mode 5 handler' in content, 'export: the resolved label and title',
+               content[:800])
+        r = s.call('analysis', {'action': 'experiment', 'finding': code['id'],
+                                'spec': {'poke': {mode: 5}, 'frames': 2, 'watch': [{'pc': rare, 'as': 'rare'}],
+                                         'expect': {'rare': 'reached', 'mem:' + seen: '$AA'}}})
+        expect((r.structured or {}).get('observed') == 1, 'experiment: mode 5 reaches the rare code (observed)',
+               r.text[:600])
+    r = s.call('analysis', {'action': 'experiment',
+                            'spec': [{'id': 'nopoke', 'frames': 2, 'watch': [{'pc': rare, 'as': 'rare'}],
+                                      'expect': {'rare': 'reached'}},
+                                     {'id': 'mode1', 'poke': {mode: 1}, 'frames': 2, 'expect': {'mem:' + seen: '0'}}]})
+    results = (r.structured or {}).get('results', [])
+    expect([x.get('verdict') for x in results] == ['refuted', 'observed'],
+           'experiment array: no poke refuted, mode 1 observed', r.text[:600])
+    expect('nopoke refuted' in r.text, 'experiment: the verdicts in the text', r.text[:600])
+
+    r = s.call('analysis', {'action': 'cover', 'frames': 3})
+    expect((r.structured or {}).get('flipped', 0) >= 1 and 'poke $801C=$05' in r.text,
+           'cover: the jr z flipped by holding mode at 5', r.text[:800])
+
+    r = s.call('analysis', {'action': 'experiment'}, ok=False)
+    expect(r.is_error, 'experiment without a spec is refused', r.text)
+    r = s.call('analysis', {'action': 'experiment', 'spec': {'frames': 2}}, ok=False)
+    expect(r.is_error and '400' in r.text and 'expect' in r.text, 'experiment: a spec with no expect: 400', r.text)
+    r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': 'F99999', 'verdict': 'ok'}, ok=False)
+    expect(r.is_error and '404' in r.text, 'review resolve of no such finding: 404', r.text)
+    s.call('analysis', {'action': 'stop'})
+
+
 def test_calls_counted_per_action(s):
     s.call('analysis', {'action': 'status'})
     r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/monitor/host.clients'})
@@ -208,7 +281,9 @@ def test_calls_counted_per_action(s):
     tools = clients.get('mcp', {}).get('tools', {})
     actions = tools.get('analysis', {}).get('actions', {})
     expect(actions.get('status', 0) >= 2 and actions.get('explain', 0) >= 1 and actions.get('query', 0) >= 1 and
-           actions.get('export', 0) >= 1 and actions.get('gallery', 0) >= 1, 'host.clients.mcp.tools counts the actions',
+           actions.get('export', 0) >= 1 and actions.get('gallery', 0) >= 1 and actions.get('findings', 0) >= 1 and
+           actions.get('review', 0) >= 1 and actions.get('experiment', 0) >= 1 and actions.get('cover', 0) >= 1,
+           'host.clients.mcp.tools counts the actions',
            str(body)[:600])
 
 

@@ -410,6 +410,76 @@ TEST_F(McpDebugTools_Test, Analysis_GalleryAnswersAnImage)
     EXPECT_NE(list.text.find("2 graphics regions"), std::string::npos) << list.text;
 }
 
+/// analysis L3 (P5): findings, review, experiment, cover go to their POST routes with every option as given; an
+/// experiment spec object reaches the body as an object (the WebAPI serializes it for the core)
+TEST_F(McpDebugTools_Test, Analysis_ReviewActionsForwardTheirOptions)
+{
+    // The dispatcher refuses an argument the schema does not name: every option the L3 actions forward is in it
+    const mcp::ToolDefinition* definition = _registry->Find("analysis");
+    ASSERT_NE(definition, nullptr);
+    for (const char* name : {"op", "id", "verdict", "label", "title", "comment", "by", "experiment", "status", "claim",
+                             "evidence", "spec", "finding", "parallel", "budget", "per_branch"})
+        EXPECT_TRUE(definition->inputSchema["properties"].isMember(name)) << name;
+
+    Json::Value reviewBody;
+    reviewBody["text"] = "L3 review F7 (bug): ...";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/review"] = {200, reviewBody};
+    Json::Value args;
+    args["action"] = "review";
+    args["op"] = "resolve";
+    args["id"] = "F7";
+    args["verdict"] = "ok";
+    args["label"] = "MainLoop";
+    args["experiment"]["frames"] = 2;
+    const mcp::ToolResult review = Run("analysis", args);
+    ASSERT_FALSE(review.isError) << review.text;
+    EXPECT_NE(review.text.find("L3 review F7"), std::string::npos) << review.text;
+    const FakeCaller::RecordedCall* resolved = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/review");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->body["op"].asString(), "resolve");
+    EXPECT_EQ(resolved->body["id"].asString(), "F7");
+    EXPECT_EQ(resolved->body["verdict"].asString(), "ok");
+    EXPECT_EQ(resolved->body["label"].asString(), "MainLoop");
+    EXPECT_TRUE(resolved->body["experiment"].isObject());
+
+    args = Json::Value();
+    args["action"] = "experiment";
+    args["spec"]["poke"]["$8100"] = 5;
+    args["spec"]["expect"]["screen"] = "changed";
+    args["finding"] = "F3";
+    args["parallel"] = 2;
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* experiment = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/experiment");
+    ASSERT_NE(experiment, nullptr);
+    EXPECT_EQ(experiment->body["spec"]["poke"]["$8100"].asInt(), 5);
+    EXPECT_EQ(experiment->body["finding"].asString(), "F3");
+    EXPECT_EQ(experiment->body["parallel"].asInt(), 2);
+
+    args = Json::Value();
+    args["action"] = "experiment";
+    EXPECT_TRUE(Run("analysis", args).isError) << "experiment needs a spec or a path";
+
+    args = Json::Value();
+    args["action"] = "findings";
+    args["format"] = "markdown";
+    args["kind"] = "bug";
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* findings = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/findings");
+    ASSERT_NE(findings, nullptr);
+    EXPECT_EQ(findings->body["format"].asString(), "markdown");
+    EXPECT_EQ(findings->body["kind"].asString(), "bug");
+
+    args = Json::Value();
+    args["action"] = "cover";
+    args["budget"] = 16;
+    args["per_branch"] = 4;
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* cover = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/cover");
+    ASSERT_NE(cover, nullptr);
+    EXPECT_EQ(cover->body["budget"].asInt(), 16);
+    EXPECT_EQ(cover->body["per_branch"].asInt(), 4);
+}
+
 TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
 {
     Json::Value args;

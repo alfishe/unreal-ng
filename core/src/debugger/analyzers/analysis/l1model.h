@@ -152,6 +152,10 @@ struct RoutineProfile
     uint16_t written = 0;            ///< registers it wrote and did not restore
     uint16_t minDepth = 0xFFFF;      ///< call depth at entry (0: no known caller)
     uint16_t maxDepth = 0;
+    /// Stack balance: frames entered here and left without a return (the stack pointer moved above their return
+    /// slot: a reset or an unwind), and frames ended by a RET to another address than the one pushed
+    uint64_t abandoned = 0;
+    uint64_t patchedReturns = 0;
 };
 
 struct Routine
@@ -387,6 +391,8 @@ struct BranchCondition
     uint16_t address = 0;        ///< memory address / port (Memory / Port)
     uint8_t constant = 0;        ///< the compared constant (Constant)
     bool varies = false;         ///< more than one producer / source was seen
+    uint32_t firstFrame = 0;     ///< frames since the replay's first: the branch's first and last run
+    uint32_t lastFrame = 0;
 };
 
 struct ReplaySummary

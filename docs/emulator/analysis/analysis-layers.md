@@ -6,7 +6,10 @@ describes what is built. Phase P1 is in: the **L0 access facts** and the `analys
 adds **L1 code behaviour**: `analysis build` replays a recording on an analysis instance and folds every instruction
 into routines, a call graph, loops, record fields and data flow; `explain` gives a routine's fact sheet. Phase P3
 adds the **L2 structure** (detectors over L1, a region store) and the **draft**: `query` lists the claims, `export`
-writes a SkoolKit ctl / skool that builds relocatable, the record fields, a relocation layout and symbols.
+writes a SkoolKit ctl / skool that builds relocatable, the record fields, a relocation layout and symbols. Phase P4
+adds the media detectors and the gallery. Phase P5 adds **L3 review**: the findings register, the review queue whose
+decisions go into the draft, the experiment runner on muted clones, directed coverage and candidate bugs. The agent
+workflow on top of it: [.recipe/analysis/analysis-layers.md](../../../.recipe/analysis/analysis-layers.md).
 
 ## L0 access facts
 
@@ -261,6 +264,15 @@ height, frames; target 96), and the P3 numbers stay (categories 99.98 %, entries
 test` and both shift tests pass). The draft grows from 103 to 303 entries
 ([score-p4.md](../../inprogress/2026-10-24-analysis-layers/baselines/score-p4.md)).
 
+### Manic Miner (P5)
+
+The same session with `mm_session.py --l3` (findings, review, a coverage run before the exports): 619 findings, a
+review queue of 108 open items (7 unnamed hot routines, 40 low-confidence claims, 61 unknown areas, no conflicts, no
+candidate bugs), coverage over 51 one-way branches: 19 tried in 38 attempts, 17 flipped, 77 instructions the session
+never ran, 5.4 s on 4 workers. The gate numbers of P4 stay (categories 99.98 %, entries 31 of 33, records 5 of 5,
+geometry 106 of 106, `make`, `make test`, both shift tests); the coverage notes are comments, the build is unchanged
+([score-p5.md](../../inprogress/2026-10-24-analysis-layers/baselines/score-p5.md)).
+
 ### Where P3 differs from design.md
 
 - Pointer / handler tables run before records (design: after): a table whose words the code used as addresses is a
@@ -287,6 +299,129 @@ test` and both shift tests pass). The draft grows from 103 to 303 entries
   are mechanism rules proven on fixtures only.
 - The gallery draws from the memory at the end of the replay, in fixed colours (no per-frame attributes).
 
+## L3 review
+
+L3 turns the L2 claims into a list of decisions. It lives in core
+(`core/src/debugger/analyzers/analysis/l3*.{h,cpp}`) and is reached through four `analysis` actions.
+
+```mermaid
+flowchart LR
+    L2["L2 regions<br/>+ L1 routines"] --> F["findings register<br/>(F1.. fixed order)"]
+    B["candidate bug rules"] --> F
+    F --> Q["review queue<br/>(cap 40 + summary)"]
+    Q -->|review next| S["fact sheet <= 1 KB"]
+    S -->|review resolve| D["decision<br/>(kept by key)"]
+    D --> X["draft export:<br/>labels, titles, comments"]
+    E["experiment runner<br/>(muted clones)"] -->|observed / refuted| F
+    C["directed coverage"] --> E
+    C -->|flips| F
+    C -->|needs poke / key| X
+```
+
+### Findings register
+
+`l3findings.h`. One finding per L2 claim (in the region store's order), then the conflicts between two claims, the
+candidate bugs, the unnamed hot routines and the unknown areas, then what was added since the build (notes,
+coverage flips, experiments). Ids are `F1`, `F2`, ... in that order, so the same build gives the same ids. Each
+finding has a kind (`claim`, `conflict`, `bug`, `routine`, `unknown`, `coverage`, `note`, `experiment`), a status
+(`observed`: seen in the replay or an experiment; `inferred`: from a rule or the code; `confirmed`; `refuted`), a
+range, a one-sentence claim, its evidence and its references. The register exports as zx-reaper's `re/findings.md`
+table (`format=markdown`) and as JSON lines.
+
+A decision is stored under the finding's key (kind, range, subject, source), not its id: a rebuild keeps the decisions
+but may give the findings other ids.
+
+### Review queue
+
+`l3review.h`. Only the findings that need a decision, in this order:
+
+| Priority | Reason | Rule |
+| ---: | --- | --- |
+| 0 | `bug` | every candidate bug |
+| 1 | `conflict` | two specific claims (not the code map's fallbacks) overlap, confidences within 300 of each other |
+| 2 | `unnamed-hot` | a routine at $4000 or above with at least 1 % of the replayed T-states (inclusive) or one entry a frame, and no name |
+| 3 | `low-confidence` | a specific claim below 700 |
+| 4 | `unknown` | more than 16 bytes with only a fallback claim |
+
+In each priority by address. A decided finding (a verdict, label, title or comment) leaves the queue. At most 40 items
+(`limit`); the rest is one summary line by reason. `review next` gives the next open item and its fact sheet (at most
+1 KB: the finding, its evidence, 16 bytes, a 4-line disassembly or the routine's L1 fact sheet, the resolve line).
+`review resolve` takes `verdict` (`ok`: confirmed, `wrong`: refuted, `skip`: out of the queue), `label` (an
+identifier, unique), `title`, `comment`, and optionally an `experiment` whose result is recorded on the finding. The
+draft export (`export ctl` / `skool`) puts the label and title on the entry starting at the finding and the comment
+first in its description; a label inside an entry becomes a comment line there.
+
+The thresholds were tuned on the Manic Miner session ([Manic Miner (P5)](#manic-miner-p5)) and are frozen; JSW and a 128K game
+are the hold-outs.
+
+### Experiment runner
+
+`l3experiment.h`, on `analysisinstance.h`. A spec changes the machine and checks a predicate:
+
+```json
+{"id": "mode5", "finding": "F12", "from": "start",
+ "poke": {"$8100": 5}, "regs": {"a": 1}, "input": [{"frame": 0, "key": "q"}, {"frame": 10, "key": "q", "up": true}],
+ "frames": 50,
+ "watch": [{"pc": "$8130", "as": "rare"}, {"write": "$8101", "as": "w"}],
+ "expect": {"rare": "reached", "w": ">=1", "mem:$8101": "$AA", "screen": "unchanged", "new_code": ">0"}}
+```
+
+- One **base** analysis instance holds the recording (`TraceBundle`, kept per build) and is seeked to each start point
+  (`start`: the first keyframe, `end`, `frame:N`). Every experiment gets the base's state copied into an analysis
+  instance of its own (`MachineStateTransfer`, the clone path) and runs there; the source instance is never touched.
+- A pool of workers (`parallel`, default min(4, cores / 4), at most 8) runs the experiments; two never share a
+  machine. Every analysis instance is muted, sound off, logging off.
+- Pokes and registers go in once the state is copied; input events (keys, Kempston directions, release all) at their
+  frame; watches count executions (pc), writes and reads. Checks: a watch reached / not reached / a count; a byte's
+  value or change; the screen changed; instructions L1 never saw run.
+- A result is `observed` (every check held), `refuted` (one did not) or `error`; with `finding` it marks that
+  finding, without it adds an `experiment` finding.
+
+### Directed coverage
+
+`l3coverage.h`. The branches L1 saw go one way only, in the ranges (default $4000-$FFFF), each tried on the experiment
+runner from the last frame it ran in:
+
+- a branch on a memory byte: the byte is held (written before every instruction) at the compared constant, its
+  neighbours, $00, $01, $FF, $80 until the branch runs once;
+- a branch on port `$xxFE`: each key of the half-rows the high byte selects is held;
+- a branch on port `$xx1F`: each Kempston direction and fire.
+
+An attempt flips the branch when it goes the other way; it stops early when the branch goes the old way. The first
+arrival at the branch counts only when it goes the new way: the start state is taken at a frame boundary, which may
+fall between the read and the branch, so that arrival can test flags from before the poke or the key. Attempts
+spread breadth first (`budget` 64 in all, `per_branch` 8, `frames` 50). Branches on registers, constants and other
+ports are listed as skipped with the reason. A flip is a `coverage` finding (observed) with the code it reached and a
+draft note at the branch ("needs poke $8100=$05", "needs key q"), and at the first new instruction ("reached only in
+an experiment").
+
+### Candidate bugs
+
+`l3bugs.h`. Rules over L1's per-byte uses, the routines' stack balance and the L2 claims; each hit is a `bug` finding,
+`inferred`, never a verdict:
+
+| Rule | Fires on |
+| --- | --- |
+| `read-unwritten` | data reads of RAM bytes ($5B00 up) the replay never wrote, in a zero-filled run of at least 2 bytes no claim explains, unless the reader also reads a never-written non-zero byte within 256 bytes (it walks static data: the zeros are table values) |
+| `stack-over-code` | stack writes onto bytes that ran as code |
+| `code-overwritten` | an opcode byte written after it ran, by a block copy or the stack (not an operand patch) |
+| `stack-imbalance` | a routine whose frames were left without a return, or that returned to another address than pushed |
+| `index-past-table` | a pointer / handler / init table whose readers also read up to 16 bytes past its ends |
+| `counter-wrap` | a byte ($5B00 up) only INC / DEC wrote that took both $00 and $FF |
+
+### Where P5 differs from design.md
+
+- `experiment` and `cover` answer when they are done (no job id, no `analysis.experiment` topic): a batch of short
+  runs on a 48K game takes seconds.
+- Experiments start from a TTD point of the recording (`start`, `end`, `frame:N`), not from a snapshot file; there is
+  no screenshot in the result.
+- The specs are not stored for a re-run of the whole register: a result is recorded as evidence on its finding.
+- Coverage makes one round over the branches of the session; branches inside the new code it reaches are not tried in
+  the same call (call `cover` again after a rebuild with a recording that reaches them).
+- Coverage flips and review decisions go into the findings and the draft notes; they do not re-run the L2 detectors.
+- The worker count is a fixed rule (min(4, cores / 4), at most 8), not `tools/build/slot.sh`'s slots.
+- The fact sheet of a non-routine finding has a 4-line disassembly (a routine's has L1's, up to 24 lines).
+
 ## The `analysis` verbs
 
 One core handler, `analysis::Execute(emulator, action, options)` in
@@ -303,12 +438,18 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `explain` | `address` (`$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label), `page` (index, `ram:N`, `rom:N`), `what` (`auto`, default, `routine` or `byte`) | a routine of L1 at the address (`what` auto or routine): `what` = routine, `entry`, `page`, `page_name`, `kinds`, `instructions`, `blocks`, `profile`, `callers`, `callees`, `loops`, `fields`, `sheet_bytes`, and the fact sheet as `text`. Otherwise the byte (L0): `what` = byte, `address`, `mode`, `bank` or `page` {page, name, offset}, `label`, `accessed`, `kinds`, `kinds_mask`, `first_frame`, `last_frame`, `last_reader` {pc, label} or null, `multi_reader`, `last_writer`, `multi_writer`, `written` {distinct, min, max}, `counters` {reads, writes, executes} |
 | `query` | `kind` (`all`, default, `conflicts` or a region kind: `code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...), `range` (`8000-83FF`, `$8000-$83FF`; default all), `limit` (default 200, at most 100000) | `kind`, `range`, `regions` [{start, end, page, size, kind, detector, confidence, status, label, title, stride, count, ...}] or `conflicts` [{a, b}], `count`, `truncated`; the text one line per claim |
 | `export` | `format` (`ctl`, `skool`, `fields`, `geometry`, `layout`, `symbols`, `map`), `path` (write the file there), `ranges` (`5900-59FF,8000-FFFF`, no overlap; default `4000-FFFF`), `width` (DEFB bytes per line, 1..64, default 8) | `format`, `entries`, `bytes`, `ranges`, `path`; without `path` the file in `content` and the text (up to 16 KB) |
+| `findings` | `op` (`list`, default, or `add`), `kind`, `status`, `range`, `limit` (200), `format` (`table`, default, `markdown`, `jsonl`), `path`; add: `claim`, `range`, `status`, `evidence` (`;`-separated), `by`, `title` | `count`, `total`, `by_kind`, `by_status`, `findings` [{id, kind, status, start, end, subject, source, confidence, claim, evidence, refs, label, title, comment, verdict, by}], `truncated`; markdown / jsonl in `content` or written to `path` |
+| `review` | `op` (`next`, default, `list`, `show`, `resolve`), `id`, `verdict` (`ok`, `wrong`, `skip`), `label`, `title`, `comment`, `by`, `experiment` (a spec), `ranges`, `limit` (40) | next / show: `item` {id, reason, state, kind, start, end, claim, confidence}, `sheet`, `sheet_bytes`, `queue`; list: `items`, `queue` {open, shown, resolved, summary, by_reason}; resolve: `finding`, `experiments` ([L3 review](#review-queue)) |
+| `experiment` | `spec` (an object or an array of up to 256, as JSON text on the CLI / Lua), `path` (a JSON file), `parallel` (1..8), `finding` | `results` [{id, finding, claim, verdict, error, checks [{key, expect, actual, pass}], hits, new_code, new_ranges, from_frame, frames_run, worker}], `observed`, `refuted`, `errors`, `workers`, `peak_concurrency`, `seeks`, `micros` ([experiment runner](#experiment-runner)) |
+| `cover` | `budget` (64), `per_branch` (8), `frames` (50), `parallel`, `limit` (200 branches), `ranges` | `candidates`, `tried`, `flipped`, `attempts`, `new_code`, `branches` [{pc, cond, want, tested, address, status, reason, how, attempts, from_frame, new_code, new_ranges}], `workers`, `peak_concurrency`, `micros` ([directed coverage](#directed-coverage)) |
 | `gallery` | `address` (as `explain`; none: the list), `kind` (`all`, default, `font`, `sprite`, `tile`, `screen`, `level_map`), `scale` (1..8, default 2), `path` (write the PNG there), `limit` (default 200) | the list: `regions` [...], `count`, `truncated`, the text one line per region (range, kind, shape, detector, confidence, title); one region: `region`, `width`, `height`, `frames`, `scale`, `bytes`, `mime_type`, `png` (base64; empty with `path`), `path` ([the gallery](#the-gallery)) |
 
 Refusals: an unknown action or option, a value that does not parse (400); no such label, `what=routine` where no
 routine runs (404); `explain` of a byte at level `counters`, `what=routine` before a build, `build` with no recording
 or while one runs, `cancel` with none running, `query` / `export` / `gallery` before a build, a file `export` or
-`gallery` cannot write, a region the gallery cannot draw (409); no graphics region at the gallery's address (404); no memory tracker, `record` without a time travel engine
+`gallery` cannot write, a region the gallery cannot draw (409); no graphics region at the gallery's address (404);
+`findings` / `review` / `experiment` / `cover` before a build, a label another entry has (409); no such finding (404);
+a bad spec, a resolve with no decision (400); no memory tracker, `record` without a time travel engine
 (503).
 
 The long operation has two WebSocket state topics (monitoring names, also `GET /api/v1/monitor/{name}`):
@@ -332,12 +473,12 @@ $80BC (score) [RAM 2]: DataRead, DataWrite
 
 | Plane | Shape | Doc |
 |-------|-------|-----|
-| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
-| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
+| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `analysis findings [list\|add] [kind=] [format=]`, `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip] [label=] [title=] [comment=]`, `analysis experiment <spec.json\|{json}> [finding=]`, `analysis cover [budget] [frames=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
+| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?}, `GET\|POST .../analysis/findings`, `GET\|POST .../analysis/review` (options in the query or the body), `POST .../analysis/experiment` {spec (object or array), path?, parallel?, finding?}, `POST .../analysis/cover` {budget?, per_branch?, frames?, parallel?, limit?, ranges?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
 | WebSocket | every route as a `call` on `/api/v1/ws`; state topics `analysis.progress`, `analysis.ready` | [websocket-interface.md](../design/control-interfaces/websocket-interface.md#analysis-layers) |
-| Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason) | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
-| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
-| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
+| Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason); `spec=` / `experiment=` take a dict or a list | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
+| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`, the op for `findings` / `review`, the spec's JSON text for `experiment`, the budget for `cover`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
+| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, by, status, claim, evidence, spec, experiment, finding, parallel, budget, per_branch}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
 
 The MCP tool calls are counted per tool and action in `host.clients.mcp.tools` (`GET /api/v1/monitor/host.clients`):
 `{"analysis": {"calls": N, "actions": {"explain": n, ...}}}`, every tool alike (`(none)` for a call without an

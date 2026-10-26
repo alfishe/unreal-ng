@@ -55,6 +55,10 @@ Records an input-script session on a snapshot through MCP (unreal-qt offscreen o
 mixer muted), builds L1 + L2 and writes every `analysis export` format into `--out` (`draft.ctl`, `draft.skool`,
 `draft.fields.json`, `draft.geometry.json`, `draft.layout.mk`, `draft.symbols`, `draft.map.txt`), plus `l1.json`,
 `conflicts.txt` and `session.json`. The scripts are zx-reaper's `tests/inputs` format. Example in the docstring.
+With `--l3` (P5) it also writes, before the exports, the findings register (`findings.md` in zx-reaper's format,
+`findings.jsonl`), the review queue (`review.txt`, `review.json`, the first sheet in `review-next.txt`) and a directed
+coverage run (`cover.txt`, `cover.json`; `--cover-budget`, default 64), and their counts in `session.json` under `l3`;
+the exported draft then carries the coverage notes.
 
 ## reaper_gate.py
 
@@ -63,6 +67,28 @@ copied in, zxinit's skool replaced by the draft, `re/layout.mk` taking the draft
 `make` (tape identical), `make test`, `make shift-test` at +$100 and +$101 and `score_draft.py` with the draft's
 fields. Nothing is edited by hand. `gate.json`, `gate.log`, `score.txt`, `score.json` go into `--work`; exit 0 when
 every step passed. Result and commands: [score-p3.md](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/score-p3.md).
+
+## run_ab.py
+
+The A/B harness (P5): a draft directory (`draft.skool`, `draft.layout.mk`, `draft.fields.json`,
+`draft.geometry.json`) through `reaper_gate.py` (fresh zx-reaper project, `make`, `make test`, both shift tests, the
+score), and a token ledger in run B's format
+([run-b-token-ledger.json](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/run-b-token-ledger.json):
+`{"run_c": {"agents": [{"id", "group", "model", "tokens", "tool_calls", "wall_s"}]}}`) against run B's. It runs no
+agent: the review agent works by [the recipe](../../../.recipe/analysis/analysis-layers.md) and hands in its draft
+and ledger. Without `--ledger` (or with an empty file) only the quality side is judged.
+
+```bash
+python3 tools/verification/analysis/run_ab.py --draft scratch/p5/mm1 --work scratch/p5/ab --ledger run-c.json \
+    --reaper /path/to/zx-reaper --tape $R/original/game.tap --tests $R/tests --reference mm.skool \
+    --expected tools/verification/analysis/expected/manic-miner-records.json --venv scratch/skoolkit-venv \
+    --bin scratch/reaper-mm/bin [--run-b-skool scratch/reaper-mm/compare/B.skool]
+```
+
+The verdict (plan.md, P5): every gate step passes, quality at least run B's (byte categories by entry, code entries
+matched, graphics covered; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
+numbers), subagent tokens at most `--token-target` (200000). `ab.json` and `ab.md` go into `--work`; exit 0 pass,
+1 fail, 2 when the gate did not run through. `--skip-gate` reuses `<work>/gate`.
 
 ## make_rom48_signatures.py
 

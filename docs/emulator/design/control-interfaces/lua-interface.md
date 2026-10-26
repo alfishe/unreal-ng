@@ -1507,6 +1507,13 @@ emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59
 emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
 local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
 emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+
+-- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }
+local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
+emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
+emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+emu.analysis("cover", "32")                          -- a string: the budget
 ```
 
 ## Usage Examples

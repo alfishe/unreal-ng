@@ -89,11 +89,14 @@ is a job whose progress and result are the topics `analysis.progress` and `analy
 → {"op":"call","rid":7,"method":"GET","path":"/api/v1/emulator/0/analysis/query?kind=records"}
 → {"op":"call","rid":8,"method":"POST","path":"/api/v1/emulator/0/analysis/export","body":{"format":"skool","path":"game.skool","ranges":"8000-FFFF"}}
 → {"op":"call","rid":9,"method":"POST","path":"/api/v1/emulator/0/analysis/gallery","body":{"address":"$8200","scale":4}}
+→ {"op":"call","rid":10,"method":"POST","path":"/api/v1/emulator/0/analysis/review","body":{"op":"next"}}
+→ {"op":"call","rid":11,"method":"POST","path":"/api/v1/emulator/0/analysis/experiment","body":{"spec":{"poke":{"$8100":5},"frames":50,"expect":{"mem:$8101":"$AA"}}}}
 ```
 
 The L2 structure the build made is read with `query`, written with `export` (the draft) and drawn with `gallery` (a PNG
 of one graphics region, base64 in `png`); they are calls, there is no L2 topic (`analysis.ready` tells when a new
-structure is there).
+structure is there). L3 (`findings`, `review`, `experiment`, `cover`) are calls too; `experiment` and `cover` answer
+when their runs are done, on their own analysis instances (the socket's other calls go on meanwhile).
 
 ## 3. Topics
 

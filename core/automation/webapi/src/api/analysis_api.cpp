@@ -103,6 +103,14 @@ bool OptionsFromJson(const HttpRequestPtr& req, analysis::Options& options, std:
         const Json::Value& v = (*json)[name];
         if (v.isNull())
             continue;
+        if ((v.isObject() || v.isArray()) && (name == "spec" || name == "experiment"))
+        {
+            // An experiment spec (l3experiment.h): an object or an array of them, as JSON text
+            Json::StreamWriterBuilder writer;
+            writer["indentation"] = "";
+            options[name] = Json::writeString(writer, v);
+            continue;
+        }
         if (v.isObject() || v.isArray())
         {
             RespondError(HttpStatusCode::k400BadRequest, "Bad Request", "'" + name + "' must be a number, a string or true / false",
@@ -185,6 +193,51 @@ void EmulatorAPI::analysisGallery(const HttpRequestPtr& req, std::function<void(
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondAnalysis(id, "gallery", options, callback);
+}
+
+/// GET: the options from the query; POST: from the body (L3 actions take both: a read and a change)
+static void RespondAnalysisEither(const HttpRequestPtr& req, const std::string& id, const std::string& action,
+                           std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (req->getMethod() == drogon::Get)
+    {
+        RespondAnalysis(id, action, OptionsFromQuery(req, action), callback);
+        return;
+    }
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, action, options, callback);
+}
+
+void EmulatorAPI::analysisFindings(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    RespondAnalysisEither(req, id, "findings", callback);
+}
+
+void EmulatorAPI::analysisReview(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    RespondAnalysisEither(req, id, "review", callback);
+}
+
+void EmulatorAPI::analysisExperiment(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "experiment", options, callback);
+}
+
+void EmulatorAPI::analysisCover(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "cover", options, callback);
 }
 
 }  // namespace v1

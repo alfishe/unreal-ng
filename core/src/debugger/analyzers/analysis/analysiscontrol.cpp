@@ -12,6 +12,7 @@
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l2gallery.h"
+#include "debugger/analyzers/analysis/l3session.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -80,8 +81,9 @@ StateNode Reply::ToValue() const
 
 const std::vector<std::string>& Actions()
 {
-    static const std::vector<std::string> actions = {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
-                                                      "gallery"};
+    static const std::vector<std::string> actions = {"start",   "stop",     "status", "build",      "cancel",
+                                                      "explain", "query",    "export", "gallery",    "findings",
+                                                      "review",  "experiment", "cover"};
     return actions;
 }
 
@@ -94,6 +96,12 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> query = {"kind", "range", "limit"};
     static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
     static const std::vector<std::string> gallery = {"address", "kind", "scale", "path", "limit"};
+    static const std::vector<std::string> findings = {"op",    "kind",  "status",   "range", "limit", "format",
+                                                      "path",  "claim", "evidence", "by",    "title"};
+    static const std::vector<std::string> review = {"op",      "id", "verdict",    "label",  "title",
+                                                    "comment", "by", "experiment", "ranges", "limit"};
+    static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding"};
+    static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges"};
     if (action == "start")
         return start;
     if (action == "build")
@@ -106,6 +114,14 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
         return exportOptions;
     if (action == "gallery")
         return gallery;
+    if (action == "findings")
+        return findings;
+    if (action == "review")
+        return review;
+    if (action == "experiment")
+        return experiment;
+    if (action == "cover")
+        return cover;
     return none;
 }
 
@@ -910,6 +926,8 @@ Reply ExportDraft(Emulator& emulator, const Options& options)
     // Plain addresses: the draft names its own entries (@label), and a debugger label in an operand (a ROM symbol,
     // "VR-CONT-$0003 ($0800)") is no assembler text
     const Z80Disassembler::NoLabelsScope plainAddresses;
+    // L3: what the review named and noted, and the coverage notes
+    exportOptions.notes = L3Sessions::Instance().Notes(emulator.GetId());
     const ExportResult result = Export(*l1, *l2, format, exportOptions);
     if (!result.ok)
         return Refuse(Error::BadRequest, result.error);
@@ -1078,12 +1096,23 @@ Reply Gallery(Emulator& emulator, const Options& options)
 
 }  // namespace
 
+bool ParseZ80Range(const std::string& text, ExportRange& range)
+{
+    return ParseRange(text, range);
+}
+
+bool ParseZ80Ranges(const std::string& text, std::vector<ExportRange>& ranges)
+{
+    return ParseRanges(text, ranges);
+}
+
 Reply Execute(Emulator& emulator, const std::string& action, const Options& options)
 {
     const std::vector<std::string>& actions = Actions();
     if (std::find(actions.begin(), actions.end(), action) == actions.end())
         return Refuse(Error::BadRequest, "unknown action '" + action +
-                                              "' (start, stop, status, build, cancel, explain, query, export, gallery)");
+                                              "' (start, stop, status, build, cancel, explain, query, export, gallery, findings, "
+                                              "review, experiment, cover)");
     const std::vector<std::string>& known = OptionsFor(action);
     for (const auto& [name, value] : options)
     {
@@ -1118,6 +1147,8 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         return ExportDraft(emulator, options);
     if (action == "gallery")
         return Gallery(emulator, options);
+    if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
+        return ExecuteReview(emulator, action, options);
     return Explain(emulator, *tracker, options);
 }
 

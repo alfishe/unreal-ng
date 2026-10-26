@@ -6499,11 +6499,13 @@ public:
             return StateNodeToLua(ts, value);
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
-        // stop | status | build | cancel | explain | query | export | gallery; opts a table ({level=, mode=, record=} /
+        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
         // {frames=, path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
         // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
-        // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why
+        // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
+        // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=} (or the op), experiment {spec=<JSON
+        // text>, path=, finding=} (or the spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");
@@ -6518,6 +6520,9 @@ public:
                                                              : verb == "build" ? "frames"
                                                              : verb == "query" ? "kind"
                                                              : verb == "export" ? "format"
+                                                             : verb == "findings" || verb == "review" ? "op"
+                                                             : verb == "experiment" ? "spec"
+                                                             : verb == "cover" ? "budget"
                                                                                : "")
                                                : analysis::Options{});
             StateNode value = reply.ToValue();

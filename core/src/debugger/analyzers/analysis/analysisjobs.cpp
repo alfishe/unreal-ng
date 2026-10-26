@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "debugger/analyzers/analysis/detectors/detectors.h"
+#include "debugger/analyzers/analysis/l3session.h"
 
 namespace analysis
 {
@@ -102,7 +103,8 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceB
     };
     auto result = std::make_shared<L1Result>();
     std::string error;
-    const bool ok = ReplayBuild(bundle, options, *result, error);
+    const auto kept = std::make_shared<const TraceBundle>(std::move(bundle));
+    const bool ok = ReplayBuild(*kept, options, *result, error);
     std::shared_ptr<const L2Result> structure;
     uint64_t conflicts = 0;
     if (ok)
@@ -125,6 +127,7 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceB
         {
             it->second.result = result;
             it->second.structure = structure;
+            it->second.bundle = kept;
             it->second.regions = structure->store.Size();
             it->second.conflicts = conflicts;
             it->second.resultJob = j.id;
@@ -206,6 +209,20 @@ std::shared_ptr<const L2Result> L1Jobs::Structure(const std::string& emulatorId)
     return it != _slots.end() ? it->second.structure : nullptr;
 }
 
+std::shared_ptr<const TraceBundle> L1Jobs::Bundle(const std::string& emulatorId) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _slots.find(emulatorId);
+    return it != _slots.end() ? it->second.bundle : nullptr;
+}
+
+uint64_t L1Jobs::ResultJob(const std::string& emulatorId) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _slots.find(emulatorId);
+    return it != _slots.end() ? it->second.resultJob : 0;
+}
+
 bool L1Jobs::Wait(const std::string& emulatorId, int timeoutMs) const
 {
     std::shared_ptr<Job> job;
@@ -243,6 +260,7 @@ void L1Jobs::Forget(const std::string& emulatorId)
         }
         _recordings.erase(emulatorId);
     }
+    L3Sessions::Instance().Forget(emulatorId);
     if (slot.job)
     {
         slot.job->cancel = true;

@@ -1922,6 +1922,15 @@ emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000
 g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
 png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
 emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+
+# L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}
+emu.analysis("findings", format="markdown", path="re/findings.md")
+item = emu.analysis("review")                          # the next item: {item, sheet, sheet_bytes, queue, text}
+emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label="MainLoop", title="The main loop")
+emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
+             "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
+emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 
 ### Enumerations

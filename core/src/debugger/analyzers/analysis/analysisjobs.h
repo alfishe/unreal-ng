@@ -63,6 +63,10 @@ public:
     std::shared_ptr<const L1Result> Result(const std::string& emulatorId) const;
     /// The L2 the detectors made from that L1 (on the worker, right after the replay)
     std::shared_ptr<const L2Result> Structure(const std::string& emulatorId) const;
+    /// The recording the result was built from (L3's experiments and coverage replay it again)
+    std::shared_ptr<const TraceBundle> Bundle(const std::string& emulatorId) const;
+    /// The id of the build the result came from (0: none)
+    uint64_t ResultJob(const std::string& emulatorId) const;
     /// Wait for the running build (true: it ended within @p timeoutMs)
     bool Wait(const std::string& emulatorId, int timeoutMs) const;
     bool Cancel(const std::string& emulatorId);
@@ -95,6 +99,7 @@ private:
         std::shared_ptr<Job> job;
         std::shared_ptr<const L1Result> result;
         std::shared_ptr<const L2Result> structure;
+        std::shared_ptr<const TraceBundle> bundle;
         uint64_t regions = 0;
         uint64_t conflicts = 0;
         uint64_t resultJob = 0;

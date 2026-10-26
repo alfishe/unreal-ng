@@ -4,7 +4,9 @@
 Drives unreal-qt offscreen through MCP (tools/verification/mcp/mcplib.py): a fresh 48K with a Kempston card (the
 scripts' KF needs one; the card is plugged before the snapshot, as plugging restarts the machine), the mixer muted,
 the snapshot loaded, `analysis start record=true`, the scripts played one after another in one recording, then
-`analysis build` and `analysis export` of every format into the output directory.
+`analysis build` and `analysis export` of every format into the output directory. With --l3, before the exports:
+the findings register (findings.md, findings.jsonl), the review queue (review.txt, review.json) and a directed
+coverage run (cover.txt, cover.json), so the exported draft carries the coverage notes (P5).
 
 Input scripts are zx-reaper's tests/inputs format (tools/zxrun.py): one line per change, the keys held until the next
 line; "FRAME KEYS..." (A-Z 0-9 ENTER SPACE CS SS, Kempston KF KL KR KU KD), "FRAME -" releases all, "FRAME END" ends
@@ -93,6 +95,38 @@ class Player:
         self.set_keys([])
 
 
+def dump_l3(s, out, args):
+    """The P5 outputs: the register, the queue, a coverage run; their counts for session.json"""
+    l3 = {}
+    began = time.time()
+    s.call('analysis', {'action': 'findings', 'format': 'markdown', 'path': os.path.join(out, 'findings.md')})
+    s.call('analysis', {'action': 'findings', 'format': 'jsonl', 'path': os.path.join(out, 'findings.jsonl')})
+    r = s.call('analysis', {'action': 'findings', 'limit': 1})
+    l3['findings'] = {k: r.structured.get(k) for k in ('total', 'by_kind', 'by_status')}
+    r = s.call('analysis', {'action': 'review', 'op': 'list', 'ranges': args.ranges, 'limit': 1000})
+    with open(os.path.join(out, 'review.txt'), 'w') as f:
+        f.write(r.text)
+    with open(os.path.join(out, 'review.json'), 'w') as f:
+        json.dump(r.structured, f, indent=1)
+    l3['review'] = r.structured.get('queue')
+    r = s.call('analysis', {'action': 'review', 'ranges': args.ranges})
+    with open(os.path.join(out, 'review-next.txt'), 'w') as f:
+        f.write(r.text)
+    l3['first_sheet_bytes'] = r.structured.get('sheet_bytes')
+    l3['findings_seconds'] = round(time.time() - began, 1)
+    began = time.time()
+    r = s.call('analysis', {'action': 'cover', 'budget': args.cover_budget, 'ranges': args.ranges})
+    with open(os.path.join(out, 'cover.txt'), 'w') as f:
+        f.write(r.text)
+    with open(os.path.join(out, 'cover.json'), 'w') as f:
+        json.dump(r.structured, f, indent=1)
+    l3['cover'] = {k: r.structured.get(k) for k in ('candidates', 'tried', 'flipped', 'attempts', 'new_code',
+                                                     'workers', 'peak_concurrency', 'micros')}
+    l3['cover_seconds'] = round(time.time() - began, 1)
+    print('L3:', json.dumps(l3))
+    return l3
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--snapshot', required=True)
@@ -102,6 +136,8 @@ def main():
     parser.add_argument('--binary', default=DEFAULT_BINARY)
     parser.add_argument('--port-base', type=int, default=8790)
     parser.add_argument('--no-kempston', action='store_true')
+    parser.add_argument('--l3', action='store_true', help='also dump findings / review / cover (P5) before the exports')
+    parser.add_argument('--cover-budget', type=int, default=64)
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -146,6 +182,8 @@ def main():
         print(status)
         report['build_seconds'] = round(time.time() - began, 1)
         report['status'] = status
+        if args.l3:
+            report['l3'] = dump_l3(s, out, args)
         for fmt in FORMATS:
             path = os.path.join(out, 'draft.' + fmt + ('.json' if fmt in ('fields', 'geometry') else
                                                          '.txt' if fmt == 'map' else '.mk' if fmt == 'layout' else ''))

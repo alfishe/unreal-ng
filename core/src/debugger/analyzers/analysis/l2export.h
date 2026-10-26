@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ struct ExportRange
     uint16_t end = 0;  ///< inclusive
 };
 
+/// What the review (L3, l3findings.h) adds at one address: a label and a title an agent or a human gave, comments,
+/// the coverage notes ("needs poke $8100=5")
+struct ExportNote
+{
+    std::string label;  ///< empty: the draft's own
+    std::string title;
+    std::vector<std::string> comments;
+};
+
 struct ExportOptions
 {
     /// The Z80 ranges written (each starts an @org); empty: $4000-$FFFF
@@ -40,6 +50,9 @@ struct ExportOptions
     std::function<std::string(const uint8_t* bytes, uint16_t z80)> disassemble;
     uint16_t defbWidth = 8;               ///< bytes per DEFB line (skool2asm writes them as they are)
     std::string symbolCodec = "skoolkit-ctl";
+    /// L3 notes by Z80 address. At an entry's start: its label (unless another entry has it), its title, comments
+    /// first in its description; inside an entry: a comment line "$XXXX: ..." in the entry's description
+    std::map<uint16_t, ExportNote> notes;
 };
 
 struct ExportResult
@@ -84,6 +97,9 @@ struct DraftPlan
     uint16_t shiftEnd = 0;      ///< the fixed tail starts here (= the end of the region + 1 when there is none)
 };
 DraftPlan MakePlan(const L1Result& l1, const L2Result& l2, const ExportOptions& options);
+
+/// The title the draft gives a claim's entry ("16x16 sprites, 4 frames, used by $8E3C")
+std::string RegionTitle(const Region& region);
 
 /// "$XXXX" in a comment -> "#R$XXXX" where XXXX is an entry of @p entries (sorted)
 std::string CommentRefs(const std::string& text, const std::vector<uint16_t>& entries);

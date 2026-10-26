@@ -2872,7 +2872,14 @@ namespace PythonBindings
             .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
                 analysis::Options options;
                 for (const auto& [key, value] : kwargs)
-                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                {
+                    // An experiment spec may be a dict or a list of them: JSON text for analysis::Execute
+                    if (py::isinstance<py::dict>(value) || py::isinstance<py::list>(value))
+                        options[py::str(key).cast<std::string>()] =
+                            py::module_::import("json").attr("dumps")(value).cast<std::string>();
+                    else
+                        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                }
                 const analysis::Reply reply = analysis::Execute(self, action, options);
                 StateNode value = reply.ToValue();
                 if (!reply.Ok())
@@ -2889,7 +2896,13 @@ namespace PythonBindings
                "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
                "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft) | "
                "gallery (kind='sprite' | 'tile' | 'font' | 'screen' | 'level_map', address='$8200' or a label, "
-               "scale=2, path='sprite.png', limit=200: the L2 graphics, one drawn as a PNG, base64 in png). "
+               "scale=2, path='sprite.png', limit=200: the L2 graphics, one drawn as a PNG, base64 in png) | "
+               "findings (op='list' | 'add', kind=, status=, range=, format='table' | 'markdown' | 'jsonl', path=: "
+               "the L3 findings register) | review (op='next' | 'list' | 'show' | 'resolve', id='F12', verdict='ok' | "
+               "'wrong' | 'skip', label=, title=, comment=, experiment=spec: the review queue) | experiment (spec=a "
+               "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
+               "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
+               "branches). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")

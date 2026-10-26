@@ -6,6 +6,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
+#include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/l1builder.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/config.h"
@@ -93,76 +94,6 @@ StateNode TraceBundle::ToStateNode() const
 namespace
 {
 
-/// The analysis instance: a headless, muted machine like the source, holding the recording
-struct Clone
-{
-    std::unique_ptr<Emulator> emulator;
-
-    ~Clone()
-    {
-        if (emulator)
-        {
-            emulator->Stop();
-            emulator->Release();
-        }
-    }
-
-    bool Make(const TraceBundle& bundle, std::string& error)
-    {
-        const CONFIG source = *bundle.config;
-        emulator = std::make_unique<Emulator>("analysis-replay", LoggerLevel::LogError);
-        emulator->SetPreferredModel(source.mem_model, source.ramsize);
-        // The same model: the source's cards, and its slot set as it is (a card plugged at run time, a Kempston for
-        // a game's joystick, is part of what the recording checks before it loads)
-        emulator->SetConfigOverride([source, slots = bundle.slots](CONFIG& config) {
-            MachineStateTransfer::FitSourceDevices(source, config);
-            if (slots)
-                SlotManager::UseSlots(*slots, config);
-        });
-        bool initialized = false;
-        try
-        {
-            initialized = emulator->Init();
-        }
-        catch (const std::exception& e)
-        {
-            error = std::string("the analysis instance could not be made: ") + e.what();
-            return false;
-        }
-        if (!initialized)
-        {
-            error = "the analysis instance could not be made (model " + bundle.model + ")";
-            return false;
-        }
-        EmulatorContext* context = emulator->GetContext();
-        if (context->pModuleLogger != nullptr)
-            context->pModuleLogger->TurnOffLoggingForAll();
-        if (FeatureManager* features = emulator->GetFeatureManager())
-        {
-            features->setFeature(Features::kSoundGeneration, false);
-            features->setFeature(Features::kTimeTravel, true);
-        }
-        if (context->pSoundManager != nullptr)
-            context->pSoundManager->mute();
-        if (context->pMemory != nullptr)
-            context->pMemory->UpdateFeatureCache();
-        ttd::TimeTravelController* ttd = context->pTimeTravelController;
-        if (ttd == nullptr)
-        {
-            error = "the analysis instance has no time travel engine";
-            return false;
-        }
-        std::istringstream stream(*bundle.session, std::ios::binary);
-        std::string why;
-        if (!ttd->DeserializeSession(stream, why))
-        {
-            error = "the recording did not load on the analysis instance: " + why;
-            return false;
-        }
-        return true;
-    }
-};
-
 /// The hooks' state: what the instruction-start hook reads besides the registers
 struct Tap
 {
@@ -197,11 +128,11 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         return false;
     }
     const auto started = std::chrono::steady_clock::now();
-    Clone clone;
-    if (!clone.Make(bundle, error))
+    AnalysisInstance clone;
+    if (!clone.Make(bundle, "analysis-replay", true, error))
         return false;
 
-    EmulatorContext* context = clone.emulator->GetContext();
+    EmulatorContext* context = clone.Context();
     ttd::TimeTravelController* ttd = context->pTimeTravelController;
     Z80* z80 = context->pCore->GetZ80();
     Memory* memory = context->pMemory;
@@ -287,7 +218,7 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
                 const uint64_t run = frames * frameT;
                 const uint64_t t = z80->t;
                 const uint64_t before = context->emulatorState.t_states + t;
-                clone.emulator->RunTStates(run > t ? run - t : 1, /*skipBreakpoints=*/true);
+                clone.GetEmulator()->RunTStates(run > t ? run - t : 1, /*skipBreakpoints=*/true);
                 stalled = context->emulatorState.t_states + z80->t == before;
             }
             if (stalled)

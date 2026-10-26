@@ -218,4 +218,139 @@
         gallery["responses"]["404"]["description"] = "No graphics region at the address, or no such label";
         gallery["responses"]["409"]["description"] =
             "No L2 yet (build first), a geometry with no picture, or the path could not be written";
+
+        // L3 (P5): the same options in the query (GET) or the body (POST)
+        auto bodyOf = [](Json::Value& op, const std::vector<std::pair<const char*, const char*>>& fields) {
+            Json::Value& schema = op["requestBody"]["content"]["application/json"]["schema"];
+            schema["type"] = "object";
+            for (const auto& [name, text] : fields)
+            {
+                const bool object = std::string(name) == "spec" || std::string(name) == "experiment";
+                if (object)
+                    for (const char* type : {"object", "array", "string"})
+                        schema["properties"][name]["oneOf"].append(Json::Value(Json::objectValue))["type"] = type;
+                else
+                    schema["properties"][name]["type"] = "string";
+                schema["properties"][name]["description"] = text;
+            }
+        };
+        auto queryOf = [&idParameter](Json::Value& op, const std::vector<std::pair<const char*, const char*>>& fields) {
+            idParameter(op);
+            for (const auto& [name, text] : fields)
+            {
+                Json::Value p;
+                p["name"] = name;
+                p["in"] = "query";
+                p["required"] = false;
+                p["schema"]["type"] = "string";
+                p["description"] = text;
+                op["parameters"].append(p);
+            }
+        };
+        const std::vector<std::pair<const char*, const char*>> findingsFields = {
+            {"op", "list (default) or add (POST: a note)"},
+            {"kind", "claim, conflict, bug, routine, unknown, coverage, note, experiment"},
+            {"status", "observed, inferred, refuted, confirmed (add: the note's status)"},
+            {"range", "Hex start-end (list: overlapping; add: the note's range)"},
+            {"limit", "The most findings answered (default 200)"},
+            {"format", "table (default), markdown (zx-reaper re/findings.md) or jsonl"},
+            {"path", "Write the markdown / jsonl here"},
+            {"claim", "add: the sentence"},
+            {"evidence", "add: evidence, ';' separated"},
+            {"by", "add: who (default agent)"},
+            {"title", "add: a title"}};
+        const char* findingsText =
+            "The L3 findings register of the last build: every L2 claim, conflict, candidate bug (reads of never "
+            "written bytes, writes into code outside SMC, stack imbalance, indexes past a table, counters that wrap), "
+            "unnamed hot routine and unknown area, with the notes, coverage and experiments added since; each with "
+            "evidence, a status (observed, inferred, refuted, confirmed) and an id F1.. in a fixed order.";
+        for (const char* method : {"get", "post"})
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/analysis/findings"][method];
+            op["summary"] = std::string(method) == "get" ? "List the L3 findings" : "List the L3 findings or add a note";
+            op["tags"].append("Analyzers");
+            op["description"] = findingsText;
+            if (std::string(method) == "get")
+                queryOf(op, findingsFields);
+            else
+            {
+                idParameter(op);
+                bodyOf(op, findingsFields);
+            }
+            op["responses"]["200"]["description"] = "count, total, by_kind, by_status, findings (or content), text";
+            op["responses"]["400"]["description"] = "An unknown op, kind, status or format, a bad range";
+            op["responses"]["409"]["description"] = "No L2 yet (build first), or the path could not be written";
+        }
+        const std::vector<std::pair<const char*, const char*>> reviewFields = {
+            {"op", "next (default), list, show, resolve"},
+            {"id", "show / resolve: the finding (F12)"},
+            {"verdict", "resolve: ok (confirmed), wrong (refuted), skip (out of the queue)"},
+            {"label", "resolve: the entry's label in the draft"},
+            {"title", "resolve: the entry's title in the draft"},
+            {"comment", "resolve: a comment in the draft"},
+            {"by", "resolve: who decided (default agent)"},
+            {"experiment", "resolve: an experiment spec whose result marks the finding"},
+            {"ranges", "Hex Z80 ranges, comma separated (default 4000-FFFF)"},
+            {"limit", "The queue's cap (default 40; the rest is one summary)"}};
+        for (const char* method : {"get", "post"})
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/analysis/review"][method];
+            op["summary"] = "The L3 review queue";
+            op["tags"].append("Analyzers");
+            op["description"] =
+                "Only the findings that need a decision: candidate bugs, conflicts, unnamed hot routines, low "
+                "confidence claims and unknown areas over 16 bytes, in a fixed order, capped with one summary item. "
+                "next answers the next item with a fact sheet under 1 KB; resolve writes the decision into the register "
+                "and the draft export (label, title, comment).";
+            if (std::string(method) == "get")
+                queryOf(op, reviewFields);
+            else
+            {
+                idParameter(op);
+                bodyOf(op, reviewFields);
+            }
+            op["responses"]["200"]["description"] = "next / show: item, sheet, sheet_bytes, queue; list: items, queue "
+                                                    "(open, shown, resolved, summary, by_reason); resolve: finding, experiments; text";
+            op["responses"]["400"]["description"] = "An unknown op or verdict, a bad label, a resolve with no decision";
+            op["responses"]["404"]["description"] = "No such finding";
+            op["responses"]["409"]["description"] = "No L2 yet (build first), a label already used";
+        }
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/analysis/experiment"]["post"];
+            op["summary"] = "Run L3 experiments on muted clones";
+            op["tags"].append("Analyzers");
+            op["description"] =
+                "Each spec: pokes, registers and input events (keys, joystick) applied on a muted headless analysis "
+                "instance seeked to a TTD point (start, end or frame:N), then N frames, then checks over memory, the "
+                "screen, watched addresses (pc / write / read) and new code. The source instance is never touched; "
+                "the experiments run in a bounded pool, each on its own clone. The result marks the finding "
+                "observed or refuted.";
+            idParameter(op);
+            bodyOf(op, {{"spec", "One spec object or an array of them (or their JSON text)"},
+                        {"path", "A JSON file with the spec(s)"},
+                        {"parallel", "Clones at once (1..8)"},
+                        {"finding", "The finding the result marks"}});
+            op["responses"]["200"]["description"] = "results, observed, refuted, errors, workers, peak_concurrency, seeks, micros, text";
+            op["responses"]["400"]["description"] = "A bad spec (the field and what it takes)";
+            op["responses"]["409"]["description"] = "No L2 yet (build first), or no recording kept";
+        }
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/analysis/cover"]["post"];
+            op["summary"] = "L3 directed coverage";
+            op["tags"].append("Analyzers");
+            op["description"] =
+                "Flips branches the session took one way only: holds the byte a branch tests (the compared constant "
+                "first) or presses the keys / joystick directions of the port it reads, in experiments on clones, and "
+                "reports the new code as coverage findings and draft notes.";
+            idParameter(op);
+            bodyOf(op, {{"budget", "Experiments in all (default 64)"},
+                        {"per_branch", "Attempts per branch (default 8)"},
+                        {"frames", "Frames per attempt (default 50)"},
+                        {"parallel", "Clones at once (1..8)"},
+                        {"limit", "Branches tried at most (default 200)"},
+                        {"ranges", "Hex Z80 ranges, comma separated (default 4000-FFFF)"}});
+            op["responses"]["200"]["description"] = "candidates, tried, flipped, attempts, new_code, branches, text";
+            op["responses"]["400"]["description"] = "A bad budget, frames or range";
+            op["responses"]["409"]["description"] = "No L2 yet (build first)";
+        }
     }
