@@ -273,6 +273,8 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
     while (moved < maxBytes && _transferring)
     {
         uint8_t data = 0xFF;
+        if (_bus.contend)
+            _bus.contend(_src, srcIo);
         if (_bus.advance)
             _bus.advance(Cycles(_aToB ? _portATiming : _portBTiming));
         if (srcIo)
@@ -282,6 +284,8 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
         }
         else if (_bus.readMemory)
             data = _bus.readMemory(_src);
+        if (_bus.contend)
+            _bus.contend(_dst, dstIo);
         if (_bus.advance)
             _bus.advance(Cycles(_aToB ? _portBTiming : _portATiming));
         if (dstIo)

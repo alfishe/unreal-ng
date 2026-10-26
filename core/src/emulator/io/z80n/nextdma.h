@@ -26,6 +26,8 @@ public:
         std::function<void(uint16_t, uint8_t)> writeIo;
         /// CPU clocks the transfer takes before the next access (the read, then the write cycles of the port timing bytes)
         std::function<void(unsigned)> advance;
+        /// At the start of a read or write cycle: the waits the video logic gives the access (a memory address, or a port when `io`)
+        std::function<void(uint16_t, bool)> contend;
     };
 
     void SetBus(Bus bus) { _bus = std::move(bus); }

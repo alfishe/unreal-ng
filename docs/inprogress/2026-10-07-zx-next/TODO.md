@@ -8,16 +8,35 @@ remains of the rest is here.
 
 Planned, in this order:
 
-- [ ] NEXTREG writes in the port trace: the `NEXTREG` instruction (`ED 91` / `ED 92`) and the copper's MOVEs are no port cycles, so the
+- [x] NEXTREG writes in the port trace: the `NEXTREG` instruction (`ED 91` / `ED 92`) and the copper's MOVEs are no port cycles, so the
   generic port trace (`TraceControl`) shows nothing and a port breakpoint on #253B does not fire for them. The NextREG journal, `bnextreg`
-  and the TTD journal have them already
-- [ ] Contention: the Next's "previous hc cycle" phase (3-14 instead of 4-15) in `UlaContention::ComputeContentionDelay`, the +3 WAIT-line
-  form (the +3 timing reuses the gate-array pattern), NR #08 bit 6 taking effect at hc(8) = 1 (zxnext.vhd 5822; ours at once); settle
-  `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME)
-- [ ] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
-  238), the DMA interrupt pulse, bus arbitration with the expansion bus; the heights of the `dma` / `zilogDMA` border blocks are not measured
-- [ ] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
-  engine is drawing
+  and the TTD journal have them already (done 2026-10-25: `PortDecoder::OnPortWriteWithoutBusCycle` gives the port breakpoints, the port
+  access tracker and the port trace the instruction as `OUT #243B,reg` / `OUT #253B,value` at its pc, rule `PortTraceRule::kNoBusCycle`
+  (252); tests `NextSkeleton_Test.NextRegInstructionIsInThePortTrace` / `PortBreakpointFiresOnNextReg`. The copper is no CPU: it stays in
+  the NextREG journal and the `bcopper` breakpoints)
+- [x] Contention: the Next's "previous hc cycle" phase (3-14 instead of 4-15) in `UlaContention::ComputeContentionDelay`, the +3 WAIT-line
+  form (the +3 timing reuses the gate-array pattern), NR #08 bit 6 taking effect at hc(8) = 1 (zxnext.vhd 5822; ours at once) (done
+  2026-10-25: NR #08 bit 6 waits for the end of the line's contention window (`UlaContention::LineWindowEndFrom`,
+  `PortDecoder_Next::SetContentionDisabled`), the register reads the switch in effect (5906); test
+  `NextSkeleton_Test.ContentionSwitchWaitsForTheLinesWindowToEnd`. No change for the other two, by the RTL: `zxula.vhd` 579-580 says the
+  synchronous core decides one `hc` early (3-14) so that the CPU clock is held in the same cycles as the original's combinational OR
+  (4-15): the clock the CPU sees is the same. The +3 `o_cpu_wait_n` (600) is low for `hc(3:0)` 15, 0, 3-14 of every cell: sampled at
+  T2 and at each Tw, that gives the waits 7, 6, 5, 4, 3, 2, 1, 0 by phase, the shape of `gateArrayContentionPattern`)
+- [ ] Contention: settle `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME); needs a board measurement (the
+  "targeted tests run on a real board" below)
+- [x] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
+  238), the DMA interrupt pulse, bus arbitration with the expansion bus (done 2026-10-26: the DMA runs on the contended CPU clock
+  (`z80dma` `clk_i = i_CLK_CPU`, the +3 wait through `dma_wait_n`, zxnext.vhd 1844), so `NextDma::Bus::contend` gives its memory cycles
+  the CPU's waits and its port cycles the port contention at IORQ; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryAndPorts`.
+  No change for the rest: the DMA steps between instructions, so it never runs inside a RETI and the tail ends with it as
+  `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
+  no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
+- [ ] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo)
+- [x] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
+  engine is drawing (done 2026-10-26: `NextSprites::FillUntil` runs the engine to a clock and keeps where it stands; a write inside a pass
+  runs it to the write with the state before it (`ScreenNext::AdvanceSpritePass`), the sprites after that point qualify with the new
+  attributes and draw with the patterns and transparent index of then (sprites.vhd 971 compares each pixel as it is written); test
+  `NextSpriteFill_Test.AMoveInsideAFillReachesTheSpritesNotYetDrawn`)
 - [ ] Ports: NR #8A (propagate the port decodes to the expansion bus) is stored and read back only; nothing on the bus yet
 
 Not planned yet:

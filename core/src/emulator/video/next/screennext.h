@@ -119,6 +119,9 @@ private:
     uint64_t _rowSeq[NextVideoRenderer::kHeight] = {};             ///< the frame whose picture it is
     NextSprites::LineBuffer _passScratch;                          ///< the fill of a line no row shows
     std::vector<uint16_t> _passTicks;
+    NextSprites::FillCursor _passCursor;  ///< where the engine stands in the pass _passCursorOf (AdvanceSpritePass)
+    bool _passCursorValid = false;
+    int _passCursorOf = 0;
     int64_t _passEnd = 0;              ///< when _passNext's fill ends (valid for _passEndEpoch / _passEndOf)
     uint32_t _passEndEpoch = ~0u;
     int _passEndOf = 0;
@@ -130,6 +133,8 @@ private:
     unsigned PassVcount(int g, bool& nextFrame) const;
     int64_t PassEnd(int g);
     void RunSpritePass(int g, int64_t now);
+    /// A write at machine clock `now` inside pass g: the engine runs to `now` with the state before it, the rest of the pass sees the write
+    void AdvanceSpritePass(int g, int64_t now);
     void RunSpritePassesStartedBy(int64_t now);
     void RunSpritePassesEndedBy(int64_t now);
     /// The frame's natural end (InitFrame of the next one, every frame, drawn or not): the passes of the frame not run yet run now

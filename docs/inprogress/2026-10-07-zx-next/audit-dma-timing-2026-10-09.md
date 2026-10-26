@@ -56,7 +56,7 @@ nothing. There are no real-board numbers; this item stays "arithmetic" until a b
 | CPU speed change | latched within the instruction | ours at the next frame start |
 | 60 Hz timing | `zxula_timing.vhd` 216-308 | **done 2026-10-24**: NR #05 bit 2 latched at the frame sync (`ula_sixty_hz`), 264-line tables for 48K / 128K / +3, Pentagon forced to 50 Hz |
 | NR #03 timing decode | bit 3, user lock, codes 101-111 map to +3 | **done 2026-10-24** (lock, remap, config-mode type rules, read-back) |
-| NR #08 contention latch | at `hc(8)` | ours at once |
+| NR #08 contention latch | at `hc(8)` | at the end of the line's contention window (2026-10-25) |
 | Port contention details | `#BF3B`, `#FF3B`, per-8K-page decision | **done 2026-10-24**: memory contention per 8K page, odd-port contention only `#7FFD` (128K timing) and the ULA+ pair, no wait before IORQ |
 | Other contended internal cycles (48K / 128K) | `o_cpu_contend` also for no-MREQ cycles | moderate confidence |
 | DMA bus contention / handover latency | DMA cycles go through the same waits | not modelled |

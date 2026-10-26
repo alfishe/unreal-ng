@@ -10,6 +10,7 @@
 #include "platform/windows/xinputbackend.h"
 #elif defined(__linux__)
 #include "platform/linux/evdevbackend.h"
+#include "platform/linux/hidrawbackend.h"
 #endif
 
 namespace controllers
@@ -28,6 +29,8 @@ std::vector<std::unique_ptr<IBackend>> BackendFactory::CreateNative()
     backends.push_back(CreateRawInputBackend());
     backends.push_back(CreateXInputBackend(xboxServed));
 #elif defined(__linux__)
+    // hidraw first: opening the Steam Deck's controller makes hid-steam drop its evdev pad
+    backends.push_back(CreateHidrawBackend());
     backends.push_back(CreateEvdevBackend());
 #endif
     return backends;

@@ -78,6 +78,7 @@ namespace PortTraceRule
 constexpr uint8_t kNoMatch     = 0xFF;  // No decode rule matched (unmapped)
 constexpr uint8_t kBdiFallback = 0xFE;  // Resolved by the BDI #1F/#3F/#5F/#7F fallback decode
 constexpr uint8_t kNoTable     = 0xFD;  // Model has no mask/match table (if-chain decoder)
+constexpr uint8_t kNoBusCycle  = 0xFC;  // A register write without a port cycle (the Z80N NEXTREG instruction)
 }  // namespace PortTraceRule
 
 /// Internal port code sentinel (PortTraceEvent::internalCode)

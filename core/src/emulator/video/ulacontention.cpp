@@ -85,6 +85,20 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     return _gateArray ? gateArrayContentionPattern[offsetInCell] : contentionPattern[offsetInCell];
 }
 
+uint32_t UlaContention::LineWindowEndFrom(uint32_t t) const
+{
+    const uint32_t perLine = _raster.tstatesPerLine;
+    if (!perLine || _raster.screenLineAreaStart < kContentionLeadT)
+        return t;
+    const uint32_t windowStart = _raster.screenLineAreaStart - kContentionLeadT;
+    const uint32_t windowLength = _raster.screenLineAreaEnd - _raster.screenLineAreaStart + 1;
+    // The lines are counted from the first paper line's start, as ComputeContentionDelay counts them
+    const uint32_t tInLine = (t % perLine + perLine - _raster.screenAreaStart % perLine) % perLine;
+    if (tInLine < windowStart || tInLine >= windowStart + windowLength)
+        return t;
+    return t + (windowStart + windowLength - tInLine);
+}
+
 uint8_t UlaContention::IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) const
 {
     // The +2A/+3 gate array contends memory cycles only, never I/O

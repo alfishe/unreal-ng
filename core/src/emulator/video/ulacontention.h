@@ -243,6 +243,10 @@ public:
     /// Raster timing snapshot (test/diagnostic access)
     const ContentionRaster& GetRaster() const { return _raster; }
 
+    /// The first T from `t` on outside the 128 T contention window of its line (any line, paper or border): t itself when it is
+    /// outside. The Next's ULA counts the window as hc(8) = 0; NR #08 bit 6 is latched while hc(8) = 1 (zxnext.vhd 5822)
+    uint32_t LineWindowEndFrom(uint32_t t) const;
+
     /// I/O contention of the Ferranti ULA (48K / 128K / +2), the four patterns of the "Contended I/O" rules
     /// (faqwiki; FUSE, MAME):
     ///

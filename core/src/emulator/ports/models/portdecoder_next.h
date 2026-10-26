@@ -59,6 +59,8 @@ public:
     void SetCpuSpeed(uint8_t ratio) override;
     void SetMachineTiming(uint8_t timing) override;
     void SetContentionDisabled(bool disabled) override;
+    void ResetContentionDisabled() override;
+    bool ContentionDisabled() const override { return _nr08NoContention; }
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void DivMmcEnableChanged() override { _divMmc->OnEnableChanged(); }
@@ -212,7 +214,13 @@ private:
     uint32_t FrameDurationUs(uint32_t frame) const;
     /// Contention follows the frame family, the speed (3.5 MHz only) and NR #08 bit 6
     void UpdateContention();
-    bool _nr08NoContention = false;
+    /// Apply the NR #08 bit 6 write once the beam has left the line's contention window
+    void SettleContentionDisabled();
+    bool _nr08NoContention = false;      // eff_nr_08_contention_disable
+    bool _nr08Pending = false;           // a write waits for hc(8) = 1
+    bool _nr08PendingValue = false;
+    uint32_t _nr08ApplyAt = 0;           // the CPU T it takes effect at
+    uint64_t _nr08PendingFrame = 0;      // in this frame
     uint8_t _ratio = 1;
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;

@@ -215,6 +215,24 @@
       "match": [ { "bus": "bt", "vid": "045e", "pid": ["091b"] } ],
       "layout": "generic", "images": "surface-dial", "glyphs": "surface-dial",
       "controls": ["knob", "push", "touch"] },
+
+    { "id": "steam-deck", "name": "Steam Deck", "vendor": "Valve",
+      "match": [ { "bus": "usb", "vid": "28de", "pid": ["1205"], "backend": "hidraw" } ],
+      "layout": "xbox", "images": "steam-deck", "glyphs": "steam-deck",
+      "controls": ["south", "east", "west", "north", "dpad.*", "lb", "rb", "lt", "rt", "lstick.*", "rstick.*",
+                   "view", "menu", "guide", "misc.1", "paddle.p1", "paddle.p2", "paddle.p3", "paddle.p4",
+                   "lstick.touch", "rstick.touch", "ltouchpad.*", "rtouchpad.*", "gyro.*", "accel.*"] },
+    { "id": "steam-deck-evdev", "ignore": "synthetic",
+      "match": [ { "vid": "28de", "pid": ["1205"], "backend": "evdev" } ] },
+    { "id": "steam-virtual-pad", "ignore": "synthetic",
+      "match": [ { "vid": "28de", "pid": ["11ff"], "backend": "evdev" } ] },
+    { "id": "steam-deck-gamepad", "name": "Steam Deck (gamepad emulator)", "vendor": "Valve",
+      "match": [ { "bus": "bt", "vid": "28de", "pid": ["0001"] }, { "vid": "1209", "pid": ["0001"], "name": "steam deck" } ],
+      "layout": "xbox",
+      "hid": {"buttons": ["south", "east", "west", "north", "lb", "rb", "view", "menu", "guide", "lstick.click", "rstick.click"]}, "images": "steam-deck", "glyphs": "steam-deck",
+      "controls": ["south", "east", "west", "north", "dpad.*", "lb", "rb", "lt", "rt", "lstick.*", "rstick.*",
+                   "view", "menu", "guide"] },
+
     { "id": "dragonrise-generic", "name": "USB Gamepad", "vendor": "DragonRise",
       "match": [ { "vid": "0079", "pid": ["0006"] } ],
       "layout": "generic", "images": "generic-unknown" },
@@ -359,6 +377,11 @@
                      "menu": "Options", "guide": "PS", "lb": "L1", "rb": "R1", "lt": "L2", "rt": "R2", "touchpad.click": "Touchpad" },
     "nintendo": { "south": "B", "east": "A", "west": "Y", "north": "X", "view": "-", "menu": "+", "guide": "Home",
                   "lb": "L", "rb": "R", "lt": "ZL", "rt": "ZR", "share": "Capture" },
+    "steam-deck": {
+      "south": "A", "east": "B", "west": "X", "north": "Y", "view": "View", "menu": "Menu", "guide": "Steam",
+      "misc.1": "···", "lb": "L1", "rb": "R1", "lt": "L2", "rt": "R2", "paddle.p1": "R4", "paddle.p2": "R5",
+      "paddle.p3": "L4", "paddle.p4": "L5", "ltouchpad.click": "Left trackpad", "rtouchpad.click": "Right trackpad"
+    },
     "surface-dial": { "knob": "Turn", "push": "Press", "touch": "Touch" }
   }
 }
