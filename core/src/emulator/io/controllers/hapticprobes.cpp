@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -42,8 +41,12 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
     BreakpointManager* breakpoints = Breakpoints();
     if (breakpoints == nullptr || probes.empty())
         return;
+    _sink = breakpoints->RegisterTapSink(this);
+    if (_sink == BRK_NO_TAP)
+        return;
     _probes.assign(probes.begin(), probes.begin() + std::min<size_t>(probes.size(), HapticFrame::kMaxProbes));
-    bool memory = false;
+    // One repaint for all of them: the tap demand switches once
+    BreakpointManager::Batch batch(*breakpoints);
     for (size_t index = 0; index < _probes.size(); index++)
     {
         const HapticProbe& probe = _probes[index];
@@ -51,7 +54,8 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
         descriptor->hidden = true;
         descriptor->owner = kOwner;
         descriptor->note = "haptic probe";
-        descriptor->probe = static_cast<uint8_t>(index);
+        descriptor->tapSink = _sink;
+        descriptor->tapCookie = static_cast<uint32_t>(index);
         if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
         {
             descriptor->type = BRK_IO;
@@ -61,7 +65,6 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
         }
         else
         {
-            memory = true;
             descriptor->type = BRK_MEMORY;
             descriptor->memoryType = probe.kind == HapticProbeKind::Exec   ? BRK_MEM_EXECUTE
                                      : probe.kind == HapticProbeKind::Read ? BRK_MEM_READ
@@ -83,31 +86,18 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
         }
         _ids.push_back(breakpoints->AddBreakpoint(descriptor));
     }
-    breakpoints->SetProbeSink(this);
-    // Exec / read / write breakpoints are checked on the CPU's debug path only: held on while the probes are armed
-    if (memory && _context->pFeatureManager != nullptr)
-    {
-        _context->pFeatureManager->setProbeDebugHold(true);
-        _debugHold = true;
-    }
     Clear();
 }
 
 void HapticProbes::Disarm()
 {
+    // Unregistering removes the taps (and with them what they held on: the exec check, the write hook, the debug path)
     BreakpointManager* breakpoints = Breakpoints();
-    if (breakpoints != nullptr && (!_ids.empty() || !_probes.empty()))
-    {
-        breakpoints->SetProbeSink(nullptr);
-        for (uint16_t id : _ids)
-            if (id != BRK_INVALID)
-                breakpoints->RemoveBreakpointByID(id);
-    }
+    if (breakpoints != nullptr && _sink != BRK_NO_TAP)
+        breakpoints->UnregisterTapSink(_sink);
+    _sink = BRK_NO_TAP;
     _ids.clear();
     _probes.clear();
-    if (_debugHold && _context != nullptr && _context->pFeatureManager != nullptr)
-        _context->pFeatureManager->setProbeDebugHold(false);
-    _debugHold = false;
     Clear();
 }
 
@@ -126,8 +116,11 @@ void HapticProbes::TakeFrame(HapticFrame& frame)
     Clear();
 }
 
-void HapticProbes::OnProbeHit(uint8_t probe, uint16_t address, int value)
+void HapticProbes::OnTap(const BreakpointTapHit& hit)
 {
+    const uint32_t probe = hit.cookie;
+    const uint16_t address = hit.address;
+    const int value = hit.value;
     if (probe >= _probes.size())
         return;
     if (_hits[probe] != 0xFFFF)
@@ -136,7 +129,7 @@ void HapticProbes::OnProbeHit(uint8_t probe, uint16_t address, int value)
     if (kind != HapticProbeKind::Write && kind != HapticProbeKind::PortOut)
         return;
     HapticProbeEvent event;
-    event.probe = probe;
+    event.probe = static_cast<uint8_t>(probe);
     if (kind == HapticProbeKind::Write)
     {
         // The breakpoint is told after the write: memory holds the new byte, _last the one it replaced

@@ -1,9 +1,11 @@
 /// @file hapticprofile_test.cpp
 /// @brief H3 (haptics.md §5-§7): a game profile's `haptics` section parses and refuses what it cannot do yet, its
 /// frame probes fire on what they watch (Haptics_ProbeWriteDecreased of §12), and its rules play the library effects.
+/// A play profile's `events:` are its sources too, and they report the game's events without a device.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -140,4 +142,81 @@ TEST(HapticProfile_Test, Haptics_ProbeWriteDecreased)
     for (const auto& [name, level] : feed.SourceLevels())
         fired = fired || (name == "boom" && level == 1.0f);
     EXPECT_TRUE(fired) << "the Haptics tab sees the source fire";
+}
+
+TEST(HapticProfile_Test, EventsAreTheSourcesOfTheHaptics)
+{
+    // A play profile's `events:` (breakpoint taps README.md §7) are haptics sources: the rules name them, beside the
+    // ones written under haptics.sources
+    const char* const text = R"({
+      "schema": 1, "kind": "play", "id": "game/events-test",
+      "match": { "file_sha256": ["00"] },
+      "events": { "jump": { "probe": "exec", "address": "0x795A" }, "lives": { "probe": "value", "address": "0x767F" } },
+      "haptics": {
+        "sources": { "boom": { "filter": "ay-envelope" } },
+        "rules": [ { "on": "jump", "play": "tick" }, { "on": "boom", "play": "explosion" } ]
+      }
+    })";
+    Profile profile;
+    std::string error;
+    ASSERT_TRUE(ParseProfile(text, profile, error)) << error;
+    HapticProfile haptics;
+    ASSERT_TRUE(ParseHapticProfile(profile.haptics, haptics, error)) << error;
+    ASSERT_EQ(haptics.sources.size(), 3u);
+    std::vector<std::string> names;
+    for (const HapticSource& source : haptics.sources)
+        names.push_back(source.name);
+    EXPECT_NE(std::find(names.begin(), names.end(), "jump"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "lives"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "boom"), names.end());
+
+    // Events alone: the haptics section is made, with no rules
+    const char* const alone = R"({"schema": 1, "kind": "play", "id": "game/events-only", "match": {"file_sha256": ["00"]},
+      "events": {"died": {"probe": "exec", "address": "0x8B80"}}})";
+    ASSERT_TRUE(ParseProfile(alone, profile, error)) << error;
+    ASSERT_TRUE(ParseHapticProfile(profile.haptics, haptics, error)) << error;
+    ASSERT_EQ(haptics.sources.size(), 1u);
+    EXPECT_TRUE(haptics.rules.empty());
+
+    std::string twice = text;
+    twice.replace(twice.find("\"boom\""), 6, "\"jump\"");
+    EXPECT_FALSE(ParseProfile(twice, profile, error));
+    EXPECT_NE(error.find("also a haptics source"), std::string::npos) << error;
+    EXPECT_FALSE(ParseProfile(R"({"schema": 1, "kind": "debug", "id": "debug/x", "events": {}})", profile, error));
+    EXPECT_NE(error.find("play profile"), std::string::npos) << error;
+}
+
+TEST(HapticProfile_Test, GameEventsWithoutADevice)
+{
+    // The game's events come from the profile's sources with no device to play on: each frame's levels and watched
+    // values; a hold (a replay or seek) reports nothing
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
+    ProfileHaptics feed(ParseGame(), "game/haptic-test", mixer, [] { return std::vector<HostDeviceId>{}; });
+    const std::vector<GameEventInfo> events = feed.GameEvents();
+    ASSERT_EQ(events.size(), 3u);
+    EXPECT_EQ(events[1].name, "died");
+    EXPECT_FALSE(events[1].level) << "a write is an event";
+    EXPECT_TRUE(events[2].level) << "a value is a level";
+    EXPECT_EQ(feed.GameEventsProfile(), "game/haptic-test");
+
+    GameEventFrame frame;
+    EXPECT_FALSE(feed.TakeGameEvents(frame)) << "no frame evaluated yet";
+    feed.OnHapticFrame(Frame(3, 0x40));  // the first frame learns the lives
+    ASSERT_TRUE(feed.TakeGameEvents(frame));
+    EXPECT_EQ(frame.fired & 2u, 0u);
+    EXPECT_EQ(frame.value[1], 3);
+    EXPECT_EQ(frame.value[2], 0x40);
+    EXPECT_EQ(frame.value[0], -1) << "a sound source reads no byte";
+    EXPECT_FALSE(feed.TakeGameEvents(frame)) << "taken once";
+
+    frame = GameEventFrame{};
+    feed.OnHapticFrame(Frame(2, 0x40));
+    ASSERT_TRUE(feed.TakeGameEvents(frame));
+    EXPECT_NE(frame.fired & 2u, 0u) << "died: the lives went down";
+    EXPECT_EQ(frame.level[1], 1.0f);
+    EXPECT_NE(frame.fired & 4u, 0u) << "a level above 0 counts as fired";
+
+    feed.OnHapticHold(true);
+    feed.OnHapticFrame(Frame(1, 0x40));
+    EXPECT_FALSE(feed.TakeGameEvents(frame)) << "held: nothing to report";
 }

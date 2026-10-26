@@ -13,7 +13,8 @@
 ///
 /// State topics (latest value, coalesced at the connection's `max_hz`, at most 50): `run.state`, `ttd.position`,
 /// `surfaces.context`, the monitoring ones of an instance (`emulator.stats`, `debug.breakpoints`, `media.slots`,
-/// `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`: monitoringapi.h), one
+/// `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`,
+/// `game.events`: monitoringapi.h), one
 /// message per instance whose value changed; `{"op":"gone"}` when the instance went. Topics of the process, one
 /// message without `instance`: `streamdeck.status`, `host.stats`, `host.clients`. A
 /// topic and a surface readout need a companion token (handshake or `auth`), no scope: they read what the REST GETs

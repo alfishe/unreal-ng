@@ -76,8 +76,12 @@ Not planned yet:
   that phase, so a frame-aligned seek compared a different instruction
 - [x] requirements.md Q9 (TTD checkpoint now, UNS later), Q10 (disassembler, `unreal-asm`, DZRP know Z80N; GDB needs nothing) and
   Q12 (the T80N persona) closed 2026-10-26
-- [ ] Media: the KS3 board variant (with the NR #11 video timing clocks); the esxDOS-only mode (requirements.md Q11); refresh
-  phases.md
+- [x] The board variants (2026-10-26): `[NEXT] Board=issue2|issue4|issue5`, the machine variants `NEXT-KS1` / `NEXT-KS3`; NR #0F,
+  the NR #10 core id rule, NR #11's seven Artix timings (two on Issue 2), NR #04's A21 on Issue 5, the DNA and the XADC behind NR
+  #F0 / #F8-#FA on the Artix boards (research-variants.md section 4, `NextBoardIssue_Test`)
+- [x] Media: the esxDOS-only mode (requirements.md Q11); refresh phases.md (2026-10-26: feature `esxdos`, `NextEsxDos`
+  serves the API on the SD card's FAT volume without the firmware, esxdos-and-sd.md section 5a, `*NextEsxDos*` tests;
+  phases.md carries a status line, stale notes removed)
 - [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
   the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes

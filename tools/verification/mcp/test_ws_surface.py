@@ -3,7 +3,7 @@
 control-surfaces/protocol.md; Stream Deck integration protocol.md §0), the conformance suite against a live server:
 auth and its errors (companion_required, companion_not_for_agents, companion_unknown), join and welcome, actions with
 rid (run.pause_toggle, ctx.set, ttd.seek_by with marks) and their refusals (companion_forbidden, bad_request,
-Not Found), `ctx` from one session reaching another, the default context flipping to `ttd` when a history appears,
+Not Found), a press's value (a bare number refused as on REST, set.speed's parameter by name), `ctx` from one session reaching another, the default context flipping to `ttd` when a history appears,
 readouts (full, then changed only) and the hub topics (run.state, surfaces.context), the `instances` topic (the events
 socket's view: hello, emulator, snapshot) and the debug.* topics (DebugEventHub's events, the same numbering as
 /api/v1/websocket), and 50 Hz readout subscribers beside a running machine measured: the same frames per second. A
@@ -153,6 +153,33 @@ def test_actions_answer_their_rid_and_refusals_use_the_routes_codes(s):
     result = act(narrow, 'run.step_in', rid=15)
     expect(not result['ok'] and result['error'] == 'companion_forbidden', 'the debug scope is not granted', result)
     narrow.close()
+
+
+def test_a_press_refuses_a_bare_number_as_rest_does_and_takes_its_params_by_name(s):
+    emu = instance(s)
+    ws, _ = join(s)
+    ws.send({'op': 'subscribe', 'readouts': ['run.state'], 'max_hz': 50})
+    first = ws.until(lambda m: m.get('op') == 'readout', 'the full readout')
+    expect(first['values']['run.state']['speed'] == 1, 'speed 1 (setup)', first)
+
+    # set.speed 4 without its name ran the press without a parameter: "next" (x2). Refused on both planes now
+    result = act(ws, 'set.speed', 4, rid=21)
+    expect(result['op'] == 'error' and result['error'] == 'bad_request' and 'params' in result.get('message', ''),
+           'a bare number for a press: bad_request naming params', result)
+    status, body = http(s, 'POST', '/api/v1/controllers/actions/set.speed', {'instance': emu, 'value': 4}, TOKEN)
+    expect(status == 400, 'REST refuses the same value', (status, body))
+
+    # The first speed change the readout shows is the named one: the refused calls ran nothing (else 2 came first)
+    result = act(ws, 'set.speed', {'params': {'value': 4}}, rid=22)
+    expect(result['op'] == 'result' and result['ok'], 'the parameter by name', result)
+    moved = ws.until(lambda m: m.get('op') == 'readout' and m['values'].get('run.state', {}).get('speed', 1) != 1,
+                     'the readout follows')
+    expect(moved['values']['run.state']['speed'] == 4, 'speed 4, never "next" (2)', moved)
+    result = act(ws, 'set.speed', {'value': 1}, rid=23)
+    expect(result['op'] == 'result' and result['ok'], 'a parameter beside the press keys', result)
+    ws.until(lambda m: m.get('op') == 'readout' and m['values'].get('run.state', {}).get('speed') == 1,
+             'the readout follows: speed 1')
+    ws.close()
 
 
 def test_ctx_set_from_one_session_reaches_another_and_the_topic(s):

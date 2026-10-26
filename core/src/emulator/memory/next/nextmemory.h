@@ -24,7 +24,7 @@ public:
     /// Reset values of the slot table: ROM, ROM, then the 48K layout (RAM 5, 2, 0 as 8K pages)
     static constexpr uint8_t kResetMmu[kSlots] = {kMmuRom, kMmuRom, 10, 11, 4, 5, 0, 1};
 
-    /// The 2 MB the core addresses: 8-bit MMU pages of 8 KB (zxnext.vhd mmu_A21_A13). A 4 MB board (Issue 3) is the same to this core
+    /// The 2 MB the core addresses: 8-bit MMU pages of 8 KB (zxnext.vhd mmu_A21_A13). A 4 MB board (MAME's KS3) is the same to this core
     static constexpr unsigned kAddressableRamPages = 128;
     /// The 16 KB RAM pages the machine has (config.ramsize / 16, at most the 2 MB the core addresses). A bank beyond them is not wired: its
     /// slot reads as an unmapped one (the SRAM chip is not there)
@@ -55,6 +55,8 @@ public:
     bool SramWait28() const { return _sramWait28; }
     bool SlotWaitsAt28(unsigned slot) const { return _slotSramWait[slot]; }
     MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
+    /// Its own slot writes (SlotWriteFast), not MemoryWriteFast: its write taps take the debug path
+    bool SupportsWriteTapHook() const override { return false; }
     void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
     /// endregion

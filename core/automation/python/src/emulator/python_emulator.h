@@ -583,7 +583,8 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
 }
 
 /// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state) with its args as keywords (instance=
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events) with its args as keywords
+/// (instance=
 /// an id or an index; default this emulator for an instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
 {
@@ -2084,7 +2085,7 @@ namespace PythonBindings
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
                  "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
-                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state): "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);

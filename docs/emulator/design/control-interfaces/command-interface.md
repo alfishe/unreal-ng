@@ -1314,6 +1314,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
 | `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
+| `esxdos` | `esx` | OFF | ZX Spectrum Next esxDOS mode: on the bare machine (no `[NEXT] BootRom`) the emulator serves the esxDOS API itself (`RST $08` calls `$80` and up: files, directories, +3DOS headers, `DISK_FILEMAP` and the stream, the date from the RTC) against the FAT volume of SD card 0, so a program that uses it runs without NextZXOS. Off: `RST $08` runs the ROM as on the board. Design: [esxdos-and-sd.md](../../../inprogress/2026-10-07-zx-next/esxdos-and-sd.md) section 5a | None (one compare at `#0008`) |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
 **Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
@@ -1321,6 +1322,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | Feature | Held off while |
 | :--- | :--- |
 | `turbomode` | a recording is active |
+| `esxdos` | cannot change either way while the machine is bound to a TTD timeline or an RZX recording plays: it changes what `RST $08` does |
 | `contention` | cannot change either way while the machine is bound to a TTD timeline (recording, replay, positioned in history): the timeline replays only with the timing it was recorded with |
 | `fasttape`, `turbotape`, `fastdisk` | a recording is active, a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`) |
 
@@ -4207,6 +4209,7 @@ by its manager's revision.
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
 | `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
+| `monitor game.events` | `[instance=]` | The game's events: the play profile's `events:` (and `haptics.sources`) as the haptic feed found them in live frames, with or without a haptic device ([breakpoint taps §7](../../../inprogress/2026-10-26-breakpoint-taps/README.md#7-game-events-the-profile-names-events-consumers-subscribe)): `available`, `profile`, `frame`, `seq`, `events` {`<name>`: {`kind` (`event` / `level`), `fires`, `last_frame`, `level`, `value` (the watched byte or word, else null)}}, `recent` [{`seq`, `frame`, `name`}] (the last 64 fired; a poller keeps the last `seq` it saw) | ✅ Implemented |
 
 `instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
 `Not Found` (404: no such name, no such instance).
@@ -4215,7 +4218,7 @@ by its manager's revision.
 | :--- | :--- | :--- | :--- |
 | CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
 | WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` (per instance); the same names as surface readouts |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`, `game.events` (per instance); the same names as surface readouts |
 | MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
 | Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
 | Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |

@@ -217,13 +217,12 @@ float ProfileHaptics::Evaluate(const HapticSource& source, State& state, const H
             const uint8_t before = state.last;
             state.seen = true;
             state.last = now;
+            const unsigned high = source.word && static_cast<unsigned>(state.watch) + 1 < frame.watchCount
+                                      ? frame.watched[static_cast<size_t>(state.watch) + 1]
+                                      : 0;
+            state.value = static_cast<int32_t>(now | (high << 8));
             if (source.kind == HapticSourceKind::Value)
-            {
-                const unsigned high = source.word && static_cast<unsigned>(state.watch) + 1 < frame.watchCount
-                                          ? frame.watched[static_cast<size_t>(state.watch) + 1]
-                                          : 0;
-                return std::min(1.0f, static_cast<float>(now | (high << 8)) * source.scale / 255.0f);
-            }
+                return std::min(1.0f, static_cast<float>(state.value) * source.scale / 255.0f);
             if (source.kind == HapticSourceKind::Frame)
                 return (now & source.mask) == (source.value & source.mask) ? 1.0f : 0.0f;
             // The first frame only learns the byte: a profile attached mid-game does not fire on its old value
@@ -237,9 +236,11 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
 {
     if (_held.load(std::memory_order_acquire))
         return;
-    std::vector<float> levels(_profile.sources.size(), 0.0f);
+    std::vector<float>& levels = _frameLevels;
+    levels.assign(_profile.sources.size(), 0.0f);
     for (size_t index = 0; index < _profile.sources.size(); index++)
         levels[index] = Evaluate(_profile.sources[index], _states[index], frame);
+    _frameReady = true;
     {
         std::lock_guard<std::mutex> lock(_levelsMutex);
         for (size_t index = 0; index < levels.size(); index++)
@@ -285,6 +286,35 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             _mixer.Play(device, played);
         }
     }
+}
+
+std::vector<GameEventInfo> ProfileHaptics::GameEvents() const
+{
+    std::vector<GameEventInfo> events;
+    for (const HapticSource& source : _profile.sources)
+        events.push_back({source.name, !source.IsEvent()});
+    return events;
+}
+
+std::string ProfileHaptics::GameEventsProfile() const
+{
+    return _name;
+}
+
+bool ProfileHaptics::TakeGameEvents(GameEventFrame& frame)
+{
+    if (!_frameReady)
+        return false;
+    _frameReady = false;
+    const size_t count = std::min<size_t>(_frameLevels.size(), GameEventFrame::kMax);
+    for (size_t index = 0; index < count; index++)
+    {
+        frame.level[index] = _frameLevels[index];
+        frame.value[index] = _states[index].value;
+        if (_frameLevels[index] > 0)
+            frame.fired |= 1u << index;
+    }
+    return true;
 }
 
 std::vector<std::pair<std::string, float>> ProfileHaptics::SourceLevels() const

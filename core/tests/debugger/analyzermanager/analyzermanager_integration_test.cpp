@@ -312,65 +312,82 @@ TEST_F(AnalyzerManagerIntegration_test, OwnershipCheckDistinguishesBreakpoints)
         << "AnalyzerManager should NOT own non-existent address";
 }
 
-/// @brief Verify AnalyzerManager auto-enables required features on first breakpoint request
-/// This test captures the requirement that analyzers shouldn't need manual feature setup.
-/// When AnalyzerManager registers its first breakpoint, it should automatically enable:
-/// 1. 'debugmode' feature (master debug switch)
-/// 2. 'breakpoints' feature (breakpoint processing)
-/// 3. Set Z80::isDebugMode = true (CPU-level debug flag)
-TEST_F(AnalyzerManagerIntegration_test, AutoEnablesFeaturesOnFirstBreakpointRequest)
+/// @brief Analyzer breakpoints are taps (breakpoint-taps §8): they run without the debug mode. A request turns on the
+/// instruction start's check (Z80::execTapHold) or the fast write's hook, never 'debugmode' / 'breakpoints'
+TEST_F(AnalyzerManagerIntegration_test, AnalyzerTapsRunWithoutTheDebugMode)
 {
-    // Create a fresh emulator WITHOUT debug features pre-enabled
     EmulatorTestHelper::CleanupEmulator(_emulator);
-    _emulator = EmulatorTestHelper::CreateDebugEmulator({});  // No features enabled
+    _emulator = EmulatorTestHelper::CreateDebugEmulator({});
     ASSERT_NE(_emulator, nullptr);
-    
     _context = _emulator->GetContext();
-    ASSERT_NE(_context, nullptr);
-    
     _manager = _context->pDebugManager->GetAnalyzerManager();
-    ASSERT_NE(_manager, nullptr);
-    
+    _breakpointManager = _emulator->GetBreakpointManager();
+    _memory = _emulator->GetMemory();
     _z80 = _context->pCore->GetZ80();
-    ASSERT_NE(_z80, nullptr);
-    
     FeatureManager* fm = _emulator->GetFeatureManager();
-    ASSERT_NE(fm, nullptr);
-    
-    // Explicitly disable debug features to ensure clean initial state
-    // (EmulatorTestHelper may enable them during creation)
     fm->setFeature("debugmode", false);
     fm->setFeature("breakpoints", false);
-    _manager->setEnabled(false);  // Disable AnalyzerManager master toggle
-    
-    // PRECONDITION: Verify ALL debug mechanisms are now disabled
-    EXPECT_FALSE(fm->isEnabled("debugmode")) 
-        << "debugmode should be disabled after explicit disable";
-    EXPECT_FALSE(fm->isEnabled("breakpoints")) 
-        << "breakpoints should be disabled after explicit disable";
-    EXPECT_FALSE(_z80->isDebugMode) 
-        << "Z80::isDebugMode should be false when debugmode is disabled";
-    EXPECT_FALSE(_manager->isEnabled())
-        << "AnalyzerManager master toggle should be disabled";
-    
-    // Register and activate an analyzer - this enables AnalyzerManager master toggle
-    auto analyzer = std::make_unique<TrackingAnalyzer>("auto-features-test", "auto-uuid");
-    _manager->registerAnalyzer("auto-features-test", std::move(analyzer));
-    _manager->activate("auto-features-test");
-    
-    // Register first breakpoint - this should trigger auto-enable of features
-    BreakpointId bp = _manager->requestExecutionBreakpoint(0x1000, "auto-features-test");
-    ASSERT_NE(bp, BRK_INVALID) << "Failed to register breakpoint";
-    
-    // POSTCONDITION: ALL required debug mechanisms should now be enabled
-    EXPECT_TRUE(fm->isEnabled("debugmode")) 
-        << "debugmode should be auto-enabled when AnalyzerManager registers first breakpoint";
-    EXPECT_TRUE(fm->isEnabled("breakpoints")) 
-        << "breakpoints should be auto-enabled when AnalyzerManager registers first breakpoint";
-    EXPECT_TRUE(_z80->isDebugMode) 
-        << "Z80::isDebugMode should be set to true when debugmode feature is enabled";
-    EXPECT_TRUE(_manager->isEnabled())
-        << "AnalyzerManager master toggle should be enabled after activation";
+    ASSERT_FALSE(_z80->isDebugMode);
+
+    const uint8_t testCode[] = {
+        0x00,              // $0000 NOP          - exec tap
+        0x32, 0x00, 0x90,  // $0001 LD (#9000),A - write tap
+        0x76               // $0004 HALT
+    };
+    WriteTestCode(testCode, sizeof(testCode));
+    auto analyzer = std::make_unique<TrackingAnalyzer>("taps-test", "taps-uuid");
+    TrackingAnalyzer* mock = analyzer.get();
+    _manager->registerAnalyzer("taps-test", std::move(analyzer));
+    _manager->activate("taps-test");
+    _manager->setEnabled(true);
+    ASSERT_NE(_manager->requestExecutionBreakpoint(0x0000, "taps-test"), BRK_INVALID);
+    ASSERT_NE(_manager->requestMemoryBreakpoint(0x9000, false, true, "taps-test"), BRK_INVALID);
+
+    EXPECT_FALSE(fm->isEnabled("debugmode")) << "a tap needs no debug mode";
+    EXPECT_FALSE(fm->isEnabled("breakpoints"));
+    EXPECT_FALSE(_z80->isDebugMode);
+    EXPECT_TRUE(_z80->execTapHold) << "the exec tap's instruction start check";
+    EXPECT_TRUE(_z80->MemIf == _z80->FastMemIf || _z80->MemIf == _z80->FastContendedMemIf) << "the fast memory path";
+
+    _emulator->RunNCPUCycles(30, false);
+    EXPECT_EQ(mock->breakpointHitCount.load(), 2) << "the NOP and the write, each once";
+    EXPECT_EQ(mock->lastBreakpointAddress.load(), 0x9000);
+    EXPECT_EQ(_breakpointManager->GetLastTriggeredBreakpointID(), BRK_INVALID) << "a tap never stops";
+
+    _manager->deactivate("taps-test");
+    EXPECT_FALSE(_z80->execTapHold) << "released with the analyzer's taps";
+}
+
+/// @brief A user breakpoint and analyzer taps at one address: each analyzer is told, the user's still stops, and an
+/// analyzer's release leaves the user's breakpoint (a plain request adopted the user's id before)
+TEST_F(AnalyzerManagerIntegration_test, TapsAndUserBreakpointShareAnAddress)
+{
+    const uint8_t testCode[] = {0x00, 0x00, 0x76};  // $0000 NOP; NOP; HALT
+    WriteTestCode(testCode, sizeof(testCode));
+    auto first = std::make_unique<TrackingAnalyzer>("first", "first-uuid");
+    auto second = std::make_unique<TrackingAnalyzer>("second", "second-uuid");
+    TrackingAnalyzer* one = first.get();
+    TrackingAnalyzer* two = second.get();
+    _manager->registerAnalyzer("first", std::move(first));
+    _manager->registerAnalyzer("second", std::move(second));
+    _manager->activate("first");
+    _manager->activate("second");
+    _manager->setEnabled(true);
+
+    const uint16_t user = _breakpointManager->AddExecutionBreakpoint(0x0001);
+    const BreakpointId tapOne = _manager->requestExecutionBreakpoint(0x0001, "first");
+    const BreakpointId tapTwo = _manager->requestExecutionBreakpoint(0x0001, "second");
+    ASSERT_NE(user, BRK_INVALID);
+    EXPECT_NE(tapOne, user) << "a tap is its own breakpoint";
+    EXPECT_NE(tapTwo, tapOne);
+
+    _emulator->RunNCPUCycles(10, false);
+    EXPECT_GE(one->breakpointHitCount.load(), 1);
+    EXPECT_GE(two->breakpointHitCount.load(), 1);
+    EXPECT_EQ(_breakpointManager->GetLastTriggeredBreakpointID(), user) << "the user's breakpoint stopped";
+
+    _manager->releaseBreakpoint(tapOne);
+    EXPECT_NE(_breakpointManager->GetBreakpointById(user), nullptr) << "the user's breakpoint stays";
 }
 
 /// @brief Verify features remain enabled when last analyzer breakpoint is released

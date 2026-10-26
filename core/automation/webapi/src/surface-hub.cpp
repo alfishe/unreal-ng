@@ -42,8 +42,10 @@ bool Finite(const Json::Value& value, double& out)
 }
 
 /// The protocol's value by the action's kind (protocol.md §3.1): `{"p": true/false}`, `{"d": n, "rate": r, …params}`,
-/// `{"l": x}` or a string; the REST spellings (`pressed`, `delta`, `level`, `text`, `params`) and bare values (a
-/// bool, a number) as well. Any other member of the object is a parameter (`unit`, `min`, `max` of ttd.seek_by)
+/// `{"l": x}` or a string; the REST spellings (`pressed`, `delta`, `level`, `text`, `params`) and bare values as well
+/// (a bool for a press, a number for a delta or a level). Any other member of the object is a parameter (`unit`,
+/// `min`, `max` of ttd.seek_by). A bare number for a press is refused as on REST: it is a parameter written without
+/// its name (`set.speed` 4 ran the press without one: "next")
 bool SurfaceValue(const Json::Value& raw, actions::ValueKind kind, actions::ActionValue& value, std::string& error)
 {
     using actions::ValueKind;
@@ -64,11 +66,11 @@ bool SurfaceValue(const Json::Value& raw, actions::ValueKind kind, actions::Acti
             const Json::Value& p = object ? member("p", "pressed") : raw;
             if (p.isBool())
                 value.pressed = p.asBool();
-            else if (p.isNumeric())
+            else if (object && p.isNumeric())
                 value.pressed = p.asDouble() != 0;
             else if (!p.isNull())
             {
-                error = "value: a press takes true / false or {\"p\": true}";
+                error = "value: a press takes true / false or {\"p\": true}; parameters by name: {\"params\": {…}}";
                 return false;
             }
             break;

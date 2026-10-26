@@ -2080,7 +2080,7 @@ public:
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
         // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
-        // debug.analyzers, controllers.state; an instance's name defaults to this emulator), as WebAPI
+        // debug.analyzers, controllers.state, game.events; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
             Emulator* emulator = effectiveEmulator();

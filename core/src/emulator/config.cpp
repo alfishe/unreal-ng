@@ -9,6 +9,7 @@
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
+#include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/atm/atmgeometry.h"
@@ -552,6 +553,14 @@ bool Config::ParseConfig(IniFile& inimanager)
         config.next_layer_capture = (text == "off" || text == "0" || text == "false" || text == "no") ? 0 : 1;
         if (text != "on" && text != "off" && text != "0" && text != "1" && text != "true" && text != "false" && text != "yes" && text != "no")
             MLOGWARNING("Config: [NEXT] LayerCapture=%s is not on or off - on used", word);
+    }
+    {
+        // [NEXT] Board = issue2|issue4|issue5 (also ks1|ks2|ks3): the PCB the core is built for (research-variants.md); default the KS2
+        const char* word = inimanager.GetValue("NEXT", "Board", "issue4");
+        NextBoardIssue issue = NextBoardIssue::Issue4;
+        if (word && !NextBoardIssueFromName(word, issue))
+            MLOGWARNING("Config: [NEXT] Board=%s is not issue2, issue4 or issue5 - issue4 used", word);
+        config.next_board_issue = static_cast<uint8_t>(issue);
     }
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
@@ -1581,7 +1590,7 @@ uint32_t Config::EffectiveRamSize(MEM_MODEL model, uint32_t requestedKb, std::st
     constexpr uint32_t kFourMegabytes = 4096, kTwoMegabytes = 2048;
     if (model == MM_NEXT && requestedKb == kFourMegabytes)
     {
-        note = "ZX Next with 4096 KB (Issue 3): this core addresses 2048 KB (8-bit MMU pages of 8 KB), created with 2048 KB";
+        note = "ZX Next with 4096 KB: this core addresses 2048 KB (8-bit MMU pages of 8 KB), created with 2048 KB";
         return kTwoMegabytes;
     }
     return requestedKb;

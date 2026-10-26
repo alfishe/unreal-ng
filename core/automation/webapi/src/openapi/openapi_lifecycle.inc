@@ -123,7 +123,7 @@
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["description"] =
-        "Optional RAM size in KB (a size of available_ram_sizes_kb of the model). ZX Next also takes 4096 (Issue 3): this core "
+        "Optional RAM size in KB (a size of available_ram_sizes_kb of the model). ZX Next also takes 4096 (MAME's KS3 size): this core "
         "addresses 2048, the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
@@ -374,7 +374,7 @@
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["description"] =
-        "Optional RAM size in KB (a size of available_ram_sizes_kb). ZX Next also takes 4096 (Issue 3): this core addresses 2048, "
+        "Optional RAM size in KB (a size of available_ram_sizes_kb). ZX Next also takes 4096 (MAME's KS3 size): this core addresses 2048, "
         "the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]

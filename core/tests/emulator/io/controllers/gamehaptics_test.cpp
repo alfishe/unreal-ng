@@ -1,15 +1,17 @@
 /// @file gamehaptics_test.cpp
-/// @brief H5 (haptics.md §13): the first built-in game haptic profiles (Manic Miner, Exolon, Chase H.Q.) are found by
-/// the hash of their disk image, parse, and fire their effects on a Pentagon. The games themselves are not in the
-/// repository, so a small program stands in for each: it calls the game's addresses one at a time (a RET stub at
-/// each) and writes its values, and each source must fire alone and play through the mixer. The addresses were
-/// checked by play on the real images (haptics.md §13, H5).
+/// @brief H5 (haptics.md §13): the built-in game haptic profiles (Manic Miner, Exolon, Chase H.Q., Dizzy X) are found
+/// by the hash of their image, parse, and fire their effects on a Pentagon. Most games are not in the repository, so a
+/// small program stands in for each: it calls the game's addresses one at a time (a RET stub at each) and writes its
+/// values, and each source must fire alone and play through the mixer. The addresses were checked by play on the real
+/// images (haptics.md §13, H5). Dizzy X is in testdata: DizzyXJumpsAndLandsOnce plays it and reads the same jump and
+/// landing back as the game.events monitor.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -17,13 +19,16 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "common/signaturecache.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/controllers/controllermanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/monitoring/monitoringapi.h"
 #include "haptics/hapticmixer.h"
 #include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
@@ -100,6 +105,9 @@ const Game kGames[] = {
     {"builtin/game/chase-hq-demo",
      "5d51ecbd2c9aea0feb40ed838f21257f90bc35d998fbfe004c90c8e7b264fc63",
      {{"crash", 0x9F8E}, {"rammed", 0xA1B0}, {"turbo", 0x8327}}},
+    {"builtin/game/dizzy-x",
+     "0173041bd8c3c9d71d2a46065c8381c5e084e5b8ef931a074788dede4ba2227f",
+     {{"jump", 0x795A}, {"land", 0x7A97}, {"hurt", 0x847A}, {"died", 0x8B80}}},
 };
 
 /// The game's haptics section, found as the emulator finds it: the image's hash on a Pentagon
@@ -255,4 +263,67 @@ TEST_F(GameHaptics_Test, ChaseHqSpeedDrivesTheEngine)
     _mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));
     EXPECT_GT(_mixer.Written("pad").low, 0.0f) << "the engine on the low motor";
     EXPECT_EQ(_mixer.Written("pad").high, 0.0f);
+}
+
+TEST(GameHapticsDizzyX_Test, DizzyXJumpsAndLandsOnce)
+{
+    // The real game (testdata/loaders/sna/Dizzy X.sna): its profile is found by the file's hash, and one jump on the
+    // spot from the first room fires `jump` in one frame and `land` in one frame, nothing else (Sinclair 9 jumps)
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/sna/Dizzy X.sna");
+    std::ifstream file(path, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    ASSERT_FALSE(bytes.empty()) << path;
+    const std::string sha = SignatureCache::Sha256Hex(bytes.data(), bytes.size());
+    const Game game{"builtin/game/dizzy-x", sha.c_str(), {}};
+    const HapticProfile haptics = Resolve(game);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    HapticMixer mixer{[](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock()};
+    auto feed = std::make_shared<ProfileHaptics>(haptics, game.id, mixer, [] { return std::vector<HostDeviceId>{"pad"}; });
+    context->pControllerManager->SetHapticFeed(feed);
+    emulator->RunNFrames(2, false);  // the first frame attaches the feed and arms its probes
+    EXPECT_FALSE(context->pCore->GetZ80()->isDebugMode) << "exec probes only: no debug mode";
+
+    std::vector<std::string> fired;
+    auto run = [&](int frames) {
+        for (int i = 0; i < frames; i++)
+        {
+            emulator->RunNFrames(1, false);
+            for (const auto& [name, level] : feed->SourceLevels())
+                if (level > 0.0f)
+                    fired.push_back(name);
+            mixer.StopAll();
+        }
+    };
+    run(4);
+    EXPECT_TRUE(fired.empty()) << "standing: " << fired.front();
+    context->pKeyboard->PressKey(ZXKEY_9);
+    run(4);
+    context->pKeyboard->ReleaseKey(ZXKEY_9);
+    run(76);  // the jump lands about 60 frames after its start
+    EXPECT_EQ(fired, (std::vector<std::string>{"jump", "land"}));
+
+    // The same facts as the game's events (the profile's `events:`), as every plane reads them: the game.events monitor
+    StateNode events = monitoring::ReadInstance("game.events", *emulator);
+    ASSERT_TRUE(events["available"].b);
+    EXPECT_EQ(events["profile"].s, game.id);
+    std::vector<std::string> recent;
+    for (StateNode& entry : events["recent"].items)
+        recent.push_back(entry["name"].s);
+    EXPECT_EQ(recent, (std::vector<std::string>{"jump", "land"}));
+    for (const char* name : {"jump", "land", "hurt", "died"})
+    {
+        StateNode& entry = events["events"][name];
+        const bool played = std::string_view(name) == "jump" || std::string_view(name) == "land";
+        EXPECT_EQ(entry["fires"].i, played ? 1 : 0) << name;
+        EXPECT_EQ(entry["kind"].s, "event") << name;
+    }
+
+    context->pControllerManager->SetHapticFeed(nullptr);
+    emulator->RunNFrames(1, false);
+    EXPECT_FALSE(monitoring::ReadInstance("game.events", *emulator)["available"].b) << "detached: no events";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

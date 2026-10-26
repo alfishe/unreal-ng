@@ -6,11 +6,13 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/io/z80n/nextcopper.h"
 #include "emulator/io/z80n/nextkeyjoystick.h"
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
+#include "emulator/io/z80n/nextxilinx.h"
 #include "emulator/io/z80n/z80nengine.h"
 
 class NextMemory;
@@ -102,6 +104,7 @@ public:
     static constexpr uint8_t kRegMmu0 = 0x50;  ///< #50-#57: MMU slot 0-7
     static constexpr uint8_t kMachineIdNext = 10;
     static constexpr uint8_t kRegCoreVersionSub = 0x0E;
+    static constexpr uint8_t kRegBoardIssue = 0x0F;
     static constexpr uint8_t kCoreVersion = 0x32;     ///< 3.02 ...
     static constexpr uint8_t kCoreVersionSub = 0x03;  ///< ... .03: the FPGA sources the register map follows
 
@@ -114,6 +117,11 @@ public:
         });
     }
     void SetMachine(INextMachine* machine) { _machine = machine; }
+    /// The board this core runs on (fixed for a machine: another board is another FPGA image)
+    void SetIssue(NextBoardIssue issue) { _issue = issue; }
+    NextBoardIssue Issue() const { return _issue; }
+    /// The Artix-7 boards: the MMCM's seven video timings, the DNA and XADC, the core id rule
+    bool Artix() const { return _issue != NextBoardIssue::Issue2; }
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
     /// What the header's other end drives on GPIO bank 0-3 (pins 0-7, 8-15, 16-23, 24-27) as bits; unset: low
     void SetGpioInput(std::function<uint8_t(unsigned bank)> input) { _gpioInput = std::move(input); }
@@ -153,7 +161,10 @@ public:
     {
         if (_readCounts)
             (*_readCounts)[_selected]++;
-        return Read(_selected);
+        const uint8_t value = Read(_selected);
+        if (_selected == 0xF0 && Artix())
+            _xilinx.AfterProgramRead();
+        return value;
     }
     void WriteSelected(uint8_t value)
     {
@@ -190,8 +201,12 @@ public:
     bool EffectiveSixtyHz() const { return (_eff05 & 0x04) != 0; }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
-    /// CLK_28 of the video timing in NR #11 (zxnext_top_issue2.vhd system_pll, nextreg.txt): 28 MHz at VGA 0, 28.571429 MHz at VGA 1
-    uint32_t SystemClockHz() const { return (_regs[0x11] & 1) ? 28571429u : 28000000u; }
+    /// CLK_28 of the video timing in NR #11. Issue 2 (pll/S6/system_pll_reduced.v, 50 MHz x 14 / 25 and x 16 / 28): 28 and
+    /// 28.571429 MHz. The Artix boards (pll/A7/system_mmcme2.v, 50 MHz x (M + F / 1000) / D / 25): the MMCM's own output, VGA 1 and 2
+    /// a little off the nominal 28.571429 / 29.464286 MHz the file names
+    static constexpr uint32_t kClk28Issue2[2] = {28000000u, 28571429u};
+    static constexpr uint32_t kClk28Artix[7] = {28000000u, 28583333u, 29437500u, 30000000u, 31000000u, 32000000u, 33000000u};
+    uint32_t SystemClockHz() const { return Artix() ? kClk28Artix[_regs[0x11] % 7] : kClk28Issue2[_regs[0x11] & 1]; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
     void SetStoredBits(uint8_t reg, uint8_t mask, uint8_t value) { _regs[reg] = static_cast<uint8_t>((_regs[reg] & ~mask) | (value & mask)); }
     /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
@@ -238,6 +253,8 @@ private:
     NextSprites _sprites;
     NextCopper _copper;
     NextKeyJoystick _keyJoystick;
+    mutable NextXilinx _xilinx;  ///< mutable: a program's read of NR #F0 shifts the DNA
+    NextBoardIssue _issue = NextBoardIssue::Issue4;
     NextRegJournal _journal;
     std::function<void(uint32_t&, uint32_t&, uint16_t&)> _journalClock;
     NextRegSource _source = NextRegSource::Internal;
