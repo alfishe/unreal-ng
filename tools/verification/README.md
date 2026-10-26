@@ -35,6 +35,13 @@ application).
 
 ---
 
+### Analysis drafts (`analysis/`)
+
+[`analysis/score_draft.py`](analysis/README.md): scores a SkoolKit ctl / skool draft against a reference disassembly
+(byte categories, code entries, graphics regions, record fields) with no agent, for the analysis-layers work.
+
+---
+
 ### MCP (`mcp/`)
 
 [`mcp/run_all.py`](mcp/README.md): the MCP server as an agent sees it, one script per block of tools (protocol,

@@ -34,17 +34,18 @@ question 1).
 
 ## How we measure
 
-Two tools in `tools/verification/analysis/`, neither needs an agent:
+Two tools in `tools/verification/analysis/`, neither needs an agent (baselines measured in P0: [score-p0.md](baselines/score-p0.md),
+[run-b-token-ledger.md](baselines/run-b-token-ledger.md)):
 
 1. **Reference scorer** (`score_draft.py`): compares a draft ctl / skool with a skoolkid reference (mm.skool,
    jsw.skool).
 
 | Measure | Target | Run A / B by hand |
 |---------|--------|------------------|
-| byte categories (code / data / text / unused) agree | ≥ 95 % | 90.8 % |
-| code entry boundaries match | ≥ 32 of 34 on MM, ≥ 90 % on the hold-out | |
+| byte categories (code / data / text / unused) agree | ≥ 95 % | A 92.4 %, B 92.3 %; `sna2ctl -m` alone 79.8 % |
+| code entry boundaries match | ≥ 31 of 33 on MM, ≥ 90 % on the hold-out | A, B 33 / 33; `sna2ctl -m` 28 / 33 |
 | record layouts (cavern, guardians, items, conveyor, Willy) | all 5 | all 5 |
-| graphics found with the right geometry | ≥ 90 % | |
+| graphics found with the right geometry | ≥ 90 % (96 of 106) | runs: no machine-readable geometry |
 
 2. **A/B harness** (`run_ab.py`): runs the zx-reaper pipeline with a review-only brief on top of the draft, logs
    subagent tokens per step in the ledger format of run B, runs `make test` and the shift tests.

@@ -17,8 +17,8 @@
 |:--|:--|:--|
 | - | Owner review of the proposal and the open questions | done 2026-10-25 |
 | P0 | `memorytracker_frame_benchmark` baseline (off / counters) on 48K, 128K and Pentagon | open |
-| P0 | `tools/verification/analysis/score_draft.py` against mm.skool; baseline from `sna2ctl -m` | open |
-| P0 | Run B token ledger checked in as the baseline | open |
+| P0 | `tools/verification/analysis/score_draft.py` against mm.skool; baseline from `sna2ctl -m` | done 2026-10-25 |
+| P0 | Run B token ledger checked in as the baseline | done 2026-10-25 |
 | P1 | L0 level `facts` + tests + A/B | open |
 | P1 | `analysis start/stop/status/explain` on every plane, MCP `analysis` | open |
 | P2 | `TraceBundle`, `ReplayTracer`, L1 structures, fact sheet | open |

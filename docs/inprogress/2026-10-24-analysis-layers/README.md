@@ -15,7 +15,7 @@ address or a constant.
 
 ```mermaid
 pie showData title Run B: 2.03 M subagent tokens
-    "Annotating 99 routines (8 agents)" : 1137
+    "Annotating 99 entries (8 agents)" : 1137
     "Verifying 'inferred' claims" : 214
     "Gallery of graphics" : 160
     "Bug hunt" : 156
@@ -145,7 +145,7 @@ How the main detectors recognise their target, in plain words:
 - **Init table:** written by one routine early, then only read. Its content is checked against a few known
   generators, such as screen row addresses.
 - **Text:** printable bytes with a terminator, read by a print routine. Text that nobody reads but that
-  parses as tokenized source code becomes "unused, leftover source" (Manic Miner has 2,232 such bytes).
+  parses as tokenized source code becomes "unused, leftover source" (Manic Miner has 2,484 such bytes at $934C-$9CFF; neither run marked them unused).
 
 **Gain:** about 0.3 M tokens. The gallery is generated, record layouts come for free (both runs laid out all
 five Manic Miner record types by hand), and graphics entries arrive titled with their geometry.
@@ -174,7 +174,7 @@ sequenceDiagram
     participant K as SkoolKit / zx-reaper
     A->>E: load game, record with TTD, cover (automatic)
     A->>E: analysis build
-    E-->>A: summary: 99 routines, 44 graphics, 5 record types, 31 review items
+    E-->>A: summary: 38 routines, 106 graphics, 5 record types, 31 review items
     A->>E: export ctl + skool draft
     E-->>K: ctl, skool, findings
     K-->>A: make test, shift tests pass
