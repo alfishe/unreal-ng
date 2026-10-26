@@ -8,9 +8,12 @@ remains of the rest is here.
 
 Planned, in this order:
 
-- [ ] NEXTREG writes in the port trace: the `NEXTREG` instruction (`ED 91` / `ED 92`) and the copper's MOVEs are no port cycles, so the
+- [x] NEXTREG writes in the port trace: the `NEXTREG` instruction (`ED 91` / `ED 92`) and the copper's MOVEs are no port cycles, so the
   generic port trace (`TraceControl`) shows nothing and a port breakpoint on #253B does not fire for them. The NextREG journal, `bnextreg`
-  and the TTD journal have them already
+  and the TTD journal have them already (done 2026-10-25: `PortDecoder::OnPortWriteWithoutBusCycle` gives the port breakpoints, the port
+  access tracker and the port trace the instruction as `OUT #243B,reg` / `OUT #253B,value` at its pc, rule `PortTraceRule::kNoBusCycle`
+  (252); tests `NextSkeleton_Test.NextRegInstructionIsInThePortTrace` / `PortBreakpointFiresOnNextReg`. The copper is no CPU: it stays in
+  the NextREG journal and the `bcopper` breakpoints)
 - [ ] Contention: the Next's "previous hc cycle" phase (3-14 instead of 4-15) in `UlaContention::ComputeContentionDelay`, the +3 WAIT-line
   form (the +3 timing reuses the gate-array pattern), NR #08 bit 6 taking effect at hc(8) = 1 (zxnext.vhd 5822; ours at once); settle
   `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME)
