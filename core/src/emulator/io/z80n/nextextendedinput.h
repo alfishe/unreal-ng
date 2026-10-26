@@ -14,7 +14,9 @@
 /// It is the keyboard's IExtendedKeySink too: the membrane's 16 extended keys as ZX keys (ZXKEY_EXT_LEFT ..., the host's matrix side and the
 /// on-screen keyboard) are held here, not on the matrix. Each one presses its two matrix keys (membrane.vhd 157-238: LEFT = CAPS SHIFT + 5,
 /// EXTEND = CAPS SHIFT + SYMBOL SHIFT ...) unless NR #68 bit 4 cancels the extended keys' matrix entries (zxnext.vhd 5451), and shows in
-/// NR #B0 / #B1 either way. Not modelled: the membrane's shift advance by one scan (a naive reader of a composite key).
+/// NR #B0 / #B1 either way. The membrane scans its 8 rows in 9 steps of 512 CLK_28 (zxnext_top_issue2.vhd 1179) and shows a composite key's
+/// shift a scan before its other key and two scans after it (membrane.vhd 177-232), so a naive reader of a composite key does not see the key
+/// without its shift.
 
 #include <array>
 #include <atomic>
@@ -53,11 +55,26 @@ public:
     bool OwnsExtendedKey(ZXKeysEnum key) const override;
     void OnExtendedKey(ZXKeysEnum key, bool pressed) override;
     uint8_t ExtendedMatrixRow(uint8_t row) const override;
-    void ReleaseExtendedKeys() override { _membrane.store(0, std::memory_order_relaxed); }
+    void ReleaseExtendedKeys() override;
     /// endregion
 
     /// NR #68 bit 4 as the machine has it (the port decoder): set, the extended keys press no matrix keys
     void SetCancelMatrixEntries(std::function<bool()> cancel) { _cancel = std::move(cancel); }
+    /// The machine's CLK_28 count (the port decoder): it paces the membrane scan. Unset, every read is a scan of its own
+    void SetClock(std::function<uint64_t()> now28) { _now28 = std::move(now28); }
+
+    /// region <The membrane scan>
+    static constexpr uint64_t kScanClocks = 9 * 512;  ///< one scan of the 8 rows: 9 steps of CLK_28_MEMBRANE_EN
+    static constexpr unsigned kScanDepth = 4;         ///< the scans a matrix read looks at: the current one and three before
+    /// The membrane keys held in a scan, newest first (bits = Key), and the scan they were last brought up to
+    uint16_t ScanKeys(unsigned age) const { return age < kScanDepth ? _scans[age] : 0; }
+    uint64_t ScanIndex() const { return _scan; }
+    void SetScan(uint64_t index, const std::array<uint16_t, kScanDepth>& keys)
+    {
+        _scan = index;
+        _scans = keys;
+    }
+    /// endregion
 
     /// region <The registers>
     uint8_t ReadB0() const;  ///< ; " , . UP DOWN LEFT RIGHT (bit 7 .. 0)
@@ -114,6 +131,12 @@ private:
     std::atomic<uint16_t> _keys{0};      ///< from the PC keys (IPs2KeySink)
     std::atomic<uint16_t> _membrane{0};  ///< from the ZX extended keys (IExtendedKeySink): these press matrix keys
     std::function<bool()> _cancel;
+    std::function<uint64_t()> _now28;
+    /// The membrane keys seen in the latest scans (index 0 = scan _scan); the machine's thread only
+    mutable std::array<uint16_t, kScanDepth> _scans{};
+    mutable uint64_t _scan = 0;
+
+    void AdvanceScan() const;
     std::atomic<uint8_t> _padLeft{0};
     std::atomic<uint16_t> _right{0};  ///< the whole right pad; its extras are bits 11..8
     std::array<std::atomic<uint8_t>, kPadButtons> _padKeys{};  ///< index = the button's bit number; a PcKey, 0 unbound

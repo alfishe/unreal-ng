@@ -9,7 +9,6 @@
 
 namespace
 {
-constexpr uint64_t kSystemClockHz = 28000000;
 constexpr uint8_t kSelectBit = 0x40, kPrescalerFollows = 0x10, kPrescalerMsbMask = 0x07, kHalfSelect = 0x80, kHalfMask = 0x7F;
 constexpr unsigned kRxRegister = 0, kSelectRegister = 1, kFrameRegister = 2;  // 3 is the Tx / status register (the default)
 constexpr unsigned kHalfBits = 7;
@@ -175,11 +174,11 @@ void NextUart::TellPeer(Channel& c)
     if (!peer)
         return;
     SerialLine line;
-    // 28 MHz / prescaler is never exactly a standard rate (243 gives 115226): the line is told the nearest standard one
+    // CLK_28 / prescaler is never exactly a standard rate (243 gives 115226): the line is told the nearest standard one
     // within 3 %, which is what a module's own tolerance accepts
     static const uint32_t kStandard[] = {300,   600,    1200,   2400,   4800,    9600,    14400,   19200,   28800,   31250,   38400,  57600,
                                          76800, 115200, 230400, 250000, 460800,  500000,  921600,  1000000, 1500000, 2000000, 3000000};
-    const uint32_t raw = static_cast<uint32_t>(kSystemClockHz / Prescaler(c));
+    const uint32_t raw = static_cast<uint32_t>(_systemClockHz / Prescaler(c));
     line.baud = raw;
     for (uint32_t standard : kStandard)
     {
@@ -530,13 +529,22 @@ void NextUart::PollInterrupts(uint8_t enable)
     }
 }
 
+void NextUart::SetSystemClock(uint32_t hz)
+{
+    if (hz == _systemClockHz)
+        return;
+    _systemClockHz = hz;
+    for (Channel& c : _ch)
+        TellPeer(c);  // the same prescaler is another rate now
+}
+
 NextUart::View NextUart::GetView(unsigned channel) const
 {
     const Channel& c = _ch[channel];
     View v;
     v.selected = _selected == channel;
     v.prescaler = Prescaler(c);
-    v.baud = static_cast<uint32_t>(kSystemClockHz / v.prescaler);
+    v.baud = static_cast<uint32_t>(_systemClockHz / v.prescaler);
     v.frame = c.frame;
     v.dataBits = DataBits(c);
     v.parity = (c.frame & kFrameParity) ? ((c.frame & kFrameOdd) ? 'O' : 'E') : 'N';

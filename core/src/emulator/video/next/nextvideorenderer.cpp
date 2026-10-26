@@ -513,14 +513,8 @@ bool NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
     if (!in.sprites)
         return false;
     NextSprites::Pixel grid[NextSprites::kGridWidth];
-    if (in.spriteFill)
-    {
-        // the attributes, the patterns and the transparent index are what the engine saw when it filled this row; the enable, the clip
-        // and the palette are the output stage's, as they are now
-        in.spriteFill->DrawLine(y, in.nr[0x15], *in.regs, grid, static_cast<uint8_t>(in.spriteTransparent >= 0 ? in.spriteTransparent : in.nr[0x4B]),
-                                in.lineClocks);
-        in.sprites->MergeFlags(*in.spriteFill);
-    }
+    if (in.spriteLine)  // the engine's fill of this row; the enable, the clip and the palette are the output stage's, as they are now
+        in.sprites->Output(*in.spriteLine, y, in.nr[0x15], *in.regs, grid);
     else
         in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B], in.lineClocks);
     const unsigned palette = (in.regs->PaletteControl() & 0x08) ? 6 : 2;
@@ -580,7 +574,7 @@ unsigned NextVideoRenderer::DrawLayers(const NextVideoInputs& in, unsigned y, Pi
         above |= kAboveLayer2;
     if (TilemapLine(in, y, tiles))
         above |= kAboveTilemap;
-    if (SpriteLine(in, y, sprites, spriteNumbers))  // always run: the sprite engine sets its collision and overtime flags by drawing
+    if (SpriteLine(in, y, sprites, spriteNumbers))  // always run: with no line buffer the engine sets its flags by drawing
         above |= kAboveSprites;
     return above;
 }

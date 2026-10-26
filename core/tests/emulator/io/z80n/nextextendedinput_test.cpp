@@ -61,6 +61,11 @@ protected:
         const KeyEventEnum type = pressed ? KEY_PRESSED : KEY_RELEASED;
         center.Post(pressed ? MC_PCKEY_PRESSED : MC_PCKEY_RELEASED, new PcKeyEvent(static_cast<uint8_t>(key), type, _emulator->GetUUID()));
     }
+    /// Move the machine's clock on by whole membrane scans (plus `clocks` of CLK_28)
+    void NextScans(uint64_t scans, uint64_t clocks = 0)
+    {
+        _context->emulatorState.t_states += (scans * NextExtendedInput::kScanClocks + clocks) / 8;
+    }
     /// Wait until the register reads `value` (the message center delivers on its own thread)
     bool WaitFor(uint8_t reg, uint8_t value)
     {
@@ -267,6 +272,8 @@ TEST_F(NextExtendedInput_Test, AMembraneKeyPressesItsMatrixKeysAndShowsInNrB0)
     post(ZXKEY_EXT_LEFT, true);
     ASSERT_TRUE(WaitFor(kRegExtended0, kB0Left));
     EXPECT_EQ(row(kRowCapsShift), 0x1E) << "CAPS SHIFT";
+    EXPECT_EQ(row(kRow12345), 0x1F) << "the shift goes a scan ahead of the key";
+    NextScans(1);
     EXPECT_EQ(row(kRow12345), 0x0F) << "5";
     EXPECT_EQ(_ports->ExtendedInput().PcKeys(), 0) << "a ZX key, not a PC key";
 
@@ -276,11 +283,16 @@ TEST_F(NextExtendedInput_Test, AMembraneKeyPressesItsMatrixKeysAndShowsInNrB0)
     EXPECT_EQ(row(kRow12345), 0x1F);
     EXPECT_EQ(_ports->Board().Read(kRegExtended0), kB0Left);
     _ports->Board().Write(kRegUlaControl, 0);
+    NextScans(1);
+    EXPECT_EQ(row(kRow12345), 0x0F);
 
     post(ZXKEY_EXT_LEFT, false);
     ASSERT_TRUE(WaitFor(kRegExtended0, 0));
-    EXPECT_EQ(row(kRowCapsShift), 0x1F);
+    NextScans(2);
     EXPECT_EQ(row(kRow12345), 0x1F);
+    EXPECT_EQ(row(kRowCapsShift), 0x1E) << "the shift stays two scans after the key";
+    NextScans(2);
+    EXPECT_EQ(row(kRowCapsShift), 0x1F);
 
     // EXTEND MODE is CAPS SHIFT + SYMBOL SHIFT, GRAPH CAPS SHIFT + 9: the keys the 48K's matrix map has no code for
     keyboard->PressKey(ZXKEY_EXT_EXTEND);
@@ -290,6 +302,7 @@ TEST_F(NextExtendedInput_Test, AMembraneKeyPressesItsMatrixKeysAndShowsInNrB0)
     const std::vector<uint8_t> held = NextStateCodec::Save(*_ports);
     keyboard->ReleaseKey(ZXKEY_EXT_EXTEND);
     EXPECT_EQ(_ports->Board().Read(kRegExtended1), 0);
+    NextScans(NextExtendedInput::kScanDepth);
     EXPECT_EQ(row(kRowSpaceSymbol), 0x1F);
     ASSERT_TRUE(NextStateCodec::Load(*_ports, held.data(), held.size()));
     EXPECT_EQ(_ports->Board().Read(kRegExtended1), kB1Extend) << "a seek puts the membrane's keys back";
@@ -297,6 +310,69 @@ TEST_F(NextExtendedInput_Test, AMembraneKeyPressesItsMatrixKeysAndShowsInNrB0)
 
     keyboard->Reset();
     EXPECT_EQ(_ports->Board().Read(kRegExtended1), 0) << "a keyboard reset lets them go";
+}
+
+// membrane.vhd 177-232: "make it harder for naive software to incorrectly read composite keys by advancing shift key state one scan and
+// holding shift key state an extra scan". A key's own matrix key is the previous scan's; its shift is in any of the last four scans
+TEST_F(NextExtendedInput_Test, TheMembraneShowsACompositeKeysShiftAScanAheadAndTwoAfter)
+{
+    Keyboard* keyboard = _context->pKeyboard;
+    auto row = [&](uint16_t port) { return static_cast<uint8_t>(keyboard->HandlePortIn(port) & 0x1F); };
+    constexpr uint8_t kSymbol = 0x1D, kN = 0x17, kNone = 0x1F;
+    struct Step
+    {
+        uint8_t symbol;
+        uint8_t n;
+    };
+
+    // "," = SYMBOL SHIFT + N, pressed for two scans (mid-scan reads)
+    NextScans(1, NextExtendedInput::kScanClocks / 2);
+    keyboard->PressKey(ZXKEY_EXT_COMMA);
+    const Step pressed[] = {{kSymbol, kNone}, {kSymbol, kN}};
+    for (const Step& step : pressed)
+    {
+        EXPECT_EQ(row(kRowSpaceSymbol) | 0x08, step.symbol | 0x08);
+        EXPECT_EQ(row(kRowSpaceSymbol) | 0x02, step.n | 0x02);
+        NextScans(1);
+    }
+    keyboard->ReleaseKey(ZXKEY_EXT_COMMA);
+    // the release scan still saw it: N goes a scan later, SYMBOL SHIFT two more
+    const Step released[] = {{kSymbol, kN}, {kSymbol, kN}, {kSymbol, kNone}, {kSymbol, kNone}, {kNone, kNone}};
+    for (size_t i = 0; i < std::size(released); i++)
+    {
+        EXPECT_EQ(row(kRowSpaceSymbol) | 0x08, released[i].symbol | 0x08) << "scan " << i;
+        EXPECT_EQ(row(kRowSpaceSymbol) | 0x02, released[i].n | 0x02) << "scan " << i;
+        NextScans(1);
+    }
+
+    // A naive reader that never waits: N alone is never in the matrix
+    keyboard->PressKey(ZXKEY_EXT_COMMA);
+    for (int i = 0; i < 3; i++)
+    {
+        EXPECT_NE(row(kRowSpaceSymbol) & 0x02, 0x02) << "SYMBOL SHIFT with every read";
+        NextScans(1);
+    }
+    keyboard->ReleaseKey(ZXKEY_EXT_COMMA);
+    for (unsigned i = 0; i <= NextExtendedInput::kScanDepth; i++)
+    {
+        const uint8_t r = row(kRowSpaceSymbol);
+        EXPECT_FALSE((r & 0x08) == 0 && (r & 0x02) != 0) << "N without SYMBOL SHIFT, scan " << i;
+        NextScans(1);
+    }
+    EXPECT_EQ(row(kRowSpaceSymbol), kNone);
+
+    // The scan is in the state image: a load in the middle of the hold keeps it
+    keyboard->PressKey(ZXKEY_EXT_COMMA);
+    NextScans(1);
+    keyboard->ReleaseKey(ZXKEY_EXT_COMMA);
+    NextScans(2);
+    const std::vector<uint8_t> holding = NextStateCodec::Save(*_ports);
+    EXPECT_EQ(row(kRowSpaceSymbol), kSymbol);
+    NextScans(2);
+    EXPECT_EQ(row(kRowSpaceSymbol), kNone);
+    ASSERT_TRUE(NextStateCodec::Load(*_ports, holding.data(), holding.size()));
+    _context->emulatorState.t_states -= 2 * NextExtendedInput::kScanClocks / 8;
+    EXPECT_EQ(row(kRowSpaceSymbol), kSymbol);
 }
 
 TEST_F(NextExtendedInput_Test, TwoHostPressesOfAMembraneKeyHoldItUntilTheLastRelease)

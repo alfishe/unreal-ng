@@ -4,10 +4,13 @@
 /// @brief The Next's sprite engine (video/sprites.vhd, research-fpga-vhdl.md section 10): 128 sprites of five attribute
 /// bytes, 16K of pattern RAM (64 patterns of 16 x 16 at 8 bits, or 128 of 4 bits), the upload ports #303B / #57 / #5B
 /// and the NextREG mirrors #34-#39 / #75-#79, relative (composite / unified) sprites, scaling, mirror and rotate.
-/// DrawLine paints one 320 x 256 grid line (sprite coordinates: the paper starts at 32, 32); the renderer doubles it.
-/// The collision and "too many sprites" flags are set by drawing, read-and-cleared through port #303B.
+/// Fill runs the engine for one line into a line buffer (sprite coordinates: the paper starts at 32, 32), Output paints what the
+/// output stage (NR #15 bit 0, the clip window) lets through; the renderer doubles it. The collision and "too many sprites" flags are
+/// events with the machine clock of the engine's step (PostFill), read-and-cleared through port #303B at the clock of the read.
 
 #include <cstdint>
+#include <limits>
+#include <vector>
 
 class NextVideoRegs;
 
@@ -32,11 +35,21 @@ public:
         bool opaque = false;
     };
 
+    /// One line of the engine's buffer (sprites.vhd: it fills one while the video reads the other)
+    struct LineBuffer
+    {
+        Pixel pixel[kGridWidth];
+        bool any = false;  ///< false: no sprite is visible, nothing was written
+    };
+
     void Reset();       ///< a hard reset: the configuration load clears the attribute and pattern RAMs too
     void SoftReset();   ///< `reset` of sprites.vhd: the indices, the mirror and the status flags; the RAMs stay
 
     /// region <Ports>
-    uint8_t ReadStatus();                  ///< #303B: bit 1 too many sprites, bit 0 collision; clears both
+    /// #303B at machine clock `clock` (28 MHz clocks of the frame, the PostFill clocks): bit 1 too many sprites, bit 0 collision, set by
+    /// the events before the clock; clears them (an event on the read's own clock is lost, a later one stays for the next read)
+    uint8_t ReadStatus(int64_t clock);
+    uint8_t ReadStatus();                  ///< #303B with every event so far: bit 1 too many sprites, bit 0 collision; clears both
     void WriteSlotSelect(uint8_t value);   ///< #303B: sprite (6:0), pattern half (7)
     void WriteAttribute(uint8_t value);    ///< #57
     void WritePattern(uint8_t value);      ///< #5B
@@ -53,10 +66,21 @@ public:
     void WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied);  ///< NR #35-#39 / #75-#79
     /// endregion
 
-    /// Run the engine for grid line `y` (0..255) and paint what is inside the clip window (NR #19) into `out` (not touched when the
-    /// sprites are off: NR #15 bit 0 gates the output, the engine and its flags run). `control` is NR #15, `lineClocks` the
-    /// line period in 28 MHz clocks (kLineBudget)
+    /// Run the engine for line `vcount` (spr_cur_vcount, 0..511: the grid's lines are 0..255) into `out`: every opaque pixel of x 0..319,
+    /// NR #15 bit 6 (zero on top, the `control` byte) decides which of two stays. `collisions` gets the engine clock (from S_START = 1) of
+    /// each write onto a pixel already there; returns true when the engine is still busy after `lineClocks` (the "too many" flag)
+    bool Fill(unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks, LineBuffer& out, std::vector<uint16_t>& collisions) const;
+    /// The output stage for grid line `y`: what is inside the clip window (NR #19) into `out` (not touched when the sprites are off: NR #15
+    /// bit 0 gates the output only). `control` is NR #15
+    void Output(const LineBuffer& line, unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out) const;
+    /// Fill and Output at once, the flags set at once (a renderer with no machine clock: the tests)
     void DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex, unsigned lineClocks = kLineBudget);
+    /// The events of a fill that started at machine clock `start` (Fill's ticks added to it, the overtime on the next pass's start) at
+    /// machine clock `now`: those before it are kept as set flags, the later ones with their clocks
+    void PostFill(int64_t start, const std::vector<uint16_t>& collisions, bool overtime, unsigned lineClocks, int64_t now);
+    /// The machine clock moved by `delta` (a new frame: its clocks count from its start)
+    void ShiftClock(int64_t delta);
+    bool AnyVisible() const;
 
     /// region <Const view for the next_sprites report: nothing here clears a flag or steps an upload index (design-automation-coverage.md R3)>
     /// The state the sprite engine fills a line's buffer from changes with every write: a snapshot taken at the fill is valid while the
@@ -66,17 +90,10 @@ public:
     /// The 28 MHz clocks the engine needs for row y: one per sprite to qualify and the process clocks (16 << x scale, fewer at the right
     /// edge) of each one drawn (sprites.vhd S_QUALIFY / S_PROCESS; the last drawn sprite ends the visible fill)
     unsigned FillClocks(unsigned y) const;
-    /// The flags a drawing of a snapshot set go to this (live) object, the snapshot's are cleared
-    void MergeFlags(NextSprites& from)
-    {
-        _collision = _collision || from._collision;
-        _tooMany = _tooMany || from._tooMany;
-        from._collision = from._tooMany = false;
-    }
-    void ClearFlags() { _collision = _tooMany = false; }
+    void ClearFlags();
 
-    bool CollisionFlag() const { return _collision; }
-    bool TooManyFlag() const { return _tooMany; }
+    bool CollisionFlag() const { return _collision || !_pendingCollision.empty(); }
+    bool TooManyFlag() const { return _tooMany || !_pendingTooMany.empty(); }
     uint8_t UploadSlot() const { return _slot; }
     /// One sprite as the engine sees it: the five attribute bytes decoded, a relative sprite resolved against its anchor
     struct Info
@@ -131,7 +148,11 @@ private:
     uint16_t _patternOffset = 0;
     uint8_t _patternHalf = 0;
     uint8_t _mirror = 0;
-    bool _collision = false;
+    static constexpr int64_t kNever = std::numeric_limits<int64_t>::min();
+    bool _collision = false;  ///< set by an event before the last clock that posted or read
     bool _tooMany = false;
+    std::vector<int64_t> _pendingCollision;  ///< the later events, sorted (at most a line's)
+    std::vector<int64_t> _pendingTooMany;
+    int64_t _lastRead = kNever;  ///< the clock of the last #303B read: an event up to it was cleared by it
     uint32_t _epoch = 0;
 };

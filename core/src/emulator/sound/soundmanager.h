@@ -279,6 +279,12 @@ public:
         _drcErrIntegral = 0.0;
     }
 
+    /// The machine's clock against the one its T-states are counted in (CPU_CLOCK_RATE): a Next at VGA 1 (CLK_28 28.571429 MHz) runs
+    /// 1.0204 times faster in real time. The stream stays CORE_RATE samples per machine time (recordings keep it); the device stage plays
+    /// it that much faster. 1.0: the stage is as before
+    void setMachineClockScale(double scale) { _machineClockScale = scale > 0.0 ? scale : 1.0; }
+    double getMachineClockScale() const { return _machineClockScale; }
+
 protected:
     static constexpr double DRC_MAX_TRIM = 0.005;
     static constexpr double DRC_KP = 0.08;
@@ -293,6 +299,7 @@ protected:
     static constexpr double DRC_ERR_DEADBAND = 0.02;
     double _drcOccFiltered = -1.0;  // <0 = uninitialized (seeded on first sample)
     double _drcErrIntegral = 0.0;
+    double _machineClockScale = 1.0;
 
     void updateDrcControl();
 

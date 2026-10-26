@@ -45,15 +45,156 @@ void ScreenNext::DetectRaster()
 
 void ScreenNext::InitFrame()
 {
+    // A frame start right after the frame counter moved on is the previous frame's natural end (the CPU's clock is back at the frame's
+    // start already): the passes it has not run yet (a turbo frame with nothing drawn) run with the state at its end, and its late events
+    // carry over. Another start in the same frame (the geometry set again) keeps what has run; any other start (a reset, a state load) has
+    // no passes behind it: the ones before now are what the state holds
+    const uint64_t counter = _state ? _state->frame_counter : 0;
+    const bool natural = _passCounterValid && counter == _passCounter + 1;
+    const bool again = _passCounterValid && counter == _passCounter && _passNext == _passes.first;
+    if (natural)
+        FinishSpriteFrame();
     Screen::InitFrame();
     _nextLine = 0;
     _nextX = 0;
-    _fillNext = 0;
-    _fillNextEndRow = ~0u;
-    _fillSnap.reset();
-    for (auto& row : _rowFill)
-        row.reset();
+    const bool closed = _passFrameClosed;
+    PortDecoder_Next* decoder = Decoder();
+    if (closed && decoder)
+        decoder->Board().Sprites().ShiftClock(-_passes.frame);
+    _passFrameClosed = false;
+    if (!again)
+        _frameSeq++;
+    SetupSpritePasses();
+    _passNext = _passes.first;
+    if (!closed && !again)
+    {
+        const int64_t now = NowClock();
+        while (_passNext < PassLimit() && PassStart(_passNext) <= now)
+            _passNext++;
+    }
+    _passEndValid = false;
+    _passCounter = counter;
+    _passCounterValid = true;
     PrepareLayerFrame();
+}
+
+void ScreenNext::SetupSpritePasses()
+{
+    // paper row R is filled during row R - 1, from about raw hc -21 of it (28 MHz clocks: 1 a sprite, 17 more for a drawn one); raw hc 0
+    // is 16 T-states before the grid's x = 0 (POC 028)
+    const int64_t perLine = _rasterState.tstatesPerLine;
+    _passes.line = perLine * 8;
+    _passes.frame = static_cast<int64_t>(_rasterState.maxFrameTiming) * 8;
+    _passes.lines = perLine ? _rasterState.maxFrameTiming / static_cast<uint32_t>(perLine) : 0;
+    _passes.base = (static_cast<int64_t>(GridFirstT()) + static_cast<int64_t>(_rasterState.screenLineAreaStart) - 32) * 8 - 84;
+    _passes.first = 0;
+    if (_passes.line)
+    {
+        // the first g with base + g * line >= 0
+        int64_t g = -(_passes.base / _passes.line);
+        while (PassStart(static_cast<int>(g)) < 0)
+            g++;
+        while (PassStart(static_cast<int>(g - 1)) >= 0)
+            g--;
+        _passes.first = static_cast<int>(g);
+    }
+}
+
+unsigned ScreenNext::PassVcount(int g, bool& nextFrame) const
+{
+    // zxula_timing.vhd 494-507: wvc is 0 on the grid's line 0, restarts at 510 two lines above it and counts on through the frame's end
+    // into the next frame's top lines. A pass at the frame's end (the 60 Hz grid starts at the frame's top) belongs to the next frame's
+    const int lines = static_cast<int>(_passes.lines);
+    int w = g;
+    nextFrame = false;
+    if (w < -2)
+        w += lines;
+    else if (w >= lines - 2)
+    {
+        w -= lines;
+        nextFrame = true;
+    }
+    const unsigned wvc = w < 0 ? static_cast<unsigned>(512 + w) : static_cast<unsigned>(w);
+    return (wvc + 1) & 0x1FF;
+}
+
+int64_t ScreenNext::PassEnd(int g)
+{
+    PortDecoder_Next* decoder = Decoder();
+    const NextSprites& sprites = decoder->Board().Sprites();
+    if (!_passEndValid || _passEndOf != g || _passEndEpoch != sprites.Epoch())
+    {
+        bool next;
+        const unsigned vcount = PassVcount(g, next);
+        _passEnd = PassStart(g) + (sprites.AnyVisible() ? static_cast<int64_t>(sprites.FillClocks(vcount)) : 0);
+        _passEndOf = g;
+        _passEndEpoch = sprites.Epoch();
+        _passEndValid = true;
+    }
+    return _passEnd;
+}
+
+void ScreenNext::RunSpritePass(int g, int64_t now)
+{
+    PortDecoder_Next* decoder = Decoder();
+    NextBoard& board = decoder->Board();
+    NextSprites& sprites = board.Sprites();
+    bool next;
+    const unsigned vcount = PassVcount(g, next);
+    NextSprites::LineBuffer& line = vcount < NextVideoRenderer::kHeight ? _rowLine[vcount] : _passScratch;
+    const unsigned lineClocks = static_cast<unsigned>(_passes.line);
+    const bool overtime = sprites.Fill(vcount, board.Stored(0x15), board.Stored(0x4B), lineClocks, line, _passTicks);
+    if (vcount < NextVideoRenderer::kHeight)
+        _rowSeq[vcount] = _frameSeq + (next ? 1 : 0);
+    if (overtime || !_passTicks.empty())
+        sprites.PostFill(PassStart(g), _passTicks, overtime, lineClocks, now);
+}
+
+void ScreenNext::RunSpritePassesStartedBy(int64_t now)
+{
+    if (!Decoder() || !_passes.line)
+        return;
+    while (_passNext < PassLimit() && PassStart(_passNext) <= now)
+        RunSpritePass(_passNext++, now);
+}
+
+void ScreenNext::RunSpritePassesEndedBy(int64_t now)
+{
+    if (!Decoder() || !_passes.line)
+        return;
+    while (_passNext < PassLimit() && PassEnd(_passNext) <= now)
+        RunSpritePass(_passNext++, now);
+}
+
+uint8_t ScreenNext::ReadSpriteStatus()
+{
+    PortDecoder_Next* decoder = Decoder();
+    if (!decoder)
+        return 0;
+    const int64_t now = NowClock();
+    RunSpritePassesStartedBy(now);
+    return decoder->Board().Sprites().ReadStatus(now);
+}
+
+void ScreenNext::RestartSpriteFrame()
+{
+    _passFrameClosed = false;
+    _passNext = _passes.first;
+    const int64_t now = NowClock();
+    while (_passNext < PassLimit() && PassStart(_passNext) <= now)
+        _passNext++;
+    _passEndValid = false;
+    _passCounter = _state ? _state->frame_counter : 0;
+    _passCounterValid = true;
+}
+
+void ScreenNext::FinishSpriteFrame()
+{
+    if (!Decoder() || !_passes.line)
+        return;
+    while (_passNext < PassLimit())
+        RunSpritePass(_passNext++, _passes.frame);
+    _passFrameClosed = true;
 }
 
 void ScreenNext::PrepareLayerFrame()
@@ -158,46 +299,12 @@ uint64_t ScreenNext::CopperClock(uint32_t tstate) const
     return t7 * 4;
 }
 
-int64_t ScreenNext::SpriteFillEnd(unsigned y)
-{
-    PortDecoder_Next* decoder = Decoder();
-    const NextSprites& sprites = decoder->Board().Sprites();
-    if (_fillNextEndRow != y || _fillNextEndEpoch != sprites.Epoch())
-    {
-        // paper row y is filled during row y - 1, from about raw hc -21 of it (28 MHz clocks 1 a sprite, 17 more for a drawn one); raw hc 0
-        // is 16 T-states before the grid's x = 0
-        const int64_t perLine = _rasterState.tstatesPerLine;
-        const int64_t first = static_cast<int64_t>(GridFirstT());
-        const int64_t gridX0 = first + (static_cast<int64_t>(y) - 1) * perLine + static_cast<int64_t>(_rasterState.screenLineAreaStart) - 16;
-        const int64_t clocks = sprites.FillClocks(y);
-        _fillNextEnd = gridX0 - 16 + (clocks - 84) / 8;
-        _fillNextEndRow = y;
-        _fillNextEndEpoch = sprites.Epoch();
-    }
-    return _fillNextEnd;
-}
-
-void ScreenNext::FillSpriteRow(unsigned y)
-{
-    PortDecoder_Next* decoder = Decoder();
-    NextSprites& live = decoder->Board().Sprites();
-    if (!_fillSnap || _fillSnapEpoch != live.Epoch())
-    {
-        _fillSnap = std::make_shared<NextSprites>(live);
-        _fillSnap->ClearFlags();
-        _fillSnapEpoch = live.Epoch();
-    }
-    _rowFill[y] = _fillSnap;
-    _rowTransparent[y] = decoder->Board().Stored(0x4B);
-}
-
 void ScreenNext::SpriteStateWillChange(int64_t tstate)
 {
     if (!Decoder() || _rasterState.tstatesPerLine == 0)
         return;
-    const int64_t now = tstate >= 0 ? tstate : static_cast<int64_t>(GetCurrentTstate());
-    while (_fillNext < NextVideoRenderer::kHeight && SpriteFillEnd(_fillNext) <= now)
-        FillSpriteRow(_fillNext++);
+    // the passes whose fill has ended by the write saw the old state
+    RunSpritePassesEndedBy(tstate >= 0 ? tstate * 8 : NowClock());
 }
 
 void ScreenNext::UpdateCopperGeometry()
@@ -443,11 +550,19 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         if (toX > fromX)
         {
             refresh();
-            // the sprite state this row was filled from: rows not yet filled by the clock are filled now, with the state as it is
-            while (_fillNext <= _nextLine)
-                FillSpriteRow(_fillNext++);
-            in.spriteFill = _rowFill[_nextLine].get();
-            in.spriteTransparent = _rowTransparent[_nextLine];
+            // the engine's fill of this row: the passes whose fill has ended ran with the state they saw, the row's own runs if it has
+            // started; a row ahead of the beam (a picture drawn early) is filled from the state as it is, its flags not posted
+            if (_rowSeq[_nextLine] != _frameSeq)
+            {
+                const int64_t now = NowClock();
+                RunSpritePassesEndedBy(now);
+                while (_rowSeq[_nextLine] != _frameSeq && _passNext < PassLimit() && PassStart(_passNext) <= now)
+                    RunSpritePass(_passNext++, now);
+                if (_rowSeq[_nextLine] != _frameSeq)
+                    board.Sprites().Fill(_nextLine, board.Stored(0x15), board.Stored(0x4B), static_cast<unsigned>(in.lineClocks), _rowLine[_nextLine],
+                                         _passTicks);
+            }
+            in.spriteLine = &_rowLine[_nextLine];
             const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)

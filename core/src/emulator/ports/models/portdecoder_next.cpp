@@ -36,6 +36,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _context->pKeyboard->SetExtendedKeySink(&_extendedInput);
     }
     _extendedInput.SetCancelMatrixEntries([this]() { return (_board->Stored(0x68) & 0x10) != 0; });
+    _extendedInput.SetClock([this]() { return Now28(); });
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
     // (the copper first: its MOVEs that are due come before the program's write, as the bus gives the copper the clock it asks for)
     _board->SetBeforeCpuWrite([this]() {
@@ -190,6 +191,8 @@ PortDecoder_Next::~PortDecoder_Next()
         _context->pSoundManager->detachModelAudioSource(_audio.get());
         _audio->ReleaseBeeperLevels();
     }
+    if (_context->pSoundManager)
+        _context->pSoundManager->setMachineClockScale(1.0);  // the next machine runs at its T-states' clock
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == _divMmc.get())
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
     if (_context->pCore && _context->pCore->GetZ80())
@@ -487,7 +490,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(14))
             return IdleRead(port, pc);
-        const uint8_t value = _board->Sprites().ReadStatus();
+        // the engine runs in machine time: the flags are those of its steps before the read
+        const uint8_t value = _screenNext ? _screenNext->ReadSpriteStatus() : _board->Sprites().ReadStatus();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -1133,6 +1137,8 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    if (hard)
+        ApplySystemClock();  // NR #11 is back to VGA 0 with the configuration load
     // the same net pulses on a hard reset, and on a soft one while the expansion bus is enabled (zxnext_top bus_rst_n_io: reset_hard or
     // reset_soft and zxn_bus_en): the ESP restarts with it
     if (hard || (_board->Stored(0x80) & 0x80))
@@ -1494,6 +1500,35 @@ void PortDecoder_Next::OnFrameEnd()
         ApplyTiming(timing);
 }
 
+uint32_t PortDecoder_Next::FrameDurationUs(uint32_t frame) const
+{
+    // a T-state is 8 clocks of CLK_28; rounded up as CalculateFrameDurationUs (the same at 28 MHz)
+    const uint64_t hz = _board->SystemClockHz();
+    return static_cast<uint32_t>((static_cast<uint64_t>(frame) * 8'000'000ull + hz - 1) / hz);
+}
+
+void PortDecoder_Next::ApplySystemClock()
+{
+    // NR #11 sets CLK_28 (the PLL): the machine counts the same clocks, the real time they take follows. The frame's pacing, the sound's
+    // playback rate and the UARTs' baud rates change with it
+    const uint32_t hz = _board->SystemClockHz();
+    _uart.SetSystemClock(hz);
+    _context->config.frame_duration_us = FrameDurationUs(_context->config.frame);
+    if (_context->pSoundManager)
+        _context->pSoundManager->setMachineClockScale(static_cast<double>(hz) / 28000000.0);
+}
+
+void PortDecoder_Next::SystemClockChanged()
+{
+    ApplySystemClock();
+    // the top level's power-on reset is reset_hard there: the expansion bus reset pulses and the ESP restarts (bus_rst_n_io)
+    if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+    {
+        esp->SetResetPin(true);
+        esp->SetResetPin((_board->Stored(0x02) & 0x80) != 0);
+    }
+}
+
 bool PortDecoder_Next::SixtyHzWanted(uint8_t timing) const
 {
     return timing != 4 && _board->EffectiveSixtyHz();  // the Pentagon is always 50 Hz
@@ -1510,7 +1545,7 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
     config.t_line = t.line;
     config.intstart = t.intStart;
     config.intlen = t.intLength;
-    config.frame_duration_us = CalculateFrameDurationUs(t.frame);
+    config.frame_duration_us = FrameDurationUs(t.frame);
     _state->ula_timing_class = timing;
     _state->ula_sixty_hz = t.sixty ? 1 : 0;
     _interrupts->SetGeometry(t);

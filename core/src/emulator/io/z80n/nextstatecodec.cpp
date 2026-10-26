@@ -21,11 +21,12 @@
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/sound/nextaudio.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 namespace
 {
-constexpr uint8_t kImageVersion = 12;  // 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 13;  // 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -159,6 +160,10 @@ static void SaveSprites(Writer& w, const NextSprites& s)
     w.Put(s._mirror);
     w.Put(s._collision);
     w.Put(s._tooMany);
+    // the events still to come keep their first clock (the image has one length: the later ones of the same line fold into it)
+    w.Put(s._pendingCollision.empty() ? NextSprites::kNever : s._pendingCollision.front());
+    w.Put(s._pendingTooMany.empty() ? NextSprites::kNever : s._pendingTooMany.front());
+    w.Put(s._lastRead);
 }
 static void LoadSprites(Reader& r, NextSprites& s)
 {
@@ -172,6 +177,16 @@ static void LoadSprites(Reader& r, NextSprites& s)
     r.Get(s._mirror);
     r.Get(s._collision);
     r.Get(s._tooMany);
+    int64_t collisionAt = NextSprites::kNever, tooManyAt = NextSprites::kNever;
+    r.Get(collisionAt);
+    r.Get(tooManyAt);
+    r.Get(s._lastRead);
+    s._pendingCollision.clear();
+    s._pendingTooMany.clear();
+    if (collisionAt != NextSprites::kNever)
+        s._pendingCollision.push_back(collisionAt);
+    if (tooManyAt != NextSprites::kNever)
+        s._pendingTooMany.push_back(tooManyAt);
 }
 
 static void SaveCopper(Writer& w, const NextCopper& c)
@@ -676,6 +691,9 @@ static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
     w.Put(e.Pad(true));
     w.Put(e.Right());
     w.Put(e.MembraneKeys());
+    w.Put(e.ScanIndex());
+    for (unsigned age = 0; age < NextExtendedInput::kScanDepth; age++)
+        w.Put(e.ScanKeys(age));
 }
 static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
 {
@@ -689,6 +707,12 @@ static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
     e.SetPad(true, left);
     e.SetRight(right);
     e.SetMembraneKeys(membrane);
+    uint64_t scan = 0;
+    std::array<uint16_t, NextExtendedInput::kScanDepth> scans{};
+    r.Get(scan);
+    for (uint16_t& keys : scans)
+        r.Get(keys);
+    e.SetScan(scan, scans);
 }
 
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)
@@ -771,6 +795,9 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadUart(r, p._uart);
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
     p.SyncPiLine();            // and UART 1's pins NR #A0
+    p.ApplySystemClock();      // CLK_28 is NR #11's
+    if (p._screenNext)
+        p._screenNext->RestartSpriteFrame();  // the next frame start is not the end of a frame the engine ran
     memory.Remap();  // the slot table, the windows and the contention flags follow the image
     return r.Done();
 }

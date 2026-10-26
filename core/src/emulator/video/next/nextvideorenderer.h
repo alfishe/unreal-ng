@@ -22,11 +22,10 @@ struct NextVideoInputs
     const uint8_t* ram = nullptr;
     uint16_t ramPages = 0;
     const NextVideoRegs* regs = nullptr;  ///< palettes, clip windows
-    NextSprites* sprites = nullptr;       ///< drawn from here (its collision / overtime flags are set by drawing)
-    /// The sprite engine's fill state for this row (a snapshot of `sprites` taken when the engine filled it, ScreenNext) and NR #4B as of
-    /// then; null: draw from `sprites` as it is
-    NextSprites* spriteFill = nullptr;
-    int spriteTransparent = -1;
+    NextSprites* sprites = nullptr;       ///< the output stage's, and the engine's when `spriteLine` is null
+    /// The line buffer the sprite engine filled for this row in machine time (ScreenNext, which posts its flags); null: run the engine on
+    /// `sprites` as it is and set its collision / overtime flags at once
+    const NextSprites::LineBuffer* spriteLine = nullptr;
     uint8_t nr[256] = {};                 ///< the stored NextREG bytes (scrolls, layer control, timex port alias, ...)
     uint8_t border = 0;                   ///< port #FE bits 2:0
     uint8_t portFf = 0;                   ///< the Timex port (NR #69 bits 5:0 alias it)
