@@ -958,6 +958,39 @@ TEST_F(AnalysisL2_Test, ReviewLabelInsideAnEntryRenamesItsIsubReferences)
             EXPECT_EQ(line.find(old->second), std::string::npos) << "a stale name: " << line;
 }
 
+/// A kind the review gives a range inside a page-aligned buffer (a table in the cavern buffer made a level map, run
+/// C3 on Manic Miner) changes how that range is written only: the ALIGN 256 before the buffer stays where it was
+/// (the +$101 shift test failed without it) and the buffer keeps its field list in the fields JSON
+TEST_F(AnalysisL2_Test, ReviewKindInsideABufferKeepsItsAlignAndFields)
+{
+    Run("buffer-page.asm");
+    ASSERT_FALSE(HasFailure());
+    const auto aligned = [](const std::string& skool) {
+        std::vector<std::string> next;  // the line each ALIGN goes after
+        const std::vector<std::string> lines = Lines(skool);
+        for (size_t i = 0; i + 1 < lines.size(); ++i)
+            if (lines[i] == "@isub=+ALIGN 256")
+                next.push_back(lines[i + 1].substr(0, 6));
+        return next;
+    };
+    const ExportResult plain = ExportDraft("skool");
+    const ExportResult plainFields = ExportDraft("fields");
+    ASSERT_TRUE(plain.ok && plainFields.ok);
+    ASSERT_FALSE(aligned(plain.text).empty()) << "the page-aligned buffer has its ALIGN\n" << plain.text;
+    ASSERT_NE(plainFields.text.find("\"base\": \"$9000\""), std::string::npos) << plainFields.text;
+
+    std::map<uint16_t, ExportNote> notes;
+    notes[0x9006].kind = "text";
+    notes[0x9006].kindEnd = 0x90FF;
+    const ExportResult retyped = ExportDraft("skool", 8, {{0x8000, 0x9FFF}}, notes);
+    const ExportResult retypedFields = ExportDraft("fields", 8, {{0x8000, 0x9FFF}}, notes);
+    ASSERT_TRUE(retyped.ok && retypedFields.ok);
+    EXPECT_NE(retyped.text.find("t$9006"), std::string::npos) << "the range is text now\n" << retyped.text;
+    EXPECT_EQ(aligned(retyped.text), aligned(plain.text)) << retyped.text;
+    EXPECT_NE(retypedFields.text.find("\"base\": \"$9000\""), std::string::npos)
+        << "the buffer keeps its fields\n" << retypedFields.text;
+}
+
 TEST_F(AnalysisL2_Test, SkoolDraftIsub)
 {
     Run("address-vs-constant.asm");

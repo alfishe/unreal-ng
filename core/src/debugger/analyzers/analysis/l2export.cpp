@@ -441,11 +441,12 @@ struct Exporter
         }
     }
 
-    /// Whether a claim of the store is under a kind the review gave (it leaves the fields and geometry JSON)
+    /// Whether a claim of the store is under a kind the review gave (it leaves the fields and geometry JSON): inside
+    /// the range only. A claim that reaches out of it (the buffer around a table the review retyped) keeps its fields
     bool Overridden(const Region& r) const
     {
         for (const ExportRange& k : kindRanges)
-            if (r.z80 <= k.end && r.Z80End() >= k.start)
+            if (r.z80 >= k.start && r.Z80End() <= k.end)
                 return true;
         return false;
     }
@@ -1024,13 +1025,23 @@ struct Exporter
         }
     }
 
-    /// ALIGN 256 before the table at @p table, or before the outermost buffer that holds it at a page offset
+    /// ALIGN 256 before the table at @p table, or before the outermost buffer that holds it at a page offset. The
+    /// buffers come from L2, not from the draft's entries: a kind the review gave the buffer's entry (a level map, a
+    /// record array) changes how it is written, not the page its copies are addressed by
     void AlignFor(uint16_t table)
     {
         uint16_t at = table;
+        uint32_t size = 0;
+        for (const Region& r : l2.store.Regions())
+            if (r.kind == RegionKind::Buffer && (r.z80 & 0xFF) == 0 && r.z80 <= table &&
+                table <= static_cast<uint32_t>(r.z80) + r.Size() - 1u && r.Size() > size)
+            {
+                at = r.z80;
+                size = r.Size();
+            }
         for (const DraftEntry& e : plan.entries)
             if (e.start <= table && table <= e.end && e.region != nullptr && e.region->kind == RegionKind::Buffer &&
-                (e.start & 0xFF) == 0)
+                (e.start & 0xFF) == 0 && e.start < at)
                 at = e.start;
         reloc.align.insert(at);
         reloc.breaks.insert(at);
