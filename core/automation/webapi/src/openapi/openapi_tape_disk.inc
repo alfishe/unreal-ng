@@ -450,7 +450,9 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["summary"] = "Get disk catalog";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["tags"].append("Disk Inspection");
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["description"] =
-        "Parses TR-DOS directory (sectors 1-8) returning file names, types, sizes";
+        "The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT; dos_type names it): path, name, type "
+        "(the TR-DOS type letter or the extension), start, length; TR-DOS also sectors, first_track, first_sector. Every "
+        "volume and directory: GET /media/{slot}/files";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][0]["required"] = true;

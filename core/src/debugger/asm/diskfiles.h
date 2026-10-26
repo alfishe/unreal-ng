@@ -3,9 +3,10 @@
 /// @file diskfiles.h
 /// @brief Files on the disks in the machine's drives for the assembler-source and symbol surfaces (unreal-asm tdd §7):
 /// "disk:A/NAME.T" names the last live TR-DOS catalog entry NAME of type T on drive A. Reading and writing go through
-/// unreal-disk's TR-DOS file system on the drive's image (the same catalog hints and sector slack as zxasm); writing
-/// deletes an older live file of that name and type first, as TR-DOS does, is refused on a write-protected disk, and
-/// leaves the image modified. Both run at a coherent moment of the emulator (paused, stopped or between frames).
+/// unreal-disk's DiskFs on the drive's image, the code zxasm uses (unreal-asm tools/common/diskfiles.h): reading any
+/// file system it reads (TR-DOS with the catalog hints and sector slack, +3DOS, iS-DOS, FAT), writing TR-DOS and
+/// +3DOS; writing deletes an older live file of that name and type first, as TR-DOS does, is refused on a
+/// write-protected disk, and leaves the image modified. Both run at a coherent moment of the emulator (paused, stopped or between frames).
 /// Image files on the host (any format unreal-disk reads, and tapes) are read by ReadImageFiles.
 
 #include <cstdint>
