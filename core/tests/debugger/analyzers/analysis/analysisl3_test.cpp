@@ -582,13 +582,18 @@ TEST_F(AnalysisL3_Test, NamingBatchesPickAddressNamesInBatchesOfOneClass)
     }
     EXPECT_EQ(subjects, naming.subjects);
     EXPECT_TRUE(data) << "the variable n";
-    // rj: an absolute JP reaches it (a point); the loop labels only JR / DJNZ reach are no subjects
+    // rj: an absolute JP reaches it (a point); main: only `jr main` does (a loop label), a subject too
     const uint16_t rj = b.symbols.at("rj");
-    bool rjSubject = false;
+    const uint16_t loop = b.symbols.at("main");
+    bool rjSubject = false, loopSubject = false;
     for (const NamingBatch& batch : naming.batches)
         for (const NamingSubject& s : batch.subjects)
+        {
             rjSubject = rjSubject || (s.z80 == rj && !s.entry);
+            loopSubject = loopSubject || (s.z80 == loop && !s.entry);
+        }
     EXPECT_TRUE(point && rjSubject);
+    EXPECT_TRUE(loopSubject) << "a loop label is named too";
     // Deterministic: the same batches again
     const NamingResult again = NamingBatches(b.l1, b.l2, MakePlan(b.l1, b.l2, ExportOptions{}));
     ASSERT_EQ(again.batches.size(), naming.batches.size());
@@ -670,6 +675,13 @@ TEST_F(AnalysisL3_Test, ReviewNamesABatchIntoTheDraft)
         EXPECT_EQ(Member(resolved.body, "skippedAt").items.size(), subjects.size() - 1);
         EXPECT_NE(resolved.text.find("skipped: " + second), std::string::npos)
             << "the reply lists the skipped addresses: " << resolved.text;
+        // Resolved again with another subject only: the first name stays and the reply says so
+        const Reply again = Execute(emulator, "review",
+                                    {{"op", "resolve"}, {"id", batch}, {"names", "{\"" + second + "\": \"SecondName\"}"}});
+        ASSERT_TRUE(again.Ok()) << again.message;
+        EXPECT_EQ(Member(again.body, "kept").items.size(), 1u);
+        EXPECT_NE(again.text.find("kept: " + at + " FirstName"), std::string::npos) << again.text;
+        EXPECT_EQ(static_cast<size_t>(Member(again.body, "skipped").i), subjects.size() - 2);
     }
     const Reply after = Execute(emulator, "review", {{"op", "list"}, {"reason", "name"}, {"limit", "1000"}});
     EXPECT_EQ(static_cast<uint64_t>(Member(Member(after.body, "queue"), "open").i) + 1, open) << "the batch is decided";
@@ -739,6 +751,10 @@ TEST_F(AnalysisL3_Test, ReviewEntryCandidatesAndKindChangesReachTheDraft)
     EXPECT_NE(both.message.find("verdict wrong with the kind"), std::string::npos) << both.message;
     ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "text"}}).Ok());
     EXPECT_NE(ctl().find("\nt " + n), std::string::npos) << ctl();
+    const Reply retyped = Execute(emulator, "findings", {{"kind", "claim"}, {"range", n.substr(1) + "-" + n.substr(1)}});
+    for (const StateNode& f : Member(retyped.body, "findings").items)
+        if (Member(f, "id").s == nId)
+            EXPECT_EQ(Member(f, "status").s, "refuted") << "a kind alone decides the claim: it is not what it said";
 
     // Paging: offset 1 shows the second item of the same queue
     const Reply all = Execute(emulator, "review", {{"op", "list"}, {"limit", "1000"}});

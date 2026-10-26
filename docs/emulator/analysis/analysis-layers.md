@@ -390,9 +390,10 @@ both candidates; the test mutates the tail jump into a RET and the entry becomes
 ### Naming batches
 
 `l3naming.h`. The draft names what L2 could not name after its kind and address (`sub_9A10`, `var_9000`, `L9A20`). The
-subjects are those labels, except the fallback entries (plain data, untouched, unused), code entries no instruction
-refers to that L2 did not take for routine entries (the continuation of a routine after a status change), graphics
-inside the copy source of a buffer that no instruction refers to, and points only JR / DJNZ reach (loop labels). They
+subjects are those labels, the points inside entries (loop labels only JR / DJNZ reach too) and plain data the code
+uses, except untouched and unused entries, code entries no instruction refers to that L2 did not take for routine
+entries (the continuation of a routine after a status change), and graphics inside the copy source of a buffer that
+no instruction refers to. They
 are grouped by entry, then packed in address order into batches of up to 10 subjects of one class (code or data,
 never mixed) and a sheet of at most 2 KB; at most 40 batches. The batches come from the draft without the review's
 notes, so a build gives the same ids `N1`, `N2`, ... on every compiler. A subject's facts: for code its callers,

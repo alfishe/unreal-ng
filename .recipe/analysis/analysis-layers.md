@@ -99,7 +99,7 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
   `screen`, `variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`. The export
   makes the range one entry of that kind (code decoded from the start image) and drops the old claim's geometry and
   fields. On a claim it goes with `wrong` (`ok` with another kind is refused: `ok` keeps the claim, its fields too);
-  on an `unknown` item, with `ok`:
+  on an `unknown` item, with `ok`. A kind without a verdict decides the item the same way:
 
   ```text
   analysis {"action":"review","op":"resolve","id":"F88","verdict":"wrong","kind":"text","label":"CavernName"}

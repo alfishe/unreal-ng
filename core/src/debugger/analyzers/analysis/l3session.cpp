@@ -432,9 +432,16 @@ Reply ResolveNames(const std::string& id, const NamingBatch& batch, const Option
         }
     }
     std::vector<uint16_t> skipped;
+    std::vector<GivenName> kept;
     for (const NamingSubject& s : batch.subjects)
         if (std::none_of(names.begin(), names.end(), [&](const GivenName& n) { return n.z80 == s.z80; }))
-            skipped.push_back(s.z80);
+        {
+            // A subject named by an earlier resolve of the batch keeps that name
+            if (const auto earlier = given.find(s.z80); earlier != given.end())
+                kept.push_back(earlier->second);
+            else
+                skipped.push_back(s.z80);
+        }
     sessions.Name(id, names, skipped);
 
     Reply reply;
@@ -459,10 +466,23 @@ Reply ResolveNames(const std::string& id, const NamingBatch& batch, const Option
         skippedAt.push(Hex4(z80));
         skippedLine += " " + Hex4(z80);
     }
+    StateNode keptList = StateNode::Array();
+    std::string keptLine;
+    for (const GivenName& n : kept)
+    {
+        StateNode node = StateNode::Object();
+        node["at"] = Hex4(n.z80);
+        node["label"] = n.label;
+        keptList.push(node);
+        keptLine += " " + Hex4(n.z80) + " " + (n.label.empty() ? "(title)" : n.label);
+    }
     reply.body["skipped"] = static_cast<uint64_t>(skipped.size());
     reply.body["skippedAt"] = skippedAt;
+    reply.body["kept"] = keptList;
     reply.text = batch.id + " resolved: " + std::to_string(names.size()) + " named, " +
+                 (kept.empty() ? std::string() : std::to_string(kept.size()) + " kept from before, ") +
                  std::to_string(skipped.size()) + " skipped" + lines +
+                 (keptLine.empty() ? "" : "\n  kept:" + keptLine) +
                  (skippedLine.empty() ? "" : "\n  skipped:" + skippedLine) + "\nThe draft export carries them.";
     return reply;
 }
@@ -538,7 +558,7 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         const Finding* f = FindById(findings, findingId);
         if (f == nullptr)
             return Refuse(Error::NotFound, "no finding " + findingId + " (analysis findings lists them)");
-        const std::string verdict = Lower(Option(options, "verdict"));
+        std::string verdict = Lower(Option(options, "verdict"));
         if (!verdict.empty() && verdict != "ok" && verdict != "wrong" && verdict != "skip")
             return Refuse(Error::BadRequest, "verdict: ok (confirmed), wrong (refuted) or skip (out of the queue)");
         const std::string label = Option(options, "label");
@@ -559,6 +579,9 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
             return Refuse(Error::BadRequest, "verdict ok confirms " + f->id + " as " + f->subject + "; kind " + kind +
                                                  " says it is not (its fields and geometry go): verdict wrong with "
                                                  "the kind, or ok without it");
+        // A kind alone decides the item: another kind refutes a claim, a kind says what an unknown area is
+        if (!kind.empty() && verdict.empty())
+            verdict = f->kind == FindingKind::Claim && Lower(f->subject) != kind ? "wrong" : "ok";
         const std::string specText = Option(options, "experiment");
         if (verdict.empty() && label.empty() && Option(options, "title").empty() && Option(options, "comment").empty() &&
             specText.empty() && kind.empty())

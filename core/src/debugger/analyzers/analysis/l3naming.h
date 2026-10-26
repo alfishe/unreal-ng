@@ -9,11 +9,11 @@
 /// data. The batches come from the draft plan without the review's notes, so one build gives the same batches (ids
 /// N1..) on every compiler.
 ///
-/// Subjects: every label of the draft named after its address (a kind prefix and the address in hex), except the
-/// fallback entries (plain data, untouched, unused), code entries no instruction refers to that L2 did not take
-/// for routine entries (the continuation of a routine after a status change), graphics inside the copy source of
-/// a buffer no instruction refers to (one of a set the program copies as a whole), and points only JR / DJNZ reach
-/// (loop labels inside a routine).
+/// Subjects: every label of the draft named after its address (a kind prefix and the address in hex), the points
+/// inside entries (loop labels JR / DJNZ reach included) and plain data the code uses, except untouched and unused
+/// entries, code entries no instruction refers to that L2 did not take for routine entries (the continuation of a
+/// routine after a status change), and graphics inside the copy source of a buffer no instruction refers to (one of
+/// a set the program copies as a whole).
 ///
 /// @code
 ///   analysis::DraftPlan plan = analysis::MakePlan(l1, l2, analysis::ExportOptions{});

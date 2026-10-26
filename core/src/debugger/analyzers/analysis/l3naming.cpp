@@ -291,17 +291,13 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
         const bool referenced = plan.refs.count(z80) != 0;
         if (s.entry)
         {
-            if (e->region == nullptr || IsFallbackClaim(*e->region) || e->ctl == 'u' || e->ctl == 'i')
+            // Plain data the code uses is named too (a table read by index); untouched and unused bytes are not
+            if (e->region == nullptr || e->ctl == 'u' || e->ctl == 'i' ||
+                (IsFallbackClaim(*e->region) && (e->region->users.empty() || e->region->kind != RegionKind::Data)))
                 continue;
             if (s.code && routineEntries.count(z80) == 0 && !referenced)
                 continue;
             if (Graphic(e->region->kind) && !referenced && inSource(z80))
-                continue;
-        }
-        else
-        {
-            const auto only = plan.relativeOnly.find(z80);
-            if (only != plan.relativeOnly.end() && only->second)
                 continue;
         }
         if (e != current || groups.empty())
