@@ -146,10 +146,11 @@ struct BreakpointDescriptor
 
     bool active = true;   // Breakpoint can be temporarily disabled
     bool hidden = false;  // Internal/temporary breakpoint (e.g. step-over, step-out, traps)
-    // A probe of the haptic feed (controller manager haptics.md §5): the non-breaking "notify feed" action. A hit
-    // never stops; it is counted and told to the probe sink (BreakpointManager::SetProbeSink) with this index.
-    // BRK_NO_PROBE: a breakpoint that stops
-    uint8_t probe = 0xFF;
+    // A tap (docs/inprogress/2026-10-26-breakpoint-taps §3): the non-stopping action. A hit never stops; it is
+    // counted (and passes the hit policy) and goes to the sink registered as tapSink (RegisterTapSink) with tapCookie,
+    // the client's own index. BRK_NO_TAP: a breakpoint that stops
+    uint8_t tapSink = 0;
+    uint32_t tapCookie = 0;
 
     std::string owner =
         "interactive";  // Owner: "interactive" for user/CLI, or "analyzer_manager" if set by analyzer manager
@@ -157,15 +158,50 @@ struct BreakpointDescriptor
     std::string group = "default";  // Group name for organizing breakpoints
 };
 
-constexpr uint8_t BRK_NO_PROBE = 0xFF;
+constexpr uint8_t BRK_NO_TAP = 0;
 
-/// Where the hits of probe breakpoints go (BreakpointDescriptor::probe): on the emulation thread, inside the access,
-/// so it must only note the hit. `value`: the byte an OUT wrote, -1 for the other accesses (a write's byte is in memory)
-class IBreakpointProbeSink
+/// The access a tap saw
+enum BreakpointTapKind : uint8_t
+{
+    BRK_TAP_EXEC = 0,  // the instruction start (same order as BRK_KIND_*)
+    BRK_TAP_READ,
+    BRK_TAP_WRITE,
+    BRK_TAP_PORT_IN,
+    BRK_TAP_PORT_OUT
+};
+
+/// One hit of a tap
+struct BreakpointTapHit
+{
+    uint32_t cookie = 0;                  // the tap's BreakpointDescriptor::tapCookie
+    uint16_t breakpointID = 0xFFFF;       // the tap itself
+    uint16_t address = 0;                 // the CPU address, or the port
+    int value = -1;                       // the byte an OUT wrote; -1 for the others (a write's byte is in memory)
+    BreakpointTapKind kind = BRK_TAP_EXEC;
+};
+
+/// Where the hits of a sink's taps go: on the emulation thread, inside the access, so it must only note the hit.
+/// A write tap is told after the store. Nothing is told during a TTD replay or a tool's access
+class IBreakpointTapSink
 {
 public:
-    virtual ~IBreakpointProbeSink() = default;
-    virtual void OnProbeHit(uint8_t probe, uint16_t address, int value) = 0;
+    virtual ~IBreakpointTapSink() = default;
+    virtual void OnTap(const BreakpointTapHit& hit) = 0;
+};
+
+/// What the armed taps need of the machine (breakpoint-taps §4), derived at each repaint and pushed to the CPU, the
+/// memory and the feature manager: exec taps the instruction start's check, write taps the write hook (or the debug
+/// path where the machine has no hook), read taps the debug path. Stopping breakpoints still need the debug mode
+struct BreakpointTapDemand
+{
+    bool exec = false;
+    bool read = false;
+    bool write = false;
+    bool operator==(const BreakpointTapDemand& other) const
+    {
+        return exec == other.exec && read == other.read && write == other.write;
+    }
+    bool operator!=(const BreakpointTapDemand& other) const { return !(*this == other); }
 };
 
 typedef std::unordered_map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddress;
@@ -308,8 +344,9 @@ protected:
     bool _execPassArmed = false;
     uint16_t _execPassAddress = 0;
 
-    // The probe breakpoints' hits go here (SetProbeSink)
-    IBreakpointProbeSink* _probeSink = nullptr;
+    // The tap sinks by id (RegisterTapSink; 0 is BRK_NO_TAP) and what their armed taps need of the machine
+    std::array<IBreakpointTapSink*, 256> _tapSinks{};
+    BreakpointTapDemand _tapDemand;
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -553,9 +590,13 @@ public:
     /// Bumped on every change of the set (add, remove, enable, group, note; hidden ones too): a reader caches by it
     uint64_t Revision() const { return _revision.load(std::memory_order_relaxed); }
 
-    /// The probe breakpoints' sink (haptics.md §5); nullptr: their hits are counted only. Set on the emulation thread
-    /// (or with the CPU held); the sink must outlive its probes or be cleared first
-    void SetProbeSink(IBreakpointProbeSink* sink) { _probeSink = sink; }
+    /// A tap sink: the id its taps carry in BreakpointDescriptor::tapSink, BRK_NO_TAP when all 255 are taken. Holds
+    /// the CPU as a change does; the sink must stay alive until UnregisterTapSink
+    uint8_t RegisterTapSink(IBreakpointTapSink* sink);
+    /// Removes the sink and every tap that reports to it
+    void UnregisterTapSink(uint8_t sinkId);
+    /// What the armed taps need of the machine now
+    BreakpointTapDemand GetTapDemand() const { return _tapDemand; }
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);
@@ -675,15 +716,18 @@ protected:
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
-    /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical). A probe
-    /// candidate never stops: it goes to the probe sink with `address` and `value`
-    uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, uint16_t address = 0, int value = -1);
+    /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical). A tap
+    /// never stops: a hit that passes its policy goes to its sink with `kind`, `address` and `value`
+    uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind, uint16_t address,
+                            int value = -1);
     /// Whether a breakpoint covers the access (for the lookups that are not on the hot path)
     static bool CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page);
 
     /// Rebuild hot-path filter state from current breakpoint set.
     /// Called after every mutation (add, remove, enable, disable, change); inside a batch only once, at its end.
     void RebuildFilters();
+    /// Pushes a changed tap demand to the CPU, the memory and the feature manager (with the CPU held, as every change)
+    void ApplyTapDemand(const BreakpointTapDemand& demand);
     /// NC_BREAKPOINTS_CHANGED for this emulator with the ids added, removed or changed since the last one
     /// (none: nothing posted). Hidden breakpoints (step-over, traps) are internal and never reported
     void NotifyBreakpointsChanged();

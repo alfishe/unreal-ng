@@ -257,49 +257,18 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     /// endregion  </Ports logic>
 
     // Let debugger process step event
-    if ((cpu.isDebugMode || cpu.execProbeHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execTapHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
         uint16_t breakpointID = brk.HandlePCChange(pc);
         if (breakpointID != BRK_INVALID)
         {
-            AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
-
-            // Get current memory page information for page-specific breakpoint matching
-            Memory& mem = *_context->pMemory;
-            MemoryPageDescriptor pageInfo = mem.MapZ80AddressToPhysicalPage(pc);
-
-            // Check if this is an analyzer-owned breakpoint (should not pause)
-            // Must check both address-only AND page-specific ownership
-            bool isAnalyzerBreakpoint = false;
-            if (analyzerMgr)
-            {
-                // First check page-specific match (for breakpoints like TR-DOS ROM)
-                isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc, pageInfo.page, pageInfo.mode);
-
-                // Fall back to address-only match (for non-page-specific breakpoints)
-                if (!isAnalyzerBreakpoint)
-                {
-                    isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc);
-                }
-            }
-
-            // Always dispatch breakpoint hit to analyzer manager for notification
-            // Note: No MessageCenter notification is sent for analyzer breakpoints
-            if (analyzerMgr)
-            {
-                analyzerMgr->dispatchBreakpointHit(pc, breakpointID, this);
-            }
-
-            // Only pause for debugger breakpoints (not analyzer-owned)
-            if (!isAnalyzerBreakpoint)
-            {
-                // Pause and park, or during a direct run stop before this instruction
-                // A bare Core (tests) has no emulator to stop
-                Emulator* emulator = _context->pEmulator;
-                if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
-                    return true;
-            }
+            // Pause and park, or during a direct run stop before this instruction
+            // A bare Core (tests) has no emulator to stop
+            Emulator* emulator = _context->pEmulator;
+            if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                return true;
         }
     }
 
@@ -401,7 +370,7 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
         return false;
 
     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
-    if (isDebugMode || execProbeHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+    if (isDebugMode || execTapHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
         return false;
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         return false;

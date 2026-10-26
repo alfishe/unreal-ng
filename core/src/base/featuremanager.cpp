@@ -91,7 +91,7 @@ bool FeatureManager::isTtdRecordingActive() const
 bool FeatureManager::debugModeInEffect() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (_replayDebugHold || _probeDebugHold)
+    if (_replayDebugHold || _tapDebugHold)
         return true;
     auto debugIt = _features.find(Features::kDebugMode);
     return debugIt != _features.end() && debugIt->second.enabled;
@@ -108,21 +108,21 @@ void FeatureManager::OnModeChanged(const coordinator::ModeState& /*from*/, const
     applyDebugMode();
 }
 
-void FeatureManager::setProbeDebugHold(bool on)
+void FeatureManager::setTapDebugHold(bool on)
 {
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
-        if (_probeDebugHold == on)
+        if (_tapDebugHold == on)
             return;
-        _probeDebugHold = on;
+        _tapDebugHold = on;
     }
     applyDebugMode();
 }
 
-bool FeatureManager::probeDebugHold() const
+bool FeatureManager::tapDebugHold() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    return _probeDebugHold;
+    return _tapDebugHold;
 }
 
 void FeatureManager::applyDebugMode()

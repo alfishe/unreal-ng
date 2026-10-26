@@ -295,8 +295,12 @@ TEST_F(NextEsxDos_Test, WritesReachTheCardWithTheRtcDate)
     Close(handle);
     EXPECT_EQ(ReadBack("/GAMES/SAVE.DAT"), data);
     for (const FatDirEntryInfo& e : ListBack("/GAMES"))
+    {
         if (e.shortName == "SAVE.DAT")
+        {
             EXPECT_EQ(e.date, ((2026 - 1980) << 9) | (10 << 5) | 26) << "the board's RTC dates the write";
+        }
+    }
 
     // Create-new refuses an existing file; read-only refuses a write open
     Poke(kName, "/GAMES/SAVE.DAT");

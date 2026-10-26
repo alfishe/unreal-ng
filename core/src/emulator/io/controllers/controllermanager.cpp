@@ -676,6 +676,9 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
             _hapticProbes = std::make_unique<HapticProbes>(_context);
         _hapticProbes->Arm(probes);
     }
+    const std::vector<GameEventInfo> events = feed->GameEvents();
+    _gameEventsOn = !events.empty();
+    _gameEvents.Define(events, feed->GameEventsProfile());
     if (_hapticHeld.load(std::memory_order_acquire))
         feed->OnHapticHold(true);
 }
@@ -688,6 +691,9 @@ void ControllerManager::DetachHapticFeed()
     if (_hapticProbes)
         _hapticProbes->Disarm();
     _hapticWatches.clear();
+    if (_gameEventsOn)
+        _gameEvents.Clear();
+    _gameEventsOn = false;
     _hapticFed.reset();
 }
 
@@ -763,6 +769,13 @@ void ControllerManager::FeedHaptics(uint64_t frame)
     if (_hapticProbes && _hapticProbes->Armed())
         _hapticProbes->TakeFrame(summary);
     feed->OnHapticFrame(summary);
+    if (_gameEventsOn)
+    {
+        GameEventFrame events;
+        events.frame = frame;
+        if (feed->TakeGameEvents(events))
+            _gameEvents.Record(events);
+    }
 }
 
 void ControllerManager::WatchPortReads(bool on)

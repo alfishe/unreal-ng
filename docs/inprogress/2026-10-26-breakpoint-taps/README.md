@@ -1,6 +1,7 @@
 # Breakpoint taps: one non-stopping observation path for analyzers, haptics and scripts
 
-**Status:** design, 2026-10-26. Nothing implemented beyond what exists today (§1).
+**Status:** 2026-10-26: phases 1-4 implemented (§10; §6 and §7 say where the build differs from the design); phase 5
+waits for F1. §1 describes the state before the work.
 
 The emulator gets more and more watchers that never stop the CPU: analyzers (TR-DOS, NedoOS, DSS, ROM print, the
 BASIC editor monitor), the haptic feed's game probes, coverage, the bus and font analyzers ahead. Each needs the same
@@ -56,11 +57,12 @@ BreakpointDescriptor
   pointer.
 - Taps are `hidden` with an owner, so they never show in the user's list, and `ChangedSince` leaves them out (as
   today).
-- **Write `before`**: a write tap gets the byte it replaced. The light write path (§5) reads it before the store, so
-  the client keeps no shadow copy (today `HapticProbes::_last`).
+- **Write `before`** (deferred): a write tap could get the byte it replaced, but the debug path's write check runs
+  after the store, so both paths would have to read it first. No client needs it yet: `HapticProbes` keeps its `_last`.
 
-`IBreakpointProbeSink` / `descriptor->probe` become `ITapSink` / `descriptor->tapSink + tapCookie`. HapticProbes is
-the first sink; nothing else uses the old names.
+As implemented: `IBreakpointTapSink::OnTap(const BreakpointTapHit&)` with `{cookie, breakpointID, address, value,
+kind}` (`BRK_TAP_EXEC / READ / WRITE / PORT_IN / PORT_OUT`); `descriptor->tapSink` (0 = `BRK_NO_TAP`) and
+`tapCookie`. HapticProbes and the AnalyzerManager are the sinks; the old probe names are gone.
 
 ## 4. Gates: demand from the armed set, not from one client
 
@@ -82,7 +84,7 @@ still needs debug mode, as today.
 ## 5. The light write path
 
 `MemoryWriteFast` already has one rare branch per write: `if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7)
-[[unlikely]]` (the event-rule screen's catch-up). Fold it into one per-bank byte:
+[[unlikely]]` (the event-rule screen's catch-up). Fold it into one hook byte (the design had one per bank; as implemented one byte for the whole memory, see below):
 
 ```cpp
 // Memory: set on every bank switch and on a tap or video watch change
@@ -106,7 +108,16 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
   everyone, and read taps are rare (profiles prefer exec, haptics.md §5). Revisit with a measurement if an analyzer
   needs them.
 
-Expected: `BM_HapticProbeFrame/1` (one each-write tap on a 48K) from +38 % to the noise of `BM_HapticProbeFrame/0`.
+As implemented: `Memory::_writeHooks` has `kWriteHookVideo` (the video watch is set) and `kWriteHookTap` (a write
+tap is armed). The hooked branch does the video catch-up for pages 5 / 7, the store, then one bit test of the
+breakpoint filter (`MemoryBit(WRITE)`) and on a hit `HandleMemoryWrite` (a stopping breakpoint there is only counted;
+it stops only on the debug path). A per-bank byte would need a re-derivation on every bank switch for a gain only on
+128K games with taps; measured, the single byte already reaches the noise. `WriteDebugEffects` checks breakpoints when
+the feature is on or a write tap is armed, so a write on the debug path is told once. The Next writes through its own
+slot table (`NextMemory::SupportsWriteTapHook()` is false): there a write tap holds the debug path as before.
+
+Measured (lower quartile of 12 interleaved rounds, µs per 48K frame, before → after): `BM_HapticProbeFrame/1`
+305 → 220, `/16` 305 → 222, `/0` 223 → 222, `BM_HapticProbeExec/1` 231 → 227, Dizzy X 613 → 634 (noise of the run).
 
 ## 6. Frame watches as a service
 
@@ -114,6 +125,11 @@ The frame-end byte watches (`value`, `changed`, `increased` / `decreased`) cost 
 than haptics: a lives counter for a Stream Deck key, a score for the OSD, a script's `on_change`. Move them out of
 ControllerManager into a `FrameWatchSet` owned by the AnalyzerManager: `Watch({page, address, word}) -> id`, read at
 `dispatchFrameEnd`, a client reads the frame's values and changes. TTD replay suppression is already there.
+
+As implemented: the watches stay where the profile's sources are evaluated (the haptic feed's, ControllerManager), and
+every consumer reads them through the game's events (§7): a `value` / `write` source's byte or word is the event's
+`value`. A `FrameWatchSet` of its own waits for a client that watches bytes without a profile (a script's
+`on_change`).
 
 ## 7. Game events: the profile names events, consumers subscribe
 
@@ -143,6 +159,25 @@ haptics:
 Finding the events stays the recipe [.recipe/input/game-haptics.md](../../../.recipe/input/game-haptics.md); it
 becomes "finding a game's events".
 
+As implemented:
+
+- **The profile key**: a play profile's top-level `events:` merges into `haptics.sources` when it is parsed (a name in
+  both is an error; another kind of profile refuses it). A saved copy writes them as `haptics.sources`. Dizzy X's
+  built-in profile uses `events:`.
+- **No core analyzer**: the sources are parsed and evaluated in the controllers library (`ProfileHaptics`, which the
+  core does not link), so the feed stays the evaluator and reports each live frame's result to the core:
+  `IHapticFeed::GameEvents()` (the names, at attach) and `TakeGameEvents(GameEventFrame&)` (after each
+  `OnHapticFrame`). `ControllerManager` keeps them in a `GameEventLog` (`core/src/emulator/io/controllers/gameevents.h`):
+  per name its kind (`event` / `level`), fires, last frame, level and watched value, and the last 64 fired events with
+  a sequence number. The feed is made for any resolved game profile, with or without a device, so the events need no
+  controller. A replay or seek holds the feed: the log holds live play only.
+- **The planes**: the monitoring name `game.events` (monitoringapi.h), so at once `GET /api/v1/monitor/game.events`,
+  the WebSocket topic `game.events`, a surface readout (a deck key's `show: {readout: game.events.events.lives.value}`;
+  `events` is keyed by name for that), CLI `monitor game.events`, Lua / Python `monitor("game.events")` and MCP
+  `inspect_state` aspect `monitor` (in its text too). A poller keeps the last `seq` it saw.
+- **Not built**: script callbacks (`on_game_event`: the poll covers it), TTD markers and the OSD; each takes the log
+  when it is wanted.
+
 ## 8. Analyzers move onto taps
 
 - `requestExecutionBreakpoint*` / `requestMemoryBreakpoint` create taps to the AnalyzerManager's own sink with the
@@ -153,6 +188,16 @@ becomes "finding a game's events".
 - `requestMemoryBreakpoint` gets an owner, hidden and the tap action: fixes the defect of §1.
 - `subscribeMemoryRead` / `subscribeMemoryWrite`: removed, or reimplemented as a full-range tap if a client appears.
   A dead API that silently does nothing is worse than none.
+
+As implemented: the requests build taps to the AnalyzerManager's sink (`addTap`); `OnTap` dispatches to the owning
+analyzer. The subscribe API and `ensureDebugFeaturesEnabled` are removed. Analyzer taps keep their visibility (not
+hidden): the debugger UI shows them as analyzer-owned. Fixed on the way:
+
+- a plain analyzer exec request at a user breakpoint's address adopted it (returned the user's id; the release then
+  removed the user's breakpoint): a tap is always its own breakpoint;
+- a user breakpoint at an analyzer-owned address did not pause (`ownsBreakpointAtAddress` in the Z80): the Z80 now
+  pauses only on a stopping hit; `ownsBreakpointAtAddress` stays as a query;
+- only the first breakpoint id at an address was dispatched: every tap at the address is told.
 
 ## 9. Cost targets
 
@@ -168,6 +213,12 @@ Benchmarks: `core/benchmarks/debugger/hapticprobe_frame_benchmark.cpp` (exists),
 an A/B of `MemoryWriteFast` with nothing armed.
 
 ## 10. Phases
+
+Status: 1-3 done (tests `BreakpointTaps_Test`, `AnalyzerManagerIntegration_test`, `TRDOSIntegration_test`,
+`HapticFeed_Test`); 4 done (`GameEventLog_Test`, `HapticProfile_Test.EventsAreTheSourcesOfTheHaptics` /
+`GameEventsWithoutADevice`, `GameHapticsDizzyX_Test` reads the jump and the landing back from the monitor); 5 waits
+for F1.
+
 
 1. **Taps in the breakpoint manager**: the sink registry, `tapSink + tapCookie`, `TapHit` with `before`; HapticProbes
    moves onto it. The demand gates (§4) replace `setProbeDebugHold` / `execProbeHold`.

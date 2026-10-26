@@ -10,6 +10,8 @@
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
+#include "base/featuremanager.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -2048,7 +2050,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 
     uint16_t result = BRK_INVALID;
     if (!_cpuHeads[kind].empty())
-        result = WalkCandidates(_cpuHeads[kind][address], -1, result, address);
+        result = WalkCandidates(_cpuHeads[kind][address], -1, result, static_cast<BreakpointTapKind>(kind), address);
 
     // Physical breakpoints: the page the slot shows now, from the memory model (no remap tracking needed:
     // the filter does not depend on the mapping, design §5.2)
@@ -2060,7 +2062,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
             const size_t pageId = (static_cast<size_t>(where.mode) << 8) | where.page;
             if (pageId < kPageIds && _pageSlices[kind][pageId])
                 result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result,
-                                        address);
+                                        static_cast<BreakpointTapKind>(kind), address);
         }
     }
 
@@ -2103,7 +2105,9 @@ uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port, int value)
         return BRK_INVALID;
     if (_portHeads[direction].empty())
         return BRK_INVALID;
-    const uint16_t result = WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID, port, value);
+    const uint16_t result =
+        WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID,
+                       direction == BRK_PORT_IN ? BRK_TAP_PORT_IN : BRK_TAP_PORT_OUT, port, value);
     if (result != BRK_INVALID)
         _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
     return result;
@@ -2239,7 +2243,8 @@ uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t v
     return result;
 }
 
-uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, uint16_t address, int value)
+uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind,
+                                           uint16_t address, int value)
 {
     if (set == 0 || set >= _candidateSets.size())
         return first;
@@ -2248,15 +2253,7 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
             continue;
-        // A probe notifies the feed and never stops (haptics.md §5)
-        if (bp->probe != BRK_NO_PROBE)
-        {
-            ++bp->hitCount;
-            if (_probeSink != nullptr)
-                _probeSink->OnProbeHit(bp->probe, address, value);
-            continue;
-        }
-        // Every matching access counts; the policy decides whether it stops
+        // Every matching access counts; the policy decides whether it stops, or for a tap whether its sink is told
         const uint32_t n = ++bp->hitCount;
         bool stop = true;
         switch (bp->hitMode)
@@ -2265,6 +2262,22 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
             case BRK_HIT_EQUAL: stop = n == bp->hitTarget; break;
             case BRK_HIT_AT_LEAST: stop = n >= bp->hitTarget; break;
             case BRK_HIT_MULTIPLE: stop = bp->hitTarget != 0 && n % bp->hitTarget == 0; break;
+        }
+        // A tap never stops: its sink is told (breakpoint-taps §3)
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (stop)
+                if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+                {
+                    BreakpointTapHit hit;
+                    hit.cookie = bp->tapCookie;
+                    hit.breakpointID = bp->breakpointID;
+                    hit.address = address;
+                    hit.value = value;
+                    hit.kind = kind;
+                    sink->OnTap(hit);
+                }
+            continue;
         }
         if (stop && first == BRK_INVALID)
             first = bp->breakpointID;
@@ -2318,15 +2331,15 @@ uint16_t BreakpointManager::GenerateNewBreakpointID()
 
 /// A single-address breakpoint without range, slot filter or hit policy: adding the same one again returns
 /// the existing id (the key maps). Anything richer is its own breakpoint
-/// A plain breakpoint shares its address with an equal one; a probe is always its own (it must not adopt a user's
+/// A plain breakpoint shares its address with an equal one; a tap is always its own (it must not adopt a user's
 /// breakpoint, nor a user's adopt it)
 static bool IsPlainMemory(const BreakpointDescriptor& d)
 {
-    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.probe == BRK_NO_PROBE;
+    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
 }
 static bool IsPlainPort(const BreakpointDescriptor& d)
 {
-    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.probe == BRK_NO_PROBE;
+    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
 }
 
 uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor)
@@ -2536,6 +2549,7 @@ void BreakpointManager::RebuildFilters()
         }
     };
 
+    BreakpointTapDemand demand;
     std::vector<Interval> cpu[3];
     std::map<size_t, std::vector<Interval>> pages[3];
     std::map<uint16_t, std::vector<BreakpointDescriptor*>> ports[2];
@@ -2608,6 +2622,8 @@ void BreakpointManager::RebuildFilters()
             if (!(bp->memoryType & bit))
                 continue;
             (k == BRK_KIND_EXEC ? _hotState.hasExec : k == BRK_KIND_READ ? _hotState.hasRead : _hotState.hasWrite) = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                (k == BRK_KIND_EXEC ? demand.exec : k == BRK_KIND_READ ? demand.read : demand.write) = true;
             if (bp->matchType == BRK_MATCH_ADDR)
             {
                 cpu[k].push_back({bp->z80address, bp->EndAddress(), bp});
@@ -2668,8 +2684,59 @@ void BreakpointManager::RebuildFilters()
             _portHeads[d][port] = intern(set);
     }
 
+    ApplyTapDemand(demand);
+
     // Every mutation of the set ends here: tell the surfaces
     NotifyBreakpointsChanged();
+}
+
+/// The CPU checks the instruction start without the debug mode while exec taps are armed; the memory tests the write
+/// filter in its fast write while write taps are (a machine without that hook, and read taps, take the debug path)
+void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
+{
+    if (demand == _tapDemand)
+        return;
+    _tapDemand = demand;
+    if (_context == nullptr || _context->pCore == nullptr)
+        return;
+    _context->pCore->GetZ80()->execTapHold = demand.exec;
+    Memory* memory = _context->pCore->GetMemory();
+    const bool hooked = demand.write && memory != nullptr && memory->SupportsWriteTapHook();
+    if (memory != nullptr)
+        memory->SetWriteTapDemand(hooked, &_hotState);
+    if (_context->pFeatureManager != nullptr)
+        _context->pFeatureManager->setTapDebugHold(demand.read || (demand.write && !hooked));
+}
+
+uint8_t BreakpointManager::RegisterTapSink(IBreakpointTapSink* sink)
+{
+    if (sink == nullptr)
+        return BRK_NO_TAP;
+    ChangeScope change(*this);
+    for (size_t id = 1; id < _tapSinks.size(); id++)
+        if (_tapSinks[id] == nullptr)
+        {
+            _tapSinks[id] = sink;
+            return static_cast<uint8_t>(id);
+        }
+    return BRK_NO_TAP;
+}
+
+void BreakpointManager::UnregisterTapSink(uint8_t sinkId)
+{
+    if (sinkId == BRK_NO_TAP)
+        return;
+    ChangeScope change(*this);
+    std::vector<uint16_t> taps;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        if (descriptor != nullptr && descriptor->tapSink == sinkId)
+            taps.push_back(id);
+    {
+        Batch batch(*this);
+        for (const uint16_t id : taps)
+            RemoveBreakpointByID(id);
+    }
+    _tapSinks[sinkId] = nullptr;
 }
 
 BreakpointManager::Batch::Batch(BreakpointManager& manager) : _manager(manager), _scope(std::make_unique<ChangeScope>(manager))

@@ -1815,7 +1815,7 @@ the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
 GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
                                                          media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
-                                                         controllers.state, breakpoint_groups
+                                                         controllers.state, game.events, breakpoint_groups
 GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
 ```
 

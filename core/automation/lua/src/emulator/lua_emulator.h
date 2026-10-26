@@ -1791,7 +1791,8 @@ public:
         // media_rescan(slot [, opts]), media_create(slot [, opts]),
         // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
         // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
-        // media_read_bytes(slot, file [, volume]), and media(verb, slot, path, opts).
+        // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
+        // names a host file), and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -2079,7 +2080,7 @@ public:
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
         // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
-        // debug.analyzers, controllers.state; an instance's name defaults to this emulator), as WebAPI
+        // debug.analyzers, controllers.state, game.events; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
             Emulator* emulator = effectiveEmulator();
@@ -2238,6 +2239,19 @@ public:
             std::vector<uint8_t> bytes;
             base64::Decode(reply.body.find("data")->s, bytes);
             return {sol::make_object(view, std::string(bytes.begin(), bytes.end())), sol::make_object(view, sol::lua_nil)};
+        });
+        // A file onto a slot's TR-DOS / +3DOS floppy: `bytes` a Lua string, or nil with opts["in"] a host file
+        lua.set_function("media_write", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<std::string> bytes, sol::optional<sol::table> opts) {
+            if (!bytes)
+                return mediaCall(s, "write", slot, path, opts);
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["data"] = base64::Encode(std::vector<uint8_t>(bytes->begin(), bytes->end()));
+            return mediaCall(s, "write", slot, path, all);
         });
         for (const char* verb : {"insert", "swap"})
         {

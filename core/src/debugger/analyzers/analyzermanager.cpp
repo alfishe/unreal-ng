@@ -3,6 +3,7 @@
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -12,13 +13,15 @@ AnalyzerManager::AnalyzerManager(EmulatorContext* context) : _context(context)
     // Don't access DebugManager members during construction
     // They will be initialized later when DebugManager construction completes
     _breakpointManager = nullptr;
-    _featureManager = nullptr;
     (void)_context;  // May be used later for feature manager integration
 }
 
 AnalyzerManager::~AnalyzerManager()
 {
+    // Before the breakpoint manager goes (DebugManager's destructor): the analyzers' taps and the sink with them
     deactivateAll();
+    if (_breakpointManager != nullptr && _tapSink != BRK_NO_TAP)
+        _breakpointManager->UnregisterTapSink(_tapSink);
 }
 
 void AnalyzerManager::init(DebugManager* debugManager)
@@ -29,29 +32,8 @@ void AnalyzerManager::init(DebugManager* debugManager)
     if (debugManager)
     {
         _breakpointManager = debugManager->GetBreakpointsManager();
-    }
-    // Initialize FeatureManager reference for auto-enabling debug features
-    if (_context && _context->pEmulator)
-    {
-        _featureManager = _context->pEmulator->GetFeatureManager();
-    }
-}
-
-/// @brief Ensure debug features are enabled when first breakpoint is registered
-/// Auto-enables 'debugmode' and 'breakpoints' features to ensure analyzer breakpoints work.
-/// This is called automatically when an analyzer requests its first breakpoint.
-void AnalyzerManager::ensureDebugFeaturesEnabled()
-{
-    if (!_featureManager)
-        return;
-    
-    // Only auto-enable if this is the first analyzer breakpoint being registered
-    // (optimization: skip if features are already enabled)
-    if (!_featureManager->isEnabled(Features::kBreakpoints))
-    {
-        // Enable breakpoints feature - this will also auto-enable debugmode
-        // due to the cascade logic in FeatureManager::setFeature()
-        _featureManager->setFeature(Features::kBreakpoints, true);
+        if (_breakpointManager != nullptr && _tapSink == BRK_NO_TAP)
+            _tapSink = _breakpointManager->RegisterTapSink(this);
     }
 }
 
@@ -254,42 +236,6 @@ CallbackId AnalyzerManager::subscribeCPUStep(void (*fn)(void* ctx, Z80* cpu, uin
     return id;
 }
 
-CallbackId AnalyzerManager::subscribeMemoryRead(void (*fn)(void* ctx, uint16_t addr, uint8_t val), void* context,
-                                                const std::string& analyzerId)
-{
-    CallbackId id = _nextCallbackId++;
-
-    MemoryCallback cb;
-    cb.fn = fn;
-    cb.context = context;
-    cb.ownerId = analyzerId;
-
-    _memoryReadCallbacks.push_back(cb);
-
-    _subscriptionOwners[id] = analyzerId;
-    _analyzerSubscriptions[analyzerId].push_back(id);
-
-    return id;
-}
-
-CallbackId AnalyzerManager::subscribeMemoryWrite(void (*fn)(void* ctx, uint16_t addr, uint8_t val), void* context,
-                                                 const std::string& analyzerId)
-{
-    CallbackId id = _nextCallbackId++;
-
-    MemoryCallback cb;
-    cb.fn = fn;
-    cb.context = context;
-    cb.ownerId = analyzerId;
-
-    _memoryWriteCallbacks.push_back(cb);
-
-    _subscriptionOwners[id] = analyzerId;
-    _analyzerSubscriptions[analyzerId].push_back(id);
-
-    return id;
-}
-
 // Warm path subscriptions
 
 CallbackId AnalyzerManager::subscribeVideoLine(std::function<void(uint16_t line)> callback,
@@ -320,80 +266,68 @@ CallbackId AnalyzerManager::subscribeAudioSample(std::function<void(int16_t left
 
 // Breakpoint management
 
-BreakpointId AnalyzerManager::requestExecutionBreakpoint(uint16_t address, const std::string& analyzerId)
+BreakpointId AnalyzerManager::addTap(BreakpointDescriptor* descriptor, const std::string& analyzerId, uint32_t key)
 {
-    if (!_breakpointManager)
+    if (_breakpointManager == nullptr || _tapSink == BRK_NO_TAP)
+    {
+        delete descriptor;
         return BRK_INVALID;
-    
-    // Auto-enable debug features on first breakpoint registration
-    ensureDebugFeaturesEnabled();
-
-    // Add breakpoint using BreakpointManager with AnalyzerManager's OWNER_ID
-    // AnalyzerManager owns all analyzer breakpoints - dispatches internally to requesting analyzer
-    uint16_t bpId = _breakpointManager->AddExecutionBreakpoint(address, OWNER_ID);
+    }
+    // A tap of this manager's sink: never stops, never adopts a user's breakpoint at the same address (nor is adopted)
+    descriptor->owner = OWNER_ID;
+    descriptor->tapSink = _tapSink;
+    const uint16_t bpId = _breakpointManager->AddBreakpoint(descriptor);
+    if (bpId == BRK_INVALID)
+        return BRK_INVALID;
 
     // Track which analyzer requested this breakpoint for internal dispatch
-    // Non-page-specific breakpoints use BANK_INVALID marker
-    uint32_t key = makeBreakpointKey(address);
     _breakpointOwners[bpId] = analyzerId;
     _breakpointKeys[bpId] = key;
-    _ownedAddresses.insert(address);  // O(1) address lookup
-    _ownedKeys.insert(key);           // O(1) page-specific lookup
+    _ownedAddresses.insert(static_cast<uint16_t>(key & 0xFFFF));  // the queries (ownsBreakpointAtAddress)
+    _ownedKeys.insert(key);
     _analyzerBreakpoints[analyzerId].push_back(bpId);
-
     return bpId;
 }
 
-BreakpointId AnalyzerManager::requestExecutionBreakpointInPage(uint16_t address, uint8_t page, 
+BreakpointId AnalyzerManager::requestExecutionBreakpoint(uint16_t address, const std::string& analyzerId)
+{
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = BRK_MEM_EXECUTE;
+    descriptor->z80address = address;
+    // Non-page-specific breakpoints use the BANK_INVALID marker in their key
+    return addTap(descriptor, analyzerId, makeBreakpointKey(address));
+}
+
+BreakpointId AnalyzerManager::requestExecutionBreakpointInPage(uint16_t address, uint8_t page,
                                                                MemoryBankModeEnum pageType,
                                                                const std::string& analyzerId)
 {
-    if (!_breakpointManager)
-        return BRK_INVALID;
-    
-    // Auto-enable debug features on first breakpoint registration
-    ensureDebugFeaturesEnabled();
-
-    // Add page-specific breakpoint using BreakpointManager with AnalyzerManager's OWNER_ID
-    // AnalyzerManager owns all analyzer breakpoints - dispatches internally to requesting analyzer
-    uint16_t bpId = _breakpointManager->AddExecutionBreakpointInPage(address, page, pageType, OWNER_ID);
-
-    // Track which analyzer requested this breakpoint for internal dispatch
-    uint32_t key = makeBreakpointKey(address, page, pageType);
-    _breakpointOwners[bpId] = analyzerId;
-    _breakpointKeys[bpId] = key;
-    _ownedAddresses.insert(address);  // O(1) address lookup
-    _ownedKeys.insert(key);           // O(1) page-specific lookup
-    _analyzerBreakpoints[analyzerId].push_back(bpId);
-
-    return bpId;
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = BRK_MEM_EXECUTE;
+    descriptor->matchType = BRK_MATCH_BANK_ADDR;
+    descriptor->z80address = address;
+    descriptor->page = page;
+    descriptor->pageType = pageType;
+    return addTap(descriptor, analyzerId, makeBreakpointKey(address, page, pageType));
 }
 
 BreakpointId AnalyzerManager::requestMemoryBreakpoint(uint16_t address, bool onRead, bool onWrite,
                                                       const std::string& analyzerId)
 {
-    if (!_breakpointManager)
-        return BRK_INVALID;
-
-    uint16_t bpId = BRK_INVALID;
-
-    // Determine the combined memory type flags
     uint8_t memoryType = BRK_MEM_NONE;
     if (onRead)
         memoryType |= BRK_MEM_READ;
     if (onWrite)
         memoryType |= BRK_MEM_WRITE;
-
-    if (memoryType != BRK_MEM_NONE)
-    {
-        bpId = _breakpointManager->AddCombinedMemoryBreakpoint(address, memoryType);
-
-        // Track ownership
-        _breakpointOwners[bpId] = analyzerId;
-        _analyzerBreakpoints[analyzerId].push_back(bpId);
-    }
-
-    return bpId;
+    if (memoryType == BRK_MEM_NONE)
+        return BRK_INVALID;
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = memoryType;
+    descriptor->z80address = address;
+    return addTap(descriptor, analyzerId, makeBreakpointKey(address));
 }
 
 void AnalyzerManager::releaseBreakpoint(BreakpointId id)
@@ -496,28 +430,6 @@ void AnalyzerManager::dispatchCPUStep(Z80* cpu, uint16_t pc)
     }
 }
 
-void AnalyzerManager::dispatchMemoryRead(uint16_t addr, uint8_t val)
-{
-    if (!_enabled)
-        return;
-
-    for (const auto& cb : _memoryReadCallbacks)
-    {
-        cb.fn(cb.context, addr, val);
-    }
-}
-
-void AnalyzerManager::dispatchMemoryWrite(uint16_t addr, uint8_t val)
-{
-    if (!_enabled)
-        return;
-
-    for (const auto& cb : _memoryWriteCallbacks)
-    {
-        cb.fn(cb.context, addr, val);
-    }
-}
-
 void AnalyzerManager::dispatchVideoLine(uint16_t line)
 {
     if (!_enabled)
@@ -569,6 +481,12 @@ void AnalyzerManager::dispatchFrameEnd()
     {
         _analyzers.at(id)->onFrameEnd();
     }
+}
+
+void AnalyzerManager::OnTap(const BreakpointTapHit& hit)
+{
+    Z80* cpu = _context != nullptr && _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    dispatchBreakpointHit(hit.address, hit.breakpointID, cpu);
 }
 
 void AnalyzerManager::dispatchBreakpointHit(uint16_t addr, BreakpointId bpId, Z80* cpu)
@@ -637,14 +555,6 @@ void AnalyzerManager::removeAllSubscriptionsForAnalyzer(const std::string& analy
     _cpuStepCallbacks.erase(std::remove_if(_cpuStepCallbacks.begin(), _cpuStepCallbacks.end(),
                                            [&](const CPUStepCallback& cb) { return cb.ownerId == analyzerId; }),
                             _cpuStepCallbacks.end());
-
-    _memoryReadCallbacks.erase(std::remove_if(_memoryReadCallbacks.begin(), _memoryReadCallbacks.end(),
-                                              [&](const MemoryCallback& cb) { return cb.ownerId == analyzerId; }),
-                               _memoryReadCallbacks.end());
-
-    _memoryWriteCallbacks.erase(std::remove_if(_memoryWriteCallbacks.begin(), _memoryWriteCallbacks.end(),
-                                               [&](const MemoryCallback& cb) { return cb.ownerId == analyzerId; }),
-                                _memoryWriteCallbacks.end());
 
     _videoLineCallbacks.erase(std::remove_if(_videoLineCallbacks.begin(), _videoLineCallbacks.end(),
                                              [&](const auto& pair) { return pair.second == analyzerId; }),

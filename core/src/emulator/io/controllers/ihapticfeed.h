@@ -9,7 +9,10 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
+
+#include "emulator/io/controllers/gameevents.h"
 
 namespace controllers
 {
@@ -141,6 +144,22 @@ public:
     virtual std::vector<HapticProbe> Probes() const
     {
         return {};
+    }
+    /// The game's events (gameevents.h): the names, asked once when the feed is set, and their profile; none: the
+    /// game.events monitor has nothing
+    virtual std::vector<GameEventInfo> GameEvents() const
+    {
+        return {};
+    }
+    virtual std::string GameEventsProfile() const
+    {
+        return {};
+    }
+    /// After each OnHapticFrame, on the same thread: the frame's events. False: nothing to report (held)
+    virtual bool TakeGameEvents(GameEventFrame& frame)
+    {
+        (void)frame;
+        return false;
     }
     /// The machine replays or seeks (a TTD seek, scrub or history replay, RZX playback): held = true at once, on the
     /// thread that starts it, before the first replayed frame; false when live play resumes (haptics.md §8, H-5)

@@ -3,7 +3,8 @@
 /// by the hash of their image, parse, and fire their effects on a Pentagon. Most games are not in the repository, so a
 /// small program stands in for each: it calls the game's addresses one at a time (a RET stub at each) and writes its
 /// values, and each source must fire alone and play through the mixer. The addresses were checked by play on the real
-/// images (haptics.md §13, H5). Dizzy X is in testdata: DizzyXJumpsAndLandsOnce plays it.
+/// images (haptics.md §13, H5). Dizzy X is in testdata: DizzyXJumpsAndLandsOnce plays it and reads the same jump and
+/// landing back as the game.events monitor.
 
 #include <gtest/gtest.h>
 
@@ -27,6 +28,7 @@
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/monitoring/monitoringapi.h"
 #include "haptics/hapticmixer.h"
 #include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
@@ -304,6 +306,24 @@ TEST(GameHapticsDizzyX_Test, DizzyXJumpsAndLandsOnce)
     run(76);  // the jump lands about 60 frames after its start
     EXPECT_EQ(fired, (std::vector<std::string>{"jump", "land"}));
 
+    // The same facts as the game's events (the profile's `events:`), as every plane reads them: the game.events monitor
+    StateNode events = monitoring::ReadInstance("game.events", *emulator);
+    ASSERT_TRUE(events["available"].b);
+    EXPECT_EQ(events["profile"].s, game.id);
+    std::vector<std::string> recent;
+    for (StateNode& entry : events["recent"].items)
+        recent.push_back(entry["name"].s);
+    EXPECT_EQ(recent, (std::vector<std::string>{"jump", "land"}));
+    for (const char* name : {"jump", "land", "hurt", "died"})
+    {
+        StateNode& entry = events["events"][name];
+        const bool played = std::string_view(name) == "jump" || std::string_view(name) == "land";
+        EXPECT_EQ(entry["fires"].i, played ? 1 : 0) << name;
+        EXPECT_EQ(entry["kind"].s, "event") << name;
+    }
+
     context->pControllerManager->SetHapticFeed(nullptr);
+    emulator->RunNFrames(1, false);
+    EXPECT_FALSE(monitoring::ReadInstance("game.events", *emulator)["available"].b) << "detached: no events";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

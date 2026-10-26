@@ -171,9 +171,11 @@ Built (2026-10-23):
   - `exec`, `read`, `port-in`, `port-out` and `write` with `each_write: true` are breakpoint probes
     (`IHapticFeed::Probes`, at most 16).
 - **How a breakpoint probe works.**
-  - Each one is a hidden breakpoint with the owner `haptics` and the probe index (`BreakpointDescriptor::probe`).
-  - `HapticProbes`, the `IBreakpointProbeSink`, is told of each hit with the address and the byte written. Nothing
-    stops, and the hit counts as one in the breakpoint's counter.
+  - Each one is a hidden tap ([breakpoint-taps](../2026-10-26-breakpoint-taps/README.md)): a breakpoint with the owner
+    `haptics` whose action tells a sink instead of stopping (`BreakpointDescriptor::tapSink`, the probe index in
+    `tapCookie`). Analyzers use the same taps.
+  - `HapticProbes` registers itself as a tap sink (`BreakpointManager::RegisterTapSink`) and is told of each hit with
+    the address and the byte an OUT wrote. Nothing stops, and the hit counts as one in the breakpoint's counter.
   - A probe is never adopted by a user breakpoint of the same address, and it never adopts one either.
   - A probe with a page is a bank breakpoint on that RAM page.
   - The OUT's byte now reaches the port path (`HandlePortOut(port, value)`).
@@ -187,15 +189,21 @@ Built (2026-10-23):
   - With nothing armed the feed costs the frame-end call only: no probe, no debug mode, the fast memory interface.
   - Frame-end watches (`value`, `frame`, a plain `write`) read their byte once a frame: nothing on the CPU.
   - Port probes use the port path's existing gate.
-  - Exec probes (2026-10-26) set `Z80::execProbeHold`: the instruction start checks the exec filter bit
+  - The breakpoint manager derives what the armed taps need and switches it itself (`ApplyTapDemand`); no client
+    touches the CPU or the feature manager.
+  - Exec probes: `Z80::execTapHold`, the instruction start checks the exec filter bit
     (`BreakpointManager::HandlePCChange`, one load and one bit) as it does in the debug mode, and nothing else
     changes. No debug mode, the memory stays on the fast interface; only the idle-step skip (`Z80::IdleStepsInert`)
     is off while they are armed, so no instruction start is skipped.
-  - Read and write-each probes need the debug memory path. `FeatureManager::setProbeDebugHold` holds the debug mode
-    on while they are armed (with the CPU held, §8), and the memory's breakpoint cache follows it.
-  - How a frame's hits reach the feed: the breakpoint's hit calls `HapticProbes::OnProbeHit` on the emulation thread
-    (a counter per probe, the write's bytes); the frame end hands the counters to the feed (`TakeFrame`) and clears
-    them; the feed turns them into its rules' effects on the controllers' thread.
+  - Write-each probes: the fast write's hook (`Memory::MemoryWriteFast`, one hook byte shared with the event-rule
+    screen's check, so the plain write still tests one byte). With a write tap armed every write tests the write
+    filter bit; only a marked address goes on to the resolve. No debug mode. The Next writes through its own slot
+    table: there write taps hold the debug path (`Memory::SupportsWriteTapHook`).
+  - Read probes need the debug memory path: `FeatureManager::setTapDebugHold` holds the debug mode on while they are
+    armed (with the CPU held, §8), and the memory's breakpoint cache follows it.
+  - How a frame's hits reach the feed: the tap's hit calls `HapticProbes::OnTap` on the emulation thread (a counter
+    per probe, the write's bytes); the frame end hands the counters to the feed (`TakeFrame`) and clears them; the
+    feed turns them into its rules' effects on the controllers' thread.
 - **A 16-bit value.** `value` takes `word: true`: the little-endian word at `address` and `address + 1` (two
   frame-end watches), scaled as a byte is (`value * scale / 255`), so a speed of 0 to 511 takes `scale: 0.5`.
 - **During replay.** The breakpoint manager skips memory and port breakpoints while `ttdReplayActive`, and
@@ -286,6 +294,13 @@ signatures are `core/swsignature`'s ([mapping-and-profiles.md §6.1](mapping-and
 ```
 
 The addresses above are an illustration of the format, not verified values for this title.
+
+The sources are game facts, not haptic ones, so a play profile may write them as its top-level `events:` (the same
+fields; `haptics.sources` stays accepted, both are one list, a name in both is an error). Every source is a game
+event: the `game.events` monitor ([breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) publishes each live
+frame's fired events and watched values on every plane (REST, the WebSocket topic, a deck key's `show:`, CLI, Lua,
+Python, MCP), with or without a haptic device; the rules are one consumer of them. Dizzy X's built-in profile uses
+`events:`.
 
 - **Authoring**: the Advanced dialog has a "Haptics" tab with a live meter per source and per actuator, and
   "Add probe from debugger": a watch or breakpoint in the debugger can be turned into a probe with one click.
@@ -537,23 +552,25 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 | `Haptics_Fallback` | `trigger.right\|handle.high` plays on handle.high for a device without trigger motors |
 | `Haptics_NoCostWhenIdle` | no ring pushes when no device with actuators is bound |
 
-| `ExecProbesKeepTheFastMemoryPath` | an exec probe fires once a frame with no debug mode and the fast memory interface; detaching releases `Z80::execProbeHold` |
+| `ExecProbesKeepTheFastMemoryPath` | an exec probe fires once a frame with no debug mode and the fast memory interface; detaching releases `Z80::execTapHold` |
+| `WriteProbesKeepTheFastMemoryPath` | a write-each probe sees both writes of a change undone in the frame, with the bytes before and after, with no debug mode and the fast memory interface |
 | `DizzyXJumpsAndLandsOnce` | the real Dizzy X (testdata): its profile found by the file's hash, one jump fires `jump` and `land` in one frame each and nothing else |
 
 Benchmarks: `core/benchmarks/debugger/hapticprobe_frame_benchmark.cpp`, one frame per iteration (`RunFramePublic`),
-600 iterations, three interleaved rounds on an M-series Mac (release, LTO), the median:
+600 iterations, on an M-series Mac (release, LTO). Before the taps: the debug hold for every memory probe, then (also
+2026-10-26) `execProbeHold` for exec probes; now: the taps with the write hook. Now against the previous step: 12
+interleaved rounds of both binaries, the lower quartile (the machine was shared, the medians noisy):
 
-| Benchmark | Before (debug hold for exec) | Now (`execProbeHold`) |
-|:--|:--|:--|
-| `BM_HapticProbeFrame/0`: 48K in BASIC, the feed, no probe | 224 µs | 224 µs |
-| `BM_HapticProbeFrame/1` and `/16`: write-each probes on FRAMES | 310 µs (+38 %) | 306 µs (+38 %, unchanged: the debug memory path) |
-| `BM_HapticExecProbeFrame/1` and `/16`: exec probes from #0038 | 314 µs (+40 %) | 228 µs (+2 %, within noise) |
-| `BM_HapticProbeDizzy/-1`: Dizzy X on a Pentagon, no feed | 625 µs | 575-610 µs |
-| `BM_HapticProbeDizzy/4`: the profile's four exec probes | 720 µs (+13 %) | 566-595 µs (within noise) |
+| Benchmark | Debug hold | Exec hold | Taps (now) |
+|:--|:--|:--|:--|
+| `BM_HapticProbeFrame/0`: 48K in BASIC, the feed, no probe | 224 µs | 223 µs | 222 µs |
+| `BM_HapticProbeFrame/1` and `/16`: write-each probes on FRAMES | 310 µs (+38 %) | 305 µs (+37 %) | 220-222 µs (within noise) |
+| `BM_HapticExecProbeFrame/1` and `/16`: exec probes from #0038 | 314 µs (+40 %) | 230 µs | 227-228 µs |
+| `BM_HapticProbeDizzy/-1`: Dizzy X on a Pentagon, no feed | 625 µs | 614 µs | 624 µs |
+| `BM_HapticProbeDizzy/4`: the profile's four exec probes | 720 µs (+13 %) | 613 µs | 634 µs (within noise) |
 
-A 20 ms frame keeps over 96 % of the core free in every case; the write-each cost is the debug memory path as a whole
-(every read and write through `ReadDebugEffects` / `WriteDebugEffects`), not the probe's filter bit. Open: a "probe"
-memory interface (the fast read, a write with the write filter bit only) would take it to the exec probes' level.
+A 20 ms frame keeps over 96 % of the core free in every case. With nothing armed the fast write tests one hook byte as
+before (the event-rule screen's check moved into it): no change measured. Read probes still take the debug path.
 
 ## 13. Phases and open points
 

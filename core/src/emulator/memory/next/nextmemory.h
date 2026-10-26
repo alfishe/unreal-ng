@@ -55,6 +55,8 @@ public:
     bool SramWait28() const { return _sramWait28; }
     bool SlotWaitsAt28(unsigned slot) const { return _slotSramWait[slot]; }
     MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
+    /// Its own slot writes (SlotWriteFast), not MemoryWriteFast: its write taps take the debug path
+    bool SupportsWriteTapHook() const override { return false; }
     void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
     /// endregion
