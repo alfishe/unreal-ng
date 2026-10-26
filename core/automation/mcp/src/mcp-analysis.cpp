@@ -37,7 +37,8 @@
 //                                                    an MCP image content block)
 //   findings {op?, kind?, status?, range?, limit?, format?, path?, claim?, evidence?, by?, title?}
 //                         → POST /analysis/findings  (P5: the L3 findings register; op add: a note)
-//   review {op?, id?, verdict?, label?, title?, comment?, by?, experiment?, ranges?, limit?}
+//   review {op?, id?, verdict?, label?, title?, comment?, kind?, names?, by?, experiment?, ranges?, reason?, offset?,
+//           limit?}
 //                         → POST /analysis/review    (P5: the review queue; next, list, show, resolve)
 //   experiment {spec | path, finding?, parallel?} → POST /analysis/experiment (P5: spec an object or an array)
 //   cover {budget?, per_branch?, frames?, parallel?, limit?, ranges?} → POST /analysis/cover (P5: directed coverage)
@@ -1105,12 +1106,23 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["kind"]["description"] =
         "query: all (default), conflicts, or a region kind (code, data, text, font, sprite, tile, screen, level_map, "
         "buffer, init_table, records, variable, pointer_table, handler_table, rng_state, music_data, packed, unused, "
-        "untouched, ...); gallery: all, font, sprite, tile, screen or level_map";
+        "untouched, ...); gallery: all, font, sprite, tile, screen or level_map; review resolve: what the draft makes "
+        "of the finding's range (code, data, text, font, sprite, tile, screen, variable, pointer_table, "
+        "handler_table, rng, music, packed, level_map, unused)";
     schema["properties"]["range"]["type"] = "string";
     schema["properties"]["range"]["description"] = "query: hex start-end, e.g. 8000-83FF (default the whole 64K)";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] =
         "query, gallery, findings: the most rows (default 200); review: the queue's cap (default 40); cover: branches";
+    schema["properties"]["offset"]["type"] = "integer";
+    schema["properties"]["offset"]["description"] = "review list / next: items of the queue to skip (paging, default 0)";
+    schema["properties"]["reason"]["type"] = "string";
+    schema["properties"]["reason"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* reason : {"all", "bug", "conflict", "unnamed-hot", "low-confidence", "unknown", "entry", "name"})
+        schema["properties"]["reason"]["enum"].append(reason);
+    schema["properties"]["reason"]["description"] =
+        "review list / next: only the items of this reason (default all; entry: entry candidates, name: naming "
+        "batches)";
     schema["properties"]["scale"]["type"] = "integer";
     schema["properties"]["scale"]["description"] = "gallery: integer zoom of the PNG, 1..8 (default 2)";
     schema["properties"]["format"]["type"] = "string";
@@ -1147,9 +1159,9 @@ void RegisterAnalysis(ToolRegistry& registry)
         schema["properties"]["op"]["enum"].append(op);
     schema["properties"]["op"]["description"] =
         "findings: list (default) or add (a note: claim, range, status, evidence, by); review: next (default), list, "
-        "show (id) or resolve (id + verdict / label / title / comment)";
+        "show (id) or resolve (id + verdict / label / title / comment / kind / experiment; a naming batch: names)";
     schema["properties"]["id"]["type"] = "string";
-    schema["properties"]["id"]["description"] = "review show / resolve: the finding, e.g. F12";
+    schema["properties"]["id"]["description"] = "review show / resolve: the finding (F12) or the naming batch (N3)";
     schema["properties"]["verdict"]["type"] = "string";
     schema["properties"]["verdict"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* verdict : {"ok", "wrong", "skip"})
@@ -1171,7 +1183,7 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["claim"]["description"] = "findings add: the note's sentence";
     schema["properties"]["evidence"]["type"] = "string";
     schema["properties"]["evidence"]["description"] = "findings add: evidence, ';' separated";
-    for (const char* name : {"spec", "experiment"})
+    for (const char* name : {"spec", "experiment", "names"})
         for (const char* type : {"object", "array", "string"})
             schema["properties"][name]["type"].append(type);
     schema["properties"]["spec"]["description"] =
@@ -1182,6 +1194,10 @@ void RegisterAnalysis(ToolRegistry& registry)
         "\"changed\", \"new_code\": \">0\"}, \"finding\": \"F12\"}";
     schema["properties"]["experiment"]["description"] =
         "review resolve: an experiment spec (as for spec) whose result marks the finding";
+    schema["properties"]["names"]["description"] =
+        "review resolve of a naming batch (N3): {\"$9000\": \"PlayerY\", \"$9A10\": {\"label\": \"MovePlayer\", "
+        "\"title\": \"Move the player\"}} or [{\"at\": \"$9000\", \"label\": ..., \"title\": ...}] (or its JSON "
+        "text); the batch's subjects left out are skipped";
     schema["properties"]["finding"]["type"] = "string";
     schema["properties"]["finding"]["description"] = "experiment: the finding the result marks (none: a new experiment finding)";
     schema["properties"]["parallel"]["type"] = "integer";
@@ -1322,12 +1338,14 @@ void RegisterAnalysis(ToolRegistry& registry)
             }
             if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
             {
-                // Every option goes through as given (numbers, strings, booleans; spec / experiment objects or arrays):
+                // Every option goes through as given (numbers, strings, booleans; spec / experiment / names objects or
+                // arrays):
                 // the core checks them
                 static const std::map<std::string, std::vector<const char*>> kOptions = {
                     {"findings", {"op", "kind", "status", "range", "limit", "format", "path", "claim", "evidence", "by",
                                   "title"}},
-                    {"review", {"op", "id", "verdict", "label", "title", "comment", "by", "experiment", "ranges", "limit"}},
+                    {"review", {"op", "id", "verdict", "label", "title", "comment", "kind", "names", "by", "experiment",
+                                "ranges", "reason", "offset", "limit"}},
                     {"experiment", {"spec", "path", "parallel", "finding"}},
                     {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges"}},
                 };

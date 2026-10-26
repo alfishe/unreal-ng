@@ -98,8 +98,9 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> gallery = {"address", "kind", "scale", "path", "limit"};
     static const std::vector<std::string> findings = {"op",    "kind",  "status",   "range", "limit", "format",
                                                       "path",  "claim", "evidence", "by",    "title"};
-    static const std::vector<std::string> review = {"op",      "id", "verdict",    "label",  "title",
-                                                    "comment", "by", "experiment", "ranges", "limit"};
+    static const std::vector<std::string> review = {"op",     "id",     "verdict", "label",      "title",
+                                                    "comment", "kind",  "names",   "by",         "experiment",
+                                                    "ranges", "reason", "offset",  "limit"};
     static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding"};
     static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges"};
     if (action == "start")

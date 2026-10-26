@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <set>
 #include <sstream>
@@ -347,6 +348,11 @@ struct Exporter
     std::vector<uint8_t> image;      ///< the start image in the Z80 view
     std::vector<const CodeLine*> lineAt;  ///< instruction starting at an address
     std::vector<const CodeLine*> lineOver;  ///< instruction covering an address
+    /// The review's kind changes (ExportNote::kind): the claims standing in for the range, the lines decoded for a
+    /// range made code, the ranges
+    std::deque<Region> overrides;
+    std::deque<CodeLine> decoded;
+    std::vector<ExportRange> kindRanges;
 
     Exporter(const L1Result& l1In, const L2Result& l2In, const ExportOptions& optionsIn)
         : l1(l1In), l2(l2In), options(optionsIn), image(0x10000, 0), lineAt(0x10000, nullptr), lineOver(0x10000, nullptr)
@@ -363,6 +369,94 @@ struct Exporter
             for (uint8_t i = 0; i < c.length; ++i)
                 lineOver[static_cast<uint16_t>(c.z80 + i)] = &c;
         }
+        ApplyKindNotes();
+    }
+
+    /// L3: the kinds the review gave ranges. A range made code is decoded from the start image (instructions that
+    /// do not fit stay bytes); a range made anything else loses its instructions. Each range gets a claim of its own.
+    void ApplyKindNotes()
+    {
+        for (const auto& [address, note] : options.notes)
+        {
+            RegionKind kind = RegionKind::Data;
+            if (note.kind.empty() || !ParseRegionKind(note.kind, kind) || note.kindEnd < address)
+                continue;
+            const uint16_t end = note.kindEnd;
+            kindRanges.push_back(ExportRange{address, end});
+            if (kind == RegionKind::Code)
+            {
+                for (uint32_t a = address; a <= end;)
+                {
+                    if (lineAt[a] != nullptr)
+                    {
+                        a += lineAt[a]->length;
+                        continue;
+                    }
+                    uint8_t bytes[4];
+                    for (int i = 0; i < 4; ++i)
+                        bytes[i] = image[static_cast<uint16_t>(a + i)];
+                    const OpInfo& op = DecodeOp(bytes);
+                    bool free = a + op.length - 1 <= end;
+                    for (uint8_t i = 0; i < op.length && free; ++i)
+                        free = lineOver[static_cast<uint16_t>(a + i)] == nullptr;
+                    if (!free)
+                    {
+                        ++a;
+                        continue;
+                    }
+                    CodeLine line;
+                    line.key = l1.StartKey(static_cast<uint16_t>(a));
+                    line.z80 = static_cast<uint16_t>(a);
+                    line.length = op.length;
+                    for (uint8_t i = 0; i < op.length; ++i)
+                        line.bytes[i] = bytes[i];
+                    decoded.push_back(line);
+                    lineAt[a] = &decoded.back();
+                    for (uint8_t i = 0; i < op.length; ++i)
+                        lineOver[static_cast<uint16_t>(a + i)] = &decoded.back();
+                    a += op.length;
+                }
+            }
+            else
+                for (uint32_t a = address; a <= end; ++a)
+                {
+                    lineAt[a] = nullptr;
+                    lineOver[a] = nullptr;
+                }
+            Region r;
+            r.kind = kind;
+            r.z80 = address;
+            r.lo = l1.StartKey(address);
+            r.hi = r.lo + (end - address);
+            r.status = RegionStatus::Inferred;
+            r.confidence = confidence::kMax;
+            r.detector = DetectorId::CodeMap;
+            std::string name = RegionKindName(kind);
+            if (!name.empty())
+                name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+            r.title = kind == RegionKind::Code ? "Routine at " + Hex4(address)
+                                               : name + ", " + std::to_string(end - address + 1u) + " bytes";
+            r.evidence.push_back(Evidence{"review", address, 0, std::string("the review made it ") + RegionKindName(kind)});
+            overrides.push_back(std::move(r));
+        }
+    }
+
+    /// Whether a claim of the store is under a kind the review gave (it leaves the fields and geometry JSON)
+    bool Overridden(const Region& r) const
+    {
+        for (const ExportRange& k : kindRanges)
+            if (r.z80 <= k.end && r.Z80End() >= k.start)
+                return true;
+        return false;
+    }
+
+    /// The instructions in address order (the code map's and the ones a kind change decoded)
+    template <typename F>
+    void ForEachLine(F&& f) const
+    {
+        for (uint32_t a = 0; a < 0x10000; ++a)
+            if (lineAt[a] != nullptr)
+                f(*lineAt[a]);
     }
 
     std::vector<ExportRange> Ranges() const
@@ -402,9 +496,22 @@ struct Exporter
                     owner[a] = &r;
             }
         }
+        for (const Region& r : overrides)
+        {
+            // A buffer under a kind change is no container any more
+            for (uint32_t a = r.z80; a <= r.Z80End(); ++a)
+                if (const Region* box = container[a])
+                    for (uint32_t b = box->z80; b <= box->Z80End(); ++b)
+                        container[b] = nullptr;
+            for (uint32_t a = r.z80; a <= r.Z80End(); ++a)
+                owner[a] = &r;
+        }
         std::set<uint16_t> entryStarts;
         for (const auto& e : l2.entries)
             entryStarts.insert(e.first);
+        for (const auto& [address, note] : options.notes)
+            if (note.entry || !note.kind.empty())
+                entryStarts.insert(address);
 
         for (const ExportRange& range : plan.ranges)
         {
@@ -600,9 +707,13 @@ struct Exporter
             for (auto it = options.notes.lower_bound(e.start); it != options.notes.end() && it->first <= e.end; ++it)
             {
                 const bool atStart = it->first == e.start;
+                if (!atStart && !it->second.title.empty())
+                    lines.push_back(Hex4(it->first) + ": " + it->second.title);
                 for (const std::string& comment : it->second.comments)
                     lines.push_back(atStart ? comment : Hex4(it->first) + ": " + comment);
-                if (!atStart && !it->second.label.empty())
+                // Inside an instruction no label can go (ApplyNoteInnerLabels puts the others)
+                const CodeLine* over = lineOver[it->first];
+                if (!atStart && !it->second.label.empty() && over != nullptr && over->z80 != it->first)
                     lines.push_back(Hex4(it->first) + ": named " + it->second.label + " in the review.");
             }
             if (!lines.empty())
@@ -715,12 +826,22 @@ struct Exporter
         return nullptr;
     }
 
-    std::string LabelFor(uint16_t address)
+    /// The label of a referenced address (the draft's point label "L" + hex where none is there); @p from refers to
+    /// it (a JR / DJNZ when @p relative)
+    std::string LabelFor(uint16_t address, uint16_t from, bool relative = false)
     {
         auto it = reloc.labels.find(address);
         if (it == reloc.labels.end())
             it = reloc.labels.emplace(address, HexName("L", address)).first;
         reloc.breaks.insert(address);
+        std::vector<uint16_t>& refs = plan.refs[address];
+        if (std::find(refs.begin(), refs.end(), from) == refs.end())
+            refs.push_back(from);
+        const auto only = plan.relativeOnly.find(address);
+        if (only == plan.relativeOnly.end())
+            plan.relativeOnly.emplace(address, relative);
+        else
+            only->second = only->second && relative;
         return it->second;
     }
 
@@ -747,10 +868,9 @@ struct Exporter
         const auto inRanges = [this](uint32_t a) { return InRanges(plan.ranges, a); };
         // Pass 1: the addresses code refers to get labels (line starts) or @isub (inside an instruction)
         std::vector<std::pair<const CodeLine*, uint16_t>> midRefs;
-        for (const CodeLine& c : l2.code)
-        {
+        ForEachLine([&](const CodeLine& c) {
             if (!inRanges(c.z80))
-                continue;
+                return;
             uint8_t b[4];
             for (int i = 0; i < 4; ++i)
                 b[i] = image[static_cast<uint16_t>(c.z80 + i)];
@@ -758,42 +878,43 @@ struct Exporter
             uint16_t target = 0;
             if (BranchTarget(op, c.z80, b, target) && inRanges(target))
             {
+                const bool relative = op.flow == Flow::Jr || op.flow == Flow::Djnz;
                 const CodeLine* over = lineOver[target];
                 if (over == nullptr || over->z80 == target)
-                    LabelFor(target);
+                    LabelFor(target, c.z80, relative);
                 else
                     midRefs.emplace_back(&c, target);
-                continue;
+                return;
             }
             if (op.immBytes == 2 && (op.immIsAddress || PointerEvidence(c.key)))
             {
                 const uint16_t v = Imm16(op, b);
                 if (!inRanges(v))
-                    continue;
+                    return;
                 const CodeLine* over = lineOver[v];
                 if (over == nullptr || over->z80 == v)
-                    LabelFor(v);
+                    LabelFor(v, c.z80);
                 else
                     midRefs.emplace_back(&c, v);
-                continue;
+                return;
             }
             if (const PointerUse* high = HighPointer(c.key); high != nullptr && op.immBytes == 1)
             {
                 const auto table = static_cast<uint16_t>(high->value << 8);
                 if (!inRanges(table) || !inRanges(static_cast<uint16_t>(table + 0xFF)))
-                    continue;
-                const std::string name = LabelFor(table);
+                    return;
+                const std::string name = LabelFor(table, c.z80);
                 const std::string text = Text(c);
                 const std::string sub = Replace(text, high->value, false, name + "/256");
                 if (!sub.empty())
                     reloc.isub[c.z80] = sub;
                 AlignFor(table);
             }
-        }
+        });
         for (const auto& [c, v] : midRefs)
         {
             const CodeLine* over = lineOver[v];
-            const std::string name = LabelFor(over->z80);
+            const std::string name = LabelFor(over->z80, c->z80);
             const std::string text = Text(*c);
             uint8_t b[4];
             for (int i = 0; i < 4; ++i)
@@ -820,26 +941,62 @@ struct Exporter
                 {
                     const auto v = static_cast<uint16_t>(image[a] | (image[a + 1] << 8));
                     if (inRanges(v) && (lineOver[v] == nullptr || lineOver[v]->z80 == v))
-                        LabelFor(v);
+                        LabelFor(v, static_cast<uint16_t>(a));
                 }
             }
         // Pass 2: constants that equal a label stay numbers
-        for (const CodeLine& c : l2.code)
-        {
+        ForEachLine([&](const CodeLine& c) {
             if (!inRanges(c.z80))
-                continue;
+                return;
             uint8_t b[4];
             for (int i = 0; i < 4; ++i)
                 b[i] = image[static_cast<uint16_t>(c.z80 + i)];
             const OpInfo& op = DecodeOp(b);
             if (op.immBytes != 2 || op.immIsAddress || op.flow != Flow::None)
-                continue;
+                return;
             if (!c.executed)
-                continue;  // no DataFlow seen: SkoolKit's default (a label when one is there)
+                return;  // no DataFlow seen: SkoolKit's default (a label when one is there)
             if (PointerEvidence(c.key))
-                continue;
+                return;
             if (reloc.labels.count(Imm16(op, b)) != 0)
                 reloc.keep.insert(c.z80);
+        });
+        ApplyNoteInnerLabels();
+        plan.labels = reloc.labels;
+    }
+
+    /// L3: the labels the review gave addresses inside entries replace the draft's point labels there (or start a
+    /// point; not inside an instruction, not a label another address has)
+    void ApplyNoteInnerLabels()
+    {
+        if (options.notes.empty())
+            return;
+        std::set<uint16_t> starts;
+        for (const DraftEntry& e : plan.entries)
+            starts.insert(e.start);
+        std::set<std::string> taken;
+        for (const auto& [address, name] : reloc.labels)
+            taken.insert(name);
+        for (const auto& [address, note] : options.notes)
+        {
+            if (note.label.empty() || starts.count(address) != 0 || !InRanges(plan.ranges, address))
+                continue;
+            if (lineOver[address] != nullptr && lineOver[address]->z80 != address)
+                continue;  // inside an instruction: the comment line says it
+            const auto it = reloc.labels.find(address);
+            if (it != reloc.labels.end() && it->second == note.label)
+                continue;
+            if (taken.count(note.label) != 0)
+                continue;
+            if (it != reloc.labels.end())
+            {
+                taken.erase(it->second);
+                it->second = note.label;
+            }
+            else
+                reloc.labels.emplace(address, note.label);
+            taken.insert(note.label);
+            reloc.breaks.insert(address);
         }
     }
 
@@ -1164,7 +1321,7 @@ struct Exporter
         for (const Region& r : l2.store.Regions())
         {
             if ((r.kind != RegionKind::RecordArray && r.kind != RegionKind::Buffer) || r.geometry.fields.empty() ||
-                !InRanges(plan.ranges, r.z80))
+                !InRanges(plan.ranges, r.z80) || Overridden(r))
                 continue;
             out << (firstRecord ? "\n" : ",\n");
             firstRecord = false;
@@ -1199,7 +1356,7 @@ struct Exporter
             const bool graphic = r.kind == RegionKind::Font || r.kind == RegionKind::Sprite ||
                                  r.kind == RegionKind::Tile || r.kind == RegionKind::Screen ||
                                  r.kind == RegionKind::LevelMap;
-            if (!graphic || !InRanges(plan.ranges, r.z80))
+            if (!graphic || !InRanges(plan.ranges, r.z80) || Overridden(r))
                 continue;
             const struct Geometry& g = r.geometry;
             out << (first ? "\n" : ",\n") << "  {\"start\": \"" << Hex4(r.z80) << "\", \"end\": \""

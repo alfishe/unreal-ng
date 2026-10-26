@@ -273,7 +273,7 @@ Reply FindingsAction(Emulator& emulator, const Options& options)
     {
         FindingKind parsed = FindingKind::Claim;
         if (!ParseFindingKind(k, parsed))
-            return Refuse(Error::BadRequest, "kind: all, claim, conflict, bug, routine, unknown, coverage, note or experiment");
+            return Refuse(Error::BadRequest, "kind: all, claim, conflict, bug, routine, unknown, coverage, note, experiment or entry");
         kind = parsed;
     }
     std::optional<FindingStatus> status;
@@ -296,7 +296,8 @@ Reply FindingsAction(Emulator& emulator, const Options& options)
 
     const std::vector<Finding> all = sessions.Findings(id, built.job, *built.l1, *built.l2);
     std::vector<Finding> picked;
-    uint64_t byKind[8] = {};
+    constexpr int kKinds = static_cast<int>(FindingKind::Entry) + 1;
+    uint64_t byKind[kKinds] = {};
     uint64_t byStatus[4] = {};
     for (const Finding& f : all)
     {
@@ -319,7 +320,7 @@ Reply FindingsAction(Emulator& emulator, const Options& options)
     reply.body["total"] = static_cast<uint64_t>(all.size());
     reply.body["truncated"] = picked.size() > limit;
     StateNode kinds = StateNode::Object();
-    for (int k = 0; k < 8; ++k)
+    for (int k = 0; k < kKinds; ++k)
         kinds[FindingKindName(static_cast<FindingKind>(k))] = byKind[k];
     reply.body["by_kind"] = kinds;
     StateNode statuses = StateNode::Object();
@@ -329,7 +330,7 @@ Reply FindingsAction(Emulator& emulator, const Options& options)
     reply.body["format"] = format;
 
     std::string summary = "Findings: " + std::to_string(all.size()) + " (";
-    for (int k = 0; k < 8; ++k)
+    for (int k = 0; k < kKinds; ++k)
         if (byKind[k] != 0)
             summary += std::string(summary.back() == '(' ? "" : ", ") + std::to_string(byKind[k]) + " " +
                        FindingKindName(static_cast<FindingKind>(k));
@@ -365,6 +366,98 @@ Reply FindingsAction(Emulator& emulator, const Options& options)
     return reply;
 }
 
+/// Kinds a review may give a range (the structure kinds need a geometry the review does not give)
+bool ReviewKind(const std::string& text)
+{
+    RegionKind kind = RegionKind::Data;
+    return ParseRegionKind(text, kind) && kind != RegionKind::Buffer && kind != RegionKind::RecordArray &&
+           kind != RegionKind::InitTable && kind != RegionKind::Untouched;
+}
+
+/// A label taken at another address than @p z80: a draft name, an entry's, a finding's, a batch name
+std::string LabelTaken(const std::string& label, uint16_t z80, const std::vector<Finding>& findings,
+                       const L2Result& l2, const NamingResult& naming, const std::map<uint16_t, GivenName>& names)
+{
+    for (const auto& [at, name] : l2.entries)
+        if (name == label && at != z80)
+            return "label " + label + " is the name of " + Hex4(at) + " already";
+    for (const Finding& other : findings)
+        if (other.label == label && other.start != z80)
+            return "label " + label + " was given to " + other.id + " (" + Hex4(other.start) + ") already";
+    for (const auto& [at, name] : names)
+        if (name.label == label && at != z80)
+            return "label " + label + " was given to " + Hex4(at) + " already";
+    for (const NamingBatch& b : naming.batches)
+        for (const NamingSubject& s : b.subjects)
+            if (s.label == label && s.z80 != z80)
+                return "label " + label + " is the draft's name of " + Hex4(s.z80);
+    return {};
+}
+
+/// review op=resolve id=N3 names=...: the names of a naming batch
+Reply ResolveNames(const std::string& id, const NamingBatch& batch, const Options& options,
+                   const std::vector<Finding>& findings, const L2Result& l2, const NamingResult& naming)
+{
+    L3Sessions& sessions = L3Sessions::Instance();
+    const std::string verdict = Lower(Option(options, "verdict"));
+    const std::string text = Option(options, "names");
+    if (!verdict.empty() && verdict != "skip")
+        return Refuse(Error::BadRequest, "a naming batch takes names (JSON) or verdict=skip");
+    if (text.empty() && verdict.empty())
+        return Refuse(Error::BadRequest, "resolve " + batch.id + " needs names: {\"$XXXX\": \"Name\", ...} (or "
+                                         "verdict=skip)");
+    std::vector<GivenName> names;
+    std::string error;
+    if (!text.empty() && !ParseGivenNames(text, names, error))
+        return Refuse(Error::BadRequest, error);
+    const std::map<uint16_t, GivenName> given = sessions.Names(id);
+    std::set<std::string> seen;
+    for (GivenName& n : names)
+    {
+        const auto subject = std::find_if(batch.subjects.begin(), batch.subjects.end(),
+                                          [&](const NamingSubject& s) { return s.z80 == n.z80; });
+        if (subject == batch.subjects.end())
+            return Refuse(Error::BadRequest, Hex4(n.z80) + " is not a subject of " + batch.id);
+        if (n.label.empty() && n.title.empty())
+            return Refuse(Error::BadRequest, Hex4(n.z80) + ": a label, a title or both");
+        if (!n.label.empty())
+        {
+            if (!ValidLabel(n.label))
+                return Refuse(Error::BadRequest, Hex4(n.z80) + ": label " + n.label +
+                                                     ": a letter or _, then letters, digits, _ (at most 32)");
+            if (!seen.insert(n.label).second)
+                return Refuse(Error::BadRequest, "label " + n.label + " twice in one batch");
+            if (const std::string taken = LabelTaken(n.label, n.z80, findings, l2, naming, given); !taken.empty())
+                return Refuse(Error::Conflict, taken);
+        }
+    }
+    std::vector<uint16_t> skipped;
+    for (const NamingSubject& s : batch.subjects)
+        if (std::none_of(names.begin(), names.end(), [&](const GivenName& n) { return n.z80 == s.z80; }))
+            skipped.push_back(s.z80);
+    sessions.Name(id, names, skipped);
+
+    Reply reply;
+    StateNode list = StateNode::Array();
+    std::string lines;
+    for (const GivenName& n : names)
+    {
+        StateNode node = StateNode::Object();
+        node["at"] = Hex4(n.z80);
+        node["label"] = n.label;
+        node["title"] = n.title;
+        list.push(node);
+        lines += "\n  " + Hex4(n.z80) + " " + (n.label.empty() ? "(title)" : n.label) +
+                 (n.title.empty() ? "" : " \"" + n.title + "\"");
+    }
+    reply.body["batch"] = batch.id;
+    reply.body["named"] = list;
+    reply.body["skipped"] = static_cast<uint64_t>(skipped.size());
+    reply.text = batch.id + " resolved: " + std::to_string(names.size()) + " named, " +
+                 std::to_string(skipped.size()) + " skipped" + lines + "\nThe draft export carries them.";
+    return reply;
+}
+
 Reply ReviewAction(Emulator& emulator, const Options& options)
 {
     Built built;
@@ -386,8 +479,31 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
             return Refuse(Error::BadRequest, "limit: the queue's cap, 1 to 1000 (default 40)");
         reviewOptions.limit = static_cast<uint32_t>(limit);
     }
+    if (const std::string o = Option(options, "offset"); !o.empty())
+    {
+        uint64_t offset = 0;
+        if (!ParseCount(o, 100000, offset))
+            return Refuse(Error::BadRequest, "offset: items of the queue to skip, 0 to 100000");
+        reviewOptions.offset = static_cast<uint32_t>(offset);
+    }
+    if (const std::string r = Lower(Option(options, "reason")); !r.empty() && r != "all")
+    {
+        reviewOptions.reason = ParseReviewReason(r);
+        if (reviewOptions.reason < 0)
+            return Refuse(Error::BadRequest,
+                          "reason: all, bug, conflict, unnamed-hot, low-confidence, unknown, entry or name");
+    }
 
     std::vector<Finding> findings = sessions.Findings(id, built.job, *built.l1, *built.l2);
+    const NamingResult naming = sessions.Naming(id, built.job, *built.l1, *built.l2);
+    reviewOptions.names = &naming.batches;
+    reviewOptions.named = [&](const NamingBatch& b) { return sessions.Named(id, b); };
+    const auto batchById = [&](const std::string& batchId) -> const NamingBatch* {
+        for (const NamingBatch& b : naming.batches)
+            if (Lower(b.id) == Lower(batchId))
+                return &b;
+        return nullptr;
+    };
     Z80Disassembler disassembler(emulator.GetContext());
     const Z80Disassembler::NoLabelsScope plainAddresses;
     const ReviewTools tools = ToolsFor(emulator, *built.l1, disassembler);
@@ -395,9 +511,22 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
     if (op == "resolve")
     {
         const std::string findingId = Option(options, "id");
-        const Finding* f = FindById(findings, findingId);
         if (findingId.empty())
-            return Refuse(Error::BadRequest, "review op=resolve needs id=<finding> (F12)");
+            return Refuse(Error::BadRequest, "review op=resolve needs id=<finding> (F12) or id=<naming batch> (N3)");
+        if (const NamingBatch* batch = batchById(findingId))
+        {
+            Reply reply = ResolveNames(id, *batch, options, findings, *built.l2, naming);
+            if (reply.error == Error::None)
+            {
+                const ReviewQueue queue = SelectReview(findings, *built.l2, reviewOptions);
+                reply.body["open"] = static_cast<uint64_t>(queue.total);
+                reply.text += " " + std::to_string(queue.total) + " items left (analysis review op=next)";
+            }
+            return reply;
+        }
+        if (!Option(options, "names").empty())
+            return Refuse(Error::BadRequest, "names: for a naming batch (N3) only");
+        const Finding* f = FindById(findings, findingId);
         if (f == nullptr)
             return Refuse(Error::NotFound, "no finding " + findingId + " (analysis findings lists them)");
         const std::string verdict = Lower(Option(options, "verdict"));
@@ -407,19 +536,19 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         if (!label.empty() && !ValidLabel(label))
             return Refuse(Error::BadRequest, "label: a letter or _, then letters, digits, _ (at most 32): an assembler name");
         if (!label.empty())
-        {
-            for (const auto& [z80, name] : built.l2->entries)
-                if (name == label && z80 != f->start)
-                    return Refuse(Error::Conflict, "label " + label + " is the name of " + Hex4(z80) + " already");
-            for (const Finding& other : findings)
-                if (other.label == label && other.start != f->start)
-                    return Refuse(Error::Conflict, "label " + label + " was given to " + other.id + " (" +
-                                                       Hex4(other.start) + ") already");
-        }
+            if (const std::string taken = LabelTaken(label, f->start, findings, *built.l2, naming, sessions.Names(id));
+                !taken.empty())
+                return Refuse(Error::Conflict, taken);
+        const std::string kind = Lower(Option(options, "kind"));
+        if (!kind.empty() && !ReviewKind(kind))
+            return Refuse(Error::BadRequest, "kind: code, data, text, font, sprite, tile, screen, variable, "
+                                             "pointer_table, handler_table, rng, music, packed, level_map or unused");
+        if (!kind.empty() && (f->start >> 14) != (f->end >> 14))
+            return Refuse(Error::BadRequest, "kind: the finding's range crosses a 16 KB page");
         const std::string specText = Option(options, "experiment");
         if (verdict.empty() && label.empty() && Option(options, "title").empty() && Option(options, "comment").empty() &&
-            specText.empty())
-            return Refuse(Error::BadRequest, "resolve needs a verdict, a label, a title, a comment or an experiment");
+            specText.empty() && kind.empty())
+            return Refuse(Error::BadRequest, "resolve needs a verdict, a label, a title, a comment, a kind or an experiment");
         const Finding target = *f;
 
         Reply reply;
@@ -454,6 +583,11 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         res.title = Option(options, "title");
         res.comment = Option(options, "comment");
         res.by = Option(options, "by").empty() ? "agent" : Option(options, "by");
+        if (!kind.empty())
+        {
+            res.kind = kind;
+            res.kindEnd = target.end;
+        }
         if (!verdict.empty())
         {
             res.verdict = verdict;
@@ -462,6 +596,7 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
                 res.statusSet = true;
                 res.status = verdict == "ok" ? FindingStatus::Confirmed : FindingStatus::Refuted;
             }
+            res.entry = target.kind == FindingKind::Entry && verdict == "ok";
         }
         sessions.Resolve(id, target.Key(), res);
         findings = sessions.Findings(id, built.job, *built.l1, *built.l2);
@@ -469,10 +604,13 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         const ReviewQueue queue = SelectReview(findings, *built.l2, reviewOptions);
         reply.body["finding"] = FindingNode(*now);
         reply.body["open"] = static_cast<uint64_t>(queue.total);
+        reply.body["kind"] = kind;
         reply.text = target.id + " resolved: " + FindingStatusName(now->status) +
                      (now->label.empty() ? "" : ", label " + now->label) +
                      (now->title.empty() ? "" : ", title \"" + now->title + "\"") +
-                     (res.comment.empty() ? "" : ", a comment") + experimentLine +
+                     (res.comment.empty() ? "" : ", a comment") +
+                     (kind.empty() ? "" : ", " + Hex4(target.start) + "-" + Hex4(target.end) + " made " + kind) +
+                     (res.entry ? ", a routine starts at " + Hex4(target.start) : "") + experimentLine +
                      "\nThe draft export carries it. " + std::to_string(queue.total) +
                      " items left (analysis review op=next)";
         return reply;
@@ -482,15 +620,22 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
     StateNode queueNode = StateNode::Object();
     queueNode["open"] = static_cast<uint64_t>(queue.total);
     queueNode["shown"] = static_cast<uint64_t>(queue.items.size());
+    queueNode["offset"] = static_cast<uint64_t>(queue.offset);
     queueNode["resolved"] = static_cast<uint64_t>(queue.resolved);
     queueNode["summary"] = queue.summary;
+    queueNode["reason"] = reviewOptions.reason >= 0 ? ReviewReasonName(reviewOptions.reason) : "all";
     StateNode reasons = StateNode::Object();
-    static const char* const kReasons[] = {"bug", "conflict", "unnamed-hot", "low-confidence", "unknown"};
-    for (int r = 0; r < 5; ++r)
-        reasons[kReasons[r]] = static_cast<uint64_t>(queue.byReason[r]);
+    for (int r = 0; r < kReviewReasons; ++r)
+        reasons[ReviewReasonName(r)] = static_cast<uint64_t>(queue.byReason[r]);
     queueNode["by_reason"] = reasons;
-    const auto stateOf = [&](const ReviewItem& item) {
-        return sessions.Shown(id, findings[item.finding].Key()) ? "shown" : "queued";
+    queueNode["name_subjects"] = static_cast<uint64_t>(naming.subjects);
+    queueNode["name_capped"] = static_cast<uint64_t>(naming.capped);
+    const auto keyOf = [&](const ReviewItem& item) {
+        return item.batch ? "name:" + naming.batches[item.finding].id : findings[item.finding].Key();
+    };
+    const auto stateOf = [&](const ReviewItem& item) { return sessions.Shown(id, keyOf(item)) ? "shown" : "queued"; };
+    const auto claimOf = [&](const ReviewItem& item) {
+        return item.batch ? NamingItemClaim(naming.batches[item.finding]) : findings[item.finding].claim;
     };
 
     if (op == "list")
@@ -500,10 +645,11 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         std::string text;
         for (const ReviewItem& item : queue.items)
         {
-            items.push(ReviewItemNode(findings[item.finding], item, stateOf(item)));
+            items.push(item.batch ? NamingItemNode(naming.batches[item.finding], item, stateOf(item))
+                                  : ReviewItemNode(findings[item.finding], item, stateOf(item)));
             char head[48];
             std::snprintf(head, sizeof(head), "%-5s %-14s %-6s ", item.id.c_str(), item.reason.c_str(), stateOf(item));
-            text += head + findings[item.finding].claim.substr(0, 110) + "\n";
+            text += head + claimOf(item).substr(0, 110) + "\n";
         }
         if (!queue.summary.empty())
         {
@@ -517,11 +663,17 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
         }
         reply.body["items"] = items;
         reply.body["queue"] = queueNode;
-        reply.text = "Review queue: " + std::to_string(queue.total) + " open (" + std::to_string(queue.byReason[0]) +
-                     " bugs, " + std::to_string(queue.byReason[1]) + " conflicts, " +
-                     std::to_string(queue.byReason[2]) + " unnamed hot routines, " +
-                     std::to_string(queue.byReason[3]) + " low confidence, " + std::to_string(queue.byReason[4]) +
-                     " unknown), " + std::to_string(queue.resolved) + " resolved\n" + text;
+        std::string counts;
+        static const char* const kWords[kReviewReasons] = {"bugs",    "conflicts",        "unnamed hot routines",
+                                                           "low confidence", "unknown", "entry candidates",
+                                                           "naming batches"};
+        for (int r = 0; r < kReviewReasons; ++r)
+            counts += (r ? ", " : "") + std::to_string(queue.byReason[r]) + " " + kWords[r];
+        reply.text = "Review queue: " + std::to_string(queue.total) + " open" +
+                     (reviewOptions.reason >= 0 ? std::string(" (reason ") + ReviewReasonName(reviewOptions.reason) + ")"
+                                                : std::string()) +
+                     (queue.offset != 0 ? ", from " + std::to_string(queue.offset) : std::string()) + " (" + counts +
+                     "), " + std::to_string(queue.resolved) + " resolved\n" + text;
         return reply;
     }
 
@@ -530,25 +682,29 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
     if (op == "show")
     {
         const std::string findingId = Option(options, "id");
-        const Finding* f = FindById(findings, findingId);
-        if (f == nullptr)
+        const NamingBatch* batch = batchById(findingId);
+        const Finding* f = batch != nullptr ? nullptr : FindById(findings, findingId);
+        if (f == nullptr && batch == nullptr)
             return Refuse(findingId.empty() ? Error::BadRequest : Error::NotFound,
-                          findingId.empty() ? "review op=show needs id=<finding>" : "no finding " + findingId);
+                          findingId.empty() ? "review op=show needs id=<finding> or id=<naming batch>"
+                                            : "no finding or naming batch " + findingId);
         for (const ReviewItem& i : queue.items)
-            if (i.id == f->id)
+            if (i.id == (batch != nullptr ? batch->id : f->id))
                 item = &i;
         if (item == nullptr)
         {
-            single.finding = static_cast<size_t>(f - findings.data());
-            single.id = f->id;
+            single.finding = batch != nullptr ? static_cast<size_t>(batch - naming.batches.data())
+                                              : static_cast<size_t>(f - findings.data());
+            single.id = batch != nullptr ? batch->id : f->id;
             single.reason = "not queued";
+            single.batch = batch != nullptr;
             item = &single;
         }
     }
     else
     {
         for (const ReviewItem& i : queue.items)
-            if (!sessions.Shown(id, findings[i.finding].Key()))
+            if (!sessions.Shown(id, keyOf(i)))
             {
                 item = &i;
                 break;
@@ -567,12 +723,24 @@ Reply ReviewAction(Emulator& emulator, const Options& options)
                      "the shift tests";
         return reply;
     }
-    const Finding& finding = findings[item->finding];
-    const std::string sheet = ReviewSheet(finding, *item, *built.l1, *built.l2, tools);
     const std::string state = op == "next" ? "shown" : stateOf(*item);
-    sessions.MarkShown(id, finding.Key());
-    reply.body["item"] = ReviewItemNode(finding, *item, state);
-    reply.body["finding"] = FindingNode(finding);
+    std::string sheet;
+    if (item->batch)
+    {
+        const NamingBatch& batch = naming.batches[item->finding];
+        const DraftPlan plan = MakePlan(*built.l1, *built.l2, ExportOptions{});
+        sheet = NamingSheet(batch, *built.l1, *built.l2, plan, tools.disassemble);
+        reply.body["item"] = NamingItemNode(batch, *item, state);
+        reply.body["finding"] = StateNode();
+    }
+    else
+    {
+        const Finding& finding = findings[item->finding];
+        sheet = ReviewSheet(finding, *item, *built.l1, *built.l2, tools);
+        reply.body["item"] = ReviewItemNode(finding, *item, state);
+        reply.body["finding"] = FindingNode(finding);
+    }
+    sessions.MarkShown(id, keyOf(*item));
     reply.body["sheet"] = sheet;
     reply.body["sheet_bytes"] = static_cast<uint64_t>(sheet.size());
     reply.text = sheet + "queue: " + std::to_string(queue.total) + " open" +
@@ -805,6 +973,13 @@ void L3Sessions::Resolve(const std::string& emulatorId, const std::string& key, 
         r.verdict = resolution.verdict;
     if (!resolution.by.empty())
         r.by = resolution.by;
+    if (!resolution.kind.empty())
+    {
+        r.kind = resolution.kind;
+        r.kindEnd = resolution.kindEnd;
+    }
+    if (!resolution.verdict.empty())
+        r.entry = resolution.entry;
     r.evidence.insert(r.evidence.end(), resolution.evidence.begin(), resolution.evidence.end());
 }
 
@@ -851,7 +1026,7 @@ std::map<uint16_t, ExportNote> L3Sessions::Notes(const std::string& emulatorId) 
     for (const auto& [key, r] : it->second.resolutions)
     {
         (void)key;
-        if (r.label.empty() && r.title.empty() && r.comment.empty())
+        if (r.label.empty() && r.title.empty() && r.comment.empty() && r.kind.empty() && !r.entry)
             continue;
         ExportNote& note = notes[r.start];
         if (!r.label.empty())
@@ -860,6 +1035,20 @@ std::map<uint16_t, ExportNote> L3Sessions::Notes(const std::string& emulatorId) 
             note.title = r.title;
         if (!r.comment.empty())
             note.comments.push_back(r.comment);
+        if (!r.kind.empty())
+        {
+            note.kind = r.kind;
+            note.kindEnd = r.kindEnd;
+        }
+        note.entry = note.entry || r.entry;
+    }
+    for (const auto& [address, name] : it->second.names)
+    {
+        ExportNote& note = notes[address];
+        if (note.label.empty())
+            note.label = name.label;
+        if (note.title.empty())
+            note.title = name.title;
     }
     for (const auto& [address, note] : it->second.coverageNotes)
     {
@@ -867,6 +1056,58 @@ std::map<uint16_t, ExportNote> L3Sessions::Notes(const std::string& emulatorId) 
         target.comments.insert(target.comments.end(), note.comments.begin(), note.comments.end());
     }
     return notes;
+}
+
+NamingResult L3Sessions::Naming(const std::string& emulatorId, uint64_t job, const L1Result& l1, const L2Result& l2)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const State& state = _states[emulatorId];
+        if (state.namingMade && state.namingJob == job)
+            return state.naming;
+    }
+    // The base plan: the draft without the review's notes (the same batches however the review went)
+    const DraftPlan plan = MakePlan(l1, l2, ExportOptions{});
+    NamingResult result = NamingBatches(l1, l2, plan);
+    std::lock_guard<std::mutex> lock(_mutex);
+    State& state = _states[emulatorId];
+    state.naming = result;
+    state.namingJob = job;
+    state.namingMade = true;
+    return result;
+}
+
+void L3Sessions::Name(const std::string& emulatorId, const std::vector<GivenName>& names,
+                      const std::vector<uint16_t>& skipped)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    State& state = _states[emulatorId];
+    for (const GivenName& n : names)
+    {
+        state.names[n.z80] = n;
+        state.skippedNames.erase(n.z80);
+    }
+    for (const uint16_t z80 : skipped)
+        if (state.names.count(z80) == 0)
+            state.skippedNames.insert(z80);
+}
+
+std::map<uint16_t, GivenName> L3Sessions::Names(const std::string& emulatorId) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _states.find(emulatorId);
+    return it != _states.end() ? it->second.names : std::map<uint16_t, GivenName>();
+}
+
+bool L3Sessions::Named(const std::string& emulatorId, const NamingBatch& batch) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _states.find(emulatorId);
+    if (it == _states.end())
+        return false;
+    return std::all_of(batch.subjects.begin(), batch.subjects.end(), [&](const NamingSubject& s) {
+        return it->second.names.count(s.z80) != 0 || it->second.skippedNames.count(s.z80) != 0;
+    });
 }
 
 void L3Sessions::Forget(const std::string& emulatorId)

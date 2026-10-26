@@ -4,7 +4,8 @@ status, explain an address the ROM runs every frame and a stack byte, the refusa
 recording (start record=true, build, the analysis.ready topic's value) and a routine's fact sheet; the L2 structure
 (query by kind and range, conflicts, the refusals), the draft export (ctl / skool / fields in the answer, skool to a
 file) and the gallery (the list, one region as a PNG image block or a file); L3 (findings, review and resolve,
-experiments, coverage); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
+experiments, coverage; the queue by reason and offset, entry candidates, naming batches, a kind change, no implicit
+session); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
 
 import os
 import re
@@ -270,6 +271,79 @@ def test_review_experiment_cover(s):
     expect(r.is_error and '400' in r.text and 'expect' in r.text, 'experiment: a spec with no expect: 400', r.text)
     r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': 'F99999', 'verdict': 'ok'}, ok=False)
     expect(r.is_error and '404' in r.text, 'review resolve of no such finding: 404', r.text)
+    s.call('analysis', {'action': 'stop'})
+
+
+def test_review_entries_names_kind(s):
+    """L3 (P5b) on the tail-entry fixture: the queue by reason (entry candidates, naming batches) and by offset, an
+    entry candidate accepted splits the ctl draft, a naming batch's names reach the skool draft, a kind change, no
+    review call opens a session implicitly"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, '..', '..', '..', 'testdata', 'analysis', 'fixtures', 'tail-entry.asm')) as f:
+        source = f.read()
+    s.call('debug_code', {'action': 'assemble', 'code': source, 'address': '0x8000'})
+    s.call('control_execution', {'action': 'set_register', 'name': 'pc', 'value': '0x8000'})
+    s.call('analysis', {'action': 'start', 'record': True})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 3})
+    r = s.call('analysis', {'action': 'build'})
+    expect((r.structured or {}).get('state') == 'done', 'build of the tail-entry fixture: done', r.text[:300])
+
+    r = s.call('analysis', {'action': 'review', 'op': 'list', 'reason': 'entry'})
+    items = (r.structured or {}).get('items', [])
+    entries = [i for i in items if i.get('reason') == 'entry']
+    expect(len(entries) == 2 and len(entries) == len([i for i in items if i.get('id') != 'more']),
+           'review list reason=entry: the two entry candidates only', r.text[:600])
+    expect('implicitly' not in r.text, 'review: no implicit session note', r.text[:300])
+    r = s.call('analysis', {'action': 'review', 'op': 'list', 'limit': 1000})
+    every = [i['id'] for i in (r.structured or {}).get('items', []) if i.get('id') != 'more']
+    r = s.call('analysis', {'action': 'review', 'op': 'list', 'offset': 1, 'limit': 1000})
+    paged = [i['id'] for i in (r.structured or {}).get('items', []) if i.get('id') != 'more']
+    expect(len(every) >= 2 and paged == every[1:], 'review list offset=1: the same queue from its second item',
+           (every[:6], paged[:6]))
+    if entries:
+        # The tail candidate never ran: its sheet decodes the start image. The prologue candidate runs inside the
+        # routine before it, so accepting it splits that ctl entry.
+        tail = next((e for e in entries if 'tail' in e.get('claim', '')), entries[0])
+        pro = next((e for e in entries if e is not tail), tail)
+        r = s.call('analysis', {'action': 'review', 'op': 'show', 'id': tail['id']})
+        expect('not executed' in r.text, 'an entry candidate sheet: the code decoded, marked not executed', r.text[:700])
+        r = s.call('analysis', {'action': 'export', 'format': 'ctl', 'ranges': '8000-80FF'})
+        before = (r.structured or {}).get('content', '')
+        r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': pro['id'], 'verdict': 'ok'})
+        expect('a routine starts at ' + pro['start'] in r.text, 'resolve an entry candidate ok', r.text[:300])
+        r = s.call('analysis', {'action': 'export', 'format': 'ctl', 'ranges': '8000-80FF'})
+        after = (r.structured or {}).get('content', '')
+        expect('\nc ' + pro['start'] not in before and '\nc ' + pro['start'] in after,
+               'export ctl: the accepted entry splits there', after[:900])
+
+    r = s.call('analysis', {'action': 'review', 'op': 'list', 'reason': 'name', 'limit': 100})
+    batches = [i for i in (r.structured or {}).get('items', []) if i.get('reason') == 'name']
+    expect(batches and batches[0].get('id') == 'N1' and batches[0].get('subjects'),
+           'review list reason=name: naming batches N1.. with their subjects', r.text[:600])
+    if batches:
+        at = batches[0]['subjects'][0]['at']
+        r = s.call('analysis', {'action': 'review', 'op': 'show', 'id': 'N1'})
+        expect('op=resolve id=N1 names=' in r.text and 0 < (r.structured or {}).get('sheet_bytes', 0) <= 2048,
+               'review show N1: the batch sheet (<= 2 KB) with the resolve line', r.text[:900])
+        r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': 'N1',
+                                'names': {at: {'label': 'McpNamed', 'title': 'Named over MCP'}}})
+        expect('N1 resolved: 1 named' in r.text, 'resolve N1 with names (an object)', r.text[:300])
+        r = s.call('analysis', {'action': 'export', 'format': 'skool', 'ranges': '8000-80FF'})
+        expect('@label=McpNamed' in (r.structured or {}).get('content', ''), 'export skool: the batch name',
+               (r.structured or {}).get('content', '')[:900])
+        r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': 'N1', 'names': {'$0001': 'X'}}, ok=False)
+        expect(r.is_error and '400' in r.text, 'names for no subject of the batch: 400', r.text)
+
+    claims = s.call('analysis', {'action': 'findings', 'kind': 'claim', 'range': '8000-80FF',
+                                 'limit': 500}).structured or {}
+    var = next((f for f in claims.get('findings', []) if f.get('subject') == 'variable'), None)
+    expect(var is not None, 'findings: a variable claim', str(claims)[:400])
+    if var:
+        r = s.call('analysis', {'action': 'review', 'op': 'resolve', 'id': var['id'], 'kind': 'text'})
+        expect('made text' in r.text, 'resolve kind=text', r.text[:300])
+        r = s.call('analysis', {'action': 'export', 'format': 'ctl', 'ranges': '8000-80FF'})
+        expect('\nt ' + var['start'] in (r.structured or {}).get('content', ''), 'export ctl: the range is text now',
+               (r.structured or {}).get('content', '')[:900])
     s.call('analysis', {'action': 'stop'})
 
 

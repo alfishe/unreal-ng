@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "debugger/analyzers/analysis/z80opinfo.h"
+
 namespace analysis
 {
 
@@ -17,7 +19,8 @@ std::string Hex4(uint32_t value)
     return text;
 }
 
-const char* const kReasons[] = {"bug", "conflict", "unnamed-hot", "low-confidence", "unknown"};
+const char* const kReasons[kReviewReasons] = {"bug",     "conflict", "unnamed-hot", "low-confidence",
+                                              "unknown", "entry",    "name"};
 
 bool Overlaps(const std::vector<ExportRange>& ranges, const Finding& f)
 {
@@ -67,6 +70,8 @@ int Priority(const Finding& f, const L2Result& l2)
         }
         case FindingKind::Unknown:
             return 4;
+        case FindingKind::Entry:
+            return 5;
         default:
             return -1;
     }
@@ -81,6 +86,19 @@ std::string Clip(std::string text, size_t max)
 }
 
 }  // namespace
+
+const char* ReviewReasonName(int priority)
+{
+    return priority >= 0 && priority < kReviewReasons ? kReasons[priority] : "";
+}
+
+int ParseReviewReason(const std::string& text)
+{
+    for (int p = 0; p < kReviewReasons; ++p)
+        if (text == kReasons[p])
+            return p;
+    return -1;
+}
 
 ReviewQueue SelectReview(const std::vector<Finding>& findings, const L2Result& l2, const ReviewOptions& options)
 {
@@ -105,6 +123,8 @@ ReviewQueue SelectReview(const std::vector<Finding>& findings, const L2Result& l
         item.priority = static_cast<uint32_t>(priority);
         item.reason = kReasons[priority];
         ++queue.byReason[priority];
+        if (options.reason >= 0 && priority != options.reason)
+            continue;
         all.push_back(item);
     }
     std::stable_sort(all.begin(), all.end(), [&](const ReviewItem& a, const ReviewItem& b) {
@@ -116,18 +136,49 @@ ReviewQueue SelectReview(const std::vector<Finding>& findings, const L2Result& l
             return fa.start < fb.start;
         return a.finding < b.finding;
     });
+    // Naming batches last, in their order
+    constexpr int kName = kReviewReasons - 1;
+    if (options.names != nullptr)
+        for (size_t i = 0; i < options.names->size(); ++i)
+        {
+            const NamingBatch& b = (*options.names)[i];
+            Finding range;
+            range.start = b.start;
+            range.end = b.end;
+            if (!Overlaps(options.ranges, range))
+                continue;
+            if (options.named && options.named(b))
+            {
+                ++queue.resolved;
+                continue;
+            }
+            ++queue.byReason[kName];
+            if (options.reason >= 0 && options.reason != kName)
+                continue;
+            ReviewItem item;
+            item.finding = i;
+            item.id = b.id;
+            item.priority = kName;
+            item.reason = kReasons[kName];
+            item.batch = true;
+            all.push_back(item);
+        }
     queue.total = static_cast<uint32_t>(all.size());
+    queue.offset = std::min<uint32_t>(options.offset, queue.total);
+    all.erase(all.begin(), all.begin() + queue.offset);
     if (all.size() > options.limit)
     {
-        uint32_t left[5] = {};
+        uint32_t left[kReviewReasons] = {};
         for (size_t i = options.limit; i < all.size(); ++i)
             ++left[all[i].priority];
         std::string parts;
-        for (int p = 0; p < 5; ++p)
+        for (int p = 0; p < kReviewReasons; ++p)
             if (left[p] != 0)
                 parts += (parts.empty() ? "" : ", ") + std::to_string(left[p]) + " " + kReasons[p];
         queue.summary = std::to_string(all.size() - options.limit) + " more items (" + parts +
-                        "): resolve the shown ones first, or narrow the ranges";
+                        "): resolve the shown ones first, page on (offset=" +
+                        std::to_string(queue.offset + options.limit) + "), pick a reason (reason=...) or narrow the "
+                        "ranges";
         all.resize(options.limit);
     }
     queue.items = std::move(all);
@@ -169,22 +220,81 @@ std::string ReviewSheet(const Finding& f, const ReviewItem& item, const L1Result
     }
     else if (tools.disassemble)
     {
+        // Executed instructions as the replay ran them; code never executed (an inferred claim, an entry candidate)
+        // decoded from the start image
         const uint16_t at = f.at != 0 ? f.at : f.start;
-        const Instruction* ins = l1.InstructionAt(l1.StartKey(at));
+        const bool code = f.kind == FindingKind::Entry ||
+                          (f.kind == FindingKind::Claim && f.subject == RegionKindName(RegionKind::Code)) ||
+                          f.kind == FindingKind::Bug || f.kind == FindingKind::Coverage;
         uint16_t pc = at;
-        for (int line = 0; line < 4 && ins != nullptr; ++line)
+        for (int line = 0; line < 4; ++line)
         {
-            sheet += "  " + Hex4(pc) + "  " + tools.disassemble(ins->bytes, pc) + "\n";
-            pc = static_cast<uint16_t>(pc + ins->length);
-            ins = l1.InstructionAt(l1.StartKey(pc));
+            const Instruction* ins = l1.InstructionAt(l1.StartKey(pc));
+            uint8_t bytes[4] = {};
+            uint8_t length = 0;
+            if (ins != nullptr)
+            {
+                std::copy(std::begin(ins->bytes), std::end(ins->bytes), std::begin(bytes));
+                length = ins->length;
+            }
+            else if (code)
+            {
+                for (int i = 0; i < 4; ++i)
+                    l1.StartByte(l1.StartKey(static_cast<uint16_t>(pc + i)), bytes[i]);
+                length = DecodeOp(bytes).length;
+            }
+            if (length == 0)
+                break;
+            sheet += "  " + Hex4(pc) + "  " + tools.disassemble(bytes, pc) + (ins == nullptr ? "  ; not executed" : "") +
+                     "\n";
+            pc = static_cast<uint16_t>(pc + length);
         }
     }
-    const std::string resolve = "resolve: analysis review op=resolve id=" + f.id +
-                                " verdict=ok|wrong|skip [label=Name title=\"...\" comment=\"...\"] or attach an "
-                                "experiment (analysis experiment, finding=" + f.id + ")\n";
+    const std::string resolve =
+        f.kind == FindingKind::Entry
+            ? "resolve: analysis review op=resolve id=" + f.id +
+                  " verdict=ok (a routine starts here: the draft splits the entry) | wrong | skip [label=Name "
+                  "title=\"...\"]\n"
+            : "resolve: analysis review op=resolve id=" + f.id +
+                  " verdict=ok|wrong|skip [label=Name title=\"...\" comment=\"...\" kind=code|data|text|sprite|...] "
+                  "or attach an experiment (experiment='{...}', see analysis experiment)\n";
     if (sheet.size() + resolve.size() > kReviewSheetBytes)
         sheet = Clip(sheet, kReviewSheetBytes - resolve.size() - 1) + "\n";
     return sheet + resolve;
+}
+
+std::string NamingItemClaim(const NamingBatch& batch)
+{
+    std::string text = std::to_string(batch.subjects.size()) + " draft labels " + Hex4(batch.start) + "-" +
+                       Hex4(batch.end) + " (" + (batch.code ? "code" : "data") + "):";
+    for (const NamingSubject& s : batch.subjects)
+        text += " " + s.label;
+    return text;
+}
+
+StateNode NamingItemNode(const NamingBatch& batch, const ReviewItem& item, const std::string& state)
+{
+    StateNode node = StateNode::Object();
+    node["id"] = item.id;
+    node["reason"] = item.reason;
+    node["state"] = state;
+    node["kind"] = "name";
+    node["start"] = Hex4(batch.start);
+    node["end"] = Hex4(batch.end);
+    node["confidence"] = static_cast<uint64_t>(0);
+    node["claim"] = NamingItemClaim(batch);
+    StateNode subjects = StateNode::Array();
+    for (const NamingSubject& s : batch.subjects)
+    {
+        StateNode n = StateNode::Object();
+        n["at"] = Hex4(s.z80);
+        n["label"] = s.label;
+        n["code"] = s.code;
+        n["entry"] = s.entry;
+        subjects.push(n);
+    }
+    node["subjects"] = subjects;
+    return node;
 }
 
 StateNode ReviewItemNode(const Finding& finding, const ReviewItem& item, const std::string& state)

@@ -321,9 +321,10 @@ flowchart LR
 ### Findings register
 
 `l3findings.h`. One finding per L2 claim (in the region store's order), then the conflicts between two claims, the
-candidate bugs, the unnamed hot routines and the unknown areas, then what was added since the build (notes,
-coverage flips, experiments). Ids are `F1`, `F2`, ... in that order, so the same build gives the same ids. Each
-finding has a kind (`claim`, `conflict`, `bug`, `routine`, `unknown`, `coverage`, `note`, `experiment`), a status
+candidate bugs, the unnamed hot routines, the unknown areas and the entry candidates, then what was added since the
+build (notes, coverage flips, experiments). Ids are `F1`, `F2`, ... in that order, so the same build gives the same
+ids. Each finding has a kind (`claim`, `conflict`, `bug`, `routine`, `unknown`, `coverage`, `note`, `experiment`,
+`entry`), a status
 (`observed`: seen in the replay or an experiment; `inferred`: from a rule or the code; `confirmed`; `refuted`), a
 range, a one-sentence claim, its evidence and its references. The register exports as zx-reaper's `re/findings.md`
 table (`format=markdown`) and as JSON lines.
@@ -342,17 +343,70 @@ but may give the findings other ids.
 | 2 | `unnamed-hot` | a routine at $4000 or above with at least 1 % of the replayed T-states (inclusive) or one entry a frame, and no name |
 | 3 | `low-confidence` | a specific claim below 700 |
 | 4 | `unknown` | more than 16 bytes with only a fallback claim |
+| 5 | `entry` | an entry candidate of the code map: a jump target that may start a routine of its own ([entry candidates](#entry-candidates)) |
+| 6 | `name` | a naming batch: up to 10 draft labels named after their address ([naming batches](#naming-batches)) |
 
-In each priority by address. A decided finding (a verdict, label, title or comment) leaves the queue. At most 40 items
-(`limit`); the rest is one summary line by reason. `review next` gives the next open item and its fact sheet (at most
-1 KB: the finding, its evidence, 16 bytes, a 4-line disassembly or the routine's L1 fact sheet, the resolve line).
-`review resolve` takes `verdict` (`ok`: confirmed, `wrong`: refuted, `skip`: out of the queue), `label` (an
-identifier, unique), `title`, `comment`, and optionally an `experiment` whose result is recorded on the finding. The
-draft export (`export ctl` / `skool`) puts the label and title on the entry starting at the finding and the comment
-first in its description; a label inside an entry becomes a comment line there.
+In each priority by address. A decided finding (a verdict, label, title, comment or kind) leaves the queue. At most
+40 items (`limit`) from `offset` (0); the rest is one summary line by reason. `reason` shows one reason only (the
+counts by reason stay those of the whole queue). `review next` gives the next open item and its fact sheet (at most
+1 KB: the finding, its evidence, 16 bytes, a 4-line disassembly or the routine's L1 fact sheet, the resolve line; code
+the replay never ran is decoded from the start image and marked `not executed`). `review resolve` takes `verdict`
+(`ok`: confirmed, `wrong`: refuted, `skip`: out of the queue), `label` (an identifier, unique), `title`, `comment`,
+`kind` (what the draft makes of the finding's range: `code`, `data`, `text`, `font`, `sprite`, `tile`, `screen`,
+`variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`), and optionally an
+`experiment` (a spec as for `analysis experiment`) whose result is recorded on the finding:
 
-The thresholds were tuned on the Manic Miner session ([Manic Miner (P5)](#manic-miner-p5)) and are frozen; JSW and a 128K game
-are the hold-outs.
+```text
+analysis review op=resolve id=F12 experiment='{"poke": {"$8100": 5}, "frames": 50, "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}}'
+```
+
+The draft export (`export ctl` / `skool`) puts the label and title on the entry starting at the finding and the comment
+first in its description; a label inside an entry replaces the draft's point label there (an `@label` at that
+instruction or data line; a comment line only where no label can go: inside an instruction). A `kind` makes the range
+one entry of that kind (code is decoded from the start image), the claims under it leave the `fields` and `geometry`
+files. An entry candidate resolved `ok` splits the code entry there (a routine of its own, `sub_XXXX` until named).
+
+Rows 1-5 were tuned on the Manic Miner session ([Manic Miner (P5)](#manic-miner-p5)) and are frozen; JSW and a 128K
+game are the hold-outs. Rows 6 and 7 come after them, so the first items of the queue are what they were; `reason` and
+`offset` reach them.
+
+### Entry candidates
+
+The code map (`detectors/codemap.cpp`) takes as routine entries L1's routines, the targets of calls in inferred code,
+jump targets after an unconditional transfer that only a tail jump or a backward branch reaches, and conditional tail
+calls: the target T of a conditional JP whose code never comes back (no RET / RETI / RETN / JP (rr) up to the next
+entry, no jump back below T, every exit a known entry, no branch from outside into it but at T), when the instruction
+before T is an unconditional JP to a known entry and that JP is the only way into T. Two shapes look like a routine
+start but are no proof of one; they become `entry` findings:
+
+| Rule | Shape |
+| --- | --- |
+| `tail` | the closed code above reached from two or more sites, or after something else than a tail jump (a RET) |
+| `prologue` | the straight code (no branch in it, none into it but at its start) that runs into a known entry and is jumped to from two or more sites |
+
+`testdata/analysis/fixtures/tail-entry.asm` has a positive, two negatives (code that returns, code that jumps back) and
+both candidates; the test mutates the tail jump into a RET and the entry becomes a candidate.
+
+### Naming batches
+
+`l3naming.h`. The draft names what L2 could not name after its kind and address (`sub_9A10`, `var_9000`, `L9A20`). The
+subjects are those labels, except the fallback entries (plain data, untouched, unused), code entries no instruction
+refers to that L2 did not take for routine entries (the continuation of a routine after a status change), graphics
+inside the copy source of a buffer that no instruction refers to, and points only JR / DJNZ reach (loop labels). They
+are grouped by entry, then packed in address order into batches of up to 10 subjects of one class (code or data,
+never mixed) and a sheet of at most 2 KB; at most 40 batches. The batches come from the draft without the review's
+notes, so a build gives the same ids `N1`, `N2`, ... on every compiler. A subject's facts: for code its callers,
+callees, the data it uses, its entries and a 4-instruction head; for data its reads, writes, the values written, its
+users and its first 8 bytes.
+
+```text
+analysis review op=resolve id=N3 names='{"$9000": "PlayerY", "$9A10": {"label": "MovePlayer", "title": "Move the player"}}'
+```
+
+`names` is an object by address or an array `[{"at": "$9000", "label": ..., "title": ...}]` (a JSON object on REST,
+MCP and Python). A label is an identifier, unique among the draft's labels and the review's; the subjects left out
+are skipped; `verdict=skip` skips them all. A batch leaves the queue when each subject is named or skipped. Names go
+into the draft export like a resolve's label and title.
 
 ### Experiment runner
 
@@ -439,7 +493,7 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `query` | `kind` (`all`, default, `conflicts` or a region kind: `code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...), `range` (`8000-83FF`, `$8000-$83FF`; default all), `limit` (default 200, at most 100000) | `kind`, `range`, `regions` [{start, end, page, size, kind, detector, confidence, status, label, title, stride, count, ...}] or `conflicts` [{a, b}], `count`, `truncated`; the text one line per claim |
 | `export` | `format` (`ctl`, `skool`, `fields`, `geometry`, `layout`, `symbols`, `map`), `path` (write the file there), `ranges` (`5900-59FF,8000-FFFF`, no overlap; default `4000-FFFF`), `width` (DEFB bytes per line, 1..64, default 8) | `format`, `entries`, `bytes`, `ranges`, `path`; without `path` the file in `content` and the text (up to 16 KB) |
 | `findings` | `op` (`list`, default, or `add`), `kind`, `status`, `range`, `limit` (200), `format` (`table`, default, `markdown`, `jsonl`), `path`; add: `claim`, `range`, `status`, `evidence` (`;`-separated), `by`, `title` | `count`, `total`, `by_kind`, `by_status`, `findings` [{id, kind, status, start, end, subject, source, confidence, claim, evidence, refs, label, title, comment, verdict, by}], `truncated`; markdown / jsonl in `content` or written to `path` |
-| `review` | `op` (`next`, default, `list`, `show`, `resolve`), `id`, `verdict` (`ok`, `wrong`, `skip`), `label`, `title`, `comment`, `by`, `experiment` (a spec), `ranges`, `limit` (40) | next / show: `item` {id, reason, state, kind, start, end, claim, confidence}, `sheet`, `sheet_bytes`, `queue`; list: `items`, `queue` {open, shown, resolved, summary, by_reason}; resolve: `finding`, `experiments` ([L3 review](#review-queue)) |
+| `review` | `op` (`next`, default, `list`, `show`, `resolve`), `id` (a finding `F12` or a naming batch `N3`), `verdict` (`ok`, `wrong`, `skip`), `label`, `title`, `comment`, `kind` (a region kind for the finding's range), `names` (a naming batch's names, JSON), `by`, `experiment` (a spec), `ranges`, `reason` (`all`, `bug`, `conflict`, `unnamed-hot`, `low-confidence`, `unknown`, `entry`, `name`), `offset` (0), `limit` (40) | next / show: `item` {id, reason, state, kind, start, end, claim, confidence; a batch also `subjects` [{at, label, code, entry}]}, `sheet`, `sheet_bytes`, `queue`; list: `items`, `queue` {open, shown, offset, resolved, summary, reason, by_reason, name_subjects, name_capped}; resolve: `finding`, `kind`, `experiments`; a batch: `batch`, `named` [{at, label, title}], `skipped` ([L3 review](#review-queue)) |
 | `experiment` | `spec` (an object or an array of up to 256, as JSON text on the CLI / Lua), `path` (a JSON file), `parallel` (1..8), `finding` | `results` [{id, finding, claim, verdict, error, checks [{key, expect, actual, pass}], hits, new_code, new_ranges, from_frame, frames_run, worker}], `observed`, `refuted`, `errors`, `workers`, `peak_concurrency`, `seeks`, `micros` ([experiment runner](#experiment-runner)) |
 | `cover` | `budget` (64), `per_branch` (8), `frames` (50), `parallel`, `limit` (200 branches), `ranges` | `candidates`, `tried`, `flipped`, `attempts`, `new_code`, `branches` [{pc, cond, want, tested, address, status, reason, how, attempts, from_frame, new_code, new_ranges}], `workers`, `peak_concurrency`, `micros` ([directed coverage](#directed-coverage)) |
 | `gallery` | `address` (as `explain`; none: the list), `kind` (`all`, default, `font`, `sprite`, `tile`, `screen`, `level_map`), `scale` (1..8, default 2), `path` (write the PNG there), `limit` (default 200) | the list: `regions` [...], `count`, `truncated`, the text one line per region (range, kind, shape, detector, confidence, title); one region: `region`, `width`, `height`, `frames`, `scale`, `bytes`, `mime_type`, `png` (base64; empty with `path`), `path` ([the gallery](#the-gallery)) |
@@ -448,7 +502,8 @@ Refusals: an unknown action or option, a value that does not parse (400); no suc
 routine runs (404); `explain` of a byte at level `counters`, `what=routine` before a build, `build` with no recording
 or while one runs, `cancel` with none running, `query` / `export` / `gallery` before a build, a file `export` or
 `gallery` cannot write, a region the gallery cannot draw (409); no graphics region at the gallery's address (404);
-`findings` / `review` / `experiment` / `cover` before a build, a label another entry has (409); no such finding (404);
+`findings` / `review` / `experiment` / `cover` before a build, a label another entry or name has (409); no such finding or
+naming batch (404);
 a bad spec, a resolve with no decision (400); no memory tracker, `record` without a time travel engine
 (503).
 
@@ -471,14 +526,20 @@ $80BC (score) [RAM 2]: DataRead, DataWrite
 
 ### Planes
 
+Every POST of the tool goes through the automation gate (`core/src/emulator/execution/automationgate.cpp`) as a
+machine-changing request: `start`, `stop`, `build`, `cancel`, `experiment` and `cover` act on this machine or its
+replay and experiment instances, and `findings`, `export` and `gallery` write host files when given a `path`, so a
+companion needs its `debug` scope for all of them. A client takes control once (`take_control`) before it reviews; the
+GET reads (`status`, `explain`, `query`, a `findings` or `review` listing) need no session.
+
 | Plane | Shape | Doc |
 |-------|-------|-----|
-| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `analysis findings [list\|add] [kind=] [format=]`, `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip] [label=] [title=] [comment=]`, `analysis experiment <spec.json\|{json}> [finding=]`, `analysis cover [budget] [frames=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
+| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `analysis findings [list\|add] [kind=] [format=]`, `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip] [label=] [title=] [comment=] [kind=] [names={json}] [reason=] [offset=]`, `analysis experiment <spec.json\|{json}> [finding=]`, `analysis cover [budget] [frames=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
 | REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?}, `GET\|POST .../analysis/findings`, `GET\|POST .../analysis/review` (options in the query or the body), `POST .../analysis/experiment` {spec (object or array), path?, parallel?, finding?}, `POST .../analysis/cover` {budget?, per_branch?, frames?, parallel?, limit?, ranges?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
 | WebSocket | every route as a `call` on `/api/v1/ws`; state topics `analysis.progress`, `analysis.ready` | [websocket-interface.md](../design/control-interfaces/websocket-interface.md#analysis-layers) |
 | Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason); `spec=` / `experiment=` take a dict or a list | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
 | Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`, the op for `findings` / `review`, the spec's JSON text for `experiment`, the budget for `cover`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
-| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, by, status, claim, evidence, spec, experiment, finding, parallel, budget, per_branch}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
+| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover; level, mode, record, frames, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, kind, names, reason, offset, by, status, claim, evidence, spec, experiment, finding, parallel, budget, per_branch}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
 
 The MCP tool calls are counted per tool and action in `host.clients.mcp.tools` (`GET /api/v1/monitor/host.clients`):
 `{"analysis": {"calls": N, "actions": {"explain": n, ...}}}`, every tool alike (`(none)` for a call without an

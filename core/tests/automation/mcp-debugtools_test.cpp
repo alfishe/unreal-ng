@@ -418,7 +418,8 @@ TEST_F(McpDebugTools_Test, Analysis_ReviewActionsForwardTheirOptions)
     const mcp::ToolDefinition* definition = _registry->Find("analysis");
     ASSERT_NE(definition, nullptr);
     for (const char* name : {"op", "id", "verdict", "label", "title", "comment", "by", "experiment", "status", "claim",
-                             "evidence", "spec", "finding", "parallel", "budget", "per_branch"})
+                             "evidence", "spec", "finding", "parallel", "budget", "per_branch", "names", "reason",
+                             "offset", "kind"})
         EXPECT_TRUE(definition->inputSchema["properties"].isMember(name)) << name;
 
     Json::Value reviewBody;
@@ -441,6 +442,23 @@ TEST_F(McpDebugTools_Test, Analysis_ReviewActionsForwardTheirOptions)
     EXPECT_EQ(resolved->body["verdict"].asString(), "ok");
     EXPECT_EQ(resolved->body["label"].asString(), "MainLoop");
     EXPECT_TRUE(resolved->body["experiment"].isObject());
+
+    // A naming batch's names (an object), the queue by reason and offset, a kind change
+    args = Json::Value();
+    args["action"] = "review";
+    args["op"] = "resolve";
+    args["id"] = "N3";
+    args["names"]["$8068"] = "PlayerY";
+    args["kind"] = "text";
+    args["reason"] = "name";
+    args["offset"] = 40;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    resolved = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/review");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->body["names"]["$8068"].asString(), "PlayerY");
+    EXPECT_EQ(resolved->body["kind"].asString(), "text");
+    EXPECT_EQ(resolved->body["reason"].asString(), "name");
+    EXPECT_EQ(resolved->body["offset"].asInt(), 40);
 
     args = Json::Value();
     args["action"] = "experiment";

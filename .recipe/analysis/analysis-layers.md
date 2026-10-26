@@ -22,13 +22,17 @@ Everything goes through **one MCP tool, `analysis`**, with an `action`. The same
 ## Budget and rules
 
 - The queue holds only what needs a decision (candidate bugs, conflicts, unnamed hot routines, low-confidence
-  claims, unknown areas over 16 bytes), at most 40 items plus one summary line. Work the queue, not the draft.
+  claims, unknown areas over 16 bytes, entry candidates, then naming batches), at most 40 items plus one summary
+  line; `offset` pages on, `reason` picks one reason. Work the queue, not the draft.
 - **Never print a whole draft, map or findings file.** Each review item comes with a fact sheet under 1 KB; ask for
   more with `explain` (one address) or `gallery` (one picture).
 - **Do not edit the draft by hand.** Every decision goes through `review resolve`; the export carries it (labels,
   entry titles, comments). A hand edit is lost at the next export.
 - One decision per item. If you cannot tell from the sheet, run one experiment, then decide. Skip rather than guess.
 - Mute the emulator you start (`PUT /audio/mixer/master {"muted": true}`).
+- Call `take_control` once before the first `analysis` call: every POST action (review resolutions, exports and
+  pictures written to a path, experiments, coverage) counts as changing the emulator, and without a session each one
+  answers "session opened implicitly".
 
 ## MCP (preferred)
 
@@ -51,12 +55,16 @@ plus steps 2 and 4, and writes the drafts: use it when you have the scripts.
 
 ```text
 analysis {"action":"findings","limit":20}            # counts by kind and status, the first rows
-analysis {"action":"review","op":"list"}             # the whole queue: id, reason, range, claim (one line each)
+analysis {"action":"review","op":"list"}             # the first 40 items: id, reason, range, claim (one line each)
+analysis {"action":"review","op":"list","offset":40}  # the next 40
+analysis {"action":"review","op":"list","reason":"name","limit":100}   # one reason only
 ```
 
 Reasons, in queue order: `bug` (a candidate bug rule fired), `conflict` (two specific claims overlap),
 `unnamed-hot` (a routine with a big time share and no name), `low-confidence` (a specific claim below 700),
-`unknown` (more than 16 bytes nothing claimed). Statuses: `observed` (seen in a run or experiment), `inferred`
+`unknown` (more than 16 bytes nothing claimed), `entry` (a jump target that may start a routine of its own), `name`
+(a naming batch: up to 10 draft labels like `sub_8A3F`, `var_8068`, `L8A50` that still need a name). `by_reason` in
+the answer counts the whole queue. Statuses: `observed` (seen in a run or experiment), `inferred`
 (read from code or a rule), `confirmed` (a reviewer said ok), `refuted` (shown wrong; kept).
 
 ### 3. Work the queue
@@ -77,8 +85,15 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
 
 - `verdict`: `ok` (the finding is confirmed), `wrong` (refuted), `skip` (out of the queue, undecided).
 - `label`: an identifier (letters, digits, `_`; not a digit first), unique in the draft; it names the entry starting
-  at the finding (a label inside an entry becomes a comment line). `title` replaces the entry title; `comment` goes
-  first in the entry description. A resolve without a verdict, label, title or comment is refused.
+  at the finding (or the point inside an entry). `title` replaces the entry title; `comment` goes first in the entry
+  description. A resolve without a verdict, label, title, comment, kind or experiment is refused.
+- `kind`: when the claim's kind is wrong, say what the range is: `code`, `data`, `text`, `font`, `sprite`, `tile`,
+  `screen`, `variable`, `pointer_table`, `handler_table`, `rng`, `music`, `packed`, `level_map`, `unused`. The export
+  makes the range one entry of that kind (code decoded from the start image) and drops the old claim's geometry:
+
+  ```text
+  analysis {"action":"review","op":"resolve","id":"F88","verdict":"wrong","kind":"text","label":"CavernName"}
+  ```
 - Per reason:
   - `unnamed-hot`: read the routine sheet (inputs, outputs, loops, callers). Give a label and a title.
   - `conflict`: the sheet names both claims. `wrong` on the one that is not right (resolve each id).
@@ -86,6 +101,19 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
   - `unknown`: `explain` the first byte; if it is graphics, `gallery` with the address; then a comment
     (`"leftover source text"`, `"unused buffer"`), or skip.
   - `bug`: decide whether the game really does it. A quick experiment usually answers (next section).
+  - `entry`: the sheet shows the jump sites and the code there (marked `not executed` when the replay never ran it).
+    `ok` when it is a routine of its own (the draft splits the entry there; give a `label`), `wrong` when it is a
+    part of the routine before it.
+  - `name`: one item, up to 10 draft labels of one class (code or data) with a few facts each (callers, callees, the
+    data a routine uses, a 4-line head; reads, writes, values, users and the first bytes of data). Name them all in
+    one call; the ones you leave out are skipped:
+
+    ```text
+    analysis {"action":"review","op":"show","id":"N3"}
+    analysis {"action":"review","op":"resolve","id":"N3","names":{"$8068":"WillyY",
+              "$8A3F":{"label":"MoveWilly","title":"Move Willy left or right"}}}
+    analysis {"action":"review","op":"resolve","id":"N4","verdict":"skip"}     # no idea: skip the batch
+    ```
 
 The queue's next item moves on after each `review` call; `review {"op":"show","id":"F12"}` shows one again.
 
@@ -100,8 +128,13 @@ analysis {"action":"experiment","finding":"F12","spec":{
   "watch":[{"pc":"$8130","as":"rare"},{"write":"$8101","as":"w"}],
   "expect":{"rare":"reached","w":">=1","mem:$8101":"$AA"}}}
 analysis {"action":"experiment","spec":[ {...}, {...} ]}     # several at once, each on its own clone
-analysis {"action":"review","op":"resolve","id":"F12","verdict":"ok","experiment":{...}}   # decide with the run
+analysis {"action":"review","op":"resolve","id":"F12","verdict":"ok","experiment":{
+  "poke":{"$8100":5}, "frames":50, "watch":[{"pc":"$8130","as":"rare"}], "expect":{"rare":"reached"}}}
 ```
+
+`resolve ... experiment` runs the spec (one or an array) on clones like `analysis experiment`, records the result on
+the finding (observed / refuted, the result line in its evidence) and applies the rest of the resolve (verdict,
+label, ...) in the same call; the answer lists the result line under the decision.
 
 Spec fields: `from` (`start` default, `end`, `frame:N`), `poke` {address: byte}, `regs` {a, f, b, c, d, e, h, l, af,
 bc, de, hl, ix, iy, sp, pc}, `input` [{frame, key | joystick | release_all, up}], `frames` (default 50, at most 5000),
@@ -122,12 +155,27 @@ Run it once, after the first pass over the queue; new code it reached shows up i
 
 ### 5. Export and finish in zx-reaper
 
+Export every format, all with the same `ranges` (the draft directory `reaper_gate.py` and `run_ab.py` read):
+
+| `format` | File | What it is |
+| --- | --- | --- |
+| `skool` | `draft.skool` | the SkoolKit skool draft (relocatable: `@label`, `@isub`, `@keep`, ALIGN) |
+| `ctl` | `draft.ctl` | the same plan as a control file (`sna2skool.py -c`) |
+| `layout` | `draft.layout.mk` | zx-reaper's `REGION_START` / `SHIFT_END` |
+| `fields` | `draft.fields.json` | the record field lists |
+| `geometry` | `draft.geometry.json` | the graphics geometry |
+| `symbols` | `draft.sym` | the labels through a symbol codec (skoolkit-ctl) |
+| `map` | `draft.map` | the claims, one line each (range, kind, detector, confidence, status, title) |
+
 ```text
 analysis {"action":"findings","format":"markdown","path":"/abs/project/re/findings.md"}   # zx-reaper's findings table
 analysis {"action":"export","format":"skool","path":"/abs/draft/draft.skool","ranges":"8000-FFFF"}
-analysis {"action":"export","format":"layout","path":"/abs/draft/draft.layout.mk"}
-analysis {"action":"export","format":"fields","path":"/abs/draft/draft.fields.json"}
-analysis {"action":"export","format":"geometry","path":"/abs/draft/draft.geometry.json"}
+analysis {"action":"export","format":"ctl","path":"/abs/draft/draft.ctl","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"layout","path":"/abs/draft/draft.layout.mk","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"fields","path":"/abs/draft/draft.fields.json","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"geometry","path":"/abs/draft/draft.geometry.json","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"symbols","path":"/abs/draft/draft.sym","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"map","path":"/abs/draft/draft.map","ranges":"8000-FFFF"}
 ```
 
 Then build, test and shift-test in a fresh zx-reaper project. `reaper_gate.py` does exactly these steps, with no
@@ -153,7 +201,8 @@ Write the run's token ledger in run B's format
 
 ## WebAPI
 
-The same actions; GET takes the options in the query, POST in the body (`spec` and `experiment` as JSON objects).
+The same actions; GET takes the options in the query, POST in the body (`spec`, `experiment` and `names` as JSON
+objects).
 
 ```bash
 BASE=http://localhost:8090/api/v1/emulator/$EMU_ID/analysis
@@ -162,16 +211,20 @@ curl -s "$BASE/review?op=list"                                      | jq '.items
 curl -s -X POST "$BASE/review" -H 'Content-Type: application/json' -d '{"op":"next"}' | jq -r .text
 curl -s -X POST "$BASE/review" -H 'Content-Type: application/json' \
      -d '{"op":"resolve","id":"F57","verdict":"ok","label":"DrawSprite"}' | jq -r .text
+curl -s -X POST "$BASE/review" -H 'Content-Type: application/json' \
+     -d '{"op":"resolve","id":"N3","names":{"$8068":"WillyY"}}' | jq -r .text
 curl -s -X POST "$BASE/experiment" -H 'Content-Type: application/json' \
      -d '{"spec":{"poke":{"$8100":5},"frames":50,"expect":{"mem:$8101":"$AA"}},"finding":"F12"}' | jq -r .text
 curl -s -X POST "$BASE/cover" -H 'Content-Type: application/json' -d '{"budget":32}' | jq -r .text
 ```
 
-Errors: 409 before a build (`build` first), 404 for an unknown finding id, 400 for a bad option or spec (the message
-names the field and what it takes).
+Errors: 409 before a build (`build` first) or for a label in use, 404 for an unknown finding or batch id, 400 for a
+bad option, spec or names (the message names the field and what it takes).
 
 ## Pitfalls
 
+- **Naming batch ids are per build.** `N3` comes from the draft without your notes, so it stays while you resolve;
+  after a `build` list the batches again (the names you gave stay, by address).
 - **A rebuild renumbers the findings.** Decisions are kept by the finding's key (kind, range, subject, source), so
   they survive, but `F57` may name another finding afterwards: list the queue again after a `build`.
 - **Experiments and coverage answer when done** (no job id). A batch of 64 short experiments on a 48K game takes

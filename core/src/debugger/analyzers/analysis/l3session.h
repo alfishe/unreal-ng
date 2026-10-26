@@ -8,10 +8,12 @@
 ///   findings   [op kind status range limit format path claim evidence by title]  op list (default): the register
 ///              (format table, markdown: zx-reaper's re/findings.md, jsonl); op add: a note (claim, range, status,
 ///              evidence ';'-separated, by)
-///   review     [op id verdict label title comment by experiment ranges limit]  op next (default): the first open
-///              item of the queue (l3review.h) with its fact sheet; list: the queue; show: one item's sheet; resolve:
-///              a decision (verdict ok: confirmed, wrong: refuted, skip: out of the queue; label, title, comment go
-///              into the draft export), optionally with an experiment whose result marks the finding
+///   review     [op id verdict label title comment kind names by experiment ranges reason offset limit]  op next
+///              (default): the first open item of the queue (l3review.h) with its fact sheet; list: the queue (one
+///              reason, from an offset); show: one item's sheet; resolve: a decision (verdict ok: confirmed, wrong:
+///              refuted, skip: out of the queue; label, title, comment go into the draft export; kind changes what
+///              the draft makes of the finding's range; an entry candidate's ok splits the code entry), optionally
+///              with an experiment whose result marks the finding; a naming batch (N3) takes names (JSON)
 ///   experiment [spec path parallel finding]  run experiments (l3experiment.h), a spec or an array of them as JSON
 ///              (spec) or a file (path); the results mark their findings observed / refuted
 ///   cover      [budget per_branch frames parallel limit ranges]  directed coverage (l3coverage.h): flip the branches
@@ -29,6 +31,7 @@
 #include "debugger/analyzers/analysis/analysiscontrol.h"
 #include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l3findings.h"
+#include "debugger/analyzers/analysis/l3naming.h"
 
 class Emulator;
 
@@ -47,6 +50,9 @@ struct Resolution
     std::string verdict;
     std::string by;
     std::vector<std::string> evidence;  ///< appended (experiment results)
+    std::string kind;                   ///< the region kind the review gave [start, kindEnd] (ExportNote::kind)
+    uint16_t kindEnd = 0;
+    bool entry = false;                 ///< an entry candidate accepted: a routine starts at start
 };
 
 class L3Sessions
@@ -64,7 +70,16 @@ public:
     void SetCoverageNotes(const std::string& emulatorId, std::map<uint16_t, ExportNote> notes);
     void MarkShown(const std::string& emulatorId, const std::string& key);
     bool Shown(const std::string& emulatorId, const std::string& key) const;
-    /// The draft export's L3 notes: decisions with a label, title or comment, and the coverage notes
+    /// The naming batches of build @p job (l3naming.h; made once per build)
+    NamingResult Naming(const std::string& emulatorId, uint64_t job, const L1Result& l1, const L2Result& l2);
+    /// Record the names of a batch (@p skipped: its subjects left unnamed)
+    void Name(const std::string& emulatorId, const std::vector<GivenName>& names, const std::vector<uint16_t>& skipped);
+    /// The names given, by address
+    std::map<uint16_t, GivenName> Names(const std::string& emulatorId) const;
+    /// Whether every subject of @p batch is named or skipped
+    bool Named(const std::string& emulatorId, const NamingBatch& batch) const;
+    /// The draft export's L3 notes: decisions with a label, title, comment, kind or entry, the names of the naming
+    /// batches, and the coverage notes
     std::map<uint16_t, ExportNote> Notes(const std::string& emulatorId) const;
     void Forget(const std::string& emulatorId);
 
@@ -77,6 +92,11 @@ private:
         std::map<std::string, Resolution> resolutions;
         std::set<std::string> shown;
         std::map<uint16_t, ExportNote> coverageNotes;
+        uint64_t namingJob = 0;
+        bool namingMade = false;
+        NamingResult naming;
+        std::map<uint16_t, GivenName> names;
+        std::set<uint16_t> skippedNames;
     };
     mutable std::mutex _mutex;
     std::map<std::string, State> _states;

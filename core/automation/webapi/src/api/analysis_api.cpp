@@ -103,9 +103,10 @@ bool OptionsFromJson(const HttpRequestPtr& req, analysis::Options& options, std:
         const Json::Value& v = (*json)[name];
         if (v.isNull())
             continue;
-        if ((v.isObject() || v.isArray()) && (name == "spec" || name == "experiment"))
+        if ((v.isObject() || v.isArray()) && (name == "spec" || name == "experiment" || name == "names"))
         {
-            // An experiment spec (l3experiment.h): an object or an array of them, as JSON text
+            // An experiment spec (l3experiment.h), an object or an array of them, or a naming batch's names
+            // (l3naming.h), as JSON text
             Json::StreamWriterBuilder writer;
             writer["indentation"] = "";
             options[name] = Json::writeString(writer, v);

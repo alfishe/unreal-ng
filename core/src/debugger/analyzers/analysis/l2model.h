@@ -214,12 +214,22 @@ struct CodeLine
     bool smc = false;         ///< written while it was code
 };
 
+/// A jump target the code map could not decide is a routine of its own (the review queue asks: reason `entry`)
+struct EntryCandidate
+{
+    uint16_t z80 = 0;
+    std::string rule;              ///< "prologue" (straight code into a routine head), "tail" (code that never returns)
+    std::string why;               ///< one sentence for the review sheet
+    std::vector<uint16_t> sources;  ///< the jumps to it
+};
+
 struct L2Result
 {
     RegionStore store;
     std::vector<CodeLine> code;  ///< sorted by key
     /// Routine entries (Z80, the start's paging) with their names: signatures, roles, then sub_XXXX
     std::vector<std::pair<uint16_t, std::string>> entries;
+    std::vector<EntryCandidate> entryCandidates;  ///< in address order, none of them in entries
     std::vector<std::string> notes;  ///< what the detectors could not do (a page not mapped at the start, ...)
 
     const CodeLine* CodeAt(PhysKey key) const;

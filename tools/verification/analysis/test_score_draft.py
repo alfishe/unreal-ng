@@ -184,3 +184,49 @@ class MacroGeometryTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NamesTest(unittest.TestCase):
+    def setUp(self):
+        self.vocab = sd.Vocabulary()
+
+    def test_classes(self):
+        v = self.vocab
+        self.assertEqual(sd.name_class(v, 0x8000, None, 'X', ''), 'missing')
+        self.assertEqual(sd.name_class(v, 0x8ABB, 'sub_8ABB', 'Move', ''), 'auto')
+        self.assertEqual(sd.name_class(v, 0x8029, 'L8029', 'Move', ''), 'auto')
+        self.assertEqual(sd.name_class(v, 0x8000, 'cavern_name', 'CAVERNNAME', ''), 'exact')
+        self.assertEqual(sd.name_class(v, 0x8000, 'MoveHorizontalGuardians', 'MOVEHG',
+                                       'Move the horizontal guardians'), 'normalized')
+        self.assertEqual(sd.name_class(v, 0x8000, 'HGuards', 'HGUARDS', ''), 'exact')
+        self.assertEqual(sd.name_class(v, 0x8000, 'GuardianTable', 'HGUARDS', ''), 'judge')
+        self.assertEqual(sd.name_class(v, 0x8000, 'Banana', 'TUNE', 'Theme tune'), 'judge')
+
+    def test_split_and_stem(self):
+        self.assertEqual(sd.split_words('HGuardianTable'), ['H', 'Guardian', 'Table'])
+        self.assertEqual(sd.split_words('move_willy2'), ['move', 'willy', '2'])
+        self.assertEqual(sd.stem('guardians'), 'guardian')
+        self.assertEqual(sd.stem('entries'), 'entry')
+
+    def test_scores_and_pairs(self):
+        rep = sd.score(path('names-draft.skool'), path('names-ref.skool'))
+        n = rep['names']
+        self.assertEqual((n['all']['total'], n['all']['exact'], n['all']['normalized'], n['all']['judge'],
+                          n['all']['auto'], n['all']['missing']), (6, 1, 2, 1, 2, 0))
+        self.assertEqual((n['entries']['total'], n['points']['total'], n['points']['auto']), (5, 1, 1))
+        self.assertEqual(n['all']['same_pct'], 50.0)
+        judge = [r for r in n['pairs'] if r['class'] == 'judge']
+        self.assertEqual([r['address'] for r in judge], ['$8006'])
+        tmp = os.path.join(DATA, '..', '__pycache__', 'names-pairs.tsv')
+        os.makedirs(os.path.dirname(tmp), exist_ok=True)
+        sd.write_pairs(tmp, n['pairs'])
+        with open(tmp) as f:
+            lines = f.read().splitlines()
+        self.assertEqual(lines[0].split('\t'), sd.PAIR_COLUMNS)
+        # the judge fills its column: the judged rows count on top of the deterministic ones
+        filled = [line + 'same' if line.startswith('$8006') else line for line in lines]
+        with open(tmp, 'w') as f:
+            f.write('\n'.join(filled) + '\n')
+        judged = sd.score(path('names-draft.skool'), path('names-ref.skool'), names_judged=tmp)['names']['all']
+        self.assertEqual((judged['judged'], judged['same_with_judge']), (1, 4))
+        os.remove(tmp)

@@ -3,9 +3,12 @@
 /// memory the replay started from and claimed as inferred code, until it meets executed code, an unconditional
 /// transfer, or a byte the code used as data. Code that was written while it was code is self-modifying. Routine
 /// entries are L1's, plus the targets of calls in inferred code, plus the jump targets after an unconditional
-/// transfer that only a tail jump or a backward branch reaches (JumpEntries).
+/// transfer that only a tail jump or a backward branch reaches (JumpEntries), plus conditional tail calls
+/// (TailEntries). Jump targets that look like a routine start but are not proven one become entry candidates for the
+/// review queue (TailEntries, PrologueCandidates).
 
 #include <algorithm>
+#include <cstdio>
 #include <deque>
 #include <map>
 #include <set>
@@ -123,6 +126,218 @@ std::vector<uint16_t> JumpEntries(const DetectorContext& context, const std::map
             found.push_back(to);
     }
     return found;
+}
+
+/// The static branches (JP / JR / DJNZ / CALL / RST with a target) of the code map: target -> sources
+std::map<uint16_t, std::vector<uint16_t>> BranchSources(const std::map<uint16_t, CodeLine>& lines)
+{
+    std::map<uint16_t, std::vector<uint16_t>> sources;
+    for (const auto& [z80, line] : lines)
+    {
+        const Targets t = StaticTargets(DecodeOp(line.bytes), z80, line.bytes);
+        for (int i = 0; i < t.count; ++i)
+            sources[t.to[i]].push_back(z80);
+    }
+    return sources;
+}
+
+/// The instruction that ends right at @p z80 (nullptr: none, or not contiguous)
+const CodeLine* LineBefore(const std::map<uint16_t, CodeLine>& lines, uint16_t z80)
+{
+    auto before = lines.lower_bound(z80);
+    if (before == lines.begin())
+        return nullptr;
+    --before;
+    return static_cast<uint32_t>(before->first) + before->second.length == z80 ? &before->second : nullptr;
+}
+
+/// The code a tail starting at @p start runs before it leaves for a known entry: every instruction reached from
+/// @p start (fall-through, jumps; a call returns to the next instruction) below @p limit. Closed when it never
+/// returns (no RET / RETI / RETN / JP (rr)), never jumps below @p start or past @p limit to a non-entry, and no
+/// branch from outside it lands inside it except at @p start.
+struct Tail
+{
+    std::set<uint16_t> body;
+    bool closed = false;
+    std::string why;  ///< what broke it
+};
+
+Tail TailFrom(const std::map<uint16_t, CodeLine>& lines, const std::map<uint16_t, std::vector<uint16_t>>& sources,
+              const std::set<uint16_t>& entries, uint16_t start, uint32_t limit)
+{
+    constexpr size_t kMaxBody = 4096;
+    Tail tail;
+    std::vector<uint16_t> work{start};
+    while (!work.empty())
+    {
+        uint32_t at = work.back();
+        work.pop_back();
+        while (at < limit && tail.body.count(static_cast<uint16_t>(at)) == 0)
+        {
+            const auto it = lines.find(static_cast<uint16_t>(at));
+            if (it == lines.end())
+            {
+                tail.why = "runs into bytes that are not code";
+                return tail;
+            }
+            if (at != start && entries.count(static_cast<uint16_t>(at)) != 0)
+                break;  // falls into a routine
+            if (tail.body.size() >= kMaxBody)
+            {
+                tail.why = "too long";
+                return tail;
+            }
+            tail.body.insert(static_cast<uint16_t>(at));
+            const CodeLine& line = it->second;
+            const OpInfo& op = DecodeOp(line.bytes);
+            if (op.flow == Flow::Ret || op.flow == Flow::Reti || op.flow == Flow::Retn || op.flow == Flow::JpIndirect)
+            {
+                tail.why = "returns";
+                return tail;
+            }
+            const Targets t = StaticTargets(op, line.z80, line.bytes);
+            if (!t.call)
+                for (int i = 0; i < t.count; ++i)
+                {
+                    const uint16_t to = t.to[i];
+                    if (entries.count(to) != 0 && to != start)
+                        continue;  // leaves for a routine
+                    if (to < start || to >= limit)
+                    {
+                        tail.why = to < start ? "jumps back into the code before it" : "jumps past the next routine";
+                        return tail;
+                    }
+                    work.push_back(to);
+                }
+            if (t.stops)
+                break;
+            at += line.length;
+        }
+    }
+    for (const uint16_t a : tail.body)
+    {
+        if (a == start)
+            continue;
+        const auto it = sources.find(a);
+        if (it == sources.end())
+            continue;
+        for (const uint16_t from : it->second)
+            if (tail.body.count(from) == 0)
+            {
+                tail.why = "entered from outside it inside it";
+                return tail;
+            }
+    }
+    tail.closed = true;
+    return tail;
+}
+
+/// Conditional tail calls: the target T of a conditional JP whose code never comes back starts a routine of its own
+/// when the instruction before T is an unconditional JP to a known entry (the code before leaves for good), the JP is
+/// the only way into T, and T's code is closed (TailFrom). A forward skip over a JP whose code returns or rejoins the
+/// code before it stays inside its routine. Closed tails that miss the first two conditions are entry candidates.
+std::vector<uint16_t> TailEntries(const std::map<uint16_t, CodeLine>& lines,
+                                  const std::map<uint16_t, std::vector<uint16_t>>& sources,
+                                  const std::set<uint16_t>& entries, const DetectorContext& context,
+                                  std::vector<EntryCandidate>& candidates)
+{
+    std::vector<uint16_t> found;
+    for (const auto& [to, from] : sources)
+    {
+        if (!context.InScope(to) || entries.count(to) != 0 || lines.count(to) == 0)
+            continue;
+        bool forwardJp = false;
+        for (const uint16_t s : from)
+        {
+            const CodeLine& line = lines.at(s);
+            const OpInfo& op = DecodeOp(line.bytes);
+            forwardJp = forwardJp || (op.flow == Flow::Jp && op.cond != kAlways && s < to);
+        }
+        if (!forwardJp)
+            continue;
+        const CodeLine* before = LineBefore(lines, to);
+        if (before == nullptr)
+            continue;
+        const OpInfo& beforeOp = DecodeOp(before->bytes);
+        const Targets beforeTargets = StaticTargets(beforeOp, before->z80, before->bytes);
+        if (!beforeTargets.stops)
+            continue;  // falls in: a skip inside the routine
+        const auto next = entries.upper_bound(to);
+        const uint32_t limit = next != entries.end() ? *next : 0x10000u;
+        const Tail tail = TailFrom(lines, sources, entries, to, limit);
+        if (!tail.closed)
+            continue;
+        const bool tailJump = beforeOp.flow == Flow::Jp && beforeOp.cond == kAlways && beforeTargets.count == 1 &&
+                              entries.count(beforeTargets.to[0]) != 0;
+        bool single = from.size() == 1;
+        for (const uint16_t s : from)
+            single = single && DecodeOp(lines.at(s).bytes).flow == Flow::Jp;
+        if (tailJump && single)
+        {
+            found.push_back(to);
+            continue;
+        }
+        EntryCandidate c;
+        c.z80 = to;
+        c.rule = "tail";
+        c.sources = from;
+        c.why = "Code entered only by jumps (" + std::to_string(from.size()) +
+                (from.size() == 1 ? " site" : " sites") + ") that never returns nor rejoins the code before it (" +
+                std::to_string(tail.body.size()) + " instructions)" +
+                (tailJump ? "" : "; the instruction before it is no tail jump to a routine") + ".";
+        candidates.push_back(std::move(c));
+    }
+    return found;
+}
+
+/// Prologues: the straight run of code (no branch in it, none into it) that falls into a known entry and starts at a
+/// target of jumps from two or more sites is shared start-up code of that entry. Whether it is a routine of its own
+/// is a reading of the program, not a fact: an entry candidate.
+void PrologueCandidates(const std::map<uint16_t, CodeLine>& lines,
+                        const std::map<uint16_t, std::vector<uint16_t>>& sources, const std::set<uint16_t>& entries,
+                        const DetectorContext& context, std::vector<EntryCandidate>& candidates)
+{
+    constexpr int kMaxRun = 64;
+    for (const uint16_t e : entries)
+    {
+        const CodeLine* line = LineBefore(lines, e);
+        uint16_t start = e;
+        for (int n = 0; line != nullptr && n < kMaxRun; ++n)
+        {
+            const OpInfo& op = DecodeOp(line->bytes);
+            const Targets t = StaticTargets(op, line->z80, line->bytes);
+            const bool selfLoop = t.count == 1 && !t.call && t.to[0] == line->z80;
+            if ((op.flow != Flow::None && op.flow != Flow::Halt && !selfLoop) || entries.count(line->z80) != 0)
+                break;
+            start = line->z80;
+            const auto it = sources.find(line->z80);
+            if (it != sources.end() && std::any_of(it->second.begin(), it->second.end(),
+                                                   [&](uint16_t s) { return s != line->z80; }))
+                break;
+            line = LineBefore(lines, line->z80);
+        }
+        if (start == e || !context.InScope(start))
+            continue;
+        const auto it = sources.find(start);
+        if (it == sources.end())
+            continue;
+        std::set<uint16_t> sites;
+        for (const uint16_t s : it->second)
+            if (s != start)
+                sites.insert(s);
+        if (sites.size() < 2)
+            continue;
+        EntryCandidate c;
+        c.z80 = start;
+        c.rule = "prologue";
+        c.sources.assign(sites.begin(), sites.end());
+        char text[160];
+        std::snprintf(text, sizeof(text),
+                      "Straight code from %u jump sites that runs into the routine at $%04X (%u bytes before it).",
+                      static_cast<unsigned>(sites.size()), e, static_cast<unsigned>(e - start));
+        c.why = text;
+        candidates.push_back(std::move(c));
+    }
 }
 
 }  // namespace
@@ -245,6 +460,26 @@ void DetectCodeMap(DetectorContext& context)
             out.entries.emplace_back(t, std::string());
     for (const uint16_t t : JumpEntries(context, lines, out.entries))
         out.entries.emplace_back(t, std::string());
+    {
+        const std::map<uint16_t, std::vector<uint16_t>> sources = BranchSources(lines);
+        std::set<uint16_t> known;
+        for (const auto& e : out.entries)
+            known.insert(e.first);
+        std::vector<EntryCandidate> candidates;
+        for (const uint16_t t : TailEntries(lines, sources, known, context, candidates))
+            out.entries.emplace_back(t, std::string());
+        for (const auto& e : out.entries)
+            known.insert(e.first);
+        PrologueCandidates(lines, sources, known, context, candidates);
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const EntryCandidate& a, const EntryCandidate& b) {
+                      return a.z80 != b.z80 ? a.z80 < b.z80 : a.rule > b.rule;  // tail before prologue
+                  });
+        for (EntryCandidate& c : candidates)
+            if (known.count(c.z80) == 0 &&
+                (out.entryCandidates.empty() || out.entryCandidates.back().z80 != c.z80))
+                out.entryCandidates.push_back(std::move(c));
+    }
     for (auto& [z80, line] : lines)
         line.entry = std::any_of(out.entries.begin(), out.entries.end(),
                                  [z = z80](const auto& e) { return e.first == z; });

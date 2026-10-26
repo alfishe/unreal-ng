@@ -15,6 +15,7 @@ Compares a draft (SkoolKit `.ctl` or `.skool`, hex or decimal addresses) with a 
 | code entries | reference `c` entries the draft starts exactly; misses and draft-only starts |
 | graphics regions | reference sections (entry or mid-block comment) with an image macro (`#UDGARRAY`, `#SPRITE`, `#SCR`, `#FONT`, the game's own `#CAVERN` / `#TILES` / ...): covered by draft data bytes, starting at a draft boundary, and with the right geometry when the draft states one (`--geometry`) |
 | record field lists | the draft's fields (`--fields`) against a checked-in expected list (`--expected`); "n/a" when the draft gives none |
+| names | each reference entry and `@label` in the range against the draft's label at the same address: `exact` (case and `_` aside), `normalized` (every meaningful word of the draft's label, CamelCase / `_` split, stemmed, synonyms of `name_vocabulary.json`, is in the reference label or title), `judge` (named, no deterministic match), `auto` (a generated `sub_8ABB` / `L8029` / `var_8068`), `missing`; "the same" = exact + normalized (+ judge rows marked same / close with `--names-judged`) |
 
 ```bash
 S=tools/verification/analysis/score_draft.py
@@ -25,6 +26,8 @@ python3 $S draft.skool path/to/mm.skool --split-vars --isub --start 0x7FFD      
 ```
 
 Options: `--start` / `--end` (default: the expected file's `range`), `-v` lists every graphics region,
+`--names-pairs OUT` writes the name pairs (TSV, an empty `judge` column), `--names-judged FILE` reads them back filled,
+`--vocabulary` replaces `name_vocabulary.json`,
 `--split-vars` counts `g` as its own category, `--isub` reads `@isub+begin` blocks as SkoolKit's `@isub` mode does
 (by default they are skipped, like `skool2html`).
 
@@ -86,9 +89,9 @@ python3 tools/verification/analysis/run_ab.py --draft scratch/p5/mm1 --work scra
 ```
 
 The verdict (plan.md, P5): every gate step passes, quality at least run B's (byte categories by entry, code entries
-matched, graphics covered; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
+matched, graphics covered, names the same; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
 numbers), subagent tokens at most `--token-target` (200000). `ab.json` and `ab.md` go into `--work`; exit 0 pass,
-1 fail, 2 when the gate did not run through. `--skip-gate` reuses `<work>/gate`.
+1 fail, 2 when the gate did not run through. The name pairs of the draft go into `<work>/names-pairs.tsv`. `--skip-gate` reuses `<work>/gate`.
 
 ## make_rom48_signatures.py
 

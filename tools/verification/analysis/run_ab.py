@@ -19,10 +19,14 @@ that is not run_a / run_b is taken (--run picks one). Without --ledger, or with 
 "no ledger" and only the quality side is judged.
 
 Quality of run B: its final skool scored the same way (--run-b-skool), else the P0 baseline's numbers (score-p0.md:
-categories 92.3 %, code entries 33 / 33, graphics covered 106 / 106).
+categories 92.3 %, code entries 33 / 33, graphics covered 106 / 106; names from score-p5.md: 50 of 142 the same).
+
+Names (score_draft.py, "Names"): each reference entry and @label in the range against the draft's label at the same
+address: auto (generated), exact, normalized (the same words), needs a judge, missing. The deterministic `same`
+(exact + normalized) is compared; the judge rows are listed, not counted (names-pairs.tsv in --work for a judge).
 
 The verdict (plan.md P5 row): subagent tokens <= --token-target (200000) and quality at least run B's (byte
-categories by entry, code entries matched, graphics regions covered) with every gate step passing. ab.json and
+categories by entry, code entries matched, graphics regions covered, names the same) with every gate step passing. ab.json and
 ab.md go into --work; exit 0 when the verdict passes, 1 when it fails, 2 when the gate could not run.
 """
 
@@ -38,7 +42,8 @@ ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 BASELINE = os.path.join(ROOT, 'docs', 'inprogress', '2026-10-24-analysis-layers', 'baselines',
                         'run-b-token-ledger.json')
 RUN_B_QUALITY = {'categories': 92.3, 'entries_matched': 33, 'entries_reference': 33, 'graphics_covered': 106,
-                 'graphics_total': 106, 'source': 'score-p0.md (run B final skool)'}
+                 'graphics_total': 106, 'names_same': 50, 'names_total': 142, 'names_judge': 61, 'names_auto': 0,
+                 'names_missing': 31, 'source': 'score-p0.md, score-p5.md (run B final skool)'}
 
 
 def agreement(level):
@@ -52,7 +57,7 @@ def agreement(level):
 def quality(score):
     graphics = score.get('graphics', {}).get('regions', [])
     records = score.get('records', {})
-    return {
+    out = {
         'categories': agreement(score['categories_entry']),
         'categories_line': agreement(score['categories_line']),
         'entries_matched': score['code_entries']['matched'],
@@ -66,6 +71,12 @@ def quality(score):
                              if any(l.get('found') for l in r.get('layouts', []))) if records.get('records') else None,
         'records_total': len(records.get('records', [])) if records.get('records') else None,
     }
+    names = (score.get('names') or {}).get('all')
+    if names:
+        out.update({'names_same': names['same'], 'names_total': names['total'], 'names_exact': names['exact'],
+                    'names_normalized': names['normalized'], 'names_judge': names['judge'],
+                    'names_auto': names['auto'], 'names_missing': names['missing']})
+    return out
 
 
 def ledger_totals(run):
@@ -98,6 +109,14 @@ def score_file(python, draft, args, out):
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, check=False)
     with open(out) as f:
         return json.load(f)
+
+
+def names_cell(q):
+    if q.get('names_same') is None:
+        return 'n/a'
+    total = q.get('names_total') or 0
+    pct = round(100.0 * q['names_same'] / total, 2) if total else 0.0
+    return f'{q["names_same"]} / {total} ({pct} %)'
 
 
 def fmt(value, suffix=''):
@@ -143,6 +162,10 @@ def main():
         return 2
     gate_ok = all(s['status'] == 0 for s in gate['steps'])
     mine = quality(score)
+    if score.get('names'):
+        sys.path.insert(0, HERE)
+        import score_draft  # noqa: E402
+        score_draft.write_pairs(os.path.join(work, 'names-pairs.tsv'), score['names']['pairs'])
 
     if args.run_b_skool:
         python = os.path.join(os.path.abspath(args.venv), 'bin', 'python3') if args.venv else sys.executable
@@ -162,12 +185,14 @@ def main():
         run_name, run = pick_run(json.loads(text) if text else {}, args.run)
     tokens = ledger_totals(run) if run else None
 
+    names_ok = None if 'names_same' not in mine or 'names_same' not in theirs else \
+        mine['names_same'] >= theirs['names_same']
     quality_ok = (mine['categories'] >= theirs['categories'] and mine['entries_matched'] >= theirs['entries_matched']
-                  and mine['graphics_covered'] >= theirs['graphics_covered'])
+                  and mine['graphics_covered'] >= theirs['graphics_covered'] and names_ok is not False)
     tokens_ok = None if not tokens or tokens['tokens'] is None else tokens['tokens'] <= args.token_target
     verdict = gate_ok and quality_ok and tokens_ok is not False
     report = {'draft': os.path.abspath(args.draft), 'gate_ok': gate_ok, 'gate_steps': gate['steps'],
-              'quality': mine, 'run_b_quality': theirs, 'quality_ok': quality_ok,
+              'quality': mine, 'run_b_quality': theirs, 'quality_ok': quality_ok, 'names_ok': names_ok,
               'run': run_name, 'tokens': tokens, 'run_b_tokens': run_b, 'token_target': args.token_target,
               'tokens_ok': tokens_ok, 'verdict': 'pass' if verdict else 'fail'}
     with open(os.path.join(work, 'ab.json'), 'w') as f:
@@ -186,6 +211,12 @@ def main():
               f'{theirs["graphics_covered"]} / {theirs["graphics_total"]} |',
               f'| graphics with the right geometry | {mine["graphics_geometry"]} | {fmt(theirs.get("graphics_geometry"))} |',
               f'| records found | {fmt(mine["records_found"])} / {fmt(mine["records_total"])} | n/a |',
+              f'| names the same (exact + normalized) | {names_cell(mine)} | {names_cell(theirs)} |',
+              f'| ... exact / normalized | {fmt(mine.get("names_exact"))} / {fmt(mine.get("names_normalized"))} | '
+              f'{fmt(theirs.get("names_exact"))} / {fmt(theirs.get("names_normalized"))} |',
+              f'| ... named, needs a judge | {fmt(mine.get("names_judge"))} | {fmt(theirs.get("names_judge"))} |',
+              f'| ... generated (auto) / missing | {fmt(mine.get("names_auto"))} / {fmt(mine.get("names_missing"))} | '
+              f'{fmt(theirs.get("names_auto"))} / {fmt(theirs.get("names_missing"))} |',
               f'| subagent tokens | {fmt(tokens["tokens"]) if tokens else "no ledger"} | {fmt(run_b["tokens"])} |',
               f'| ... without the article | {fmt(tokens["re_tokens"]) if tokens else "no ledger"} | '
               f'{fmt(run_b["re_tokens"])} |',

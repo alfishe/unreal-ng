@@ -26,7 +26,9 @@
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
 #include "debugger/analyzers/analysis/l3experiment.h"
+#include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l3findings.h"
+#include "debugger/analyzers/analysis/l3naming.h"
 #include "debugger/analyzers/analysis/l3review.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/assembler/z80textassembler.h"
@@ -528,4 +530,213 @@ TEST_F(AnalysisL3_Test, ReviewResolveWritesIntoTheRegisterAndTheDraft)
 
     const Reply md = Execute(emulator, "findings", {{"format", "markdown"}});
     EXPECT_NE(Member(md.body, "content").s.find("RareMode"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------------------------------- naming, entries
+
+namespace
+{
+
+std::string Hex4Text(uint16_t z80)
+{
+    char text[8];
+    std::snprintf(text, sizeof(text), "$%04X", z80);
+    return text;
+}
+
+/// Record and build @p fixture through Execute (the review's own path)
+bool BuildThroughExecute(Emulator& emulator)
+{
+    if (!Execute(emulator, "start", {{"record", "true"}}).Ok())
+        return false;
+    emulator.RunNFrames(3);
+    const Reply built = Execute(emulator, "build", {{"wait", "20000"}});
+    return Member(built.body, "state").s == "done";
+}
+
+}  // namespace
+
+TEST_F(AnalysisL3_Test, NamingBatchesPickAddressNamesInBatchesOfOneClass)
+{
+    const Built& b = Fixture("tail-entry.asm");
+    const DraftPlan plan = MakePlan(b.l1, b.l2, ExportOptions{});
+    const NamingResult naming = NamingBatches(b.l1, b.l2, plan);
+    ASSERT_FALSE(naming.batches.empty());
+    EXPECT_EQ(naming.capped, 0u);
+    uint32_t subjects = 0;
+    bool point = false, data = false;
+    for (size_t i = 0; i < naming.batches.size(); ++i)
+    {
+        const NamingBatch& batch = naming.batches[i];
+        EXPECT_EQ(batch.id, "N" + std::to_string(i + 1));
+        ASSERT_FALSE(batch.subjects.empty());
+        EXPECT_LE(batch.subjects.size(), kNameBatchSubjects);
+        for (const NamingSubject& s : batch.subjects)
+        {
+            EXPECT_EQ(s.code, batch.code) << s.label << ": code and data never share a batch";
+            EXPECT_TRUE(IsAddressName(s.label, s.z80)) << s.label;
+            point = point || !s.entry;
+            data = data || !s.code;
+            ++subjects;
+        }
+    }
+    EXPECT_EQ(subjects, naming.subjects);
+    EXPECT_TRUE(data) << "the variable n";
+    // rj: an absolute JP reaches it (a point); the loop labels only JR / DJNZ reach are no subjects
+    const uint16_t rj = b.symbols.at("rj");
+    bool rjSubject = false;
+    for (const NamingBatch& batch : naming.batches)
+        for (const NamingSubject& s : batch.subjects)
+            rjSubject = rjSubject || (s.z80 == rj && !s.entry);
+    EXPECT_TRUE(point && rjSubject);
+    // Deterministic: the same batches again
+    const NamingResult again = NamingBatches(b.l1, b.l2, MakePlan(b.l1, b.l2, ExportOptions{}));
+    ASSERT_EQ(again.batches.size(), naming.batches.size());
+    for (size_t i = 0; i < again.batches.size(); ++i)
+        EXPECT_EQ(NamingItemClaim(again.batches[i]), NamingItemClaim(naming.batches[i]));
+    // The sheet: at most 2 KB, a disassembly head for code, the resolve line
+    for (const NamingBatch& batch : naming.batches)
+    {
+        const std::string sheet =
+            NamingSheet(batch, b.l1, b.l2, plan, [](const uint8_t*, uint16_t) { return std::string("nop"); });
+        EXPECT_LE(sheet.size(), kNameSheetBytes);
+        EXPECT_NE(sheet.find("op=resolve id=" + batch.id + " names="), std::string::npos) << sheet;
+        if (batch.code)
+            EXPECT_NE(sheet.find("nop | nop"), std::string::npos) << sheet;
+        else
+            EXPECT_NE(sheet.find("reads"), std::string::npos) << sheet;
+    }
+    // Names: an object or an array, addresses in any spelling
+    std::vector<GivenName> names;
+    std::string error;
+    ASSERT_TRUE(ParseGivenNames(R"({"$8068": "PlayerY", "0x8069": {"label": "Lives", "title": "Lives left"}})", names,
+                                error))
+        << error;
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[1].z80, 0x8069);
+    EXPECT_EQ(names[1].title, "Lives left");
+    ASSERT_TRUE(ParseGivenNames(R"([{"at": "8068", "label": "PlayerY"}])", names, error)) << error;
+    EXPECT_FALSE(ParseGivenNames(R"({"nowhere": "X"})", names, error));
+    EXPECT_FALSE(ParseGivenNames(R"([{"label": "X"}])", names, error));
+    EXPECT_FALSE(ParseGivenNames("[]", names, error));
+}
+
+TEST_F(AnalysisL3_Test, ReviewNamesABatchIntoTheDraft)
+{
+    Source source;
+    ASSERT_TRUE(source.Make("tail-entry.asm"));
+    Emulator& emulator = *source.emulator;
+    ASSERT_TRUE(BuildThroughExecute(emulator));
+
+    const Reply list = Execute(emulator, "review", {{"op", "list"}, {"reason", "name"}, {"limit", "1000"}});
+    ASSERT_TRUE(list.Ok()) << list.message;
+    const std::vector<StateNode>& items = Member(list.body, "items").items;
+    ASSERT_FALSE(items.empty()) << list.text;
+    for (const StateNode& item : items)
+        EXPECT_EQ(Member(item, "reason").s, "name");
+    const StateNode& first = items.front();
+    const std::string batch = Member(first, "id").s;
+    ASSERT_EQ(batch, "N1");
+    const std::vector<StateNode>& subjects = Member(first, "subjects").items;
+    ASSERT_FALSE(subjects.empty());
+    const std::string at = Member(subjects.front(), "at").s;
+
+    const Reply shown = Execute(emulator, "review", {{"op", "show"}, {"id", batch}});
+    ASSERT_TRUE(shown.Ok()) << shown.message;
+    EXPECT_LE(Member(shown.body, "sheet_bytes").i, static_cast<int64_t>(kNameSheetBytes));
+    EXPECT_NE(Member(shown.body, "sheet").s.find(at), std::string::npos);
+
+    // Refusals: no names, not a subject, a bad label, names on a finding
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", batch}}).error, Error::BadRequest);
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", batch}, {"names", R"({"$0001": "Nope"})"}}).error,
+              Error::BadRequest);
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", batch}, {"names", "{\"" + at + "\": \"9x\"}"}})
+                  .error,
+              Error::BadRequest);
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", "F1"}, {"names", "{\"" + at + "\": \"X\"}"}})
+                  .error,
+              Error::BadRequest);
+
+    const uint64_t open = static_cast<uint64_t>(Member(Member(list.body, "queue"), "open").i);
+    const Reply resolved = Execute(
+        emulator, "review",
+        {{"op", "resolve"}, {"id", batch}, {"names", "{\"" + at + "\": {\"label\": \"FirstName\", \"title\": \"Named\"}}"}});
+    ASSERT_TRUE(resolved.Ok()) << resolved.message;
+    EXPECT_EQ(static_cast<size_t>(Member(resolved.body, "skipped").i), subjects.size() - 1)
+        << "the subjects left out are skipped";
+    const Reply after = Execute(emulator, "review", {{"op", "list"}, {"reason", "name"}, {"limit", "1000"}});
+    EXPECT_EQ(static_cast<uint64_t>(Member(Member(after.body, "queue"), "open").i) + 1, open) << "the batch is decided";
+    // A second batch may not take the name
+    if (items.size() > 1)
+    {
+        const std::string other = Member(items[1], "id").s;
+        const std::string otherAt = Member(Member(items[1], "subjects").items.front(), "at").s;
+        EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", other}, {"names", "{\"" + otherAt + "\": "
+                                                                                             "\"FirstName\"}"}})
+                      .error,
+                  Error::Conflict);
+    }
+    const Reply skool = Execute(emulator, "export", {{"format", "skool"}, {"ranges", "8000-80FF"}});
+    ASSERT_TRUE(skool.Ok()) << skool.message;
+    EXPECT_NE(Member(skool.body, "content").s.find("@label=FirstName"), std::string::npos)
+        << Member(skool.body, "content").s;
+}
+
+TEST_F(AnalysisL3_Test, ReviewEntryCandidatesAndKindChangesReachTheDraft)
+{
+    Source source;
+    ASSERT_TRUE(source.Make("tail-entry.asm"));
+    Emulator& emulator = *source.emulator;
+    ASSERT_TRUE(BuildThroughExecute(emulator));
+    const std::string shared = Hex4Text(source.At("shared"));
+    const std::string pre = Hex4Text(source.At("pre"));
+
+    const Reply list = Execute(emulator, "review", {{"op", "list"}, {"reason", "entry"}});
+    ASSERT_TRUE(list.Ok()) << list.message;
+    std::string sharedId, preId;
+    for (const StateNode& item : Member(list.body, "items").items)
+    {
+        EXPECT_EQ(Member(item, "reason").s, "entry");
+        if (Member(item, "start").s == shared)
+            sharedId = Member(item, "id").s;
+        if (Member(item, "start").s == pre)
+            preId = Member(item, "id").s;
+    }
+    ASSERT_FALSE(sharedId.empty()) << list.text;
+    ASSERT_FALSE(preId.empty()) << list.text;
+    // The sheet of code never executed: four instructions decoded from the start image
+    const Reply shown = Execute(emulator, "review", {{"op", "show"}, {"id", sharedId}});
+    const std::string sheet = Member(shown.body, "sheet").s;
+    EXPECT_NE(sheet.find("not executed"), std::string::npos) << sheet;
+    EXPECT_NE(sheet.find("verdict=ok (a routine starts here"), std::string::npos) << sheet;
+
+    // pre runs inside the routine pass (executed code, one region up to the entry other): accepted, it splits there
+    const auto ctl = [&]() { return Member(Execute(emulator, "export", {{"format", "ctl"}, {"ranges", "8000-80FF"}}).body,
+                                           "content").s; };
+    EXPECT_EQ(ctl().find("\nc " + pre), std::string::npos) << "not an entry before the review";
+    ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", preId}, {"verdict", "ok"}}).Ok());
+    EXPECT_NE(ctl().find("\nc " + pre), std::string::npos) << ctl();
+    ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", sharedId}, {"verdict", "wrong"}}).Ok());
+
+    // A kind change: the variable n made text, then pre made data
+    const std::string n = Hex4Text(source.At("n"));
+    const Reply claims = Execute(emulator, "findings", {{"kind", "claim"}, {"range", n.substr(1) + "-" + n.substr(1)}});
+    std::string nId;
+    for (const StateNode& f : Member(claims.body, "findings").items)
+        if (Member(f, "start").s == n)
+            nId = Member(f, "id").s;
+    ASSERT_FALSE(nId.empty()) << claims.text;
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "buffer"}}).error, Error::BadRequest);
+    ASSERT_TRUE(Execute(emulator, "review", {{"op", "resolve"}, {"id", nId}, {"kind", "text"}}).Ok());
+    EXPECT_NE(ctl().find("\nt " + n), std::string::npos) << ctl();
+
+    // Paging: offset 1 shows the second item of the same queue
+    const Reply all = Execute(emulator, "review", {{"op", "list"}, {"limit", "1000"}});
+    const Reply paged = Execute(emulator, "review", {{"op", "list"}, {"offset", "1"}, {"limit", "1000"}});
+    const std::vector<StateNode>& a = Member(all.body, "items").items;
+    const std::vector<StateNode>& p = Member(paged.body, "items").items;
+    ASSERT_GE(a.size(), 2u);
+    ASSERT_EQ(p.size() + 1, a.size());
+    EXPECT_EQ(Member(p.front(), "id").s, Member(a[1], "id").s);
+    EXPECT_EQ(Execute(emulator, "review", {{"op", "list"}, {"reason", "nonsense"}}).error, Error::BadRequest);
 }

@@ -10,7 +10,7 @@
 ///
 /// A spec (JSON):
 /// @code
-///   {"id": "e1", "finding": "F12", "claim": "the cheat code opens the cavern select",
+///   {"id": "e1", "finding": "F12", "claim": "the key sequence opens the level select",
 ///    "from": "start" | "end" | <frames after the first keyframe> | "frame:<n>",
 ///    "poke": {"$8100": 5}, "regs": {"a": "$10", "pc": "$8000"},
 ///    "input": [{"frame": 0, "key": "Q"}, {"frame": 10, "key": "Q", "up": true},

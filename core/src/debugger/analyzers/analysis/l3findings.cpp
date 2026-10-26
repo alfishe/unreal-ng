@@ -85,13 +85,15 @@ const char* FindingKindName(FindingKind kind)
             return "note";
         case FindingKind::Experiment:
             return "experiment";
+        case FindingKind::Entry:
+            return "entry";
     }
     return "claim";
 }
 
 bool ParseFindingKind(const std::string& text, FindingKind& kind)
 {
-    for (int k = 0; k <= static_cast<int>(FindingKind::Experiment); ++k)
+    for (int k = 0; k <= static_cast<int>(FindingKind::Entry); ++k)
         if (text == FindingKindName(static_cast<FindingKind>(k)))
         {
             kind = static_cast<FindingKind>(k);
@@ -291,6 +293,27 @@ std::vector<Finding> BaseFindings(const L1Result& l1, const L2Result& l2)
             out.push_back(std::move(f));
         }
         a = b + 1;
+    }
+
+    // Entry candidates: jump targets that may start a routine of their own
+    for (const EntryCandidate& c : l2.entryCandidates)
+    {
+        Finding f;
+        f.kind = FindingKind::Entry;
+        f.status = FindingStatus::Inferred;
+        f.start = f.end = c.z80;
+        f.subject = c.rule;
+        f.source = "code_map";
+        f.confidence = 400;
+        f.at = c.z80;
+        f.claim = Hex4(c.z80) + " may start a routine of its own (" + c.rule + "): " + c.why;
+        std::string sites;
+        for (size_t i = 0; i < c.sources.size() && i < 8; ++i)
+            sites += (i ? " " : "") + Hex4(c.sources[i]);
+        f.evidence.push_back("jumped to from " + sites);
+        for (size_t i = 0; i < c.sources.size() && f.refs.size() < 8; ++i)
+            f.refs.push_back(Hex4(c.sources[i]));
+        out.push_back(std::move(f));
     }
 
     for (size_t i = 0; i < out.size(); ++i)

@@ -40,6 +40,12 @@ struct ExportNote
     std::string label;  ///< empty: the draft's own
     std::string title;
     std::vector<std::string> comments;
+    /// The kind the review gave [address, kindEnd] ("code", "text", "data", "sprite", ...; RegionKindName): the range
+    /// becomes one entry of that kind (code: decoded from the start image), the claims under it leave the fields and
+    /// geometry JSON. Empty: the draft's own.
+    std::string kind;
+    uint16_t kindEnd = 0;
+    bool entry = false;  ///< a routine starts here (an entry candidate the review accepted): the code entry splits
 };
 
 struct ExportOptions
@@ -51,7 +57,9 @@ struct ExportOptions
     uint16_t defbWidth = 8;               ///< bytes per DEFB line (skool2asm writes them as they are)
     std::string symbolCodec = "skoolkit-ctl";
     /// L3 notes by Z80 address. At an entry's start: its label (unless another entry has it), its title, comments
-    /// first in its description; inside an entry: a comment line "$XXXX: ..." in the entry's description
+    /// first in its description; inside an entry: the label replaces the draft's point label there (or starts one;
+    /// a comment line "$XXXX: named ..." where no label can go: inside an instruction), the title and comments are
+    /// comment lines "$XXXX: ..." in the entry's description
     std::map<uint16_t, ExportNote> notes;
 };
 
@@ -92,6 +100,9 @@ struct DraftEntry
 struct DraftPlan
 {
     std::vector<DraftEntry> entries;
+    std::map<uint16_t, std::string> labels;          ///< every label: entry starts and points inside entries
+    std::map<uint16_t, std::vector<uint16_t>> refs;  ///< labelled address -> the instructions that refer to it
+    std::map<uint16_t, bool> relativeOnly;           ///< labelled address -> only JR / DJNZ refer to it
     std::vector<ExportRange> ranges;
     uint16_t regionStart = 0;   ///< the moved region of the relocation layout
     uint16_t shiftEnd = 0;      ///< the fixed tail starts here (= the end of the region + 1 when there is none)

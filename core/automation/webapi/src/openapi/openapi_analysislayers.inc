@@ -225,7 +225,8 @@
             schema["type"] = "object";
             for (const auto& [name, text] : fields)
             {
-                const bool object = std::string(name) == "spec" || std::string(name) == "experiment";
+                const bool object = std::string(name) == "spec" || std::string(name) == "experiment" ||
+                                    std::string(name) == "names";
                 if (object)
                     for (const char* type : {"object", "array", "string"})
                         schema["properties"][name]["oneOf"].append(Json::Value(Json::objectValue))["type"] = type;
@@ -249,7 +250,7 @@
         };
         const std::vector<std::pair<const char*, const char*>> findingsFields = {
             {"op", "list (default) or add (POST: a note)"},
-            {"kind", "claim, conflict, bug, routine, unknown, coverage, note, experiment"},
+            {"kind", "claim, conflict, bug, routine, unknown, coverage, note, experiment, entry"},
             {"status", "observed, inferred, refuted, confirmed (add: the note's status)"},
             {"range", "Hex start-end (list: overlapping; add: the note's range)"},
             {"limit", "The most findings answered (default 200)"},
@@ -283,14 +284,20 @@
         }
         const std::vector<std::pair<const char*, const char*>> reviewFields = {
             {"op", "next (default), list, show, resolve"},
-            {"id", "show / resolve: the finding (F12)"},
+            {"id", "show / resolve: the finding (F12) or the naming batch (N3)"},
             {"verdict", "resolve: ok (confirmed), wrong (refuted), skip (out of the queue)"},
             {"label", "resolve: the entry's label in the draft"},
             {"title", "resolve: the entry's title in the draft"},
             {"comment", "resolve: a comment in the draft"},
+            {"kind", "resolve: what the draft makes of the finding's range (code, data, text, font, sprite, tile, "
+                     "screen, variable, pointer_table, handler_table, rng, music, packed, level_map, unused)"},
+            {"names", "resolve of a naming batch: {\"$9000\": \"PlayerY\", \"$9A10\": {\"label\": ..., \"title\": "
+                      "...}} or [{\"at\", \"label\", \"title\"}]; the subjects left out are skipped"},
             {"by", "resolve: who decided (default agent)"},
             {"experiment", "resolve: an experiment spec whose result marks the finding"},
             {"ranges", "Hex Z80 ranges, comma separated (default 4000-FFFF)"},
+            {"reason", "list / next: one reason (bug, conflict, unnamed-hot, low-confidence, unknown, entry, name)"},
+            {"offset", "list / next: items of the queue skipped (default 0)"},
             {"limit", "The queue's cap (default 40; the rest is one summary)"}};
         for (const char* method : {"get", "post"})
         {
@@ -299,9 +306,10 @@
             op["tags"].append("Analyzers");
             op["description"] =
                 "Only the findings that need a decision: candidate bugs, conflicts, unnamed hot routines, low "
-                "confidence claims and unknown areas over 16 bytes, in a fixed order, capped with one summary item. "
+                "confidence claims, unknown areas over 16 bytes, entry candidates, then naming batches (N1..: up to 10 "
+                "draft labels named after their address, a 2 KB sheet), in a fixed order, capped with one summary item. "
                 "next answers the next item with a fact sheet under 1 KB; resolve writes the decision into the register "
-                "and the draft export (label, title, comment).";
+                "and the draft export (label, title, comment, kind; a batch's names).";
             if (std::string(method) == "get")
                 queryOf(op, reviewFields);
             else
@@ -310,9 +318,10 @@
                 bodyOf(op, reviewFields);
             }
             op["responses"]["200"]["description"] = "next / show: item, sheet, sheet_bytes, queue; list: items, queue "
-                                                    "(open, shown, resolved, summary, by_reason); resolve: finding, experiments; text";
+                                                    "(open, shown, offset, resolved, summary, reason, by_reason); resolve: "
+                                                    "finding, kind, experiments (a batch: batch, named, skipped); text";
             op["responses"]["400"]["description"] = "An unknown op or verdict, a bad label, a resolve with no decision";
-            op["responses"]["404"]["description"] = "No such finding";
+            op["responses"]["404"]["description"] = "No such finding or naming batch";
             op["responses"]["409"]["description"] = "No L2 yet (build first), a label already used";
         }
         {

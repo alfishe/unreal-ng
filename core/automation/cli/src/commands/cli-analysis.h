@@ -13,6 +13,7 @@
 ///   analysis gallery [<kind>] [<address> [<path>]] [scale=<n>] [limit=<n>]   (L2 graphics; one as a PNG)
 ///   analysis findings [list|add] [kind=<k>] [status=<s>] [range=<r>] [format=table|markdown|jsonl] [path=<file>]
 ///   analysis review [next|list|show|resolve] [<id>] [ok|wrong|skip] [label=<l>] [title=<t>] [comment=<c>]
+///                   [kind=<region kind>] [names=<json>] [experiment=<json>] [reason=<r>] [offset=<n>] [limit=<n>]
 ///   analysis experiment <spec.json | {json}> [finding=<id>] [parallel=<n>]   (L3 experiments, l3experiment.h)
 ///   analysis cover [<budget>] [frames=<n>] [ranges=<r,...>]                 (L3 directed coverage)
 
@@ -27,7 +28,8 @@ inline constexpr const char* kUsage =
     "[wait=MS] | cancel | explain <address> [page] [routine|byte] | query [kind] [range] [limit=N] | export <format> "
     "[path] [ranges=5900-59FF,8000-FFFF] [width=N] | gallery [font|sprite|tile|screen|level_map] [address [path.png]] "
     "[scale=N] [limit=N] | findings [list|add] [kind=K] [status=S] [format=table|markdown|jsonl] [path=F] | review "
-    "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] | experiment <spec.json|{json}> "
+    "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] [kind=K] [names={json}] "
+    "[reason=R] [offset=N] | experiment <spec.json|{json}> "
     "[finding=ID] | cover [budget] [frames=N] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name

@@ -6504,8 +6504,9 @@ public:
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
         // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
-        // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=} (or the op), experiment {spec=<JSON
-        // text>, path=, finding=} (or the spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
+        // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
+        // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
+        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");

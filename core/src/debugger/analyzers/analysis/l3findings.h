@@ -7,8 +7,8 @@
 /// fixed order. The review queue (l3review.h) picks the ones that need a decision; resolving one, an experiment
 /// (l3experiment.h) or the coverage driver (l3coverage.h) writes back into the register and into the draft export.
 ///
-/// The base register comes from one build: claims in the store's order, then conflicts, candidate bugs, hot routines
-/// and unknown areas, each group in address order; ids F1.. in that order, so one recording gives the same ids on
+/// The base register comes from one build: claims in the store's order, then conflicts, candidate bugs, hot routines,
+/// unknown areas and entry candidates, each group in address order; ids F1.. in that order, so one recording gives the same ids on
 /// every compiler. What the review adds (notes, coverage, experiments) follows, numbered on.
 ///
 /// @code
@@ -37,6 +37,7 @@ enum class FindingKind : uint8_t
     Coverage,    ///< a branch never taken in the session, and what flipped it (l3coverage.h)
     Note,        ///< added by an agent or a human
     Experiment,  ///< an experiment's result with no finding of its own
+    Entry,       ///< a jump target that may start a routine of its own (L2Result::entryCandidates)
 };
 const char* FindingKindName(FindingKind kind);
 bool ParseFindingKind(const std::string& text, FindingKind& kind);

@@ -47,6 +47,7 @@ ADDR = r'(\$[0-9A-Fa-f]+|0x[0-9A-Fa-f]+|\d+)'
 SKOOL_INSTR = re.compile(r'^([bcgistuw *!|>])' + ADDR + r'(?:\s+(.*))?$')
 CTL_ENTRY = re.compile(r'^([bcgistuw])\s+' + ADDR + r'(?:\s+(.*))?$')
 CTL_SUB = re.compile(r'^([BCSTW])\s+' + ADDR + r'(?:,([^\s]*))?(?:\s+(.*))?$')
+CTL_LABEL = re.compile(r'^@\s+' + ADDR + r'\s+label=(\S+)')
 
 
 def parse_int(text):
@@ -162,6 +163,7 @@ class Entry:
         self.header = []            # comment lines above the entry
         self.lines = []             # (address, op) for skool, sub-blocks for ctl
         self.sections = []          # (start address, comment text) split at mid-block comments
+        self.labels = {}            # address -> @label (the entry's own and its entry points)
         self.end = None
 
 
@@ -178,6 +180,7 @@ class Draft:
         self.graphic_claims = []    # (start, end, macro text) from draft comments
         self.graphic_text = {}      # start -> the section's comment text
         self.boundaries = set()     # entry starts, sub-block starts (ctl), mid-block comment starts (skool)
+        self.labels = {}            # address -> label (@label in a skool, '@ $XXXX label=' in a ctl)
 
 
 def include_state(stack, modes):
@@ -193,9 +196,13 @@ def parse_skool(path, isub=False):
     pending = []
     entry = None
     in_entry_body = False
+    label = None
     with open(path, encoding='utf-8', errors='replace') as f:
         for raw in f:
             line = raw.rstrip('\n').rstrip()
+            if line.startswith('@label=') and include_state(stack, modes):
+                label = line[len('@label='):].strip() or None
+                continue
             if line.startswith('@'):
                 m = re.match(r'@(' + '|'.join(ASM_BLOCKS) + r')([+-])(begin|else|end)\b', line)
                 if m:
@@ -244,6 +251,9 @@ def parse_skool(path, isub=False):
             elif pending:
                 entry.sections.append((address, '\n'.join(pending)))
                 pending = []
+            if label:
+                entry.labels[address] = label
+                label = None
             entry.lines.append((address, op))
     return entries
 
@@ -275,6 +285,7 @@ def build_skool(path, isub=False):
             d.line_cat[a] = lcat
             d.entry_ctl[a] = e.ctl
     for e in entries:
+        d.labels.update(e.labels)
         d.boundaries.update(s for s, _ in e.sections)
         starts = [s for s, _ in e.sections] + [e.end or e.address]
         for k, (start, text) in enumerate(e.sections):
@@ -291,6 +302,13 @@ def build_ctl(path, end_default=0x10000):
     with open(path, encoding='utf-8', errors='replace') as f:
         for raw in f:
             line = raw.rstrip()
+            m = CTL_LABEL.match(line)
+            if m:
+                try:
+                    d.labels[parse_int(m.group(1))] = m.group(2)
+                except ValueError:
+                    pass
+                continue
             m = CTL_ENTRY.match(line)
             if m:
                 try:
@@ -838,6 +856,212 @@ def record_scores(expected, fields):
             'records': out, 'complete': complete, 'total': len(out)}
 
 
+# ---------------------------------------------------------------- names
+
+VOCABULARY = __import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),
+                                        'name_vocabulary.json')
+NAME_CLASSES = ['missing', 'auto', 'exact', 'normalized', 'judge']
+
+
+class Vocabulary:
+    """The generic naming vocabulary (name_vocabulary.json): generated-label prefixes, stopwords, synonyms."""
+
+    def __init__(self, path=None):
+        data = load_json(path or VOCABULARY)
+        self.prefixes = sorted((p.lower() for p in data.get('auto_prefixes', [])), key=len, reverse=True)
+        self.stopwords = set(w.lower() for w in data.get('stopwords', []))
+        self.synonyms = {k.lower(): v.lower() for k, v in data.get('synonyms', {}).items()}
+
+    def is_auto(self, label, address):
+        """A generated label: a known prefix (or none) and a 4-digit hex address, the label's own or near it."""
+        m = re.fullmatch(r'([A-Za-z_]*?)_?\$?([0-9A-Fa-f]{4})', label)
+        if not m:
+            return False
+        prefix = m.group(1).lower()
+        if int(m.group(2), 16) == address:
+            return True
+        return prefix in [p.rstrip('_') for p in self.prefixes]
+
+    def canonical(self, token):
+        t = token.lower()
+        if t in self.synonyms:
+            return self.synonyms[t].split()
+        s = stem(t)
+        if s in self.synonyms:
+            return self.synonyms[s].split()
+        return [s]
+
+    def tokens(self, text):
+        """Meaningful tokens of a label or a title: split at case changes, '_', digits and punctuation; stemmed,
+        synonyms mapped, stopwords and numbers dropped."""
+        out = []
+        for raw in split_words(text):
+            if raw.isdigit() or raw.lower() in self.stopwords:
+                continue
+            for t in self.canonical(raw):
+                if t not in self.stopwords and not t.isdigit():
+                    out.append(t)
+        return out
+
+
+def stem(word):
+    """A small English suffix stripper: plurals, -ing, -ed (enough to match labels against titles)."""
+    w = word.lower()
+    if len(w) > 4 and w.endswith('ies'):
+        return w[:-3] + 'y'
+    if len(w) > 4 and w.endswith('sses'):
+        return w[:-2]
+    if len(w) > 5 and w.endswith('ing'):
+        return w[:-3]
+    if len(w) > 4 and w.endswith('ed') and not w.endswith('eed'):
+        return w[:-2]
+    if len(w) > 3 and w.endswith('es') and w[-3] in 'sxz':
+        return w[:-2]
+    if len(w) > 3 and w.endswith('s') and not w.endswith('ss'):
+        return w[:-1]
+    return w
+
+
+def split_words(text):
+    """CamelCase, snake_case, ALLCAPS and plain words: 'HGuardianTable' -> H Guardian Table"""
+    words = []
+    for part in re.split(r'[^A-Za-z0-9]+', text or ''):
+        words += re.findall(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+', part)
+    return words
+
+
+def plain(label):
+    return re.sub(r'[^a-z0-9]', '', (label or '').lower())
+
+
+def name_class(vocab, address, draft_label, ref_label, ref_title):
+    """missing / auto / exact / normalized / judge for one reference name (see names_scores)."""
+    if not draft_label:
+        return 'missing'
+    if vocab.is_auto(draft_label, address):
+        return 'auto'
+    if ref_label and plain(draft_label) == plain(ref_label):
+        return 'exact'
+    words = vocab.tokens(draft_label)
+    if not words:
+        return 'judge'
+    ref_words = set(vocab.tokens(ref_label or '')) | set(vocab.tokens(ref_title or ''))
+    joined = plain(ref_label)
+    for w in words:
+        if w in ref_words:
+            continue
+        # an ALLCAPS reference label is one token: the draft's word inside it counts ("guard" in HGUARDS)
+        if len(w) >= 4 and joined and w[:max(4, len(w) - 2)] in joined:
+            continue
+        return 'judge'
+    return 'normalized'
+
+
+def first_sentence(text):
+    text = ' '.join((text or '').split())
+    m = re.match(r'(.+?[.!?])(\s|$)', text)
+    return (m.group(1) if m else text)[:160]
+
+
+def name_points(d, lo, hi):
+    """address -> (label, title, kind) of a disassembly: every entry (kind 'entry') and every other label
+    (kind 'point'); a title is the entry title, or the mid-block comment at the point"""
+    points = {}
+    for e in d.entries:
+        if lo <= e.address < hi:
+            points[e.address] = [d.labels.get(e.address), e.title, 'entry', e.ctl]
+        sections = dict(e.sections[1:])
+        for start, label in e.labels.items():
+            if lo <= start < hi and start != e.address:
+                # the mid-block comment at the point, else the title of the entry around it
+                points[start] = [label, first_sentence(sections.get(start, '')) or e.title, 'point', e.ctl]
+    for address, label in d.labels.items():
+        if lo <= address < hi and address not in points:
+            points[address] = [label, '', 'point', d.entry_ctl.get(address, '')]
+    return points
+
+
+def names_scores(draft, ref, lo, hi, vocab=None, judged=None):
+    """Names with the same meaning as the reference (plan.md, A/B harness). Each reference entry and each
+    reference @label in the range is one name; the draft's label at the same address is classified:
+
+      missing     the draft has no label there
+      auto        a generated label (name_vocabulary.json prefixes + the address: sub_8ABB, L8029, var_8068)
+      exact       the same identifier, case and '_' aside (CavernName = CAVERNNAME)
+      normalized  every meaningful word of the draft's label (CamelCase / '_' split, stemmed, synonyms, no
+                  stopwords) is in the reference's label or title (MoveHorizontalGuardians ~ "Move the
+                  horizontal guardians")
+      judge       named, but no deterministic match: a judge decides (the pairs file, --names-judged)
+
+    `judged` ({address: 'same' | 'close' | 'different' | 'wrong'}) completes the judge rows."""
+    vocab = vocab or Vocabulary()
+    rp = name_points(ref, lo, hi)
+    dp = name_points(draft, lo, hi)
+    pairs = []
+    for address in sorted(rp):
+        ref_label, ref_title, kind, ref_ctl = rp[address]
+        if not ref_label and not ref_title:
+            continue
+        d = dp.get(address)
+        draft_label = d[0] if d else None
+        draft_title = d[1] if d and d[2] == 'entry' else (d[1] if d else '')
+        cls = name_class(vocab, address, draft_label, ref_label, ref_title)
+        row = {'address': '$%04X' % address, 'kind': kind, 'ref_ctl': ref_ctl, 'ref_label': ref_label or '',
+               'ref_title': ref_title or '', 'draft_label': draft_label or '', 'draft_title': draft_title or '',
+               'class': cls}
+        if judged and cls == 'judge' and address in judged:
+            row['judge'] = judged[address]
+        pairs.append(row)
+
+    def count(rows, cls):
+        return sum(1 for r in rows if r['class'] == cls)
+
+    def block(rows):
+        n = len(rows)
+        same = count(rows, 'exact') + count(rows, 'normalized')
+        out = {'total': n}
+        for c in NAME_CLASSES:
+            out[c] = count(rows, c)
+        out['named'] = out['exact'] + out['normalized'] + out['judge']
+        out['auto_pct'] = round(100.0 * (out['auto'] + out['missing']) / n, 2) if n else None
+        out['same'] = same
+        out['same_pct'] = round(100.0 * same / n, 2) if n else None
+        if judged is not None:
+            jsame = sum(1 for r in rows if r.get('judge') == 'same')
+            out['judged'] = sum(1 for r in rows if 'judge' in r)
+            out['same_with_judge'] = same + jsame
+            out['same_with_judge_pct'] = round(100.0 * (same + jsame) / n, 2) if n else None
+        return out
+
+    return {'all': block(pairs), 'entries': block([r for r in pairs if r['kind'] == 'entry']),
+            'points': block([r for r in pairs if r['kind'] == 'point']), 'pairs': pairs}
+
+
+PAIR_COLUMNS = ['address', 'kind', 'class', 'ref_label', 'ref_title', 'draft_label', 'draft_title', 'judge']
+
+
+def write_pairs(path, pairs):
+    """The name pairs as TSV, one reference name a row; a judge fills the `judge` column of the judge rows
+    (same / close / different / wrong) and hands the file back with --names-judged"""
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('\t'.join(PAIR_COLUMNS) + '\n')
+        for r in pairs:
+            f.write('\t'.join(str(r.get(c, '')).replace('\t', ' ').replace('\n', ' ') for c in PAIR_COLUMNS) + '\n')
+
+
+def read_judged(path):
+    """{address: verdict} from a pairs TSV whose judge column is filled"""
+    out = {}
+    with open(path, encoding='utf-8') as f:
+        header = f.readline().rstrip('\n').split('\t')
+        for line in f:
+            row = dict(zip(header, line.rstrip('\n').split('\t')))
+            verdict = row.get('judge', '').strip().lower()
+            if verdict:
+                out[parse_int(row['address'])] = verdict
+    return out
+
+
 # ---------------------------------------------------------------- output
 
 def print_table(res, out):
@@ -908,6 +1132,26 @@ def report_text(rep, out, verbose=False):
             out.write('| %s | %d | %s |\n' % (r['record'], r['expected_fields'],
                                              'n/a' if r['matched'] is None else r['matched']))
         out.write('\n')
+    report_names(rep, out)
+
+
+def report_names(rep, out):
+    n = rep.get('names')
+    if not n:
+        return
+    a = n['all']
+    out.write('## Names: %d of %d reference names the same (%s %%: %d exact, %d normalized); %d need a judge, '
+              '%d auto, %d missing\n\n' % (a['same'], a['total'], a['same_pct'], a['exact'], a['normalized'],
+                                             a['judge'], a['auto'], a['missing']))
+    out.write('| names | total | missing | auto | exact | normalized | needs judge | same %s|\n' % (
+        '| same with the judge ' if 'judged' in a else ''))
+    out.write('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |%s\n' % (' ---: |' if 'judged' in a else ''))
+    for key, title in (('entries', 'entries'), ('points', 'entry points'), ('all', 'all')):
+        b = n[key]
+        out.write('| %s | %d | %d | %d | %d | %d | %d | %s %% |%s\n' % (
+            title, b['total'], b['missing'], b['auto'], b['exact'], b['normalized'], b['judge'], b['same_pct'],
+            ' %s %% |' % b['same_with_judge_pct'] if 'judged' in b else ''))
+    out.write('\n')
 
 
 def default_refs(ref_path):
@@ -917,7 +1161,8 @@ def default_refs(ref_path):
 
 
 def score(draft_path, ref_path, start=None, end=None, expected_path=None, fields_path=None,
-          geometry_path=None, split_vars=False, isub=False, ref_files=None, macro_geometry=False):
+          geometry_path=None, split_vars=False, isub=False, ref_files=None, macro_geometry=False,
+          names_judged=None, vocabulary=None):
     draft = load_draft(draft_path, isub)
     ref = build_skool(ref_path, isub)
     defs = load_defs(default_refs(ref_path) if ref_files is None else ref_files, ref_path)
@@ -943,6 +1188,8 @@ def score(draft_path, ref_path, start=None, end=None, expected_path=None, fields
         'graphics': graphics_scores(draft, ref, start, end, geometry,
                                     expected.get('graphics') if expected and not macro_geometry else None, defs),
         'records': record_scores(expected, fields),
+        'names': names_scores(draft, ref, start, end, Vocabulary(vocabulary),
+                              read_judged(names_judged) if names_judged else None),
     }
 
 
@@ -964,9 +1211,14 @@ def main(argv=None):
     ap.add_argument('--split-vars', action='store_true', help='count g entries as their own category')
     ap.add_argument('--isub', action='store_true', help='read skool files in @isub mode')
     ap.add_argument('-v', '--verbose', action='store_true', help='list every graphics region')
+    ap.add_argument('--names-pairs', metavar='OUT', help='write the name pairs (TSV) for a judge')
+    ap.add_argument('--names-judged', metavar='FILE', help='a pairs TSV with the judge column filled')
+    ap.add_argument('--vocabulary', help='naming vocabulary JSON (default name_vocabulary.json)')
     a = ap.parse_args(argv)
     rep = score(a.draft, a.reference, a.start, a.end, a.expected, a.fields, a.geometry, a.split_vars, a.isub, a.ref,
-                macro_geometry=a.macro_geometry)
+                macro_geometry=a.macro_geometry, names_judged=a.names_judged, vocabulary=a.vocabulary)
+    if a.names_pairs:
+        write_pairs(a.names_pairs, rep['names']['pairs'])
     if a.json == '-':
         json.dump(rep, sys.stdout, indent=1)
         sys.stdout.write('\n')

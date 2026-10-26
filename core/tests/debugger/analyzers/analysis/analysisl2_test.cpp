@@ -69,8 +69,10 @@ protected:
     const Built* _built = nullptr;
 
     /// Assemble, record @p frames frames, replay, run the detectors: once per fixture (the machine, the recording
-    /// and the replay are ~25 ms; the tests reading one fixture share them)
-    const Built& Run(const std::string& fixture, unsigned frames = 3, bool kempston = false)
+    /// and the replay are ~25 ms; the tests reading one fixture share them). @p source (non-empty) replaces the
+    /// fixture's text (a mutation; @p fixture then only names the cache entry).
+    const Built& Run(const std::string& fixture, unsigned frames = 3, bool kempston = false,
+                     const std::string& source = std::string())
     {
         const std::string key = fixture + "/" + std::to_string(frames) + (kempston ? "/kempston" : "");
         if (const auto it = Cache().find(key); it != Cache().end())
@@ -98,7 +100,7 @@ protected:
             context->pSoundManager->mute();
         context->pMemory->UpdateFeatureCache();
 
-        built.assembled = Z80TextAssembler().Assemble(ReadFixture(fixture), 0x8000);
+        built.assembled = Z80TextAssembler().Assemble(source.empty() ? ReadFixture(fixture) : source, 0x8000);
         EXPECT_TRUE(built.assembled.ok) << fixture << ":" << built.assembled.error.line << ": "
                                         << built.assembled.error.message;
         bool ok = built.assembled.ok;
@@ -282,6 +284,47 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_EntriesAfterJumps)
     EXPECT_FALSE(IsEntry(At("skip"))) << "a forward conditional skip over a JP";
     EXPECT_FALSE(IsEntry(At("loop"))) << "a loop head entered at its test (JR test jumps over it)";
     EXPECT_TRUE(IsEntry(At("first")));
+}
+
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_TailEntries)
+{
+    const auto candidate = [this](uint16_t z80) -> const EntryCandidate* {
+        for (const EntryCandidate& c : _built->l2.entryCandidates)
+            if (c.z80 == z80)
+                return &c;
+        return nullptr;
+    };
+    Run("tail-entry.asm");
+    ASSERT_FALSE(HasFailure());
+    EXPECT_TRUE(IsEntry(At("tail"))) << "one conditional JP after a tail jump, closed code";
+    EXPECT_EQ(candidate(At("tail")), nullptr);
+    // Negative: code that returns or jumps back into the code before it stays inside its routine
+    EXPECT_FALSE(IsEntry(At("done")));
+    EXPECT_FALSE(IsEntry(At("back")));
+    EXPECT_EQ(candidate(At("done")), nullptr);
+    EXPECT_EQ(candidate(At("back")), nullptr);
+    // Candidates: closed code from two sites, straight code from two sites that runs into a routine
+    EXPECT_FALSE(IsEntry(At("shared")));
+    ASSERT_NE(candidate(At("shared")), nullptr);
+    EXPECT_EQ(candidate(At("shared"))->rule, "tail");
+    EXPECT_EQ(candidate(At("shared"))->sources.size(), 2u);
+    EXPECT_FALSE(IsEntry(At("pre")));
+    ASSERT_NE(candidate(At("pre")), nullptr);
+    EXPECT_EQ(candidate(At("pre"))->rule, "prologue");
+    EXPECT_EQ(_built->l2.entryCandidates.size(), 2u);
+    EXPECT_TRUE(IsEntry(At("other")));
+
+    // Mutation: a RET instead of the tail jump before `tail` (the code before may come back) keeps it a candidate
+    std::string mutated = ReadFixture("tail-entry.asm");
+    const std::string jump = "        jp other\ntail:";
+    const size_t at = mutated.find(jump);
+    ASSERT_NE(at, std::string::npos);
+    mutated.replace(at, jump.size(), "        ret\ntail:");
+    Run("tail-entry.asm#ret", 3, false, mutated);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_FALSE(IsEntry(At("tail")));
+    ASSERT_NE(candidate(At("tail")), nullptr);
+    EXPECT_EQ(candidate(At("tail"))->rule, "tail");
 }
 
 // ---------------------------------------------------------------------------------------------------- text

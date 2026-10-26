@@ -138,6 +138,9 @@ def main():
     parser.add_argument('--no-kempston', action='store_true')
     parser.add_argument('--l3', action='store_true', help='also dump findings / review / cover (P5) before the exports')
     parser.add_argument('--cover-budget', type=int, default=64)
+    parser.add_argument('--keep', action='store_true',
+                        help='leave unreal-qt running with the built analysis (a review agent takes it over); '
+                             'stop it with the pid in session.json')
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -193,11 +196,20 @@ def main():
         with open(os.path.join(out, 'conflicts.txt'), 'w') as f:
             f.write(r.text)
         report['frames'] = player.frames
+        if args.keep:
+            report['kept'] = {'pid': process.pid, 'mcp': f'http://127.0.0.1:{args.port_base + 200}/mcp',
+                              'webapi': f'http://127.0.0.1:{args.port_base}'}
         with open(os.path.join(out, 'session.json'), 'w') as f:
             json.dump(report, f, indent=1)
+    except BaseException:
+        args.keep = False
+        raise
     finally:
-        process.terminate()
-        process.wait(timeout=20)
+        if args.keep:
+            print(f'kept: pid {process.pid}, MCP http://127.0.0.1:{args.port_base + 200}/mcp')
+        else:
+            process.terminate()
+            process.wait(timeout=20)
 
 
 if __name__ == '__main__':

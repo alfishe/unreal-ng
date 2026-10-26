@@ -104,13 +104,82 @@ Gate: pass (all 7 steps). Verdict: fail, as expected for the draft alone: 2 code
 The review-only agent run by the recipe ([analysis-layers.md](../../../../.recipe/analysis/analysis-layers.md)) is the
 run that has to close both; `run_ab.py` judges it with its ledger.
 
+## Run C: the review agent
+
+One agent run by the recipe on the P5 draft (review only, no disassembly of its own), judged by `run_ab.py` with its
+ledger:
+
+| Measure | Run C | Run B |
+| --- | ---: | ---: |
+| subagent tokens | **60,627** (18 tool calls) | 2,034,851 (806) |
+| gate (7 steps) | pass | pass |
+| byte categories (by entry) | 99.98 % | 92.26 % |
+| code entries | 31 / 33 | 33 / 33 |
+| graphics with the right geometry | 106 / 106 | 0 / 106 |
+| records found | 5 / 5 | n/a |
+| names the same (exact + normalized, below) | 2 / 142 (1.41 %): 2 exact, 4 for a judge, 131 generated, 5 missing | 50 / 142 (35.21 %) |
+
+Verdict: **fail**. The tokens are 3 % of run B's, but the queue gave the agent no way to reach the two missing entries
+($8684, $8944) and no naming task: of the draft's 449 labels the agent made 7 meaningful, the rest stayed generated
+(`var_8068`, `L8029`). P5b adds both to the review and measures the names.
+
+## P5b: names, entry candidates, naming batches
+
+**Names metric.** `score_draft.py` now scores labels: each reference entry and inner label of mm.skool in $8000-$FFFF
+(142) against the draft's label at the same address: `exact` (same text), `normalized` (the same words after case,
+`_`, digits and the synonyms of `name_vocabulary.json`), `judge` (a meaningful name that differs, left to a reader),
+`auto` (a generated `var_` / `L` / `sub_` name), `missing` (no label). "The same" = exact + normalized; `run_ab.py`
+prints the rows for the draft and for run B's final skool and writes `names-pairs.tsv`; `quality_ok` now also needs
+names the same >= run B's.
+
+**Entries.** One rule and one review reason in the code map:
+
+- A conditional tail call is an entry: a target reached only by one forward conditional `JP`, right after an
+  unconditional `JP` to a known entry, whose code never returns into the routine before it. On Manic Miner it adds
+  **$8944** and nothing else (the ctl differs from P5 by one line, `c $8944`); the other 31 entries and the 303
+  entries of P5 stay.
+- The weaker shapes become `entry` review items (`rule` prologue or tail, confidence 400) instead of entries: a
+  prologue of straight code jumped to from 2+ sites that runs into an entry, a closed tail reached by several jumps.
+  Manic Miner has **5**: $8684 (prologue, a real entry in mm.skool), $88A8 and $88FF (tail), $8C7B and $8FDF
+  (prologue), the last four are inner points in mm.skool (`*` lines). As an automatic rule the prologue shape would
+  have added those 4 false entries, so $8684 stays a review decision: `verdict=ok` makes it an entry, `wrong` drops
+  it.
+
+**Naming batches.** After the five frozen reasons and `entry`, the queue offers `name` items: batches `N1..` of at most
+10 subjects with an address name (`var_`, `L`, `sub_`, ...) and one class (code, data), each sheet at most 2 KB, at
+most 40 batches, deterministic (address order). Manic Miner over the session's ranges: **22 batches, 198 subjects**, not
+capped (24 / 198 without a range filter: 2 more batches in the screen); the first sheet 1515 bytes. The subjects hold
+**118 of the 142** reference names (94 of 99 entries, 24 of 43 inner points); the 24 left: 12 loop points reached only by
+`JR` / `DJNZ` (the subject rules skip those), 5 addresses with no label in the draft ($805F $80C5 $8260 $8854 $A800)
+and 7 data entries the rules leave out (untouched / unused $841B $845E $934C, $8408 $841F, graphics $B2E0 $C2E0 inside
+a copied block).
+
+The queue of the fresh session (no agent): 135 open = bug 0, conflict 0, unnamed-hot 7, low-confidence 40, unknown
+61, entry 5, name 22 (the first five as P5, so the first 108 items are unchanged); findings 624 (P5 619 + 5 entry).
+
+| Measure | P5 draft | **P5b draft** (no review) | Run C | Run B |
+| --- | ---: | ---: | ---: | ---: |
+| byte categories (by entry) | 99.98 % | **99.98 %** | 99.98 % | 92.26 % |
+| code entries | 31 / 33 | **32 / 33** | 31 / 33 | 33 / 33 |
+| graphics with the right geometry | 106 / 106 | **106 / 106** | 106 / 106 | 0 / 106 |
+| records found | 5 / 5 | **5 / 5** | 5 / 5 | n/a |
+| names the same | 0 / 142 | **0 / 142** | 2 / 142 | 50 / 142 |
+| ... exact / normalized | 0 / 0 | 0 / 0 | 2 / 0 | 7 / 43 |
+| ... for a judge | 0 | 0 | 4 | 61 |
+| ... generated / missing | 137 / 5 | 137 / 5 | 131 / 5 | 0 / 31 |
+| gate | pass | **pass** | pass | pass |
+
+The draft alone names nothing, as before: names come from the review. With the batches the next agent run (run D)
+can close the entry gap with one decision ($8684) and has to name about 50 of the 118 reference addresses it is shown
+to match run B.
+
 ## Commands
 
 ```bash
 R=scratch/reaper-mm/run-B
 python3 tools/verification/analysis/mm_session.py --snapshot $R/re/orig.z80 \
     --inputs $R/tests/inputs/{demo-kempston,cheat-tour,play,demo}.txt \
-    --out scratch/p5/mm --ranges 5900-59FF,8000-FFFF --port-base 9600 --l3
+    --out scratch/p5/mm --ranges 5900-59FF,8000-FFFF --port-base 9600 --l3    # P5b: --out scratch/p5b/mm
 python3 tools/verification/analysis/run_ab.py --draft scratch/p5/mm --work scratch/p5/ab \
     --ledger scratch/p5/empty-ledger.json --reaper <zx-reaper> --tape $R/original/game.tap --tests $R/tests \
     --reference <skoolkid-manicminer>/sources/mm.skool \
