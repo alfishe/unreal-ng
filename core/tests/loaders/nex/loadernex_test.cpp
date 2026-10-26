@@ -300,15 +300,7 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             if (std::atoi(turbo))
                 if (auto* next = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
                     next->Board().Write(0x07, 0x03);
-        std::string sna = loadName;
-        if (sna.substr(sna.size() - 4) == ".snx")
-        {
-            sna = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/nexrun.sna";
-            std::ifstream in(loadName, std::ios::binary);
-            std::ofstream out(sna, std::ios::binary);
-            out << in.rdbuf();
-        }
-        ASSERT_TRUE(emulator->LoadSnapshot(sna)) << "the snapshot loader refused " << loadName;
+        ASSERT_TRUE(emulator->LoadSnapshot(loadName)) << "the snapshot loader refused " << loadName;
         // The state the real-board programs were photographed in: after the boot into ZX48 mode - 48K machine type (7FFD locked),
         // core id 0 (the firmware leaves it), the ULA palette filled with the 16 defaults
         auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);

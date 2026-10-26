@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <cstddef>
+
 #include "common/modulelogger.h"
 
 #include "loader_sna.h"
@@ -21,6 +23,7 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
     _logger = context->pModuleLogger;
 
     _path = FileHelper::AbsolutePath(path, false);  // Expand tilde, don't resolve symlinks for non-existent files
+    _snx = StringHelper::ToLower(FileHelper::GetFileExtension(_path)) == "snx";
 
     // Initialize all staging buffers to zero for deterministic state
     // Prevents uninitialized POD members from causing inconsistent snapshot loading
@@ -76,7 +79,7 @@ bool LoaderSNA::load()
 snapshot::Image LoaderSNA::BuildImage() const
 {
     snapshot::Image image;
-    image.format = "sna";
+    image.format = _snx ? "snx" : "sna";
     image.sourcePath = _path;
     image.timingHint = _snapshotMode == SNA_48 ? "48k" : "128k";
     image.machineHint = _snapshotMode == SNA_48 ? "48k" : "128k-family";
@@ -156,6 +159,15 @@ bool LoaderSNA::planSnapshot()
     _image = BuildImage();
     _report = snapshot::Report();
     _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    if (_snx)
+    {
+        // NextZXOS keeps the file open as handle 0 for the program: no handle is open here, the data is not loaded
+        if (_privateBytes)
+            _report.warnings.push_back("the .snx carries " + std::to_string(_privateBytes) +
+                                       " bytes of private data after its banks: not loaded (NextZXOS's open handle 0 is not modelled)");
+        else
+            _report.warnings.push_back("NextZXOS's open handle 0 of an .snx is not modelled");
+    }
     return _decision.Proceeds();
 }
 
@@ -180,8 +192,10 @@ bool LoaderSNA::validate()
         {
             _fileSize = _data.size();
             _readPos = 0;
+            _extraBanks = 0;
+            _privateBytes = 0;
 
-            if (is48kSnapshot())
+            if (_snx ? _fileSize == _snaHeaderSize + 3 * PAGE_SIZE : is48kSnapshot())
             {
                 _snapshotMode = SNA_48;
                 
@@ -193,9 +207,26 @@ bool LoaderSNA::validate()
                     _snapshotMode = SNA_UNKNOWN;
                 }
             }
-            else if (is128kSnapshot())
+            else if (_snx && _fileSize >= _sna128HeaderSize + 3 * PAGE_SIZE)
+            {
+                // An .snx of a 128K machine: the banks #7FFD leaves (5, or 6 when bank 5 or 2 is at #C000), then private data.
+                // A 48K one is exactly 49179 bytes (above), so a 48K file with private data does not exist
+                _snapshotMode = SNA_128;
+                const uint8_t top = _data[_snaHeaderSize + 3 * PAGE_SIZE + offsetof(sna128Header, port_7FFD)] & 0x07u;
+                _extraBanks = top == 5 || top == 2 ? 6 : 5;
+                const size_t banksEnd = _sna128HeaderSize + (3 + _extraBanks) * PAGE_SIZE;
+                if (_fileSize < banksEnd)
+                {
+                    MLOGWARNING("Invalid 128K SNX file size: %zu (the banks need %zu)", _fileSize, banksEnd);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
+                else
+                    _privateBytes = _fileSize - banksEnd;
+            }
+            else if (!_snx && is128kSnapshot())
             {
                 _snapshotMode = SNA_128;
+                _extraBanks = (_fileSize - _sna128HeaderSize - 3 * PAGE_SIZE) / PAGE_SIZE;
                 
                 // 128K SNA format is flexible - minimum is 49183 bytes (base structure),
                 // plus 0-8 additional 16KB RAM banks depending on which banks were saved
@@ -397,7 +428,7 @@ bool LoaderSNA::load128kToStaging()
 
     if (_snapshotMode == SNA_128 && !_data.empty())
     {
-        int memoryPagesToLoad = (_fileSize - sizeof(snaHeader) - 3 * PAGE_SIZE - sizeof (sna128Header)) / PAGE_SIZE;
+        const int memoryPagesToLoad = static_cast<int>(_extraBanks);
 
         // Ensure we're reading from file start
         _readPos = 0;

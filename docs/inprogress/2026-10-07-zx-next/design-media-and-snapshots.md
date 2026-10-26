@@ -20,7 +20,7 @@ at least 65526 clusters (the firmware's FatFs decides the type by cluster count)
 | Format | Into the Next | From the Next | Source / status |
 |:--|:--|:--|:--|
 | NEX V1.0-1.2 | new `loadernex`: header ("Next" magic, RAM requirement, bank count and flags, loading screens, border, SP, PC, entry bank), banks in order 5,2,0,1,3,4,6,7,... (wiki; MAME `snapshot_nex.cpp`), screens via banks 5 (ULA) or 9-11 (Layer 2), starts at PC (0 = load only) | NEX save of the running machine: possible with caveats (jnext: "honest register limitations") | wiki NEX page (summary read); V1.3 opt-in (jnext) |
-| `.snx` | the `.sna` loader (a 128K SNA that NextZXOS loads keeping handle 0 open) | no | ZEsarUX `snap.c` comment |
+| `.snx` | `LoaderSNA` in its SNX mode (by the extension, `SetSnx` for an image in memory): 49179 bytes = a 48K `.sna`; else a 128K one with exactly the banks `#7FFD` leaves (5, or 6 with bank 5 / 2 at `#C000`) and the program's private data after them, counted in the report, not loaded (NextZXOS leaves the file open as handle 0 for it; not modelled). No legacy mode, as NextZXOS applies none to an `.snx`; `SnapshotLauncher` takes the Next for it like for a `.nex` | no | wiki File_Formats, NextZXOS changelog; **done 2026-10-26** |
 | `.sna`, `.z80` | existing loaders; the machine commits through the Next personality it is in (48K/128K/+3 or Pentagon timing) | `.sna` 48/128 in classic personalities | existing |
 | `.szx` | existing SZX reader/writer for the matching classic machine id; Next-specific chunks: Fuse's SZX has none; a vendor chunk is Q9 | classic personalities only | [SZX design](../2026-09-29-szx-snapshots/design.md) |
 | native | the TTD checkpoint written as a file (all blobs) | same | Q9; snapshot pipeline row #84 |

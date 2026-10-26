@@ -2000,9 +2000,9 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return played.Ok();
     }
 
-    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg" && ext != "nex")
+    if (ext != "z80" && ext != "sna" && ext != "snx" && ext != "szx" && ext != "spg" && ext != "nex")
     {
-        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx, .spg or .nex", ext.c_str());
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .snx, .szx, .spg or .nex", ext.c_str());
         if (_context)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -2017,9 +2017,9 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
     return LoadSnapshotStaged(
         [&](std::string& error, const snapshot::Options& planned) {
             bool result = false;
-            if (ext == "sna")
+            if (ext == "sna" || ext == "snx")
             {
-                /// region <Load SNA snapshot>
+                /// region <Load SNA snapshot> (an .snx is a NextZXOS .sna: the loader takes it from the extension)
                 LoaderSNA loaderSna(_context, absolutePath);
                 loaderSna.SetOptions(planned);
                 result = loaderSna.load();
@@ -2104,9 +2104,9 @@ bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::str
         return false;
     }
     const std::string ext = StringHelper::ToLower(extension);
-    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg")
+    if (ext != "z80" && ext != "sna" && ext != "snx" && ext != "szx" && ext != "spg")
     {
-        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna, szx or spg", ext.c_str());
+        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna, snx, szx or spg", ext.c_str());
         if (_context)
             MessageCenter::DefaultMessageCenter().Post(
                 NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", reportedPath, false));
@@ -2122,15 +2122,16 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
                                  const snapshot::Options& options)
 {
     const std::string ext = StringHelper::ToLower(extension);
-    if (ext == "sna")
+    if (ext == "sna" || ext == "snx")
     {
         LoaderSNA loader(_context, data, "memory");
+        loader.SetSnx(ext == "snx");
         loader.SetOptions(options);
         const bool loaded = loader.load();
         _lastSnapshotReport = loader.GetSnapshotReport();
         if (loaded)
             return true;
-        error = "the SNA image did not load";
+        error = ext == "snx" ? "the SNX image did not load" : "the SNA image did not load";
         return false;
     }
     if (ext == "z80")
@@ -2184,7 +2185,7 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
         error = loader.GetError();
         return false;
     }
-    error = "snapshot type '" + ext + "' is not supported (sna, z80, szx, spg)";
+    error = "snapshot type '" + ext + "' is not supported (sna, snx, z80, szx, spg)";
     return false;
 }
 
@@ -2396,7 +2397,7 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
 
     snapshot::Image image;
-    if (ext == "sna")
+    if (ext == "sna" || ext == "snx")
     {
         LoaderSNA loader(_context, absolutePath);
         if (!loader.Stage())
@@ -2428,7 +2429,7 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
     }
     else
     {
-        error = "cannot inspect a '" + ext + "' file (sna, z80, szx, spg)";
+        error = "cannot inspect a '" + ext + "' file (sna, snx, z80, szx, spg)";
         return false;
     }
 
@@ -2819,8 +2820,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
     // rzx: an input recording, opened as its start snapshot plus the playback;
-    // spg: a TS-Conf program (the TS-Conf machine only); nex: a ZX Spectrum Next program (the Next only)
-    return {"sna", "z80", "szx", "spg", "nex", "rzx"};
+    // spg: a TS-Conf program (the TS-Conf machine only); nex / snx: a ZX Spectrum Next program / NextZXOS snapshot
+    return {"sna", "snx", "z80", "szx", "spg", "nex", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

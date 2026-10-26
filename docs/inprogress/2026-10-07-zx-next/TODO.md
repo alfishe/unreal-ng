@@ -64,7 +64,11 @@ Not planned yet:
   taken right after EI or between a DD / FD prefix (also DD DD) and its opcode
 - [ ] Host M1 button (the Multiface NMI) in Qt and on the automation planes (`GenerateMultifaceNmi`; today only NR #02 bit 3)
 - [ ] Qt panels (NextREG table, MMU map, sprites, copper, DMA / CTC / IM2) and Next-aware GDB wiring (DeZog DZRP is done)
-- [ ] Media: a NEX saver, a native .snx loader (the tests copy .snx to .sna), the NextZXOS boot seek test; the KS3 board variant; the
+- [x] Native `.snx` loader (2026-10-26): `LoaderSNA`'s SNX mode (48K = 49179 bytes; 128K = the banks `#7FFD` leaves, then private
+  data, counted in the report and not loaded), `SnapshotLauncher` takes the Next for it, every surface lists `.snx`; the tests load
+  the release `.snx` directly. With it: `NextRealBoard_Test` follows core 3.02.03 (NR #0A bit 2 reads 0; z80bltst is red under the
+  T80N persona, green with the Zilog flags)
+- [ ] Media: a NEX saver, the NextZXOS boot seek test; the KS3 board variant; the
   esxDOS-only mode (requirements.md Q11); decide Q9 / Q10 and close Q12 (the T80N persona) in requirements.md; refresh phases.md
 - [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
   the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
@@ -208,7 +212,8 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 - [x] LoRes keeps the ULA border (a transparent-white border is the pink fallback, as the board shows); ULANext attributes do not flash (LmxHiCol now equals its expected miniatures and the board photo)
 - [x] UlaScrol (after the animation: green border, clip, as the board photo and MAME), Ula_Pal (border stripes and both palettes as MAME), SprDelay (structure as the board photo; the single-line sprite is shorter than on the board), DMA: zilogDMA's hex read-back lines equal the board's (`3A3A1A03042A...`, status bit 0 never set on the core), per-byte timing from the port timing bytes (borders flash at 4T per byte)
 - [x] Open: Chg8kBan / Chg8kB_2 (green border ends ~31 lines after MAME's: contention of the NEXTREG fetches), dma / zilogDMA border blocks (heights not measured), SprDelay (the sprite renderer's delay), int_skip (ours OK, ZEsarUX ERR: ours follows the readme) (verified 2026-10-25: SprDelay (matches MAME) and int_skip settled; Chg8kBan and the DMA border heights in the Open list)
-- [x] z80bltst: the red INIR / INDR rows were **our Next not having the Kempston port**: the program reads port #1F for its INxR case 1 and our #1F answered the floating bus (FF / 55 / 1F) instead of 0; with `#1F` = 0 (the joystick built into the board, zxnext.vhd port_1f_lsb) every row is green like the board. (First written up here as "a defect of the common Z80 core" - wrong: the classic models have no Kempston, the program is not meant to run there; ZEXALL / the other core tests do not exercise interrupted block instructions, so they could not have shown it either way)
+- [x] z80bltst: the red INIR / INDR rows were **our Next not having the Kempston port**: the program reads port #1F for its INxR case 1 and our #1F answered the floating bus (FF / 55 / 1F) instead of 0; with `#1F` = 0 (the joystick built into the board, zxnext.vhd port_1f_lsb) every row is green like the board (with the Zilog flags; since the T80N persona of core 3.02.03 the Next's own CPU shows them red,
+  `BlockInstructionFlagsInterruptedByImTwoAreTheT80sOnTheNext`). (First written up here as "a defect of the common Z80 core" - wrong: the classic models have no Kempston, the program is not meant to run there; ZEXALL / the other core tests do not exercise interrupted block instructions, so they could not have shown it either way)
 - A NEX / SNA is loaded by NextZXOS with the 48K snapshot's `#7FFD` locked: nothing in the machine model is a 48K type lock (the VHDL: lock = bit 5 of #7FFD)
 
 ## Found while running NextZXOS in unreal-qt (2026-10-09)
