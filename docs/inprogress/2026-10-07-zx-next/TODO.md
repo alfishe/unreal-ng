@@ -22,16 +22,21 @@ Planned, in this order:
   synchronous core decides one `hc` early (3-14) so that the CPU clock is held in the same cycles as the original's combinational OR
   (4-15): the clock the CPU sees is the same. The +3 `o_cpu_wait_n` (600) is low for `hc(3:0)` 15, 0, 3-14 of every cell: sampled at
   T2 and at each Tw, that gives the waits 7, 6, 5, 4, 3, 2, 1, 0 by phase, the shape of `gateArrayContentionPattern`)
-- [ ] Contention: settle `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME); needs a board measurement (the
-  "targeted tests run on a real board" below)
+- [x] Contention: settle `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME); needs a board measurement (the
+  "targeted tests run on a real board" below) (done 2026-10-26 by the RTL instead of a board: POC 036 runs Z80 programs on the
+  zxnext core in GHDL; `NEXTREG` from contended memory takes the RTL's T on all three timings (its extra T-states contended, fixed),
+  so MAME is the one off. Five more fixes from the same runs: port contention by the high byte, the +3 WAIT window, the DMA hand-over,
+  the DMA's port / idle contention, the +3 DMA's WAIT sampling; test `NextRtlTiming_Test.PinnedCasesTakeTheRtlsTime`)
 - [x] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
   238), the DMA interrupt pulse, bus arbitration with the expansion bus (done 2026-10-26: the DMA runs on the contended CPU clock
   (`z80dma` `clk_i = i_CLK_CPU`, the +3 wait through `dma_wait_n`, zxnext.vhd 1844), so `NextDma::Bus::contend` gives its memory cycles
-  the CPU's waits and its port cycles the port contention at IORQ; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryAndPorts`.
+  the CPU's waits; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryNotOnPorts`; 2026-10-26 by the RTL (POC 036): its port
+  cycles take no port contention, only the address's).
   No change for the rest: the DMA steps between instructions, so it never runs inside a RETI and the tail ends with it as
   `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
   no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
-- [ ] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo)
+- [x] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo) (done 2026-10-26 by the RTL: POC 036
+  `dmacont` / `dmaburst` / `zdmacont` / `dmapaper`, every write to #FE at the RTL's T, in the border and the paper)
 - [x] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
   engine is drawing (done 2026-10-26: `NextSprites::FillUntil` runs the engine to a clock and keeps where it stands; a write inside a pass
   runs it to the write with the state before it (`ScreenNext::AdvanceSpritePass`), the sprites after that point qualify with the new
@@ -242,7 +247,7 @@ Run by `tools/machines/next/browser-drive/suite.py`; "ok" = the picture / the pr
 
 ## What counts as a reference (owner, 2026-10-09)
 No single emulator is the reference (MAME included): a difference is a defect only when the board (photo / the program's own verdict on the board) or at least two independent implementations that follow the VHDL agree against us. Everything else is *undecided* and listed as such:
-- Undecided, no board evidence: Chg8kBan / Chg8kB_2 (MAME alone ends the green border ~31 lines before us; ZEsarUX has no per-line border), SprDelay (sprite renderer delay: board photo shows a longer single-line sprite than ours and ZEsarUX), int_skip (ours follows the readme, ZEsarUX differs), the heights of the dma / zilogDMA border blocks
+- Undecided, no board evidence: Chg8kBan / Chg8kB_2 (MAME alone ends the green border ~31 lines before us; ZEsarUX has no per-line border), SprDelay (sprite renderer delay: board photo shows a longer single-line sprite than ours and ZEsarUX), int_skip (ours follows the readme, ZEsarUX differs), the heights of the dma / zilogDMA border blocks (2026-10-26: Chg8kBan and the DMA blocks settled by the RTL in GHDL, POC 036)
 - For these the way forward is **targeted tests run on a real board** (the Z80N / NextReg programs already show the method): a program per question that prints a number and checks it, so a photo or a log from a board gives the answer. Proposed: (1) NEXTREG instruction cost under contention: a loop of N `NEXTREG n,n` at 3.5 MHz with contention on, border toggled at the loop edges, count lines in the picture (the number of lines of the loop at several code addresses - #6000 contended, #8000 not); (2) sprite renderer delay: one sprite line switched visible by the copper on line L, read back which line shows it; (3) DMA block height: 2918 bytes to port #FE at each timing code, count border rows
 - Consensus found so far (board photo + ZEsarUX or VHDL): NextReg defaults and read-back masks, NR #69 and its ports, Z80N, hi-res attribute / border, ULANext without flashing, LoRes keeps the ULA border, copper at pixel resolution, the line counter origin, ULA clip, DMA read-back bytes
 

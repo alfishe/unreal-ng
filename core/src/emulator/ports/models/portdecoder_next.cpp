@@ -772,15 +772,15 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     }
     else if (WriteDacPort(port, value))
         ;
-    else if (static_cast<uint8_t>(port) == 0x6B)
+    else if (static_cast<uint8_t>(port) == 0x6B || static_cast<uint8_t>(port) == 0x0B)
     {
-        if (PortEnabled(5))
-            _dma.Write(value, false);
-    }
-    else if (static_cast<uint8_t>(port) == 0x0B)
-    {
-        if (PortEnabled(25))
-            _dma.Write(value, true);
+        const bool z80Compatible = static_cast<uint8_t>(port) == 0x0B;
+        if (PortEnabled(z80Compatible ? 25 : 5))
+        {
+            const bool wasActive = _dma.Active();
+            _dma.Write(value, z80Compatible);
+            _dmaRequestLate = !wasActive && _dma.Active();
+        }
     }
     else if (static_cast<uint8_t>(port) == 0x57)
     {
@@ -867,13 +867,17 @@ void PortDecoder_Next::BindDma()
     bus.advance = [this](unsigned clocks) { _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks)); };
     // the DMA runs on the CPU's clock (z80dma clk_i = i_CLK_CPU), which the video logic holds on a contended access of the bus whoever
     // drives it (cpu_mreq_n / cpu_iorq_n / cpu_a are the DMA's while it holds the bus); the +3's wait reaches it through dma_wait_n
-    // (zxnext.vhd 1844). So its cycles wait as the CPU's: memory at the cycle's first T, a contended port at IORQ, one T later
+    // (zxnext.vhd 1844). A cycle waits at its first T when its address maps to contended memory (mem_contend is decoded from cpu_a
+    // alone), a port cycle and a T without a strobe too (`io`); the port rule never holds it: the DMA drops IORQ on a falling edge, so
+    // the clock's next rising edge already sees ioreqtw3_n low (zxula.vhd 583-592, dma.vhd 186), while the CPU drops it on T2's rising
+    // edge. On the +3 only MREQ cycles wait (o_cpu_wait_n), sampled half a T before the CPU does (DmaDelayAt). POC 036 measured all
+    // of it on the RTL
     bus.contend = [this](uint16_t address, bool io) {
         const UlaContention* ula = _context->pUlaContention;
-        if (!ula || !ula->IsContentionEnabled())
+        if (!ula || !ula->IsContentionEnabled() || (io && ula->IsGateArray()) || !ula->IsContendedAt(address))
             return;
         Z80* z80 = _context->pCore->GetZ80();
-        const uint8_t wait = io ? ula->IoWaitAfterIorq(address, z80->t + 1) : (ula->IsContendedAt(address) ? ula->DelayAt(z80->t) : 0);
+        const uint8_t wait = ula->DmaDelayAt(z80->t);
         if (wait)
             z80->InsertWaitStates(wait);
     };
@@ -1064,6 +1068,13 @@ void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
         return;
+    if (_dmaRequestLate)
+    {
+        // the enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end
+        // of the next cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first)
+        _dmaRequestLate = false;
+        return;
+    }
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
     if (_interrupts->DmaDelay(_divMmc->NmiHold() || _multiface->NmiHold()))
         return;
@@ -1172,6 +1183,7 @@ void PortDecoder_Next::PerformReset(bool hard)
         e.value = _board->ResetBits();
         RecordInt(e);
     }
+    _dmaRequestLate = false;
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
     UpdateUartRoute(false);  // NR #0B went back to its reset value: the connector carries no UART
@@ -1532,6 +1544,7 @@ void PortDecoder_Next::UpdateContention()
     {
         ula->SetContentionEnabled(family && !off);
         ula->SetGateArray(timing == 3);
+        ula->SetWindowedWait(true);
         ula->SetOddPortRule([](const void* self, uint16_t port) { return static_cast<const PortDecoder_Next*>(self)->OddPortContended(port); }, this);
     }
     if (Core* core = _context->pCore)

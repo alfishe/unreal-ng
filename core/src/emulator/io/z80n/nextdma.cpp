@@ -12,7 +12,7 @@ void NextDma::Reset()
     _ceWait = false;
     _autoRestart = false;
     _readMask = 0x7F;
-    _transferring = _waiting = _finishPending = false;
+    _transferring = _waiting = _finishPending = _busHeld = false;
     _atLeastOne = _endOfBlock = false;
     _counter = 0;
     _readSeq = 0;
@@ -198,7 +198,29 @@ void NextDma::FinishBlock()
         _counter = _z80Compat ? 0xFFFF : 0;
     }
     else
+    {
         _transferring = false;
+        ReleaseBus(kFinishReleaseT);
+    }
+}
+
+void NextDma::ReleaseBus(unsigned clocks)
+{
+    if (!_busHeld)
+        return;
+    _busHeld = false;
+    HoldBus(clocks);
+}
+
+void NextDma::HoldBus(unsigned clocks)
+{
+    for (unsigned i = 0; i < clocks; i++)
+    {
+        if (_bus.contend)
+            _bus.contend(_src, true);
+        if (_bus.advance)
+            _bus.advance(1);
+    }
 }
 
 void NextDma::Load()
@@ -273,6 +295,12 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
     while (moved < maxBytes && _transferring)
     {
         uint8_t data = 0xFF;
+        if (!_busHeld)
+        {
+            // WAITING_ACK -> TRANSFERING_READ_1: the read starts the T after the CPU's BUSAK
+            _busHeld = true;
+            HoldBus(kGrantT);
+        }
         if (_bus.contend)
             _bus.contend(_src, srcIo);
         if (_bus.advance)
@@ -313,6 +341,8 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
             _waiting = true;
             _nextByteAt = now28 + static_cast<uint64_t>(_prescaler) * 32;
             _finishPending = _counter >= _blockLength;
+            if (_mode == 2)
+                ReleaseBus(kBurstReleaseT);  // WAITING_CYCLES gives the bus back one state before FINISH_DMA / IDLE would
             break;
         }
         if (_counter >= _blockLength)
