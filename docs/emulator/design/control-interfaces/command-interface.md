@@ -4423,6 +4423,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
 | `media save <slot> [path] [--compression ..]`, `media export <slot> <path> [--compression none\|default\|zlib,lzma,huff,flac,zstd] [--parent <base.chd>]`, `media discard <slot>` | keep or drop the writes; a `.chd` path writes a MAME CHD (hard disks, cards; `--parent` makes a delta CHD on a base image) |
 | `media rescan <slot>`, `media create <slot> [--size bytes]`, `media protect <slot> --on true\|false` | |
+| `media volumes <slot>`, `media files <slot> [dir] [--volume id] [--recursive]`, `media read <slot> <file> [--volume id] [--out path]` | the files of a floppy, hard disk or card, any file system: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS); volumes `trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`; read only ([disk-file-systems.md](../disk-file-systems.md)) |
 | `--async`, `--json` | return at once; print the WebAPI body |
 
 The `disk` commands below keep working for drive-letter scripts.
@@ -4435,7 +4436,7 @@ The `disk` commands below keep working for drive-letter scripts.
 | `disk insert <drive> <file> [autostart]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
-| `disk catalog <drive>` | `<A\|B\|C\|D>` | List files on disk (TRDOS, CP/M format parsing). | 🔮 Planned |
+| `disk catalog <drive>` | `<A\|B\|C\|D>` | List files on disk (TRDOS, CP/M format parsing). Any file system: `media files <drive>`. | 🔮 Planned |
 | `disk protect <drive> <on\|off>` | `<A\|B\|C\|D> on\|off` | Toggle write protection. | 🔮 Planned |
 
 ### 5. Audio & Video Capture

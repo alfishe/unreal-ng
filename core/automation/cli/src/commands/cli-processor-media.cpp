@@ -2,7 +2,10 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/media/mediacontrol.h>
 
+#include "common/base64.h"
+
 #include <algorithm>
+#include <cstdio>
 #include <iomanip>
 #include <set>
 #include <sstream>
@@ -21,13 +24,13 @@ namespace
     /// Options that take a value; every other option is a flag
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
-                                                 "compression", "parent"};
+                                                 "compression", "parent", "volume", "out"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
         return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
-               verb == "compose";
+               verb == "compose" || verb == "files" || verb == "read";
     }
 
     /// `media compose` / `media layers`: the layout and one line per layer
@@ -260,6 +263,68 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const StateNode& w : body.find("warnings")->items)
             out << "  warning: " << w.s << NEWLINE;
     }
+    else if (verb == "volumes")
+    {
+        out << "  slot " << reply.slot << ": " << body.find("volumes")->items.size() << " volume(s)" << NEWLINE;
+        for (const StateNode& v : body.find("volumes")->items)
+        {
+            out << "  " << std::left << std::setw(10) << v.find("id")->s << std::setw(16) << v.find("system")->s
+                << std::setw(14) << ("\"" + v.find("label")->s + "\"") << v.find("bytes")->i << " bytes";
+            if (const StateNode* free = v.find("freeBytes"))
+                out << ", " << free->i << " free";
+            if (v.find("offset")->i)
+                out << ", at byte " << v.find("offset")->i;
+            out << NEWLINE;
+        }
+        for (const StateNode& n : body.find("notes")->items)
+            out << "  note: " << n.s << NEWLINE;
+    }
+    else if (verb == "files")
+    {
+        const StateNode* entries = body.find("entries");
+        out << "  slot " << reply.slot << ", volume " << body.find("volume")->s << ", /" << body.find("path")->s << ": "
+            << entries->items.size() << " entries" << NEWLINE;
+        for (const StateNode& e : entries->items)
+        {
+            out << "  " << std::left << std::setw(40) << (e.find("path")->s + (e.find("directory")->b ? "/" : ""))
+                << std::right << std::setw(9) << (e.find("directory")->b ? std::string("<dir>") : std::to_string(e.find("size")->i));
+            if (e.find("start")->i)
+            {
+                char start[8];
+                std::snprintf(start, sizeof start, "  #%04X", static_cast<unsigned>(e.find("start")->i));
+                out << start;
+            }
+            if (const StateNode* a = e.find("attributes"))
+                out << "  " << a->s;
+            if (const StateNode* error = e.find("error"))
+                out << "  error: " << error->s;
+            out << NEWLINE;
+        }
+        for (const StateNode& n : body.find("notes")->items)
+            out << "  note: " << n.s << NEWLINE;
+    }
+    else if (verb == "read" && !body.find("savedPath"))
+    {
+        // A hex dump of the start; --out <file> takes the whole file
+        constexpr size_t kShown = 4096;
+        std::vector<uint8_t> data;
+        base64::Decode(body.find("data")->s, data);
+        out << "  " << body.find("path")->s << ": " << data.size() << " bytes" << NEWLINE;
+        for (size_t row = 0; row < data.size() && row < kShown; row += 16)
+        {
+            char line[96];
+            int n = std::snprintf(line, sizeof line, "  %06zX ", row);
+            for (size_t k = row; k < row + 16; k++)
+                n += k < data.size() ? std::snprintf(line + n, sizeof line - n, " %02X", data[k])
+                                     : std::snprintf(line + n, sizeof line - n, "   ");
+            out << line << "  ";
+            for (size_t k = row; k < row + 16 && k < data.size(); k++)
+                out << (data[k] >= 0x20 && data[k] < 0x7F ? static_cast<char>(data[k]) : '.');
+            out << NEWLINE;
+        }
+        if (data.size() > kShown)
+            out << "  ... (--out <file> writes all " << data.size() << " bytes)" << NEWLINE;
+    }
     else
     {
         out << "ok: " << reply.slot;
@@ -303,6 +368,10 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
     out << "  layers <slot>                - a composite medium's layers" << NEWLINE;
     out << "  changes <slot>               - the guest's unsaved writes as file operations (and their layers)" << NEWLINE;
+    out << "  volumes <slot>               - the file systems on the disk: TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS," << NEWLINE
+        << "                                 NedoOS): floppies, FAT partitions, iS-DOS devices of an ATM hard disk" << NEWLINE;
+    out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
+    out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE

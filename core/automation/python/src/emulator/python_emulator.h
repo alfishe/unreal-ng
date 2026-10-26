@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/base64.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
@@ -1977,7 +1978,7 @@ namespace PythonBindings
                              const py::kwargs& options) { return MediaCallPy(self, verb, slot, path, options); },
                  py::arg("verb"), py::arg("slot") = "", py::arg("path") = "",
                  "Any media verb: list, info, formats, targets, insert, swap, eject, save, export, discard, rescan, create, protect, "
-                 "compose, layers")
+                 "compose, layers, changes, flatten, volumes, files, read")
             .def("media_list", [](Emulator& self) { return MediaCallPy(self, "list", "", "", py::kwargs()); },
                  "Every media slot and the detached media")
             .def("media_info", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "info", slot, "", py::kwargs()); },
@@ -1994,6 +1995,26 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+            .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
+                 py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
+            .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "files", slot, path, options);
+                 }, py::arg("slot"), py::arg("path") = "", "A directory's entries on the disk (volume='p1', recursive=True)")
+            .def("media_read", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "read", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "A file on the disk: the reply with its bytes in base64 (volume=, out='host file')")
+            .def("media_read_bytes", [](Emulator& self, const std::string& slot, const std::string& path, const std::string& volume) {
+                     MediaRequest request{"read", slot, path, {}};
+                     if (!volume.empty())
+                         request.options["volume"] = volume;
+                     const MediaReply reply = MediaControl(self.GetContext()).Execute(request);
+                     if (!reply.result.Ok())
+                         throw std::runtime_error(reply.result.message);
+                     std::vector<uint8_t> bytes;
+                     base64::Decode(reply.body.find("data")->s, bytes);
+                     return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                 }, py::arg("slot"), py::arg("path"), py::arg("volume") = "", "A file on the disk as bytes (RuntimeError when it does not read)")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")

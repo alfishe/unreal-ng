@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file"""
+"""media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
+a disk"""
 
+import base64
 import os
 import sys
 
@@ -9,6 +11,7 @@ from mcplib import expect, main
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 TAPE = os.path.join(ROOT, 'testdata', 'contention', 'rak-timing-test', 'timing.tap')
 SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
+ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
 
 
 def test_slots_listed(s):
@@ -58,6 +61,21 @@ def test_recent_lists_and_clears(s):
     expect('No recent files' in cds.text, 'no cd after the clear', cds.text)
     bad = s.call('media', {'action': 'recent', 'kind': 'floppies'}, ok=False)
     expect(bad.is_error, 'an unknown kind is an error', bad.text)
+
+
+def test_disk_files(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('isdos: iS-DOS Classic' in r.text, 'the volume in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'path': 'SHELL', 'recursive': True})
+    expect('SHELL/HELP/exit.hlp 663 bytes' in r.text, 'a file of the tree in the text', r.text[:600])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'read_me.txt'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 1641, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'nothing.txt'}, ok=False)
+    expect(r.is_error and 'nothing.txt' in r.text, 'a missing file names it', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
 if __name__ == '__main__':
