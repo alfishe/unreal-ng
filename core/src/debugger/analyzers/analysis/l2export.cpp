@@ -965,6 +965,29 @@ struct Exporter
         plan.labels = reloc.labels;
     }
 
+    /// The @isub texts Relocate wrote name a label that is renamed after them: the whole identifier, not a prefix
+    /// of a longer one (sprite_81 in sprite_8100)
+    void RenameInIsubs(const std::string& from, const std::string& to)
+    {
+        const auto identifier = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        for (auto& [address, text] : reloc.isub)
+        {
+            (void)address;
+            for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at))
+            {
+                const bool startOk = at == 0 || !identifier(text[at - 1]);
+                const bool endOk = at + from.size() >= text.size() || !identifier(text[at + from.size()]);
+                if (startOk && endOk)
+                {
+                    text.replace(at, from.size(), to);
+                    at += to.size();
+                }
+                else
+                    at += from.size();
+            }
+        }
+    }
+
     /// L3: the labels the review gave addresses inside entries replace the draft's point labels there (or start a
     /// point; not inside an instruction, not a label another address has)
     void ApplyNoteInnerLabels()
@@ -991,6 +1014,7 @@ struct Exporter
             if (it != reloc.labels.end())
             {
                 taken.erase(it->second);
+                RenameInIsubs(it->second, note.label);
                 it->second = note.label;
             }
             else

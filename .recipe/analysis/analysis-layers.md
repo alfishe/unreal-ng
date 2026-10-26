@@ -28,11 +28,17 @@ Everything goes through **one MCP tool, `analysis`**, with an `action`. The same
   more with `explain` (one address) or `gallery` (one picture).
 - **Do not edit the draft by hand.** Every decision goes through `review resolve`; the export carries it (labels,
   entry titles, comments). A hand edit is lost at the next export.
-- One decision per item. If you cannot tell from the sheet, run one experiment, then decide. Skip rather than guess.
+- One decision per item. If you cannot tell from the sheet, run one experiment, then decide. For findings (`ok` /
+  `wrong`), skip rather than guess. For names the rule is the other way round: name every subject of a batch, as a
+  human reverser would, from what the facts show (`DrawGuardians`, `AirSupply`, `TitleTuneData`); a name that says
+  what the code does or what the data holds beats an auto label. Skip a subject only when its facts are empty.
 - Mute the emulator you start (`PUT /audio/mixer/master {"muted": true}`).
-- Call `take_control` once before the first `analysis` call: every POST action (review resolutions, exports and
-  pictures written to a path, experiments, coverage) counts as changing the emulator, and without a session each one
-  answers "session opened implicitly".
+- Call `control_execution {"action":"take_control"}` once before the first `analysis` call: every POST action
+  (review resolutions, exports and pictures written to a path, experiments, coverage) counts as changing the
+  emulator, and without a session each one answers "session opened implicitly". The session belongs to the MCP
+  connection: keep one client (one process) for the whole review, or take control again in every new connection.
+- A `resolve` may be repeated on an item already decided (a better label, more names for a batch): the last label
+  wins, a batch's names add up.
 
 ## MCP (preferred)
 
@@ -65,7 +71,8 @@ Reasons, in queue order: `bug` (a candidate bug rule fired), `conflict` (two spe
 `unknown` (more than 16 bytes nothing claimed), `entry` (a jump target that may start a routine of its own), `name`
 (a naming batch: up to 10 draft labels like `sub_8A3F`, `var_8068`, `L8A50` that still need a name). `by_reason` in
 the answer counts the whole queue. Statuses: `observed` (seen in a run or experiment), `inferred`
-(read from code or a rule), `confirmed` (a reviewer said ok), `refuted` (shown wrong; kept).
+(read from code or a rule), `confirmed` (a reviewer said ok), `refuted` (shown wrong; kept). In `list`, an open item is `queued`, or `shown` once `next` / `show`
+returned it: both still need a decision, so filter on "not resolved", not on `queued`.
 
 ### 3. Work the queue
 
@@ -106,13 +113,13 @@ analysis {"action":"review","op":"resolve","id":"F63","verdict":"skip"}
     part of the routine before it.
   - `name`: one item, up to 10 draft labels of one class (code or data) with a few facts each (callers, callees, the
     data a routine uses, a 4-line head; reads, writes, values, users and the first bytes of data). Name them all in
-    one call; the ones you leave out are skipped:
+    one call (every subject: see the rules above); the ones you leave out are skipped:
 
     ```text
     analysis {"action":"review","op":"show","id":"N3"}
     analysis {"action":"review","op":"resolve","id":"N3","names":{"$8068":"WillyY",
               "$8A3F":{"label":"MoveWilly","title":"Move Willy left or right"}}}
-    analysis {"action":"review","op":"resolve","id":"N4","verdict":"skip"}     # no idea: skip the batch
+    analysis {"action":"review","op":"resolve","id":"N4","verdict":"skip"}     # only when the facts are empty
     ```
 
 The queue's next item moves on after each `review` call; `review {"op":"show","id":"F12"}` shows one again.
@@ -164,8 +171,8 @@ Export every format, all with the same `ranges` (the draft directory `reaper_gat
 | `layout` | `draft.layout.mk` | zx-reaper's `REGION_START` / `SHIFT_END` |
 | `fields` | `draft.fields.json` | the record field lists |
 | `geometry` | `draft.geometry.json` | the graphics geometry |
-| `symbols` | `draft.sym` | the labels through a symbol codec (skoolkit-ctl) |
-| `map` | `draft.map` | the claims, one line each (range, kind, detector, confidence, status, title) |
+| `symbols` | `draft.symbols` | the labels through a symbol codec (skoolkit-ctl) |
+| `map` | `draft.map.txt` | the claims, one line each (range, kind, detector, confidence, status, title) |
 
 ```text
 analysis {"action":"findings","format":"markdown","path":"/abs/project/re/findings.md"}   # zx-reaper's findings table
@@ -174,8 +181,8 @@ analysis {"action":"export","format":"ctl","path":"/abs/draft/draft.ctl","ranges
 analysis {"action":"export","format":"layout","path":"/abs/draft/draft.layout.mk","ranges":"8000-FFFF"}
 analysis {"action":"export","format":"fields","path":"/abs/draft/draft.fields.json","ranges":"8000-FFFF"}
 analysis {"action":"export","format":"geometry","path":"/abs/draft/draft.geometry.json","ranges":"8000-FFFF"}
-analysis {"action":"export","format":"symbols","path":"/abs/draft/draft.sym","ranges":"8000-FFFF"}
-analysis {"action":"export","format":"map","path":"/abs/draft/draft.map","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"symbols","path":"/abs/draft/draft.symbols","ranges":"8000-FFFF"}
+analysis {"action":"export","format":"map","path":"/abs/draft/draft.map.txt","ranges":"8000-FFFF"}
 ```
 
 Then build, test and shift-test in a fresh zx-reaper project. `reaper_gate.py` does exactly these steps, with no

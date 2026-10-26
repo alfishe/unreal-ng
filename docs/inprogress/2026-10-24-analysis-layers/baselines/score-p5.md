@@ -188,3 +188,30 @@ python3 tools/verification/analysis/run_ab.py --draft scratch/p5/mm --work scrat
 ```
 
 `run_ab.py` runs `reaper_gate.py` into `<work>/gate`; the gate alone is as in [score-p3.md](score-p3.md#commands).
+
+## Run C2: the review agent on the P5b draft (2026-10-26)
+
+A fresh sonnet agent, the recipe only, a built instance (`mm_session.py --l3 --keep`), the reference closed to it:
+140 queue items decided (7 unnamed-hot, 42 low-confidence, 62 unknown, 5 entry, 24 naming batches), no experiment,
+118,745 tokens, 32 tool calls, 6.5 min.
+
+Its first export failed `make`: a label the review gave an address inside an entry (`GuardianSprites` at $8100)
+renamed the point label after Relocate had written `@isub=LD D,sprite_8100/256`. The export now renames the @isub
+references with the label (`ReviewLabelInsideAnEntryRenamesItsIsubReferences`). The same decisions with the fix
+applied to the exported skool (the 4 @isub lines it changes; the instance was gone):
+
+| Measure | Run C2 | Run B |
+| --- | ---: | ---: |
+| gate: make, make test, shift +$100 / +$101 | pass | pass |
+| byte categories (by entry) | 98.03 % | 92.3 % |
+| code entries | 32 / 33 | 33 / 33 |
+| graphics / records | 106 / 106, 5 / 5 | 106 / 106, 5 / 5 |
+| names: exact + normalized | 30 / 142 | 50 / 142 |
+| names: + a blind judge (sonnet, both runs mixed, 112 pairs) | **73 / 142 (51.4 %)** | **109 / 142 (76.8 %)** |
+| names left generated / missing | 56 / 5 | 0 / 31 |
+| subagent tokens | **118,745** | 2,034,851 |
+
+The categories fall from 99.98 % because the review made the 20 cavern names (640 bytes) text entries of their own;
+the reference keeps them inside each cavern's data entry. The names gap is mostly the 56 subjects the agent left out
+of its batches ("skip rather than guess" in the recipe): the recipe now asks for a name for every subject from its
+facts, a skip only for empty facts, one MCP connection for `take_control`, and the harness's file names.

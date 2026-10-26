@@ -189,11 +189,13 @@ protected:
     }
 
     ExportResult ExportDraft(const std::string& format, uint16_t width = 8,
-                             std::vector<ExportRange> ranges = {{0x8000, 0x9FFF}}) const
+                             std::vector<ExportRange> ranges = {{0x8000, 0x9FFF}},
+                             std::map<uint16_t, ExportNote> notes = {}) const
     {
         static Z80Disassembler disassembler(nullptr);
         ExportOptions options;
         options.ranges = std::move(ranges);
+        options.notes = std::move(notes);
         options.defbWidth = width;
         options.disassemble = [](const uint8_t* bytes, uint16_t z80) {
             const std::vector<uint8_t> code(bytes, bytes + 4);
@@ -924,6 +926,36 @@ TEST_F(AnalysisL2_Test, CtlRoundTrip)
     const ExportResult symbols = ExportDraft("symbols");
     ASSERT_TRUE(symbols.ok) << symbols.error;
     EXPECT_NE(symbols.text.find(names.at(At("table"))), std::string::npos);
+}
+
+/// A label the review gives an address inside an entry renames the draft's point label there, and the @isub
+/// operands that refer to it follow: Relocate wrote them before the review's labels were applied, and a stale name
+/// left skool2asm / sjasmplus with "Label not found" (run C2 on Manic Miner)
+TEST_F(AnalysisL2_Test, ReviewLabelInsideAnEntryRenamesItsIsubReferences)
+{
+    Run("buffer-page.asm");
+    ASSERT_FALSE(HasFailure());
+    // The buffer's second page: a point label inside the buffer's entry, named by LD H,<page>/256
+    ExportOptions options;
+    options.ranges = {{0x8000, 0x9FFF}};
+    const DraftPlan plan = MakePlan(_built->l1, _built->l2, options);
+    for (const DraftEntry& e : plan.entries)
+        ASSERT_NE(e.start, 0x9100) << "the page must be inside an entry for this test";
+    const ExportResult plain = ExportDraft("skool");
+    ASSERT_TRUE(plain.ok) << plain.error;
+    const auto old = plan.labels.find(0x9100);
+    ASSERT_NE(old, plan.labels.end());
+    ASSERT_NE(plain.text.find("@isub=LD H," + old->second + "/256"), std::string::npos) << plain.text;
+
+    std::map<uint16_t, ExportNote> notes;
+    notes[0x9100].label = "SecondPage";
+    const ExportResult named = ExportDraft("skool", 8, {{0x8000, 0x9FFF}}, notes);
+    ASSERT_TRUE(named.ok) << named.error;
+    EXPECT_NE(named.text.find("@label=SecondPage\n"), std::string::npos) << named.text;
+    EXPECT_NE(named.text.find("@isub=LD H,SecondPage/256"), std::string::npos) << named.text;
+    for (const std::string& line : Lines(named.text))
+        if (line.rfind("@isub=", 0) == 0)
+            EXPECT_EQ(line.find(old->second), std::string::npos) << "a stale name: " << line;
 }
 
 TEST_F(AnalysisL2_Test, SkoolDraftIsub)
