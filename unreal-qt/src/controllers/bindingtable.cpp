@@ -170,7 +170,7 @@ Cover CoverOf(const std::string& control)
         return {"dpad", kAllDirections};
     if (control.rfind("dpad.", 0) == 0)
         return {"dpad", DirectionBit(control.substr(5))};
-    for (const std::string stick : {"lstick", "rstick"})
+    for (const std::string stick : {"lstick", "rstick", "ltouchpad", "rtouchpad"})
     {
         if (control == stick)
             return {stick, kAllDirections};
@@ -261,17 +261,21 @@ bool Active(const std::string& control, const std::map<std::string, float>& live
     return std::fabs(value(control)) >= kEdge;
 }
 
-/// A capture ignores what moves by itself or is no press: motion, the touchpad's finger, the mouse, an encoder's
-/// turn and the hand on it (a Surface Dial's `knob` and `touch`)
+/// A capture ignores what moves by itself or is no press: motion, a touchpad's finger, a thumb resting on a stick, the
+/// mouse, an encoder's turn and the hand on it (a Surface Dial's `knob` and `touch`)
 bool Ignored(const std::string& name)
 {
     for (const char* prefix : {"gyro.", "accel.", "mouse.", "pointer."})
         if (name.rfind(prefix, 0) == 0)
             return true;
     ControlInfo info;
-    if (name == "touch" || (ParseControl(name, info) && info.type == ControlType::Encoder))
+    if (name == "touch" || name == "lstick.touch" || name == "rstick.touch" ||
+        (ParseControl(name, info) && info.type == ControlType::Encoder))
         return true;
-    return name.rfind("touchpad.", 0) == 0 && name != "touchpad.click";
+    for (const char* pad : {"touchpad.", "ltouchpad.", "rtouchpad."})
+        if (name.rfind(pad, 0) == 0)
+            return name.size() < 6 || name.compare(name.size() - 6, 6, ".click") != 0;
+    return false;
 }
 
 QString KeyTitle(const std::string& key)
@@ -466,9 +470,12 @@ QString BindingTable::ControlName(const std::string& control, const std::string&
     if (control.rfind("dpad.", 0) == 0)
         if (auto arrow = arrows.find(control.substr(5)); arrow != arrows.end())
             return tr("D-pad %1").arg(QString::fromUtf8(arrow->second));
-    for (const std::string stick : {"lstick", "rstick"})
+    static const std::map<std::string, QString> sticks = {{"lstick", tr("Left stick")},
+                                                          {"rstick", tr("Right stick")},
+                                                          {"ltouchpad", tr("Left trackpad")},
+                                                          {"rtouchpad", tr("Right trackpad")}};
+    for (const auto& [stick, name] : sticks)
     {
-        const QString name = stick == "lstick" ? tr("Left stick") : tr("Right stick");
         if (control == stick)
             return name;
         if (control.rfind(stick + ".", 0) != 0)
@@ -476,6 +483,10 @@ QString BindingTable::ControlName(const std::string& control, const std::string&
         const std::string part = control.substr(stick.size() + 1);
         if (part == "click")
             return tr("%1 press").arg(name);
+        if (part == "touch")
+            return tr("%1 touch").arg(name);
+        if (part == "pressure")
+            return tr("%1 pressure").arg(name);
         if (auto arrow = arrows.find(part); arrow != arrows.end())
             return name + " " + QString::fromUtf8(arrow->second);
     }

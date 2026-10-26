@@ -26,7 +26,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 13;  // 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 14;  // 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -718,6 +718,10 @@ static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)
 {
     w.Put(p._nr08NoContention);
+    w.Put(p._nr08Pending);
+    w.Put(p._nr08PendingValue);
+    w.Put(p._nr08ApplyAt);
+    w.Put(p._nr08PendingFrame);
     w.Put(p._ratio);
     w.Put(p._pendingTiming);
     w.Put(p._spiSelected);
@@ -731,6 +735,10 @@ static void SaveDecoder(Writer& w, const PortDecoder_Next& p)
 static void LoadDecoder(Reader& r, PortDecoder_Next& p)
 {
     r.Get(p._nr08NoContention);
+    r.Get(p._nr08Pending);
+    r.Get(p._nr08PendingValue);
+    r.Get(p._nr08ApplyAt);
+    r.Get(p._nr08PendingFrame);
     r.Get(p._ratio);
     r.Get(p._pendingTiming);
     r.Get(p._spiSelected);

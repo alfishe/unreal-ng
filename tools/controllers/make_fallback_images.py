@@ -91,6 +91,89 @@ def surface_dial():
     return spots, svgs
 
 
+def steam_deck():
+    """The Steam Deck from the front: the screen in the middle; on the left the D-pad, the left stick, the left
+    trackpad and the Steam button, mirrored on the right by A B X Y, the right stick, the right trackpad and the quick
+    access button. The triggers and shoulders stand above the body; the back paddles (L4 L5 R4 R5) hang below the
+    grips as dashed tabs. A trackpad shows the finger as a stick's dot; its pressure is the bar under it, the thumb on
+    a stick a tag under the stick"""
+    spots, svgs = [], []
+    svgs.append(f'<path d="M260 430 L1788 430 Q1960 430 1975 600 L1990 1000 Q1995 1230 1800 1250 Q1640 1260 1560 1160 '
+                f'L488 1160 Q408 1260 248 1250 Q53 1230 58 1000 L73 600 Q88 430 260 430 Z" fill="{BODY}" '
+                f'stroke="{EDGE}" stroke-width="8"/>')
+    svgs.append(f'<rect x="674" y="480" width="700" height="480" rx="34" fill="#1d1f22" stroke="{EDGE}" '
+                f'stroke-width="4"/>')
+    svgs.append('<rect x="709" y="520" width="630" height="400" rx="6" fill="#232a33"/>')
+    svgs.append('<path d="M709 520 L1009 520 L829 920 L709 920 Z" fill="#ffffff" fill-opacity="0.04"/>')
+    for side, sign in (("left", 1), ("right", -1)):
+        mirror = (lambda x: x) if sign > 0 else (lambda x: W - x)
+        for row in range(3):
+            for col in range(4):
+                cx = mirror(150 + col * 26 + (row % 2) * 13)
+                svgs.append(f'<circle cx="{cx}" cy="{1080 + row * 24}" r="6" fill="#2c2f33"/>')
+        trigger, shoulder = ("lt", "lb") if sign > 0 else ("rt", "rb")
+        tl, sl = ("L2", "L1") if sign > 0 else ("R2", "R1")
+        x = 150 if sign > 0 else W - 150 - 260
+        for spot, svg in (rect(trigger, tl, x, 290, 260, 90, side, analog={"kind": "trigger", "fill": "down"}),
+                          rect(shoulder, sl, x - 20, 392, 300, 44, side, rx=20)):
+            spots.append(spot)
+            svgs.append(svg)
+    s, v = dpad(250, 620, 210, "left")
+    spots += s
+    svgs += v
+    for control, dx, dy in (("north", 0, -1), ("south", 0, 1), ("west", -1, 0), ("east", 1, 0)):
+        spot, svg = circle(control, {"north": "Y", "south": "A", "west": "X", "east": "B"}[control],
+                           1798 + dx * 78, 620 + dy * 78, 42, "right")
+        spots.append(spot)
+        svgs.append(svg)
+    for name, label, cx, side in (("lstick", "LS", 500, "left"), ("rstick", "RS", W - 500, "right")):
+        spot, svg = circle(f"{name}.x", label, cx, 600, 95, side,
+                           analog={"kind": "stick", "pair": f"{name}.y", "radius": 60}, group=name)
+        click, _ = circle(f"{name}.click", f"{label} press", cx, 600, 52, side, group=name)
+        touch, tag = rect(f"{name}.touch", f"{label} touch", cx - 50, 712, 100, 28, side, rx=14)
+        touch["quiet"] = True
+        touch["group"] = name
+        spots += [spot, click, touch]
+        svgs += [svg, f'<circle cx="{cx}" cy="600" r="52" fill="{BODY}" stroke="{EDGE}" stroke-width="4"/>', tag]
+    for name, label, cx, side in (("ltouchpad", "Left trackpad", 440, "left"),
+                                  ("rtouchpad", "Right trackpad", W - 440, "right")):
+        x, y, size = cx - 115, 765, 230
+        pad_spot, pad_svg = rect(f"{name}.x", label, x, y, size, size, side, rx=40,
+                                 analog={"kind": "stick", "pair": f"{name}.y", "radius": 100})
+        pad_spot["group"] = name
+        click, _ = rect(f"{name}.click", f"{label} press", x + 20, y + 20, size - 40, size - 40, side, rx=30)
+        click["group"] = name
+        touch, _ = rect(f"{name}.touch", f"{label} touch", x + 20, y + 20, size - 40, size - 40, side, rx=30)
+        touch["quiet"] = True
+        touch["group"] = name
+        pressure, bar = rect(f"{name}.pressure", f"{label} pressure", x + 15, y + size + 10, size - 30, 14, side, rx=7,
+                             analog={"kind": "trigger", "fill": "down"})
+        pressure["quiet"] = True
+        pressure["group"] = name
+        spots += [pad_spot, click, touch, pressure]
+        svgs += [pad_svg, f'<rect x="{x + 20}" y="{y + 20}" width="{size - 40}" height="{size - 40}" rx="30" '
+                          f'fill="none" stroke="{EDGE}" stroke-width="2" stroke-dasharray="6 10"/>', bar]
+    for control, label, x, side in (("view", "View", 560, "left"), ("menu", "Menu", W - 560, "right")):
+        spot, svg = circle(control, label, x, 478, 24, side)
+        spots.append(spot)
+        svgs.append(svg)
+    for control, label, x, side in (("guide", "Steam", 250, "left"), ("misc.1", "···", W - 250, "right")):
+        spot, svg = rect(control, label, x - 55, 1000, 110, 46, side, rx=20)
+        spots.append(spot)
+        svgs.append(svg)
+    svgs.append(f'<text x="{W - 250}" y="1032" font-family="sans-serif" font-size="34" fill="{EDGE}" '
+                f'text-anchor="middle">···</text>')
+    for control, label, x, y, side in (("paddle.p3", "L4", 150, 1275, "left"), ("paddle.p4", "L5", 150, 1345, "left"),
+                                       ("paddle.p1", "R4", W - 150 - 170, 1275, "right"),
+                                       ("paddle.p2", "R5", W - 150 - 170, 1345, "right")):
+        spot, svg = rect(control, label, x, y, 170, 52, side, rx=24)
+        spots.append(spot)
+        svgs.append(svg.replace('stroke-width="6"', 'stroke-width="5" stroke-dasharray="14 8"'))
+        svgs.append(f'<text x="{x + 85}" y="{y + 36}" font-family="sans-serif" font-size="30" fill="{EDGE}" '
+                    f'text-anchor="middle">{label}</text>')
+    return spots, svgs
+
+
 # A 104-key ANSI keyboard: (PcKey automation name, label, width in key units), rows top to bottom; None is a gap
 KEYBOARD_MAIN = [
     [("esc", "Esc", 1), None, ("f1", "F1", 1), ("f2", "F2", 1), ("f3", "F3", 1), ("f4", "F4", 1), (None, 0.5),
@@ -175,6 +258,7 @@ def escape(text):
 SETS = {
     "md6-pad": md6,
     "surface-dial": surface_dial,
+    "steam-deck": steam_deck,
     "generic-keyboard": keyboard,
 }
 

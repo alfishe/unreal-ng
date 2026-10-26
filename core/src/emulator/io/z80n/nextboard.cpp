@@ -89,7 +89,7 @@ void NextBoard::Reset(bool hard)
     if (_machine)
     {
         _machine->SetCpuSpeed(1);
-        _machine->SetContentionDisabled(false);
+        _machine->ResetContentionDisabled();
         _machine->SetMachineTiming(_timing);
     }
     // nr_register <= X"24" (4603): "protection against legacy programs accidentally hitting ports 0x243B, 0x253B"
@@ -239,7 +239,10 @@ uint8_t NextBoard::Read(uint8_t reg) const
             // the pins: GPIO2 is pulled up, GPIO0 is what the board drives while NR #A8 enables it, else pulled up (6201)
             return static_cast<uint8_t>(0x04 | ((_regs[0xA8] & 1) ? (_regs[reg] & 1) : 1));
         case 0x08:
-            return static_cast<uint8_t>((_regs[reg] & 0x7F) | ((_machine && _machine->PagingLocked()) ? 0 : 0x80));  // bit 7: port #7FFD is not locked
+            // bit 7: port #7FFD is not locked; bit 6: the contention switch in effect (zxnext.vhd 5906)
+            if (!_machine)
+                return static_cast<uint8_t>(_regs[reg] | 0x80);
+            return static_cast<uint8_t>((_regs[reg] & 0x3F) | (_machine->PagingLocked() ? 0 : 0x80) | (_machine->ContentionDisabled() ? 0x40 : 0));
         default:
             break;
     }

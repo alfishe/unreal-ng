@@ -252,7 +252,7 @@ not provisioned (as the Sprinter and Profi ROM tests do).
 | L5 boot ROM + loader | boot ROM extracted from the VHDL runs against a folder card (`TBBLUE.FW` and `machines/next` present): the loader reaches `JP #6000` (breakpoint on `#6000`), `config.ini` is found | needs the boot ROM (extracted from the repo's VHDL checkout by the tool) and the SD tree | the SD tree |
 | L6 firmware boot | `TBBLUE.FW` + NextZXOS from the distribution folder boots to the NextZXOS screen (OCR of the text), `.ls` in a dot command shows the folder, `LOAD "x"`, F_OPEN / F_READ of a known file, a write and a read back | `HostFolderFat` card, TTD recording on, OCR with the screen text tools, wait with `TestWait`, `EnableTurboMode()` | yes (provisioned) |
 | L7 API conformance | a small set of our own test programs (dot commands at `$2000`, assembled by us) that call each esxDOS hook of section 5 on a known folder and write results to the screen; screen text compared to a golden file | as L6 | yes |
-| L8 cross-check | the same card image booted in ZEsarUX, MAME (`specnext`, `specnext_sd` software list) and jnext; the screens compared once by hand, the OCR text pinned | manual + recorded in `DONE.md` | yes |
+| L8 cross-check | the same card image booted in ZEsarUX, MAME (`specnext`, `specnext_sd` software list) and jnext; the screens compared once by hand, the OCR text pinned | manual + recorded in `TODO.md` | yes |
 
 ### 8.2 Test data
 

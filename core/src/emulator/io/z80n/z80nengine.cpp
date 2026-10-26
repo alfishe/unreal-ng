@@ -7,6 +7,7 @@
 #include "debugger/ttd/ttdportjournal.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 
 /// region <Register file layout contract>
 
@@ -247,17 +248,23 @@ void Z80NEngine::NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user)
     if (!e._nextRegHost)
         return;
     e.Publish(cpu);
+    constexpr uint16_t kPortRegSelect = 0x243B;  // the NextREG select port
+    constexpr uint16_t kPortRegData = 0x253B;    // the NextREG data port
     // TTD: the NEXTREG instruction has no bus cycle, so the port journal would never see it. It is journaled as the pair of writes the
     // register interface is (OUT #243B,reg then OUT #253B,value), so the queries that answer for ports ("the last write to #253B") answer
     // for it as well; a recording and its replay make the same two calls
     if (ttd::TTDPortJournal* journal = e._context->ttdPortWrites) [[unlikely]]
     {
-        constexpr uint16_t kPortRegSelect = 0x243B;  // the NextREG select port
-        constexpr uint16_t kPortRegData = 0x253B;    // the NextREG data port
         const uint64_t frame = e._context->emulatorState.frame_counter;
         const uint32_t tInFrame = e._context->emulatorState.TtdTInFrame(e._z80->t);
         journal->OnWrite(kPortRegSelect, reg, frame, tInFrame, e._z80->m1_pc);
         journal->OnWrite(kPortRegData, value, frame, tInFrame, e._z80->m1_pc);
+    }
+    // The port breakpoints and the port trace see the same pair
+    if (PortDecoder* ports = e._context->pPortDecoder)
+    {
+        ports->OnPortWriteWithoutBusCycle(kPortRegSelect, reg, e._z80->m1_pc);
+        ports->OnPortWriteWithoutBusCycle(kPortRegData, value, e._z80->m1_pc);
     }
     e._nextRegHost->WriteNextReg(reg, value);
     e.Absorb(cpu);

@@ -19,7 +19,7 @@ UNREAL_NEXT_TESTS=/path/to/ZXSpectrumNextTests tools/machines/next/realboard/run
 
 Automatic verdicts (the programs that colour their own result): `!NextReg` (no red cell), `NReg0x69` (green border), `!Z80N` (no
 `ERR` row), `z80bltst` (no red flag byte). Everything else is `look` - the photograph is the reference, not another emulator (the
-rule of [TODO.md](../../../../docs/inprogress/2026-10-07-zx-next/DONE.md), "What counts as a reference"). The same four verdicts run as
+rule of [TODO.md](../../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "What counts as a reference"). The same four verdicts run as
 unit tests in `core/tests/emulator/machines/next/nextrealboard_test.cpp`.
 
 To add a verdict: write the rule in `rule_result` and name it in `PROGRAMS` (frames, keys `"key@frame:count"`, rule).

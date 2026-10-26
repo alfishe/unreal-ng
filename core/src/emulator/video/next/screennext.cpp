@@ -66,6 +66,7 @@ void ScreenNext::InitFrame()
         _frameSeq++;
     SetupSpritePasses();
     _passNext = _passes.first;
+    _passCursorValid = false;
     if (!closed && !again)
     {
         const int64_t now = NowClock();
@@ -143,11 +144,32 @@ void ScreenNext::RunSpritePass(int g, int64_t now)
     const unsigned vcount = PassVcount(g, next);
     NextSprites::LineBuffer& line = vcount < NextVideoRenderer::kHeight ? _rowLine[vcount] : _passScratch;
     const unsigned lineClocks = static_cast<unsigned>(_passes.line);
-    const bool overtime = sprites.Fill(vcount, board.Stored(0x15), board.Stored(0x4B), lineClocks, line, _passTicks);
+    // a pass a write split goes on from where the engine stood
+    NextSprites::FillCursor fresh;
+    NextSprites::FillCursor& cursor = _passCursorValid && _passCursorOf == g ? _passCursor : fresh;
+    _passCursorValid = false;
+    const bool overtime = sprites.FillUntil(cursor, ~0u, vcount, board.Stored(0x15), board.Stored(0x4B), lineClocks, line, _passTicks);
     if (vcount < NextVideoRenderer::kHeight)
         _rowSeq[vcount] = _frameSeq + (next ? 1 : 0);
     if (overtime || !_passTicks.empty())
         sprites.PostFill(PassStart(g), _passTicks, overtime, lineClocks, now);
+}
+
+void ScreenNext::AdvanceSpritePass(int g, int64_t now)
+{
+    NextBoard& board = Decoder()->Board();
+    bool next;
+    const unsigned vcount = PassVcount(g, next);
+    NextSprites::LineBuffer& line = vcount < NextVideoRenderer::kHeight ? _rowLine[vcount] : _passScratch;
+    if (!_passCursorValid || _passCursorOf != g)
+    {
+        _passCursor = NextSprites::FillCursor();
+        _passCursorOf = g;
+        _passCursorValid = true;
+    }
+    const int64_t stop = now - PassStart(g);
+    board.Sprites().FillUntil(_passCursor, static_cast<unsigned>(stop), vcount, board.Stored(0x15), board.Stored(0x4B),
+                              static_cast<unsigned>(_passes.line), line, _passTicks);
 }
 
 void ScreenNext::RunSpritePassesStartedBy(int64_t now)
@@ -180,6 +202,7 @@ void ScreenNext::RestartSpriteFrame()
 {
     _passFrameClosed = false;
     _passNext = _passes.first;
+    _passCursorValid = false;
     const int64_t now = NowClock();
     while (_passNext < PassLimit() && PassStart(_passNext) <= now)
         _passNext++;
@@ -303,8 +326,11 @@ void ScreenNext::SpriteStateWillChange(int64_t tstate)
 {
     if (!Decoder() || _rasterState.tstatesPerLine == 0)
         return;
-    // the passes whose fill has ended by the write saw the old state
-    RunSpritePassesEndedBy(tstate >= 0 ? tstate * 8 : NowClock());
+    // the passes whose fill has ended by the write saw the old state, so did the sprites the engine has reached in the one it is in
+    const int64_t now = tstate >= 0 ? tstate * 8 : NowClock();
+    RunSpritePassesEndedBy(now);
+    if (_passNext < PassLimit() && PassStart(_passNext) <= now)
+        AdvanceSpritePass(_passNext, now);
 }
 
 void ScreenNext::UpdateCopperGeometry()

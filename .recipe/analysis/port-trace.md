@@ -152,7 +152,8 @@ Query params: `limit` (default 0 = all — beware multi-MB responses) and
 `since` (t-state floor). Nothing else is accepted here.
 
 Event fields (verbose form): `index`, `timestamp` (t-state), `frame`,
-`raw_port`, `decoded_port`, `decode_rule`, `value`, `pc`, `direction`
+`raw_port`, `decoded_port`, `decode_rule` (the model's table index; 255 unmapped, 254 BDI fallback,
+253 no table, 252 no bus cycle: the Next's NEXTREG instruction as OUT #243B / #253B), `value`, `pc`, `direction`
 (`IN`/`OUT`), `device`, flag booleans (`decoded`, `had_handler`,
 `beta128_gated`, ...) and, on decoders with codes, `code` / `code_name`.
 The compact form (`ts`, `raw`, `dec`, `val`, `dev`, `flags`) is what the

@@ -23,6 +23,10 @@
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/video/ulacontention.h"
+#include "emulator/ports/portdiagrecorder.h"
+#include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 
 class NextSkeleton_Test : public ::testing::Test
 {
@@ -201,6 +205,46 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
     EXPECT_EQ(_memory->PeekSlot(0x0000), rom0);
 }
 
+// The DMA runs on the CPU's clock, which the video logic holds on a contended access whoever drives the bus: a fill of bank 5 in the
+// paper area takes the waits a CPU write there would, so does a block to port #FE; bank 2 and contention switched off (NR #08 bit 6)
+// take none
+TEST_F(NextSkeleton_Test, DmaCyclesWaitOnContendedMemoryAndPorts)
+{
+    UlaContention* ula = _context->pUlaContention;
+    ASSERT_NE(ula, nullptr);
+    ASSERT_TRUE(ula->IsContentionEnabled());
+    Load(0x9000, {0x00});  // NOP: the instruction the DMA runs after
+    const uint32_t paper = 16300;
+    auto fillTime = [&](uint16_t destination) {
+        DmaFill(_ports, destination, 64);
+        _z80->pc = 0x9000;
+        _z80->t = paper;
+        _z80->EngineStep();
+        return _z80->t - paper;
+    };
+    // memory -> the ULA port #FE (port B: I/O, fixed): a contended port waits at IORQ
+    auto borderTime = [&]() {
+        for (uint8_t v : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x80), uint8_t(64), uint8_t(0x00), uint8_t(0x24), uint8_t(0x28), uint8_t(0xAD),
+                          uint8_t(0xFE), uint8_t(0x00), uint8_t(0xCF), uint8_t(0x87)})
+            _ports->DecodePortOut(0x6B, v, 0);
+        _z80->pc = 0x9000;
+        _z80->t = paper;
+        _z80->EngineStep();
+        return _z80->t - paper;
+    };
+    const uint32_t bank5 = fillTime(0x4000);
+    const uint32_t bank2 = fillTime(0xA000);
+    const uint32_t border = borderTime();
+    _z80->t = ula->LineWindowEndFrom(_z80->t);
+    Out(0x243B, 0x08);
+    Out(0x253B, 0x40);  // contention off
+    ASSERT_FALSE(ula->IsContentionEnabled());
+    const uint32_t off = fillTime(0x4000);
+    EXPECT_EQ(bank2, off) << "bank 2 is not contended";
+    EXPECT_GT(border, borderTime() + 32) << "port #FE is contended";
+    EXPECT_GT(bank5, off + 32) << "64 writes into bank 5 in paper lines wait (" << bank5 << " T against " << off << ")";
+}
+
 // zxnext.vhd 1844: dma_wait_n = z80_wait_n and spi_wait_n - a DMA that reads the SD card's data port waits for each 16-clock byte (it was
 // compared in the wrong unit and never waited: every read after the first returned the byte before)
 TEST_F(NextSkeleton_Test, DmaReadsOfThePortEbWaitForTheSpiByte)
@@ -229,6 +273,60 @@ TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
     // page 68 is bank 34, low half
     EXPECT_EQ(_memory->PeekSlot(0xC000), 0x5A);
     EXPECT_EQ(_memory->RAMPageAddress(34)[0], 0x5A);
+}
+
+// NEXTREG has no port cycle, yet the port trace shows it as the register interface's pair: OUT #243B,reg then OUT #253B,value at the
+// instruction's pc, marked as no bus cycle
+TEST_F(NextSkeleton_Test, NextRegInstructionIsInThePortTrace)
+{
+    ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = _ports->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+    Load(0x8000, {0x3E, 0x44,                // LD A,#44
+                  0xED, 0x92, 0x56});        // NEXTREG #56,A
+    _z80->pc = 0x8000;
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_EQ(_memory->GetMmu(6), 0x44);
+
+    const std::vector<PortTraceEvent> events = recorder->getLast(16);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].rawPort, 0x243B);
+    EXPECT_EQ(events[0].value, 0x56);
+    EXPECT_EQ(events[1].rawPort, 0x253B);
+    EXPECT_EQ(events[1].value, 0x44);
+    for (const PortTraceEvent& e : events)
+    {
+        EXPECT_TRUE(e.isOut());
+        EXPECT_EQ(e.pc, 0x8002);
+        EXPECT_EQ(e.decodeRuleIndex, PortTraceRule::kNoBusCycle);
+    }
+}
+
+// A port breakpoint on #253B stops on NEXTREG as on OUT (#253B),A: after the instruction, which has written the register
+TEST_F(NextSkeleton_Test, PortBreakpointFiresOnNextReg)
+{
+    _emulator->DebugOn();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    auto* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_OUT;
+    breakpoint->z80address = 0x253B;
+    const uint16_t id = _emulator->GetBreakpointManager()->AddBreakpoint(breakpoint);
+
+    Load(0x8000, {0x00,                      // NOP
+                  0xED, 0x91, 0x56, 0x44,    // NEXTREG #56,#44
+                  0x00, 0x00});              // NOP, NOP
+    _z80->pc = 0x8000;
+    _z80->iff1 = _z80->iff2 = 0;
+    EXPECT_EQ(_emulator->RunNCPUCycles(4, false), 2u) << "NOP / NEXTREG, then the run ends";
+    EXPECT_EQ(_z80->pc, 0x8005);
+    EXPECT_EQ(_memory->GetMmu(6), 0x44);
+    EXPECT_EQ(_emulator->LastDirectStop().breakpointId, id);
+    EXPECT_EQ(_emulator->LastDirectStop().kind, BreakpointHitKind::PortOut);
+    EXPECT_EQ(_emulator->LastDirectStop().address, 0x253B);
 }
 
 // Next3D Elite Wireframe draws into Layer 2 through MMU slot 0 (NEXTREG #50 = #12 + y/32, then writes at #0000-#1FFF): a RAM page in slot 0
@@ -336,6 +434,49 @@ TEST_F(NextSkeleton_Test, Only48KBank5AndNothingAbove3_5MHz)
     Out(0x243B, 0x08);
     Out(0x253B, 0x40);  // NR #08 bit 6: contention disabled
     EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
+}
+
+// zxnext.vhd 5822: NR #08 bit 6 takes effect in an idle bus cycle while hc(8) = 1, so a switch inside a line's contention window waits
+// for the window's end; the register reads the switch in effect (5906). Outside the window it is at once
+TEST_F(NextSkeleton_Test, ContentionSwitchWaitsForTheLinesWindowToEnd)
+{
+    Out(0x243B, 0x03);
+    Out(0x253B, 0x90);  // timing family 1 (48K)
+    _emulator->RunFrame(true);
+    UlaContention* ula = _context->pUlaContention;
+    ASSERT_NE(ula, nullptr);
+    ASSERT_TRUE(ula->IsContentionEnabled());
+    const ContentionRaster& raster = ula->GetRaster();
+    const uint32_t inWindow = raster.screenAreaStart + 20 * raster.tstatesPerLine + raster.screenLineAreaStart;  // a paper line, mid window
+    const uint32_t windowEnd = ula->LineWindowEndFrom(inWindow);
+    ASSERT_GT(windowEnd, inWindow);
+    EXPECT_EQ(ula->LineWindowEndFrom(windowEnd), windowEnd) << "the end is outside";
+
+    _z80->t = inWindow;
+    Out(0x243B, 0x08);
+    Out(0x253B, 0x40);
+    EXPECT_EQ(In(0x253B) & 0x40, 0) << "the switch in effect reads back, not the one written";
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    _z80->t = windowEnd - 1;
+    _ports->OnInstructionDone();
+    EXPECT_TRUE(ula->IsContentionEnabled()) << "still inside the window";
+    _z80->t = windowEnd;
+    _ports->OnInstructionDone();
+    EXPECT_FALSE(ula->IsContentionEnabled()) << "the window ended";
+    EXPECT_EQ(In(0x253B) & 0x40, 0x40);
+
+    Out(0x253B, 0x00);  // outside the window: at once
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    EXPECT_EQ(In(0x253B) & 0x40, 0);
+
+    // A switch still waiting when the frame ends takes effect in the next one, whatever its T count
+    _z80->t = inWindow;
+    Out(0x253B, 0x40);
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    _context->emulatorState.frame_counter++;
+    _z80->t = 4;
+    _ports->OnInstructionDone();
+    EXPECT_FALSE(ula->IsContentionEnabled());
 }
 
 // t80n_mcode.vhd X"91": NEXTREG n,v is 6 memory cycles (2 M1, 2 operand, 2 trailing reads with NoRead = 0), all stretched by the +3 gate

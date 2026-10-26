@@ -1,0 +1,673 @@
+{
+  "schema": 1,
+  "family": "steam-deck",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "lt",
+      "label": "L2",
+      "shape": {
+        "rect": [
+          150,
+          290,
+          260,
+          90
+        ]
+      },
+      "anchor": [
+        280,
+        335
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 0
+    },
+    {
+      "control": "lb",
+      "label": "L1",
+      "shape": {
+        "rect": [
+          130,
+          392,
+          300,
+          44
+        ]
+      },
+      "anchor": [
+        280,
+        414
+      ],
+      "callout": "left",
+      "order": 1
+    },
+    {
+      "control": "rt",
+      "label": "R2",
+      "shape": {
+        "rect": [
+          1638,
+          290,
+          260,
+          90
+        ]
+      },
+      "anchor": [
+        1768,
+        335
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 2
+    },
+    {
+      "control": "rb",
+      "label": "R1",
+      "shape": {
+        "rect": [
+          1618,
+          392,
+          300,
+          44
+        ]
+      },
+      "anchor": [
+        1768,
+        414
+      ],
+      "callout": "right",
+      "order": 3
+    },
+    {
+      "control": "dpad.up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          215,
+          515,
+          70,
+          70
+        ]
+      },
+      "anchor": [
+        250,
+        550
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 4
+    },
+    {
+      "control": "dpad.down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          215,
+          655,
+          70,
+          70
+        ]
+      },
+      "anchor": [
+        250,
+        690
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 5
+    },
+    {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          145,
+          585,
+          70,
+          70
+        ]
+      },
+      "anchor": [
+        180,
+        620
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 6
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          285,
+          585,
+          70,
+          70
+        ]
+      },
+      "anchor": [
+        320,
+        620
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 7
+    },
+    {
+      "control": "north",
+      "label": "Y",
+      "shape": {
+        "circle": [
+          1798,
+          542,
+          42
+        ]
+      },
+      "anchor": [
+        1798,
+        542
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "south",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1798,
+          698,
+          42
+        ]
+      },
+      "anchor": [
+        1798,
+        698
+      ],
+      "callout": "right",
+      "order": 9
+    },
+    {
+      "control": "west",
+      "label": "X",
+      "shape": {
+        "circle": [
+          1720,
+          620,
+          42
+        ]
+      },
+      "anchor": [
+        1720,
+        620
+      ],
+      "callout": "right",
+      "order": 10
+    },
+    {
+      "control": "east",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1876,
+          620,
+          42
+        ]
+      },
+      "anchor": [
+        1876,
+        620
+      ],
+      "callout": "right",
+      "order": 11
+    },
+    {
+      "control": "lstick.x",
+      "label": "LS",
+      "shape": {
+        "circle": [
+          500,
+          600,
+          95
+        ]
+      },
+      "anchor": [
+        500,
+        600
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "stick",
+        "pair": "lstick.y",
+        "radius": 60
+      },
+      "group": "lstick",
+      "order": 12
+    },
+    {
+      "control": "lstick.click",
+      "label": "LS press",
+      "shape": {
+        "circle": [
+          500,
+          600,
+          52
+        ]
+      },
+      "anchor": [
+        500,
+        600
+      ],
+      "callout": "left",
+      "group": "lstick",
+      "order": 13
+    },
+    {
+      "control": "lstick.touch",
+      "label": "LS touch",
+      "shape": {
+        "rect": [
+          450,
+          712,
+          100,
+          28
+        ]
+      },
+      "anchor": [
+        500,
+        726
+      ],
+      "callout": "left",
+      "quiet": true,
+      "group": "lstick",
+      "order": 14
+    },
+    {
+      "control": "rstick.x",
+      "label": "RS",
+      "shape": {
+        "circle": [
+          1548,
+          600,
+          95
+        ]
+      },
+      "anchor": [
+        1548,
+        600
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "stick",
+        "pair": "rstick.y",
+        "radius": 60
+      },
+      "group": "rstick",
+      "order": 15
+    },
+    {
+      "control": "rstick.click",
+      "label": "RS press",
+      "shape": {
+        "circle": [
+          1548,
+          600,
+          52
+        ]
+      },
+      "anchor": [
+        1548,
+        600
+      ],
+      "callout": "right",
+      "group": "rstick",
+      "order": 16
+    },
+    {
+      "control": "rstick.touch",
+      "label": "RS touch",
+      "shape": {
+        "rect": [
+          1498,
+          712,
+          100,
+          28
+        ]
+      },
+      "anchor": [
+        1548,
+        726
+      ],
+      "callout": "right",
+      "quiet": true,
+      "group": "rstick",
+      "order": 17
+    },
+    {
+      "control": "ltouchpad.x",
+      "label": "Left trackpad",
+      "shape": {
+        "rect": [
+          325,
+          765,
+          230,
+          230
+        ]
+      },
+      "anchor": [
+        440,
+        880
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "stick",
+        "pair": "ltouchpad.y",
+        "radius": 100
+      },
+      "group": "ltouchpad",
+      "order": 18
+    },
+    {
+      "control": "ltouchpad.click",
+      "label": "Left trackpad press",
+      "shape": {
+        "rect": [
+          345,
+          785,
+          190,
+          190
+        ]
+      },
+      "anchor": [
+        440,
+        880
+      ],
+      "callout": "left",
+      "group": "ltouchpad",
+      "order": 19
+    },
+    {
+      "control": "ltouchpad.touch",
+      "label": "Left trackpad touch",
+      "shape": {
+        "rect": [
+          345,
+          785,
+          190,
+          190
+        ]
+      },
+      "anchor": [
+        440,
+        880
+      ],
+      "callout": "left",
+      "quiet": true,
+      "group": "ltouchpad",
+      "order": 20
+    },
+    {
+      "control": "ltouchpad.pressure",
+      "label": "Left trackpad pressure",
+      "shape": {
+        "rect": [
+          340,
+          1005,
+          200,
+          14
+        ]
+      },
+      "anchor": [
+        440,
+        1012
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "quiet": true,
+      "group": "ltouchpad",
+      "order": 21
+    },
+    {
+      "control": "rtouchpad.x",
+      "label": "Right trackpad",
+      "shape": {
+        "rect": [
+          1493,
+          765,
+          230,
+          230
+        ]
+      },
+      "anchor": [
+        1608,
+        880
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "stick",
+        "pair": "rtouchpad.y",
+        "radius": 100
+      },
+      "group": "rtouchpad",
+      "order": 22
+    },
+    {
+      "control": "rtouchpad.click",
+      "label": "Right trackpad press",
+      "shape": {
+        "rect": [
+          1513,
+          785,
+          190,
+          190
+        ]
+      },
+      "anchor": [
+        1608,
+        880
+      ],
+      "callout": "right",
+      "group": "rtouchpad",
+      "order": 23
+    },
+    {
+      "control": "rtouchpad.touch",
+      "label": "Right trackpad touch",
+      "shape": {
+        "rect": [
+          1513,
+          785,
+          190,
+          190
+        ]
+      },
+      "anchor": [
+        1608,
+        880
+      ],
+      "callout": "right",
+      "quiet": true,
+      "group": "rtouchpad",
+      "order": 24
+    },
+    {
+      "control": "rtouchpad.pressure",
+      "label": "Right trackpad pressure",
+      "shape": {
+        "rect": [
+          1508,
+          1005,
+          200,
+          14
+        ]
+      },
+      "anchor": [
+        1608,
+        1012
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "quiet": true,
+      "group": "rtouchpad",
+      "order": 25
+    },
+    {
+      "control": "view",
+      "label": "View",
+      "shape": {
+        "circle": [
+          560,
+          478,
+          24
+        ]
+      },
+      "anchor": [
+        560,
+        478
+      ],
+      "callout": "left",
+      "order": 26
+    },
+    {
+      "control": "menu",
+      "label": "Menu",
+      "shape": {
+        "circle": [
+          1488,
+          478,
+          24
+        ]
+      },
+      "anchor": [
+        1488,
+        478
+      ],
+      "callout": "right",
+      "order": 27
+    },
+    {
+      "control": "guide",
+      "label": "Steam",
+      "shape": {
+        "rect": [
+          195,
+          1000,
+          110,
+          46
+        ]
+      },
+      "anchor": [
+        250,
+        1023
+      ],
+      "callout": "left",
+      "order": 28
+    },
+    {
+      "control": "misc.1",
+      "label": "\u00b7\u00b7\u00b7",
+      "shape": {
+        "rect": [
+          1743,
+          1000,
+          110,
+          46
+        ]
+      },
+      "anchor": [
+        1798,
+        1023
+      ],
+      "callout": "right",
+      "order": 29
+    },
+    {
+      "control": "paddle.p3",
+      "label": "L4",
+      "shape": {
+        "rect": [
+          150,
+          1275,
+          170,
+          52
+        ]
+      },
+      "anchor": [
+        235,
+        1301
+      ],
+      "callout": "left",
+      "order": 30
+    },
+    {
+      "control": "paddle.p4",
+      "label": "L5",
+      "shape": {
+        "rect": [
+          150,
+          1345,
+          170,
+          52
+        ]
+      },
+      "anchor": [
+        235,
+        1371
+      ],
+      "callout": "left",
+      "order": 31
+    },
+    {
+      "control": "paddle.p1",
+      "label": "R4",
+      "shape": {
+        "rect": [
+          1728,
+          1275,
+          170,
+          52
+        ]
+      },
+      "anchor": [
+        1813,
+        1301
+      ],
+      "callout": "right",
+      "order": 32
+    },
+    {
+      "control": "paddle.p2",
+      "label": "R5",
+      "shape": {
+        "rect": [
+          1728,
+          1345,
+          170,
+          52
+        ]
+      },
+      "anchor": [
+        1813,
+        1371
+      ],
+      "callout": "right",
+      "order": 33
+    }
+  ]
+}

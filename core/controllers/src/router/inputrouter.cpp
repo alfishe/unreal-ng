@@ -141,7 +141,7 @@ bool InputRouter::Compile(const Binding& binding, CompiledBinding& out, std::str
                 // lstick.x is the stick for an override: a shift layer binding `lstick` takes it too
                 const size_t dot = source.control.find('.');
                 const std::string stick = dot == std::string::npos ? "" : source.control.substr(0, dot);
-                out.controls.insert(stick == "lstick" || stick == "rstick" ? stick : source.control);
+                out.controls.insert(!StickOf(stick).empty() ? stick : source.control);
                 break;
             }
             case SourceKind::Button:

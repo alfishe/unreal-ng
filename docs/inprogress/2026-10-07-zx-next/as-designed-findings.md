@@ -83,6 +83,6 @@ from what the wiki or a classic Spectrum does, the VHDL wins.
 | N5 NR #07 / #80 | NR #80 bit 7 (expansion bus on) forces 3.5 MHz; NR #07 reads `00 & speed in force & 00 & programmed` | done (the switch is immediate, the VHDL's within the instruction) |
 | N6 NR #8E | a bank change writes #DFFD bits 2:0 = `00 & d7` and clears bit 3 (the Profi mapping is hard-wired off); #1FFD bit 1 = d0 | done |
 | N7 NR #04 / #0A | NR #04 keeps 8 bits on the Issue 5 board and reads 0 (no read case); NR #0A reads `{mf type, sd swap, automap, reverse, 0, dpi}` (mask #FB; the report's #DB is wrong) | done |
-| N8 contention | `port_contend = not A0 or port_7ffd_active or port_bf3b or port_ff3b`; `mem_contend` per 8K page; the +3 has no I/O contention | done; NR #08 bit 6 and speed latches (`hc(8)`) remain immediate |
+| N8 contention | `port_contend = not A0 or port_7ffd_active or port_bf3b or port_ff3b`; `mem_contend` per 8K page; the +3 has no I/O contention | done; NR #08 bit 6 waits for `hc(8)` = 1 (2026-10-25) |
 
 Not modelled: the held SRAM output a read of an unmapped slot returns on the board (N1), the within-instruction speed latch (N5).

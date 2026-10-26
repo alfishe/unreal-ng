@@ -37,8 +37,13 @@ public:
     virtual void SetCpuSpeed(uint8_t ratio) = 0;
     /// NR #03: the frame family (NextTiming) the video logic follows from the next frame
     virtual void SetMachineTiming(uint8_t timing) = 0;
-    /// NR #08 bit 6: the video memory contention is disabled
+    /// NR #08 bit 6 written: the video memory contention is disabled. It takes effect while the ULA's hc(8) = 1, outside the line's
+    /// contention window (zxnext.vhd 5822)
     virtual void SetContentionDisabled(bool disabled) = 0;
+    /// A reset clears NR #08 bit 6 at once
+    virtual void ResetContentionDisabled() = 0;
+    /// NR #08 bit 6 as it is in effect (eff_nr_08_contention_disable): what the register reads
+    virtual bool ContentionDisabled() const = 0;
     /// NR #8E: the Spectrum 128K memory mapping as the paging ports #7FFD / #DFFD / #1FFD carry it
     virtual void WriteMemoryMapping(uint8_t value) = 0;
     virtual uint8_t ReadMemoryMapping() const = 0;

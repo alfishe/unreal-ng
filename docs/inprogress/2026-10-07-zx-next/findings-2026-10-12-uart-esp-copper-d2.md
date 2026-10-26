@@ -98,6 +98,6 @@ Full table, method and calibration: [copper-picture-latency-2026-10-12.md](coppe
 
 ## 5. Still open (not done)
 
-See the `[ ]` items of [DONE.md](DONE.md); the ones from this stretch: the UART items in 1; a per-sprite fill time instead of one
+See the `[ ]` items of [TODO.md](TODO.md); the ones from this stretch: the UART items in 1; a per-sprite fill time instead of one
 instant per row; the ULA+ 28 MHz wait; the CPU speed change within the instruction (taken at the frame start now); the older
 N-series items (CTC, DivMMC direct paging, AY reset, Multiface RETN, hard / soft reset, core 3.0.x overscan, DMA WR3 start).

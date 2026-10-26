@@ -19,9 +19,16 @@
 // SSH session); Ctrl+C or --seconds ends it. --boot starts the ROM instead of the border test: the app the Deck
 // launcher runs (deck-install.sh), a machine to drive over the WebAPI.
 //
-// Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: View + Menu, Esc.
+// With --boot or --file the controllers library drives the machine (deckcontrollers.h): the Deck's own controller
+// through hidraw (every button, paddle, trackpad, the motion sensors, both motors), any other
+// pad through evdev, the play and game profiles, haptics. SDL's gamepad layer stays off then, so nothing else writes
+// the Deck's feature reports; the border test keeps the SDL gamepad (A / D-pad on Kempston).
+//
+// Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: Esc; the border test also View + Menu, --boot / --file the Steam menu.
 
+#include "deckcontrollers.h"
 #include "emuhost.h"
+#include "emulator/emulator.h"
 #include "emulator/video/displaygeometry.h"
 #include "timinglog.h"
 
@@ -30,6 +37,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -110,7 +118,9 @@ int main(int argc, char** argv)
         else if (k == "--autofire") opt.autofireMs = std::stod(v);
     }
 
-    if (!SDL_Init(opt.headless ? SDL_INIT_EVENTS : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
+    const bool hosted = !opt.headless && (opt.boot || !opt.file.empty());   // the controllers library has the pads
+    const SDL_InitFlags video = SDL_INIT_VIDEO | SDL_INIT_AUDIO | (hosted ? 0u : SDL_INIT_GAMEPAD);
+    if (!SDL_Init(opt.headless ? SDL_INIT_EVENTS : video))
     {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
@@ -126,6 +136,10 @@ int main(int argc, char** argv)
         SDL_Log("emulator: %s", error.c_str());
         return 1;
     }
+    // Before the file loads: its NC_FILE_LOADED picks the game profile
+    std::unique_ptr<deckpoc::DeckControllers> controllers;
+    if (hosted)
+        controllers = std::make_unique<deckpoc::DeckControllers>(*emu.Get(), deckpoc::DeckControllers::Options{});
     if (!opt.file.empty())
     {
         if (!emu.LoadFile(opt.file, &error))
@@ -261,6 +275,10 @@ int main(int argc, char** argv)
         }
         if (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK) && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START))
             quit = true;
+        // Game Mode: the window always has the focus. View + Menu is the debug layer key there (pad-default): the
+        // Steam menu's Exit game quits
+        if (controllers)
+            controllers->Poll((SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0 || !opt.windowed);
 
         // Timer-driven presses at a period that is not a multiple of the frame time, so the press phase
         // relative to the emulated frame sweeps through every position
@@ -381,6 +399,7 @@ int main(int argc, char** argv)
                  deckpoc::Describe(deckpoc::ComputeSamples(softwareLatencies)).c_str());
     SDL_Log("software latency: %s", deckpoc::Describe(deckpoc::ComputeSamples(softwareLatencies)).c_str());
 
+    controllers.reset();   // the motors stop, the Deck's lizard mode comes back
     emu.Stop();
     if (frameTexture) SDL_ReleaseGPUTexture(device, frameTexture);
     if (transfer) SDL_ReleaseGPUTransferBuffer(device, transfer);

@@ -536,6 +536,9 @@ TEST(LinuxPads_Test, HidSteam_ThePadsTheSteamClientHolds)
     // A Steam Deck whose pad hid-steam still offers (Steam not holding it): not listed
     AddSteamHid(root, "0003:28DE:1205.0003", "Valve Software Steam Deck Controller", "usb-0000:04:00.3-3/input2",
                 false, true);
+    // A Steam Deck that Steam holds: the hidraw backend reads it, no placeholder
+    AddSteamHid(root, "0003:28DE:1205.0006", "Valve Software Steam Deck Controller", "usb-0000:04:00.3-3/input2",
+                false, false);
     // A 2015 wireless receiver: two slots without a pad, one entry
     AddSteamHid(root, "0003:28DE:1142.0004", "Valve Software Wireless Steam Controller", "usb-0000:00:14.0-2/input1",
                 false, false);

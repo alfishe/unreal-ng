@@ -60,7 +60,7 @@ git diff testdata/slots/fitted-devices.txt   # only the `62:` number of the next
 ```
 
 Open: compare only the presence of id 62, as the test already does for `EthernetNics` (`:var`), since the layout of `NextState` is guarded
-by its own image version and codec tests; see [DONE.md](DONE.md), "Remaining".
+by its own image version and codec tests; see [TODO.md](TODO.md), "Remaining".
 
 ## 4. Isolating port reads later
 

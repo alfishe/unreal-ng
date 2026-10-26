@@ -1,6 +1,6 @@
 # ZX Spectrum Next (`NEXT`, 2048K) as a creatable machine
 
-**Created:** 2026-10-07 · **Status:** done, closed 2026-10-16 · see [DONE.md](DONE.md)
+**Created:** 2026-10-07 · **Status:** reopened 2026-10-25 (closed 2026-10-16) · open items: [TODO.md](TODO.md)
 
 ## What this is
 
@@ -62,7 +62,7 @@ something that can be shipped and checked from every automation surface.
 | [research-other-emulators.md](research-other-emulators.md) | MAME, jnext, ZEsarUX, CSpect: what each models and how it is built |
 | [research-cosim-first-diff.md](research-cosim-first-diff.md) | the co-simulation tools (`tools/machines/next/cosim`) and the first diff of the real boot against jnext: NR #8C AltROM missing |
 | [research-sources.md](research-sources.md) | every source with link, revision read and what it is good for |
-| [DONE.md](DONE.md) | status marker, what is done and what is open |
+| [TODO.md](TODO.md) | status marker, what is done and what is open |
 
 ## Key findings so far
 

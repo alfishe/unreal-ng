@@ -865,6 +865,18 @@ void PortDecoder_Next::BindDma()
     };
     // the CPU is held: its clock runs on with every access of the transfer, so a port write lands at its own moment
     bus.advance = [this](unsigned clocks) { _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks)); };
+    // the DMA runs on the CPU's clock (z80dma clk_i = i_CLK_CPU), which the video logic holds on a contended access of the bus whoever
+    // drives it (cpu_mreq_n / cpu_iorq_n / cpu_a are the DMA's while it holds the bus); the +3's wait reaches it through dma_wait_n
+    // (zxnext.vhd 1844). So its cycles wait as the CPU's: memory at the cycle's first T, a contended port at IORQ, one T later
+    bus.contend = [this](uint16_t address, bool io) {
+        const UlaContention* ula = _context->pUlaContention;
+        if (!ula || !ula->IsContentionEnabled())
+            return;
+        Z80* z80 = _context->pCore->GetZ80();
+        const uint8_t wait = io ? ula->IoWaitAfterIorq(address, z80->t + 1) : (ula->IsContendedAt(address) ? ula->DelayAt(z80->t) : 0);
+        if (wait)
+            z80->InsertWaitStates(wait);
+    };
     _dma.SetBus(std::move(bus));
 }
 
@@ -952,6 +964,8 @@ void PortDecoder_Next::FireBreakpoint(uint16_t id, uint16_t address, BreakpointH
 
 void PortDecoder_Next::OnInstructionDone()
 {
+    if (_nr08Pending) [[unlikely]]
+        SettleContentionDisabled();
     if (!_context->pDebugManager) [[unlikely]]
         return;
     BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
@@ -1468,7 +1482,41 @@ uint8_t PortDecoder_Next::ReadMemoryMapping() const
 
 void PortDecoder_Next::SetContentionDisabled(bool disabled)
 {
-    _nr08NoContention = disabled;
+    // zxnext.vhd 5822: eff_nr_08_contention_disable follows the register in an idle bus cycle while hc(8) = 1, so a switch inside the
+    // line's contention window takes effect when the window ends
+    _nr08Pending = false;
+    if (disabled == _nr08NoContention)
+        return;
+    const UlaContention* ula = _context->pUlaContention;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t at = ula && z80 ? ula->LineWindowEndFrom(z80->t) : 0;
+    if (!z80 || at <= z80->t)
+    {
+        _nr08NoContention = disabled;
+        UpdateContention();
+        return;
+    }
+    _nr08Pending = true;
+    _nr08PendingValue = disabled;
+    _nr08ApplyAt = at;
+    _nr08PendingFrame = _state->frame_counter;
+}
+
+void PortDecoder_Next::ResetContentionDisabled()
+{
+    _nr08Pending = false;
+    _nr08NoContention = false;
+    UpdateContention();
+}
+
+void PortDecoder_Next::SettleContentionDisabled()
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    // The window ends inside its line: a new frame (the T count restarted) is past it
+    if (z80 && z80->t < _nr08ApplyAt && _state->frame_counter == _nr08PendingFrame)
+        return;
+    _nr08Pending = false;
+    _nr08NoContention = _nr08PendingValue;
     UpdateContention();
 }
 
