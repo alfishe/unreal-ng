@@ -131,6 +131,14 @@ public:
     }
     bool IsGateArray() const { return _gateArray; }
 
+    /// The Next's +3 timing: the video logic drives WAIT from the ULA's contention window (WindowedGateArrayWait) instead of the
+    /// Amstrad gate array's pattern
+    void SetWindowedWait(bool windowed)
+    {
+        _windowedWait = windowed;
+        RebuildDelayLut();
+    }
+
     /// The machine's rule, from the flags above (None while contention is disabled for the model)
     ContentionRule GetRule() const
     {
@@ -198,6 +206,9 @@ public:
         return d < _delayLutSize ? _delayLut[d] : 0;
     }
 
+    /// DelayAt for a DMA cycle: the same but on the Next's +3 timing, where the DMA samples WAIT half a T before the CPU
+    uint8_t DmaDelayAt(uint32_t t) const;
+
     /// Is this Z80 address in contended memory on the current model?
     /// 48K/128K: the slots holding an odd RAM page (page 5 at 0x4000, and 0xC000 when page 1/3/5/7 is
     /// mapped there) - those pages share the ULA's memory bus. +2A/+3: the slots holding pages 4-7,
@@ -222,9 +233,9 @@ public:
     /// The hot-path test of the contended memory interfaces: is the 8K half holding this address contended
     bool IsContendedAt(uint16_t addr) const { return _slotContended[addr >> 13]; }
 
-    /// The Next's I/O contention (zxula.vhd i_contention_port = zxnext.vhd port_contend): no wait before IORQ, and after it only
-    /// A0 = 0 ports and the ports `rule` names (#7FFD, the ULA+ pair); the contended memory behind the high byte plays no part.
-    /// Without a rule the Spectrum behaviour stays: the high byte in contended memory contends the port
+    /// The Next's odd ports that contend as a ULA port (zxnext.vhd port_contend: #7FFD, the ULA+ pair) besides the A0 = 0 ones. The
+    /// high byte in contended memory contends a port as on a Spectrum (mem_contend is decoded from the address alone: the wait before
+    /// IORQ, then C:1 x 3); POC 036 measured both on the RTL. Without a rule only A0 = 0 ports contend
     void SetOddPortRule(bool (*rule)(const void* owner, uint16_t port), const void* owner)
     {
         _oddPortRule = rule;
@@ -232,7 +243,7 @@ public:
     }
     bool IsOddPortContended(uint16_t port) const
     {
-        return _oddPortRule ? _oddPortRule(_oddPortOwner, port) : _slotContended[port >> 13];
+        return (_oddPortRule && _oddPortRule(_oddPortOwner, port)) || _slotContended[port >> 13];
     }
 
     /// +2A/+3: the gate array keeps the last byte of a contended memory access on its bus; the floating
@@ -319,6 +330,7 @@ public:
 private:
     /// Shared computation for both memory and IO contention.
     uint8_t ComputeContentionDelay(uint32_t t) const;
+    uint8_t WindowedGateArrayWait(uint32_t tInLine, bool dma = false) const;
 
     /// Shared floating-bus position math: resolves the VRAM cell being
     /// fetched at the current T-state (with the fetch pipeline offset, FetchLead).
@@ -359,6 +371,7 @@ private:
 
     bool _contentionEnabled = false;
     bool _gateArray = false;
+    bool _windowedWait = false;
     std::vector<uint8_t> _delayLutStorage;  // DelayAt: the wait of each T from screenAreaStart to screenAreaEnd
     const uint8_t* _delayLut = nullptr;
     uint32_t _delayLutSize = 0;

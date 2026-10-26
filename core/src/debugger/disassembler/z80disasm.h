@@ -166,46 +166,49 @@ namespace OpFlags
     namespace Basic
     {
         constexpr Flag None{0, "None", "No flags set"};
-        constexpr Flag Prefix{1, "Prefix", "Current byte is opcode prefix"};
+        constexpr Flag Prefix{OF_PREFIX, "Prefix", "Current byte is opcode prefix"};
         constexpr Flag Ext = Prefix;  // Alias
     }
 
     // Memory-related flags
     namespace Memory
     {
-        constexpr Flag Byte{1UL << 1, "MByte", "Operand is byte from memory"};
-        constexpr Flag Word{1UL << 2, "MWord", "Operand is word from memory"};
-        constexpr Flag Disp{1UL << 3, "Disp", "Uses index register displacement"};
-        constexpr Flag Addr{1UL << 4, "MemAddr", "Contains memory address"};
+        constexpr Flag Byte{OF_MBYTE, "MByte", "Operand is byte from memory"};
+        constexpr Flag Word{OF_MWORD, "MWord", "Operand is word from memory"};
+        constexpr Flag Disp{OF_DISP, "Disp", "Uses index register displacement"};
+        constexpr Flag Addr{OF_MEMADR, "MemAddr", "Contains memory address"};
     }
 
     // Control flow flags
     namespace Flow
     {
-        constexpr Flag Condition{1UL << 5, "Condition", "Operation checks condition"};
-        constexpr Flag RelJump{1UL << 6, "RelJump", "Uses relative jump offset"};
-        constexpr Flag Jump{1UL << 8, "Jump", "Jump or call address"};
-        constexpr Flag Ret{1UL << 9, "Ret", "Takes next PC from stack"};
-        constexpr Flag Rst{1UL << 10, "Rst", "Jumps to pre-defined address"};
+        constexpr Flag Condition{OF_CONDITION, "Condition", "Operation checks condition"};
+        constexpr Flag RelJump{OF_RELJUMP, "RelJump", "Uses relative jump offset"};
+        constexpr Flag Jump{OF_JUMP, "Jump", "Jump address (JP, JR)"};
+        constexpr Flag Call{OF_CALL, "Call", "Call address (CALL)"};
+        constexpr Flag Ret{OF_RET, "Ret", "Takes next PC from stack"};
+        constexpr Flag Rst{OF_RST, "Rst", "Jumps to pre-defined address"};
     }
 
     // CPU flags
     namespace Flags
     {
-        constexpr Flag Affected{1UL << 11, "FlagsAffected", "Instruction modifies flags"};
-        constexpr Flag All{1UL << 12, "FlagsAll", "All flags affected"};
-        constexpr Flag SZ{1UL << 13, "FlagsSZ", "Only S and Z flags affected"};
+        constexpr Flag Affected{OF_FLAGS_AFFECTED, "FlagsAffected", "Instruction modifies flags"};
+        constexpr Flag All{OF_FLAGS_ALL, "FlagsAll", "All flags affected"};
+        constexpr Flag SZ{OF_FLAGS_SZ, "FlagsSZ", "Only S and Z flags affected"};
     }
 
     // Operation type flags
     namespace Operation
     {
-        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
-        constexpr Flag RegExchange{1UL << 14, "RegExchange", "Register exchange operations"};
-        constexpr Flag Block{1UL << 15, "Block", "Block operations (LDI, LDIR, etc.)"};
-        constexpr Flag IO{1UL << 16, "IO", "I/O operations (IN, OUT)"};
-        constexpr Flag Interrupt{1UL << 17, "Interrupt", "Interrupt-related (EI, DI, IM)"};
-        constexpr Flag Djnz{1UL << 18, "Djnz", "DJNZ instruction"};
+        constexpr Flag VarCycles{OF_VAR_T, "VarCycles", "Variable number of t-states"};
+        constexpr Flag RegExchange{OF_REG_EXCHANGE, "RegExchange", "Register exchange operations"};
+        constexpr Flag Block{OF_BLOCK, "Block", "Block operations (LDI, LDIR, etc.)"};
+        constexpr Flag IO{OF_IO, "IO", "I/O operations (IN, OUT)"};
+        constexpr Flag Interrupt{OF_INTERRUPT, "Interrupt", "Interrupt-related (EI, DI, IM)"};
+        constexpr Flag Djnz{OF_DJNZ, "Djnz", "DJNZ instruction"};
+        constexpr Flag Indirect{OF_INDIRECT, "Indirect", "Indirect addressing via a register pair"};
+        constexpr Flag BigEndian{OF_BIGENDIAN, "BigEndian", "Word operand stored high byte first (Z80N PUSH nn)"};
     }
 
     // Debug flags

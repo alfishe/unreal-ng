@@ -26,7 +26,8 @@ public:
         std::function<void(uint16_t, uint8_t)> writeIo;
         /// CPU clocks the transfer takes before the next access (the read, then the write cycles of the port timing bytes)
         std::function<void(unsigned)> advance;
-        /// At the start of a read or write cycle: the waits the video logic gives the access (a memory address, or a port when `io`)
+        /// At the start of a read or write cycle or a T without a strobe: the waits the video logic gives the address on the bus
+        /// (`io`: no MREQ, a port cycle or an idle T)
         std::function<void(uint16_t, bool)> contend;
     };
 
@@ -104,7 +105,17 @@ private:
         R6Mask,
         Stuck  ///< dma.vhd R4_BYTE_2: WR4 with only bit 4 set waits for an interrupt control byte the case statement does not handle
     };
+    // The bus hand-over in CPU clocks, from the RTL in GHDL (POC 036: a 256-byte block to port #FE holds the CPU 1536 + 5 T): the
+    // first read starts 1 T after BUSAK, the CPU's next cycle 4 T after the last write ends (FINISH_DMA, IDLE drops BUSRQ, the T80
+    // samples it). A burst-mode prescaler wait releases from WAITING_CYCLES, one state earlier (dma.vhd, not measured)
+    static constexpr unsigned kGrantT = 1;
+    static constexpr unsigned kFinishReleaseT = 4;
+    static constexpr unsigned kBurstReleaseT = 3;
     static unsigned Cycles(uint8_t timing);
+    void ReleaseBus(unsigned clocks);
+    /// Clocks the DMA holds the bus without a strobe: the source address is on it (dma.vhd WAITING_ACK, WRITE_4), and the video
+    /// logic decodes contention from the address alone (zxnext.vhd mem_contend), so each T waits as a cycle without MREQ
+    void HoldBus(unsigned clocks);
     void Command(uint8_t value);
     void Load();
     void FinishBlock();
@@ -123,6 +134,7 @@ private:
     // running state
     bool _transferring = false, _waiting = false, _z80Compat = false, _finishPending = false;
     bool _atLeastOne = false, _endOfBlock = false;
+    bool _busHeld = false;  // between the CPU's BUSAK and the release of BUSRQ
     uint16_t _src = 0, _dst = 0, _counter = 0;
     uint64_t _nextByteAt = 0;
     Seq _seq = Seq::Idle;

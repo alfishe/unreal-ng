@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/video/ulacontention.h"
 
 /// region <Register file layout contract>
 
@@ -49,6 +50,7 @@ Z80NEngine::Z80NEngine(EmulatorContext* context, Z80* cpu) : _context(context), 
     Z80nCpuAttachRegisterFile(_cpu, reinterpret_cast<Z80nCpuRegisterFile*>(&_z80->pc));
     Z80nCpuSetMemoryBus(_cpu, &MemRead, this, &MemWrite, this);
     Z80nCpuSetPortBus(_cpu, &PortIn, this, &PortOut, this);
+    Z80nCpuSetContendFn(_cpu, &Contend, this);
     Z80nCpuSetIntVectorFn(_cpu, &IntVector, this);
     Z80nCpuSetRetiFn(_cpu, &Reti, this);
     Z80nCpuSetRetnFn(_cpu, &Retn, this);
@@ -173,6 +175,21 @@ uint8_t Z80NEngine::MemRead(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind,
 
     e.Absorb(cpu);
     return value;
+}
+
+// The memory and port cycles take their waits in the memory interface and Z80::in / out; the internal T-states with an address on
+// the bus (INC (HL), the IR cycle after M1, PUSH, JR's displacement ...) wait here. The 48K / 128K form of zxula.vhd holds the clock
+// whenever the address on the bus is contended and MREQ was not active at the last edge (o_cpu_contend, 590), so these wait like a
+// memory cycle's first T; the +3 form waits on MREQ cycles only (600). POC 036 measured it on the simulated core
+int Z80NEngine::Contend(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind, void* user)
+{
+    if (kind != Z80nCpuAccessInternal)
+        return 0;
+    const Z80NEngine& e = *static_cast<const Z80NEngine*>(user);
+    const UlaContention* ula = e._z80->ioContention;  // null without contention and on the +3 gate array (Core::SelectMemoryInterface)
+    if (!ula || !ula->IsContendedAt(addr))
+        return 0;
+    return ula->DelayAt(static_cast<uint32_t>(Z80nCpuTstates(cpu)));
 }
 
 void Z80NEngine::MemWrite(Z80nCPU* cpu, uint16_t addr, uint8_t value, void* user)
