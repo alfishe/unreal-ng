@@ -2479,7 +2479,7 @@ bool Emulator::SaveSnapshot(const std::string& path)
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
     const std::optional<snapshot::SaveFormat> format = snapshot::SaveFormatFromExtension(ext);
     if (!format)
-        return refuse("'." + ext + "' is not a snapshot format this emulator saves: use .sna, .z80 or .szx", "format");
+        return refuse("'." + ext + "' is not a snapshot format this emulator saves: use .sna, .z80 or .szx (.nex on the Next)", "format");
     _lastSaveResult.format = snapshot::ToText(*format);
 
     if (!hold.Held())

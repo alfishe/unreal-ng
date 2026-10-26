@@ -44,6 +44,7 @@ namespace ttd {
 struct DivergenceFrame
 {
     uint64_t               frameCounter = 0;
+    uint32_t               tInFrame     = 0;  // TTD position inside the frame (a live run's frame-step phase)
     uint64_t               tStates      = 0;
     uint64_t               ramDigest    = 0;
     MachineStateSnapshot  snapshot{};
@@ -125,11 +126,16 @@ public:
     // Replay verification
     // -----------------------------------------------------------------
 
-    /// @brief SeekTo frame `frameIndex` (frame-aligned, tInFrame=0) and
-    /// verify the resulting live state matches the live-captured record.
+    /// @brief SeekTo the position recorded for `frameIndex` and verify the
+    /// resulting live state matches the live-captured record.
+    ///
+    /// Emulator::RunFrame keeps the in-frame phase the run started at (a
+    /// machine whose reset leaves z80.t > 0 never stops on a boundary), so
+    /// the target is the recorded {frame, tInFrame}: on a frame-aligned run
+    /// that is the checkpoint itself.
     ///
     /// Algorithm:
-    ///   1. SeekTo({frame, 0})
+    ///   1. SeekTo({frame, tInFrame})
     ///   2. Compute current snapshot + ram_digest
     ///   3. Compare hash + digest + key snapshot fields to expected
     ///

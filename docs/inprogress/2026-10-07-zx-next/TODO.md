@@ -68,7 +68,13 @@ Not planned yet:
   data, counted in the report and not loaded), `SnapshotLauncher` takes the Next for it, every surface lists `.snx`; the tests load
   the release `.snx` directly. With it: `NextRealBoard_Test` follows core 3.02.03 (NR #0A bit 2 reads 0; z80bltst is red under the
   T80N persona, green with the Zilog flags)
-- [ ] Media: a NEX saver, the NextZXOS boot seek test; the KS3 board variant; the
+- [x] NEX saver (2026-10-26): `LoaderNex::Capture` / `SaveFile`, `SaveFormat::Nex` on the Next only (design-media-and-snapshots.md
+  section 2); a saved file loads back into another Next, a refusal writes nothing
+- [x] NextZXOS boot seek test (2026-10-26): `NextFirmware_Test.SeeksOverTheBootGiveTheLiveRunsState` records the boot ROM's card
+  reads (60 frames; the long tier 1800, through the soft reset into the personality) and seeks back to sampled frames. The
+  divergence harness now seeks to the live run's in-frame position: the Next's reset leaves z80.t at 3 and `Emulator::RunFrame` keeps
+  that phase, so a frame-aligned seek compared a different instruction
+- [ ] Media: the KS3 board variant; the
   esxDOS-only mode (requirements.md Q11); decide Q9 / Q10 and close Q12 (the T80N persona) in requirements.md; refresh phases.md
 - [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
   the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
