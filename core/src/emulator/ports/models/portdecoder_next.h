@@ -55,6 +55,7 @@ public:
 
     /// INextMachine: NR #02. Runs between two instructions
     void PerformReset(bool hard) override;
+    void SystemClockChanged() override;
     void SetCpuSpeed(uint8_t ratio) override;
     void SetMachineTiming(uint8_t timing) override;
     void SetContentionDisabled(bool disabled) override;
@@ -205,6 +206,10 @@ private:
 
     void InsertConfiguredCard();
     void ApplyTiming(uint8_t timing);
+    /// CLK_28 of NR #11 to the UARTs, the frame's real time and the sound's playback rate
+    void ApplySystemClock();
+    /// The real time of a frame of `frame` T-states at CLK_28
+    uint32_t FrameDurationUs(uint32_t frame) const;
     /// Contention follows the frame family, the speed (3.5 MHz only) and NR #08 bit 6
     void UpdateContention();
     bool _nr08NoContention = false;

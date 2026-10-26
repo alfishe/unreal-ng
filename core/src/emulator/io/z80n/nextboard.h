@@ -31,6 +31,8 @@ public:
     virtual ~INextMachine() = default;
     /// Runs between two instructions
     virtual void PerformReset(bool hard) = 0;
+    /// NR #11 took another video timing (between two instructions, before the reset it causes): CLK_28 is SystemClockHz() now
+    virtual void SystemClockChanged() {}
     /// NR #07: the CPU clock as a multiple of 3.5 MHz (1, 2, 4, 8)
     virtual void SetCpuSpeed(uint8_t ratio) = 0;
     /// NR #03: the frame family (NextTiming) the video logic follows from the next frame
@@ -183,6 +185,8 @@ public:
     bool EffectiveSixtyHz() const { return (_eff05 & 0x04) != 0; }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
+    /// CLK_28 of the video timing in NR #11 (zxnext_top_issue2.vhd system_pll, nextreg.txt): 28 MHz at VGA 0, 28.571429 MHz at VGA 1
+    uint32_t SystemClockHz() const { return (_regs[0x11] & 1) ? 28571429u : 28000000u; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
     void SetStoredBits(uint8_t reg, uint8_t mask, uint8_t value) { _regs[reg] = static_cast<uint8_t>((_regs[reg] & ~mask) | (value & mask)); }
     /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
@@ -259,4 +263,5 @@ private:
     uint8_t _eff05 = 0, _eff09 = 0;  ///< NR #05 bits 2 / 0 and NR #09 bits 1:0 as the video logic took them at the last frame sync
     uint8_t _resetType = 4;  ///< zxnext.vhd nr_02_reset_type, power on '100'
     bool _resetHard = false;
+    bool _resetClock = false;  ///< the pending reset is the top level's power-on reset of a video timing change (NR #11)
 };

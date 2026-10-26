@@ -2,6 +2,8 @@
 
 #include "nextextendedinput.h"
 
+#include <algorithm>
+
 namespace
 {
 /// keymaps.vhd, "U.S. PS/2 ASSIGNMENTS": Left Alt = EXTEND, Right Alt = GRAPH, ; ' , . as themselves, the arrows, Caps Lock, Backspace = DELETE,
@@ -105,28 +107,82 @@ void NextExtendedInput::OnExtendedKey(ZXKeysEnum key, bool pressed)
     if (!m)
         return;
     const uint16_t bit = static_cast<uint16_t>(1u << m->bit);
+    AdvanceScan();
     if (pressed)
+    {
         _membrane.fetch_or(bit, std::memory_order_relaxed);
+        _scans[0] = static_cast<uint16_t>(_scans[0] | bit);
+    }
     else
+    {
+        // a key released mid-scan was still seen by this scan
         _membrane.fetch_and(static_cast<uint16_t>(~bit), std::memory_order_relaxed);
+    }
+}
+
+void NextExtendedInput::ReleaseExtendedKeys()
+{
+    _membrane.store(0, std::memory_order_relaxed);
+    _scans = {};
+}
+
+void NextExtendedInput::AdvanceScan() const
+{
+    // every read is a scan of its own without a clock
+    const uint64_t scan = _now28 ? _now28() / kScanClocks : _scan + 1;
+    if (scan == _scan)
+        return;
+    const uint16_t held = MembraneKeys();
+    if (scan < _scan)
+    {
+        // the clock went back (a state load without the scan): start the history over
+        _scans = {};
+        _scans[0] = held;
+    }
+    else
+    {
+        // the scans since the last one saw the keys as held now (a change goes through here first)
+        const uint64_t steps = std::min<uint64_t>(scan - _scan, kScanDepth);
+        for (uint64_t i = 0; i < steps; i++)
+        {
+            for (unsigned k = kScanDepth - 1; k > 0; k--)
+                _scans[k] = _scans[k - 1];
+            _scans[0] = held;
+        }
+    }
+    _scan = scan;
 }
 
 uint8_t NextExtendedInput::ExtendedMatrixRow(uint8_t row) const
 {
-    const uint16_t held = MembraneKeys();
-    if (held == 0 || (_cancel && _cancel()))
+    if (MembraneKeys() == 0 && (_scans[0] | _scans[1] | _scans[2] | _scans[3]) == 0)
         return 0xFF;
+    if (_cancel && _cancel())
+    {
+        // i_cancel_extended_entries clears the ex registers
+        _scans = {};
+        _scans[0] = MembraneKeys();
+        return 0xFF;
+    }
+    AdvanceScan();
+    // membrane.vhd 189-190, 232: a key's own matrix key comes from the previous scan; its shift from any of the last four (one scan ahead of
+    // the key and two after it)
+    const uint16_t keys = _scans[1];
+    const uint16_t shifted = static_cast<uint16_t>(_scans[0] | _scans[1] | _scans[2] | _scans[3]);
     uint8_t result = 0xFF;
+    auto press = [&](ZXKeysEnum key) {
+        uint8_t keyRow = 0, keyBit = 0;
+        if (Keyboard::MatrixPosition(key, keyRow, keyBit) && keyRow == row)
+            result &= static_cast<uint8_t>(~(1u << keyBit));
+    };
     for (const Membrane& m : kMembrane)
     {
-        if (!(held & (1u << m.bit)))
-            continue;
-        for (ZXKeysEnum key : {m.shift, m.base})
-        {
-            uint8_t keyRow = 0, keyBit = 0;
-            if (Keyboard::MatrixPosition(key, keyRow, keyBit) && keyRow == row)
-                result &= static_cast<uint8_t>(~(1u << keyBit));
-        }
+        const uint16_t bit = static_cast<uint16_t>(1u << m.bit);
+        if (shifted & bit)
+            press(m.shift);
+        // EXTEND's second key is SYMBOL SHIFT: a shift too
+        if (((m.base == ZXKEY_SYM_SHIFT) ? shifted : keys) & bit)
+            press(m.base);
     }
     return result;
 }

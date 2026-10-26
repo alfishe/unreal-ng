@@ -63,6 +63,10 @@ public:
     /// frame's T-state; negative: now): the rows the engine has filled by then keep the state they saw (POC 028: it fills paper row R
     /// during row R - 1 from about hc -21, in index order, one clock a sprite and 17 more for a drawn one)
     void SpriteStateWillChange(int64_t tstate = -1);
+    /// Port #303B read now: the engine's passes that have started by now run first, the flags are those of the events before the read
+    uint8_t ReadSpriteStatus();
+    /// The machine's state was replaced (a state load): the passes before now are what the state holds, the frame is the loaded one's
+    void RestartSpriteFrame();
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
@@ -94,17 +98,43 @@ private:
     bool FramebufferReady() const;
 
     mutable PortDecoder_Next* _decoder = nullptr;
-    // the sprite engine's fill: what each row saw (shared snapshots of the sprite state, one per epoch of writes)
-    std::shared_ptr<NextSprites> _fillSnap;
-    uint32_t _fillSnapEpoch = 0;
-    std::shared_ptr<NextSprites> _rowFill[NextVideoRenderer::kHeight];
-    uint8_t _rowTransparent[NextVideoRenderer::kHeight] = {};
-    unsigned _fillNext = 0;                ///< the next row to fill
-    int64_t _fillNextEnd = 0;              ///< when its fill ends (valid for _fillNextEndEpoch / _fillNextEndRow)
-    uint32_t _fillNextEndEpoch = ~0u;
-    unsigned _fillNextEndRow = ~0u;
-    int64_t SpriteFillEnd(unsigned y);
-    void FillSpriteRow(unsigned y);
+    // The sprite engine in machine time (sprites.vhd): one pass a line on every line of the frame, drawn or not. The pass during grid line
+    // g (from the grid's line 0, negative above it) fills spr_cur_vcount = wvc + 1: paper row R during row R - 1, the lines below the grid
+    // and in the blank too (their flags count). Clocks are 28 MHz clocks from the frame's start
+    struct SpritePasses
+    {
+        int64_t base = 0;     ///< the start of the pass of g = 0
+        int64_t line = 0;     ///< a line
+        int64_t frame = 0;    ///< the frame
+        int first = 0;        ///< the frame's first pass (the first to start at or after its start)
+        unsigned lines = 0;   ///< passes (lines) in the frame
+    };
+    SpritePasses _passes;
+    int _passNext = 0;                 ///< the next pass to run
+    bool _passFrameClosed = false;     ///< FinishSpriteFrame ran: the frame ended naturally, its late events carry over
+    uint64_t _passCounter = 0;         ///< the frame counter the passes were set up for
+    bool _passCounterValid = false;
+    uint64_t _frameSeq = 1;
+    NextSprites::LineBuffer _rowLine[NextVideoRenderer::kHeight];  ///< the last fill of each grid row
+    uint64_t _rowSeq[NextVideoRenderer::kHeight] = {};             ///< the frame whose picture it is
+    NextSprites::LineBuffer _passScratch;                          ///< the fill of a line no row shows
+    std::vector<uint16_t> _passTicks;
+    int64_t _passEnd = 0;              ///< when _passNext's fill ends (valid for _passEndEpoch / _passEndOf)
+    uint32_t _passEndEpoch = ~0u;
+    int _passEndOf = 0;
+    bool _passEndValid = false;
+    void SetupSpritePasses();
+    int64_t PassStart(int g) const { return _passes.base + g * _passes.line; }
+    int PassLimit() const { return _passes.first + static_cast<int>(_passes.lines); }
+    /// spr_cur_vcount of pass g; `nextFrame`: its row is shown in the next frame (the last passes fill the top rows)
+    unsigned PassVcount(int g, bool& nextFrame) const;
+    int64_t PassEnd(int g);
+    void RunSpritePass(int g, int64_t now);
+    void RunSpritePassesStartedBy(int64_t now);
+    void RunSpritePassesEndedBy(int64_t now);
+    /// The frame's natural end (InitFrame of the next one, every frame, drawn or not): the passes of the frame not run yet run now
+    void FinishSpriteFrame();
+    int64_t NowClock() { return static_cast<int64_t>(GetCurrentTstate()) * 8; }
     unsigned _nextLine = 0;
     unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;

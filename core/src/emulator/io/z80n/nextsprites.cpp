@@ -15,20 +15,20 @@ void NextSprites::Reset()
     std::memset(_pattern, 0, sizeof _pattern);
     _slot = _byte = _patternHalf = _mirror = 0;
     _patternOffset = 0;
-    _collision = _tooMany = false;
+    ClearFlags();
 }
 
 void NextSprites::SoftReset()
 {
     _slot = _byte = _patternHalf = _mirror = 0;
     _patternOffset = 0;
-    _collision = _tooMany = false;
+    ClearFlags();
 }
 
 uint8_t NextSprites::ReadStatus()
 {
-    const uint8_t value = static_cast<uint8_t>((_tooMany ? 2 : 0) | (_collision ? 1 : 0));
-    _tooMany = _collision = false;
+    const uint8_t value = static_cast<uint8_t>(((_tooMany || !_pendingTooMany.empty()) ? 2 : 0) | ((_collision || !_pendingCollision.empty()) ? 1 : 0));
+    ClearFlags();
     return value;
 }
 
@@ -233,18 +233,100 @@ bool NextSprites::PatternPixel(const Effective& s, int patternCol, int rowIndex,
     return true;
 }
 
-void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex, unsigned lineClocks)
+bool NextSprites::AnyVisible() const
+{
+    for (unsigned i = 0; i < kSprites; i++)
+        if (_attr[i][3] & 0x80)
+            return true;
+    return false;
+}
+
+bool NextSprites::Fill(unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks, LineBuffer& out,
+                       std::vector<uint16_t>& collisions) const
 {
     // sprites.vhd runs whatever NR #15 bit 0 says (the bit only gates the output in zxnext.vhd), so the collision and "too many" flags
     // are set with the sprites disabled too. A line with no visible sprite costs the engine 129 clocks and sets nothing
-    bool anyVisible = false;
-    for (unsigned i = 0; i < kSprites && !anyVisible; i++)
-        anyVisible = (_attr[i][3] & 0x80) != 0;
-    if (!anyVisible)
-        return;
-    const bool enabled = (control & 0x01) != 0;
-    const bool overBorder = (control & 0x02) != 0;
+    collisions.clear();
+    out.any = false;
+    if (!AnyVisible())
+        return false;
+    out.any = true;
+    for (Pixel& p : out.pixel)
+        p.opaque = false;
     const bool zeroOnTop = (control & 0x40) != 0;
+
+    Effective effective[kSprites];
+    Anchor anchor;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        if (Relative(i))
+            Resolve(i, anchor, effective[i]);
+        else
+        {
+            effective[i] = Decode(i);
+            UpdateAnchor(i, anchor);
+        }
+    }
+
+    // The engine, one 28 MHz clock per step (sprites.vhd states S_START, S_QUALIFY, S_PROCESS): it fills the line buffer in index order,
+    // writes every opaque pixel with an x of 0..319 whatever the clip window says (the window and the 224-line limit act at the output),
+    // notes a collision (the clock of the write) when it writes onto a pixel already there and, when the line period `lineClocks` is used
+    // up before it is idle, is cut off: what it has not reached is not on the line
+    unsigned tick = 1;  // S_START
+    bool overtime = false;
+    for (unsigned i = 0; i < kSprites && !overtime; i++)
+    {
+        tick++;  // S_QUALIFY
+        const Effective& e = effective[i];
+        if (!e.visible)
+            continue;
+        const int height = 16 << e.yScale;
+        int dy = static_cast<int>(vcount) - e.y;
+        if (dy < 0)
+            dy += 512;
+        if (dy >= height)
+            continue;
+        const int rowIndex = e.yMirror ? 15 - (dy >> e.yScale) : (dy >> e.yScale);
+        const int width = 16 << e.xScale;
+        // spr_cur_x_wrap: a position of 320 or more ends the sprite unless it is in the last 16 << scale of the 512 (it wraps to 0)
+        static const unsigned kWrapMask[4] = {0x1F, 0x1E, 0x1C, 0x18};
+        const unsigned wrapMask = kWrapMask[e.xScale];
+        for (int k = 0;; k++)
+        {
+            if (++tick > lineClocks)
+            {
+                overtime = true;
+                break;
+            }
+            const unsigned hc = static_cast<unsigned>(e.x + k) & 0x1FF;
+            uint8_t index;
+            if (hc < kGridWidth && PatternPixel(e, k >> e.xScale, rowIndex, transparentIndex, index))
+            {
+                Pixel& p = out.pixel[hc];
+                if (p.opaque)
+                    collisions.push_back(static_cast<uint16_t>(tick));
+                if (!zeroOnTop || !p.opaque)
+                {
+                    p.index = index;
+                    p.sprite = static_cast<uint8_t>(i);
+                }
+                p.opaque = true;
+            }
+            if (k + 1 == width)
+                break;
+            const unsigned next = static_cast<unsigned>(e.x + k + 1) & 0x1FF;
+            if (next >= kGridWidth && (((next >> 4) & wrapMask) != wrapMask))
+                break;
+        }
+    }
+    return overtime || tick >= lineClocks;  // still busy when the next line starts (the last clock of the line is a busy one too)
+}
+
+void NextSprites::Output(const LineBuffer& line, unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out) const
+{
+    if (!line.any || !(control & 0x01))
+        return;
+    const bool overBorder = (control & 0x02) != 0;
     const bool borderClip = (control & 0x20) != 0;
     int clip[4];
     if (overBorder)
@@ -272,88 +354,76 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
         clip[2] = shifted(regs.Clip(1, 2));
         clip[3] = shifted(regs.Clip(1, 3));
     }
-
-    Effective effective[kSprites];
-    Anchor anchor;
-    for (unsigned i = 0; i < kSprites; i++)
-    {
-        if (Relative(i))
-            Resolve(i, anchor, effective[i]);
-        else
-        {
-            effective[i] = Decode(i);
-            UpdateAnchor(i, anchor);
-        }
-    }
-
-    // The engine, one 28 MHz clock per step (sprites.vhd states S_START, S_QUALIFY, S_PROCESS): it fills the line buffer in index order,
-    // writes every opaque pixel with an x of 0..319 whatever the clip window says (the window and the 224-line limit act at the output),
-    // flags a collision when it writes onto a pixel already there and, when the line period `lineClocks` is used up before it is idle,
-    // flags "too many" and is cut off: what it has not reached is not on the line
-    uint8_t lineIndex[kGridWidth];
-    uint8_t lineSprite[kGridWidth];
-    bool occupied[kGridWidth] = {};
-    unsigned tick = 1;  // S_START
-    bool overtime = false;
-    for (unsigned i = 0; i < kSprites && !overtime; i++)
-    {
-        tick++;  // S_QUALIFY
-        const Effective& e = effective[i];
-        if (!e.visible)
-            continue;
-        const int height = 16 << e.yScale;
-        int dy = static_cast<int>(y) - e.y;
-        if (dy < 0)
-            dy += 512;
-        if (dy >= height)
-            continue;
-        const int rowIndex = e.yMirror ? 15 - (dy >> e.yScale) : (dy >> e.yScale);
-        const int width = 16 << e.xScale;
-        // spr_cur_x_wrap: a position of 320 or more ends the sprite unless it is in the last 16 << scale of the 512 (it wraps to 0)
-        static const unsigned kWrapMask[4] = {0x1F, 0x1E, 0x1C, 0x18};
-        const unsigned wrapMask = kWrapMask[e.xScale];
-        for (int k = 0;; k++)
-        {
-            if (++tick > lineClocks)
-            {
-                overtime = true;
-                break;
-            }
-            const unsigned hc = static_cast<unsigned>(e.x + k) & 0x1FF;
-            uint8_t index;
-            if (hc < kGridWidth && PatternPixel(e, k >> e.xScale, rowIndex, transparentIndex, index))
-            {
-                if (occupied[hc])
-                    _collision = true;
-                if (!zeroOnTop || !occupied[hc])
-                {
-                    lineIndex[hc] = index;
-                    lineSprite[hc] = static_cast<uint8_t>(i);
-                }
-                occupied[hc] = true;
-            }
-            if (k + 1 == width)
-                break;
-            const unsigned next = static_cast<unsigned>(e.x + k + 1) & 0x1FF;
-            if (next >= kGridWidth && (((next >> 4) & wrapMask) != wrapMask))
-                break;
-        }
-    }
-    if (overtime || tick >= lineClocks)  // still busy when the next line starts (the last clock of the line is a busy one too)
-        _tooMany = true;
-
-    if (!enabled)
-        return;
     if (static_cast<int>(y) < clip[2] || static_cast<int>(y) > clip[3] || (!overBorder && y >= 224))
         return;
     const int from = std::max(clip[0], 0), to = std::min(clip[1], static_cast<int>(kGridWidth) - 1);
     for (int x = from; x <= to; x++)
-        if (occupied[x])
-        {
-            out[x].index = lineIndex[x];
-            out[x].sprite = lineSprite[x];
-            out[x].opaque = true;
-        }
+        if (line.pixel[x].opaque)
+            out[x] = line.pixel[x];
+}
+
+void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex, unsigned lineClocks)
+{
+    LineBuffer line;
+    std::vector<uint16_t> collisions;
+    if (Fill(y, control, transparentIndex, lineClocks, line, collisions))
+        _tooMany = true;
+    if (!collisions.empty())
+        _collision = true;
+    Output(line, y, control, regs, out);
+}
+
+void NextSprites::PostFill(int64_t start, const std::vector<uint16_t>& collisions, bool overtime, unsigned lineClocks, int64_t now)
+{
+    // An event before `now` is before any read still to come: it only needs to be remembered. One at or after it waits with its clock (a
+    // read on the clock of a set loses it: sprites.vhd clears the register on that edge)
+    const auto post = [&](int64_t at, bool& flag, std::vector<int64_t>& pending) {
+        if (at <= _lastRead)
+            return;
+        if (at < now)
+            flag = true;
+        else
+            pending.insert(std::upper_bound(pending.begin(), pending.end(), at), at);
+    };
+    for (uint16_t tick : collisions)
+        post(start + tick, _collision, _pendingCollision);
+    if (overtime)  // taken where the next pass starts: the engine is not idle on that edge
+        post(start + static_cast<int64_t>(lineClocks) - 1, _tooMany, _pendingTooMany);
+}
+
+uint8_t NextSprites::ReadStatus(int64_t clock)
+{
+    const auto take = [&](bool& flag, std::vector<int64_t>& pending) {
+        bool set = flag;
+        flag = false;
+        auto end = std::upper_bound(pending.begin(), pending.end(), clock);
+        if (end != pending.begin() && *pending.begin() < clock)
+            set = true;
+        pending.erase(pending.begin(), end);
+        return set;
+    };
+    const bool collision = take(_collision, _pendingCollision);
+    const bool tooMany = take(_tooMany, _pendingTooMany);
+    _lastRead = clock;
+    return static_cast<uint8_t>((tooMany ? 2 : 0) | (collision ? 1 : 0));
+}
+
+void NextSprites::ShiftClock(int64_t delta)
+{
+    for (int64_t& at : _pendingCollision)
+        at += delta;
+    for (int64_t& at : _pendingTooMany)
+        at += delta;
+    if (_lastRead != kNever)
+        _lastRead += delta;
+}
+
+void NextSprites::ClearFlags()
+{
+    _collision = _tooMany = false;
+    _pendingCollision.clear();
+    _pendingTooMany.clear();
+    _lastRead = kNever;
 }
 
 unsigned NextSprites::FillClocks(unsigned y) const

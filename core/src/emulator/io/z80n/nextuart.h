@@ -69,6 +69,11 @@ public:
 
     NextUart() { Reset(true); }
 
+    /// CLK_28, the prescaler's clock (NR #11: 28 MHz at VGA 0, 28.571429 MHz at VGA 1): the bit time in clocks stays, the rate the
+    /// line is told follows it
+    void SetSystemClock(uint32_t hz);
+    uint32_t SystemClock() const { return _systemClockHz; }
+
     /// A hard reset also restores the prescalers and the frames; any reset empties the FIFOs and selects UART 0
     void Reset(bool hard);
     /// Bring both channels up to the 28 MHz clock value `now`: Tx frames finish and go to the peer, Rx frames finish and fill the FIFO
@@ -148,6 +153,8 @@ public:
 
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
+
+    uint32_t _systemClockHz = 28000000;
 
     struct Channel
     {

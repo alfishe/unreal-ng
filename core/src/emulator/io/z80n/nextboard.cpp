@@ -107,7 +107,8 @@ void NextBoard::Reset(bool hard)
         _interrupts->Reset();
         _interrupts->SetCounterOffset(0);  // nr_64_copper_offset is reset: the line counter the interrupts see follows it
     }
-    const bool config = type == 0;
+    // nr_03_config_mode changes on NR #03 writes only (zxnext.vhd 5146-5151): a soft reset keeps it, a power-on one starts in it
+    const bool config = hard ? type == 0 : _memory->InConfigMode();
     _memory->SetConfigBank(_regs[kRegConfigMapping]);  // NR #04 is not reset: zero at power on, the program's value after a soft reset
     _memory->SetConfigMode(config);
     // "switched on by a reset in config mode"
@@ -459,6 +460,22 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             if (_memory->InConfigMode())  // the core id is writable in config mode only
                 _regs[reg] = value & 0x1F;
             return;
+        case 0x11:
+            // zxnext.vhd 5208-5217 on the issue 2 core (g_video_inc "10"): written in config mode only, 7 (HDMI) is VGA 0, else bit 0
+            // picks VGA 0 / 1. A change moves the PLL to the new CLK_28 and runs the top level's power-on reset (zxnext_top_issue2.vhd
+            // 771-783): the core sees `reset` as on a soft one, NR #11 and config mode stay, so the boot ROM starts again
+            if (_memory->InConfigMode())
+            {
+                const uint8_t timing = (value & 7) == 7 ? 0 : static_cast<uint8_t>(value & 1);
+                if (timing != _regs[reg])
+                {
+                    _regs[reg] = timing;
+                    _resetPending = true;
+                    _resetHard = false;
+                    _resetClock = true;
+                }
+            }
+            return;
         case 0x40:
             _video.WritePaletteIndex(value);
             return;
@@ -479,6 +496,7 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             {
                 _resetPending = true;
                 _resetHard = (value & 0x02) != 0;
+                _resetClock = false;
             }
             {
                 // bit 7 the expansion bus reset is held; bits 3:2 read 1 once their NMI was generated and until written 0
@@ -612,6 +630,17 @@ void NextBoard::AfterInstruction()
     if (!_resetPending)
         return;
     _resetPending = false;
+    if (_resetClock)
+    {
+        // nr_02_reset_type follows nr_02_soft_reset only: a power-on reset of the top level leaves it
+        _resetClock = false;
+        if (_machine)
+        {
+            _machine->SystemClockChanged();
+            _machine->PerformReset(false);
+        }
+        return;
+    }
     if (!_resetHard)
         {
         // zxnext.vhd: '0' & t(2) & (t(1) or t(0))

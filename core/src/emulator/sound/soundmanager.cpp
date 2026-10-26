@@ -2029,7 +2029,8 @@ void SoundManager::updateDrcControl()
     const uint32_t devRateRaw = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
     const double devRate = (devRateRaw == 0) ? static_cast<double>(_coreRate)
                                              : static_cast<double>(devRateRaw);
-    const double baseRatio = devRate / static_cast<double>(_coreRate);
+    // a machine clock faster than the T-states' base plays the same samples in less time
+    const double baseRatio = devRate / static_cast<double>(_coreRate) / _machineClockScale;
 
     const double occMs = occCell->load(std::memory_order_relaxed) * 1000.0 / devRate;
 
