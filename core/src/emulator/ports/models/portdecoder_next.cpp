@@ -865,6 +865,18 @@ void PortDecoder_Next::BindDma()
     };
     // the CPU is held: its clock runs on with every access of the transfer, so a port write lands at its own moment
     bus.advance = [this](unsigned clocks) { _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks)); };
+    // the DMA runs on the CPU's clock (z80dma clk_i = i_CLK_CPU), which the video logic holds on a contended access of the bus whoever
+    // drives it (cpu_mreq_n / cpu_iorq_n / cpu_a are the DMA's while it holds the bus); the +3's wait reaches it through dma_wait_n
+    // (zxnext.vhd 1844). So its cycles wait as the CPU's: memory at the cycle's first T, a contended port at IORQ, one T later
+    bus.contend = [this](uint16_t address, bool io) {
+        const UlaContention* ula = _context->pUlaContention;
+        if (!ula || !ula->IsContentionEnabled())
+            return;
+        Z80* z80 = _context->pCore->GetZ80();
+        const uint8_t wait = io ? ula->IoWaitAfterIorq(address, z80->t + 1) : (ula->IsContendedAt(address) ? ula->DelayAt(z80->t) : 0);
+        if (wait)
+            z80->InsertWaitStates(wait);
+    };
     _dma.SetBus(std::move(bus));
 }
 

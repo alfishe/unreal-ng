@@ -205,6 +205,46 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
     EXPECT_EQ(_memory->PeekSlot(0x0000), rom0);
 }
 
+// The DMA runs on the CPU's clock, which the video logic holds on a contended access whoever drives the bus: a fill of bank 5 in the
+// paper area takes the waits a CPU write there would, so does a block to port #FE; bank 2 and contention switched off (NR #08 bit 6)
+// take none
+TEST_F(NextSkeleton_Test, DmaCyclesWaitOnContendedMemoryAndPorts)
+{
+    UlaContention* ula = _context->pUlaContention;
+    ASSERT_NE(ula, nullptr);
+    ASSERT_TRUE(ula->IsContentionEnabled());
+    Load(0x9000, {0x00});  // NOP: the instruction the DMA runs after
+    const uint32_t paper = 16300;
+    auto fillTime = [&](uint16_t destination) {
+        DmaFill(_ports, destination, 64);
+        _z80->pc = 0x9000;
+        _z80->t = paper;
+        _z80->EngineStep();
+        return _z80->t - paper;
+    };
+    // memory -> the ULA port #FE (port B: I/O, fixed): a contended port waits at IORQ
+    auto borderTime = [&]() {
+        for (uint8_t v : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x80), uint8_t(64), uint8_t(0x00), uint8_t(0x24), uint8_t(0x28), uint8_t(0xAD),
+                          uint8_t(0xFE), uint8_t(0x00), uint8_t(0xCF), uint8_t(0x87)})
+            _ports->DecodePortOut(0x6B, v, 0);
+        _z80->pc = 0x9000;
+        _z80->t = paper;
+        _z80->EngineStep();
+        return _z80->t - paper;
+    };
+    const uint32_t bank5 = fillTime(0x4000);
+    const uint32_t bank2 = fillTime(0xA000);
+    const uint32_t border = borderTime();
+    _z80->t = ula->LineWindowEndFrom(_z80->t);
+    Out(0x243B, 0x08);
+    Out(0x253B, 0x40);  // contention off
+    ASSERT_FALSE(ula->IsContentionEnabled());
+    const uint32_t off = fillTime(0x4000);
+    EXPECT_EQ(bank2, off) << "bank 2 is not contended";
+    EXPECT_GT(border, borderTime() + 32) << "port #FE is contended";
+    EXPECT_GT(bank5, off + 32) << "64 writes into bank 5 in paper lines wait (" << bank5 << " T against " << off << ")";
+}
+
 // zxnext.vhd 1844: dma_wait_n = z80_wait_n and spi_wait_n - a DMA that reads the SD card's data port waits for each 16-clock byte (it was
 // compared in the wrong unit and never waited: every read after the first returned the byte before)
 TEST_F(NextSkeleton_Test, DmaReadsOfThePortEbWaitForTheSpiByte)

@@ -24,8 +24,14 @@ Planned, in this order:
   T2 and at each Tw, that gives the waits 7, 6, 5, 4, 3, 2, 1, 0 by phase, the shape of `gateArrayContentionPattern`)
 - [ ] Contention: settle `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME); needs a board measurement (the
   "targeted tests run on a real board" below)
-- [ ] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
-  238), the DMA interrupt pulse, bus arbitration with the expansion bus; the heights of the `dma` / `zilogDMA` border blocks are not measured
+- [x] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
+  238), the DMA interrupt pulse, bus arbitration with the expansion bus (done 2026-10-26: the DMA runs on the contended CPU clock
+  (`z80dma` `clk_i = i_CLK_CPU`, the +3 wait through `dma_wait_n`, zxnext.vhd 1844), so `NextDma::Bus::contend` gives its memory cycles
+  the CPU's waits and its port cycles the port contention at IORQ; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryAndPorts`.
+  No change for the rest: the DMA steps between instructions, so it never runs inside a RETI and the tail ends with it as
+  `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
+  no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
+- [ ] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo)
 - [ ] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
   engine is drawing
 - [ ] Ports: NR #8A (propagate the port decodes to the expansion bus) is stored and read back only; nothing on the bus yet
