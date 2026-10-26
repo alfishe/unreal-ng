@@ -116,14 +116,17 @@
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
         post["summary"] =
             "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten / "
-            "volumes / files / read";
+            "volumes / files / read / write";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
             "A dirty medium leaves its slot only with a disposition: save (into its own file), export: <path> "
             "(into a new file) or discard. insert / swap take 'path' (a file or a folder) or the file itself "
             "(multipart/form-data 'file', or a raw body with X-Filename; up to 1 MB, deleted when ejected). "
-            "save / export take 'path' as the target. Options go in the JSON body or the query string:" + verbs;
+            "save / export take 'path' as the target. write puts a file onto the TR-DOS (path NAME.T) or +3DOS "
+            "(NAME.TYP) floppy in the slot, an older file of that name replaced: the bytes as base64 'data', a host "
+            "file 'in', or the body itself (application/octet-stream, ?path=NAME.T); the disk is dirty until saved. "
+            "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
         idParameter(post, 0);
         slotParameter(post, 1);
@@ -140,12 +143,21 @@
         body["type"] = "object";
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] =
-            "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk";
+            "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk; "
+            "write: the file to write";
         body["properties"]["volume"]["type"] = "string";
-        body["properties"]["volume"]["description"] = "files / read: the volume id from volumes; left out: the first";
+        body["properties"]["volume"]["description"] = "files / read / write: the volume id from volumes; left out: the first";
         body["properties"]["recursive"]["type"] = "boolean";
         body["properties"]["out"]["type"] = "string";
         body["properties"]["out"]["description"] = "read: write the file's bytes to this host file";
+        body["properties"]["data"]["type"] = "string";
+        body["properties"]["data"]["description"] = "write: the file's bytes in base64";
+        body["properties"]["in"]["type"] = "string";
+        body["properties"]["in"]["description"] = "write: the file's bytes from this host file";
+        body["properties"]["start"]["type"] = "string";
+        body["properties"]["start"]["description"] = "write: the TR-DOS start / +3DOS CODE address: 32768, 0x8000 or #8000";
+        body["properties"]["header"]["type"] = "boolean";
+        body["properties"]["header"]["description"] = "write: +3DOS: false leaves out the 128-byte +3DOS header";
         body["properties"]["descriptor"]["type"] = "object";
         body["properties"]["descriptor"]["description"] =
             "insert / swap: a composition descriptor inline (the *.ucompose.json body) instead of a path";
@@ -230,5 +242,9 @@
         Json::Value& upload = post["requestBody"]["content"]["multipart/form-data"]["schema"];
         upload["properties"]["file"]["type"] = "string";
         upload["properties"]["file"]["format"] = "binary";
+        // write: the file's bytes as the body (path in the query)
+        Json::Value& rawBody = post["requestBody"]["content"]["application/octet-stream"]["schema"];
+        rawBody["type"] = "string";
+        rawBody["format"] = "binary";
         replyRef(post);
     }

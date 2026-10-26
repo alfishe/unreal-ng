@@ -465,6 +465,8 @@ inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, con
         std::string name = py::str(item.first);
         if (name == "async_")
             name = "async";  // "async" is a Python keyword: media_eject("A", async_=True)
+        else if (name == "in_")
+            name = "in";     // so is "in": media_write("A", "PROG.C", in_="prog.bin")
         const py::handle value = item.second;
         if (py::isinstance<py::bool_>(value))
             request.options[name] = value.cast<bool>() ? "true" : "false";
@@ -1978,7 +1980,7 @@ namespace PythonBindings
                              const py::kwargs& options) { return MediaCallPy(self, verb, slot, path, options); },
                  py::arg("verb"), py::arg("slot") = "", py::arg("path") = "",
                  "Any media verb: list, info, formats, targets, insert, swap, eject, save, export, discard, rescan, create, protect, "
-                 "compose, layers, changes, flatten, volumes, files, read")
+                 "compose, layers, changes, flatten, volumes, files, read, write")
             .def("media_list", [](Emulator& self) { return MediaCallPy(self, "list", "", "", py::kwargs()); },
                  "Every media slot and the detached media")
             .def("media_info", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "info", slot, "", py::kwargs()); },
@@ -2015,6 +2017,21 @@ namespace PythonBindings
                      base64::Decode(reply.body.find("data")->s, bytes);
                      return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
                  }, py::arg("slot"), py::arg("path"), py::arg("volume") = "", "A file on the disk as bytes (RuntimeError when it does not read)")
+            .def("media_write", [](Emulator& self, const std::string& slot, const std::string& path, const py::object& data,
+                                   const py::kwargs& options) {
+                     // The bytes as `data`, or a host file as in_='path'
+                     py::kwargs all;
+                     for (const auto& item : options)
+                         all[item.first] = item.second;
+                     if (!data.is_none())
+                     {
+                         const std::string bytes = data.cast<py::bytes>();
+                         all["data"] = base64::Encode(std::vector<uint8_t>(bytes.begin(), bytes.end()));
+                     }
+                     return MediaCallPy(self, "write", slot, path, all);
+                 }, py::arg("slot"), py::arg("path"), py::arg("data") = py::none(),
+                 "A file onto the TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy in a slot: data=bytes or in_='host file' "
+                 "(start=0x8000, header=False, volume=)")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")

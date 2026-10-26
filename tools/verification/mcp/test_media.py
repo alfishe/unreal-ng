@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
-a disk"""
+a disk, writing a file onto a TR-DOS disk"""
 
 import base64
 import os
@@ -77,6 +77,23 @@ def test_disk_files(s):
     expect(r.is_error and 'nothing.txt' in r.text, 'a missing file names it', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
+
+
+def test_disk_write(s):
+    r = s.call('media', {'action': 'create', 'slot': 'A', 'format': 'trdos'})
+    expect(not r.is_error, 'a blank TR-DOS disk', r.text)
+    code = bytes([0xF3, 0xC9, 0x00, 0x01])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'HELLO.C', 'start': '#8000',
+                         'data': base64.b64encode(code).decode()})
+    expect('wrote HELLO.C (4 bytes)' in r.text and 'unsaved:' in r.text, 'the write in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('HELLO.C 4 bytes, start 32768' in r.text, 'the file in the listing', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'HELLO.C'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data) == code, 'the bytes read back', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'HELLO.C'}, ok=False)
+    expect(r.is_error and "'data'" in r.text, 'no bytes is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

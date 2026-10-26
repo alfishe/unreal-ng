@@ -303,7 +303,7 @@ const std::vector<std::string>& MediaControl::Verbs()
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
                                                    "compose", "layers", "changes", "flatten", "volumes", "files",
-                                                   "read"};
+                                                   "read", "write"};
     return verbs;
 }
 
@@ -331,6 +331,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"volumes", {}},
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
+        {"write", {"volume", "in", "data", "start", "header"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -408,6 +409,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Changes(request);
     else if (verb == "volumes" || verb == "files" || verb == "read")
         reply = Files(request, verb);
+    else if (verb == "write")
+        reply = WriteFile(request);
     else
         reply = Protect(request);
     return reply;
@@ -626,6 +629,128 @@ MediaReply MediaControl::Files(const MediaRequest& request, const std::string& v
         return Fail(MediaError::DoesNotFit, request.path + ": " + std::to_string(data.size()) +
                                                 " bytes, more than an answer carries: give 'out' (a host file)");
     reply.body["data"] = base64::Encode(data);
+    return reply;
+}
+
+MediaReply MediaControl::WriteFile(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    const Options& o = request.options;
+    const std::string volume = o.count("volume") ? Trim(o.at("volume")) : std::string();
+    if (Trim(request.path).empty())
+        return Fail(MediaError::BadRequest, "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP)");
+
+    // The bytes: base64 `data` or the host file `in`, one of them
+    const bool hasData = o.count("data") != 0;
+    const bool hasIn = o.count("in") != 0 && !Trim(o.at("in")).empty();
+    if (hasData == hasIn)
+        return Fail(MediaError::BadRequest, "give the bytes as 'data' (base64) or 'in' (a host file), one of them");
+    std::vector<uint8_t> data;
+    if (hasData && !base64::Decode(Trim(o.at("data")), data))
+        return Fail(MediaError::BadRequest, "option 'data': not base64");
+    if (hasIn)
+    {
+        std::ifstream in(FileHelper::ToFsPath(Trim(o.at("in"))), std::ios::binary);
+        if (!in)
+            return Fail(MediaError::UnreadableSource, "cannot read '" + Trim(o.at("in")) + "'");
+        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+
+    DiskFsWriteOptions options;
+    if (auto it = o.find("start"); it != o.end())
+    {
+        // Decimal, or hex as #8000 / $8000 / 0x8000
+        std::string text = Trim(it->second);
+        int base = 10;
+        const size_t prefix = !text.empty() && (text[0] == '#' || text[0] == '$')                             ? 1
+                              : text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2
+                                                                                                         : 0;
+        if (prefix)
+        {
+            text.erase(0, prefix);
+            base = 16;
+        }
+        char* end = nullptr;
+        const unsigned long value = text.empty() ? 0x10000 : std::strtoul(text.c_str(), &end, base);
+        if (text.empty() || *end != 0 || value > 0xFFFF)
+            return Fail(MediaError::BadRequest, "option 'start': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
+        options.start = static_cast<uint16_t>(value);
+    }
+    if (auto it = o.find("header"); it != o.end() && !ParseBool(it->second, options.header))
+        return Fail(MediaError::BadRequest, "option 'header': expected true or false, got '" + it->second + "'");
+
+    const std::optional<SlotInfo> info = _manager->Info(reply.slot);
+    if (info && info->writeProtect)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "': the disk is write-protected");
+
+    // At a coherent moment (paused, stopped or between frames), as a tool's edit: a TTD session keeps it
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    MediaResult result;
+    bool written = false;
+    auto work = [&]() {
+        Medium* medium = _manager->GetMedium(reply.slot);
+        if (!medium)
+        {
+            result = MediaResult::Fail(MediaError::NotSupported, "slot '" + reply.slot + "' is empty");
+            return;
+        }
+        DiskImage* floppy = medium->Floppy();
+        if (!floppy)
+        {
+            result = MediaResult::Fail(MediaError::NotSupported,
+                                       "slot '" + reply.slot + "': files are written on floppies only (TR-DOS, +3DOS)");
+            return;
+        }
+        if (medium->Access() == AccessMode::ReadOnly)
+        {
+            result = MediaResult::Fail(MediaError::NotSupported, "slot '" + reply.slot + "': the disk is read only");
+            return;
+        }
+        DiskFs fs(*floppy);
+        if (fs.Volumes().empty())
+        {
+            result = MediaResult::Fail(MediaError::UnreadableSource, "slot '" + reply.slot + "': no file system found on the disk");
+            return;
+        }
+        std::string error;
+        auto edit = [&]() {
+            // Every track as it was, for the medium's undo log (a TTD seek back sets the disk to it); without a TTD
+            // history the manager keeps nothing
+            for (int t = 0; t < floppy->getCylinders() * floppy->getSides(); t++)
+                if (const DiskImage::Track* track = floppy->getTrack(static_cast<uint8_t>(t)))
+                    _manager->BeforeTrackWrite(reply.slot, *track);
+            written = fs.Write(volume, request.path, data, options, error);
+        };
+        std::string refused;
+        if (emulator)
+            refused = emulator->EditMemoryFromTool("media write", edit);
+        else
+            edit();
+        if (!refused.empty())
+            result = MediaResult::Fail(MediaError::Recording, refused);
+        else if (!written)
+            result = MediaResult::Fail(error.find("read only") != std::string::npos ? MediaError::NotSupported : MediaError::BadRequest,
+                                       "slot '" + reply.slot + "': " + error);
+        else
+        {
+            reply.body["volume"] = volume.empty() ? fs.Volumes().front().id : volume;
+            reply.body["changes"] = medium->DescribeChanges();
+        }
+    };
+    if (emulator && emulator->RunAtCoherentMoment(work, 2000) == Emulator::CoherentMoment::Busy)
+        return Fail(MediaError::InUse, "no coherent moment to reach the disk within 2 s (another client is stepping the machine)");
+    if (!emulator)
+        work();
+    if (!result.Ok())
+    {
+        reply.result = result;
+        return reply;
+    }
+    reply.body["path"] = request.path;
+    reply.body["size"] = static_cast<uint64_t>(data.size());
     return reply;
 }
 

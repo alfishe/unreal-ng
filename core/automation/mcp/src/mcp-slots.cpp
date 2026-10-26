@@ -45,6 +45,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"volumes", {}},
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
+        {"write", {"volume", "in", "data", "start", "header"}},
     };
     return actions;
 }
@@ -170,6 +171,10 @@ namespace
                 out << "\n(too long for the text: the bytes are in structuredContent.data, or give 'out' to write a host file)";
             return out.str();
         }
+        if (action == "write")
+            return "wrote " + reply["path"].asString() + " (" + std::to_string(reply["size"].asUInt64()) + " bytes) on " +
+                   reply["slot"].asString() + " volume " + reply["volume"].asString() + "; unsaved: " +
+                   reply["changes"].asString() + " (save:true on eject, or the save action, keeps them)";
         if (action == "formats")
             return "Accepted formats per kind\n" + FlatFields(reply["formats"]);
         if (action == "compose" || action == "layers")
@@ -245,13 +250,14 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["path"]["description"] =
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
         "or folder to place; compose: a *.ucompose.yaml descriptor; files: a directory on the disk (empty: the root); "
-        "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe)";
+        "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe); write: the file to write (TR-DOS "
+        "NAME.T, +3DOS NAME.TYP)";
     schema["properties"]["descriptor"]["type"] = "object";
     schema["properties"]["descriptor"]["description"] =
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -311,9 +317,14 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
         "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
     schema["properties"]["volume"]["description"] =
-        "files / read: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
+        "files / read / write: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
         "iS-DOS devices of an ATM hard disk); left out: the first";
     schema["properties"]["out"]["description"] = "read: write the file's bytes to this host file instead of answering them";
+    schema["properties"]["in"]["description"] = "write: the bytes from this host file";
+    schema["properties"]["data"]["description"] = "write: the bytes in base64 (instead of 'in')";
+    schema["properties"]["start"]["description"] =
+        "write: the TR-DOS start field / the +3DOS CODE load address: 32768, 0x8000 or #8000";
+    schema["properties"]["header"]["description"] = "write: +3DOS: false writes the file without its 128-byte header";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk, cdrom or cf (a CompactFlash card on an IDE adapter) - swap the unit's drive first (the unit must be empty)";
@@ -331,8 +342,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot, read only: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
-        "NedoOS floppies, hard disks and SD cards). Operations are synchronous (the reply "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
+        "NedoOS floppies, hard disks and SD cards), write (a file onto a TR-DOS or +3DOS floppy in a slot: path the "
+        "name, data base64 or in a host file, start, header; an older file of that name is replaced, the disk turns "
+        "dirty until saved). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
         "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "

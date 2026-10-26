@@ -24,13 +24,13 @@ namespace
     /// Options that take a value; every other option is a flag
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
-                                                 "compression", "parent", "volume", "out"};
+                                                 "compression", "parent", "volume", "out", "in", "data", "start"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
         return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
-               verb == "compose" || verb == "files" || verb == "read";
+               verb == "compose" || verb == "files" || verb == "read" || verb == "write";
     }
 
     /// `media compose` / `media layers`: the layout and one line per layer
@@ -303,6 +303,12 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const StateNode& n : body.find("notes")->items)
             out << "  note: " << n.s << NEWLINE;
     }
+    else if (verb == "write")
+    {
+        out << "  wrote " << body.find("path")->s << " (" << body.find("size")->i << " bytes) on slot " << reply.slot
+            << ", volume " << body.find("volume")->s << NEWLINE;
+        out << "  unsaved: " << body.find("changes")->s << " (media save / eject --save keeps them)" << NEWLINE;
+    }
     else if (verb == "read" && !body.find("savedPath"))
     {
         // A hex dump of the start; --out <file> takes the whole file
@@ -372,6 +378,10 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
         << "                                 NedoOS): floppies, FAT partitions, iS-DOS devices of an ATM hard disk" << NEWLINE;
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
+    out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
+        << "                               - a file onto a TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy, an older file" << NEWLINE
+        << "                                 of that name replaced; --start: the TR-DOS start / +3DOS CODE address" << NEWLINE
+        << "                                 (#8000, 0x8000, 32768); --header=false: +3DOS without its header" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE
