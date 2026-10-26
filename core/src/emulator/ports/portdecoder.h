@@ -735,6 +735,8 @@ public:
     /// Re-read the porttrace feature flag from FeatureManager and instantiate or
     /// release the recorder accordingly. Called from FeatureManager::onFeatureChanged.
     void UpdateFeatureCache();
+    /// The model's own features (the Next's esxDOS mode), asked at the end of UpdateFeatureCache
+    virtual void UpdateModelFeatureCache() {}
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
     /// Once returned the pointer stays valid for the decoder's lifetime

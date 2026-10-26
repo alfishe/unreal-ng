@@ -46,6 +46,7 @@ constexpr const char* const kGSLightweight = "gs_lightweight";
 constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
 constexpr const char* const kTTDRestart = "ttdrestart";
+constexpr const char* const kEsxDos = "esxdos";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -73,6 +74,7 @@ constexpr const char* const kGSLightweightAlias = "gslw";
 constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
 constexpr const char* const kTTDRestartAlias = "ttdre";
+constexpr const char* const kEsxDosAlias = "esx";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -131,6 +133,12 @@ constexpr const char* const kContentionDesc =
     "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
     "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
+
+constexpr const char* const kEsxDosDesc =
+    "ZX Spectrum Next esxDOS mode: without a boot ROM (the bare machine) the emulator serves the esxDOS API (RST $08 "
+    "calls #80 and up: files, directories, the file map and stream, the date) against the FAT volume of SD card 0, so "
+    "a program that uses it runs without NextZXOS. Off: RST $08 runs the ROM as on the board. Cannot change while the "
+    "machine is bound to a TTD timeline or an RZX recording plays.";
 
 constexpr const char* const kTTDRestartDesc =
     "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "

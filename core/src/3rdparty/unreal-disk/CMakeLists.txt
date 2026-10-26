@@ -37,6 +37,7 @@ add_library(unreal-disk STATIC
     src/unicode.cpp
     src/subrangedevice.cpp
     src/fatvolumereader.cpp
+    src/fatfs.cpp
     src/floppyblockdevice.cpp
     src/diskfs.cpp
     src/flux/flux_pll.cpp
