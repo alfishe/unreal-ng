@@ -23,6 +23,7 @@
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/video/ulacontention.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -393,6 +394,49 @@ TEST_F(NextSkeleton_Test, Only48KBank5AndNothingAbove3_5MHz)
     Out(0x243B, 0x08);
     Out(0x253B, 0x40);  // NR #08 bit 6: contention disabled
     EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
+}
+
+// zxnext.vhd 5822: NR #08 bit 6 takes effect in an idle bus cycle while hc(8) = 1, so a switch inside a line's contention window waits
+// for the window's end; the register reads the switch in effect (5906). Outside the window it is at once
+TEST_F(NextSkeleton_Test, ContentionSwitchWaitsForTheLinesWindowToEnd)
+{
+    Out(0x243B, 0x03);
+    Out(0x253B, 0x90);  // timing family 1 (48K)
+    _emulator->RunFrame(true);
+    UlaContention* ula = _context->pUlaContention;
+    ASSERT_NE(ula, nullptr);
+    ASSERT_TRUE(ula->IsContentionEnabled());
+    const ContentionRaster& raster = ula->GetRaster();
+    const uint32_t inWindow = raster.screenAreaStart + 20 * raster.tstatesPerLine + raster.screenLineAreaStart;  // a paper line, mid window
+    const uint32_t windowEnd = ula->LineWindowEndFrom(inWindow);
+    ASSERT_GT(windowEnd, inWindow);
+    EXPECT_EQ(ula->LineWindowEndFrom(windowEnd), windowEnd) << "the end is outside";
+
+    _z80->t = inWindow;
+    Out(0x243B, 0x08);
+    Out(0x253B, 0x40);
+    EXPECT_EQ(In(0x253B) & 0x40, 0) << "the switch in effect reads back, not the one written";
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    _z80->t = windowEnd - 1;
+    _ports->OnInstructionDone();
+    EXPECT_TRUE(ula->IsContentionEnabled()) << "still inside the window";
+    _z80->t = windowEnd;
+    _ports->OnInstructionDone();
+    EXPECT_FALSE(ula->IsContentionEnabled()) << "the window ended";
+    EXPECT_EQ(In(0x253B) & 0x40, 0x40);
+
+    Out(0x253B, 0x00);  // outside the window: at once
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    EXPECT_EQ(In(0x253B) & 0x40, 0);
+
+    // A switch still waiting when the frame ends takes effect in the next one, whatever its T count
+    _z80->t = inWindow;
+    Out(0x253B, 0x40);
+    EXPECT_TRUE(ula->IsContentionEnabled());
+    _context->emulatorState.frame_counter++;
+    _z80->t = 4;
+    _ports->OnInstructionDone();
+    EXPECT_FALSE(ula->IsContentionEnabled());
 }
 
 // t80n_mcode.vhd X"91": NEXTREG n,v is 6 memory cycles (2 M1, 2 operand, 2 trailing reads with NoRead = 0), all stretched by the +3 gate

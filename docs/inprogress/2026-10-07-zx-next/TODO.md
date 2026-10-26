@@ -14,9 +14,16 @@ Planned, in this order:
   access tracker and the port trace the instruction as `OUT #243B,reg` / `OUT #253B,value` at its pc, rule `PortTraceRule::kNoBusCycle`
   (252); tests `NextSkeleton_Test.NextRegInstructionIsInThePortTrace` / `PortBreakpointFiresOnNextReg`. The copper is no CPU: it stays in
   the NextREG journal and the `bcopper` breakpoints)
-- [ ] Contention: the Next's "previous hc cycle" phase (3-14 instead of 4-15) in `UlaContention::ComputeContentionDelay`, the +3 WAIT-line
-  form (the +3 timing reuses the gate-array pattern), NR #08 bit 6 taking effect at hc(8) = 1 (zxnext.vhd 5822; ours at once); settle
-  `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME)
+- [x] Contention: the Next's "previous hc cycle" phase (3-14 instead of 4-15) in `UlaContention::ComputeContentionDelay`, the +3 WAIT-line
+  form (the +3 timing reuses the gate-array pattern), NR #08 bit 6 taking effect at hc(8) = 1 (zxnext.vhd 5822; ours at once) (done
+  2026-10-25: NR #08 bit 6 waits for the end of the line's contention window (`UlaContention::LineWindowEndFrom`,
+  `PortDecoder_Next::SetContentionDisabled`), the register reads the switch in effect (5906); test
+  `NextSkeleton_Test.ContentionSwitchWaitsForTheLinesWindowToEnd`. No change for the other two, by the RTL: `zxula.vhd` 579-580 says the
+  synchronous core decides one `hc` early (3-14) so that the CPU clock is held in the same cycles as the original's combinational OR
+  (4-15): the clock the CPU sees is the same. The +3 `o_cpu_wait_n` (600) is low for `hc(3:0)` 15, 0, 3-14 of every cell: sampled at
+  T2 and at each Tw, that gives the waits 7, 6, 5, 4, 3, 2, 1, 0 by phase, the shape of `gateArrayContentionPattern`)
+- [ ] Contention: settle `Chg8kBan` / `Chg8kB_2` (contention on: ~31 lines longer than MAME); needs a board measurement (the
+  "targeted tests run on a real board" below)
 - [ ] DMA: memory reads without contention (`DirectReadFromZ80Memory`), the `dma_delay` tail through the RETI's ED prefix (im2_control.vhd
   238), the DMA interrupt pulse, bus arbitration with the expansion bus; the heights of the `dma` / `zilogDMA` border blocks are not measured
 - [ ] Sprites: a write inside a pass lands before or after the whole pass (`ScreenNext::SpriteStateWillChange`), not at the sprite the
