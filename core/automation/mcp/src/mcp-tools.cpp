@@ -2322,7 +2322,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'monitor' = monitoring (GET /api/v1/monitor?instance=): the host process (CPU %, resident memory, threads), the "
         "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
         "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
-        "labels, TTD sizes, profiler states, controllers; the WebSocket topics of the same names push them. "
+        "labels, TTD sizes, profiler states, controllers, the game's events (game.events: the play profile's events, "
+        "how often each fired, its last frame and watched value); the WebSocket topics of the same names push them. "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -3432,6 +3433,22 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " active); media dirty " << (instance["media.slots"]["dirty"].asBool() ? "yes" : "no")
                                             << "; recording " << (instance["recording.state"]["recording"].asBool() ? "yes" : "no")
                                             << "; ttd " << instance["ttd.status"]["state"].asString();
+                                        const Json::Value& game = instance["game.events"];
+                                        if (game["available"].asBool())
+                                        {
+                                            out << "\n  game events (" << game["profile"].asString() << ", frame "
+                                                << game["frame"].asUInt64() << "):";
+                                            for (const std::string& name : game["events"].getMemberNames())
+                                            {
+                                                const Json::Value& event = game["events"][name];
+                                                out << " " << name << " " << event["fires"].asUInt64();
+                                                if (event["last_frame"].asUInt64() != 0)
+                                                    out << " (last frame " << event["last_frame"].asUInt64() << ")";
+                                                if (!event["value"].isNull())
+                                                    out << " = " << event["value"].asInt64();
+                                                out << ";";
+                                            }
+                                        }
                                     }
                                 }
                             }

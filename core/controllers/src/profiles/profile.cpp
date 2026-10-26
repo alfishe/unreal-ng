@@ -23,7 +23,8 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
                                      "curve"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
-                                      "connectors", "players", "options", "layers", "layer_key", "haptics"};
+                                      "connectors", "players", "options", "layers", "layer_key", "haptics",
+                                      "events"};
 
 template <size_t N>
 bool OneOf(const char* const (&names)[N], const std::string& name)
@@ -599,7 +600,49 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
         profile.options = *options;
     }
 
-    if (const JsonValue* haptics = root.Find("haptics"))
+    JsonValue merged;
+    const JsonValue* haptics = root.Find("haptics");
+    if (const JsonValue* events = root.Find("events"))
+    {
+        // A play profile's `events` are the game's facts (breakpoint taps README.md §7): the sources of its haptics
+        // and of the game.events monitor. Kept as haptics.sources, beside the ones written there
+        if (profile.kind != ProfileKind::Play)
+        {
+            error = "'events' belongs to a play profile";
+            return false;
+        }
+        if (!events->IsObject())
+        {
+            error = "events: an object expected";
+            return false;
+        }
+        merged = haptics != nullptr ? *haptics : JsonValue::Object();
+        if (!merged.IsObject())
+        {
+            error = "haptics: an object expected";
+            return false;
+        }
+        JsonValue sources = JsonValue::Object();
+        if (const JsonValue* written = merged.Find("sources"))
+            sources = *written;
+        if (!sources.IsObject())
+        {
+            error = "haptics.sources: an object expected";
+            return false;
+        }
+        for (const auto& [name, spec] : events->GetMembers())
+        {
+            if (sources.Find(name) != nullptr)
+            {
+                error = "events: '" + name + "' is also a haptics source";
+                return false;
+            }
+            sources.Set(name, spec);
+        }
+        merged.Set("sources", std::move(sources));
+        haptics = &merged;
+    }
+    if (haptics != nullptr)
     {
         // A play profile's are the game's (sources and rules); a debug profile's what a surface feels per layer
         HapticProfile game;

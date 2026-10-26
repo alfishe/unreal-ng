@@ -4207,6 +4207,7 @@ by its manager's revision.
 | `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
 | `monitor debug.buffers` | `[instance=]` | How full each trace buffer is (read at most once a second): `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {`used`, `capacity`, `slot_bytes`, `used_bytes`, `capacity_bytes`, `percent`}, a buffer not allocated absent; `ttd` {`history_bytes`, `limit_bytes`, `limit_frames`, `memory_bytes`, `checkpoints`, `write_journal_records`, `write_journal_bytes`} | ✅ Implemented |
 | `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
+| `monitor game.events` | `[instance=]` | The game's events: the play profile's `events:` (and `haptics.sources`) as the haptic feed found them in live frames, with or without a haptic device ([breakpoint taps §7](../../../inprogress/2026-10-26-breakpoint-taps/README.md#7-game-events-the-profile-names-events-consumers-subscribe)): `available`, `profile`, `frame`, `seq`, `events` {`<name>`: {`kind` (`event` / `level`), `fires`, `last_frame`, `level`, `value` (the watched byte or word, else null)}}, `recent` [{`seq`, `frame`, `name`}] (the last 64 fired; a poller keeps the last `seq` it saw) | ✅ Implemented |
 
 `instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
 `Not Found` (404: no such name, no such instance).
@@ -4215,7 +4216,7 @@ by its manager's revision.
 | :--- | :--- | :--- | :--- |
 | CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
 | WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` (per instance); the same names as surface readouts |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`, `game.events` (per instance); the same names as surface readouts |
 | MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
 | Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
 | Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |

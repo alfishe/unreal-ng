@@ -103,8 +103,8 @@ Memory::Memory(EmulatorContext* context)
         // It's probably better to have a master switch
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        // The haptic probes' hold (FeatureManager::setProbeDebugHold): their breakpoints are checked anyway
-        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->probeDebugHold();
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
         _feature_sharedmemory_enabled = fm->isEnabled(Features::kSharedMemory);
         // TTD requires debugMode (uses the debug write path) AND the runtime timetravel flag.
         // Per TDD §6.2 the gate is the same shape as _feature_memorytracking_enabled:
@@ -422,12 +422,42 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
-    // A screen on the event rule draws what it has not drawn yet first: RAM page 5 or 7 (page | 2 == 7)
-    if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7) [[unlikely]]
-        _videoWatch->CatchUpToStepStart();
+    // The hooks (breakpoint-taps §5): one byte, so the plain write pays one test
+    if (_writeHooks) [[unlikely]]
+    {
+        // A screen on the event rule draws what it has not drawn yet first: RAM page 5 or 7 (page | 2 == 7)
+        if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7)
+            _videoWatch->CatchUpToStepStart();
+        *(_bank_write[bank] + addressInBank) = value;
+        // A write tap: the write filter's bit, then the resolve (told after the store)
+        if ((_writeHooks & kWriteHookTap) && _tapFilter->MemoryBit(BRK_KIND_WRITE, addr))
+            MemoryWriteTapped(addr);
+        return;
+    }
 
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
+}
+
+/// A write the write filter marks, on the fast path: the taps there are told; a stopping breakpoint does not stop off
+/// the debug path (it is counted only)
+void Memory::MemoryWriteTapped(uint16_t addr)
+{
+    if (_context->pDebugManager != nullptr)
+        (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryWrite(addr);
+}
+
+void Memory::SetWriteTapDemand(bool on, const BreakpointHotState* filter)
+{
+    _writeTapDemand = on && filter != nullptr;
+    _tapFilter = filter;
+    RefreshWriteHooks();
+}
+
+void Memory::RefreshWriteHooks()
+{
+    _writeHooks = static_cast<uint8_t>((_videoWatch != nullptr ? kWriteHookVideo : 0) |
+                                       (_writeTapDemand ? kWriteHookTap : 0));
 }
 
 /// The debug write's bookkeeping after the byte is stored: memory tracking, TTD dirty page / journal / probe,
@@ -495,7 +525,8 @@ void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physP
     }
 
     /// region <Write breakpoint logic>
-    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
+    // Write taps are checked here too while the debug path runs (the fast write's hook does not see these writes)
+    if ((_feature_breakpoints_enabled || _writeTapDemand) && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
@@ -2144,8 +2175,8 @@ void Memory::UpdateFeatureCache()
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        // The haptic probes' hold (FeatureManager::setProbeDebugHold): their breakpoints are checked anyway
-        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->probeDebugHold();
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
         // A TTD replay observes accesses whatever the user's debug mode: it
         // engages the debug path for its own duration (EnterReplayMode)
         _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;

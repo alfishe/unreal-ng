@@ -33,6 +33,7 @@
 #include "loaders/disk/loader_trd.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -580,8 +581,9 @@ TEST_F(TRDOSIntegration_test, RecordNotFoundGeneratesErrorEvent)
 // Feature Management Tests
 // =============================================================================
 
-/// @brief Verify debug features are auto-enabled when analyzer activates
-TEST_F(TRDOSIntegration_test, DebugFeaturesAutoEnabled)
+/// @brief The analyzer's breakpoints are taps (breakpoint-taps §8): activating it leaves 'debugmode' and
+/// 'breakpoints' as they are and turns on the instruction start's check only
+TEST_F(TRDOSIntegration_test, ActivationNeedsNoDebugFeatures)
 {
     if (!_manager)
     {
@@ -594,16 +596,15 @@ TEST_F(TRDOSIntegration_test, DebugFeaturesAutoEnabled)
         GTEST_SKIP() << "FeatureManager not available";
     }
     
-    // Disable debug features first
     fm->setFeature("debugmode", false);
     fm->setFeature("breakpoints", false);
-    
-    // Activate analyzer
     _manager->activate("trdos");
-    
-    // Features should be auto-enabled
-    EXPECT_TRUE(fm->isEnabled("breakpoints"))
-        << "breakpoints feature should be auto-enabled when analyzer activates";
+
+    Z80* z80 = _emulator->GetContext()->pCore->GetZ80();
+    EXPECT_FALSE(fm->isEnabled("breakpoints")) << "a tap needs no breakpoints feature";
+    EXPECT_FALSE(fm->isEnabled("debugmode"));
+    EXPECT_FALSE(z80->isDebugMode);
+    EXPECT_TRUE(z80->execTapHold) << "the TR-DOS entry points are checked at each instruction start";
 }
 
 /// @brief Verify analyzer coexists with interactive breakpoints

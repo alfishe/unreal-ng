@@ -19,12 +19,12 @@ Coverage in general: [analysis/code-coverage-and-analyzers.md](../analysis/code-
 |:--|:--|:--|
 | a routine that starts the event (jump start, death, pickup) | `exec` | none measurable: the PC check at each instruction start, the memory stays on the fast path |
 | a counter or flag that changes once per event (lives, energy) | `write` with `when: decreased` / `increased` / `changed` (read at the frame end) | none on the CPU: one byte read per frame |
-| a change undone within one frame | `write` with `each_write: true` | the debug memory path: +38 % CPU on a 48K in BASIC |
+| a change undone within one frame | `write` with `each_write: true` | none measurable: each write tests one filter bit (the Next: the debug memory path) |
 | a continuous value (speed, altitude) | `value` (`word: true` for 16 bits) | none on the CPU |
 | a border flash, an AY register | `port-out` with `value` / `mask` | the port path's existing gate |
 
-Prefer `exec`. Take a `write` that reads at the frame end when the game has a clean counter. Use `each_write` and
-`read` only when nothing else works.
+Prefer `exec`. Take a `write` that reads at the frame end when the game has a clean counter. Use `read` only when
+nothing else works: it switches the debug memory path on (+38 % CPU on a 48K).
 
 ## 2. Find the candidates: per-frame coverage around the event
 
@@ -83,8 +83,10 @@ Things that bite:
 
 ## 5. Write the profile
 
-`data/controllers/profiles/games/<machine>/<game>.yaml`: the bindings, the match and the haptics. The header comment
-says how the addresses were found and checked, and which candidates were left out and why.
+`data/controllers/profiles/games/<machine>/<game>.yaml`: the bindings, the match, the game's `events` and the haptics
+rules that play them. The header comment says how the addresses were found and checked, and which candidates were left
+out and why. The events are game facts, not only haptics: the `game.events` monitor publishes them for a deck key, a
+script or an agent, with no haptic device needed (older profiles write the same sources as `haptics.sources`).
 
 ```yaml
 schema: 1
@@ -99,12 +101,12 @@ layers:
   play:
     south:        { key: "9", label: Jump }
     west:         { key: "0", label: Pockets }
+events:
+  jump:   { probe: exec, address: "0x795A" }
+  land:   { probe: exec, address: "0x7A97" }
+  hurt:   { probe: exec, address: "0x847A" }
+  died:   { probe: exec, address: "0x8B80" }
 haptics:
-  sources:
-    jump:   { probe: exec, address: "0x795A" }
-    land:   { probe: exec, address: "0x7A97" }
-    hurt:   { probe: exec, address: "0x847A" }
-    died:   { probe: exec, address: "0x8B80" }
   rules:
     - { on: jump, play: tick, target: handle.high }
     - { on: land, play: knock, target: handle.low }
@@ -125,13 +127,21 @@ Check what the emulator chooses for the loaded file:
 controllers {"action":"match"}     # = GET /api/v1/controllers/match: matches, profile, haptics_reason
 ```
 
+Then play the event once and read it back (the GUI instance resolves the profile; each `fires` counts the frames the
+event fired on, `recent` lists them in order):
+
+```text
+inspect_state {"aspects":["monitor"]}   # MCP: "game events (builtin/game/dizzy-x, frame N): jump 1 (last frame N); ..."
+GET /api/v1/monitor/game.events         # REST; the WebSocket topic game.events pushes the same value
+```
+
 ## 6. Test it
 
 - `core/tests/emulator/io/controllers/gamehaptics_test.cpp`: add a row to `kGames` (the id, one release's hash, each
   source with its address). The test resolves the profile by the hash on a Pentagon and calls each address from a
   stub program: each source must fire alone and play through the mixer.
 - When the image is in `testdata/`, add a short play test as `DizzyXJumpsAndLandsOnce` does: load it, press the keys,
-  assert the exact list of sources fired (under 50 ms).
+  assert the exact list of sources fired (under 50 ms) and the same list from the `game.events` monitor.
 - Add the profile's row to the H5 table in [haptics.md §13](../../docs/inprogress/2026-10-17-controller-manager/haptics.md#13-phases-and-open-points).
 
 ## WebAPI
