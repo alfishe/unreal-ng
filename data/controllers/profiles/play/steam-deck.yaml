@@ -1,0 +1,19 @@
+# The Steam Deck's own controller (hidraw): pad-default for what every pad has, and what only the Deck has. The left
+# trackpad is a second D-pad and fire, the right one the mouse (a joystick mouse: the distance from the centre is the
+# speed), its click the left button. The back grips: R4 (paddle.p1) the second fire, R5 (paddle.p2) the auto fire,
+# L4 (paddle.p3) SPACE; L5 (paddle.p4) stays free for the debug layer key (debug/steam-deck.yaml)
+schema: 1
+kind: play
+id: builtin/play/steam-deck
+label: Steam Deck
+applies_to: { families: [steam-deck] }
+layers:
+  play:
+    ltouchpad:        { retro: "auto:dpad" }
+    ltouchpad.click:  { retro: "auto:fire" }
+    rtouchpad.x:      { mouse: dx }
+    rtouchpad.y:      { mouse: dy }
+    rtouchpad.click:  { mouse: left }
+    paddle.p1:        { retro: "auto:fire2" }
+    paddle.p2:        { retro: "auto:fire", turbo: classic, on: 2, off: 2, label: Fire (auto) }
+    paddle.p3:        { key: SPACE }

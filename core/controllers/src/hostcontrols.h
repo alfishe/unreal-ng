@@ -55,7 +55,8 @@ std::string KeyControl(const std::string& key, uint8_t modifiers);
 /// the control surfaces' `knob` (encoder), `push` and `touch` (the hand on the knob)
 const std::vector<std::string>& KnownControls();
 
-/// The stick a name stands for as a whole (`lstick`, `rstick`), for a binding of all four directions; empty otherwise
+/// The stick a name stands for as a whole (`lstick`, `rstick`, a trackpad `ltouchpad`, `rtouchpad`), for a binding of
+/// all four directions; empty otherwise
 std::string StickOf(const std::string& name);
 
 /// A retro control name -> its bits in a connector mask: `right` `left` `down` `up` `fire` `fire2` `fire3` `fire4`,

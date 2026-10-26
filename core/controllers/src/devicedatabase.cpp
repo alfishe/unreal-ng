@@ -234,6 +234,7 @@ bool DeviceDatabase::Read(const std::string& text, bool merge, std::string& erro
                     }
                     match.hasHid = true;
                 }
+                match.name = Lower(Text(m, "name"));
                 uint16_t version = 0;
                 if (Hex(m.Find("version"), version))
                     match.version = version;
@@ -310,8 +311,10 @@ DeviceMatch DeviceDatabase::Lookup(const DeviceIdentity& device) const
                 continue;
             if (!match.bus.empty() && !device.bus.empty() && match.bus != device.bus)
                 continue;
-            // A version or a bus that had to match makes the entry more specific (§3: exact before VID + PID)
-            const int score = match.version >= 0 || !match.bus.empty() ? 100 : 80;
+            if (!match.name.empty() && Lower(device.name).find(match.name) == std::string::npos)
+                continue;
+            // A version, a bus or a name that had to match makes the entry more specific (§3: exact before VID + PID)
+            const int score = match.version >= 0 || !match.bus.empty() || !match.name.empty() ? 100 : 80;
             // On a tie the user's own family wins over a built-in one of the same VID:PID (an import, a learned map)
             if (score > bestScore || (score == bestScore && best != nullptr && family.user && !best->user))
             {

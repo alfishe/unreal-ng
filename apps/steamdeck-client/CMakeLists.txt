@@ -11,7 +11,7 @@ add_library(steamdeck-poc-timing STATIC common/timinglog.cpp)
 target_include_directories(steamdeck-poc-timing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
 target_link_libraries(steamdeck-poc-timing PUBLIC SDL3::SDL3)
 
-add_library(steamdeck-poc-common STATIC common/emuhost.cpp)
+add_library(steamdeck-poc-common STATIC common/emuhost.cpp common/deckcontrollers.cpp)
 target_include_directories(steamdeck-poc-common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/core/src

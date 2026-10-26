@@ -578,6 +578,7 @@ std::vector<LinuxSteamHeld> FindSteamHeldPads(const std::string& sysRoot)
 {
     namespace fs = std::filesystem;
     constexpr uint16_t kValve = 0x28DE;
+    constexpr uint16_t kSteamDeck = 0x1205;
     std::vector<fs::path> devices;
     std::error_code error;
     for (fs::directory_iterator it(fs::path(sysRoot) / "bus" / "hid" / "drivers" / "hid-steam", error), end;
@@ -598,6 +599,9 @@ std::vector<LinuxSteamHeld> FindSteamHeldPads(const std::string& sysRoot)
         const uint16_t vendor = static_cast<uint16_t>(std::strtoul(dir.substr(5, 4).c_str(), nullptr, 16));
         const uint16_t product = static_cast<uint16_t>(std::strtoul(dir.substr(10, 4).c_str(), nullptr, 16));
         if (vendor != kValve || fs::exists(device / "hidraw", error) || fs::exists(device / "input", error))
+            continue;
+        // The Steam Deck's controller: the hidraw backend reads it beside the Steam client (hidrawbackend.h)
+        if (product == kSteamDeck)
             continue;
         std::string name;
         std::string phys;

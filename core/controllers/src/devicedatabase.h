@@ -124,6 +124,7 @@ private:
         std::string backend;
         bool hasHid = false;  ///< the match's own `hid` replaces the family's
         DeviceMatch::HidMap hid;
+        std::string name;  ///< lower-case substring the device name must hold: a shared VID:PID (pid.codes 1209:0001)
     };
     struct Family
     {

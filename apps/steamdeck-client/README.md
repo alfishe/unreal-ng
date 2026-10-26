@@ -92,6 +92,7 @@ SIGTERM or `--seconds N` ends it. Over SSH: `cd ~/steamdeck-poc && ./p01-sdl-gpu
 | File | Content |
 |---|---|
 | [common/emuhost.h](common/emuhost.h) | the minimum a front-end needs from the core: create a model, load a file, poke a test program, SDL3 audio stream into the core's audio callback (DRC occupancy), zero-copy `CopyPresentedFramebuffer`, Kempston bits |
+| [common/deckcontrollers.h](common/deckcontrollers.h) | the host controllers of unreal-qt without Qt: the Deck's built-in controller over hidraw, other pads over evdev, play / user / game profiles, the port-read auto choice of Kempston, Sinclair or Cursor, haptics, the WebAPI `/controllers` verbs (p01 with `--boot` / `--file`) |
 | [common/timinglog.h](common/timinglog.h) | CSV logs under `~/steamdeck-poc-logs/`, interval and sample statistics |
 | [common/embed.cmake](common/embed.cmake) | embeds compiled SPIR-V shaders as C arrays (`steamdeck_poc_shaders()`, used from P-07) |
 

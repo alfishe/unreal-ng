@@ -36,7 +36,17 @@ constexpr FixedControl kFixed[] = {
     {"mouse.x4", ControlType::Button},     {"mouse.x5", ControlType::Button},     {"pointer.x", ControlType::Pointer},
     {"pointer.y", ControlType::Pointer},   {"knob", ControlType::Encoder},        {"push", ControlType::Button},
     {"touch", ControlType::Button},
+    // Two trackpads (the Steam Deck): position while touched (0 when not), the finger, the press, the pressure
+    {"ltouchpad.x", ControlType::Axis},    {"ltouchpad.y", ControlType::Axis},    {"ltouchpad.touch", ControlType::Button},
+    {"ltouchpad.click", ControlType::Button}, {"ltouchpad.pressure", ControlType::Trigger},
+    {"rtouchpad.x", ControlType::Axis},    {"rtouchpad.y", ControlType::Axis},    {"rtouchpad.touch", ControlType::Button},
+    {"rtouchpad.click", ControlType::Button}, {"rtouchpad.pressure", ControlType::Trigger},
+    // A thumb on a capacitive stick (the Steam Deck)
+    {"lstick.touch", ControlType::Button}, {"rstick.touch", ControlType::Button},
 };
+
+/// What reads as a stick: a binding takes it whole (`lstick`) or by direction (`ltouchpad.up`)
+constexpr const char* kSticks[] = {"lstick", "rstick", "ltouchpad", "rtouchpad"};
 
 struct Direction
 {
@@ -111,11 +121,12 @@ bool ParseControl(const std::string& text, ControlInfo& out)
         out.base = name.substr(0, 2);
         return true;
     }
-    for (const char* stick : {"lstick.", "rstick."})
+    for (const char* stick : kSticks)
     {
-        if (StartsWith(name, stick) && DirectionBit(name.substr(7), out.direction))
+        const std::string prefix = std::string(stick) + ".";
+        if (StartsWith(name, prefix.c_str()) && DirectionBit(name.substr(prefix.size()), out.direction))
         {
-            out.base = name.substr(0, 6);
+            out.base = stick;
             return true;
         }
     }
@@ -167,7 +178,10 @@ const std::vector<std::string>& KnownControls()
 std::string StickOf(const std::string& name)
 {
     const std::string lower = Lower(name);
-    return lower == "lstick" || lower == "rstick" ? lower : std::string{};
+    for (const char* stick : kSticks)
+        if (lower == stick)
+            return lower;
+    return {};
 }
 
 bool RetroControlMask(const std::string& name, uint16_t& mask)

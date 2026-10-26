@@ -121,7 +121,7 @@ struct LinuxSteamHeld
 /// hid-steam's game pad interfaces under @p sysRoot (`bus/hid/drivers/hid-steam/<bus>:<vid>:<pid>.<n>`: no hidraw
 /// node of their own, as hid-steam connects the real interface without one; the client devices and the lizard-mode
 /// keyboard and mouse interfaces have one) that have no input device now. A wireless receiver's empty slots look the
-/// same: one entry per receiver
+/// same: one entry per receiver. The Steam Deck is never one: the hidraw backend reads it while Steam holds it
 std::vector<LinuxSteamHeld> FindSteamHeldPads(const std::string& sysRoot);
 /// The Steam client runs: a process under @p procRoot whose `comm` is `steam`
 bool SteamClientRunning(const std::string& procRoot);

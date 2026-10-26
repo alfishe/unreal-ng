@@ -47,6 +47,13 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 --boot                                                 # the ROM boots instead of the border test (the "Unreal NG" app)
 ```
 
+With `--boot` or `--file` the input goes through the controller manager (`common/deckcontrollers.h`), as in unreal-qt:
+the Deck's own controller over hidraw (every button, the back buttons, both trackpads, the motion sensors, the
+motors), any other pad over evdev, the `steam-deck` play profile, the user's and the game profiles, and the port-read
+auto choice (a game reading Sinclair gets Sinclair). Every control can be bound to any ZX target (a connector's
+control, keys, a macro, the mouse, an action) in a profile or over WebAPI `/controllers`. SDL's gamepad layer stays
+off then; the border test keeps it (A / D-pad on Kempston).
+
 Built with automation (the default) the instance is driven over the network: WebAPI on `:8090`
 ([README.md, Remote control](../README.md#remote-control-webapi-mcp)).
 
