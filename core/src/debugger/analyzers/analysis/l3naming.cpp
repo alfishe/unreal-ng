@@ -314,16 +314,11 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
     constexpr size_t kRoom = kNameSheetBytes - 300;  // the head line and the resolve line
     NamingBatch batch;
     size_t bytes = 0;
+    std::vector<NamingBatch> all;
     const auto close = [&]() {
         if (batch.subjects.empty())
             return;
-        if (result.batches.size() < kNameBatchCap)
-        {
-            batch.id = "N" + std::to_string(result.batches.size() + 1);
-            result.batches.push_back(batch);
-        }
-        else
-            result.capped += static_cast<uint32_t>(batch.subjects.size());
+        all.push_back(batch);
         batch = NamingBatch();
         bytes = 0;
     };
@@ -348,6 +343,32 @@ NamingResult NamingBatches(const L1Result& l1, const L2Result& l2, const DraftPl
         }
     }
     close();
+
+    // Over the cap: the batches that name the most go first (a routine's entry, then a data entry, then a point
+    // inside code; a point inside data, a position in a buffer, the least), in address order among the kept ones
+    std::vector<size_t> order(all.size());
+    for (size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    if (all.size() > kNameBatchCap)
+    {
+        const auto score = [](const NamingBatch& b) {
+            uint32_t sum = 0;
+            for (const NamingSubject& s : b.subjects)
+                sum += s.entry ? (s.code ? 4u : 2u) : (s.code ? 1u : 0u);
+            return sum;
+        };
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t x, size_t y) { return score(all[x]) > score(all[y]); });
+        for (size_t i = kNameBatchCap; i < order.size(); ++i)
+            result.capped += static_cast<uint32_t>(all[order[i]].subjects.size());
+        order.resize(kNameBatchCap);
+        std::sort(order.begin(), order.end());
+    }
+    for (const size_t i : order)
+    {
+        all[i].id = "N" + std::to_string(result.batches.size() + 1);
+        result.batches.push_back(std::move(all[i]));
+    }
     return result;
 }
 

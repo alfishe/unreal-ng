@@ -38,7 +38,8 @@ namespace analysis
 constexpr size_t kNameBatchSubjects = 10;
 /// A batch's sheet, at most
 constexpr size_t kNameSheetBytes = 2048;
-/// Batches of one build, at most (the subjects past them are counted in the queue's summary)
+/// Batches of one build, at most: over it the batches naming routine and data entries are kept first (the subjects
+/// left out are counted in the queue's summary)
 constexpr size_t kNameBatchCap = 40;
 
 struct NamingSubject

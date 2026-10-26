@@ -179,6 +179,7 @@ Export every format, all with the same `ranges` (the draft directory `reaper_gat
 
 ```text
 analysis {"action":"findings","format":"markdown","path":"/abs/project/re/findings.md"}   # zx-reaper's findings table
+analysis {"action":"findings","format":"jsonl","path":"/abs/draft/findings.jsonl"}       # one finding a line
 analysis {"action":"export","format":"skool","path":"/abs/draft/draft.skool","ranges":"8000-FFFF"}
 analysis {"action":"export","format":"ctl","path":"/abs/draft/draft.ctl","ranges":"8000-FFFF"}
 analysis {"action":"export","format":"layout","path":"/abs/draft/draft.layout.mk","ranges":"8000-FFFF"}
@@ -243,3 +244,8 @@ bad option, spec or names (the message names the field and what it takes).
   rebuilds at a level start needs `from` after that point, or a held value (coverage holds bytes for you).
 - **`skip` is not a verdict.** The finding stays `inferred` and leaves the queue only; the draft does not change.
 - **The draft carries decisions, not the queue.** Export after the last resolve.
+- **A resolve may be repeated.** The last word counts: a label, title or kind replaces the earlier one, a naming
+  batch keeps the names it gave unless you give new ones. Correct a decision by resolving the same id again.
+- **`records` is a structure.** A claim "One record: N fields the same routines use together" says these variables
+  are one record (say a direction, an address and a length): `ok` keeps the record and its field list for the
+  export; `wrong` with `kind` only when they are unrelated.

@@ -255,7 +255,7 @@ void VariableGroups(DetectorContext& context, const std::vector<Var>& vars, cons
             r.confidence = confidence::FromCount(400, 800, j - i + 1, 2);
             r.evidence.push_back(Evidence{"users", vars[i].lo, j - i + 1,
                                           std::to_string(j - i + 1) + " adjacent variables used by " + names});
-            r.title = "Variables used together";
+            r.title = "One record: " + std::to_string(j - i + 1) + " fields the same routines use together";
             r.users = context.UsersOf(vars[i].lo, vars[j].hi);
             context.Claim(std::move(r), vars[i].lo, vars[j].hi);
         }

@@ -242,3 +242,31 @@ replaced it at once, so its fields went. A claim now refuses `ok` with another k
 without it). Other fixes from the agent's notes: the recipe gives the 32-character label limit, a naming batch's reply
 lists the skipped addresses, and `take_control` by the session's holder (a new MCP connection of the same server, a
 restarted script) keeps the session instead of being refused as held by another.
+
+## Run C4: a fresh review after the C3 fixes (2026-10-26)
+
+All C3 fixes in (loop labels and used plain data named, a kind alone decides, the export ALIGN fix), a fresh session
+and a fresh sonnet agent on the recipe: 156 queue items (40 naming batches, 347 subjects named), no experiment,
+153,140 tokens, 25 tool calls, 8.2 min.
+
+| Measure | Run C4 | Run C3 | Run B |
+| --- | ---: | ---: | ---: |
+| gate: make, make test, shift +$100 / +$101 | pass | pass | pass |
+| byte categories (by entry) | 98.03 % | 98.03 % | 92.3 % |
+| code entries | 33 / 33 | 33 / 33 | 33 / 33 |
+| graphics covered / right geometry | 106 / 104 | 106 / 106 | 106 / n/a |
+| records | 4 / 5 | 4 / 5 | 5 / 5 |
+| names: exact + normalized | 37 / 142 | 50 / 142 | 50 / 142 |
+| names: + a blind judge (sonnet, mixed with B, 150 pairs) | **99 / 142 (69.7 %)** | 108 / 142 | **108 / 142 (76.1 %)** |
+| names left generated / missing | 11 / 5 | 19 / 5 | 0 / 31 |
+| subagent tokens | **153,140** | 137,491 | 2,034,851 |
+
+The judge agreed with the first one on 58 of run B's 61 pairs. What C4 found:
+
+- The 40-batch cap: with the loop labels the subjects grew to 357 and the batches past the cap were the high
+  addresses, two routines (`sub_8D88`, `sub_8E58`) among them; 123 labels stayed generated. Over the cap the
+  batches naming routine entries, then data entries, then points inside code are now kept first.
+- The conveyor record again: the claim read "Variables used together", the agent answered `wrong` with
+  `kind: variable`. The claim now says "One record: N fields the same routines use together" and the recipe says
+  `ok` keeps the record and its fields.
+- Recipe: a `findings` jsonl line, and that a resolve may be repeated (the last word counts).

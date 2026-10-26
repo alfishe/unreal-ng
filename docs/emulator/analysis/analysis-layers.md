@@ -395,7 +395,8 @@ uses, except untouched and unused entries, code entries no instruction refers to
 entries (the continuation of a routine after a status change), and graphics inside the copy source of a buffer that
 no instruction refers to. They
 are grouped by entry, then packed in address order into batches of up to 10 subjects of one class (code or data,
-never mixed) and a sheet of at most 2 KB; at most 40 batches. The batches come from the draft without the review's
+never mixed) and a sheet of at most 2 KB; at most 40 batches (over that, the batches naming routine entries, then
+data entries, then points inside code are kept first). The batches come from the draft without the review's
 notes, so a build gives the same ids `N1`, `N2`, ... on every compiler. A subject's facts: for code its callers,
 callees, the data it uses, its entries and a 4-instruction head; for data its reads, writes, the values written, its
 users and its first 8 bytes.
