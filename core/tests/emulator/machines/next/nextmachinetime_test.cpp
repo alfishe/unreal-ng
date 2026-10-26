@@ -122,6 +122,7 @@ TEST_F(NextMachineTime_Test, TheFlagsAreTheSameWhenTheBeamDraws)
 TEST_F(NextMachineTime_Test, Nr11MovesCLK28InConfigModeAndResets)
 {
     NextBoard& board = _ports->Board();
+    board.SetIssue(NextBoardIssue::Issue2);
     const uint32_t frameUs = _context->config.frame_duration_us;
     ASSERT_EQ(frameUs, FrameUs(28000000));
 
@@ -171,4 +172,25 @@ TEST_F(NextMachineTime_Test, Nr11MovesCLK28InConfigModeAndResets)
     EXPECT_EQ(board.Read(0x11), 0);
     EXPECT_EQ(_context->config.frame_duration_us, frameUs);
     EXPECT_EQ(_ports->Uart().SystemClock(), 28000000u);
+}
+
+// NR #11 on the Artix boards (g_video_inc "11", pll/A7/system_mmcme2.v): VGA 0-6, each its MMCM's CLK_28; 7 is VGA 0
+TEST_F(NextMachineTime_Test, Nr11TakesSevenTimingsOnTheArtixBoards)
+{
+    NextBoard& board = _ports->Board();
+    ASSERT_EQ(board.Issue(), NextBoardIssue::Issue4) << "the NEXT is the KS2";
+    board.Write(0x03, 0x07);  // config mode
+    const uint32_t expected[] = {28000000u, 28583333u, 29437500u, 30000000u, 31000000u, 32000000u, 33000000u};
+    for (uint8_t timing : {6, 3, 2, 1, 5, 4, 0})
+    {
+        board.Write(0x11, timing);
+        board.AfterInstruction();
+        EXPECT_EQ(board.Read(0x11), timing);
+        EXPECT_EQ(board.SystemClockHz(), expected[timing]) << "VGA " << int(timing);
+        EXPECT_EQ(_context->config.frame_duration_us, FrameUs(expected[timing])) << "VGA " << int(timing);
+        EXPECT_EQ(_ports->Uart().SystemClock(), expected[timing]);
+    }
+    board.Write(0x11, 0x06);
+    board.Write(0x11, 0x0F);
+    EXPECT_EQ(board.Read(0x11), 0) << "7 (HDMI) is VGA 0";
 }

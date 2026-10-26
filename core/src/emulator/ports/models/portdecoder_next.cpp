@@ -28,6 +28,7 @@
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
 {
     _board = std::make_unique<NextBoard>(&Mem());
+    _board->SetIssue(static_cast<NextBoardIssue>(_context->config.next_board_issue));
     _board->SetMachine(this);
     // The Next's keyboard controller: the physical host keys reach the extended keys and the pad's extra buttons (NR #B0-#B2)
     if (_context->pKeyboard)

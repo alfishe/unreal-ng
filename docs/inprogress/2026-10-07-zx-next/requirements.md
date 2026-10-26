@@ -101,9 +101,9 @@ Confidence: **H** = two independent sources agree (or the FPGA source says it); 
 
 | **Decided (owner 2026-10-08): the debugger disassembler and the `unreal-asm` ZXN mode in N1; the DZRP (DeZog) and GDB servers in N12** | What software can see | Status |
 |:--|:--|:--|
-| Issue 2 (Spartan 6 FPGA) | machine id `#0A`; the jnext author targets it as the reference; 1 MB RAM unexpanded, 2 MB with the accelerator | M |
-| Issue 4 / KS2 (Artix 7) | same register map, 2 MB RAM on every machine, bigger flash with more core slots (15 per a press report), HDMI timing notes on the shop site | M |
-| KS3 | MAME models it as Issue 5 with 4 MB; no other source read says so | O (Q3) |
+| Issue 2 (Spartan 6 FPGA) | machine id `#0A`; the jnext author targets it as the reference; 1 MB RAM unexpanded, 2 MB with the accelerator. Done 2026-10-26 as `NEXT-KS1`: NR `#0F` 0, two NR `#11` timings, no DNA / XADC ([research-variants.md](research-variants.md) section 4) | M |
+| Issue 4 / KS2 (Artix 7) | same register map, 2 MB RAM on every machine, bigger flash with more core slots (15 per a press report), HDMI timing notes on the shop site. Done: the default `NEXT` board (NR `#0F` 2, seven NR `#11` timings, the DNA and the XADC) | M |
+| KS3 | MAME models it as Issue 5 with 4 MB; no other source read says so. Done 2026-10-26 as `NEXT-KS3` (Issue 5): NR `#0F` 3, NR `#04` 8 bits; 2048K, the RAM the core addresses | M |
 | "Next Mini" | no source read mentions it | O (Q1) |
 | Emulators id (`#08`) | MAME's base `tbblue` machine reports it so that software detects an emulator | M |
 

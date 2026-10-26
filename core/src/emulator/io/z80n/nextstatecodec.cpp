@@ -26,7 +26,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 14;  // 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 15;  // 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -227,6 +227,33 @@ static void LoadCopper(Reader& r, NextCopper& c)
     c._idleUntil = 0;  // derived: the next run works it out again
 }
 
+static void SaveXilinx(Writer& w, const NextXilinx& x)
+{
+    w.Put(x._select);
+    w.Put(x._dnaEnabled);
+    w.Put(x._adcEnabled);
+    w.Put(x._dnaOut);
+    w.Put(x._dnaShifted);
+    w.Put(x._drpWrite);
+    w.Put(x._drpAddress);
+    w.Put(x._d0);
+    w.Put(x._d1);
+    w.PutArray(x._control);
+}
+static void LoadXilinx(Reader& r, NextXilinx& x)
+{
+    r.Get(x._select);
+    r.Get(x._dnaEnabled);
+    r.Get(x._adcEnabled);
+    r.Get(x._dnaOut);
+    r.Get(x._dnaShifted);
+    r.Get(x._drpWrite);
+    r.Get(x._drpAddress);
+    r.Get(x._d0);
+    r.Get(x._d1);
+    r.GetArray(x._control);
+}
+
 static void SaveBoard(Writer& w, const NextBoard& b)
 {
     w.Put(b._selected);
@@ -239,6 +266,7 @@ static void SaveBoard(Writer& w, const NextBoard& b)
         w.Put(b._keyJoystick.Entry(i));
     w.Put(b._keyJoystick.Address());
     w.Put(b._keyJoystick.Selected());
+    SaveXilinx(w, b._xilinx);
 }
 static void LoadBoard(Reader& r, NextBoard& b)
 {
@@ -260,6 +288,7 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(address);
     r.Get(selected);
     b._keyJoystick.Restore(address, selected);
+    LoadXilinx(r, b._xilinx);
 }
 
 static void SaveMemory(Writer& w, const NextMemory& m)
@@ -755,6 +784,7 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
 {
     Writer w;
     w.Put(kImageVersion);
+    w.Put(p._board->_issue);  // another board is another FPGA image: its state does not load
     Impl::SaveBoard(w, *p._board);
     Impl::SaveMemory(w, *static_cast<const NextMemory*>(p._context->pMemory));
     Impl::SaveVideo(w, p._board->_video);
@@ -778,11 +808,13 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
 bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
 {
     // The length is fixed for a machine: an image of another length is another machine's
-    if (!data || size != Save(p).size() || data[0] != kImageVersion)
+    if (!data || size != Save(p).size() || data[0] != kImageVersion || data[1] != static_cast<uint8_t>(p._board->_issue))
         return false;
     Reader r(data, size);
     uint8_t version = 0;
     r.Get(version);
+    NextBoardIssue issue{};
+    r.Get(issue);
     Impl::LoadBoard(r, *p._board);
     NextMemory& memory = *static_cast<NextMemory*>(p._context->pMemory);
     Impl::LoadMemory(r, memory);
