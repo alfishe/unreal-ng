@@ -8,7 +8,9 @@
 #include <random>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <pthread.h>
@@ -46,11 +48,30 @@ int64_t NowNs()
 
 void SleepUntilNs(int64_t t)
 {
+#ifdef _WIN32
+    // TimeHelper::WaitUntilPrecise: the C++ library waits on MinGW have ~10-15 ms granularity; a high-resolution
+    // waitable timer (Windows 10 1803+) wakes within ~0.5 ms
+    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+#endif
     for (;;)
     {
         const int64_t left = t - NowNs();
         if (left <= 0)
             return;
+#ifdef _WIN32
+        if (timer != nullptr && left > 700000)
+        {
+            LARGE_INTEGER due;
+            due.QuadPart = -(left - 500000) / 100;  // 100 ns units, relative
+            if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+            {
+                WaitForSingleObject(timer, INFINITE);
+                continue;
+            }
+        }
+        std::this_thread::yield();  // the last 0.7 ms: a library sleep could overshoot by a whole tick
+        continue;
+#endif
         if (left > 1500000)
             std::this_thread::sleep_for(std::chrono::nanoseconds(left - 1000000));
         else if (left > 200000)
@@ -58,6 +79,18 @@ void SleepUntilNs(int64_t t)
         else
             std::this_thread::yield();
     }
+}
+
+void KeepDisplayOn()
+{
+#ifdef _WIN32
+    SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+    INPUT in{};
+    in.type = INPUT_MOUSE;
+    in.mi.dwFlags = MOUSEEVENTF_MOVE;  // a zero move: the user's pointer stays where it is
+    SendInput(1, &in, sizeof in);
+    SleepUntilNs(NowNs() + 2000000000LL);  // the monitor's wake-up
+#endif
 }
 
 void RaiseThreadPriority(bool realtime)
@@ -161,6 +194,8 @@ Options ParseOptions(int argc, char** argv)
             o.tag = next();
         else if (a == "--fullscreen")
             o.fullscreen = true;
+        else if (a == "--exclusive")
+            o.exclusive = true;
     }
     if (!o.variant.empty())
         o.variant = o.variant.substr(0, 1);
@@ -421,6 +456,24 @@ void PresentLog::SetTiming(size_t id, int64_t submitNs, int64_t cpuNs)
     {
         _records[id].submitNs = submitNs;
         _records[id].cpuNs = cpuNs;
+    }
+}
+
+void PresentLog::ResolveByVBlanks(const std::vector<int64_t>& vblanks)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto onAfter = [&](int64_t t) -> int64_t {
+        const auto it = std::lower_bound(vblanks.begin(), vblanks.end(), t);
+        return it == vblanks.end() ? -1 : *it;
+    };
+    for (size_t i = 0; i < _records.size(); i++)
+    {
+        PresentRecord& r = _records[i];
+        if (r.presentedNs >= 0 || r.submitNs <= 0)
+            continue;
+        const int64_t on = onAfter(r.submitNs);
+        const bool replaced = i + 1 < _records.size() && _records[i + 1].submitNs > 0 && onAfter(_records[i + 1].submitNs) == on;
+        r.presentedNs = on < 0 ? -1 : (replaced ? 0 : on);
     }
 }
 

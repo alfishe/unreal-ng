@@ -135,6 +135,7 @@ private:
 int main(int argc, char** argv)
 {
     const Options o = ParseOptions(argc, argv);
+    KeepDisplayOn();
     QGuiApplication app(argc, argv);
     FrameRing ring;
     Producer producer(ring, o.rate, o.workMs);
@@ -195,6 +196,12 @@ int main(int argc, char** argv)
         log.Meta("display", window->screen()->name().toStdString());
         log.Meta("display_hz", std::to_string(window->screen()->refreshRate()));
     }
+#ifdef _WIN32
+    // No presentation feedback for GL: the display's vblanks give the screen time
+    std::unique_ptr<VBlankRecorder> vblanks;
+    if (o.backend == "gl")
+        vblanks = std::make_unique<VBlankRecorder>(reinterpret_cast<void*>(window->winId()));
+#endif
 
     QTimer::singleShot(static_cast<int>(o.seconds * 1000), &app, [&] {
         if (presenter)
@@ -202,6 +209,10 @@ int main(int argc, char** argv)
         if (presenter)
             presenter->Stop();
         producer.Stop();
+#ifdef _WIN32
+        if (vblanks)
+            vblanks->Stop(log);
+#endif
         log.Meta("frames_produced", std::to_string(producer.Frames()));
         log.Meta("producer_jitter_p99_ms", std::to_string(producer.LatchJitterP99Ms()));
         log.Write(RunPath(o, "qt"));

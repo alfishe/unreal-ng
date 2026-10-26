@@ -37,6 +37,27 @@ struct DisplayFacts
 };
 DisplayFacts QueryDisplay(void* handle);
 
+#ifdef _WIN32
+/// Windows has no per-present feedback for a composed (DWM) swap chain (GetFrameStatistics is all zeros) and
+/// IDXGIOutput::WaitForVBlank returns at once in a window, so the screen time comes from the display's vblanks: the
+/// kernel's vblank event of the window's monitor (D3DKMTWaitForVerticalBlankEvent) on a thread, cross-checked with
+/// DWM's composition clock (DwmGetCompositionTimingInfo, qpcVBlank). Stop() resolves the log by the kernel's vblanks.
+class VBlankRecorder
+{
+public:
+    explicit VBlankRecorder(void* hwnd);
+    ~VBlankRecorder();
+    void Stop(PresentLog& log);
+
+private:
+    void Run(void* hwnd);
+    std::thread _kernel, _dwm;
+    std::atomic<bool> _stop{false};
+    std::vector<int64_t> _vblanks, _dwmVBlanks;
+    std::string _error;
+};
+#endif
+
 #ifdef __APPLE__
 /// The CAMetalLayer backing an NSView (a Qt MetalSurface window's view), nullptr when it has none
 void* MetalLayerOfView(void* nsView);

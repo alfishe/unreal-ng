@@ -18,7 +18,7 @@ if(APPLE)
     set(LAB_LIBS "-framework Metal" "-framework QuartzCore" "-framework AppKit")
 elseif(WIN32)
     list(APPEND LAB common/presenter_dxgi.cpp)
-    set(LAB_LIBS d3d11 dxgi dwmapi)
+    set(LAB_LIBS d3d11 dxgi d3dcompiler dwmapi gdi32)
 endif()
 
 if(MSVC)

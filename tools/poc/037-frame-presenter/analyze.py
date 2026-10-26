@@ -5,7 +5,8 @@
     python3 -I analyze.py --detail <run.csv>         plus the histograms
 
 A log has one row per present. The screen time of a present is presented_ns (the system's feedback) when the run has
-it, else a proxy: submit_ns (Qt GL: frameSwapped) or tick_ns (SDL_GPU: acquire return); the table marks proxies.
+it (Windows: the first kernel vblank after the present, marked vblank), else a proxy: submit_ns (Qt GL: frameSwapped)
+or tick_ns (SDL_GPU: acquire return); the table marks proxies.
 """
 import csv
 import math
@@ -76,7 +77,7 @@ def analyze(path, detail=False):
         rows = [r for r in rows if r['latch_ns'] - t0 > 2e9]
     feedback = any(r['presented_ns'] >= 0 for r in rows)
     if feedback:
-        key, kind = 'presented_ns', 'presented'
+        key, kind = 'presented_ns', ('vblank' if 'VerticalBlank' in meta.get('presented_source', '') else 'presented')
     elif any(r['submit_ns'] > 0 for r in rows):
         key, kind = 'submit_ns', 'proxy:swap'
     else:

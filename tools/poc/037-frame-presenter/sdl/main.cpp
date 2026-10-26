@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <cstring>
 #include <memory>
 
 using namespace poc037;
@@ -128,6 +129,7 @@ void RunGpu(SDL_Window* window, FrameRing& ring, Producer& producer, PresentLog&
 int main(int argc, char** argv)
 {
     const Options o = ParseOptions(argc, argv);
+    KeepDisplayOn();
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
         SDL_Log("SDL_Init: %s", SDL_GetError());
@@ -166,7 +168,13 @@ int main(int argc, char** argv)
 
     if (o.backend == "gpu")
     {
+#ifdef _WIN32
+        VBlankRecorder vblanks(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
         RunGpu(window, ring, producer, log, o);
+        vblanks.Stop(log);
+#else
+        RunGpu(window, ring, producer, log, o);
+#endif
     }
     else
     {

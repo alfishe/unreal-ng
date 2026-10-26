@@ -41,6 +41,7 @@ struct Options
     double frameLatency = 1;       ///< CAMetalDisplayLink.preferredFrameLatency (refreshes between the callback and the target)
     int scale = 3;                  ///< window size in source pixels
     bool fullscreen = false;
+    bool exclusive = false;  ///< Windows: DXGI exclusive fullscreen at the desktop's mode (no mode change)
 };
 Options ParseOptions(int argc, char** argv);
 /// A rate from a preset name: pentagon, zx48, next60-vga0..2, or a number
@@ -134,6 +135,9 @@ public:
     void SetPresented(size_t id, int64_t presentedNs);
     /// After the present call: its return time and the CPU time it took
     void SetTiming(size_t id, int64_t submitNs, int64_t cpuNs);
+    /// No presentation feedback, but the display's vblank times (sorted): each present without a screen time gets
+    /// the first vblank after its submit; a present replaced before that vblank by the next one is dropped (0)
+    void ResolveByVBlanks(const std::vector<int64_t>& vblanks);
     /// Meta lines (key=value) written as comments at the head of the CSV
     void Meta(const std::string& key, const std::string& value);
     void Write(const std::string& path);
@@ -147,6 +151,9 @@ private:
 /// realtime: the emulation thread's priority as MainLoop sets it (ThreadHelper::setRealtimePriority); else the
 /// presenter's (user-interactive QoS on macOS)
 void RaiseThreadPriority(bool realtime);
+/// Windows: keep the display on for the run and wake a monitor that went to sleep (a sleeping monitor has no vblanks;
+/// DWM then composes on a ~60 Hz timer). Elsewhere a no-op.
+void KeepDisplayOn();
 /// Per-thread CPU time in ns
 int64_t ThreadCpuNs();
 /// The log file name for a run

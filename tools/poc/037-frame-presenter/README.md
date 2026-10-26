@@ -1,9 +1,10 @@
 # 037 — frame-presenter
 
 Feature: [`docs/inprogress/2026-10-26-frame-presenter`](../../../docs/inprogress/2026-10-26-frame-presenter/README.md).
+Lab: [`design.md`](design.md). Results: [`results.md`](results.md).
 
 The emulated machines run at 48.83 Hz (Pentagon), 50.08 Hz (48K / 128K) and, on the ZX Next's 60 Hz timing, at 58.15 /
-59.33 / 61.19 Hz (VGA 0 / 1 / 2 clocks). The host displays run at a fixed 60 Hz, at an adaptive 24-120 Hz (ProMotion) or
+59.36 / 61.13 Hz (VGA 0 / 1 / 2 clocks). The host displays run at a fixed 60 Hz, at an adaptive 24-120 Hz (ProMotion) or
 at a variable 1-144 Hz (G-Sync). Today the Qt app paints a frame when the emulator says one is ready, through a
 `QOpenGLWindow` with swap interval 1; nothing ties the choice of frame to the display's refresh. This POC measures what
 reaches the screen with today's path and with three replacements, in Qt 6 and in SDL3, on the three hosts.
@@ -15,10 +16,10 @@ reaches the screen with today's path and with three replacements, in Qt 6 and in
    latency?
 2. **Vsync presenter.** Does presenting the newest complete frame on every refresh (picked by its timestamp) give exactly
    the arithmetic beat pattern (50.08 Hz on 60 Hz: one repeat every 5 frames, evenly spaced), and nothing worse?
-3. **VRR.** Can an application put each frame on the screen at its own time (one refresh per frame, at 48.83-61.19 Hz) on
+3. **VRR.** Can an application put each frame on the screen at its own time (one refresh per frame, at 48.83-61.13 Hz) on
    ProMotion (macOS, Metal) and on G-Sync (Windows, DXGI flip model)? Through which API, from a Qt window and from an
    SDL3 window? How close is the on-screen duration of each frame to 1 / rate?
-4. **Display-locked.** When the machine's rate is close to the display's (Next VGA 0-2 on 60 Hz: -3.1 % / -1.1 % / +2.0 %),
+4. **Display-locked.** When the machine's rate is close to the display's (Next VGA 0-2 on 60 Hz: -3.1 % / -1.1 % / +1.9 %),
    can the display's refresh drive the emulation (one frame per refresh) steadily, and what audio rate range does the
    DRC need then?
 5. **Qt 6 vs SDL3.** Which shell gives the control goals 2-4 need (refresh callbacks with timestamps, present timing,
@@ -28,7 +29,7 @@ reaches the screen with today's path and with three replacements, in Qt 6 and in
 
 - Hosts: the Mac Studio (M1 Ultra, macOS 15.8, DELL U4320Q 60 Hz), the MacBook Pro (ProMotion, up to 120 Hz), the
   Windows host (RTX 4090, G-Sync display, up to 144 Hz).
-- Source rates: 48.828, 50.080, 58.15, 59.33, 61.19 and 60.00 Hz (a control), each from the machine's T-states per frame
+- Source rates: 48.828, 50.080, 58.15, 59.36, 61.13 and 60.00 Hz (a control), each from the machine's T-states per frame
   and its clock, the way `CalculateFrameDurationUs` / `PortDecoder_Next::FrameDurationUs` give them.
 - A synthetic producer that behaves like `MainLoop`: an absolute-deadline clock at the source rate, a latch into a ring
   with the latch time and the frame number per slot, a small random emulation time per frame. No emulator core: the
