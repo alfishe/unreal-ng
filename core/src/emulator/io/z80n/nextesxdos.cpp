@@ -78,7 +78,7 @@ const char* const kMessages[] = {
     "Drive busy", "Unknown filesystem", "Device busy",
 };
 
-uint8_t ErrorOf(FatFs::Error error)
+NextEsxDos::Error ErrorOf(FatFs::Error error)
 {
     switch (error)
     {
