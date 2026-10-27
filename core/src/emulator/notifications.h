@@ -631,6 +631,26 @@ public:
     {}
 };
 
+/// Payload for NC_GUEST_PROGRAM: a program file the guest read from a block medium (a NEX started from NextZXOS's
+/// Browser, a snapshot loaded by a menu). Carries the file's bytes so the host computes its signatures as for a
+/// file it loaded itself.
+class GuestProgramPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string slotId;   // "sd.zc", ...
+    std::string path;     // the file's path on the medium's volume, "/games/deltas/ds_next.snx"
+    std::vector<uint8_t> data;
+
+    GuestProgramPayload(const std::string& id, std::string slot, std::string filePath, std::vector<uint8_t> bytes)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , slotId(std::move(slot))
+        , path(std::move(filePath))
+        , data(std::move(bytes))
+    {}
+};
+
 /// Payload for NC_CONTROLLER_CONNECTOR_CHANGED (controller manager connectors)
 class ControllerConnectorPayload : public MessagePayload
 {

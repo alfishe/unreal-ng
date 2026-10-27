@@ -52,12 +52,36 @@ constexpr const char* kKeyboard = "kbd:system";
 
 /// The signature hook (C6, D7): the program's signatures (exact, tape content / TR-DOS file set / memory) and its
 /// TR-DOS file set into @p context; without the signature library the file's SHA-256 alone
-bool ProgramSignatures(const std::string& path, ProfileContext& context, std::string& error)
+bool ProgramSignatures(const uint8_t* data, size_t size, const std::string& name, ProfileContext& context,
+                       std::string& error)
 {
     context.signatures.clear();
     context.fileSha256.clear();
     context.fileSet.clear();
 #ifdef ENABLE_SWSIGNATURE
+    unrealng::swsignature::Signatures signatures;
+    if (!unrealng::swsignature::Compute(data, size, name, signatures, error))
+        return false;
+    context.signatures = signatures.Keys();
+    context.fileSha256 = {signatures.sha256};
+    context.fileSet = signatures.FileSet();
+    return true;
+#else
+    (void)name;
+    (void)error;
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(QByteArrayView(reinterpret_cast<const char*>(data), static_cast<qsizetype>(size)));
+    context.fileSha256 = {hash.result().toHex().toStdString()};
+    return true;
+#endif
+}
+
+bool ProgramSignatures(const std::string& path, ProfileContext& context, std::string& error)
+{
+#ifdef ENABLE_SWSIGNATURE
+    context.signatures.clear();
+    context.fileSha256.clear();
+    context.fileSet.clear();
     unrealng::swsignature::Signatures signatures;
     if (!unrealng::swsignature::ComputeFile(path, signatures, error))
         return false;
@@ -66,6 +90,9 @@ bool ProgramSignatures(const std::string& path, ProfileContext& context, std::st
     context.fileSet = signatures.FileSet();
     return true;
 #else
+    context.signatures.clear();
+    context.fileSha256.clear();
+    context.fileSet.clear();
     QFile file(QString::fromStdString(path));
     QCryptographicHash hash(QCryptographicHash::Sha256);
     if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly) || !hash.addData(&file))
@@ -203,6 +230,19 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         const QString path = QString::fromStdString(payload->path);
         QMetaObject::invokeMethod(this, [this, id, path] { onFileLoaded(id, path); }, Qt::QueuedConnection);
     });
+    // A program the guest read from a block medium (a NEX started from NextZXOS's Browser): the machine loaded it,
+    // not this client, so the bytes the core read give the same keys
+    _guestObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_GUEST_PROGRAM, [this](int, Message* message) {
+        auto* payload = message != nullptr ? dynamic_cast<GuestProgramPayload*>(message->obj) : nullptr;
+        if (payload == nullptr || payload->data.empty())
+            return;
+        const QString id = QString::fromStdString(payload->emulatorId.toString());
+        const QString path = QString::fromStdString(payload->path);
+        const QByteArray bytes(reinterpret_cast<const char*>(payload->data.data()),
+                               static_cast<qsizetype>(payload->data.size()));
+        QMetaObject::invokeMethod(this, [this, id, path, bytes] { onGuestProgram(id, path, bytes); },
+                                  Qt::QueuedConnection);
+    });
     // The context of an instance changed (ctx.set on any plane, the GUI's own panes): the router follows it
     _contextObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SURFACE_CONTEXT, [this](int, Message*) {
         QMetaObject::invokeMethod(this, [this] { followContext(); }, Qt::QueuedConnection);
@@ -233,6 +273,7 @@ HostControllers::~HostControllers()
 #ifdef ENABLE_CONTROLLERS
     HostInputControl::SetOwner(nullptr);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_GUEST_PROGRAM, _guestObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     releaseWheelMenu();
@@ -1067,6 +1108,23 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     std::string error;
     if (!ProgramSignatures(path.toStdString(), _program, error))
         qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
+    _autoDone = false;
+    _keyboardNoticed = false;
+    _autoConnector.clear();
+    _decision = {};
+    Reapply();
+}
+
+void HostControllers::onGuestProgram(const QString& emulatorId, const QString& path, const QByteArray& data)
+{
+    Emulator* emulator = _binding->emulator();
+    if (emulator == nullptr || QString::fromStdString(emulator->GetId()) != emulatorId)
+        return;
+    _fileName = QFileInfo(path).fileName();
+    std::string error;
+    if (!ProgramSignatures(reinterpret_cast<const uint8_t*>(data.constData()), static_cast<size_t>(data.size()),
+                           _fileName.toStdString(), _program, error))
+        qWarning("controllers: signatures of %s (read by the guest): %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
     _autoConnector.clear();
