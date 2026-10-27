@@ -31,6 +31,7 @@ struct Options
     std::string variant = "b";      ///< a-signal, b-vsync, c-vrr, d-locked (the first letter is enough)
     std::string backend = "native"; ///< gl (Qt QOpenGLWindow), gpu (SDL_GPU), native (Metal / DXGI on the shell's window)
     std::string vrr = "at";         ///< c-vrr: at (present at a time), min (present after a minimum duration), link (display link at the rate)
+    std::string target = "latch";  ///< c-vrr: latch (latch + period + delay) or clock (anchor + n periods + delay)
     std::string link = "metal";  ///< macOS refresh callback: metal (CAMetalDisplayLink) or ca (CADisplayLink + nextDrawable)
     std::string tag;                ///< free text for the run's file name
     std::string out = ".";          ///< the folder for the logs
@@ -135,8 +136,9 @@ public:
     void SetPresented(size_t id, int64_t presentedNs);
     /// After the present call: its return time and the CPU time it took
     void SetTiming(size_t id, int64_t submitNs, int64_t cpuNs);
-    /// No presentation feedback, but the display's vblank times (sorted): each present without a screen time gets
-    /// the first vblank after its submit; a present replaced before that vblank by the next one is dropped (0)
+    /// The display's vblank times (sorted): each present gets the first vblank after its submit, the end of its
+    /// scan-out; a present replaced before that vblank by the next one is dropped (0). This overrides DXGI's
+    /// statistics: under VRR their SyncQPCTime is the start of the vblank the flip ended, before the present
     void ResolveByVBlanks(const std::vector<int64_t>& vblanks);
     /// Meta lines (key=value) written as comments at the head of the CSV
     void Meta(const std::string& key, const std::string& value);

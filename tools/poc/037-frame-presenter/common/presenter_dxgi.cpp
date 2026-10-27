@@ -156,6 +156,7 @@ public:
         char hr[16];
         std::snprintf(hr, sizeof hr, "0x%08lX", static_cast<unsigned long>(_statsHr));
         _log.Meta("dxgi_stats_ok", std::to_string(_statsOk));
+        _log.Meta("target", _o.target + (_o.target == "clock" ? ", re-anchored " + std::to_string(_reanchors) : ""));
         _log.Meta("dxgi_stats_last_error", hr);
         UINT last = 0;
         _swap->GetLastPresentCount(&last);
@@ -284,8 +285,22 @@ private:
             if (!_ring.CopyAt(0, _frame))
                 continue;
             last = _frame.number;
-            // Present at latch + one period (+ delay): the latch jitter is absorbed, the cadence is the producer's
-            const int64_t target = _frame.latchNs + period + static_cast<int64_t>(_o.delayMs * 1e6);
+            // latch: latch + one period (+ delay), the latch jitter passes through to the screen. clock: the frame's
+            // place on the source clock, anchor + n periods (+ delay), as the feature's FrameClock; a frame latched
+            // too late for its target re-anchors
+            int64_t target = _frame.latchNs + period + static_cast<int64_t>(_o.delayMs * 1e6);
+            if (_o.target == "clock")
+            {
+                if (_anchorFrame == UINT64_MAX || _frame.latchNs > _anchorNs + static_cast<int64_t>(_frame.number - _anchorFrame) * period +
+                                                                       period - 2000000)
+                {
+                    _anchorFrame = _frame.number;
+                    _anchorNs = _frame.latchNs;
+                    _reanchors++;
+                }
+                target = _anchorNs + static_cast<int64_t>(_frame.number - _anchorFrame) * period + period +
+                         static_cast<int64_t>(_o.delayMs * 1e6);
+            }
             WaitForSingleObjectEx(_waitable, 100, TRUE);
             const int64_t cpu0 = ThreadCpuNs();
             Upload();
@@ -345,6 +360,9 @@ private:
     UINT _w = 0, _h = 0;
     bool _tearing = false;
     bool _exclusive = false;
+    uint64_t _anchorFrame = UINT64_MAX;
+    int64_t _anchorNs = 0;
+    int _reanchors = 0;
     Frame _frame;
     uint64_t _uploaded = UINT64_MAX;
     std::thread _thread, _poller;
@@ -436,7 +454,8 @@ VBlankRecorder::~VBlankRecorder()
 
 void VBlankRecorder::Run(void* hwnd)
 {
-    RaiseThreadPriority(false);
+    // The wake-up after the vblank event is the measurement's error: the highest priority there is
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     HMODULE gdi = GetModuleHandleA("gdi32.dll");
     auto open = reinterpret_cast<OpenAdapterFn>(reinterpret_cast<void*>(GetProcAddress(gdi, "D3DKMTOpenAdapterFromHdc")));
     auto wait = reinterpret_cast<WaitVBlankFn>(reinterpret_cast<void*>(GetProcAddress(gdi, "D3DKMTWaitForVerticalBlankEvent")));
