@@ -2995,8 +2995,9 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
             _stoppedAtExecPc = address;
         }
         NoteBreakpointCallbacks(breakpointId, address, kind);
-        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
-                                                   new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
+        auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
+        payload->kind = kind;
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT, payload);
         // Execution: stop before the instruction. Memory and ports: the instruction completes, the run ends
         return kind == BreakpointHitKind::Execute;
     }
@@ -3013,8 +3014,9 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
     _pendingPauseOwner.clear();
 
-    MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
-                                               new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
+    auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
+    payload->kind = kind;
+    MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT, payload);
     if (stepOverDone)
         MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);   // the debugger's "step completed"
     WaitWhilePaused();
@@ -3084,6 +3086,27 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     // Notify the debugger that a step has been performed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+}
+
+void Emulator::StepPastBreakpointAtPc()
+{
+    DirectStepScope directStep(*this, "step");
+    CancelPendingStepOver();
+    _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
+
+    // The scope armed the pass only for a stop on that breakpoint; this step passes it wherever it starts
+    if (t_directRunRefused)
+        return;  // no step: nothing armed that a later run could take
+    const uint16_t pc = _core ? _core->GetZ80()->pc : 0;
+    _passExecBreakpointArmed = true;
+    _passExecBreakpointPc = pc;
+    if (BreakpointManager* brk = GetBreakpointManager())
+        brk->ArmExecPass(pc);
+
+    ExecuteStep(false);
+
+    MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);
 }
 
 Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) : _emulator(emulator)

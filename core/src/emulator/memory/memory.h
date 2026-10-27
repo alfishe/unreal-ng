@@ -54,6 +54,8 @@ struct MemoryPageDescriptor
     MemoryBankModeEnum mode = BANK_INVALID;
     uint8_t page = 0xFF;          ///< ROM, RAM or cache (fast RAM) page; 0xFF with BANK_INVALID
     uint16_t addressInPage = 0;
+    /// A slot of the CPU address space is 1 << slotShift bytes: 16K windows, the Next's MMU 8K slots
+    uint8_t slotShift = 14;
 };
 
 // Memory interface descriptor
@@ -144,6 +146,12 @@ protected:
     bool _toolReadRedirect = false;
     /// What the CPU would read at `addr` given the mapped page's byte `normal`, side-effect free
     virtual uint8_t ToolReadRedirect([[maybe_unused]] uint16_t addr, uint8_t normal) const { return normal; }
+    /// Set by a model whose 16K windows are not what the CPU addresses (the Next's 8K MMU slots):
+    /// DirectWriteToZ80Memory then lets ToolWriteRedirect place the byte. False on every other machine
+    bool _toolWriteRedirect = false;
+    /// A tool's write of `value` at `addr` where the CPU sees it; true when done (ROM and a write-protected page
+    /// included, as DirectWriteToZ80Memory does), false: the 16K window's write applies
+    virtual bool ToolWriteRedirect([[maybe_unused]] uint16_t addr, [[maybe_unused]] uint8_t value) { return false; }
 
     /// Cached RAM page numbers per bank for TTD hot path optimization.
     /// Updated only when bank mapping changes (SetRAMPageToBank*).
@@ -580,8 +588,11 @@ public:
     uint8_t* MapZ80AddressToPhysicalAddress(
         uint16_t address);  // Remap address to the bank. Important! inline for this method for some reason leads to
                             // MSVC linker error (not found export function)
-    MemoryPageDescriptor MapZ80AddressToPhysicalPage(
-        uint16_t address);  // Determines current bank for Z80 address specified
+    /// The page behind a CPU address and the offset in it (16K pages; a model whose slots are smaller, the Next's
+    /// 8K MMU, answers per slot). Not the CPU's path: the breakpoint resolve and the tools
+    virtual MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address);
+    /// log2 of a slot of the CPU address space: 14 (16K windows), 13 on the Next (8K MMU slots)
+    virtual uint8_t PhysicalSlotShift() const { return 14; }
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
     /// Window 0-3 maps ROM: the hot-path form for bus logic that tells ROM from RAM (EvoTurboOverlay)

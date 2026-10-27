@@ -1996,6 +1996,11 @@ void Memory::MarkRamPageEdited(uint16_t page)
 
 void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
 {
+    // A model whose windows are not the CPU's view (the Next's 8K slots) places the byte itself. One flag test on a
+    // tool path; the emulated CPU never comes here
+    if (_toolWriteRedirect && ToolWriteRedirect(address, value)) [[unlikely]]
+        return;
+
     // Address bits 14 and 15 contain bank number
     uint8_t bank = (address >> 14) & 0b0000000000000011;
     address = address & 0b0011'1111'1111'1111;

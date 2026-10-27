@@ -758,6 +758,10 @@ public:
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
+    /// One instruction that always executes: the execution breakpoint at PC is passed (no hit, no count) as when
+    /// stepping on from a stop on it; breakpoints and watchpoints the instruction reaches still fire (ZEsarUX's
+    /// cpu-step, a debugger's step at a breakpoint it did not stop on)
+    void StepPastBreakpointAtPc();
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary

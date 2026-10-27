@@ -302,11 +302,24 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
                 error = std::string("this machine has no page ") + PageKindName(spec.pageType) + std::to_string(spec.page);
                 return BRK_INVALID;
             }
-            if ((spec.address >> 14) != (end >> 14))
+            if (spec.pageOffset != 0xFFFF)
+            {
+                if (static_cast<uint32_t>(spec.pageOffset) + (end - spec.address) > 0x3FFF)
+                {
+                    error = "a range on a page stays inside one 16K page";
+                    return BRK_INVALID;
+                }
+            }
+            else if ((spec.address >> 14) != (end >> 14))
             {
                 error = "a range on a page stays inside one 16K page (its offsets come from the address)";
                 return BRK_INVALID;
             }
+        }
+        else if (spec.pageOffset != 0xFFFF)
+        {
+            error = "an offset in the page applies to a breakpoint on a page";
+            return BRK_INVALID;
         }
         else if (spec.slotOnly)
         {
@@ -389,6 +402,7 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->page = spec.page;
         d->pageType = spec.pageType;
         d->slotOnly = spec.slotOnly;
+        d->bankOffset = spec.pageOffset;
     }
     d->spacePage = spec.spacePage;
     d->portMask = spec.portMask;
@@ -2211,8 +2225,8 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
         {
             const size_t pageId = (static_cast<size_t>(where.mode) << 8) | where.page;
             if (pageId < kPageIds && _pageSlices[kind][pageId])
-                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result,
-                                        static_cast<BreakpointTapKind>(kind), address, value);
+                result = WalkCandidates(_pageSlices[kind][pageId]->heads[where.addressInPage & 0x3FFF], where.slotShift,
+                                        result, static_cast<BreakpointTapKind>(kind), address, value);
         }
     }
 
@@ -2393,7 +2407,7 @@ uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t v
     return result;
 }
 
-uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind,
+uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t first, BreakpointTapKind kind,
                                            uint16_t address, int value)
 {
     if (set == 0 || set >= _candidateSets.size())
@@ -2401,7 +2415,7 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
     for (BreakpointDescriptor* bp : _candidateSets[set])
     {
         // A slot-only physical breakpoint fires only through the slot it was set in
-        if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
+        if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
             continue;
         // Every matching access counts as a match; a condition then decides whether it is a hit (a failed one no
         // longer matches), and the policy whether the hit stops, or for a tap whether its sink is told. Without a
@@ -2504,10 +2518,10 @@ bool BreakpointManager::CoversMemory(const BreakpointDescriptor& bp, uint16_t ad
     // Physical: the page, the offsets, and for slot-only the slot
     if (page.mode != bp.pageType || page.page != bp.page)
         return false;
-    if (bp.slotOnly && (address >> 14) != (bp.z80address >> 14))
+    if (bp.slotOnly && (address >> page.slotShift) != (bp.z80address >> page.slotShift))
         return false;
-    const uint16_t offset = address & 0x3FFF;
-    return offset >= (bp.z80address & 0x3FFF) && offset <= (bp.EndAddress() & 0x3FFF);
+    const uint16_t offset = page.addressInPage & 0x3FFF;
+    return offset >= bp.PageOffset() && offset <= bp.PageOffsetEnd();
 }
 
 // endregion </Runtime methods>
@@ -2545,8 +2559,8 @@ uint16_t BreakpointManager::GenerateNewBreakpointID()
 /// breakpoint, nor a user's adopt it)
 static bool IsPlainMemory(const BreakpointDescriptor& d)
 {
-    return d.shared && !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP &&
-           !d.condition;
+    return d.shared && !d.isRange && !d.slotOnly && d.bankOffset == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS &&
+           d.tapSink == BRK_NO_TAP && !d.condition;
 }
 static bool IsPlainPort(const BreakpointDescriptor& d)
 {
@@ -2702,6 +2716,9 @@ void BreakpointManager::RebuildFilters()
 
     _hotState = BreakpointHotState{};
     _candidateSets.assign(1, {});
+    // The slot size the physical breakpoints' CPU addresses follow (16K; the Next's MMU: 8K)
+    const uint32_t slotShift = _context && _context->pMemory ? _context->pMemory->PhysicalSlotShift() : 14;
+    const uint32_t slotMask = (1u << slotShift) - 1;
     std::map<std::vector<BreakpointDescriptor*>, uint32_t> interned;
     auto intern = [&](const std::vector<BreakpointDescriptor*>& set) -> uint32_t {
         if (set.empty())
@@ -2847,20 +2864,22 @@ void BreakpointManager::RebuildFilters()
             const size_t pageId = (static_cast<size_t>(bp->pageType) << 8) | bp->page;
             if (pageId >= kPageIds)
                 continue;
-            const uint32_t from = bp->z80address & 0x3FFF;
-            const uint32_t to = bp->EndAddress() & 0x3FFF;
+            const uint32_t from = bp->PageOffset();
+            const uint32_t to = bp->PageOffsetEnd();
             pages[k][pageId].push_back({from, to, bp});
+            // The CPU addresses the offsets may show at: every slot (of the model's slot size), or the breakpoint's
             for (uint32_t offset = from; offset <= to; offset++)
             {
+                const uint32_t inSlot = offset & slotMask;
                 if (bp->slotOnly)
                 {
-                    const uint32_t a = (bp->z80address & 0xC000) | offset;
+                    const uint32_t a = (bp->z80address & ~slotMask & 0xFFFF) | inSlot;
                     _hotState.memoryFilter[k][a >> 6] |= 1ull << (a & 63);
                 }
                 else
-                    for (uint32_t slot = 0; slot < 4; slot++)
+                    for (uint32_t slot = 0; slot < (0x10000u >> slotShift); slot++)
                     {
-                        const uint32_t a = (slot << 14) | offset;
+                        const uint32_t a = (slot << slotShift) | inSlot;
                         _hotState.memoryFilter[k][a >> 6] |= 1ull << (a & 63);
                     }
             }

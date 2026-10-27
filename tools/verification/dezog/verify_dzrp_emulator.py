@@ -510,8 +510,8 @@ class EmulatorVerifier:
                 self.expect(c.cmd_write_state(bytes(unlocked)), "WRITE_STATE (unlocked #7FFD)")
             self.expect(c.cmd_write_port(0x7FFD, 0x10 | 3), "WRITE_PORT 7FFD")
             slots = self.regs()["slots"]
-            self.expect(slots[3] == 3, f"#7FFD=0x13: slot 3 = {slots[3]}, expected 3 (WRITE_PORT goes to "
-                                       f"Ports::Out, ports.cpp:36, not the port decoder)")
+            self.expect(slots[3] == 3, f"#7FFD=0x13: slot 3 = {slots[3]}, expected 3 (WRITE_PORT must reach "
+                                       f"the port decoder)")
             self.expect(slots[0] == 9, f"#7FFD=0x13: slot 0 = {slots[0]}, expected 9 (ROM1)")
             self.expect(c.cmd_read_state()[self.SNA128_7FFD] == 0x13, "the saved latch follows")
             self.expect(c.cmd_write_port(0x7FFD, 0x00 | 4), "WRITE_PORT 7FFD")
@@ -536,8 +536,7 @@ class EmulatorVerifier:
         self.expect(c.cmd_write_port(0xFFFD, 0x01), "WRITE_PORT")
         got = c.cmd_read_port(0xFFFD)
         self.expect(got == 0x0A, f"AY register 1 reads 0x{got:02X} after WRITE_PORT #BFFD 0x0A "
-                                 f"(dezogdebugadapter.cpp readPort/writePort call Ports::In/Out, "
-                                 f"core/src/emulator/ports/ports.cpp:36-74, which decode nothing)")
+                                 f"(READ_PORT / WRITE_PORT must go through the port decoder)")
         c.cmd_write_port(0xBFFD, 0x00)
 
     def step_border(self):
@@ -604,7 +603,7 @@ class EmulatorVerifier:
         self.need(self.is_next() and self.slots0[0] == 0xFF, "ZX Next with the ROM in slot 0")
         got, mem = self.client.cmd_read_bank_mem(0xFF, 0, 16), self.read(0, 16)
         self.expect(got == mem, f"READ_BANK_MEM 0xFF {got.hex()} != READ_MEM 0x0000 {mem.hex()} "
-                                f"(dezogdebugadapter.cpp NextBankByte reads ROMPageHostAddress(GetRomSelect()))")
+                                f"(the ROM bank is what slot 0 reads: boot ROM, overlays and the alternate ROM included)")
 
     def step_next_write_mem_slot7(self):
         # CMD_WRITE_MEM at 0xE000-0xFFFF must land in the bank MMU7 shows (READ_MEM reads it from there)
@@ -618,8 +617,7 @@ class EmulatorVerifier:
             self.expect(got == p2 and c.cmd_read_bank_mem(20, 0x20, 4) == p2,
                         f"WRITE_MEM 0xE020 with MMU7=20: READ_MEM gives {got.hex()}, bank 20 "
                         f"{c.cmd_read_bank_mem(20, 0x20, 4).hex()}, bank 1 (MMU6's 16K pair) "
-                        f"{c.cmd_read_bank_mem(1, 0x20, 4).hex()} (Memory::DirectWriteToZ80Memory, "
-                        f"memory.cpp:1997, writes through the 16K window; reads use the 8K MMU)")
+                        f"{c.cmd_read_bank_mem(1, 0x20, 4).hex()} (WRITE_MEM must go through the 8K MMU)")
         finally:
             self.restore_slots()
 
@@ -633,7 +631,7 @@ class EmulatorVerifier:
         got = c.cmd_read_bank_mem(21, 0, 0x2000)
         self.expect(got == pattern,
                     f"WRITE_BANK 21 (8K bank): READ_BANK_MEM 21 = {got[:8].hex()}..., written {pattern[:8].hex()}... "
-                    f"(dezogdebugadapter.cpp writeBank treats the bank as a 16K page)")
+                    f"(WRITE_BANK takes an 8K bank on the Next)")
 
     def step_next_palette(self):
         self.need(self.is_next(), "ZX Next only")
@@ -712,7 +710,7 @@ class EmulatorVerifier:
             c.cmd_write_port(0x57, b)
         got = c.cmd_get_sprites(5, 1)
         self.expect(list(got[:3]) == [0xA1, 0xA2, 0xA3], f"sprite 5 attributes {list(got)} after WRITE_PORT #57 "
-                                                          f"(Ports::Out decodes nothing, ports.cpp:36)")
+                                                          f"(WRITE_PORT must reach the sprite port)")
 
     def step_next_banked_breakpoint(self):
         # DeZog's long address on the Next: ((8K bank + 1) << 16) | addr. The program at 0x8001 lives in the bank
@@ -729,8 +727,7 @@ class EmulatorVerifier:
                 self.client.cmd_pause()
                 self.expect_notification(REASON_MANUAL)
                 raise AssertionError(f"breakpoint on 8K bank {bank} (long 0x{((bank + 1) << 16) | PROGRAM_LOOP:06X}) "
-                                     f"never hit: dezogdebugadapter.cpp addBreakpoint maps bank-1 to a 16K page "
-                                     f"(>= 8: a ROM page)")
+                                     f"never hit while that bank is in the slot")
             self.expect(ntf.reason == REASON_BREAKPOINT and ntf.address == PROGRAM_LOOP,
                         f"NTF {ntf.reason} at 0x{ntf.address:04X}")
         finally:
@@ -780,7 +777,9 @@ class EmulatorVerifier:
         bp = self.client.cmd_add_breakpoint_long((3 << 16) | PROGRAM_JP)
         self.expect(bp > 0, "ADD_BREAKPOINT bank 2")
         self.expect(self.client.cmd_continue(), "CONTINUE")
-        self.expect_notification(REASON_BREAKPOINT, PROGRAM_JP)
+        ntf = self.expect_notification(REASON_BREAKPOINT, PROGRAM_JP)
+        # NTF_PAUSE carries bank + 1 of the stop address (DeZog adds it as the long address' upper byte)
+        self.expect(ntf.bank == 3, f"NTF_PAUSE bank byte {ntf.bank}, want 3 (bank 2)")
         self.expect(self.client.cmd_remove_breakpoint(bp), "REMOVE")
         # The same address in bank 4 (not mapped at 0x8000): no stop
         bp = self.client.cmd_add_breakpoint_long((5 << 16) | PROGRAM_JP)
@@ -841,9 +840,7 @@ class EmulatorVerifier:
                 self.client.cmd_pause()
                 self.expect_notification(REASON_MANUAL)
                 raise AssertionError(f"0x0038 on ROM bank {rom} (what GET_REGISTERS reports for slot 0) never "
-                                     f"stopped: getSlots reports ROM_BANK_BASE + (ROM page & 1) "
-                                     f"(dezogdebugadapter.cpp:495), addBreakpoint asks ROM page bank - 8 (:739-740); "
-                                     f"a ROM page above 1 (Pentagon's 128 ROM is page 2) never matches")
+                                     f"stopped: the slots and the breakpoints must use one ROM bank mapping")
             self.expect(ntf.reason == REASON_BREAKPOINT and ntf.address == 0x0038, f"NTF {ntf}")
         finally:
             self.client.cmd_remove_breakpoint(bp)
@@ -966,8 +963,8 @@ class EmulatorVerifier:
             self.write(CALL_SPIN, bytes([0x18, 0xFE]))
 
     def step_temp_bp_on_user_bp(self):
-        # Known issue: a temporary breakpoint at a user breakpoint's address shares its id (BreakpointManager
-        # dedups plain breakpoints by address), so clearing the temporaries removes the user's breakpoint
+        # A temporary breakpoint at a user breakpoint's address is a breakpoint of its own: clearing the
+        # temporaries after the stop leaves the user's breakpoint in place
         self.install_call_program()
         self.write(CALL_SPIN, bytes([0x18, 0xFA]))  # JR 8200h
         bp = self.client.cmd_add_breakpoint(CALL_AFTER)
@@ -980,9 +977,8 @@ class EmulatorVerifier:
             if ntf is None:
                 self.client.cmd_pause()
                 self.expect_notification(REASON_MANUAL)
-                raise Known(f"user breakpoint {bp} at 0x{CALL_AFTER:04X} gone after a step stopped on it "
-                            f"(temporary bp shares its id; dzrpserver.cpp handleContinue/notifyPause "
-                            f"clearTemporaryBreakpoints)")
+                raise AssertionError(f"user breakpoint {bp} at 0x{CALL_AFTER:04X} gone after a stop on a "
+                                     f"temporary breakpoint at the same address")
             self.expect(ntf.reason == REASON_BREAKPOINT and ntf.address == CALL_AFTER, f"NTF {ntf}")
         finally:
             self.client.cmd_remove_breakpoint(bp)
@@ -1003,10 +999,8 @@ class EmulatorVerifier:
             if ntf is None:
                 self.client.cmd_pause()
                 self.expect_notification(REASON_MANUAL)
-                raise Known(f"two breakpoints at 0x{CALL_AFTER:04X} got ids {bp_a} and {bp_b}; removing {bp_a} "
-                            f"removed both (same root cause as the temporary-bp issue: plain breakpoints dedup "
-                            f"by address, breakpointmanager.cpp AddMemoryBreakpoint, no reference count in "
-                            f"dzrpserver.cpp handleRemoveBreakpoint)")
+                raise AssertionError(f"two breakpoints at 0x{CALL_AFTER:04X} got ids {bp_a} and {bp_b}; "
+                                     f"removing {bp_a} removed both")
             self.expect(ntf.reason == REASON_BREAKPOINT and ntf.address == CALL_AFTER, f"NTF {ntf}")
         finally:
             self.client.cmd_remove_breakpoint(bp_a)
@@ -1157,12 +1151,9 @@ class EmulatorVerifier:
             self.expect(self.client.cmd_add_watchpoint(0x9002, 1, access=3), "ADD_WATCHPOINT rw")
             self.expect(self.client.cmd_continue(), "CONTINUE")
             ntf = self.client.wait_notification(timeout=3.0)
-            self.expect(ntf is not None and ntf.address == 0x9002 and ntf.reason in (REASON_WATCHPOINT_READ,
-                                                                                     REASON_WATCHPOINT_WRITE),
+            # The access direction comes from the hit: a write to an 'rw' watchpoint is a WATCHPOINT_WRITE
+            self.expect(ntf is not None and ntf.address == 0x9002 and ntf.reason == REASON_WATCHPOINT_WRITE,
                         f"rw watchpoint NTF {ntf}")
-            if ntf.reason != REASON_WATCHPOINT_WRITE:
-                print("  note: a write to an 'rw' watchpoint is reported as WATCHPOINT_READ (3) "
-                      "(dezogdebugadapter.cpp onBreakpointMessage: the direction is not in the payload)")
             self.expect(self.client.cmd_remove_watchpoint(0x9002, 1, access=3), "REMOVE_WATCHPOINT rw")
         finally:
             self.client.cmd_remove_watchpoint(0x9000, 4, access=2)
@@ -1359,12 +1350,27 @@ class EmulatorVerifier:
         return c.cmd_remove_breakpoint(bp)
 
     def step_unknown_and_unhandled_commands(self):
-        # No NAK (DeZog compares the seq byte raw): an empty ACK for an unknown id and for the DZRP commands the
-        # dispatcher has no case for (SET_BREAKPOINTS, RESTORE_MEM, LOOPBACK, EXEC_ASM, INTERRUPT_ON_OFF)
-        for cmd, payload in [(99, b""), (0xFF, b"\x01\x02"), (13, b"\x00\x80\x00"), (14, b"\x00\x80\x00\x00"),
-                             (15, b"\x01\x02\x03"), (22, b"\x00"), (23, b"\x01")]:
+        # No NAK (DeZog compares the seq byte raw): an empty ACK for an unknown id
+        for cmd, payload in [(99, b""), (0xFF, b"\x01\x02")]:
             resp = self.client._send_raw_command(cmd, payload)
             self.expect(not resp.nak and len(resp.payload) == 0, f"command {cmd}: nak={resp.nak} payload={resp.payload!r}")
+        # The dezogif / CSpect commands DeZog does not send to this server still answer in their own format
+        self.write(PROGRAM_START, PROGRAM)
+        expected = {
+            13: bytes([PROGRAM[0], PROGRAM[1]]),  # SET_BREAKPOINTS: the original byte at each 3-byte address
+            14: b"",                              # RESTORE_MEM: nothing was patched, empty ACK
+            15: b"\x01\x02\x03",                  # LOOPBACK: the payload back
+            23: b"",                              # INTERRUPT_ON_OFF: empty ACK
+        }
+        payloads = {13: b"\x00\x80\x00\x01\x80\x00", 14: b"\x00\x80\x00\xF3", 15: b"\x01\x02\x03", 23: b"\x00"}
+        for cmd, want in expected.items():
+            resp = self.client._send_raw_command(cmd, payloads[cmd])
+            self.expect(not resp.nak and resp.payload == want,
+                        f"command {cmd}: nak={resp.nak} payload={resp.payload!r}, want {want!r}")
+        self.expect(self.client.cmd_read_mem(PROGRAM_START, len(PROGRAM)) == PROGRAM, "RESTORE_MEM left memory alone")
+        # EXEC_ASM: error 1 (not supported) + F A C B E D L H
+        resp = self.client._send_raw_command(22, b"\x00")
+        self.expect(not resp.nak and len(resp.payload) == 9 and resp.payload[0] == 1, f"EXEC_ASM {resp.payload!r}")
         self.expect("pc" in self.client.cmd_get_registers(), "session alive")
 
     def step_restore_original(self):
@@ -1467,7 +1473,7 @@ class EmulatorVerifier:
             ("History: continue after browsing", self.step_history_continue_after_browse),
             ("CMD_READ_STATE/WRITE_STATE round-trip (regs, memory, banks)", self.step_state_roundtrip),
             ("DeZog real-flow replay (bp/regs/disasm/stack/NTF/seq-rollover)", self.step_dezog_real_flow),
-            ("Unknown + unhandled DZRP commands -> empty ACK", self.step_unknown_and_unhandled_commands),
+            ("Unknown commands -> empty ACK; dezogif commands 13-15, 22, 23", self.step_unknown_and_unhandled_commands),
             ("Restore original state + CONTINUE", self.step_restore_original),
             ("CMD_CLOSE", self.step_close),
             ("Reconnect: second session INIT/GET_REGISTERS/CLOSE", self.step_reconnect),

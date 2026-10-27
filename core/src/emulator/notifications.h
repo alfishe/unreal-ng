@@ -397,6 +397,8 @@ public:
     unreal::UUID emulatorId;
     uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
     bool        hidden{false};
+    /// The access the breakpoint fired on: a read / write watchpoint tells the direction by it
+    BreakpointHitKind kind{BreakpointHitKind::Execute};
 
     BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
         : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr), hidden(isHidden) {}

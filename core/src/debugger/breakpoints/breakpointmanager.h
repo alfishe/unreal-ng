@@ -148,7 +148,9 @@ struct BreakpointDescriptor
     // Used if breakpoint is set to any matching address in specific memory page (independently of Z80 address)
     uint8_t page = 0xFF;                     // Page number (ROM 0-63 or RAM 0-255)
     MemoryBankModeEnum pageType = BANK_RAM;  // Memory type: BANK_ROM, BANK_RAM, or BANK_CACHE
-    uint16_t bankOffset = 0xFFFF;            // Offset within the page (0-0x3FFF)
+    uint16_t bankOffset = 0xFFFF;            // Offset within the page (0-0x3FFF); 0xFFFF: z80address & 0x3FFF
+    uint16_t PageOffset() const { return bankOffset != 0xFFFF ? bankOffset : static_cast<uint16_t>(z80address & 0x3FFF); }
+    uint16_t PageOffsetEnd() const { return static_cast<uint16_t>(PageOffset() + (EndAddress() - z80address)); }
     // A watchpoint on a page of another memory space ("vram5": the Sprinter's video RAM, ttdphyspage.h virtual
     // pages): offsets (z80address & #3FFF)..(end & #3FFF) of that page, matched only by that memory's hooks
     // (HandleSpaceAccess), never by CPU addresses. 0xFFFF: none
@@ -301,6 +303,9 @@ struct BreakpointSpec
     bool hidden = false;               // internal: not in the lists, no breakpoints_changed
     uint8_t tapSink = BRK_NO_TAP;      // memory and port: a tap of this sink (RegisterTapSink), never stops
     uint32_t tapCookie = 0;
+    // Physical only: the offset in the page when it is not `address` & #3FFF (an 8K bank of the Next is half a
+    // 16K page; `address` stays the CPU address, so the slot). 0xFFFF: address & #3FFF
+    uint16_t pageOffset = 0xFFFF;
 };
 
 /// endregion </Types>
@@ -753,9 +758,9 @@ protected:
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
-    /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical). A tap
-    /// never stops: a hit that passes its policy goes to its sink with `kind`, `address` and `value`
-    uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind, uint16_t address,
+    /// BRK_INVALID); `slotShift` the slot size of the access for slot-only physical breakpoints (log2, -1: not
+    /// physical). A tap never stops: a hit that passes its policy goes to its sink with `kind`, `address` and `value`
+    uint16_t WalkCandidates(uint32_t set, int slotShift, uint16_t first, BreakpointTapKind kind, uint16_t address,
                             int value = -1);
     /// The candidate's condition on this access: counts the match, false when the condition does not hold or failed
     /// before. Never inlined: the walk without conditions keeps its size (the hit path A/B). A failure marks the

@@ -97,6 +97,13 @@ public:
     virtual uint8_t readPort(uint16_t port) const = 0;
     virtual void writePort(uint16_t port, uint8_t value) = 0;
 
+    // CMD_INTERRUPT_ON_OFF: IFF1 and IFF2 set (true) or cleared
+    virtual void setInterrupts(bool /*enabled*/) {}
+
+    // ZRCP snapshot-save / snapshot-load of a file (ZEsarUX picks the format by the extension). "" = done, else why not
+    virtual std::string saveSnapshotFile(const std::string& /*path*/) { return "snapshots not supported"; }
+    virtual std::string loadSnapshotFile(const std::string& /*path*/) { return "snapshots not supported"; }
+
     // --- ZRCP (ZEsarUX protocol) transport capabilities ---
     // Used by the zesarux module's ZRCP server; safe defaults keep other
     // transports working. Executes exactly one instruction. Call only while
@@ -230,6 +237,12 @@ private:
     Response handleSetBorder(const Command& cmd);
     Response handleReadPort(const Command& cmd);
     Response handleWritePort(const Command& cmd);
+    // dezogif's commands (DeZog sends them to a real ZX Next only; not advertised, answered in their shape)
+    Response handleSetBreakpoints(const Command& cmd);
+    Response handleRestoreMem(const Command& cmd);
+    Response handleLoopback(const Command& cmd);
+    Response handleExecAsm(const Command& cmd);
+    Response handleInterruptOnOff(const Command& cmd);
     Response handleReadState(const Command& cmd);
     Response handleWriteState(const Command& cmd);
     Response handleGetHistoryInfo(const Command& cmd);

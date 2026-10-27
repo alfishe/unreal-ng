@@ -16,6 +16,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
 #include "debugger/ports/nextregwrite.h"
+#include "debugger/ports/portwrite.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/next/nextmemory.h"
@@ -23,7 +24,9 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/video/screen.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <chrono>
@@ -56,7 +59,111 @@ uint8_t memoryTypeFromAccess(dzrp::WatchAccess access)
         type |= BRK_MEM_WRITE;
     return type;
 }
+
+/// The ROM page `base` points at (MEMORY_UNMAPPABLE: the model has no such ROM)
+uint16_t RomPageOf(Memory& memory, uint8_t* base)
+{
+    return base ? memory.GetROMPageFromAddress(base) : MEMORY_UNMAPPABLE;
+}
 }  // namespace
+
+/// region <DZRP bank numbering>
+
+uint8_t DezogDebugAdapter::bankForRomPage(Memory& memory, uint16_t page)
+{
+    if (page == RomPageOf(memory, memory.base_128_rom))
+        return ROM_BANK_BASE;
+    if (page == RomPageOf(memory, memory.base_sos_rom))
+        return ROM_BANK_BASE + 1;
+    return static_cast<uint8_t>(OTHER_ROM_BANK_BASE + (page & 0x7F));
+}
+
+uint16_t DezogDebugAdapter::romPageForBank(Memory& memory, uint8_t bank)
+{
+    if (bank == ROM_BANK_BASE || bank == ROM0_ALIAS)
+        return RomPageOf(memory, memory.base_128_rom);
+    if (bank == ROM_BANK_BASE + 1 || bank == ROM1_ALIAS)
+        return RomPageOf(memory, memory.base_sos_rom);
+    if (bank >= OTHER_ROM_BANK_BASE && bank - OTHER_ROM_BANK_BASE < MAX_ROM_PAGES)
+        return static_cast<uint16_t>(bank - OTHER_ROM_BANK_BASE);
+    return MEMORY_UNMAPPABLE;
+}
+
+bool DezogDebugAdapter::physicalForBank(uint8_t bank, uint16_t addr, BreakpointSpec& spec) const
+{
+    auto emulator = resolveEmulator();
+    Memory* memory = emulator ? emulator->GetMemory() : nullptr;
+    if (!memory)
+        return false;
+
+    // A breakpoint on a bank fires only through the slot of its address, while that slot shows the bank
+    spec.hasPage = true;
+    spec.slotOnly = true;
+    switch (getMachineType())
+    {
+        case dzrp::MachineType::ZXNEXT:
+        {
+            NextMemory* next = dynamic_cast<NextMemory*>(memory);
+            if (!next)
+                return false;
+            // An 8K bank is half of a 16K page: the page and the offset in it
+            const uint16_t offset = static_cast<uint16_t>(((bank & 1) << 13) | (addr & (NextMemory::kSlotSize - 1)));
+            if (bank < NextMemory::kRamPages8K)
+            {
+                spec.pageType = BANK_RAM;
+                spec.page = static_cast<uint8_t>(bank >> 1);
+            }
+            else if (bank >= NEXT_ROM_BANK_FIRST)
+            {
+                // DeZog's ROM banks (0xFC-0xFF, the lower / upper half): the ROM an MMU value of #FF shows now
+                spec.pageType = BANK_ROM;
+                spec.page = next->RomReadPage();
+            }
+            else
+                return false;
+            spec.pageOffset = offset;
+            return true;
+        }
+        case dzrp::MachineType::ZX48K:
+            // DeZog MemoryModelZx48k: bank 0 the ROM (0000-3FFF), bank 1 the RAM (4000-FFFF)
+            if (bank == 0 && addr < 0x4000)
+            {
+                const uint16_t page = RomPageOf(*memory, memory->base_sos_rom);
+                if (page == MEMORY_UNMAPPABLE)
+                    return false;
+                spec.pageType = BANK_ROM;
+                spec.page = static_cast<uint8_t>(page);
+                return true;
+            }
+            if (bank == 1 && addr >= 0x4000)
+            {
+                const uint16_t page = memory->GetRAMPageForBank(static_cast<uint8_t>(addr >> 14));
+                if (page == MEMORY_UNMAPPABLE)
+                    return false;
+                spec.pageType = BANK_RAM;
+                spec.page = static_cast<uint8_t>(page);
+                return true;
+            }
+            return false;
+        default:
+        {
+            const uint16_t romPage = romPageForBank(*memory, bank);
+            if (romPage != MEMORY_UNMAPPABLE)
+            {
+                spec.pageType = BANK_ROM;
+                spec.page = static_cast<uint8_t>(romPage);
+                return true;
+            }
+            if (bank >= OTHER_ROM_BANK_BASE)
+                return false;
+            spec.pageType = BANK_RAM;
+            spec.page = bank;
+            return true;
+        }
+    }
+}
+
+/// endregion </DZRP bank numbering>
 
 /// region <Construction / binding>
 
@@ -179,30 +286,18 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     if (emulator->IsRunning() && !emulator->IsPaused())
         return;
 
-    uint16_t breakpointId = static_cast<uint16_t>(payload->_payloadNumber);
-    uint16_t address = payload->address;
+    const uint16_t address = payload->address;
 
-    // Classify: execution breakpoint vs. memory watchpoint
+    // The access the breakpoint fired on tells execution from a read or a write watchpoint (an "rw" one included)
     dzrp::BreakReason reason = dzrp::BreakReason::BREAKPOINT;
-    if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
-    {
-        if (BreakpointSnapshot desc = bpManager->GetBreakpointById(breakpointId))
-        {
-            const Z80State* z80 = emulator->GetZ80State();
-            bool isExec = (desc->memoryType & BRK_MEM_EXECUTE) && z80 && z80->pc == address;
-            if (!isExec && (desc->memoryType & (BRK_MEM_READ | BRK_MEM_WRITE)))
-            {
-                // Combined R/W watchpoints cannot tell direction from the payload;
-                // report WRITE only when the watchpoint is write-only.
-                bool writeOnly = (desc->memoryType & BRK_MEM_WRITE) && !(desc->memoryType & BRK_MEM_READ);
-                reason = writeOnly ? dzrp::BreakReason::WATCHPOINT_WRITE : dzrp::BreakReason::WATCHPOINT_READ;
-            }
-        }
-    }
+    if (payload->kind == BreakpointHitKind::MemoryRead)
+        reason = dzrp::BreakReason::WATCHPOINT_READ;
+    else if (payload->kind == BreakpointHitKind::MemoryWrite)
+        reason = dzrp::BreakReason::WATCHPOINT_WRITE;
 
     // DeZog expects the stop address to be PC for breakpoints
     const Z80State* z80 = emulator->GetZ80State();
-    uint16_t stopAddr = (reason == dzrp::BreakReason::BREAKPOINT && z80) ? z80->pc : address;
+    const uint16_t stopAddr = (reason == dzrp::BreakReason::BREAKPOINT && z80) ? z80->pc : address;
 
     notify(reason, stopAddr);
 }
@@ -216,7 +311,22 @@ void DezogDebugAdapter::notify(dzrp::BreakReason reason, uint16_t addr)
     }
 
     if (notifier)
-        notifier(reason, addr, 0);
+        notifier(reason, addr, wireBankAt(addr));
+}
+
+uint8_t DezogDebugAdapter::wireBankAt(uint16_t addr) const
+{
+    // NTF_PAUSE carries the bank of the stop address the way a long address does (dzrpbufferremote.ts: longAddr +=
+    // data[5] << 16): bank + 1, 0 none. DeZog finds the breakpoint by that long address
+    const std::vector<uint8_t> slots = getSlots();
+    if (slots.empty())
+        return 0;
+    const unsigned slot = slots.size() == 8 ? (addr >> 13) : slots.size() == 4 ? (addr >> 14) : (addr < 0x4000 ? 0 : 1);
+    uint8_t bank = slot < slots.size() ? slots[slot] : 0;
+    // DeZog's Next model calls the ROM in slot 0 0xFE (dzrpremote.ts getRegistersFromEmulator)
+    if (slots.size() == 8 && slot == 0 && bank == NextMemory::kMmuRom)
+        bank = NEXT_ROM_LOWER;
+    return static_cast<uint8_t>(bank + 1);
 }
 
 /// endregion </Notifications>
@@ -417,8 +527,10 @@ bool DezogDebugAdapter::stepOnce()
     leaveHistory(*emulator);
     ensureHistoryRecording(*emulator);
 
-    // Single instruction from the control thread - the same call the CLI 'stepin' uses
-    emulator->RunSingleCPUCycle(false);
+    // Single instruction from the control thread. It always executes (ZEsarUX cpu-step): an execution breakpoint
+    // at PC is passed whether the machine stopped on it or stepped onto it, and also after a history read
+    // (leaveHistory) ended the stop; breakpoints the instruction reaches still fire
+    emulator->StepPastBreakpointAtPc();
 
     return true;
 }
@@ -492,7 +604,9 @@ std::vector<uint8_t> DezogDebugAdapter::getSlots() const
     }
 
     std::vector<uint8_t> slots(4);
-    slots[0] = static_cast<uint8_t>(ROM_BANK_BASE + (memory->GetROMPage() & 0x01));
+    // Slot 0: the ROM's DZRP bank (8 the 128 ROM, 9 the 48 BASIC, 0x80 + page another ROM), or a RAM page there
+    slots[0] = memory->IsBank0ROM() ? bankForRomPage(*memory, memory->GetROMPage())
+                                    : static_cast<uint8_t>(memory->GetRAMPageForBank0());
     slots[1] = static_cast<uint8_t>(memory->GetRAMPageForBank1());
     slots[2] = static_cast<uint8_t>(memory->GetRAMPageForBank2());
     slots[3] = static_cast<uint8_t>(memory->GetRAMPageForBank3());
@@ -521,16 +635,8 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
 
     if (slot == 0)
     {
-        uint16_t romPage;
-        if (bank == ROM0_ALIAS)
-            romPage = 0;
-        else if (bank == ROM1_ALIAS)
-            romPage = 1;
-        else if (bank >= ROM_BANK_BASE)
-            romPage = static_cast<uint16_t>(bank - ROM_BANK_BASE);
-        else
-            romPage = bank;
-
+        // The ROM banks getSlots reports (8, 9, 0x80 + page) and the 0xFE / 0xFF aliases; slot 0 takes no RAM bank
+        const uint16_t romPage = romPageForBank(*memory, bank);
         if (romPage < MAX_ROM_PAGES)
             editMachine(*emulator, "dezog set rom slot", [&]() { memory->SetROMPage(romPage, true); });
         return;
@@ -557,39 +663,56 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
 
     leaveHistory(*emulator);
 
-    // Note: bank is uint8_t (< MAX_RAM_PAGES == 256); Memory::RAMPageAddress
-    // bounds-checks internally and returns nullptr for out-of-range pages.
     Memory* memory = emulator->GetMemory();
-    if (!memory)
+    if (!memory || data.empty())
         return;
 
+    // DeZog's Next model: an 8K bank (loadBinSna writes a 16K bank as two); RAM only, as dezogif takes it
+    if (NextMemory* next = dynamic_cast<NextMemory*>(memory))
+    {
+        if (bank >= NextMemory::kRamPages8K)
+            return;
+        const size_t len = std::min<size_t>(data.size(), NextMemory::kSlotSize);
+        editMachine(*emulator, "dezog write bank", [&]() {
+            for (size_t i = 0; i < len; ++i)
+                if (uint8_t* byte = nextBankByte(*next, bank, static_cast<uint16_t>(i)))
+                    *byte = data[i];
+            next->MarkRamPageEdited(static_cast<uint16_t>(bank >> 1));
+        });
+        return;
+    }
+
+    // Note: bank is uint8_t (< MAX_RAM_PAGES == 256); Memory::RAMPageAddress
+    // bounds-checks internally and returns nullptr for out-of-range pages.
     uint8_t* page = memory->RAMPageAddress(bank);
     if (!page)
         return;
 
     const size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
-    if (len > 0)
-        editMachine(*emulator, "dezog write bank", [&]() { std::memcpy(page, data.data(), len); });
+    editMachine(*emulator, "dezog write bank", [&]() { std::memcpy(page, data.data(), len); });
 }
 
 /// region <ZX Next>
 
-namespace
+uint8_t* DezogDebugAdapter::nextBankByte(NextMemory& memory, uint8_t bank, uint16_t offset)
 {
-/// The byte at `offset` (wrapped) of a Next 8K bank: RAM 0..kRamPages8K-1, or the ROM selected now (16K, wraps inside it). Null: no such bank
-uint8_t* NextBankByte(NextMemory& memory, uint8_t bank, uint16_t offset)
-{
-    if (bank == NextMemory::kMmuRom)
+    // The ROM banks (#FF, DeZog's 0xFC-0xFE): the 16K ROM area 0x0000-0x3FFF, the offset from its start, wrapping
+    // inside it. While slot 0 / 1 has MMU #FF it is what the CPU reads there (the boot ROM, the DivMMC or Multiface
+    // overlay, the alternate ROM, as NextMemory::MapSlot maps it); otherwise the ROM such a slot would read
+    if (bank >= NEXT_ROM_BANK_FIRST)
     {
         constexpr uint32_t kRomSize = 0x4000;
-        return memory.ROMPageHostAddress(memory.GetRomSelect()) + (offset & (kRomSize - 1));
+        const unsigned slot = (offset & (kRomSize - 1)) >> 13;
+        if (NextMemory::MmuIsRom(slot, memory.GetMmu(slot)))
+            return memory.SlotReadHostAddress(slot, offset);
+        uint8_t* rom = memory.ROMPageHostAddress(memory.RomReadPage());
+        return rom ? rom + (offset & (kRomSize - 1)) : nullptr;
     }
     if (bank >= NextMemory::kRamPages8K)
         return nullptr;
     uint8_t* page = memory.RAMPageAddress(bank >> 1);
     return page ? page + (bank & 1) * NextMemory::kSlotSize + (offset & (NextMemory::kSlotSize - 1)) : nullptr;
 }
-}  // namespace
 
 std::vector<uint8_t> DezogDebugAdapter::readBankMemory(uint8_t bank, uint16_t offset, uint16_t size) const
 {
@@ -599,7 +722,7 @@ std::vector<uint8_t> DezogDebugAdapter::readBankMemory(uint8_t bank, uint16_t of
     if (!memory)
         return result;
     for (uint32_t i = 0; i < size; ++i)
-        if (const uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+        if (const uint8_t* byte = nextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
             result[i] = *byte;
     return result;
 }
@@ -613,7 +736,7 @@ void DezogDebugAdapter::writeBankMemory(uint8_t bank, uint16_t offset, const std
     leaveHistory(*emulator);
     editMachine(*emulator, "dezog write bank memory", [&]() {
         for (size_t i = 0; i < data.size(); ++i)
-            if (uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+            if (uint8_t* byte = nextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
                 *byte = data[i];
     });
 }
@@ -733,13 +856,11 @@ uint16_t DezogDebugAdapter::addBreakpoint(uint16_t addr, uint8_t bank, const std
     // DeZog's own: removing it (or clearing a temporary at a user breakpoint's address) leaves the others
     spec.shared = false;
     spec.condition = condition;
-    if (bank != 0)
+    // Wire format is bank+1 (0: none)
+    if (bank != 0 && !physicalForBank(static_cast<uint8_t>(bank - 1), addr, spec))
     {
-        // Wire format is bank+1
-        const uint8_t dzrpBank = static_cast<uint8_t>(bank - 1);
-        spec.hasPage = true;
-        spec.pageType = dzrpBank >= ROM_BANK_BASE ? BANK_ROM : BANK_RAM;
-        spec.page = dzrpBank >= ROM_BANK_BASE ? static_cast<uint8_t>(dzrpBank - ROM_BANK_BASE) : dzrpBank;
+        std::cout << "[DZRP] Breakpoint at bank " << (bank - 1) << " address " << addr << " refused: no such bank\n";
+        return 0;
     }
     std::string error;
     const uint16_t id = bpManager->AddBreakpoint(spec, error);
@@ -843,34 +964,44 @@ bool DezogDebugAdapter::addWatchpoint(uint16_t addr, uint8_t bank, uint16_t size
 
     ensureDebugEnabled(*emulator);
 
+    // One range breakpoint of DeZog's own (shared = false: an equal CLI / GUI watchpoint keeps its id). On a bank:
+    // the part in the start's slot watches that bank there; the rest is a plain CPU range, as DeZog itself checks
+    // only the start's bank (dzrpremote.ts getWatchpointsByAddress)
     std::vector<uint16_t> ids;
-    ids.reserve(size);
-
-    uint32_t end = static_cast<uint32_t>(addr) + size;
-    if (end > 0x10000)
-        end = 0x10000;
-
-    for (uint32_t a = addr; a < end; ++a)
+    const uint32_t last = std::min<uint32_t>(static_cast<uint32_t>(addr) + size - 1, 0xFFFF);
+    auto add = [&](uint32_t from, uint32_t to, bool banked) -> bool {
+        BreakpointSpec spec;
+        spec.access = memoryType;
+        spec.address = static_cast<uint16_t>(from);
+        spec.hasEnd = to != from;
+        spec.addressEnd = static_cast<uint16_t>(to);
+        spec.owner = BREAKPOINT_OWNER;
+        spec.shared = false;
+        if (banked && !physicalForBank(static_cast<uint8_t>(bank - 1), spec.address, spec))
+            return false;
+        std::string error;
+        const uint16_t id = bpManager->AddBreakpoint(spec, error);
+        if (id == BRK_INVALID)
+            return false;
+        ids.push_back(id);
+        return true;
+    };
+    bool ok;
+    if (bank == 0)
+        ok = add(addr, last, false);
+    else
     {
-        uint16_t id;
-        if (bank == 0)
-        {
-            id = bpManager->AddCombinedMemoryBreakpoint(static_cast<uint16_t>(a), memoryType, BREAKPOINT_OWNER);
-        }
-        else
-        {
-            uint8_t dzrpBank = static_cast<uint8_t>(bank - 1);
-            if (dzrpBank >= ROM_BANK_BASE)
-                id = bpManager->AddCombinedMemoryBreakpointInPage(static_cast<uint16_t>(a), memoryType,
-                                                                  static_cast<uint8_t>(dzrpBank - ROM_BANK_BASE),
-                                                                  BANK_ROM, BREAKPOINT_OWNER);
-            else
-                id = bpManager->AddCombinedMemoryBreakpointInPage(static_cast<uint16_t>(a), memoryType, dzrpBank,
-                                                                  BANK_RAM, BREAKPOINT_OWNER);
-        }
-
-        if (id != BRK_INVALID)
-            ids.push_back(id);
+        const unsigned slotShift = getMachineType() == dzrp::MachineType::ZXNEXT ? 13 : 14;
+        const uint32_t slotLast = (static_cast<uint32_t>(addr) | ((1u << slotShift) - 1));
+        ok = add(addr, std::min(last, slotLast), true);
+        if (ok && last > slotLast)
+            ok = add(slotLast + 1, last, false);
+    }
+    if (!ok)
+    {
+        for (uint16_t id : ids)
+            bpManager->RemoveBreakpointByID(id);
+        return false;
     }
 
     if (ids.empty())
@@ -980,6 +1111,94 @@ void DezogDebugAdapter::restoreState(const std::vector<uint8_t>& state)
     ensureHistoryRecording(*emulator);
 }
 
+namespace
+{
+std::string lowerExtension(const std::string& path)
+{
+    std::string ext = std::filesystem::path(path).extension().string();
+    if (!ext.empty() && ext[0] == '.')
+        ext.erase(0, 1);
+    for (char& c : ext)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+/// The format of a snapshot image by its content (a file whose extension says nothing: DeZog's ".zsf")
+std::string detectSnapshotExtension(const std::vector<uint8_t>& bytes)
+{
+    if (bytes.size() >= 4 && std::memcmp(bytes.data(), "ZXST", 4) == 0)
+        return "szx";
+    if (bytes.size() >= 4 && std::memcmp(bytes.data(), "Next", 4) == 0)
+        return "nex";
+    constexpr size_t kSna48 = 49179, kSna128 = 131103, kSna128Extra = 147487;
+    if (bytes.size() == kSna48 || bytes.size() == kSna128 || bytes.size() == kSna128Extra)
+        return "sna";
+    return "z80";
+}
+}  // namespace
+
+std::string DezogDebugAdapter::saveSnapshotFile(const std::string& path)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return "no emulator";
+    if (path.empty())
+        return "No file name";
+    leaveHistory(*emulator);
+
+    // A format this emulator writes: by the extension, as ZEsarUX does
+    if (snapshot::SaveFormatFromExtension(lowerExtension(path)))
+        return emulator->SaveSnapshot(path) ? std::string() : emulator->LastSaveResult().text;
+
+    // Another extension (DeZog's state save names the file .zsf, ZEsarUX's own format): the fullest format the machine
+    // can be saved in now, under that name; snapshot-load reads it back by its content
+    const snapshot::SaveFormats formats = emulator->SnapshotSaveFormats();
+    for (snapshot::SaveFormat format :
+         {snapshot::SaveFormat::Szx, snapshot::SaveFormat::Z80, snapshot::SaveFormat::Nex, snapshot::SaveFormat::Sna})
+    {
+        if (!formats.Has(format) || !formats.For(format).available)
+            continue;
+        std::filesystem::path temp = makeSnapshotTempPath();
+        temp.replace_extension(snapshot::ToText(format));
+        std::string error;
+        if (!emulator->SaveSnapshot(temp.string()))
+            error = emulator->LastSaveResult().text;
+        else
+        {
+            std::error_code ec;
+            std::filesystem::copy_file(temp, path, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec)
+                error = "can not write " + path + ": " + ec.message();
+        }
+        std::error_code ec;
+        std::filesystem::remove(temp, ec);
+        return error;
+    }
+    return "no snapshot format available for this machine now";
+}
+
+std::string DezogDebugAdapter::loadSnapshotFile(const std::string& path)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return "no emulator";
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return "can not open " + path;
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    leaveHistory(*emulator);
+
+    const std::string ext = lowerExtension(path);
+    const auto& known = Emulator::SupportedSnapshotExtensions();
+    const bool byName = std::find(known.begin(), known.end(), ext) != known.end();
+    coordinator::SourceScope source(coordinator::OpSource::DeZog);
+    const bool ok = byName ? emulator->LoadSnapshot(path)
+                           : emulator->LoadSnapshotData(bytes, detectSnapshotExtension(bytes), path);
+    // A snapshot load ends the TTD session - start a fresh history from here
+    ensureHistoryRecording(*emulator);
+    return ok ? std::string() : "loading " + path + " failed";
+}
+
 /// endregion </State>
 
 /// region <Machine>
@@ -1019,30 +1238,34 @@ void DezogDebugAdapter::setBorder(uint8_t color)
 
 uint8_t DezogDebugAdapter::readPort(uint16_t port) const
 {
+    // The machine's decoder, as a CPU IN would read it (no breakpoint fires, the clock stays)
     auto emulator = resolveEmulator();
-    if (!emulator)
-        return 0;
-
-    MainLoop* mainLoop = emulator->GetMainLoop();
-    if (!mainLoop || !mainLoop->GetCPU())
-        return 0;
-
-    Ports* ports = mainLoop->GetCPU()->GetPorts();
-    return ports ? ports->In(port) : 0;
+    uint8_t value = 0xFF;
+    if (emulator)
+        PortWrite::Read(emulator.get(), port, value, BREAKPOINT_OWNER);
+    return value;
 }
 
 void DezogDebugAdapter::writePort(uint16_t port, uint8_t value)
 {
+    // The machine's decoder (paging, AY, the Next's sprite ports ...), as a tool edit
     auto emulator = resolveEmulator();
     if (!emulator)
         return;
+    leaveHistory(*emulator);
+    PortWrite::Write(emulator.get(), port, value, BREAKPOINT_OWNER);
+}
 
-    MainLoop* mainLoop = emulator->GetMainLoop();
-    if (!mainLoop || !mainLoop->GetCPU())
+void DezogDebugAdapter::setInterrupts(bool enabled)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
         return;
-
-    if (Ports* ports = mainLoop->GetCPU()->GetPorts())
-        ports->Out(port, value);
+    leaveHistory(*emulator);
+    Z80State* z80 = emulator->GetZ80State();
+    if (!z80)
+        return;
+    editMachine(*emulator, "dezog interrupts", [&]() { z80->iff1 = z80->iff2 = enabled ? 1 : 0; });
 }
 
 bool DezogDebugAdapter::waitForTarget(uint32_t timeoutMs) const
@@ -1485,13 +1708,14 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     entry.regs.ix = e.ix;   entry.regs.iy = e.iy;
     entry.regs.af2 = e.af2; entry.regs.bc2 = e.bc2; entry.regs.de2 = e.de2; entry.regs.hl2 = e.hl2;
     entry.regs.r = e.r;     entry.regs.i = e.i;     entry.regs.im = e.im;
-    // The TTD cache stores raw slots (slot 0 = ROM page 0/1); clients get the
-    // same dzrp encoding getSlots() returns (ROM_BANK_BASE + page for slot 0),
+    // The TTD cache stores raw slots (slot 0 = the physical ROM page); clients get the
+    // same dzrp encoding getSlots() returns (bankForRomPage for slot 0),
     // so history entries decode identically to live register responses.
+    Memory* memory = emulator->GetMemory();
     if (getMachineType() == dzrp::MachineType::ZX48K)
         entry.slots = {0, 1};
     else
-        entry.slots = {static_cast<uint8_t>(ROM_BANK_BASE + (e.bankSlots[0] & 0x01)),
+        entry.slots = {memory ? bankForRomPage(*memory, e.bankSlots[0]) : ROM_BANK_BASE,
                        e.bankSlots[1], e.bankSlots[2], e.bankSlots[3]};
     for (int i = 0; i < 4; ++i)
         entry.opcodes[i] = e.opcodes[i];

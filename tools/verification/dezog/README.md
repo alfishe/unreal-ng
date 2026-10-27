@@ -47,7 +47,7 @@ python3 tools/verification/dezog/verify_dzrp_emulator.py
 ```
 
 Logs of a launched host go to `scratch/verification-dezog/`. Result lines: `PASS`, `FAIL` (exit code 1),
-`KNOWN` (a known server issue reproduced; not counted), `SKIP` (not for this machine type).
+`KNOWN` (a known server issue reproduced; not counted; no check raises it today), `SKIP` (not for this machine type).
 
 `dezog-emulator-host [port] [model]` (built from `core/automation/dezog/test/emulator-host.cpp`)
 creates one real emulator instance, starts it and exposes it through the
@@ -66,15 +66,15 @@ All DeZog suites are wired into the main `core-tests` binary and run against a
 live emulator instance (no external process, ephemeral ports):
 
 ```bash
-ninja -C cmake-build-release core-tests
-./cmake-build-release/bin/core-tests \
-    --gtest_filter='DZRPProtocolTest.*:DezogDebugAdapter_test.*:DZRPServer_test.*:AutomationDezog_test.*'
+tools/build/test.sh \
+    --gtest_filter='DZRPProtocolTest.*:DezogDebugAdapter_test.*:DezogBanks*:DZRPServer*:AutomationDezog_test.*'
 ```
 
 | Suite | Covers |
 |-------|--------|
 | `DZRPProtocolTest` | framing, LE helpers, seq masking, oversize/coalesced frames, capability bitfield |
-| `DezogDebugAdapter_test` | registers (16/8-bit, alt, IX/IY halves), memory wrap, slots/ROM aliases, WRITE_BANK, BP owner/temp tracking, WP per-byte expansion + clamping, MANUAL/BREAKPOINT/WATCHPOINT notifications, cross-instance filtering, state round-trip, border |
+| `DezogDebugAdapter_test` | registers (16/8-bit, alt, IX/IY halves), memory wrap, slots/ROM aliases, WRITE_BANK, BP owner/temp tracking, WP range + clamping, MANUAL/BREAKPOINT/WATCHPOINT notifications (the `rw` direction), cross-instance filtering, state round-trip, border |
+| `DezogBanks_test` (`dezogbanks_test.cpp`) | own ids for breakpoints and watchpoints, the ROM bank mapping in slots and breakpoints, the NTF bank byte, ports through the decoder, INTERRUPT_ON_OFF; 48K slots {0, 1}; Next: an 8K bank breakpoint, WRITE_BANK 8K, WRITE_MEM through the MMU, READ_BANK_MEM 0xFF = READ_MEM 0, the NextREG ports |
 | `DZRPServer_test` | real TCP session: INIT, capabilities, unknown cmd → empty ACK, regs/mem/slots/bank/border over the wire, CONTINUE → NTF_PAUSE, temp-BP step + auto-clear, PAUSE ordering (ACK before NTF), watchpoints, READ/WRITE_STATE, reconnect |
 | `AutomationDezog_test` | port resolution (arg / env / default / garbage), start/stop idempotency, client handshake through the module, busy-port failure |
 
@@ -90,29 +90,30 @@ skipped elsewhere.
 |---------|--------|
 | CMD_INIT (1) | DeZog's `onConnect` rules: error 0, DZRP 2.x, a known machine type, a program name |
 | CMD_CLOSE (2) | ACK; then a second session (INIT, GET_REGISTERS, CLOSE) on the same server |
-| CMD_GET_REGISTERS (3) | every field after every CMD_SET_REGISTER; slot layout per machine (128K ROM 8/9, 5, 2; 48K 0, 1; Next 8 MMU banks) |
+| CMD_GET_REGISTERS (3) | every field after every CMD_SET_REGISTER; slot layout per machine (128K ROM 8/9, 5, 2; 48K 0, 1; Next 8 MMU banks). One ROM mapping (`DezogDebugAdapter::bankForRomPage` / `romPageForBank`) serves the slots, SET_SLOT, breakpoints, watchpoints and history: the 128K editor ROM 8, the 48K BASIC ROM 9, another ROM page 0x80 + page |
 | CMD_SET_REGISTER (4) | every id 0-35 (16-bit, 8-bit merged into its pair, shadow set, I, R with bit 7, IM incl. clamping 5 -> 2); R counts M1 cycles and keeps bit 7 over 4 NOPs |
 | CMD_WRITE_BANK (5) | 128K: 16K bank seen through slot 3 / 1 / 2; Next: an 8K bank as DeZog's `loadBinSna` sends it |
 | CMD_CONTINUE (6) | plain; DeZog's step shapes: bp1 + bp2 for step into CALL / RET, bp1 for step over CALL and step out; the temporaries are gone after the stop; a step from a user breakpoint passes it once and keeps it; 30 steps = 30 notifications |
-| CMD_PAUSE (7) + NTF_PAUSE | MANUAL while running (address = PC) and when already paused; BREAKPOINT / WATCHPOINT reasons and addresses on every stop |
-| CMD_READ_MEM (8) / CMD_WRITE_MEM (9) | 4 B and 4 KB round trips, the 64K wrap, a full 64K read; 128K: writes land in the bank the slot shows; Next: slot 7 |
+| CMD_PAUSE (7) + NTF_PAUSE | MANUAL while running (address = PC) and when already paused; BREAKPOINT / WATCHPOINT reasons and addresses on every stop; the bank byte = bank + 1 of the stop address' slot (DeZog adds it as the long address' upper byte) |
+| CMD_READ_MEM (8) / CMD_WRITE_MEM (9) | 4 B and 4 KB round trips, the 64K wrap, a full 64K read; 128K: writes land in the bank the slot shows; Next: through the MMU (slot 7) |
 | CMD_SET_SLOT (10) | 128K: RAM banks in slots 1-3, ROM 8 / 9, aliases 0xFE / 0xFF; Next: MMU registers (GET_TBBLUE_REG agrees) |
 | CMD_GET_TBBLUE_REG (11) | Next: NR #00 = 10, NR #50-#57 = the slots; elsewhere one zero byte |
 | CMD_SET_BORDER (12) | the border in the saved `.sna` (header byte 26), masked to 3 bits |
 | CMD_GET_SPRITES_PALETTE (16) | Next: entries written through NR #43 / #40 / #41, both sprite palettes, the 9th blue bit |
 | CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL (17) | Next: NR #19 clip window + NR #15 |
 | CMD_GET_SPRITES (18) / CMD_GET_SPRITE_PATTERNS (19) | Next: attributes and a pattern written by the CPU (OUT / OTIR to #303B, #57, #5B) |
-| CMD_READ_PORT (20) / CMD_WRITE_PORT (21) | one-byte reply / empty ACK; the device behind it: AY register 1 round trip, 128K `#7FFD` paging, Next sprite port |
+| CMD_READ_PORT (20) / CMD_WRITE_PORT (21) | one-byte reply / empty ACK; through the machine's port decoder (`PortWrite`, as a tool edit): AY register 1 round trip, 128K `#7FFD` paging, Next sprite port |
 | CMD_GET_SUPPORTED_COMMANDS (24) | the exact set (the Next one adds 11, 16-19, 25-27) |
 | CMD_READ_BANK_MEM (25) / CMD_WRITE_BANK_MEM (26) | Next: round trip, the offset wraps in the 8K bank, the bank through a slot, bank 0xFF = the ROM |
 | CMD_SET_NEXTREGS (27) | Next: MMU6 / MMU7 pairs seen in the slots and NR reads |
 | CMD_READ_MEM_BLOCKS (28) | the blocks back to back, equal to separate reads |
-| CMD_ADD_BREAKPOINT (40) | plain (two ids, both stop); long addresses (128K bank 2 stops, bank 4 not; the ROM bank slot 0 shows, both `#7FFD` ROMs; Next 8K bank); DeZog conditions (below) |
+| CMD_ADD_BREAKPOINT (40) | plain (two ids at one address, each its own: removing one keeps the other; a temporary breakpoint at a user's is its own too); long addresses (128K bank 2 stops, bank 4 not; the ROM bank slot 0 shows, both `#7FFD` ROMs; 48K bank 1; a Next 8K bank stops only while that bank is in the slot, not the other half of its 16K page); DeZog conditions (below) |
 | CMD_REMOVE_BREAKPOINT (41) | removed ones never stop again; an unknown id is an empty ACK |
-| CMD_ADD_WATCHPOINT (42) / CMD_REMOVE_WATCHPOINT (43) | write, read, a 4-byte range (the address of the byte hit), `rw`, a long (bank) address, error 1 for access 0 / size 0, idempotent add and remove |
+| CMD_ADD_WATCHPOINT (42) / CMD_REMOVE_WATCHPOINT (43) | write, read, a 4-byte range (the address of the byte hit), `rw` (a write reports WATCHPOINT_WRITE), a long (bank) address, error 1 for access 0 / size 0, idempotent add and remove; one range breakpoint of DeZog's own (not shared with an equal CLI / GUI watchpoint) |
 | CMD_READ_STATE (50) / CMD_WRITE_STATE (51) | registers, memory and a paged-out bank come back; the original state is restored at the end |
 | CMD_GET_HISTORY_INFO / ENTRY (0xE0 / 0xE1) | TTD history: 10 entries coherent with memory, 200 + deep jumps (under DeZog's 5 s), out of range harmless, continue after browsing |
-| unknown (99, 0xFF) and unhandled DZRP 13, 14, 15, 22, 23 | an empty ACK (no NAK: DeZog compares the seq byte raw), the session goes on |
+| unknown (99, 0xFF) | an empty ACK (no NAK: DeZog compares the seq byte raw), the session goes on |
+| dezogif / CSpect 13, 14, 15, 22, 23 (not advertised) | SET_BREAKPOINTS: the original byte per 3-byte address, memory untouched; RESTORE_MEM: empty ACK, writes nothing; LOOPBACK: the payload back; EXEC_ASM: error 1 + 8 register bytes; INTERRUPT_ON_OFF: IFF1 / IFF2, empty ACK |
 
 **Conditional breakpoints** (CMD_ADD_BREAKPOINT's condition, translated by `dezogcondition.cpp`): a loop counts B
 (and DE in 16 bits) past a breakpoint; every stop is checked, so a stop where the condition is false fails.
