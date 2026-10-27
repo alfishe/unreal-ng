@@ -412,7 +412,7 @@ and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws`
 > | Field | Meaning |
 > |-------|---------|
 > | `held` | `true` while any hold is active |
-> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` (all `0` while the machine plays) |
+> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo`, `unpaced` (all `0` while the machine plays) |
 > | `holds_taken` | holds ever taken, by reason |
 > | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
 > | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
@@ -868,19 +868,21 @@ A Lua or Python script registers a [callback](../../../features/script-callbacks
 semantics of Lua's `callbacks()`, `callback_resume`, `callback_remove` and `callback_policy`:
 
 ```
-GET    /api/v1/emulator/{id}/callbacks                     {count, callbacks: [...]}: every callback with its statistics
+GET    /api/v1/emulator/{id}/callbacks                     {count, hooks?, callbacks: [...]}: every callback with its statistics
 POST   /api/v1/emulator/{id}/callbacks/{cb_id}/resume      A suspended one active again, fresh statistics (409: disabled)
 DELETE /api/v1/emulator/{id}/callbacks/{cb_id}             Remove it and its tap (the script is not told)
-PUT    /api/v1/emulator/{id}/callbacks/{cb_id}/policy      {policy: suspend | disable | ignore}
+PUT    /api/v1/emulator/{id}/callbacks/{cb_id}/policy      {policy: suspend | disable | ignore | unpaced}
 ```
 
 A callback has the Lua table's fields: `id, on` (`tap`, `breakpoint`, `game_event`), `owner` (`lua`, `python`),
 `label, target` (`"tap write #5C78 if MDT == 0"`, `"breakpoint 3"`, `"event died"`), `breakpoint`, `event`,
 `policy, state` (`active`, `suspended`, `disabled`), `reason`, `budget_us, ring, pending, hits, dropped, calls,
 errors, overruns, total_us, max_us, p99_us`, `last_overrun_frame` / `last_overrun_us` (after an overrun) and
-`last_error` (after an error); the optional ones are absent until they apply. Resume and policy answer
+`last_error` (after an error); a frame or sync hook also has `mode` (`frame`, `sync`; else `deferred`), `aborted`
+and `instructions`; the optional ones are absent until they apply. With hooks the list has `hooks`: `{unpaced,
+unpaced_spans, last_frame_us, max_frame_us, frames_over_share, frame_share_percent}`. Resume and policy answer
 `{status, message, callback}`, remove `{status, message, id, removed}`; an unknown callback is 404, a bad id or
-policy 400. Each route is a WebSocket `call`; a change is pushed as `callbacks_changed` on `debug.events`. The
+policy 400 (`unpaced` for a deferred callback too). Each route is a WebSocket `call`; a change is pushed as `callbacks_changed` on `debug.events`. The
 changing routes pass the automation gate as the breakpoint routes do.
 
 ### Analyzers

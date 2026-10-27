@@ -271,6 +271,12 @@ what it built.
    Lua and Python `on_tap`, `on_breakpoint`, `on_game_event`, `callbacks`, `callback_resume` / `_remove` /
    `_policy`, `callbacks_run`. Public page: [script-callbacks.md](../../features/script-callbacks.md).
 4. **The Lua hook state:** frame and sync modes, the instruction budget, and `unpaced` pacing.
+   Built 2026-10-27: `IScriptHookHost` (core) with `LuaHookHost` installed by Lua automation: one sandboxed Lua
+   state per emulator (base, string, math, table, utf8; no `pcall` / `load` / metatables), a chunk compiled at
+   register, a count hook per 1000 instructions for the budget (an overrun aborts and applies the policy at once),
+   `peek` / `poke` / `reg` / `set_reg` / `frame` / `tstate`, a shared value store. Sync hooks run inside the access,
+   frame hooks at the frame end (not on TTD replay); writes refused while TTD is not idle. `unpaced` holds the host
+   audio (`HostHoldReason::Unpaced`) after 3 long frames, releases after 50 calm ones; `hooks` status on every plane.
 5. **Logic callbacks** with TTD journaling; the GS read-value hooks.
 
 ### 9.1 Documentation per phase

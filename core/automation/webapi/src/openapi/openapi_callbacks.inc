@@ -56,13 +56,15 @@
         (*op)["summary"] = "Set a script callback's over-budget policy";
         (*op)["description"] =
             "Body {policy}: suspend (the default: suspended after 3 calls over the budget within 50 frames or one over "
-            "10 times it), disable (the same rule removes its tap) or ignore (counted in overruns only).";
+            "10 times it), disable (the same rule removes its tap), ignore (counted in overruns only) or, for a frame or "
+            "sync callback, unpaced (counted, and the machine runs slower than real time with its audio held while the "
+            "hooks keep the frames long).";
         (*op)["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         (*op)["requestBody"]["content"]["application/json"]["schema"]["required"].append("policy");
         (*op)["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["type"] = "string";
-        for (const char* name : {"suspend", "disable", "ignore"})
+        for (const char* name : {"suspend", "disable", "ignore", "unpaced"})
             (*op)["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["enum"].append(name);
         (*op)["responses"]["200"]["description"] = "{status, message, callback}";
         (*op)["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/ScriptCallbackResult";
-        (*op)["responses"]["400"]["description"] = "No policy in the body, an unknown policy or a bad callback id";
+        (*op)["responses"]["400"]["description"] = "No policy in the body, an unknown policy, unpaced for a deferred callback or a bad callback id";
     }

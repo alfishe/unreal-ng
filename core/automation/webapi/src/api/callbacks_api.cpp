@@ -58,9 +58,11 @@ void ReplyOutcome(std::function<void(const HttpResponsePtr&)>& callback, const c
 }
 }  // namespace
 
-/// @brief GET /api/v1/emulator/{id}/callbacks - {count, callbacks: [{id, on, owner, label, target, breakpoint, event?,
+/// @brief GET /api/v1/emulator/{id}/callbacks - {count, hooks?: {unpaced, unpaced_spans, last_frame_us, max_frame_us,
+/// frames_over_share, frame_share_percent}, callbacks: [{id, on, mode, owner, label, target, breakpoint, event?,
 /// policy, state, reason?, budget_us, ring, pending, hits, dropped, calls, errors, overruns, total_us, max_us, p99_us,
-/// last_overrun_frame?, last_overrun_us?, last_error?}]}: every script callback of the emulator, the Lua table's fields
+/// aborted?, instructions?, last_overrun_frame?, last_overrun_us?, last_error?}]}: every script callback of the
+/// emulator, the Lua table's fields
 void EmulatorAPI::getCallbacks(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
@@ -70,7 +72,8 @@ void EmulatorAPI::getCallbacks(const HttpRequestPtr& /*req*/, std::function<void
     if (!found)
         return;
     const std::vector<CallbackInfo> list = callbacks ? callbacks->List() : std::vector<CallbackInfo>();
-    Reply(callback, StateNodeToJson(callback_control::ListNode(list)), 200);
+    const CallbackHookStatus hooks = callbacks ? callbacks->HookStatus() : CallbackHookStatus{};
+    Reply(callback, StateNodeToJson(callback_control::ListNode(list, callbacks ? &hooks : nullptr)), 200);
 }
 
 /// @brief POST /api/v1/emulator/{id}/callbacks/{cb_id}/resume - a suspended callback active again with fresh
@@ -97,7 +100,7 @@ void EmulatorAPI::removeCallback(const HttpRequestPtr& /*req*/, std::function<vo
         ReplyOutcome(callback, callback_control::Remove(callbacks, cbId));
 }
 
-/// @brief PUT /api/v1/emulator/{id}/callbacks/{cb_id}/policy - {policy: suspend|disable|ignore}, what happens over
+/// @brief PUT /api/v1/emulator/{id}/callbacks/{cb_id}/policy - {policy: suspend|disable|ignore|unpaced}, what happens over
 /// the budget: {status, message, callback}; 400 a bad policy, 404 unknown
 void EmulatorAPI::setCallbackPolicy(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& cbId) const

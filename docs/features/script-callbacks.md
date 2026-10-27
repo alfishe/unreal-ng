@@ -20,6 +20,7 @@ Task recipe: [.recipe/analysis/script-callbacks.md](../../.recipe/analysis/scrip
 ## Contents
 
 - [Deferred mode](#deferred-mode)
+- [Frame and sync modes: the hook state](#frame-and-sync-modes-the-hook-state)
 - [The hit](#the-hit)
 - [Lua](#lua)
 - [Python](#python)
@@ -32,7 +33,7 @@ Task recipe: [.recipe/analysis/script-callbacks.md](../../.recipe/analysis/scrip
 
 ## Deferred mode
 
-Every callback of this version is **deferred**:
+A callback given a function is **deferred**:
 
 - The emulation thread only notes the hit in the callback's **ring**, together with a snapshot of the registers. It
   never waits for the script.
@@ -43,7 +44,77 @@ Every callback of this version is **deferred**:
 - The function cannot change the instruction that caused the hit. Whatever it writes (memory, registers) takes effect
   later, at the point where the emulator is when the function runs.
 
-The frame and sync modes (a function on the emulation thread with an instruction budget) come in the next phase.
+## Frame and sync modes: the hook state
+
+A callback given a **chunk** (a string of Lua source that returns the function) runs in the emulator's **hook state**:
+a Lua state of its own, separate from the script's, on the emulation thread.
+
+```lua
+-- sync: inside the access, before the next instruction
+on_tap({write = 0x5C78, ["if"] = "MDT < MDT@prev"}, [[
+    local lost = 0
+    return function(hit)
+        lost = lost + 1
+        shared_set("lost", lost)
+        if lost == 3 then poke(0x5C78, 5) end   -- infinite lives, at the instruction that took the last one
+    end]], {mode = "sync", instructions = 20000})
+
+-- frame (the default for a chunk): the frame's hits, at the frame's end
+on_tap({port_out = 0xFE, mask = 0x00FF}, [[return function(hit) shared_set("border", hit.value & 7) end]])
+print(shared_get("lost"), shared_get("border"))
+```
+
+| Mode | When the function runs |
+|:--|:--|
+| `sync` | inside the access, right after the instruction that made it: what it writes is there for the next instruction |
+| `frame` | at the end of the hit's frame, every hit of the frame in order; the hit's `frame` is the frame that just ended |
+
+A breakpoint stop or a game event runs a frame or sync callback at once (the machine is at a frame end or stopped).
+
+What a hook can use:
+
+| Function | Does |
+|:--|:--|
+| `peek(addr)`, `peek16(addr)` | read memory as the CPU sees it now |
+| `poke(addr, value)` | write memory as a CPU write would (ROM stays write-protected; TTD sees the page) |
+| `reg(name)`, `set_reg(name, value)` | a register, as the debugger names them (any case): `a f b c d e h l i r`, `a'` .. `l'`, `ixh ixl iyh iyl`, `af bc de hl ix iy sp pc ir memptr im iff1 iff2` |
+| `frame()`, `tstate()` | the frame counter and the T-state in the frame |
+| `shared_get(key)`, `shared_set(key, value)` | values shared with the scripts (`shared_get` / `shared_set` in Lua, `emu.shared_get` / `emu.shared_set` in Python): nil, a boolean, a number or a string |
+
+The libraries are `string`, `math`, `table`, `utf8` and the base functions without `pcall`, `xpcall`, `load`,
+`loadfile`, `dofile`, `collectgarbage`, `print`, `setmetatable` and `getmetatable`. There is no `io`, `os`, `package`,
+`debug` or `coroutine`: a hook works on the machine only, nothing in it can catch the budget's error, and no
+finalizer (`__gc`, which Lua runs with the count hook off) can run out of its reach.
+
+**The instruction budget.** Each call may run `instructions` Lua VM instructions (100000 by default), counted in
+steps of 1000. A call over it stops with `instruction budget of N exceeded`: it is counted in `aborted` and in
+`errors`, and the policy applies at once (a `suspend` callback is suspended with the reason `a call ran out of its N
+instructions`). The count does not depend on the host, so a runaway hook stops at the same point everywhere. A C
+function (`string.rep`, a pattern match) counts as one instruction.
+
+**The time budget** (`budget_us`) and its [policy](#over-budget-the-policy) apply as for deferred callbacks, measured
+on the emulation thread. Each call holds the machine for its time.
+
+**Changing the machine under time travel.** While a TTD session records or is browsed, `poke` and `set_reg` raise
+(`a hook does not change the machine while time travel records or browses`); reading is fine. Changes that TTD
+journals come with the `logic` callbacks.
+
+**The `unpaced` policy** is for hooks that may need more than a frame's time. Calls over the budget are counted, and
+the callback stays active. When frames run longer than 120 % of their period for 3 frames in a row while unpaced
+hooks run, the emulator goes **unpaced**: the host audio output is held (`unpaced` in the [audio mixer](../../.recipe/peripherals/audio-mixer-and-capture.md)'s
+holders), so the sound does not break up, and the machine runs as fast as the hooks let it. After 50 frames whose
+unpaced hooks took at most a quarter of the period, it goes back to real time and the sound comes back. Each change
+publishes `SCRIPT_CALLBACKS_CHANGED` with callback id 0.
+
+The hooks' time per frame: `callback_hooks()` (Lua), `emu.callback_hooks()` (Python), `hooks` in `GET /callbacks`
+and the `Hooks:` line of the CLI and MCP lists.
+
+| Field | Meaning |
+|:--|:--|
+| `unpaced` | the emulator is unpaced now |
+| `unpaced_spans` | times it went unpaced |
+| `last_frame_us`, `max_frame_us` | the hooks' time in the last frame, the most in one frame |
+| `frames_over_share` | frames whose hooks took over 10 % of the frame |
 
 ## The hit
 
@@ -77,18 +148,23 @@ id, err = on_tap({read = 0x8000, ["if"] = "a==7", dialect = "c"}, fn)
 id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)
 id, err = on_game_event("died", function(hit) print("died, value", hit.value) end)
 
--- The options (every registration): policy, budget_us, ring, label
+-- The options (every registration): policy, budget_us, ring, label; a chunk also mode, instructions
 id = on_tap({write = 0x9000}, fn, {policy = "ignore", budget_us = 500, ring = 1024, label = "score"})
+id = on_tap({write = 0x9000}, "return function(hit) end", {mode = "sync", instructions = 5000, policy = "unpaced"})
 
 callbacks()                -- every callback of the emulator: id, on, owner, label, target, policy, state, stats
 callback_resume(id)        -- a suspended one again, with fresh statistics
 callback_policy(id, "disable")
 callback_remove(id)
 callbacks_run()            -- run the waiting hits now (a script that loops without returning)
+callback_hooks()           -- the hooks' time per frame and the unpaced state
+shared_set("lives", 3)     -- shared with the hooks (nil, boolean, number, string)
+shared_get("lives")
 ```
 
 - A registration returns the id, or `-1` and the reason: an unknown name in the condition, a breakpoint that does
-  not exist, a full table (256 callbacks per emulator).
+  not exist, a full table (256 callbacks per emulator), a chunk that does not compile or does not return a function
+  (`hook: ...`), a function with `mode = "frame"` or `"sync"`.
 - An error the function raises is counted in `errors` and kept as `last_error`. The callback stays active.
 - The interpreter runs the waiting hits whenever it is idle. A script that loops for a long time calls
   `callbacks_run()` in its loop.
@@ -104,17 +180,22 @@ id = emu.on_tap(fn, "port_out", 0xFE, mask=0x00FF)    # kind: exec, read, write,
 id = emu.on_breakpoint(fn, 3)
 id = emu.on_game_event(fn, "died")
 id = emu.on_tap(fn, "write", 0x9000, policy="ignore", budget_us=500, ring=1024, label="score")
+id = emu.on_tap("return function(hit) shared_set('v', hit.value) end", "write", 0x9000, mode="sync", instructions=5000)
 
 emu.callbacks()                  # a list of dicts, as in Lua
 emu.callback_resume(id)          # False for an unknown or disabled one
 emu.callback_policy(id, "disable")
 emu.callback_remove(id)
 ue.callbacks_run()               # run the waiting hits now
+emu.callback_hooks()             # the hooks' time per frame and the unpaced state
+emu.shared_get("v")              # a value a hook or a script shared (None: not set)
 ```
 
 - A refused registration raises `ValueError` with the reason.
 - The Python thread runs the waiting hits every 10 ms when no task is running, under the GIL.
 - An exception from the function is counted in `errors` and kept as `last_error`.
+- A `str` instead of a function is a chunk of Lua source for the [hook state](#frame-and-sync-modes-the-hook-state)
+  (`mode="frame"`, the default, or `"sync"`): Python has no hook state of its own.
 
 ## Remote planes: list and manage
 
@@ -124,7 +205,7 @@ statistics and resumes, removes or re-policies one, with the semantics of `callb
 
 | Plane | List | Resume, remove, policy |
 |:--|:--|:--|
-| CLI | `callback list` (`callbacks`) | `callback resume <id>`, `callback remove <id>`, `callback policy <id> <suspend\|disable\|ignore>` |
+| CLI | `callback list` (`callbacks`) | `callback resume <id>`, `callback remove <id>`, `callback policy <id> <suspend\|disable\|ignore\|unpaced>` |
 | REST | `GET /api/v1/emulator/{id}/callbacks` | `POST .../callbacks/{cb_id}/resume`, `DELETE .../callbacks/{cb_id}`, `PUT .../callbacks/{cb_id}/policy {"policy": "ignore"}` |
 | WebSocket | every REST route as a `call`; `callbacks_changed` on `debug.events` | the same `call`s |
 | MCP | `control_execution` `callbacks` | `callback_resume`, `callback_remove`, `callback_policy` (`callback_id`, `policy`) |
@@ -134,6 +215,13 @@ The CLI and MCP print one line per callback:
 ```
 Script callbacks: 1
 #3 tap write #5C78 (lua "slow") suspended, policy suspend, hits 3, dropped 0, pending 0, calls 3, errors 0, overruns 3, max 3012 us, p99 4095 us, total 9030 us, budget 1000 us, ring 256, last overrun 3012 us at frame 412; reason: 3 calls over 1000 us within 50 frames
+```
+
+A frame or sync callback adds its mode after the state, and `aborted N, instructions N` after the ring. Once there
+are such callbacks the list has the hooks' line after the header:
+
+```
+Hooks: paced, last frame 12 us, max 340 us, frames over 10 % 0, unpaced spans 0
 ```
 
 - A disabled callback cannot be resumed (REST 409, CLI and MCP say so): the script registers it again.
@@ -164,14 +252,17 @@ The statistics of each callback, in `callbacks()`:
 | `total_us`, `max_us`, `p99_us` | call times (p99 from a histogram of powers of two) |
 | `last_overrun_frame`, `last_overrun_us` | the last call over the budget |
 | `last_error` | the last error's text |
+| `mode` | `deferred`, `frame` or `sync` |
+| `aborted`, `instructions` | frame and sync: calls stopped by the instruction budget; the budget |
 
 ## Over budget: the policy
 
 | Policy | When calls go over the budget |
 |:--|:--|
 | `suspend` (default) | after 3 calls over the budget within 50 frames, or one call over 10 times the budget, the callback is **suspended**: it notes no more hits until `callback_resume(id)` (statistics start again) |
-| `disable` | the same rule removes the callback's tap; the callback stays in the list as `disabled`; register again to get it back |
+| `disable` | the same rule removes the callback's tap; the callback stays in the list as `disabled`; register again to get it back. A frame or sync callback disabled on the emulation thread keeps its tap, silent, until it is removed |
 | `ignore` | counted in `overruns` only |
+| `unpaced` | frame and sync only: counted, and the emulator [slows down](#frame-and-sync-modes-the-hook-state) with its audio held instead |
 
 A single slow call (a garbage collection) does not suspend a callback. The `reason` field says why one was
 suspended or disabled. Every change of state publishes `SCRIPT_CALLBACKS_CHANGED` with the emulator and the callback
@@ -193,11 +284,13 @@ id.
   snapshot and a ring push of a few nanoseconds.
 - **A breakpoint stop or a game event:** one test of a counter when no callback asks for them.
 - **The script's side:** a call of the function per hit, on the script's thread; Python adds the GIL.
+- **A hook:** its call's time on the emulation thread, every hit (sync) or at the frame end (frame). With no frame
+  or sync callback the frame end tests one counter.
 
 ## Limits of this version
 
-- Deferred mode only. The frame and sync modes, the instruction budget and the `unpaced` policy come in phase 4;
-  callbacks that change the machine under TTD recording (`logic`) come in phase 5.
+- Hooks do not change the machine while TTD records; callbacks whose changes TTD journals (`logic`) come in phase 5.
+- One hook state per emulator for every script: two scripts' hooks share its globals.
 - No script manifest yet: callbacks are registered one call at a time.
 - Only Lua and Python register callbacks; CLI, REST, WebSocket and MCP list and manage them
   ([above](#remote-planes-list-and-manage)). No monitoring topic or readout carries them yet.

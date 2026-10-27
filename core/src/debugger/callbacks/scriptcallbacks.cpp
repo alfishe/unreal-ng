@@ -1,9 +1,11 @@
 #include "scriptcallbacks.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/callbacks/scripthookhost.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -11,6 +13,22 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/soundmanager.h"
+
+namespace
+{
+ScriptHookHostFactory g_hookHostFactory = nullptr;
+}  // namespace
+
+void SetScriptHookHostFactory(ScriptHookHostFactory factory)
+{
+    g_hookHostFactory = factory;
+}
+
+ScriptHookHostFactory GetScriptHookHostFactory()
+{
+    return g_hookHostFactory;
+}
 
 struct ScriptCallbackManager::Entry
 {
@@ -19,6 +37,7 @@ struct ScriptCallbackManager::Entry
     uint16_t tapId = BRK_INVALID;  ///< Tap: the hidden breakpoint
     std::string target;
     std::atomic<CallbackState> state{CallbackState::Active};
+    std::atomic<bool> armed{true};  ///< its tap or its counter is in place (Unarm once)
 
     // The ring: one producer (the emulation thread), one consumer (the script's thread)
     std::vector<CallbackHit> ring;
@@ -33,6 +52,17 @@ struct ScriptCallbackManager::Entry
     std::array<uint64_t, 32> histogram{};  ///< calls by the bit length of their µs
     std::vector<uint64_t> overrunFrames;   ///< the frames of the recent overruns
     std::string reason;
+};
+
+/// The emulation thread's view of the frame (OnFrameEnd)
+struct ScriptCallbackManager::FrameState
+{
+    uint64_t hookUs = 0;     ///< the hooks' time in this frame
+    uint64_t unpacedUs = 0;  ///< of it, the unpaced callbacks'
+    uint64_t lastEndUs = 0;
+    unsigned slowFrames = 0;
+    unsigned calmFrames = 0;
+    SoundManager::HostOutputHold hold;
 };
 
 namespace
@@ -111,6 +141,30 @@ const char* CallbackHitKindName(uint8_t kind)
     }
 }
 
+const char* CallbackModeName(CallbackMode mode)
+{
+    switch (mode)
+    {
+        case CallbackMode::Deferred: return "deferred";
+        case CallbackMode::Frame: return "frame";
+        case CallbackMode::Sync: return "sync";
+    }
+    return "deferred";
+}
+
+bool ParseCallbackMode(const std::string& text, CallbackMode& mode)
+{
+    if (text == "deferred")
+        mode = CallbackMode::Deferred;
+    else if (text == "frame")
+        mode = CallbackMode::Frame;
+    else if (text == "sync")
+        mode = CallbackMode::Sync;
+    else
+        return false;
+    return true;
+}
+
 const char* CallbackPolicyName(CallbackPolicy policy)
 {
     switch (policy)
@@ -118,6 +172,7 @@ const char* CallbackPolicyName(CallbackPolicy policy)
         case CallbackPolicy::Suspend: return "suspend";
         case CallbackPolicy::Disable: return "disable";
         case CallbackPolicy::Ignore: return "ignore";
+        case CallbackPolicy::Unpaced: return "unpaced";
     }
     return "suspend";
 }
@@ -141,12 +196,17 @@ bool ParseCallbackPolicy(const std::string& text, CallbackPolicy& policy)
         policy = CallbackPolicy::Disable;
     else if (text == "ignore")
         policy = CallbackPolicy::Ignore;
+    else if (text == "unpaced")
+        policy = CallbackPolicy::Unpaced;
     else
         return false;
     return true;
 }
 
-ScriptCallbackManager::ScriptCallbackManager(EmulatorContext* context) : _context(context) {}
+ScriptCallbackManager::ScriptCallbackManager(EmulatorContext* context)
+    : _context(context), _frame(std::make_unique<FrameState>())
+{
+}
 
 ScriptCallbackManager::~ScriptCallbackManager()
 {
@@ -155,6 +215,8 @@ ScriptCallbackManager::~ScriptCallbackManager()
         breakpoints->UnregisterTapSink(_sink);
     for (auto& slot : _slots)
         slot.reset();
+    _frame->hold.Release();
+    _host.reset();
 }
 
 BreakpointManager* ScriptCallbackManager::Breakpoints() const
@@ -174,6 +236,19 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
     entry->spec.ring = size;
     if (entry->spec.budgetUs == 0)
         entry->spec.budgetUs = 1;
+    const bool hook = spec.mode != CallbackMode::Deferred;
+    if (hook && entry->spec.instructions == 0)
+        entry->spec.instructions = kDefaultInstructions;
+    if (!hook && spec.policy == CallbackPolicy::Unpaced)
+    {
+        error = "the unpaced policy is for frame and sync callbacks";
+        return 0;
+    }
+    if (hook && spec.chunk.empty())
+    {
+        error = "a frame or sync callback is Lua source that returns its function";
+        return 0;
+    }
 
     BreakpointManager* breakpoints = Breakpoints();
     size_t slot = kMaxCallbacks;
@@ -224,9 +299,28 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
                 entry->target = "event " + spec.event;
                 break;
         }
+        if (hook && !_host)
+        {
+            if (const ScriptHookHostFactory factory = GetScriptHookHostFactory())
+                _host = factory(_context);
+            if (!_host)
+            {
+                error = "frame and sync callbacks need the Lua hook state (Lua automation is not built in)";
+                return 0;
+            }
+        }
         entry->id = _nextId++;
+        // Compiled before the slot is filled, so no hit runs a callback without its function. Under the lock (the
+        // slot is not taken yet); a hook's call never takes it, so this waits at most for one running call
+        if (hook && !_host->Compile(entry->id, spec.chunk, error))
+        {
+            error = "hook: " + error;
+            return 0;
+        }
         _slots[slot] = entry;  // before the tap is armed: its first hit finds it
     }
+    if (hook)
+        _hookCallbacks.fetch_add(1, std::memory_order_acq_rel);
 
     if (spec.trigger == CallbackTrigger::Tap)
     {
@@ -244,8 +338,15 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
         {
             if (_sink == BRK_NO_TAP)
                 error = "no tap sink left";
-            std::lock_guard<std::mutex> lock(_mutex);
-            _slots[slot].reset();
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                _slots[slot].reset();
+            }
+            if (hook)
+            {
+                _host->Forget(entry->id);
+                _hookCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+            }
             return 0;
         }
         std::lock_guard<std::mutex> lock(_mutex);
@@ -261,6 +362,8 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
 
 void ScriptCallbackManager::Unarm(Entry& entry)
 {
+    if (!entry.armed.exchange(false, std::memory_order_acq_rel))
+        return;
     if (entry.spec.trigger == CallbackTrigger::Tap)
     {
         if (entry.tapId != BRK_INVALID)
@@ -288,12 +391,17 @@ bool ScriptCallbackManager::Remove(uint32_t id)
         entry = _slots[slot];
     }
     // The tap goes first (with the CPU held), so no hit is in flight when the slot is freed
-    if (entry->state.load() != CallbackState::Disabled)
-        Unarm(*entry);
+    Unarm(*entry);
     entry->state.store(CallbackState::Disabled);
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _slots[slot].reset();
+    }
+    if (entry->spec.mode != CallbackMode::Deferred)
+    {
+        // A frame or event hit already taken holds the entry, not the function: Forget waits for a running call
+        _host->Forget(id);
+        _hookCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
     Publish(id);
     return true;
@@ -352,6 +460,8 @@ bool ScriptCallbackManager::SetPolicy(uint32_t id, CallbackPolicy policy)
         auto found = std::find_if(_slots.begin(), _slots.end(), [id](const auto& entry) { return entry && entry->id == id; });
         if (found == _slots.end())
             return false;
+        if (policy == CallbackPolicy::Unpaced && (*found)->spec.mode == CallbackMode::Deferred)
+            return false;
         (*found)->spec.policy = policy;
     }
     Publish(id);
@@ -374,10 +484,12 @@ std::vector<CallbackInfo> ScriptCallbackManager::List() const
         info.target = entry->target;
         info.breakpointId = entry->spec.trigger == CallbackTrigger::Tap ? entry->tapId : entry->spec.breakpointId;
         info.event = entry->spec.event;
+        info.mode = entry->spec.mode;
         info.policy = entry->spec.policy;
         info.state = entry->state.load(std::memory_order_acquire);
         info.reason = entry->reason;
         info.budgetUs = entry->spec.budgetUs;
+        info.instructions = entry->spec.mode != CallbackMode::Deferred ? entry->spec.instructions : 0;
         info.ring = entry->spec.ring;
         info.pending = entry->head.load(std::memory_order_acquire) - entry->tail.load(std::memory_order_acquire);
         info.stats = entry->stats;
@@ -455,6 +567,12 @@ std::vector<uint32_t> ScriptCallbackManager::Pending(const std::string& owner) c
 
 void ScriptCallbackManager::Report(uint32_t id, uint32_t us, bool failed, const std::string& error)
 {
+    Account(id, us, failed, error, false, true);
+}
+
+void ScriptCallbackManager::Account(uint32_t id, uint32_t us, bool failed, const std::string& error, bool aborted,
+                                    bool mayUnarm)
+{
     bool changed = false;
     std::shared_ptr<Entry> disable;
     {
@@ -476,25 +594,38 @@ void ScriptCallbackManager::Report(uint32_t id, uint32_t us, bool failed, const 
             stats.errors++;
             stats.lastError = error;
         }
-        if (us <= entry.spec.budgetUs || entry.state.load() != CallbackState::Active)
+        if (aborted)
+            stats.aborted++;
+        const bool over = us > entry.spec.budgetUs;
+        if ((!over && !aborted) || entry.state.load() != CallbackState::Active)
             return;
         const uint64_t frame = _context != nullptr ? _context->emulatorState.frame_counter : 0;
-        stats.overruns++;
-        stats.lastOverrunFrame = frame;
-        stats.lastOverrunUs = us;
-        if (entry.spec.policy == CallbackPolicy::Ignore)
+        if (over)
+        {
+            stats.overruns++;
+            stats.lastOverrunFrame = frame;
+            stats.lastOverrunUs = us;
+        }
+        // Unpaced: the emulator slows down instead (OnFrameEnd)
+        if (entry.spec.policy == CallbackPolicy::Ignore || entry.spec.policy == CallbackPolicy::Unpaced)
             return;
-        auto& recent = entry.overrunFrames;
-        recent.push_back(frame);
-        recent.erase(std::remove_if(recent.begin(), recent.end(),
-                                    [frame](uint64_t at) { return at + kOverrunWindow < frame; }),
-                     recent.end());
-        const bool far = static_cast<uint64_t>(us) > static_cast<uint64_t>(entry.spec.budgetUs) * kOverrunFactor;
-        if (!far && recent.size() < kOverrunsToSuspend)
-            return;
-        entry.reason = far ? "one call took " + std::to_string(us) + " us (budget " + std::to_string(entry.spec.budgetUs) + ")"
-                           : std::to_string(recent.size()) + " calls over " + std::to_string(entry.spec.budgetUs) +
-                                 " us within " + std::to_string(kOverrunWindow) + " frames";
+        if (aborted)
+            entry.reason = "a call ran out of its " + std::to_string(entry.spec.instructions) + " instructions";
+        else
+        {
+            auto& recent = entry.overrunFrames;
+            recent.push_back(frame);
+            recent.erase(std::remove_if(recent.begin(), recent.end(),
+                                        [frame](uint64_t at) { return at + kOverrunWindow < frame; }),
+                         recent.end());
+            const bool far = static_cast<uint64_t>(us) > static_cast<uint64_t>(entry.spec.budgetUs) * kOverrunFactor;
+            if (!far && recent.size() < kOverrunsToSuspend)
+                return;
+            entry.reason = far ? "one call took " + std::to_string(us) + " us (budget " +
+                                     std::to_string(entry.spec.budgetUs) + ")"
+                               : std::to_string(recent.size()) + " calls over " + std::to_string(entry.spec.budgetUs) +
+                                     " us within " + std::to_string(kOverrunWindow) + " frames";
+        }
         if (entry.spec.policy == CallbackPolicy::Suspend)
             entry.state.store(CallbackState::Suspended, std::memory_order_release);
         else
@@ -503,11 +634,129 @@ void ScriptCallbackManager::Report(uint32_t id, uint32_t us, bool failed, const 
     }
     if (disable)
     {
-        Unarm(*disable);
+        // A tap removed from the emulation thread would wait for the CPU it runs on: it stays armed, and silent
+        if (mayUnarm || disable->spec.trigger != CallbackTrigger::Tap)
+            Unarm(*disable);
         disable->state.store(CallbackState::Disabled, std::memory_order_release);
     }
     if (changed)
         Publish(id);
+}
+
+CallbackValue ScriptCallbackManager::SharedGet(const std::string& key) const
+{
+    std::lock_guard<std::mutex> lock(_sharedMutex);
+    auto found = _shared.find(key);
+    return found != _shared.end() ? found->second : CallbackValue{};
+}
+
+void ScriptCallbackManager::SharedSet(const std::string& key, const CallbackValue& value)
+{
+    std::lock_guard<std::mutex> lock(_sharedMutex);
+    if (value.kind == CallbackValue::Kind::Nil)
+        _shared.erase(key);
+    else
+        _shared[key] = value;
+}
+
+CallbackHookStatus ScriptCallbackManager::HookStatus() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    CallbackHookStatus status = _status;
+    status.unpaced = _unpaced.load(std::memory_order_acquire);
+    return status;
+}
+
+void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit)
+{
+    if (entry.state.load(std::memory_order_acquire) != CallbackState::Active || !_host)
+        return;
+    const auto start = std::chrono::steady_clock::now();
+    const HookCallResult result = _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+    const auto us = static_cast<uint32_t>(std::clamp<int64_t>(elapsed, 0, 0xFFFF'FFFF));
+    _frame->hookUs += us;
+    if (entry.spec.policy == CallbackPolicy::Unpaced)
+        _frame->unpacedUs += us;
+    Account(entry.id, us, !result.ok, result.error, result.aborted, false);
+}
+
+void ScriptCallbackManager::SetUnpaced(bool unpaced)
+{
+    if (_unpaced.load(std::memory_order_acquire) == unpaced)
+        return;
+    if (unpaced)
+    {
+        _frame->hold = SoundManager::HostOutputHold(_context != nullptr ? _context->pSoundManager : nullptr,
+                                                    SoundManager::HostHoldReason::Unpaced);
+        std::lock_guard<std::mutex> lock(_mutex);
+        _status.unpacedSpans++;
+    }
+    else
+        _frame->hold.Release();
+    _unpaced.store(unpaced, std::memory_order_release);
+    _frame->slowFrames = 0;
+    _frame->calmFrames = 0;
+    Publish(0);  // the manager's state, not one callback's
+}
+
+void ScriptCallbackManager::OnFrameEnd(uint64_t nowUs, uint32_t periodUs)
+{
+    std::vector<std::shared_ptr<Entry>> frameCallbacks;
+    bool unpacedCallbacks = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& entry : _slots)
+        {
+            if (!entry || entry->spec.mode == CallbackMode::Deferred)
+                continue;
+            if (entry->spec.mode == CallbackMode::Frame)
+                frameCallbacks.push_back(entry);
+            if (entry->spec.policy == CallbackPolicy::Unpaced && entry->state.load() == CallbackState::Active)
+                unpacedCallbacks = true;
+        }
+    }
+    // The frame's hits, oldest first; a callback suspended on the way drops the rest of its ring
+    for (const auto& entry : frameCallbacks)
+    {
+        uint32_t tail = entry->tail.load(std::memory_order_relaxed);
+        const uint32_t head = entry->head.load(std::memory_order_acquire);
+        while (tail != head)
+        {
+            const CallbackHit hit = entry->ring[tail & entry->mask];
+            tail++;
+            entry->tail.store(tail, std::memory_order_release);
+            RunHook(*entry, hit);
+        }
+    }
+
+    FrameState& frame = *_frame;
+    const uint64_t hookUs = frame.hookUs;
+    const uint64_t unpacedUs = frame.unpacedUs;
+    frame.hookUs = 0;
+    frame.unpacedUs = 0;
+    const uint64_t wallUs = frame.lastEndUs != 0 && nowUs > frame.lastEndUs ? nowUs - frame.lastEndUs : 0;
+    frame.lastEndUs = nowUs;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _status.lastFrameUs = static_cast<uint32_t>(std::min<uint64_t>(hookUs, 0xFFFF'FFFF));
+        _status.maxFrameUs = std::max(_status.maxFrameUs, _status.lastFrameUs);
+        if (hookUs * 100 > static_cast<uint64_t>(periodUs) * kFrameSharePercent)
+            _status.framesOverShare++;
+    }
+
+    if (!_unpaced.load(std::memory_order_acquire))
+    {
+        // The hooks keep the frame over its period: 120 %, so a host hiccup alone does not count
+        frame.slowFrames = unpacedUs > 0 && wallUs * 10 > static_cast<uint64_t>(periodUs) * 12 ? frame.slowFrames + 1 : 0;
+        if (frame.slowFrames >= kUnpacedSlowFrames)
+            SetUnpaced(true);
+        return;
+    }
+    frame.calmFrames = unpacedUs * 4 <= periodUs ? frame.calmFrames + 1 : 0;
+    if (!unpacedCallbacks || frame.calmFrames >= kUnpacedCalmFrames)
+        SetUnpaced(false);
 }
 
 void ScriptCallbackManager::Fill(CallbackHit& hit) const
@@ -549,7 +798,8 @@ void ScriptCallbackManager::Push(Entry& entry, CallbackHit& hit)
     entry.ring[head & entry.mask] = hit;
     entry.head.store(head + 1, std::memory_order_release);
     entry.hits.fetch_add(1, std::memory_order_relaxed);
-    if (head != tail)
+    // A frame callback's ring waits for the frame end, on this thread
+    if (head != tail || entry.spec.mode != CallbackMode::Deferred)
         return;
     // Empty to not empty: the script's thread may be waiting
     std::function<void()> wake;
@@ -580,7 +830,20 @@ void ScriptCallbackManager::OnTap(const BreakpointTapHit& hit)
     if (hit.kind == BRK_TAP_WRITE || hit.kind == BRK_TAP_READ)
         if (_context != nullptr && _context->pMemory != nullptr)
             record.value = _context->pMemory->DirectReadFromZ80Memory(hit.address);
-    Push(*entry, record);
+    Dispatch(*entry, record, false);
+}
+
+void ScriptCallbackManager::Dispatch(Entry& entry, CallbackHit& hit, bool atOnce)
+{
+    if (entry.spec.mode == CallbackMode::Deferred || (entry.spec.mode == CallbackMode::Frame && !atOnce))
+    {
+        Push(entry, hit);
+        return;
+    }
+    if (entry.state.load(std::memory_order_acquire) != CallbackState::Active)
+        return;
+    entry.hits.fetch_add(1, std::memory_order_relaxed);
+    RunHook(entry, hit);
 }
 
 void ScriptCallbackManager::OnBreakpointStop(uint16_t breakpointId, uint16_t address, uint8_t accessKind)
@@ -601,7 +864,7 @@ void ScriptCallbackManager::OnBreakpointStop(uint16_t breakpointId, uint16_t add
     record.kind = CallbackHit::kKindStop;
     record.value = accessKind;
     for (const auto& entry : targets)
-        Push(*entry, record);
+        Dispatch(*entry, record, true);
 }
 
 void ScriptCallbackManager::OnGameEvents(uint64_t frame, uint32_t fired, const std::vector<std::string>& names,
@@ -629,7 +892,7 @@ void ScriptCallbackManager::OnGameEvents(uint64_t frame, uint32_t fired, const s
             {
                 CallbackHit record = base;
                 record.value = values != nullptr ? values[index] : -1;
-                Push(*entry, record);
+                Dispatch(*entry, record, true);
             }
     }
 }

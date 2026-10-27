@@ -1332,7 +1332,7 @@ void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<
     session.SendResponse("Breakpoint #" + std::to_string(id) + (note.empty() ? " note cleared" : " note set"));
 }
 
-// HandleCallback: callback list | resume <id> | remove <id> | policy <id> <suspend|disable|ignore> (the scripts' callbacks)
+// HandleCallback: callback list | resume <id> | remove <id> | policy <id> <suspend|disable|ignore|unpaced> (the scripts' callbacks)
 void CLIProcessor::HandleCallback(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);

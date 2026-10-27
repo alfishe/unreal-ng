@@ -94,7 +94,7 @@ TEST_F(CliCallbacks_Test, ResumeRemoveAndPolicyAnswerOrRefuse)
 
     text = Run({"policy", cb, "maybe"}, &changed);
     EXPECT_FALSE(changed);
-    EXPECT_EQ(text, "Error: The policy is suspend, disable or ignore, not 'maybe'");
+    EXPECT_EQ(text, "Error: The policy is suspend, disable, ignore or unpaced, not 'maybe'");
     EXPECT_EQ(Run({"resume", "77"}), "Error: No callback 77");
     EXPECT_EQ(Run({"resume", "x"}).rfind("Error: The callback id is a number", 0), 0u);
     EXPECT_EQ(Run({"resume"}), CliCallbacks::kUsage);

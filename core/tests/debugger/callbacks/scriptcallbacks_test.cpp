@@ -1,16 +1,20 @@
 /// @file scriptcallbacks_test.cpp
-/// @brief Script callbacks, deferred mode (conditions-and-callbacks.md §3-§5): the emulation thread notes a hit in the
-/// callback's ring with a snapshot, a full ring drops and counts, the reported call times drive the policy, and a
-/// script's callbacks go with it.
+/// @brief Script callbacks (conditions-and-callbacks.md §3-§5). Deferred mode: the emulation thread notes a hit in
+/// the callback's ring with a snapshot, a full ring drops and counts, the reported call times drive the policy, and a
+/// script's callbacks go with it. Frame and sync modes, with a stand-in hook state: a sync call runs inside the
+/// access, a frame call at the frame end, a call out of instructions suspends, and unpaced hooks hold the audio.
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/callbacks/scripthookhost.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
@@ -19,6 +23,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/soundmanager.h"
 #include "haptics/hapticmixer.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
@@ -43,6 +48,61 @@ const uint8_t kProgram[] = {
 };
 constexpr uint16_t kByte = 0x9000;
 constexpr uint8_t kLives = 5;
+
+/// The hook state's stand-in: records the calls; a call can take time, fail or run out of instructions
+class FakeHookHost : public IScriptHookHost
+{
+public:
+    static inline FakeHookHost* last = nullptr;
+    std::vector<CallbackHit> hits;
+    std::vector<uint64_t> callFrames;  ///< the frame counter at each call
+    std::set<uint32_t> compiled;
+    std::set<uint32_t> forgotten;
+    uint32_t busyUs = 0;
+    bool abort = false;
+    EmulatorContext* context = nullptr;
+
+    bool Compile(uint32_t id, const std::string& chunk, std::string& error) override
+    {
+        if (chunk == "bad")
+        {
+            error = "syntax error";
+            return false;
+        }
+        compiled.insert(id);
+        return true;
+    }
+    HookCallResult Call(uint32_t /*id*/, const CallbackHit& hit, const std::string& /*event*/, uint64_t budget) override
+    {
+        hits.push_back(hit);
+        callFrames.push_back(context->emulatorState.frame_counter);
+        const auto end = std::chrono::steady_clock::now() + std::chrono::microseconds(busyUs);
+        while (std::chrono::steady_clock::now() < end)
+        {
+        }
+        HookCallResult result;
+        if (abort)
+        {
+            result.ok = false;
+            result.aborted = true;
+            result.instructions = budget + 1000;
+            result.error = "instruction budget exceeded";
+        }
+        return result;
+    }
+    void Forget(uint32_t id) override
+    {
+        forgotten.insert(id);
+    }
+};
+
+std::unique_ptr<IScriptHookHost> MakeFakeHookHost(EmulatorContext* context)
+{
+    auto host = std::make_unique<FakeHookHost>();
+    host->context = context;
+    FakeHookHost::last = host.get();
+    return host;
+}
 
 size_t OwnedBreakpoints(BreakpointManager* breakpoints)
 {
@@ -79,23 +139,32 @@ protected:
         z80->pc = 0x8000;
         z80->sp = 0x7F00;
         _callbacks = _context->pDebugManager->GetScriptCallbacks();
+        _factory = GetScriptHookHostFactory();
         _breakpoints = _context->pDebugManager->GetBreakpointsManager();
         ASSERT_NE(_callbacks, nullptr);
     }
+
+    ScriptHookHostFactory _factory = nullptr;
 
     void TearDown() override
     {
         if (_callbacks)
             _callbacks->RemoveAll();
+        SetScriptHookHostFactory(_factory);
+        FakeHookHost::last = nullptr;
         if (_context && _context->pControllerManager)
             _context->pControllerManager->SetHapticFeed(nullptr);
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
 
-    uint32_t WriteTap(const std::string& condition, CallbackPolicy policy = CallbackPolicy::Suspend, uint32_t ring = 256)
+    uint32_t WriteTap(const std::string& condition, CallbackPolicy policy = CallbackPolicy::Suspend, uint32_t ring = 256,
+                      CallbackMode mode = CallbackMode::Deferred)
     {
         CallbackSpec spec;
+        spec.mode = mode;
+        if (mode != CallbackMode::Deferred)
+            spec.chunk = "return function(hit) end";
         spec.trigger = CallbackTrigger::Tap;
         spec.tap.type = BRK_MEMORY;
         spec.tap.access = BRK_MEM_WRITE;
@@ -258,4 +327,148 @@ TEST_F(ScriptCallbacks_Test, BreakpointStopsAndGameEvents)
     _callbacks->Drain(onEvent, hits);
     ASSERT_GE(hits.size(), 2u) << "the event fires every frame";
     EXPECT_EQ(hits[0].kind, CallbackHit::kKindEvent);
+}
+
+TEST_F(ScriptCallbacks_Test, HooksNeedTheHookStateAndCompile)
+{
+    SetScriptHookHostFactory(nullptr);
+    CallbackSpec spec;
+    spec.trigger = CallbackTrigger::GameEvent;
+    spec.event = "died";
+    spec.mode = CallbackMode::Sync;
+    spec.chunk = "return function(hit) end";
+    std::string error;
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_NE(error.find("Lua hook state"), std::string::npos) << error;
+
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    spec.chunk = "bad";
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_EQ(error, "hook: syntax error");
+    spec.chunk.clear();
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u) << "a hook is source";
+    spec.chunk = "return function(hit) end";
+    spec.mode = CallbackMode::Deferred;
+    spec.policy = CallbackPolicy::Unpaced;
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_NE(error.find("unpaced"), std::string::npos) << error;
+
+    spec.mode = CallbackMode::Frame;
+    const uint32_t id = _callbacks->Register(spec, error);
+    ASSERT_NE(id, 0u) << error;
+    CallbackInfo info;
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.mode, CallbackMode::Frame);
+    EXPECT_EQ(info.instructions, ScriptCallbackManager::kDefaultInstructions);
+    EXPECT_EQ(FakeHookHost::last->compiled.count(id), 1u);
+    EXPECT_TRUE(_callbacks->WantsFrameEnd());
+    EXPECT_TRUE(_callbacks->Remove(id));
+    EXPECT_EQ(FakeHookHost::last->forgotten.count(id), 1u) << "its function goes with it";
+    EXPECT_FALSE(_callbacks->WantsFrameEnd());
+
+    const uint32_t deferred = WriteTap("");
+    EXPECT_FALSE(_callbacks->SetPolicy(deferred, CallbackPolicy::Unpaced)) << "a deferred callback cannot slow the machine";
+}
+
+TEST_F(ScriptCallbacks_Test, ASyncHookRunsInsideTheAccess)
+{
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    const uint32_t id = WriteTap("MDT < 5", CallbackPolicy::Suspend, 256, CallbackMode::Sync);
+    _emulator->RunNFrames(3, false);
+    FakeHookHost& host = *FakeHookHost::last;
+    ASSERT_GE(host.hits.size(), 2u) << "one held write a frame";
+    for (const CallbackHit& hit : host.hits)
+    {
+        EXPECT_EQ(hit.value, kLives - 1);
+        EXPECT_EQ(hit.pc, 0x8010) << "called right after the write instruction";
+    }
+    CallbackInfo info;
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.stats.calls, host.hits.size());
+    EXPECT_EQ(info.stats.hits, host.hits.size());
+    EXPECT_EQ(info.pending, 0u) << "no ring on the way";
+}
+
+TEST_F(ScriptCallbacks_Test, AFrameHookRunsAtTheFrameEnd)
+{
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    const uint32_t id = WriteTap("MDT < 5", CallbackPolicy::Suspend, 256, CallbackMode::Frame);
+    _emulator->RunNFrames(3, false);
+    FakeHookHost& host = *FakeHookHost::last;
+    ASSERT_GE(host.hits.size(), 2u);
+    for (size_t i = 0; i < host.hits.size(); i++)
+        EXPECT_EQ(host.callFrames[i], host.hits[i].frame + 1) << "at the end of the hit's frame (the counter moved on)";
+    CallbackInfo info;
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.stats.calls, host.hits.size());
+    EXPECT_EQ(info.pending, 0u);
+}
+
+TEST_F(ScriptCallbacks_Test, AHookOutOfInstructionsIsSuspended)
+{
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    const uint32_t id = WriteTap("", CallbackPolicy::Suspend, 256, CallbackMode::Sync);
+    FakeHookHost::last->abort = true;
+    _emulator->RunNFrames(3, false);
+    CallbackInfo info;
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.stats.calls, 1u) << "suspended at the first runaway call";
+    EXPECT_EQ(info.stats.aborted, 1u);
+    EXPECT_EQ(info.stats.errors, 1u);
+    EXPECT_EQ(info.state, CallbackState::Suspended);
+    EXPECT_NE(info.reason.find("100000 instructions"), std::string::npos) << info.reason;
+
+    // Disabled from the emulation thread: the tap stays armed and silent until the callback is removed
+    ASSERT_TRUE(_callbacks->Resume(id));
+    ASSERT_TRUE(_callbacks->SetPolicy(id, CallbackPolicy::Disable));
+    _emulator->RunNFrames(2, false);
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.state, CallbackState::Disabled);
+    EXPECT_EQ(info.stats.calls, 1u);
+    EXPECT_EQ(OwnedBreakpoints(_breakpoints), 1u);
+    EXPECT_TRUE(_callbacks->Remove(id));
+    EXPECT_EQ(OwnedBreakpoints(_breakpoints), 0u);
+}
+
+TEST_F(ScriptCallbacks_Test, UnpacedHooksHoldTheAudioWhileTheyKeepFramesLong)
+{
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    WriteTap("", CallbackPolicy::Unpaced, 256, CallbackMode::Sync);
+    FakeHookHost& host = *FakeHookHost::last;
+    SoundManager* sound = _context->pSoundManager;
+    constexpr uint32_t kPeriod = 400;
+    uint64_t now = 1'000'000;
+    BreakpointTapHit tap;
+    tap.cookie = 0;  // the first slot
+    tap.address = kByte;
+    tap.kind = BRK_TAP_WRITE;
+    auto frame = [&](uint32_t busyUs, uint64_t wallUs) {
+        host.busyUs = busyUs;
+        _callbacks->OnTap(tap);
+        now += wallUs;
+        _callbacks->OnFrameEnd(now, kPeriod);
+    };
+
+    frame(20, kPeriod);
+    for (unsigned i = 0; i + 1 < ScriptCallbackManager::kUnpacedSlowFrames; i++)
+        frame(20, kPeriod * 2);
+    EXPECT_FALSE(_callbacks->IsUnpaced()) << "one frame short";
+    frame(20, kPeriod);
+    frame(20, kPeriod * 2);
+    EXPECT_FALSE(_callbacks->IsUnpaced()) << "the slow frames run in a row";
+    for (unsigned i = 0; i < ScriptCallbackManager::kUnpacedSlowFrames; i++)
+        frame(20, kPeriod * 2);
+    ASSERT_TRUE(_callbacks->IsUnpaced());
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::Unpaced), 1);
+    EXPECT_EQ(_callbacks->HookStatus().unpacedSpans, 1u);
+
+    // The hooks still heavy (over a quarter of the period): it stays
+    for (unsigned i = 0; i < 10; i++)
+        frame(kPeriod / 2, kPeriod / 2);
+    EXPECT_TRUE(_callbacks->IsUnpaced());
+    EXPECT_GT(_callbacks->HookStatus().framesOverShare, 0u);
+    for (unsigned i = 0; i < ScriptCallbackManager::kUnpacedCalmFrames; i++)
+        frame(0, kPeriod / 10);
+    EXPECT_FALSE(_callbacks->IsUnpaced()) << "calm frames give the pace back";
+    EXPECT_EQ(sound->hostOutputHolds(SoundManager::HostHoldReason::Unpaced), 0);
 }

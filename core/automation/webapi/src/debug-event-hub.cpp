@@ -305,7 +305,13 @@ void DebugEventHub::OnScriptCallbacksChanged(Message* message)
     ScriptCallbackManager* callbacks =
         context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
     CallbackInfo info;
-    if (callbacks && callbacks->Get(payload->id, info))
+    if (payload->id == 0)
+    {
+        // Id 0: the manager's own state (the hooks went unpaced or back)
+        if (callbacks)
+            event["hooks"] = StateNodeToJson(callback_control::HooksNode(callbacks->HookStatus()));
+    }
+    else if (callbacks && callbacks->Get(payload->id, info))
         event["callback"] = StateNodeToJson(callback_control::InfoNode(info));
     else if (callbacks)
         event["removed"] = true;

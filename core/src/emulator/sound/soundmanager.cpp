@@ -386,6 +386,8 @@ const char* SoundManager::HostHoldReasonName(HostHoldReason reason)
             return "ttd_replay";
         case HostHoldReason::Turbo:
             return "turbo";
+        case HostHoldReason::Unpaced:
+            return "unpaced";
     }
     return "unknown";
 }
@@ -456,9 +458,10 @@ bool SoundManager::isHostOutputHeld() const
     return false;
 }
 
-int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive)
+int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive,
+                                           bool unpacedActive)
 {
-    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive};
+    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive, unpacedActive};
     int dropped = 0;
     for (size_t i = 0; i < kHostHoldReasons; i++)
     {

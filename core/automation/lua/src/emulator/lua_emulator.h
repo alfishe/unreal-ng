@@ -77,6 +77,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointcondition.h>
 #include <debugger/callbacks/scriptcallbacks.h>
+#include "../bindings/lua_callbackhit.h"
 #include <chrono>
 #include <set>
 #include <tuple>
@@ -227,6 +228,7 @@ protected:
     sol::state* _lua = nullptr;
     /// Script callbacks (docs/features/script-callbacks.md): the functions by (emulator id, callback id). Lua thread
     std::map<std::pair<std::string, uint32_t>, sol::protected_function> _callbacks;
+    std::set<std::string> _hookEmulators;  ///< emulators this script gave a frame or sync callback (chunks)
     /// Wakes the Lua thread when a callback has hits (AutomationLua sets it)
     std::function<void()> _callbackWake;
     static constexpr const char* kCallbackOwner = "lua";
@@ -7686,9 +7688,10 @@ public:
         // TS-Conf VDAC2 card (FT812): bus capture
         LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
 
-        // Script callbacks (docs/features/script-callbacks.md): deferred, on this Lua thread, with a snapshot of the hit.
-        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=}, fn [, options])
-        lua.set_function("on_tap", [this](const sol::table& where, const sol::protected_function& fn,
+        // Script callbacks (docs/features/script-callbacks.md): a function runs deferred, on this Lua thread, with a
+        // snapshot of the hit; a string is a chunk for the hook state (frame or sync mode, on the emulation thread).
+        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=}, fn_or_chunk [, options])
+        lua.set_function("on_tap", [this](const sol::table& where, const sol::object& fn,
                                           sol::optional<sol::table> options) -> std::tuple<int, sol::optional<std::string>> {
             CallbackSpec spec;
             spec.trigger = CallbackTrigger::Tap;
@@ -7719,13 +7722,13 @@ public:
                 return {-1, error};
             return RegisterCallback(spec, fn, options);
         });
-        lua.set_function("on_breakpoint", [this](uint16_t id, const sol::protected_function& fn, sol::optional<sol::table> options) {
+        lua.set_function("on_breakpoint", [this](uint16_t id, const sol::object& fn, sol::optional<sol::table> options) {
             CallbackSpec spec;
             spec.trigger = CallbackTrigger::Breakpoint;
             spec.breakpointId = id;
             return RegisterCallback(spec, fn, options);
         });
-        lua.set_function("on_game_event", [this](const std::string& event, const sol::protected_function& fn,
+        lua.set_function("on_game_event", [this](const std::string& event, const sol::object& fn,
                                                  sol::optional<sol::table> options) {
             CallbackSpec spec;
             spec.trigger = CallbackTrigger::GameEvent;
@@ -7756,10 +7759,39 @@ public:
             ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator());
             CallbackPolicy parsed;
             if (!ParseCallbackPolicy(policy, parsed))
-                return {false, "policy must be suspend, disable or ignore, not '" + policy + "'"};
+                return {false, "policy must be suspend, disable, ignore or unpaced, not '" + policy + "'"};
             if (!callbacks || !callbacks->SetPolicy(id, parsed))
-                return {false, std::string("no callback ") + std::to_string(id)};
+                return {false, parsed == CallbackPolicy::Unpaced
+                                   ? "no frame or sync callback " + std::to_string(id) + " (unpaced is for those)"
+                                   : std::string("no callback ") + std::to_string(id)};
             return {true, sol::nullopt};
+        });
+        // The hooks' time and the unpaced state: {unpaced, unpaced_spans, last_frame_us, max_frame_us, frames_over_share}
+        lua.set_function("callback_hooks", [this](sol::this_state state) -> sol::table {
+            sol::state_view lua(state);
+            sol::table t = lua.create_table();
+            if (ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator()))
+            {
+                const CallbackHookStatus status = callbacks->HookStatus();
+                t["unpaced"] = status.unpaced;
+                t["unpaced_spans"] = status.unpacedSpans;
+                t["last_frame_us"] = status.lastFrameUs;
+                t["max_frame_us"] = status.maxFrameUs;
+                t["frames_over_share"] = status.framesOverShare;
+            }
+            return t;
+        });
+        // Values the script and its hooks share: nil, a boolean, a number or a string
+        lua.set_function("shared_get", [this](sol::this_state state, const std::string& key) -> sol::object {
+            ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator());
+            return LuaFromCallbackValue(state, callbacks ? callbacks->SharedGet(key) : CallbackValue{});
+        });
+        lua.set_function("shared_set", [this](const std::string& key, const sol::object& value) {
+            CallbackValue shared;
+            if (!LuaToCallbackValue(value, shared))
+                throw std::invalid_argument("shared_set: '" + key + "' takes nil, a boolean, a number or a string");
+            if (ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator()))
+                callbacks->SharedSet(key, shared);
         });
         // Runs the callbacks with hits now (a script that loops on its own thread calls it; the idle loop does it itself)
         lua.set_function("callbacks_run", [this]() {
@@ -7793,25 +7825,7 @@ public:
     /// The hit as the function gets it
     static sol::table CallbackHitTable(sol::state_view lua, const CallbackHit& hit, const CallbackInfo* info)
     {
-        sol::table t = lua.create_table();
-        t["frame"] = hit.frame;
-        t["t"] = hit.t;
-        t["pc"] = hit.pc;
-        t["address"] = hit.address;
-        if (hit.value >= 0)
-            t["value"] = hit.value;
-        t["breakpoint"] = hit.breakpointId;
-        t["kind"] = CallbackHitKindName(hit.kind);
-        if (info != nullptr && !info->event.empty())
-            t["event"] = info->event;
-        sol::table regs = lua.create_table();
-        regs["af"] = hit.af; regs["bc"] = hit.bc; regs["de"] = hit.de; regs["hl"] = hit.hl;
-        regs["af_"] = hit.af2; regs["bc_"] = hit.bc2; regs["de_"] = hit.de2; regs["hl_"] = hit.hl2;
-        regs["ix"] = hit.ix; regs["iy"] = hit.iy; regs["sp"] = hit.sp; regs["pc"] = hit.pc;
-        regs["i"] = hit.i; regs["r"] = hit.r;
-        regs["a"] = hit.af >> 8; regs["f"] = hit.af & 0xFF;
-        t["regs"] = regs;
-        return t;
+        return LuaCallbackHitTable(lua, hit, info != nullptr ? info->event : std::string());
     }
 
     static sol::table CallbackInfoTable(sol::state_view lua, const CallbackInfo& info)
@@ -7819,6 +7833,7 @@ public:
         sol::table t = lua.create_table();
         t["id"] = info.id;
         t["on"] = CallbackTriggerName(info.trigger);
+        t["mode"] = CallbackModeName(info.mode);
         t["owner"] = info.owner;
         t["label"] = info.label;
         t["target"] = info.target;
@@ -7835,6 +7850,11 @@ public:
         const CallbackStats& s = info.stats;
         t["hits"] = s.hits; t["dropped"] = s.dropped; t["calls"] = s.calls; t["errors"] = s.errors;
         t["overruns"] = s.overruns; t["total_us"] = s.totalUs; t["max_us"] = s.maxUs; t["p99_us"] = s.p99Us;
+        if (info.mode != CallbackMode::Deferred)
+        {
+            t["aborted"] = s.aborted;
+            t["instructions"] = info.instructions;
+        }
         if (s.overruns > 0)
         {
             t["last_overrun_frame"] = s.lastOverrunFrame;
@@ -7845,33 +7865,52 @@ public:
         return t;
     }
 
-    /// on_tap / on_breakpoint / on_game_event: `options` {policy=, budget_us=, ring=, label=}. The id; -1 and the reason
-    std::tuple<int, sol::optional<std::string>> RegisterCallback(CallbackSpec spec, const sol::protected_function& fn,
+    /// on_tap / on_breakpoint / on_game_event: `options` {mode=, policy=, budget_us=, instructions=, ring=, label=}.
+    /// A function runs deferred; a string is a chunk for the hook state (mode frame, the default, or sync). The id; -1
+    /// and the reason
+    std::tuple<int, sol::optional<std::string>> RegisterCallback(CallbackSpec spec, const sol::object& fn,
                                                                  const sol::optional<sol::table>& options)
     {
         Emulator* emulator = effectiveEmulator();
         ScriptCallbackManager* callbacks = CallbacksOf(emulator);
         if (!callbacks)
             return {-1, std::string("no emulator")};
-        if (!fn.valid())
-            return {-1, std::string("a function expected")};
+        const bool chunk = fn.get_type() == sol::type::string;
+        if (!chunk && fn.get_type() != sol::type::function)
+            return {-1, std::string("a function, or a chunk (Lua source that returns one) for the hook state")};
         spec.owner = kCallbackOwner;
+        spec.mode = chunk ? CallbackMode::Frame : CallbackMode::Deferred;
+        if (chunk)
+            spec.chunk = fn.as<std::string>();
         if (options)
         {
             const sol::table& t = *options;
+            if (auto mode = t.get<sol::optional<std::string>>("mode"))
+            {
+                if (!ParseCallbackMode(*mode, spec.mode))
+                    return {-1, "mode must be deferred, frame or sync, not '" + *mode + "'"};
+                if (chunk == (spec.mode == CallbackMode::Deferred))
+                    return {-1, std::string(chunk ? "a chunk runs in the hook state: mode frame or sync"
+                                                  : "a function runs deferred: frame and sync take a chunk (Lua source)")};
+            }
             const std::string policy = t.get<sol::optional<std::string>>("policy").value_or("suspend");
             if (!ParseCallbackPolicy(policy, spec.policy))
-                return {-1, "policy must be suspend, disable or ignore, not '" + policy + "'"};
+                return {-1, "policy must be suspend, disable, ignore or unpaced, not '" + policy + "'"};
             spec.budgetUs = t.get<sol::optional<uint32_t>>("budget_us").value_or(spec.budgetUs);
+            spec.instructions = t.get<sol::optional<uint64_t>>("instructions").value_or(0);
             spec.ring = t.get<sol::optional<uint32_t>>("ring").value_or(spec.ring);
             spec.label = t.get<sol::optional<std::string>>("label").value_or("");
         }
-        callbacks->SetWake(kCallbackOwner, _callbackWake);
+        if (!chunk)
+            callbacks->SetWake(kCallbackOwner, _callbackWake);
         std::string error;
         const uint32_t id = callbacks->Register(spec, error);
         if (id == 0)
             return {-1, error};
-        _callbacks[{emulator->GetId(), id}] = fn;
+        if (chunk)
+            _hookEmulators.insert(emulator->GetId());
+        else
+            _callbacks[{emulator->GetId(), id}] = fn.as<sol::protected_function>();
         return {static_cast<int>(id), sol::nullopt};
     }
 
@@ -7924,7 +7963,8 @@ public:
     /// The Lua state goes (stop, reset): every callback of this script on every emulator
     void ForgetCallbacks()
     {
-        std::set<std::string> emulators;
+        std::set<std::string> emulators = std::move(_hookEmulators);
+        _hookEmulators.clear();
         for (const auto& [key, fn] : _callbacks)
             emulators.insert(key.first);
         for (const std::string& id : emulators)

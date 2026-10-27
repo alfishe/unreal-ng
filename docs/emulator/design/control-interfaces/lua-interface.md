@@ -1700,7 +1700,10 @@ disassemble(cpu:get_pc(), 16)
 
 A script is called back on a tap (a memory or port access, with an optional condition; it never stops the machine),
 on a breakpoint's stop, or on a game event of the controller profile. The emulation thread notes each hit with a
-snapshot of the registers; the function runs later on this interpreter's thread (deferred mode). Full reference:
+snapshot of the registers; the function runs later on this interpreter's thread (deferred mode). A string instead
+of a function is a chunk (Lua source that returns the function) for the emulator's hook state: it runs on the
+emulation thread inside the access (`mode = "sync"`) or at the frame end (`"frame"`), with an instruction budget.
+Full reference:
 [docs/features/script-callbacks.md](../../../features/script-callbacks.md).
 
 ```lua
@@ -1718,6 +1721,12 @@ callback_resume(id)                          -- a suspended callback again, stat
 callback_policy(id, "ignore")
 callback_remove(id)
 callbacks_run()                              -- run the waiting hits now (a script looping without returning)
+
+-- The hook state: peek, peek16, poke, reg, set_reg, frame, tstate, shared_get, shared_set
+id, err = on_tap({write = 0x5C78}, [[return function(hit) shared_set("lives", hit.value) end]],
+                 {mode = "sync", instructions = 5000})  -- policy may also be "unpaced"
+print(shared_get("lives"))                   -- values shared with the hooks: nil, boolean, number, string
+callback_hooks()                             -- {unpaced, unpaced_spans, last_frame_us, max_frame_us, frames_over_share}
 ```
 
 A registration returns the id, or `-1` and the reason. The callbacks go when the interpreter stops.

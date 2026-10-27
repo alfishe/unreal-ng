@@ -11,6 +11,9 @@
 #include "_helpers/testwaithelper.h"
 #include "automation-lua.h"  // its LuaEmulator declares the Automation singleton
 #include "debugger/callbacks/scriptcallbacks.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "hooks/luahookhost.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -146,4 +149,186 @@ TEST(AutomationLuaCallbacks_Test, OnTapRunsTheFunctionOnTheLuaThreadAndGoesWithT
     }
     EXPECT_TRUE(callbacks->List().empty()) << "the script's callbacks go with its interpreter";
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The hook state (docs/features/script-callbacks.md "Hook state"): a chunk compiled per callback, run on the
+/// emulation thread inside the access (sync) with the machine API and an instruction budget
+class LuaHookHost_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    ScriptCallbackManager* _callbacks = nullptr;
+    ScriptHookHostFactory _factory = nullptr;
+    std::unique_ptr<ttd::TimeTravelController> _controller;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        for (size_t i = 0; i < sizeof(kWrites); i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), kWrites[i]);
+        _context->pMemory->DirectWriteToZ80Memory(0x9000, 5);
+        Z80* z80 = _context->pCore->GetZ80();
+        z80->pc = 0x8000;
+        z80->sp = 0x7F00;
+        z80->iy = 0x5C3A;
+        z80->hl = 0x1234;
+        _callbacks = _context->pDebugManager->GetScriptCallbacks();
+        _factory = GetScriptHookHostFactory();
+        SetScriptHookHostFactory(&LuaHookHost::Create);
+    }
+
+    void TearDown() override
+    {
+        if (_callbacks)
+            _callbacks->RemoveAll();
+        if (_controller)
+        {
+            _controller->StopRecording();
+            _context->pTimeTravelHooks = _context->pTimeTravelManager;
+            _context->ttdWriteSink = _context->pTimeTravelManager;
+            _context->pTimeTravelController = nullptr;
+            _controller.reset();
+        }
+        SetScriptHookHostFactory(_factory);
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    uint32_t SyncTap(const std::string& chunk, uint64_t instructions = 0)
+    {
+        CallbackSpec spec;
+        spec.trigger = CallbackTrigger::Tap;
+        spec.tap.type = BRK_MEMORY;
+        spec.tap.access = BRK_MEM_WRITE;
+        spec.tap.address = 0x9000;
+        spec.tap.condition = "MDT < 5";
+        spec.owner = "test";
+        spec.mode = CallbackMode::Sync;
+        spec.chunk = chunk;
+        spec.instructions = instructions;
+        std::string error;
+        const uint32_t id = _callbacks->Register(spec, error);
+        EXPECT_NE(id, 0u) << error;
+        return id;
+    }
+
+    CallbackInfo Info(uint32_t id)
+    {
+        CallbackInfo info;
+        EXPECT_TRUE(_callbacks->Get(id, info));
+        return info;
+    }
+};
+
+TEST_F(LuaHookHost_Test, AHookReadsAndWritesTheMachineAndSharesValues)
+{
+    const uint32_t id = SyncTap(R"(
+        local count = 0
+        return function(hit)
+            count = count + 1
+            shared_set("count", count)
+            shared_set("value", hit.value)
+            shared_set("peek", peek(0x9000))
+            shared_set("hl", reg("hl"))
+            shared_set("same_frame", frame() == hit.frame)
+            poke(0x9100, hit.value + 0x10)
+        end)");
+    _emulator->RunNFrames(3, false);
+    const CallbackInfo info = Info(id);
+    EXPECT_EQ(info.stats.errors, 0u) << info.stats.lastError;
+    ASSERT_GE(info.stats.calls, 2u);
+    EXPECT_EQ(_callbacks->SharedGet("count").i, static_cast<int64_t>(info.stats.calls)) << "one state for every call";
+    EXPECT_EQ(_callbacks->SharedGet("value").i, 4);
+    EXPECT_EQ(_callbacks->SharedGet("peek").i, 4) << "inside the access: the byte just written";
+    EXPECT_EQ(_callbacks->SharedGet("hl").i, 0x1234);
+    EXPECT_TRUE(_callbacks->SharedGet("same_frame").b);
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9100), 0x14);
+
+    std::string error;
+    CallbackSpec spec;
+    spec.trigger = CallbackTrigger::GameEvent;
+    spec.event = "x";
+    spec.mode = CallbackMode::Frame;
+    spec.chunk = "return 5";
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_NE(error.find("returns its function"), std::string::npos) << error;
+    spec.chunk = "return function(";
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_EQ(error.rfind("hook: ", 0), 0u) << error;
+}
+
+TEST_F(LuaHookHost_Test, ARunawayHookStopsAtItsBudgetAndCannotCatchIt)
+{
+    const uint32_t runaway = SyncTap("return function() local n = 0 while true do n = n + 1 end end", 5000);
+    const uint32_t catcher = SyncTap("return function() pcall(function() while true do end end) end");
+    const uint32_t opener = SyncTap("return function() io.open('x') end");
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    _emulator->RunNFrames(2, false);
+    EXPECT_EQ(_context->emulatorState.frame_counter, frame + 2) << "the machine ran on";
+
+    CallbackInfo info = Info(runaway);
+    EXPECT_EQ(info.stats.calls, 1u);
+    EXPECT_EQ(info.stats.aborted, 1u);
+    EXPECT_EQ(info.state, CallbackState::Suspended);
+    EXPECT_NE(info.reason.find("5000 instructions"), std::string::npos) << info.reason;
+    EXPECT_NE(info.stats.lastError.find("instruction budget of 5000"), std::string::npos) << info.stats.lastError;
+    info = Info(catcher);
+    EXPECT_EQ(info.stats.aborted, 0u) << "no pcall in the hook state";
+    EXPECT_NE(info.stats.lastError.find("pcall"), std::string::npos) << info.stats.lastError;
+    info = Info(opener);
+    EXPECT_NE(info.stats.lastError.find("io"), std::string::npos) << "no io library: " << info.stats.lastError;
+}
+
+TEST_F(LuaHookHost_Test, AHookDoesNotChangeTheMachineWhileTimeTravelRecords)
+{
+    _controller = std::make_unique<ttd::TimeTravelController>(_context);
+    _context->pTimeTravelHooks = _controller.get();
+    _context->ttdWriteSink = _controller.get();
+    _context->pTimeTravelController = _controller.get();
+    ASSERT_TRUE(ttd::TTDControl(_context).Execute({"start", {}}).Ok());
+
+    const uint32_t id = SyncTap(R"(return function(hit)
+        shared_set("seen", peek(0x9000))
+        poke(0x9100, 1)
+    end)");
+    _emulator->RunNFrames(2, true);
+    const CallbackInfo info = Info(id);
+    ASSERT_GE(info.stats.calls, 1u);
+    EXPECT_EQ(info.stats.errors, info.stats.calls);
+    EXPECT_NE(info.stats.lastError.find("time travel"), std::string::npos) << info.stats.lastError;
+    EXPECT_EQ(_callbacks->SharedGet("seen").i, 4) << "reading is fine";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9100), 0);
+}
+
+TEST_F(LuaHookHost_Test, OnTapTakesAChunkFromTheScript)
+{
+    SetScriptHookHostFactory(nullptr);  // AutomationLua::start installs it
+    BoundLua lua;
+    lua.start();
+    lua.Bind(_emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        shared_set("limit", 3)
+        sync = on_tap({write = 0x9000, ["if"] = "MDT < 5"},
+                      [[return function(hit) shared_set("seen", (shared_get("seen") or 0) + 1) end]],
+                      {mode = "sync", instructions = 2000, policy = "unpaced"})
+        framed = on_tap({write = 0x9000}, [[return function(hit) shared_set("framed", shared_get("limit")) end]])
+        wrong, why = on_tap({write = 0x9000}, function() end, {mode = "sync"})
+        print(sync, framed, wrong, why)
+    )", message, output)) << message;
+    EXPECT_EQ(output, "1\t2\t-1\ta function runs deferred: frame and sync take a chunk (Lua source)\n");
+    _emulator->RunNFrames(2, false);
+    ASSERT_TRUE(lua.executeCode(R"(
+        local list = callbacks()
+        assert(list[1].mode == "sync" and list[1].instructions == 2000 and list[1].policy == "unpaced", list[1].mode)
+        assert(list[2].mode == "frame" and list[2].aborted == 0)
+        assert(shared_get("seen") >= 1 and shared_get("framed") == 3)
+        assert(callback_hooks().unpaced == false)
+    )", message, output)) << message;
+    lua.stop();
+    EXPECT_TRUE(_callbacks->List().empty()) << "a script's hooks go with it";
 }

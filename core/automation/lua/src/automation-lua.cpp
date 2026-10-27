@@ -1,5 +1,6 @@
 #include "automation-lua.h"
 #include "emulator/lua_emulator.h"
+#include "hooks/luahookhost.h"
 
 #include <chrono>
 #include <thread>
@@ -13,6 +14,8 @@
 void AutomationLua::start()
 {
     stop();
+    // Frame and sync script callbacks run in a Lua hook state of each emulator (docs/features/script-callbacks.md)
+    SetScriptHookHostFactory(&LuaHookHost::Create);
 
     _stopThread = false;
     _initialized = false;

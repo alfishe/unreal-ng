@@ -209,7 +209,8 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   not taken).
 - An event stream, not a value: queued per connection (256 at most), the oldest dropped first; the next event sent
   carries `"dropped": n` ([§4](#4-delivery-and-threads)).
-- `callbacks_changed` (`{id, callback}` or `{id, removed: true}`): a Lua / Python [script callback](../../../features/script-callbacks.md)
+- `callbacks_changed` (`{id, callback}`, `{id, removed: true}`, or `{id: 0, hooks}` when the script hooks go unpaced or
+  back to real time): a Lua / Python [script callback](../../../features/script-callbacks.md)
   was registered, resumed, re-policied, suspended or disabled over its budget (`callback` as one entry of
   `GET /callbacks`), or removed. The routes that manage them (`GET /callbacks`, `POST /callbacks/{cb_id}/resume`,
   `DELETE /callbacks/{cb_id}`, `PUT /callbacks/{cb_id}/policy`) are `call`s like every route. A hit is not an event:

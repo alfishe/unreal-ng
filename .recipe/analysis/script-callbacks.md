@@ -85,6 +85,38 @@ callback_remove(slow)
 - `disable` instead of `suspend` removes the callback's tap for good (register again to get it back).
 - A slow deferred callback never slows the emulator: the cost is its backlog (`pending` grows, then `dropped`).
 
+## Sync and frame hooks: the Lua hook state
+
+A function runs on the script's thread, later. To change the machine **at** the hit (patch a value, skip a routine)
+or to sum per frame, give the callback as a **chunk** (Lua source returning the function) and a `mode`: `sync` runs
+it inside the access, `frame` at the end of the hit's frame. It runs in a small Lua state on the emulation thread with
+`peek`, `peek16`, `poke`, `reg`, `set_reg`, `frame`, `tstate`, and `shared_get` / `shared_set` to talk to the script.
+
+```lua
+sync = on_tap({write = 0x5C78}, [[
+    local n = 0
+    return function(hit)
+        n = n + 1
+        shared_set("writes", n)
+        shared_set("same_frame", frame() == hit.frame)
+    end]], {mode = "sync", label = "frames-sync"})
+framed = on_tap({write = 0x5C78}, [[return function(hit) shared_set("framed", peek(0x5C78)) end]], {mode = "frame"})
+-- ... later, on the script's thread
+print(shared_get("writes"), shared_get("same_frame"), shared_get("framed"))   --  24  true  21
+bad, why = on_tap({write = 0x5C78}, "return function(", {mode = "sync"})
+print(bad, why)                    --  -1  hook: chunk:1: <name> or '...' expected near <eof>
+```
+
+- Each call has an instruction budget (`instructions`, 100000 by default). A runaway is cut and handled by its
+  policy at once: `return function() while true do end end` with `instructions = 5000` is `suspended`, reason
+  `a call ran out of its 5000 instructions`, `aborted` 1. `pcall`, `load`, `setmetatable`, `print` are not there.
+- `poke` and `set_reg` fail while TTD records or replays: the hook would change the machine behind the journal.
+- Policy `unpaced` (hooks only): a heavy hook may make frames long; after 3 frames over 1.2 times the period the
+  audio is held (`audio mixer` holders `"unpaced": 1`) instead of crackling, released after 50 calm frames or when
+  the callback goes. `callback_hooks()` (REST `hooks`) shows `unpaced`, `unpaced_spans`, `last_frame_us`,
+  `max_frame_us`: an 8M-iteration loop on `exec = 0x0038` gave `unpaced true 1`, `last_frame_us` ~286000.
+- Python: pass the chunk as a `str`, `emu.on_tap("return function(hit) ... end", "write", 0x5C78, mode="sync")`.
+
 ## From outside the script: REST, CLI, MCP, WebSocket
 
 Only a script registers a callback, but any client lists them and resumes, removes or re-policies one (same fields

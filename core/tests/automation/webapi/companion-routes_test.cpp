@@ -47,6 +47,7 @@ std::string Concrete(std::string path)
 const std::set<std::string> kDebugRoutes = {
     "DELETE /breakpoints",
     "DELETE /breakpoints/{bp_id}",
+    "DELETE /callbacks/{cb_id}",
     "DELETE /ttd/bookmarks/{label}",
     "POST /asm/sync/{action}",
     "POST /asm/{verb}",
@@ -59,6 +60,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /breakpoints",
     "POST /breakpoints/hits/reset",
     "POST /breakpoints/remove",
+    "POST /callbacks/{cb_id}/resume",
     "POST /control/audio/gs",
     "POST /control/audio/gs/porttrace",
     "POST /control/audio/midi",
@@ -110,6 +112,7 @@ const std::set<std::string> kDebugRoutes = {
     "PUT /breakpoints/{bp_id}/enable",
     "PUT /breakpoints/{bp_id}/group",
     "PUT /breakpoints/{bp_id}/note",
+    "PUT /callbacks/{cb_id}/policy",
     "PUT /debugmode",
     "PUT /disk/{drive}/sector/{cyl}/{side}/{sec}",
     "PUT /memory/{addr}",

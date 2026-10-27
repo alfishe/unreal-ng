@@ -16,7 +16,8 @@ namespace callback_text
 {
 /// "#3 tap write #5C78 if MDT == 0 (lua "lives") active, policy suspend, hits 6, dropped 0, pending 0, calls 6,
 /// errors 0, overruns 0, max 60 us, p99 63 us, total 300 us, budget 1000 us, ring 256[, last overrun ...][; reason:
-/// ...][; last error: ...]"
+/// ...][; last error: ...]". A frame or sync callback says its mode after the state and its aborted calls and
+/// instruction budget after the ring: "... active, sync, policy unpaced, ..., ring 256, aborted 0, instructions 100000"
 template <class Reader>
 std::string FormatLine(const Reader& r)
 {
@@ -31,11 +32,18 @@ std::string FormatLine(const Reader& r)
             out << (owner.empty() ? "" : " ") << "\"" << label << "\"";
         out << ")";
     }
-    out << " " << r.Text("state") << ", policy " << r.Text("policy") << ", hits " << r.Number("hits") << ", dropped "
+    const std::string mode = r.Text("mode");
+    const bool hook = !mode.empty() && mode != "deferred";
+    out << " " << r.Text("state");
+    if (hook)
+        out << ", " << mode;
+    out << ", policy " << r.Text("policy") << ", hits " << r.Number("hits") << ", dropped "
         << r.Number("dropped") << ", pending " << r.Number("pending") << ", calls " << r.Number("calls") << ", errors "
         << r.Number("errors") << ", overruns " << r.Number("overruns") << ", max " << r.Number("max_us") << " us, p99 "
         << r.Number("p99_us") << " us, total " << r.Number("total_us") << " us, budget " << r.Number("budget_us")
         << " us, ring " << r.Number("ring");
+    if (hook)
+        out << ", aborted " << r.Number("aborted") << ", instructions " << r.Number("instructions");
     if (r.Has("last_overrun_frame"))
         out << ", last overrun " << r.Number("last_overrun_us") << " us at frame " << r.Number("last_overrun_frame");
     if (r.Has("reason"))
@@ -49,5 +57,16 @@ std::string FormatLine(const Reader& r)
 inline std::string ListHeader(size_t count)
 {
     return "Script callbacks: " + std::to_string(count);
+}
+
+/// "Hooks: paced, last frame 120 us, max 900 us, frames over 10 % 0, unpaced spans 0", from the list's `hooks`
+template <class Reader>
+std::string FormatHooks(const Reader& r)
+{
+    std::ostringstream out;
+    out << "Hooks: " << (r.Number("unpaced") != 0 ? "unpaced" : "paced") << ", last frame " << r.Number("last_frame_us")
+        << " us, max " << r.Number("max_frame_us") << " us, frames over " << r.Number("frame_share_percent")
+        << " % " << r.Number("frames_over_share") << ", unpaced spans " << r.Number("unpaced_spans");
+    return out.str();
 }
 }  // namespace callback_text

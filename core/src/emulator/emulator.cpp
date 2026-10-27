@@ -1764,11 +1764,17 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
     }
     NoteDebugChange();
     // A resumed machine runs paced to real time and is heard: a host output hold whose reason is not in effect
-    // now (no direct run on any thread, no TTD replay, no turbo) is a holder that leaked it - drop it, so no
-    // pause / step / seek sequence on any surface can leave the speakers silent (SoundManager::HostOutputHold)
+    // now (no direct run on any thread, no TTD replay, no turbo, no unpaced script hooks) is a holder that leaked
+    // it - drop it, so no pause / step / seek sequence on any surface can leave the speakers silent
+    // (SoundManager::HostOutputHold)
     if (_context && _context->pSoundManager)
+    {
+        ScriptCallbackManager* callbacks =
+            _context->pDebugManager != nullptr ? _context->pDebugManager->GetScriptCallbacks() : nullptr;
         _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping() || _stepOverHostHold.IsHeld(),
-                                                          _context->ttdReplayActive, _context->config.turbo_mode);
+                                                          _context->ttdReplayActive, _context->config.turbo_mode,
+                                                          callbacks != nullptr && callbacks->IsUnpaced());
+    }
     _stoppedAtExecBreakpoint = false;  // the run goes on from there
     ResetLineStepAnchor();             // Full-speed run invalidates line-step anchor
 }

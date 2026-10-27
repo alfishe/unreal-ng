@@ -1201,6 +1201,9 @@ id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
 emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]
 emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(id)
 ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
+# A str instead of fn: Lua source for the emulator's hook state (mode="frame" by default, or "sync"; instructions=)
+id = emu.on_tap("return function(hit) shared_set('lives', hit.value) end", "write", 0x5C78, mode="sync")
+emu.shared_get("lives"); emu.shared_set("limit", 3); emu.callback_hooks()
 ```
 
 ### DebugManager Class

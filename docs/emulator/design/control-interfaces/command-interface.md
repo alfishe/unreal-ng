@@ -463,7 +463,7 @@ them). TTD seek / replay and turbo mode hold the output the same way; the user's
 Each hold ends with the run, seek or turbo span that took it (also when it fails), and `resume` drops any hold
 whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
 `GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
-`ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
+`ttd_replay`, `turbo`, `unpaced`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
 `frames_delivered`, `frames_audible`, `frames_held`.
 
 **Operation log** (`ops`):

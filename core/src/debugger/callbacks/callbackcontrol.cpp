@@ -1,5 +1,7 @@
 #include "callbackcontrol.h"
 
+#include <algorithm>
+
 #include "debugger/callbacks/callbacktext.h"
 
 namespace callback_control
@@ -25,6 +27,8 @@ struct NodeReader
             return value->i;
         if (value->kind == StateNode::Kind::Double)
             return static_cast<int64_t>(value->d);
+        if (value->kind == StateNode::Kind::Bool)
+            return value->b ? 1 : 0;
         return 0;
     }
     bool Has(const char* key) const
@@ -83,6 +87,7 @@ StateNode InfoNode(const CallbackInfo& info)
     StateNode t = StateNode::Object();
     t["id"] = info.id;
     t["on"] = CallbackTriggerName(info.trigger);
+    t["mode"] = CallbackModeName(info.mode);
     t["owner"] = info.owner;
     t["label"] = info.label;
     t["target"] = info.target;
@@ -105,6 +110,11 @@ StateNode InfoNode(const CallbackInfo& info)
     t["total_us"] = s.totalUs;
     t["max_us"] = s.maxUs;
     t["p99_us"] = s.p99Us;
+    if (info.mode != CallbackMode::Deferred)
+    {
+        t["aborted"] = s.aborted;
+        t["instructions"] = info.instructions;
+    }
     if (s.overruns > 0)
     {
         t["last_overrun_frame"] = s.lastOverrunFrame;
@@ -115,10 +125,27 @@ StateNode InfoNode(const CallbackInfo& info)
     return t;
 }
 
-StateNode ListNode(const std::vector<CallbackInfo>& callbacks)
+StateNode HooksNode(const CallbackHookStatus& status)
+{
+    StateNode t = StateNode::Object();
+    t["unpaced"] = status.unpaced;
+    t["unpaced_spans"] = status.unpacedSpans;
+    t["last_frame_us"] = status.lastFrameUs;
+    t["max_frame_us"] = status.maxFrameUs;
+    t["frames_over_share"] = status.framesOverShare;
+    t["frame_share_percent"] = ScriptCallbackManager::kFrameSharePercent;
+    return t;
+}
+
+StateNode ListNode(const std::vector<CallbackInfo>& callbacks, const CallbackHookStatus* hooks)
 {
     StateNode list = StateNode::Object();
     list["count"] = static_cast<uint64_t>(callbacks.size());
+    // The hooks' line only once there are hooks (a list of deferred callbacks reads as before)
+    const bool anyHook = std::any_of(callbacks.begin(), callbacks.end(),
+                                     [](const CallbackInfo& info) { return info.mode != CallbackMode::Deferred; });
+    if (hooks != nullptr && (anyHook || hooks->unpacedSpans > 0 || hooks->maxFrameUs > 0))
+        list["hooks"] = HooksNode(*hooks);
     StateNode& items = list["callbacks"];
     items = StateNode::Array();
     for (const CallbackInfo& info : callbacks)
@@ -135,6 +162,8 @@ std::string FormatList(const StateNode& list)
 {
     const StateNode* items = list.find("callbacks");
     std::string text = callback_text::ListHeader(items != nullptr ? items->size() : 0);
+    if (const StateNode* hooks = list.find("hooks"))
+        text += "\n" + callback_text::FormatHooks(NodeReader{*hooks});
     if (items != nullptr)
         for (const StateNode& callback : items->items)
             text += "\n" + FormatLine(callback);
@@ -187,12 +216,16 @@ Outcome SetPolicy(ScriptCallbackManager* manager, const std::string& text, const
 {
     CallbackPolicy parsed = CallbackPolicy::Suspend;
     if (!ParseCallbackPolicy(policy, parsed))
-        return Failure(400, "Bad Request", "The policy is suspend, disable or ignore, not '" + policy + "'");
+        return Failure(400, "Bad Request",
+                       "The policy is suspend, disable, ignore or unpaced, not '" + policy + "'");
     uint32_t id = 0;
     CallbackInfo info;
     Outcome failure;
     if (!Find(manager, text, id, info, failure))
         return failure;
+    if (parsed == CallbackPolicy::Unpaced && info.mode == CallbackMode::Deferred)
+        return Failure(400, "Bad Request",
+                       "Callback " + std::to_string(id) + " is deferred: the unpaced policy is for frame and sync callbacks");
     if (!manager->SetPolicy(id, parsed))
         return Failure(404, "Not Found", "No callback " + std::to_string(id));
     manager->Get(id, info);

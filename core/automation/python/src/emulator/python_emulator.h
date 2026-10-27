@@ -1187,6 +1187,12 @@ namespace PythonBindings
         return *functions;
     }
     constexpr const char* kPythonCallbackOwner = "python";
+    /// Emulators the Python state gave a frame or sync callback (a chunk: no function here to keep)
+    inline std::set<std::string>& PythonHookEmulators()
+    {
+        static auto* emulators = new std::set<std::string>();
+        return *emulators;
+    }
 
     inline ScriptCallbackManager* PythonCallbacksOf(Emulator* emulator)
     {
@@ -1220,6 +1226,7 @@ namespace PythonBindings
         py::dict d;
         d["id"] = info.id;
         d["on"] = CallbackTriggerName(info.trigger);
+        d["mode"] = CallbackModeName(info.mode);
         d["owner"] = info.owner;
         d["label"] = info.label;
         d["target"] = info.target;
@@ -1241,29 +1248,56 @@ namespace PythonBindings
             d["last_overrun_frame"] = s.lastOverrunFrame;
             d["last_overrun_us"] = s.lastOverrunUs;
         }
+        if (info.mode != CallbackMode::Deferred)
+        {
+            d["aborted"] = s.aborted;
+            d["instructions"] = info.instructions;
+        }
         if (!s.lastError.empty())
             d["last_error"] = s.lastError;
         return d;
     }
 
-    /// on_tap / on_breakpoint / on_game_event: the id; ValueError with the reason when refused
-    inline int PythonRegisterCallback(Emulator& self, CallbackSpec spec, const py::function& fn, const std::string& policy,
-                                      uint32_t budgetUs, uint32_t ring, const std::string& label)
+    /// on_tap / on_breakpoint / on_game_event: the id; ValueError with the reason when refused. A callable runs
+    /// deferred on the Python thread; a str is a chunk of Lua source for the hook state (mode frame, the default, or
+    /// sync; docs/features/script-callbacks.md "Hook state")
+    inline int PythonRegisterCallback(Emulator& self, CallbackSpec spec, const py::object& fn, const std::string& policy,
+                                      uint32_t budgetUs, uint32_t ring, const std::string& label,
+                                      const std::string& mode, uint64_t instructions)
     {
         ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
         if (!callbacks)
             throw py::value_error("no debugger on this emulator");
+        const bool chunk = py::isinstance<py::str>(fn);
+        if (!chunk && !PyCallable_Check(fn.ptr()))
+            throw py::value_error("a function, or a chunk (Lua source that returns one) for the hook state");
         spec.owner = kPythonCallbackOwner;
+        spec.mode = chunk ? CallbackMode::Frame : CallbackMode::Deferred;
+        if (!mode.empty())
+        {
+            if (!ParseCallbackMode(mode, spec.mode))
+                throw py::value_error("mode must be deferred, frame or sync, not '" + mode + "'");
+            if (chunk == (spec.mode == CallbackMode::Deferred))
+                throw py::value_error(chunk ? "a chunk runs in the hook state: mode frame or sync"
+                                            : "a function runs deferred: frame and sync take a chunk (Lua source)");
+        }
+        if (chunk)
+            spec.chunk = fn.cast<std::string>();
         if (!ParseCallbackPolicy(policy, spec.policy))
-            throw py::value_error("policy must be suspend, disable or ignore, not '" + policy + "'");
+            throw py::value_error("policy must be suspend, disable, ignore or unpaced, not '" + policy + "'");
         spec.budgetUs = budgetUs;
         spec.ring = ring;
-        spec.label = label.empty() ? py::str(py::getattr(fn, "__name__", py::str(""))).cast<std::string>() : label;
+        spec.instructions = instructions;
+        spec.label = label.empty() && !chunk ? py::str(py::getattr(fn, "__name__", py::str(""))).cast<std::string>()
+                                             : label;
         std::string error;
         const uint32_t id = callbacks->Register(spec, error);
         if (id == 0)
             throw py::value_error(error);
-        PythonCallbackFunctions()[{self.GetId(), id}] = fn;
+        if (chunk)
+            PythonHookEmulators().insert(self.GetId());
+        else
+            PythonCallbackFunctions()[{self.GetId(), id}] = fn;
         return static_cast<int>(id);
     }
 
@@ -1319,7 +1353,8 @@ namespace PythonBindings
     {
         auto& functions = PythonCallbackFunctions();
         auto* manager = EmulatorManager::GetInstance();
-        std::set<std::string> emulators;
+        std::set<std::string> emulators = std::move(PythonHookEmulators());
+        PythonHookEmulators().clear();
         for (const auto& [key, fn] : functions)
             emulators.insert(key.first);
         for (const std::string& id : emulators)
@@ -1652,10 +1687,10 @@ namespace PythonBindings
         auto emulatorClass = py::class_<Emulator>(m, "Emulator")
             // Lifecycle control
             .def("start", &Emulator::Start, "Start emulator execution")
-            .def("on_tap", [](Emulator& self, const py::function& fn, const std::string& kind, uint16_t address,
+            .def("on_tap", [](Emulator& self, const py::object& fn, const std::string& kind, uint16_t address,
                               int32_t to, const std::string& page, int32_t mask, const std::string& condition,
                               const std::string& dialect, const std::string& policy, uint32_t budget_us, uint32_t ring,
-                              const std::string& label) -> int {
+                              const std::string& label, const std::string& mode, uint64_t instructions) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Tap;
                 if (kind == "exec") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_EXECUTE; }
@@ -1672,34 +1707,37 @@ namespace PythonBindings
                 std::string error;
                 if (!BreakpointManager::ApplyScriptOptions(spec.tap, page, to, false, mask, "", error))
                     throw py::value_error(error);
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
             }, "Call fn(hit) on the Python thread at every access the tap sees (kind exec / read / write / port_in / "
-               "port_out; condition: only when it holds). hit: frame, t, pc, address, value, kind, regs. The id; "
-               "ValueError when refused. docs/features/script-callbacks.md",
+               "port_out; condition: only when it holds). hit: frame, t, pc, address, value, kind, regs. fn as a str: "
+               "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call). "
+               "The id; ValueError when refused. docs/features/script-callbacks.md",
                py::arg("fn"), py::arg("kind"), py::arg("address"), py::arg("to") = -1, py::arg("page") = "",
                py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
-               py::arg("budget_us") = 1000, py::arg("ring") = 256, py::arg("label") = "")
-            .def("on_breakpoint", [](Emulator& self, const py::function& fn, uint16_t id, const std::string& policy,
-                                     uint32_t budget_us, uint32_t ring, const std::string& label) -> int {
+               py::arg("budget_us") = 1000, py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "",
+               py::arg("instructions") = 0)
+            .def("on_breakpoint", [](Emulator& self, const py::object& fn, uint16_t id, const std::string& policy,
+                                     uint32_t budget_us, uint32_t ring, const std::string& label,
+                                     const std::string& mode, uint64_t instructions) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Breakpoint;
                 spec.breakpointId = id;
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
-            }, "Call fn(hit) on the Python thread each time breakpoint id stops the machine (it still stops). The id; "
-               "ValueError when refused",
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
+            }, "Call fn(hit) on the Python thread each time breakpoint id stops the machine (it still stops); a str: "
+               "a chunk for the hook state. The id; ValueError when refused",
                py::arg("fn"), py::arg("id"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
-               py::arg("ring") = 256, py::arg("label") = "")
-            .def("on_game_event", [](Emulator& self, const py::function& fn, const std::string& event,
+               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0)
+            .def("on_game_event", [](Emulator& self, const py::object& fn, const std::string& event,
                                      const std::string& policy, uint32_t budget_us, uint32_t ring,
-                                     const std::string& label) -> int {
+                                     const std::string& label, const std::string& mode, uint64_t instructions) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::GameEvent;
                 spec.event = event;
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
             }, "Call fn(hit) on the Python thread on each frame the game event fires (game.events; hit.value: its "
-               "value). The id; ValueError when refused",
+               "value); a str: a chunk for the hook state. The id; ValueError when refused",
                py::arg("fn"), py::arg("event"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
-               py::arg("ring") = 256, py::arg("label") = "")
+               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0)
             .def("callbacks", [](Emulator& self) -> py::list {
                 py::list list;
                 if (ScriptCallbackManager* callbacks = PythonCallbacksOf(&self))
@@ -1721,10 +1759,66 @@ namespace PythonBindings
             .def("callback_policy", [](Emulator& self, uint32_t id, const std::string& policy) -> bool {
                 CallbackPolicy parsed;
                 if (!ParseCallbackPolicy(policy, parsed))
-                    throw py::value_error("policy must be suspend, disable or ignore, not '" + policy + "'");
+                    throw py::value_error("policy must be suspend, disable, ignore or unpaced, not '" + policy + "'");
                 ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
                 return callbacks && callbacks->SetPolicy(id, parsed);
-            }, "Set a callback's over-budget policy; False for an unknown id", py::arg("id"), py::arg("policy"))
+            }, "Set a callback's over-budget policy; False for an unknown id (or unpaced on a deferred one)",
+               py::arg("id"), py::arg("policy"))
+            .def("callback_hooks", [](Emulator& self) -> py::dict {
+                py::dict d;
+                if (ScriptCallbackManager* callbacks = PythonCallbacksOf(&self))
+                {
+                    const CallbackHookStatus status = callbacks->HookStatus();
+                    d["unpaced"] = status.unpaced;
+                    d["unpaced_spans"] = status.unpacedSpans;
+                    d["last_frame_us"] = status.lastFrameUs;
+                    d["max_frame_us"] = status.maxFrameUs;
+                    d["frames_over_share"] = status.framesOverShare;
+                }
+                return d;
+            }, "The hooks' time per frame and the unpaced state")
+            .def("shared_get", [](Emulator& self, const std::string& key) -> py::object {
+                ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
+                const CallbackValue value = callbacks ? callbacks->SharedGet(key) : CallbackValue{};
+                switch (value.kind)
+                {
+                    case CallbackValue::Kind::Boolean: return py::bool_(value.b);
+                    case CallbackValue::Kind::Integer: return py::int_(value.i);
+                    case CallbackValue::Kind::Number: return py::float_(value.n);
+                    case CallbackValue::Kind::String: return py::str(value.s);
+                    case CallbackValue::Kind::Nil: break;
+                }
+                return py::none();
+            }, "A value the scripts and the hooks share (None: not set)", py::arg("key"))
+            .def("shared_set", [](Emulator& self, const std::string& key, const py::object& value) {
+                CallbackValue shared;
+                if (value.is_none())
+                    shared.kind = CallbackValue::Kind::Nil;
+                else if (py::isinstance<py::bool_>(value))
+                {
+                    shared.kind = CallbackValue::Kind::Boolean;
+                    shared.b = value.cast<bool>();
+                }
+                else if (py::isinstance<py::int_>(value))
+                {
+                    shared.kind = CallbackValue::Kind::Integer;
+                    shared.i = value.cast<int64_t>();
+                }
+                else if (py::isinstance<py::float_>(value))
+                {
+                    shared.kind = CallbackValue::Kind::Number;
+                    shared.n = value.cast<double>();
+                }
+                else if (py::isinstance<py::str>(value))
+                {
+                    shared.kind = CallbackValue::Kind::String;
+                    shared.s = value.cast<std::string>();
+                }
+                else
+                    throw py::value_error("shared_set: '" + key + "' takes None, a bool, a number or a str");
+                if (ScriptCallbackManager* callbacks = PythonCallbacksOf(&self))
+                    callbacks->SharedSet(key, shared);
+            }, "Share a value with the hooks and the other scripts (None removes it)", py::arg("key"), py::arg("value"))
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
             .def("pause", [](Emulator& self) -> std::string {

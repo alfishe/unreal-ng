@@ -1,20 +1,31 @@
 #pragma once
 
 /// @file scriptcallbacks.h
-/// @brief Script callbacks, deferred mode (docs/inprogress/2026-10-26-breakpoint-taps/conditions-and-callbacks.md §3-§5,
+/// @brief Script callbacks (docs/inprogress/2026-10-26-breakpoint-taps/conditions-and-callbacks.md §3-§5,
 /// docs/features/script-callbacks.md): a script asks to be called on a tap, on a breakpoint's stop or on a game
-/// event. The emulation thread only notes the hit in the callback's ring (a snapshot of the registers, the access and
-/// the frame); the script's own thread drains the ring and runs its function, then reports the call's time. The
-/// manager keeps the statistics and applies the over-budget policy. The emulator never waits for a script: a full
-/// ring drops the hit and counts it.
+/// event.
 ///
-/// Threads: Register / Remove / Resume / SetPolicy / List from any thread; OnTap, OnBreakpointStop and OnGameEvents
-/// on the emulation thread; Drain and Report on the script's thread (one consumer per callback).
+/// Deferred mode: the emulation thread only notes the hit in the callback's ring (a snapshot of the registers, the
+/// access and the frame); the script's own thread drains the ring and runs its function, then reports the call's
+/// time. The emulator never waits for a script: a full ring drops the hit and counts it.
+///
+/// Frame and sync modes: the callback is a chunk of Lua source that the hook state of the emulator
+/// (scripthookhost.h) compiles and runs on the emulation thread, with an instruction budget. A sync callback runs
+/// inside the access; a frame callback's hits wait in its ring until the frame ends. A breakpoint stop or a game
+/// event runs a frame or sync callback at once. The unpaced policy lets such a callback slow the emulator down: the
+/// host audio output is held while the hooks keep frames over their period, so the sound does not break up.
+///
+/// The manager keeps the statistics and applies the over-budget policy.
+///
+/// Threads: Register / Remove / Resume / SetPolicy / List / SharedGet / SharedSet from any thread; OnTap,
+/// OnBreakpointStop, OnGameEvents and OnFrameEnd on the emulation thread; Drain and Report on the script's thread
+/// (one consumer per callback).
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,11 +42,20 @@ enum class CallbackTrigger : uint8_t
     GameEvent    ///< a game event of the profile (game.events) fired on a frame
 };
 
+/// Where and when the function runs
+enum class CallbackMode : uint8_t
+{
+    Deferred,  ///< the script's thread, after the hit (a function of the script)
+    Frame,     ///< the hook state, at the end of the hit's frame (a chunk)
+    Sync       ///< the hook state, inside the access (a chunk)
+};
+
 enum class CallbackPolicy : uint8_t
 {
     Suspend,  ///< the default: suspended until resumed (callback resume)
     Disable,  ///< removed for the session
-    Ignore    ///< counted only
+    Ignore,   ///< counted only
+    Unpaced   ///< frame and sync: counted, and the emulator runs slower than real time instead (audio held)
 };
 
 enum class CallbackState : uint8_t
@@ -57,6 +77,9 @@ struct CallbackSpec
     CallbackPolicy policy = CallbackPolicy::Suspend;
     uint32_t budgetUs = 1000;    ///< per call
     uint32_t ring = 256;         ///< hits kept for the script (16 .. 4096)
+    CallbackMode mode = CallbackMode::Deferred;
+    std::string chunk;           ///< Frame, Sync: Lua source that returns the function
+    uint64_t instructions = 0;   ///< Frame, Sync: VM instructions per call (0: kDefaultInstructions)
 };
 
 /// One hit as the callback sees it: a snapshot, never live state
@@ -83,6 +106,7 @@ struct CallbackStats
     uint64_t calls = 0;
     uint64_t errors = 0;    ///< the function raised
     uint64_t overruns = 0;  ///< calls over the budget
+    uint64_t aborted = 0;   ///< frame and sync calls stopped by the instruction budget (errors too)
     uint64_t totalUs = 0;
     uint32_t maxUs = 0;
     uint32_t p99Us = 0;     ///< from a histogram of powers of two
@@ -100,21 +124,55 @@ struct CallbackInfo
     std::string target;     ///< "tap #12 write #5C3A if …", "breakpoint 3", "event died"
     uint16_t breakpointId = 0;
     std::string event;
+    CallbackMode mode = CallbackMode::Deferred;
     CallbackPolicy policy = CallbackPolicy::Suspend;
     CallbackState state = CallbackState::Active;
     std::string reason;     ///< why suspended or disabled
     uint32_t budgetUs = 0;
+    uint64_t instructions = 0;  ///< Frame, Sync
     uint32_t ring = 0;
     uint32_t pending = 0;   ///< hits in the ring
     CallbackStats stats;
 };
 
+/// The hook state's time, over every frame and sync callback (§5)
+struct CallbackHookStatus
+{
+    bool unpaced = false;        ///< the host audio is held: the hooks keep the frames over their period
+    uint64_t unpacedSpans = 0;   ///< times it went unpaced
+    uint32_t lastFrameUs = 0;    ///< the hooks' time in the last frame
+    uint32_t maxFrameUs = 0;
+    uint64_t framesOverShare = 0;  ///< frames whose hooks took over kFrameSharePercent of the frame
+};
+
+/// A value the scripts and the hooks share (shared_get / shared_set): plain values only
+struct CallbackValue
+{
+    enum class Kind : uint8_t
+    {
+        Nil,
+        Boolean,
+        Integer,
+        Number,
+        String
+    };
+    Kind kind = Kind::Nil;
+    bool b = false;
+    int64_t i = 0;
+    double n = 0;
+    std::string s;
+};
+
 const char* CallbackTriggerName(CallbackTrigger trigger);
 /// CallbackHit::kind as the scripts see it: exec, read, write, port_in, port_out, stop, event
 const char* CallbackHitKindName(uint8_t kind);
+const char* CallbackModeName(CallbackMode mode);
+bool ParseCallbackMode(const std::string& text, CallbackMode& mode);
 const char* CallbackPolicyName(CallbackPolicy policy);
 const char* CallbackStateName(CallbackState state);
 bool ParseCallbackPolicy(const std::string& text, CallbackPolicy& policy);
+
+class IScriptHookHost;
 
 class ScriptCallbackManager : public IBreakpointTapSink
 {
@@ -127,6 +185,13 @@ public:
     static constexpr uint64_t kOverrunWindow = 50;
     static constexpr uint32_t kOverrunFactor = 10;
     static constexpr const char* kOwnerPrefix = "callback:";
+    static constexpr uint64_t kDefaultInstructions = 100000;
+    /// The hooks' share of a frame that counts the frame in framesOverShare
+    static constexpr uint32_t kFrameSharePercent = 10;
+    /// Unpaced: on after this many frames in a row over 120 % of the period with unpaced hooks running; off after
+    /// kUnpacedCalmFrames in a row whose unpaced hooks took at most a quarter of the period
+    static constexpr unsigned kUnpacedSlowFrames = 3;
+    static constexpr unsigned kUnpacedCalmFrames = 50;
 
     explicit ScriptCallbackManager(EmulatorContext* context);
     ~ScriptCallbackManager() override;
@@ -154,6 +219,15 @@ public:
     /// The script's thread: one call ran for @p us (failed: it raised @p error). Applies the policy
     void Report(uint32_t id, uint32_t us, bool failed, const std::string& error = {});
 
+    /// Any thread: the values the scripts and the hooks share (a nil value removes the key)
+    CallbackValue SharedGet(const std::string& key) const;
+    void SharedSet(const std::string& key, const CallbackValue& value);
+    CallbackHookStatus HookStatus() const;
+    bool IsUnpaced() const
+    {
+        return _unpaced.load(std::memory_order_acquire);
+    }
+
     /// Emulation thread
     void OnTap(const BreakpointTapHit& hit) override;
     void OnBreakpointStop(uint16_t breakpointId, uint16_t address, uint8_t accessKind);
@@ -167,11 +241,29 @@ public:
     {
         return _breakpointCallbacks.load(std::memory_order_acquire) > 0;
     }
+    /// Emulation thread, at the frame end (MainLoop; not in a TTD replay pass): runs the frame callbacks' hits, then
+    /// accounts the hooks' time of the frame and the unpaced state. @p nowUs: the host's steady clock, @p periodUs:
+    /// the frame's real-time period
+    void OnFrameEnd(uint64_t nowUs, uint32_t periodUs);
+    bool WantsFrameEnd() const
+    {
+        return _hookCallbacks.load(std::memory_order_acquire) > 0 || _unpaced.load(std::memory_order_acquire);
+    }
 
 private:
     struct Entry;
+    struct FrameState;
     BreakpointManager* Breakpoints() const;
     void Push(Entry& entry, CallbackHit& hit);
+    /// Emulation thread: a hit to its callback. A deferred one's ring; a frame one's ring, or its call when
+    /// @p atOnce (a breakpoint stop, a game event: the frame end is near or the CPU stopped); a sync one's call
+    void Dispatch(Entry& entry, CallbackHit& hit, bool atOnce);
+    /// Emulation thread: a frame or sync callback's call in the hook state
+    void RunHook(Entry& entry, const CallbackHit& hit);
+    /// One call's time and outcome; the policy. @p mayUnarm: false on the emulation thread (a disabled tap stays
+    /// armed and silent until it is removed: removing a breakpoint holds the CPU)
+    void Account(uint32_t id, uint32_t us, bool failed, const std::string& error, bool aborted, bool mayUnarm);
+    void SetUnpaced(bool unpaced);
     void Fill(CallbackHit& hit) const;
     void Publish(uint32_t id) const;
     void Unarm(Entry& entry);
@@ -183,5 +275,12 @@ private:
     uint8_t _sink = BRK_NO_TAP;
     std::atomic<int> _gameEventCallbacks{0};
     std::atomic<int> _breakpointCallbacks{0};
+    std::atomic<int> _hookCallbacks{0};  ///< frame and sync callbacks
+    std::atomic<bool> _unpaced{false};
     std::vector<std::pair<std::string, std::function<void()>>> _wakes;
+    std::unique_ptr<IScriptHookHost> _host;  ///< made with the first frame or sync callback, then kept
+    std::unique_ptr<FrameState> _frame;      ///< the emulation thread's
+    CallbackHookStatus _status;              ///< under _mutex
+    mutable std::mutex _sharedMutex;
+    std::map<std::string, CallbackValue> _shared;
 };

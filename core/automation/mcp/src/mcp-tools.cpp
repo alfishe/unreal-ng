@@ -1184,6 +1184,8 @@ struct CallbackJsonReader
     }
     int64_t Number(const char* key) const
     {
+        if (value[key].isBool())
+            return value[key].asBool() ? 1 : 0;
         return value[key].isNumeric() ? value[key].asInt64() : 0;
     }
     bool Has(const char* key) const
@@ -1202,6 +1204,8 @@ std::string FormatCallbackList(const Json::Value& list)
 {
     const Json::Value& items = list["callbacks"];
     std::string text = callback_text::ListHeader(items.isArray() ? items.size() : 0);
+    if (list.isMember("hooks"))
+        text += "\n" + callback_text::FormatHooks(CallbackJsonReader{list["hooks"]});
     if (items.isArray())
         for (const Json::Value& callback : items)
             text += "\n" + FormatCallbackLine(callback);
@@ -1333,7 +1337,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Script callback id for callback_resume / callback_remove / callback_policy (the callbacks list shows them)";
     schema["properties"]["policy"]["type"] = "string";
     schema["properties"]["policy"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* policy : {"suspend", "disable", "ignore"})
+    for (const char* policy : {"suspend", "disable", "ignore", "unpaced"})
         schema["properties"]["policy"]["enum"].append(policy);
     schema["properties"]["policy"]["description"] =
         "For callback_policy: what happens over the budget - suspend (default: suspended after 3 calls over it within "
@@ -1372,7 +1376,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "lists the groups, bp_group_set / bp_note / bp_condition change a breakpoint's group / note / condition). "
         "callbacks lists the script callbacks (Lua on_tap / on_breakpoint / on_game_event, Python emu.on_*) with their "
         "state and statistics; callback_resume (a suspended one, fresh statistics), callback_remove and "
-        "callback_policy (suspend, disable, ignore) manage one by callback_id. "
+        "callback_policy (suspend, disable, ignore; unpaced for frame and sync hooks) manage one by callback_id. "
         "set_register writes a CPU register (name, "
         "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
