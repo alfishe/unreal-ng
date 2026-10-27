@@ -66,7 +66,7 @@
         Json::Value& files = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["get"];
         files["summary"] = "The files on a slot's disk: volumes / files / read (read only)";
         files["description"] =
-            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M and MB-02 (read only) and MDOS floppies, "
+            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M (read only), MB-02 and MDOS floppies, "
             "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
             "the ATM CP/M partitions (read only) and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks of a divIDE one. "
             "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
@@ -164,7 +164,7 @@
         body["properties"]["attributes"]["description"] =
             "attrib: the volume's attribute letters (volumes lists them): '+R-H' sets and clears, 'RA' leaves exactly these";
         body["properties"]["time"]["type"] = "string";
-        body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
+        body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS, MB-02): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
         body["properties"]["label"]["type"] = "string";
         body["properties"]["label"]["description"] = "label: the volume's new name (empty removes a FAT label)";
         body["properties"]["out"]["type"] = "string";

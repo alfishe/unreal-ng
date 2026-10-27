@@ -280,7 +280,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
         "or folder to place; compose: a *.ucompose.yaml descriptor; files: a directory on the disk (empty: the root); "
         "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe); write / delete / rename: the file "
-        "(TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS dir/name.ext) or directory; mkdir: the directory to make; attrib: "
+        "(TR-DOS NAME.T, +3DOS NAME.TYP, MDOS NAME.T, FAT and iS-DOS dir/name.ext, MB-02 dir/name) or directory; mkdir: the directory to make; attrib: "
         "the file or directory to change";
     schema["properties"]["descriptor"]["type"] = "object";
     schema["properties"]["descriptor"]["description"] =
@@ -355,7 +355,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["start"]["description"] =
         "write: the TR-DOS start field / the +3DOS CODE / the iS-DOS load address: 32768, 0x8000 or #8000";
     schema["properties"]["to"]["description"] =
-        "rename: the new name; a bare name keeps the file in its directory, FAT and iS-DOS take a path from the root "
+        "rename: the new name; a bare name keeps the file in its directory, FAT, iS-DOS and MB-02 take a path from the root "
         "(/name: the root), moving the file or the directory";
     schema["properties"]["recursive"]["description"] = "files: the whole tree under the directory; delete: a directory with everything in it";
     schema["properties"]["parents"]["description"] = "mkdir: make the missing directories on the way too (one there already is no error)";
@@ -365,7 +365,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "archive, iS-DOS RWHD read / write protected, hidden, delete protected, +3DOS RSA): '+R-H' sets and clears, 'RA' "
         "leaves exactly these set";
     schema["properties"]["time"]["description"] =
-        "attrib: the date and time of the file or directory (FAT, iS-DOS): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
+        "attrib: the date and time of the file or directory (FAT, iS-DOS, MB-02): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
     schema["properties"]["label"]["description"] =
         "label: the volume's name - the FAT volume label (empty removes it), the TR-DOS disk title (8), the iS-DOS device "
         "name (8, 11 on a Chic disk)";
@@ -386,7 +386,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M and MB-02 (read only) and MDOS floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M (read only), MB-02 and MDOS floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
         "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
         "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
         "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "

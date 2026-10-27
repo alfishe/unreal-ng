@@ -430,19 +430,19 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
     out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
         << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, MDOS name.T, FAT and" << NEWLINE
-        << "                                 iS-DOS dir/name.ext), an older file of that name replaced; --start: the" << NEWLINE
+        << "                                 iS-DOS dir/name.ext, MB-02 dir/name), an older file of that name replaced; --start: the" << NEWLINE
         << "                                 TR-DOS / MDOS start, +3DOS CODE, iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
         << "                                 --header=false: +3DOS without its header" << NEWLINE;
-    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS);" << NEWLINE
+    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS, MB-02);" << NEWLINE
         << "                                 --recursive: a directory with everything in it" << NEWLINE;
-    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT and" << NEWLINE
-        << "                                 iS-DOS take a path from the root (/name: the root), moving the file or" << NEWLINE
+    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT," << NEWLINE
+        << "                                 iS-DOS and MB-02 take a path from the root (/name: the root), moving the file or" << NEWLINE
         << "                                 the directory" << NEWLINE;
-    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue); --parents:" << NEWLINE
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue, MB-02); --parents:" << NEWLINE
         << "                                 the missing ones on the way too" << NEWLINE;
     out << "  attrib <slot> <file> [+R-H | RA] [--time 2026-10-26T14:30[:05] | now] [--volume id]" << NEWLINE
         << "                               - the attributes (FAT R H S A, iS-DOS R W H D, +3DOS R S A; +R-H changes," << NEWLINE
-        << "                                 RA sets exactly) and the date and time (FAT, iS-DOS) of a file or directory" << NEWLINE;
+        << "                                 RA sets exactly) and the date and time (FAT, iS-DOS, MB-02) of a file or directory" << NEWLINE;
     out << "  label <slot> <name> [--volume id] - the FAT volume label (\"\" removes it), TR-DOS disk title, iS-DOS" << NEWLINE
         << "                                 device name" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE

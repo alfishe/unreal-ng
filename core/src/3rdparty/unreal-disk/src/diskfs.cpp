@@ -1020,6 +1020,8 @@ struct Mb02Driver : DiskFs::Driver
             e.name = unique(NameOf(d.name), "~D" + std::to_string(d.number));
             e.path = prefix + e.name;
             e.directory = true;
+            if (d.date)
+                e.mtime = FatVolumeReader::DosToUnix(d.date, d.time);
             e.fields = {{"dir", d.number}, {"sector", d.first}};
             const std::string path = e.path;
             out.push_back(std::move(e));
@@ -1027,7 +1029,27 @@ struct Mb02Driver : DiskFs::Driver
         }
     }
 
-    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    /// The DIRS number of directory `dir` ("" the root)
+    bool DirNumber(const std::string& dir, uint8_t& number, std::string& error)
+    {
+        number = 0;
+        if (dir.empty())
+            return true;
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(dir, entry, notes, error))
+            return false;
+        if (!entry.directory)
+        {
+            error = dir + " is no directory";
+            return false;
+        }
+        number = static_cast<uint8_t>(entry.Field("dir"));
+        return true;
+    }
+
+    /// The file `path` names (as listed: a later file of a name with ~<entry>)
+    bool FileOf(const std::string& path, Mb02File& out, std::string& error)
     {
         std::vector<std::string> notes;
         DiskFsEntry entry;
@@ -1041,22 +1063,111 @@ struct Mb02Driver : DiskFs::Driver
         std::string dir, name;
         SplitPath(entry.path, dir, name);
         uint8_t number = 0;
-        if (!dir.empty())
-        {
-            DiskFsEntry parent;
-            if (!Stat(dir, parent, notes, error))
-                return false;
-            number = static_cast<uint8_t>(parent.Field("dir"));
-        }
         std::vector<Mb02File> files;
-        if (!fs.List(number, files, error))
+        if (!DirNumber(dir, number, error) || !fs.List(number, files, error))
             return false;
         for (const Mb02File& f : files)
             if (f.entry == entry.Field("entry"))
-                return fs.Read(f, data, error);
+            {
+                out = f;
+                return true;
+            }
         error = "no " + path + " on the MB-02 volume";
         return false;
     }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Read(f, data, error);
+    }
+
+    static void Dos(int64_t mtime, uint16_t& date, uint16_t& time)
+    {
+        date = time = 0;
+        if (mtime)
+            FatVolumeReader::UnixToDos(mtime, date, time);
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        uint8_t number = 0;
+        if (!DirNumber(dir, number, error))
+            return false;
+        Mb02FileSystem::WriteOptions write;
+        write.start = options.start;
+        Dos(options.mtime, write.date, write.time);
+        return fs.Write(number, Unescape(name), data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+            return fs.DeleteDirectory(static_cast<uint8_t>(entry.Field("dir")), error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Delete(f, error);
+    }
+
+    /// A bare name stays in its directory; a path (with '/') is from the root
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::string fromDir, fromName, toDir, toName;
+        SplitPath(entry.path, fromDir, fromName);
+        if (to.find('/') == std::string::npos)
+        {
+            toDir = fromDir;
+            toName = to;
+        }
+        else
+            SplitPath(to.substr(to.front() == '/'), toDir, toName);
+        uint8_t number = 0;
+        if (!DirNumber(toDir, number, error))
+            return false;
+        if (entry.directory)
+            return fs.RenameDirectory(static_cast<uint8_t>(entry.Field("dir")), number, Unescape(toName), error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Rename(f, number, Unescape(toName), error);
+    }
+
+    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        uint8_t number = 0;
+        uint16_t date = 0, time = 0;
+        Dos(mtime, date, time);
+        return DirNumber(dir, number, error) && fs.MakeDirectory(number, Unescape(name), date, time, error);
+    }
+
+    bool SetTime(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        uint16_t date = 0, time = 0;
+        Dos(mtime, date, time);
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+            return fs.SetDirectoryTime(static_cast<uint8_t>(entry.Field("dir")), date, time, error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.SetTime(f, date, time, error);
+    }
+
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override { return fs.SetName(label, error); }
+    bool HasTimes() const override { return true; }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return Ascii(fs.Boot().name); }
 
     Mb02FileSystem fs;
 };
@@ -1353,6 +1464,7 @@ void DiskFs::Probe()
             v.label = Ascii(mb02.Boot().name);
             v.bytes = static_cast<uint64_t>(mb02.Boot().Sectors()) * Mb02FileSystem::kSector;
             v.freeBytes = static_cast<int64_t>(mb02.FreeSectors()) * Mb02FileSystem::kSector;
+            v.writable = true;
             add(std::move(v), std::make_unique<Mb02Driver>(std::move(mb02)));
             return;
         }

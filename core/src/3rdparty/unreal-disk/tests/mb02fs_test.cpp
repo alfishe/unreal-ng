@@ -1,10 +1,11 @@
 // MB-02: the BS-DOS 308 system disk (its directory tree, every body against the tape copies of the same archive), the
-// raw image told from MGT by its boot sector, a FAT chain that loops
+// raw image told from MGT by its boot sector, a FAT chain that loops; files and directories written
 
 #include "unrealdisk/mb02fs.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -120,7 +121,9 @@ TEST(Mb02Fs, SystemDiskTreeAndBodiesMatchItsTapes)
     EXPECT_EQ(v.label, "System 308");
     EXPECT_EQ(v.bytes, 1847296u);
     EXPECT_EQ(v.freeBytes, 1586 * 1024);  // SYS308.LST: free 1 624 064
-    EXPECT_FALSE(v.writable);
+    EXPECT_TRUE(v.writable);
+    EXPECT_TRUE(v.times);
+    EXPECT_TRUE(v.labels);
 
     std::vector<DiskFsEntry> root;
     std::string error;
@@ -234,4 +237,109 @@ TEST(Mb02Fs, LoopingChainFailsAndDamagedBootIsRefused)
     std::string why;
     EXPECT_FALSE(mb02.Open(&why));
     EXPECT_NE(why.find("backup"), std::string::npos) << why;
+}
+
+namespace
+{
+std::vector<uint8_t> Pattern(size_t size, uint8_t seed)
+{
+    std::vector<uint8_t> data(size);
+    for (size_t k = 0; k < size; k++)
+        data[k] = static_cast<uint8_t>(k * 13 + seed + (k >> 10));
+    return data;
+}
+}  // namespace
+
+TEST(Mb02Fs, FilesAndDirectoriesWritten)
+{
+    std::string format;
+    std::unique_ptr<DiskImage> disk = Parse(Bytes("loaders/mb02/SYS308.MB2"), "SYS308.MB2", format);
+    ASSERT_TRUE(disk);
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    std::string error;
+
+    // A file of two sectors and a bit in "Small demo": a CODE header, the start as the body address
+    const std::vector<uint8_t> data = Pattern(2 * 1024 + 300, 1);
+    DiskFsWriteOptions options;
+    options.start = 0x8000;
+    options.mtime = 1262347200;  // 2010-01-01 12:00
+    ASSERT_TRUE(fs.Write("", "Small demo/hello", data, options, error)) << error;
+    std::vector<uint8_t> read;
+    ASSERT_TRUE(fs.Read("", "Small demo/hello", read, error)) << error;
+    EXPECT_EQ(read, data);
+    DiskFsEntry entry;
+    ASSERT_TRUE(fs.Stat("", "Small demo/hello", entry, error)) << error;
+    EXPECT_EQ(entry.start, 0x8000u);
+    EXPECT_EQ(entry.Field("type"), 3);
+    EXPECT_EQ(entry.Field("address"), 0x8000);
+    EXPECT_EQ(entry.Field("entry"), 9);
+    EXPECT_EQ(entry.mtime, 1262347200);
+    EXPECT_EQ(entry.Field("flags"), 0xB0);
+
+    // Written over in the same entry; an empty file has no body
+    const std::vector<uint8_t> shorter = Pattern(1024, 2);
+    ASSERT_TRUE(fs.Write("", "Small demo/hello", shorter, options, error)) << error;
+    ASSERT_TRUE(fs.Read("", "Small demo/hello", read, error)) << error;
+    EXPECT_EQ(read, shorter);
+    ASSERT_TRUE(fs.Stat("", "Small demo/hello", entry, error)) << error;
+    EXPECT_EQ(entry.Field("entry"), 9);
+    ASSERT_TRUE(fs.Write("", "empty", {}, {}, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "empty", entry, error)) << error;
+    EXPECT_EQ(entry.Field("flags"), 0x90);
+    EXPECT_EQ(entry.mtime, 0);
+
+    // The root holds 31 entries a sector: the second file grows it by one
+    ASSERT_TRUE(fs.Write("", "more", Pattern(10, 3), {}, error)) << error;
+    ASSERT_TRUE(fs.Write("", "grown", Pattern(10, 4), {}, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "grown", entry, error)) << error;
+    EXPECT_EQ(entry.Field("entry"), 32);
+
+    // A directory: made, a file moved into it, renamed, refused while not empty, then gone
+    ASSERT_TRUE(fs.MakeDirectory("", "Small demo/Sub", false, 1262347200, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "Small demo/Sub", entry, error)) << error;
+    EXPECT_TRUE(entry.directory);
+    EXPECT_EQ(entry.Field("dir"), 3);
+    EXPECT_EQ(entry.mtime, 1262347200);
+    ASSERT_TRUE(fs.Rename("", "more", "/Small demo/Sub/moved", error)) << error;
+    ASSERT_TRUE(fs.Read("", "Small demo/Sub/moved", read, error)) << error;
+    EXPECT_EQ(read, Pattern(10, 3));
+    EXPECT_FALSE(fs.Stat("", "more", entry, error));
+    ASSERT_TRUE(fs.Rename("", "Small demo/Sub", "/Top", error)) << error;
+    ASSERT_TRUE(fs.Read("", "Top/moved", read, error)) << error;
+    EXPECT_FALSE(fs.Rename("", "Top", "/Top/Inner", error));  // not into itself
+    EXPECT_FALSE(fs.Delete("", "Top", error));
+    EXPECT_NE(error.find("not empty"), std::string::npos) << error;
+    ASSERT_TRUE(fs.SetTime("", "Top/moved", 1262347200, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "Top/moved", entry, error)) << error;
+    EXPECT_EQ(entry.mtime, 1262347200);
+    ASSERT_TRUE(fs.Delete("", "Top", error, true)) << error;
+    EXPECT_FALSE(fs.Stat("", "Top", entry, error));
+
+    // Too big, bad names
+    EXPECT_FALSE(fs.Write("", "huge", Pattern(1600 * 1024, 5), {}, error));
+    EXPECT_NE(error.find("not enough free sectors"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Write("", "elevenchars", data, {}, error));
+    EXPECT_FALSE(fs.Write("", "No dir/x", data, {}, error));
+
+    ASSERT_TRUE(fs.SetLabel("", "Renamed", 0, error)) << error;
+    EXPECT_EQ(fs.Volumes()[0].label, "Renamed");
+    for (const char* name : {"Small demo/hello", "empty", "grown"})
+        ASSERT_TRUE(fs.Delete("", name, error)) << name << ": " << error;
+
+    // The saved image: both FAT copies alike, every file of the original there, the sectors free again but the
+    // root's second one
+    std::vector<uint8_t> out;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(LoaderMB02({}, "").serialize(disk.get(), out, warnings));
+    EXPECT_TRUE(std::equal(out.begin() + 2 * 1024, out.begin() + 6 * 1024, out.begin() + 6 * 1024));
+    std::unique_ptr<DiskImage> again = Parse(out, "again.mb2", format);
+    ASSERT_TRUE(again);
+    DiskFs reread(*again);
+    ASSERT_EQ(reread.Volumes().size(), 1u);
+    EXPECT_EQ(reread.Volumes()[0].label, "Renamed");
+    EXPECT_EQ(reread.Volumes()[0].freeBytes, (1586 - 1) * 1024);
+    std::vector<DiskFsEntry> all;
+    ASSERT_TRUE(reread.List("", "", true, all, error)) << error;
+    EXPECT_EQ(all.size(), 29u + 22u + 8u + 2u);
 }
