@@ -2,14 +2,15 @@
 
 The files on any disk, read the same way for every file system and from every surface: the volumes of a disk, a
 directory's entries, a file's bytes. Floppies and hard disks, SD and CF cards. Reading, writing, deleting and renaming
-files on every file system the probe finds; making, moving and deleting directories on FAT and iS-DOS.
+files on every file system the probe finds (ATM CP/M is read only); making, moving and deleting directories on FAT and
+iS-DOS.
 
 It all lives in **unreal-disk** (`core/src/3rdparty/unreal-disk`), the standard C++ library of disks: the emulator,
 the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's core for disk files.
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader (read only), FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -32,8 +33,8 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
-| Floppy | TR-DOS (the system sector 9: label at +0xF5, free sectors); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); iS-DOS / TASiS (the descriptor in block 0) | `trdos`, `fat`, `plus3`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT partitions | `fat`, `p1`..`p4`, `isdos`, `isdos-<cylinder>` |
+| Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `fat`, `plus3`, `isdos` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `isdos`, `isdos-<cylinder>` |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -45,7 +46,8 @@ is not there answers `no volume 'x' (volumes: ...)`.
 ## Paths and entries
 
 Paths go from the volume's root, `/` between levels, no leading `/` needed; names match case-insensitively, the exact
-case first. TR-DOS names are `NAME.T` (the type letter; the last entry of a name wins, as TR-DOS finds it). iS-DOS
+case first. TR-DOS names are `NAME.T` (the type letter; the last entry of a name wins, as TR-DOS finds it). ATM CP/M
+names are `NAME.TYP`: user 0 at the root, users 1-15 in the directories `USER1`..`USER15`. iS-DOS
 and FAT short names are decoded from CP866 (FAT: the medium's code page) to UTF-8.
 
 | Field | Meaning |
@@ -56,7 +58,7 @@ and FAT short names are decoded from CP866 (FAT: the medium's code page) to UTF-
 | `attributes` | iS-DOS: the XiSD letters (`S` segmented, `R`, `W`, `H` hidden, `D` directory); FAT: `RHSVDA` |
 | `mtime` | UTC seconds, 0 when the file system keeps none |
 | `error` | a directory that did not open |
-| `fields` | only this file system's: TR-DOS `sectors`, `track`, `sector`, `slot`; +3DOS `user`, `onDisk`, `header`, `basicType`, `param2`; iS-DOS `status`, `first`, `special`, `system`; FAT `cluster`, `attributes` |
+| `fields` | only this file system's: TR-DOS `sectors`, `track`, `sector`, `slot`; +3DOS `user`, `onDisk`, `header`, `basicType`, `param2`; iS-DOS `status`, `first`, `special`, `system`; ATM CP/M `user`, `extents`, `block` (the first); FAT `cluster`, `attributes` |
 
 `recursive` lists the whole tree below the directory, each directory right before its contents. `Notes()` carries
 what the probe and the last listing found: loops cut, cross-linked or stale entries, a partition that did not read.
@@ -71,6 +73,33 @@ A catalogue is 32-byte entries; entry 0 describes the catalogue itself (parent a
 number of files at +21). A file is continuous (status bit 6) or segmented: a table of up to 85 runs. `device.sys` and
 `boot.sys` (status and special #FF) are files, not catalogues. The reader follows the zxarc `isdos.py` rules and gives
 the same files and bytes on the test images (`testdata/loaders/isdos/`).
+
+## ATM CP/M layout
+
+The ATM-Turbo BIOS CP/M 2.2 (`cpmfs.h`): 32-byte directory entries (user 0-15, #E5 free; name 8, type 3 with bit 7 of
+t1' t2' t3' read only / system / archive; EX, S1, S2, RC; the block numbers), 2 KB blocks counted from the
+directory's first one. Past 256 blocks a block number has 16 bits (8 an entry, 16 KB an extent), else 8 bits (16 an
+entry, EXM 1). The size is the last extent's `(EX + 32 * S2) * 16384 + RC * 128`: CP/M keeps records, a text ends at
+#1A. Only the pointers the entry's records need count; the others may be garbage.
+
+- **Floppy**: the TR-DOS geometry (80 x 2 x 16 x 256), cylinder 0 reserved (#E5, an empty TR-DOS catalogue or a
+  configuration record), the directory at #2000 with 128 entries, 316 blocks (DSM 315).
+- **Hard disk**: no partition table. Sector 0 holds the configuration record: `C9 00 00 55 AA`, then records of tag,
+  length (tag and length included) and body up to #7E, tag 0 ending them. Tag 3 is ASSIGN: the drive (0 = A), the
+  channel and the channel descriptor from DTYP on (DTYP 4 a hard disk, DUS the unit, DHEADF heads, DCYLN cylinders,
+  DSECTT sectors, DBYTES, DALTCYL the reserved tracks, DBEGCYL the start cylinder, DBLDR the size in 128-byte records,
+  DDIRENT the directory entries); tag 6 is GO, the start command. More partitions come from the text descriptors
+  (`.CDS`: `DRIVER = 4`, `UNIT`, `SECTORS`, `TRACKS`, `HEADSF`, `SYS`, `DIR`, `PATBEG`) that AUTOEXEC.SUB assigns with
+  `AS E: 4 D:HDDE.CDS`; the probe reads every `.CDS` of user 0 on a partition it found (the same unit, a hard disk).
+  The directory is at the start cylinder past the reserved tracks; DSM is `((DBLDR - SPT * OFF) >> 4) - 1` as the
+  BIOS computes it. The BIOS addresses the disk by cylinder, head and sector of the descriptor; the image maps them
+  with its own geometry (16 x 63 when it has none).
+
+A volume is taken only when every used entry reads: user 0-15, printable name bytes (not all blank), EX <= 31, S1 0,
+RC <= 128 and every block it needs inside the volume, past the directory, used once; at least one file. Scorpion
+MOA CP/M (`testdata/machines/scorpion/cpm/`) fails it, and so does none of about 7500 TR-DOS and SCL images; all 104
+ATM CP/M floppies of the collection pass. `ATM_HDD.HDD` gives D: (cylinder 1, from the record) and E:, F:, G:
+(cylinders 6, 22, 38, from `HDDE.CDS`..`HDDG.CDS`); its descriptors of other disks (15 heads) find no directory.
 
 ## Surfaces
 
@@ -154,6 +183,7 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 |---|---|---|---|---|
 | FAT12 / 16 / 32 | `RHSA`: read only, hidden, system, archive | `RHSVDA` | 2-second steps, the entry's write date and time | the root's volume entry (made in a free slot, the FAT32 root grows for it; `""` deletes it) and the boot sector's copy at +43 / +71 (FAT32 also in the backup boot sector; `NO NAME` when cleared); up to 11 short-name characters, upper-cased |
 | iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
+| ATM CP/M (read only) | none | `RSA` (bit 7 of t1', t2', t3') | none | none (`label`: the drive `D:` or the `.CDS` file) |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
 
@@ -178,5 +208,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 - iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
 - iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
-- Not read: ATM CP/M partitions, MB-02, MDOS, other file systems of a hard disk.
+- ATM CP/M is read only. A hard disk partition is found only when the configuration record or a `.CDS` file on a
+  partition found names it.
+- Not read: MB-02, MDOS, other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.

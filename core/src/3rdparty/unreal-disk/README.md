@@ -1,7 +1,8 @@
 # unreal-disk
 
 ZX Spectrum disks: the floppy track and sector model, the format drivers, the block device seam of hard disks and
-cards, and the file systems (TR-DOS, +3DOS, iS-DOS / TASiS, FAT) behind one interface, `DiskFs`. Standard C++20 only.
+cards, and the file systems (TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, FAT) behind one interface, `DiskFs`. Standard
+C++20 only.
 Part of [unreal-ng](https://github.com/alfishe/unreal-ng): the emulator's media manager, disk controllers and media
 verbs use it, and so do the tools (`zxdisk` here, the unreal-asm tools `zxasm`, `symconv`). Design:
 `docs/inprogress/2026-10-10-unreal-disk/`.
@@ -19,7 +20,7 @@ verbs use it, and so do the tools (`zxdisk` here, the unreal-asm tools `zxasm`, 
 | block devices | `unrealdisk/blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | `BlockDevice`: a disk as 512-byte sectors (the emulator's `IBlockDevice`); `SubRangeDevice` a window of one (a partition); `FloppyBlockDevice` a floppy of uniform 512-byte sectors as one |
 | FAT | `unrealdisk/fatvolumereader.h` | `FatVolumeReader`: FAT12 / 16 / 32 on a block device, MBR or superfloppy, long names, chains and extents |
 | code pages | `unrealdisk/unicode.h` | `UnicodeHelper`: UTF-8 / UTF-16 / code points, CP866 and CP1251 |
-| any file system | `unrealdisk/diskfs.h` | `DiskFs`: the volumes of a floppy or a block device (FAT partitions, iS-DOS devices at cylinder boundaries), `List` / `Stat` / `Read` by volume and path, `Write` on TR-DOS and +3DOS ([design](../../../../docs/emulator/design/disk-file-systems.md)) |
+| any file system | `unrealdisk/diskfs.h` | `DiskFs`: the volumes of a floppy or a block device (FAT partitions, ATM CP/M partitions, iS-DOS devices at cylinder boundaries), `List` / `Stat` / `Read` by volume and path, `Write` on TR-DOS and +3DOS ([design](../../../../docs/emulator/design/disk-file-systems.md)) |
 | host settings | `unrealdisk/options.h` | `LoaderOptions` (the TR-DOS sector interleave) |
 
 ## Example
@@ -43,7 +44,7 @@ if (unrealdisk::FloppyFormats::Load({}, "game.scl", disk, format).Ok())
 The files of any image from the command line:
 
 ```bash
-zxdisk volumes ATM_HDD.HDD                       # p1 FAT16 "NEDOOS" ..., isdos-70 iS-DOS Classic "..." ...
+zxdisk volumes ATM_HDD.HDD                       # cpm-1 ATM CP/M "D:", cpm-6 ..., isdos-70 iS-DOS Chic "HARD B:" ...
 zxdisk ls ISDOS50.FDI SHELL -r                   # the tree under SHELL
 zxdisk cat dss_1_62_92.img pics/sample.bmp -o sample.bmp
 zxdisk put game.trd loader.bin LOADER.C --start 0x6000   # onto a TR-DOS or +3DOS floppy, saved back

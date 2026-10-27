@@ -6,14 +6,15 @@
 #include <set>
 
 #include "unrealdisk/blockdevice.h"
+#include "unrealdisk/cpmfs.h"
 #include "unrealdisk/diskimage.h"
 #include "unrealdisk/fatfs.h"
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
 #include "unrealdisk/plus3fs.h"
-#include "unrealdisk/trdoscatalog.h"
 #include "unrealdisk/subrangedevice.h"
+#include "unrealdisk/trdoscatalog.h"
 #include "unrealdisk/trdosfs.h"
 
 namespace unrealdisk
@@ -21,8 +22,9 @@ namespace unrealdisk
 namespace
 {
 constexpr uint32_t kSector = BlockDevice::kSectorSize;
-/// The cylinder of a hard disk without a geometry in its image (16 heads, 63 sectors: the ATM-Turbo IDE images)
-constexpr uint64_t kDefaultCylinderSectors = 16 * 63;
+/// The geometry of a hard disk without one in its image (16 heads, 63 sectors: the ATM-Turbo IDE images)
+constexpr uint64_t kDefaultHeads = 16;
+constexpr uint64_t kDefaultSectors = 63;
 /// iS-DOS devices are looked for at this many cylinder boundaries at most (a 2 GB disk of 16 x 63 cylinders)
 constexpr uint64_t kMaxCylinderScan = 4096;
 
@@ -825,6 +827,111 @@ std::unique_ptr<FatDriver> OpenFat(std::shared_ptr<BlockDevice> device, CodePage
     return driver;
 }
 
+struct CpmDriver : DiskFs::Driver
+{
+    explicit CpmDriver(CpmFileSystem fs) : fs(std::move(fs)) {}
+
+    /// User 0 at the root, users 1-15 in the directories USER1..USER15
+    static std::string PathOf(const CpmFile& f)
+    {
+        const std::string name = Ascii(f.FullName());
+        return f.user ? "USER" + std::to_string(f.user) + "/" + name : name;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (uint8_t user = 0; user < 16; user++)
+        {
+            bool listed = false;
+            for (const CpmFile& f : files)
+            {
+                if (f.user != user)
+                    continue;
+                if (user && !listed)
+                {
+                    DiskFsEntry d;
+                    d.name = d.path = "USER" + std::to_string(user);
+                    d.directory = true;
+                    d.fields = {{"user", user}};
+                    out.push_back(std::move(d));
+                }
+                listed = true;
+                DiskFsEntry e;
+                e.path = PathOf(f);
+                e.name = Ascii(f.FullName());
+                e.size = f.size;
+                static const char letters[] = "RSA";
+                for (int bit = 0; bit < 3; bit++)
+                    e.attributes += (f.attributes & (1 << bit)) ? letters[bit] : '.';
+                e.fields = {{"user", f.user}, {"extents", f.extents}, {"block", f.firstBlock}};
+                out.push_back(std::move(e));
+            }
+        }
+        return true;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const CpmFile& f : files)
+                if (pass == 0 ? PathOf(f) == path : Lower(PathOf(f)) == Lower(path))
+                    return fs.Read(f, data, error);
+        error = "no " + path + " on the CP/M volume";
+        return false;
+    }
+
+    CpmFileSystem fs;
+};
+
+void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume)
+{
+    volume.fs = "cpm";
+    volume.system = "ATM CP/M";
+    uint32_t free = 0;
+    if (fs.FreeBlocks(free))
+        volume.freeBytes = static_cast<int64_t>(free) * CpmGeometry::kBlock;
+}
+
+/// The bytes of an ATM CP/M hard disk partition from its directory on: the BIOS's cylinder, head and sector of the
+/// channel's geometry, at the disk's own (`heads` x `sectors`)
+CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+{
+    const uint64_t directory = static_cast<uint64_t>(channel.reserved) * channel.sectors;
+    const uint64_t perTrack = channel.sectors, partHeads = channel.heads, start = channel.startCylinder;
+    return [&device, directory, perTrack, partHeads, start, heads, sectors, cache](uint64_t offset, uint8_t* dst,
+                                                                                   uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t logical = directory + offset / kSector;
+            const uint64_t track = logical / perTrack;
+            const uint64_t lba =
+                ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+            if (lba != cache->lba)
+            {
+                if (!device.ReadSector(lba, cache->sector))
+                {
+                    cache->lba = UINT64_MAX;
+                    return false;
+                }
+                cache->lba = lba;
+            }
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            std::memcpy(dst, cache->sector + offset % kSector, n);
+            dst += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
 void DescribeIsdos(const IsdosFileSystem& fs, DiskFsVolume& volume)
 {
     volume.fs = "isdos";
@@ -866,14 +973,27 @@ void DiskFs::Probe()
 
     if (_floppy)
     {
-        if (TrdosCatalog::IsTrdos(*_floppy))
+        // ATM CP/M before TR-DOS: its reserved cylinder 0 often holds an empty TR-DOS catalogue, which is no volume
+        // then
+        CpmFileSystem cpm = CpmFileSystem::AtmFloppy(*_floppy);
+        const bool isCpm = cpm.IsCpm();
+        if (isCpm)
+        {
+            DiskFsVolume v;
+            v.id = "cpm";
+            DescribeCpm(cpm, v);
+            v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
+            add(std::move(v), std::make_unique<CpmDriver>(std::move(cpm)));
+        }
+        TrdosCatalog catalog;
+        const bool parsed = catalog.Parse(*_floppy);
+        if (TrdosCatalog::IsTrdos(*_floppy) && !(isCpm && (!parsed || catalog.FileCount() == 0)))
         {
             DiskFsVolume v;
             v.id = v.fs = "trdos";
             v.system = "TR-DOS";
             v.writable = true;
-            TrdosCatalog catalog;
-            if (catalog.Parse(*_floppy))
+            if (parsed)
                 v.freeBytes = static_cast<int64_t>(catalog.FreeSectors()) * 256;
             // The disk title: 8 bytes at #F5 of the info sector (track 0, sector 9)
             DiskImage::Track* track0 = _floppy->getTrack(0);
@@ -970,6 +1090,64 @@ void DiskFs::Probe()
         }
     }
 
+    const std::optional<BlockGeometry> geometry = device.NativeGeometry();
+    const bool known = geometry && geometry->heads && geometry->sectors;
+    const uint64_t heads = known ? geometry->heads : kDefaultHeads;
+    const uint64_t sectors = known ? geometry->sectors : kDefaultSectors;
+
+    // ATM CP/M: the drives of the configuration record in sector 0, then the hard disk descriptors (.CDS) of the same
+    // unit kept on them (AUTOEXEC.SUB assigns them)
+    std::vector<AtmCpmChannel> channels;
+    if (CpmFileSystem::ParseAtmConfig(s0, channels))
+    {
+        std::set<std::vector<uint32_t>> seen;
+        for (size_t i = 0; i < channels.size(); i++)
+        {
+            const AtmCpmChannel c = channels[i];
+            if (c.driver != 4 || c.sectorSize != kSector || c.heads == 0 || c.sectors == 0 || c.heads > heads ||
+                c.sectors > sectors || !seen.insert({c.startCylinder, c.heads, c.sectors, c.reserved}).second)
+                continue;
+            const CpmGeometry g = c.Geometry();
+            const uint64_t first = static_cast<uint64_t>(c.startCylinder) * heads * sectors;
+            const uint64_t end = first + static_cast<uint64_t>(c.records) * 128 / kSector;
+            bool overlaps = false;
+            for (const auto& [from, to] : taken)
+                overlaps = overlaps || (first < to && from < end);
+            if (g.blocks == 0 || overlaps || end > device.SectorCount())
+                continue;
+            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, std::make_shared<SectorCache>()), g);
+            std::string why;
+            if (!fs.IsCpm(&why))
+            {
+                if (c.drive)
+                    _notes.push_back(std::string("ATM CP/M drive ") + c.drive + ": has no directory (" + why + ")");
+                continue;
+            }
+            std::vector<CpmFile> files;
+            fs.List(files, why);
+            for (const CpmFile& f : files)
+            {
+                std::vector<uint8_t> text;
+                AtmCpmChannel cds;
+                if (f.user == 0 && f.type == "CDS" && f.size <= 4096 && fs.Read(f, text, why) &&
+                    CpmFileSystem::ParseCds(std::string(text.begin(), text.end()), cds) && cds.driver == 4 &&
+                    cds.unit == c.unit)
+                {
+                    cds.source = f.FullName();
+                    channels.push_back(cds);
+                }
+            }
+            DiskFsVolume v;
+            v.id = "cpm-" + std::to_string(c.startCylinder);
+            DescribeCpm(fs, v);
+            v.label = c.drive ? std::string(1, c.drive) + ":" : c.source;
+            v.offset = first * kSector;
+            v.bytes = static_cast<uint64_t>(c.records) * 128;
+            taken.emplace_back(first, end);
+            add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
+        }
+    }
+
     // iS-DOS: the whole disk is one device, or devices start at cylinder boundaries (the ATM-Turbo HDD driver)
     auto isdosAt = [&](uint64_t lba, const std::string& id) {
         for (const auto& [first, end] : taken)
@@ -995,10 +1173,7 @@ void DiskFs::Probe()
     };
     if (isdosAt(0, "isdos"))
         return;
-    const std::optional<BlockGeometry> geometry = device.NativeGeometry();
-    const uint64_t cylinder = geometry && geometry->heads && geometry->sectors
-                                  ? static_cast<uint64_t>(geometry->heads) * geometry->sectors
-                                  : kDefaultCylinderSectors;
+    const uint64_t cylinder = heads * sectors;
     const uint64_t cylinders = std::min(device.SectorCount() / cylinder, kMaxCylinderScan);
     for (uint64_t c = 1; c < cylinders; c++)
         isdosAt(c * cylinder, "isdos-" + std::to_string(c));
