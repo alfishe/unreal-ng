@@ -3223,7 +3223,7 @@ namespace PythonBindings
                py::arg("hits") = "")
             .def("bp_beam", [](Emulator& self, uint16_t line, int32_t hc, const std::string& hits) -> int {
                 return PythonScriptPositionBreakpoint(self, BRK_BEAM, line, hc, -1, hits);
-            }, "Add a ZX Next beam breakpoint: stops when the beam passes line 'line' of the copper's counter at pixel clock 'hc'. -1 when refused",
+            }, "Add a beam breakpoint: stops when the beam passes line 'line' of the copper's counter at pixel clock 'hc' (ZX Next), or raster line 'line' at CPU tact 'hc' (TS-Conf). -1 when refused",
                py::arg("line"), py::arg("hc") = 0, py::arg("hits") = "")
             .def("bp_copper", [](Emulator& self, uint16_t index, int32_t to, const std::string& hits) -> int {
                 return PythonScriptPositionBreakpoint(self, BRK_COPPER, index, 0, to, hits);
@@ -3264,7 +3264,7 @@ namespace PythonBindings
                 return id;
             }, "Add a General Sound / NeoGS protocol event breakpoint: the card's (int, nmi, reset, page, card_command, "
                "card_data, card_reply) stop the machine at the card's next instruction, the host's (host_command, "
-               "host_data, host_reply) after the main CPU's access, the ZX Next's machine events (cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done) on "
+               "host_data, host_reply) after the main CPU's access, the machine's events (the ZX Next's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done; TS-Conf's cpu_int, tsdma_start, tsdma_done) on "
                "the main CPU; value / vmask filter the byte; cpu defaults to the kind's side. Returns the id; ValueError with the reason when refused",
                py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
             .def("bp_chipreg", [](Emulator& self, const std::string& chipName, int32_t reg, int32_t end, int32_t unit,

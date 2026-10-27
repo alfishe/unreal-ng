@@ -238,3 +238,19 @@ whatever port pair, latch order or board the program reaches it through.
 - **Cost.** The machine tells its events only while `EmulatorContext::machineEventWatch` is set (an active event
   breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte.
 - **Not yet.** DivMMC and Multiface RAM as pages a breakpoint can name; taps (script callbacks) on machine events.
+
+### TS-Conf (platform-debugging P6)
+
+- **DMA.** The TS-Conf DMA works on physical RAM (word addresses, no CPU address), so only the watchpoints tied to a
+  page see it: `wp 0x0005 w --page ram20` stops on the DMA's write of physical #50005. Reads of the source (and the
+  blitters' reads of the destination) hit read watchpoints on the page. The stop's access is `dma_write` /
+  `dma_read`, its address the offset in the 16 KB page. Checked once per byte while the CPU is in debug mode. CRAM,
+  SFILE, SPI and IDE are not RAM: their side of a transfer has no watchpoint.
+- **FMaps.** A write into the register part of the FMaps window (+#400+n) is `OUT (n << 8 | #AF)`: a port breakpoint
+  on that port stops on it (`bport 0x0FAF o` sees `LD (#C40F),A` with FMaps at #C000) as on the OUT.
+- **Beam.** `BRK_BEAM` works on TS-Conf: the line is 0..319 of the 320-line raster, `hc` the CPU tact in the 224-tact
+  line (3.5 MHz, whatever the turbo). The engine looks after every step while a beam breakpoint is active
+  (`EmulatorContext::beamWatch`); the stop is after the instruction that passed the place.
+- **Events.** `cpu_int` (value: int_sel, 0 frame, 1 line, 2 DMA, 3 wait port, #FE none pending; the detail the vector
+  #FF / #FD / #FB / #F9), `tsdma_start` (value: the device, DMA_CTRL bits 7 and 2-0), `tsdma_done` (1 the end with
+  the DMA INT, 0 aborted by a new DMA_CTRL).

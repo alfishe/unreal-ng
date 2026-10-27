@@ -3205,6 +3205,7 @@ void BreakpointManager::RebuildFilters()
     {
         _context->chipRegisterWatch = _hotState.hasChipReg != 0;
         _context->machineEventWatch = _hotState.hasEvent != 0;
+        _context->beamWatch = _hotState.hasBeam != 0;
     }
 
     ApplyTapDemand(demand);

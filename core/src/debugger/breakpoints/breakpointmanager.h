@@ -715,6 +715,13 @@ public:
             return BRK_INVALID;
         return ResolvePage(BRK_KIND_WRITE, mode, page, offset, value);
     }
+    /// The same for a bus master's read (the TS-Conf DMA's source and blitter reads)
+    uint16_t HandlePageRead(MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value = -1)
+    {
+        if (!_hasPageSlices[BRK_KIND_READ])
+            return BRK_INVALID;
+        return ResolvePage(BRK_KIND_READ, mode, page, offset, value);
+    }
     /// `value`: the byte written, for the conditions (-1: not known)
     uint16_t HandleMemoryWrite(uint16_t writeAddress, int value = -1)
     {

@@ -313,6 +313,10 @@ public:
     /// set by the main CPU's breakpoint manager while an event breakpoint is active (platform-debugging P5)
     bool machineEventWatch = false;
 
+    /// A beam breakpoint is active on the main CPU: the machines without their own beam watch (TS-Conf's engine) look
+    /// at the raster after every step (platform-debugging P6). Set by the main CPU's breakpoint manager
+    bool beamWatch = false;
+
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
     ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;

@@ -37,10 +37,11 @@ enum class GSCardEvent : uint8_t
     DmaStart,          ///< a NeoGS DMA module started: `value` the module (0 ZX-DMA, 1 SD, 2 MP3)
     DmaDone,           ///< a NeoGS DMA module ended: `value` the module, `port` 1 when it finished (interrupt), 0 aborted
     ConfigWrite,       ///< the card wrote NeoGS GSCFG0 (every write, a clock change or not): `value` the byte
-    // The machine's events, the main CPU's (platform-debugging P5; appended). The ZX Next tells them; `port` (the tap
-    // hit's `arg`) carries the detail
-    CpuInt,            ///< a maskable interrupt accepted: `value` the source (NextInterruptSource: 0 line, 1-2 UART RX,
-                       ///< 3-10 CTC 0-7, 11 ULA, 12-13 UART TX; #FE spurious), `port` the IM2 vector the controller gave
+    // The machine's events, the main CPU's (platform-debugging P5-P6; appended). The ZX Next and TS-Conf tell them;
+    // `port` (the tap hit's `arg`) carries the detail
+    CpuInt,            ///< a maskable interrupt accepted: `value` the source, `port` the IM2 vector the controller gave.
+                       ///< The Next (NextInterruptSource): 0 line, 1-2 UART RX, 3-10 CTC 0-7, 11 ULA, 12-13 UART TX.
+                       ///< TS-Conf (int_sel): 0 frame, 1 line, 2 DMA, 3 wait port. #FE: none pending (spurious)
     CpuReti,           ///< RETI ended the hardware IM2 source in service: `value` the source
     CpuNmi,            ///< an NMI request: `value` the source (0 M1 button, 1 drive button, 2 I/O trap, 3 other), bit 7
                        ///< set when the machine refused it
@@ -54,6 +55,8 @@ enum class GSCardEvent : uint8_t
                        ///< byte, `port` the return address
     ZxnDmaStart,       ///< the zxnDMA began a transfer
     ZxnDmaDone,        ///< the zxnDMA stopped: `value` 1 at the end of the block, 0 disabled or reset
+    TsDmaStart,        ///< the TS-Conf DMA began a transfer (a DMA_CTRL write): `value` the device (DMA_CTRL bits 7, 2-0)
+    TsDmaDone,         ///< the TS-Conf DMA stopped: `value` 1 at its end (the DMA INT), 0 aborted by a new DMA_CTRL
     Count
 };
 
@@ -94,6 +97,8 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::EsxDosCall: return "esxdos_call";
         case GSCardEvent::ZxnDmaStart: return "zxndma_start";
         case GSCardEvent::ZxnDmaDone: return "zxndma_done";
+        case GSCardEvent::TsDmaStart: return "tsdma_start";
+        case GSCardEvent::TsDmaDone: return "tsdma_done";
         case GSCardEvent::Count: break;
     }
     return "unknown";

@@ -464,7 +464,8 @@ void CLIProcessor::HandleBeamBreakpoint(const ClientSession& session, const std:
         ss << "Usage: bbeam <line> [--hc N] [--hits N|>=N|%N] [note]" << NEWLINE
            << "Stops when the beam passes the place: <line> is the copper's line counter (NR #64 applied: 0 is the paper's first"
            << NEWLINE << "line unless offset), --hc the pixel clock in the row (7 MHz, default 0). The machine stops at the end of the" << NEWLINE
-           << "instruction the beam passed it in. ZX Next only." << NEWLINE << "Examples:" << NEWLINE
+           << "instruction the beam passed it in. ZX Next; on TS-Conf <line> is the raster line (0..319) and --hc the CPU tact" << NEWLINE
+           << "in the line (0..223, 3.5 MHz)." << NEWLINE << "Examples:" << NEWLINE
            << "  bbeam 100            - the start of line 100" << NEWLINE << "  bbeam 99 --hc 255    - where the line interrupt of line 100 fires";
         session.SendResponse(ss.str());
         return;
@@ -594,6 +595,8 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
            << "  (0 M1 button, 1 drive button, 2 I/O trap; bit 7 refused), cpu_retn, machine_reset (1 hard)," << NEWLINE
            << "  divmmc_map (0 RST, 1 NMI, 2 #3Dxx, 3 ROM 3), divmmc_unmap, esxdos_call (the call byte)," << NEWLINE
            << "  zxndma_start, zxndma_done" << NEWLINE
+           << "Machine (the main CPU, TS-Conf): cpu_int (int_sel: 0 frame, 1 line, 2 DMA, 3 wait port)," << NEWLINE
+           << "  tsdma_start (the device), tsdma_done (1 the end, 0 aborted)" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
            << "  bevent host_command               - the host writes any command" << NEWLINE
