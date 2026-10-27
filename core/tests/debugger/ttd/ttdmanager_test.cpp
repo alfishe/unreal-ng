@@ -773,6 +773,28 @@ TEST_F(TimeTravelManagerRecordingLock_Test, StartRecordingForcesHostSpeedTo1xAnd
     EXPECT_EQ(_core->GetHostSpeedMultiplier(), 4);
 }
 
+// A machine's own hardware turbo (TS-Conf SYS_CONFIG 7 / 14 MHz, Scorpion, ATM) is guest-controlled and part
+// of the recorded machine: the lock holds the HOST speed at 1x and must leave the hardware ratio alone.
+// The effective multiplier is host x ratio, so a "4x" CPU clock with a 1x host is correct, not a breach.
+TEST_F(TimeTravelManagerRecordingLock_Test, HardwareTurboWhileRecordingLeavesHostSpeedAt1x)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    EmulatorState& state = _emulator->GetContext()->emulatorState;
+    state.hw_turbo_ratio = 4;   // what a guest 14 MHz switch leaves behind
+    RunFrames(2);
+
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 1);   // the lock: wall-clock speed
+    EXPECT_EQ(_core->GetSpeedMultiplier(), 4);       // composed: the CPU clock the status bar shows
+    EXPECT_FALSE(_core->IsTurboMode());
+    EXPECT_TRUE(_ttd->IsRecording());
+
+    // The host stays locked while the hardware turbo is up
+    EXPECT_FALSE(_emulator->SetSpeedMultiplier(2));
+    state.hw_turbo_ratio = 1;
+    RunFrames(1);
+    EXPECT_EQ(_core->GetSpeedMultiplier(), 1);
+}
+
 TEST_F(TimeTravelManagerRecordingLock_Test, SpeedChangeWhileRecordingIsRefusedAndKeepsTheSession)
 {
     ASSERT_TRUE(_ttd->StartRecording());
