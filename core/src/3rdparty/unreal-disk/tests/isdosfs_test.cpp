@@ -542,6 +542,80 @@ TEST(IsdosFs_Test, CataloguesAsMkdirMakesThem)
     EXPECT_EQ(after.catalogues, before.catalogues);
 }
 
+/// TASiS mkdir.com /c /s<n>: a continuous catalogue is one run of n blocks with no segment table (status #61, +17 and
+/// +19 its first block, as on the TASiS 5.40 floppy); /s sizes a segmented one too
+TEST(IsdosFs_Test, ContinuousAndSizedCataloguesAsTasisMkdirMakesThem)
+{
+    auto disk = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    const Tree before = Walk(fs);
+    uint32_t free0 = 0, free1 = 0;
+    ASSERT_TRUE(fs.FreeBlocks(free0));
+    std::string error;
+    IsdosFileSystem::WriteOptions options;
+    options.date = 0x5B5A;
+    options.continuous = true;
+    options.blocks = 2;
+
+    ASSERT_TRUE(fs.MakeCatalogue("CONT", options, error)) << error;
+    IsdosFile cont;
+    ASSERT_TRUE(fs.Find("CONT", cont, error)) << error;
+    EXPECT_TRUE(cont.directory);
+    EXPECT_EQ(cont.status, 0x61);
+    EXPECT_EQ(cont.Attributes()[0], '.');
+    EXPECT_EQ(cont.length, 512u);
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free0 - free1, 2u) << "no segment table";
+    const std::vector<uint8_t> parentEntry = EntryIn(fs, fs.Boot().root, "CONT       ");
+    EXPECT_EQ(Word(parentEntry, 17), cont.first);
+    EXPECT_EQ(Word(parentEntry, 19), cont.first);
+    const std::vector<uint8_t> head = RawBlock(fs, cont.first);
+    EXPECT_EQ(std::memcmp(head.data(), "CONT       \x61", 12), 0);
+    EXPECT_EQ(Word(head, 12), fs.Boot().root);
+    EXPECT_EQ(Word(head, 14), 512);
+    EXPECT_EQ(Word(head, 17), cont.first);
+    EXPECT_EQ(head[16], 1);
+    EXPECT_EQ(head[21], 1);
+    EXPECT_EQ(Word(head, 30), 0x5B5A);
+    EXPECT_EQ(RawBlock(fs, cont.first + 1), std::vector<uint8_t>(256, 0));
+
+    // 15 files fill its 16 entries (entry 0 its own; growing is AFullContinuousCatalogueGrows)
+    for (int k = 0; k < 15; k++)
+        ASSERT_TRUE(
+            fs.Write("CONT/f" + std::to_string(k) + ".bin", Pattern(10 + k, static_cast<uint8_t>(k)), {}, error))
+            << k << ": " << error;
+    for (int k = 0; k < 15; k++)
+        EXPECT_EQ(ReadBack(fs, "CONT/f" + std::to_string(k) + ".bin"), Pattern(10 + k, static_cast<uint8_t>(k))) << k;
+    EXPECT_EQ(RawBlock(fs, cont.first)[11], 0x61);
+    EXPECT_EQ(RawBlock(fs, cont.first)[21], 16);
+
+    // /s alone: a segmented catalogue of n blocks; 1-16 only
+    IsdosFileSystem::WriteOptions sized;
+    sized.blocks = 5;
+    ASSERT_TRUE(fs.MakeCatalogue("BIG", sized, error)) << error;
+    IsdosFile big;
+    ASSERT_TRUE(fs.Find("BIG", big, error)) << error;
+    EXPECT_EQ(big.status, 0x21);
+    EXPECT_EQ(big.length, 1280u);
+    const std::vector<uint8_t> t = RawBlock(fs, Word(EntryIn(fs, fs.Boot().root, "BIG        "), 17));
+    EXPECT_EQ(t[0], 1);
+    EXPECT_EQ(t[3], 5);
+    sized.blocks = 17;
+    EXPECT_FALSE(fs.MakeCatalogue("TOOBIG", sized, error));
+    EXPECT_NE(error.find("1 to 16"), std::string::npos) << error;
+
+    ASSERT_TRUE(fs.Delete("BIG", error)) << error;
+    for (int k = 0; k < 15; k++)
+        ASSERT_TRUE(fs.Delete("CONT/f" + std::to_string(k) + ".bin", error)) << error;
+    ASSERT_TRUE(fs.Delete("CONT", error)) << error;
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free1, free0);
+    const Tree after = Walk(fs);
+    EXPECT_EQ(after.files, before.files);
+    EXPECT_EQ(after.catalogues, before.catalogues);
+}
+
 /// A Chic device (HDDNEMO): the level at +23, a catalogue of 3 blocks
 TEST(IsdosFs_Test, ChicCatalogueOnAHardDiskDevice)
 {

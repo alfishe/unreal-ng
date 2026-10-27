@@ -12,6 +12,7 @@
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
+#include "unrealdisk/mb01fs.h"
 #include "unrealdisk/mb02fs.h"
 #include "unrealdisk/mdosfs.h"
 #include "unrealdisk/plus3fs.h"
@@ -177,7 +178,9 @@ struct DiskFs::Driver
         return false;
     }
     /// A new empty directory; false with no reason: the file system has none
-    virtual bool MakeDirectory(const std::string&, int64_t, std::string&) { return false; }
+    virtual bool MakeDirectory(const std::string&, const DiskFsDirectoryOptions&, std::string&) { return false; }
+    /// Whether MakeDirectory takes `continuous` and `blocks`
+    virtual bool SizedDirectories() const { return false; }
     /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
     virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
     /// The attribute letters SetAttributes takes ("": none)
@@ -508,12 +511,16 @@ struct IsdosDriver : DiskFs::Driver
         return fs.Rename(path, to, error);
     }
 
-    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
     {
         IsdosFileSystem::WriteOptions write;
-        FatVolumeReader::UnixToDos(mtime, write.date, write.time);
+        FatVolumeReader::UnixToDos(options.mtime, write.date, write.time);
+        write.continuous = options.continuous;
+        write.blocks = options.blocks;
         return fs.MakeCatalogue(path, write, error);
     }
+
+    bool SizedDirectories() const override { return true; }
 
     bool Deletable(const DiskFsEntry& entry, std::string& error) override { return fs.Deletable(entry.path, error); }
 
@@ -654,13 +661,13 @@ struct FatDriver : DiskFs::Driver
         return false;
     }
 
-    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
     {
         std::string dir, name;
         SplitPath(path, dir, name);
         return Edit(path, error, [&](FatFs& fs) {
             uint16_t date = 0, time = 0;
-            FatVolumeReader::UnixToDos(mtime, date, time);
+            FatVolumeReader::UnixToDos(options.mtime, date, time);
             fs.SetClock(date, time);
             FatNode parent, made;
             return fs.Resolve("/" + dir, parent) && fs.Create(parent, name, true, made);
@@ -1091,9 +1098,12 @@ CpmFileSystem::ByteWriter CpmWriterAt(BlockDevice& device, const AtmCpmChannel& 
     };
 }
 
-struct Mb02Driver : DiskFs::Driver
+/// The tree of a BS-DOS disk, MB-02 (Mb02FileSystem) or MB-01 (Mb01FileSystem): its directories by number with a
+/// parent each, the files of a directory by entry
+template <typename Fs>
+struct BsdosTree : DiskFs::Driver
 {
-    explicit Mb02Driver(Mb02FileSystem fs) : fs(std::move(fs)) {}
+    BsdosTree(Fs fs, const char* system) : fs(std::move(fs)), system(system) {}
 
     /// The name bytes as Ascii gives them, the path separators as \xNN too
     static std::string NameOf(const std::string& raw)
@@ -1227,7 +1237,7 @@ struct Mb02Driver : DiskFs::Driver
                 out = f;
                 return true;
             }
-        error = "no " + path + " on the MB-02 volume";
+        error = "no " + path + " on the " + std::string(system) + " volume";
         return false;
     }
 
@@ -1236,6 +1246,19 @@ struct Mb02Driver : DiskFs::Driver
         Mb02File f;
         return FileOf(path, f, error) && fs.Read(f, data, error);
     }
+
+    Fs fs;
+    const char* system;
+};
+
+struct Mb01Driver : BsdosTree<Mb01FileSystem>
+{
+    explicit Mb01Driver(Mb01FileSystem fs) : BsdosTree(std::move(fs), "MB-01") {}
+};
+
+struct Mb02Driver : BsdosTree<Mb02FileSystem>
+{
+    explicit Mb02Driver(Mb02FileSystem fs) : BsdosTree(std::move(fs), "MB-02") {}
 
     static void Dos(int64_t mtime, uint16_t& date, uint16_t& time)
     {
@@ -1295,13 +1318,13 @@ struct Mb02Driver : DiskFs::Driver
         return FileOf(path, f, error) && fs.Rename(f, number, Unescape(toName), error);
     }
 
-    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
     {
         std::string dir, name;
         SplitPath(path, dir, name);
         uint8_t number = 0;
         uint16_t date = 0, time = 0;
-        Dos(mtime, date, time);
+        Dos(options.mtime, date, time);
         return DirNumber(dir, number, error) && fs.MakeDirectory(number, Unescape(name), date, time, error);
     }
 
@@ -1323,8 +1346,6 @@ struct Mb02Driver : DiskFs::Driver
     bool HasTimes() const override { return true; }
     bool HasLabel() const override { return true; }
     std::string Label() const override { return Ascii(fs.Boot().name); }
-
-    Mb02FileSystem fs;
 };
 
 struct MdosDriver : DiskFs::Driver
@@ -1622,6 +1643,18 @@ void DiskFs::Probe()
             v.freeBytes = static_cast<int64_t>(mb02.FreeSectors()) * Mb02FileSystem::kSector;
             v.writable = true;
             add(std::move(v), std::make_unique<Mb02Driver>(std::move(mb02)));
+            return;
+        }
+        Mb01FileSystem mb01 = Mb01FileSystem::OnDisk(*_floppy);
+        if (mb01.Open())
+        {
+            DiskFsVolume v;
+            v.id = v.fs = "mb01";
+            v.system = "MB-01 BS-DOS";
+            v.label = Ascii(mb01.Boot().name);
+            v.bytes = static_cast<uint64_t>(mb01.Boot().Sectors()) * Mb01FileSystem::kSector;
+            v.freeBytes = static_cast<int64_t>(mb01.FreeSectors()) * Mb01FileSystem::kSector;
+            add(std::move(v), std::make_unique<Mb01Driver>(std::move(mb01)));
             return;
         }
         IsdosFileSystem isdos = IsdosFileSystem::OnDisk(*_floppy);
@@ -2043,7 +2076,8 @@ bool DiskFs::Delete(const std::string& volume, const std::string& path, std::str
     return true;
 }
 
-bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error)
+bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents,
+                           const DiskFsDirectoryOptions& options, std::string& error)
 {
     size_t index = 0;
     if (!Find(volume, error, &index))
@@ -2057,9 +2091,17 @@ bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, b
     }
     if (!driver)
         return false;
+    if ((options.continuous || options.blocks) && !driver->SizedDirectories())
+    {
+        error = "continuous and blocks are for iS-DOS catalogues, not " + _volumes[index].system;
+        return false;
+    }
+    // The directories on the way are of the standard kind, `options` makes the last one
+    DiskFsDirectoryOptions plain;
+    plain.mtime = options.mtime;
     auto make = [&](const std::string& dir) {
         error.clear();
-        if (driver->MakeDirectory(dir, mtime, error))
+        if (driver->MakeDirectory(dir, dir.size() == clean.size() ? options : plain, error))
             return true;
         if (error.empty())
             error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' has no directories";

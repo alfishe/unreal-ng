@@ -2,12 +2,12 @@
 
 /// @file diskfs.h
 /// @brief The files on any disk, one way for every file system: the volumes of a disk, a directory's entries, a
-/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT12 (Sprinter DSS,
-/// MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy
-/// (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS
-/// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
-/// out (a descriptor at a cylinder boundary), the BS-DOS 309 floppies of a #47 partition, and the virtual disks of an
-/// MDOS3 partition (MBR type #49, or the whole device from its first "SDOS" sector). Reading everywhere; writing,
+/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only), MDOS, FAT12
+/// (Sprinter DSS, MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a
+/// superfloppy (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0,
+/// the .CDS descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays
+/// them out (a descriptor at a cylinder boundary), the BS-DOS 309 floppies of a #47 partition, and the virtual disks of
+/// an MDOS3 partition (MBR type #49, or the whole device from its first "SDOS" sector). Reading everywhere; writing,
 /// deleting and renaming files on every one of them (a block device that takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
@@ -78,6 +78,13 @@ struct DiskFsWriteOptions
                                ///< (0: 1980-01-01 00:00)
 };
 
+struct DiskFsDirectoryOptions
+{
+    int64_t mtime = 0;        ///< as in DiskFsWriteOptions
+    bool continuous = false;  ///< iS-DOS: a continuous catalogue (TASiS mkdir.com /c)
+    uint32_t blocks = 0;      ///< iS-DOS: the catalogue's size, 1-16 blocks (mkdir.com /s; 0: the standard size)
+};
+
 class DiskFs
 {
 public:
@@ -113,9 +120,18 @@ public:
     /// sectors stay used until the disk is compacted). `recursive`: a directory goes with everything in it; every
     /// entry is checked first (a protected iS-DOS file, a read-only FAT entry), so nothing goes when one would stay
     bool Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive = false);
-    /// A new empty directory `path` (FAT, iS-DOS, MB-02) in a directory that is there; `parents`: the missing directories
-    /// on the way are made too, and one that is there already is no error. `mtime` as in DiskFsWriteOptions
-    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error);
+    /// A new empty directory `path` (FAT, iS-DOS, MB-02) in a directory that is there; `parents`: the missing
+    /// directories on the way are made too (of the standard kind and size), and one that is there already is no error.
+    /// `continuous` and `blocks` are refused on a file system other than iS-DOS
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents,
+                       const DiskFsDirectoryOptions& options, std::string& error);
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime,
+                       std::string& error)
+    {
+        DiskFsDirectoryOptions options;
+        options.mtime = mtime;
+        return MakeDirectory(volume, path, parents, options, error);
+    }
     /// The file `path` takes the name `to`: a bare name keeps it in its directory; FAT, iS-DOS and MB-02 take a path from
     /// the root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
     /// into itself). False when `to` is there already

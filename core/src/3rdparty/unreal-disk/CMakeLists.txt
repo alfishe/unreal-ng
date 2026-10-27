@@ -35,6 +35,7 @@ add_library(unreal-disk STATIC
     src/plus3fs.cpp
     src/isdosfs.cpp
     src/cpmfs.cpp
+    src/mb01fs.cpp
     src/mb02fs.cpp
     src/mdosfs.cpp
     src/unicode.cpp

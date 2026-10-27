@@ -26,7 +26,7 @@ namespace
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
                                                  "compression", "parent", "volume", "out", "in", "data", "start", "to",
-                                                 "attributes", "time", "label"};
+                                                 "attributes", "time", "label", "blocks"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
@@ -438,8 +438,9 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT," << NEWLINE
         << "                                 iS-DOS and MB-02 take a path from the root (/name: the root), moving the file or" << NEWLINE
         << "                                 the directory" << NEWLINE;
-    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue, MB-02); --parents:" << NEWLINE
-        << "                                 the missing ones on the way too" << NEWLINE;
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n] - a new directory (FAT, iS-DOS" << NEWLINE
+        << "                                 catalogue, MB-02); --parents: the missing ones on the way too; iS-DOS:" << NEWLINE
+        << "                                 --continuous a continuous catalogue, --blocks its size 1-16 (mkdir.com /c /s)" << NEWLINE;
     out << "  attrib <slot> <file> [+R-H | RA] [--time 2026-10-26T14:30[:05] | now] [--volume id]" << NEWLINE
         << "                               - the attributes (FAT R H S A, iS-DOS R W H D, +3DOS / CP/M R S A, MDOS HSPARWED;" << NEWLINE
         << "                                 +R-H changes, RA sets exactly) and the date and time (FAT, iS-DOS, MB-02)" << NEWLINE

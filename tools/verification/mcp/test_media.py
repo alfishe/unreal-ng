@@ -136,7 +136,18 @@ def test_disk_catalogues_on_isdos(s):
     for path in ('SUB', 'WORK'):
         r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': path, 'recursive': True})
         expect(f'deleted {path}' in r.text, f'{path} deleted with its contents', r.text)
+    # A continuous catalogue of 4 blocks, as TASiS mkdir.com /c /s4
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'CONT', 'continuous': True, 'blocks': 4})
+    expect('made CONT' in r.text, 'the continuous catalogue made', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    line = next((l for l in r.text.splitlines() if 'CONT' in l), '')
+    print('        ' + line.strip())
+    expect(line != '' and 'attributes S' not in line, 'listed, not segmented', r.text)
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'BIG', 'blocks': 17}, ok=False)
+    expect(r.is_error and '1-16' in r.text, 'blocks past 16 refused', r.text)
     r = s.call('media', {'action': 'create', 'slot': 'B', 'format': 'trdos', 'discard': True})
+    r = s.call('media', {'action': 'mkdir', 'slot': 'B', 'path': 'X', 'continuous': True}, ok=False)
+    expect(r.is_error and 'iS-DOS' in r.text, 'continuous refused off iS-DOS', r.text)
     r = s.call('media', {'action': 'mkdir', 'slot': 'B', 'path': 'X'}, ok=False)
     expect(r.is_error and 'no directories' in r.text, 'TR-DOS has no directories', r.text)
     for slot in ('A', 'B'):

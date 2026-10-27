@@ -1,6 +1,6 @@
 // MB-02: the BS-DOS 308 system disk (its directory tree, every body against the tape copies of the same archive), the
 // raw image told from MGT by its boot sector, a FAT chain that loops; files and directories written; the BS-DOS 309
-// virtual floppies of a #47 hard disk partition
+// virtual floppies of a #47 hard disk partition; an MB-01 (BS-DOS 52-105) disk as Busy describes it
 
 #include "unrealdisk/mb02fs.h"
 
@@ -16,6 +16,7 @@
 #include "unrealdisk/diskfs.h"
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/loaders/loader_mb02.h"
+#include "unrealdisk/mb01fs.h"
 
 using namespace unrealdisk;
 using unrealdisk::testing::TestDataPath;
@@ -224,6 +225,140 @@ TEST(Mb02Fs, SystemDiskTreeAndBodiesMatchItsTapes)
     std::vector<std::string> warnings;
     ASSERT_TRUE(LoaderMB02({}, "").serialize(disk.get(), out, warnings));
     EXPECT_TRUE(out == bytes);
+}
+
+namespace
+{
+/// An MB-01 DD disk (80 x 2 x 5) as mb02form.htm lays it out, built here (no MB-01 disk survives): the boot sector
+/// at id 2 (LSN 1; id 1 bad), its backup, FAT1 at 3-4 chained in itself, FAT2 at 5-6, the directory list at 7, the
+/// file list at 8; "hello" (1500 bytes over 9, 10) at the root, "game" in directory 1 "Games", a deleted entry and a
+/// headerless body
+std::unique_ptr<DiskImage> Mb01Disk(bool mark = true)
+{
+    std::vector<uint8_t> lsn(800 * 1024, 0);
+    auto sector = [&](uint32_t n) { return lsn.data() + n * 1024; };
+    auto word = [](uint8_t* p, uint32_t v) {
+        p[0] = static_cast<uint8_t>(v);
+        p[1] = static_cast<uint8_t>(v >> 8);
+    };
+    uint8_t* boot = sector(1);
+    boot[0] = 0x18;
+    boot[2] = 0x80;
+    boot[3] = mark ? 0x01 : 0x02;
+    std::memcpy(boot + 4, "Busy MB-01", 10);
+    boot[14] = 80;
+    boot[15] = 5;
+    word(boot + 16, 0x6000);  // 12:00:00
+    word(boot + 18, 0x5B5B);  // 2025-10-27
+    boot[24] = 7;
+    boot[25] = 8;
+    boot[26] = 2;
+    boot[27] = 3;
+    boot[31] = 5;
+    std::memcpy(sector(2), boot, 1024);
+    for (uint32_t copy : {3u, 5u})
+    {
+        auto fat = [&](uint32_t n, uint16_t v) { word(sector(copy) + 2 * n, v); };
+        fat(0, 0x2000);  // bad
+        for (uint32_t n : {1u, 2u, 4u, 6u, 7u, 8u})
+            fat(n, 0x5400);  // system, the last of its chain, 1024 bytes
+        fat(3, 0x1004);
+        fat(5, 0x1006);
+        fat(9, 10);
+        fat(10, 0x4000 | 476);
+        fat(11, 0x4000 | 100);
+        fat(12, 0x4000 | 10);
+    }
+    // The FAT's second sector holds LSN 512..799: all free here, so it stays zero
+    uint8_t* dir = sector(7) + 16;
+    word(dir + 1, 0x6000);
+    word(dir + 3, 0x5B5B);
+    dir[5] = 1;
+    std::memcpy(dir + 6, "Games     ", 10);
+    auto file = [&](uint32_t entry, uint8_t directory, uint8_t id, const char* name, uint32_t length, uint16_t first) {
+        uint8_t* e = sector(8) + entry * 32;
+        e[0] = directory;
+        word(e + 1, 0x6000);
+        word(e + 3, 0x5B5B);
+        e[5] = id;
+        std::memcpy(e + 6, name, 10);
+        word(e + 16, length);
+        word(e + 18, 0x8000);
+        word(e + 22, 0x8000);
+        word(e + 24, length);
+        e[26] = static_cast<uint8_t>(length >> 16);
+        e[27] = 0xFF;
+        word(e + 30, first);
+    };
+    file(0, 0, 0x63, "hello     ", 1500, 9);
+    file(1, 1, 0x63, "game      ", 100, 11);
+    file(2, 0, 0xE3, "old       ", 100, 11);
+    file(3, 0, 0x44, "          ", 10, 12);
+    for (uint32_t k = 0; k < 1500; k++)
+        lsn[9 * 1024 + k] = static_cast<uint8_t>(k * 7);
+    std::memset(sector(11), 0x47, 100);
+    std::memset(sector(12), 0x48, 10);
+
+    auto disk = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
+    const DiskImage::TrackFormatSpec spec = LoaderMB02::trackSpec(5);
+    const uint8_t* src = lsn.data();
+    for (uint8_t cylinder = 0; cylinder < 80; cylinder++)
+        for (uint8_t side = 0; side < 2; side++)
+        {
+            DiskImage::Track* track = disk->getTrackForCylinderAndSide(cylinder, side);
+            track->formatTrack(cylinder, side, spec);
+            for (uint8_t index = 0; index < 5; index++, src += 1024)
+            {
+                DiskImage::Sector* s = track->getSector(index);
+                std::memcpy(s->data, src, 1024);
+                s->recalculateDataCRC();
+            }
+        }
+    return disk;
+}
+}  // namespace
+
+TEST(Mb01Fs, ABusyDescribedDiskReads)
+{
+    std::unique_ptr<DiskImage> disk = Mb01Disk();
+    Mb01FileSystem mb01 = Mb01FileSystem::OnDisk(*disk);
+    std::string why;
+    ASSERT_TRUE(mb01.Open(&why)) << why;
+    EXPECT_EQ(mb01.Boot().lsn, 1u);
+    EXPECT_EQ(mb01.Boot().Sectors(), 800u);
+
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    const DiskFsVolume& v = fs.Volumes()[0];
+    EXPECT_EQ(v.id, "mb01");
+    EXPECT_EQ(v.system, "MB-01 BS-DOS");
+    EXPECT_EQ(v.label, "Busy MB-01");
+    EXPECT_FALSE(v.writable);
+    EXPECT_EQ(v.freeBytes, (800 - 13) * 1024);
+    std::vector<DiskFsEntry> all;
+    std::string error;
+    ASSERT_TRUE(fs.List("", "", true, all, error)) << error;
+    std::vector<std::string> paths;
+    for (const DiskFsEntry& e : all)
+        paths.push_back(e.path);
+    EXPECT_EQ(paths, (std::vector<std::string>{"hello", "~3", "Games", "Games/game"}));
+    EXPECT_EQ(all[0].size, 1500u);
+    EXPECT_EQ(all[0].start, 0x8000u);
+    EXPECT_EQ(all[0].mtime, 1761566400);  // 2025-10-27 12:00:00 UTC
+    EXPECT_TRUE(all[2].directory);
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(fs.Read("", "hello", data, error)) << error;
+    ASSERT_EQ(data.size(), 1500u);
+    EXPECT_EQ(data[1499], static_cast<uint8_t>(1499 * 7));
+    ASSERT_TRUE(fs.Read("", "Games/game", data, error)) << error;
+    EXPECT_EQ(data, std::vector<uint8_t>(100, 0x47));
+    ASSERT_TRUE(fs.Read("", "~3", data, error)) << error;
+    EXPECT_EQ(data, std::vector<uint8_t>(10, 0x48));
+    EXPECT_FALSE(fs.Write("", "new", {1}, {}, error));
+
+    // Without the MB-01 mark: none
+    std::unique_ptr<DiskImage> other = Mb01Disk(false);
+    EXPECT_FALSE(Mb01FileSystem::OnDisk(*other).Open());
 }
 
 TEST(Mb02Fs, DdDiskIsNoMgtAndKeepsItsDate)

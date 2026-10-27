@@ -2039,7 +2039,7 @@ namespace PythonBindings
                  "Delete a file or an empty iS-DOS / FAT directory on the disk (volume=, recursive=True: a directory with its contents)")
             .def("media_mkdir", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "mkdir", slot, path, options);
-                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue, MB-02 (volume=, parents=True)")
+                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue, MB-02 (volume=, parents=True; iS-DOS: continuous=True, blocks=1-16)")
             .def("media_attrib", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "attrib", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "A file's attributes and time: attributes='+R-H' or 'RA', time='2026-10-26 14:30' (volume=)")

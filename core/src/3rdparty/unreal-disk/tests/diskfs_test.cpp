@@ -296,6 +296,10 @@ TEST(DiskFs_Test, FatDirectories)
     EXPECT_FALSE(fs.MakeDirectory("", "Work", false, 0, error));
     EXPECT_NE(error.find("already"), std::string::npos) << error;
     EXPECT_FALSE(fs.MakeDirectory("", "NONE/SUB", false, 0, error));  // no parents
+    DiskFsDirectoryOptions continuous;
+    continuous.continuous = true;
+    EXPECT_FALSE(fs.MakeDirectory("", "Flat", false, continuous, error));
+    EXPECT_NE(error.find("iS-DOS"), std::string::npos) << error;
     ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;
     ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;  // there already: fine with parents
     ASSERT_TRUE(fs.Write("", "Work/a/b/c/deep.txt", {1, 2, 3}, {}, error)) << error;

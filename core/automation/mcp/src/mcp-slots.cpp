@@ -48,7 +48,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"write", {"volume", "in", "data", "start", "header"}},
         {"delete", {"volume", "recursive"}},
         {"rename", {"volume", "to"}},
-        {"mkdir", {"volume", "parents"}},
+        {"mkdir", {"volume", "parents", "continuous", "blocks"}},
         {"attrib", {"volume", "attributes", "time"}},
         {"label", {"volume", "label"}},
     };
@@ -287,8 +287,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header", "parents"};
-    const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header", "parents", "continuous"};
+    const std::set<std::string> integers = {"free", "cylinders", "sides", "size", "blocks"};
     std::set<std::string> options;
     std::string perVerb;
     for (const auto& [verb, verbOptions] : MediaToolActions())
@@ -359,6 +359,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "(/name: the root), moving the file or the directory";
     schema["properties"]["recursive"]["description"] = "files: the whole tree under the directory; delete: a directory with everything in it";
     schema["properties"]["parents"]["description"] = "mkdir: make the missing directories on the way too (one there already is no error)";
+    schema["properties"]["continuous"]["description"] = "mkdir: iS-DOS: a continuous catalogue (TASiS mkdir.com /c), one run of blocks with no segment table";
+    schema["properties"]["blocks"]["description"] = "mkdir: iS-DOS: the catalogue's size, 1-16 blocks of 256 bytes, 8 entries each (mkdir.com /s; left out: 2 Classic, 3 Chic)";
     schema["properties"]["header"]["description"] = "write: +3DOS: false writes the file without its 128-byte header";
     schema["properties"]["attributes"]["description"] =
         "attrib: the letters of the volume's file system (volumes lists them: FAT RHSA read only / hidden / system / "
@@ -386,11 +388,11 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS floppies, ATM hard disk devices, MDOS3 virtual disks, BS-DOS 309 floppies of a #47 partition, FAT of Sprinter DSS and "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only) and MDOS floppies, ATM hard disk devices, MDOS3 virtual disks, BS-DOS 309 floppies of a #47 partition, FAT of Sprinter DSS and "
         "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
         "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
         "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "
-        "a directory, parents:true the missing ones on the way; attrib sets attributes and / or time of a file or "
+        "a directory, parents:true the missing ones on the way, continuous:true / blocks:n an iS-DOS catalogue continuous / of n blocks; attrib sets attributes and / or time of a file or "
         "directory; label names the volume; a session disk turns dirty until saved, a write-through one takes it into its file). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
