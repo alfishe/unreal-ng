@@ -162,6 +162,7 @@ window published (`WindowView::Publish`). The table with params:
 |:--|:--|:--|:--|
 | `video.gpu_toggle`, `video.crt_toggle`, `video.blending` | P | `on?` (`video.blending` also `frames?`, `weights?`, `decay?`) | WindowDisplay `gpu`, `crt`, `blending*` |
 | `video.crt_profile` | P | `profile?` (name, next, prev) | `crt_profile` |
+| `video.temporal_toggle`, `video.temporal_effect` | P | `on?` / `effect?` (blend, dlss, next) | the Temporal Effects dialog's switch and effect: `blending` or `Screen::SetTemporalAlgorithm`, one at a time |
 | `video.crt_param_by`, `video.blending_decay_by` | D | `name` / - | `SetCrtParameters` steps / `blending_decay` |
 | `video.crt_params_reset` | P | `name?` | `SetCrtParameters` reset |
 | `video.viewport` | P | `viewport?` (name, next, prev) | `VideoViewport::SetViewport` |

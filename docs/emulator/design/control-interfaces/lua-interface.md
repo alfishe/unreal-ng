@@ -185,7 +185,7 @@ media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
 media_targets("/discs/dna_nemo.iso")                    -- where a file can go: file, targets, default, refusal
 media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
-media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, FAT partitions
+media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 media_files("A", "SHELL", {recursive = true})           -- a directory's entries; {volume = "p1"} picks a volume
 media_read("A", "read_me.txt", {out = "/tmp/r.txt"})    -- base64 data, or written to out
 local bytes, why = media_read_bytes("hd", "AUTOEXEC.BAT", "p1")  -- the bytes as a string, or nil and the reason
@@ -194,6 +194,8 @@ media_rename("A", "PROG.C", "GAME.C")                   -- a bare name stays in 
 media_delete("hd", "OLD.TXT", {volume = "p1"})
 media_mkdir("hd", "GAMES/NEW", {parents = true})         -- a FAT directory, an iS-DOS catalogue
 media_delete("hd", "GAMES", {recursive = true})          -- a directory with its contents
+media_attrib("hd", "GAME.COM", {attributes = "+R-H", time = "2026-10-26 14:30"})  -- FAT RHSA, iS-DOS RWHD, +3DOS RSA
+media_label("hd", "WORK DISK")                           -- FAT label, TR-DOS title, iS-DOS device name
 media(verb, slot, path, opts)                           -- any verb
 ```
 

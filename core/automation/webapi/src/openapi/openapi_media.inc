@@ -66,9 +66,9 @@
         Json::Value& files = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["get"];
         files["summary"] = "The files on a slot's disk: volumes / files / read (read only)";
         files["description"] =
-            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS and iS-DOS / TASiS floppies, "
+            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS (read only) floppies, "
             "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
-            "the iS-DOS / TASiS devices of an ATM-Turbo hard disk (a descriptor at a cylinder boundary). "
+            "the ATM CP/M partitions (read only) and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks (read only) of a divIDE one. "
             "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
             "files?path=<dir>[&volume=<id>][&recursive=true]: field 'entries' (path, name, directory, size, start, "
             "attributes, mtime, error, and the file system's own fields), 'notes' (loops cut, stale entries). "
@@ -116,7 +116,7 @@
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
         post["summary"] =
             "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten / "
-            "volumes / files / read / write / delete / rename / mkdir";
+            "volumes / files / read / write / delete / rename / mkdir / attrib / label";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -128,7 +128,9 @@
             "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file or an empty "
             "iS-DOS / FAT directory (recursive: a directory with its contents); rename takes 'to': a bare name stays "
             "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT); "
-            "mkdir makes a directory (parents: the missing ones on the way too). The reply's access says where the change went: writethrough is in the "
+            "mkdir makes a directory (parents: the missing ones on the way too); attrib sets a file's or directory's "
+            "'attributes' (+R-H changes, RA sets exactly: FAT RHSA, iS-DOS RWHD, +3DOS RSA) and / or 'time' (FAT, "
+            "iS-DOS); label names the volume ('label': FAT volume label, TR-DOS disk title, iS-DOS device name). The reply's access says where the change went: writethrough is in the "
             "disk's file, session is dirty until saved. "
             "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
@@ -148,9 +150,9 @@
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] =
             "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk; "
-            "write / delete / rename: the file or directory; mkdir: the directory";
+            "write / delete / rename / attrib: the file or directory; mkdir: the directory";
         body["properties"]["volume"]["type"] = "string";
-        body["properties"]["volume"]["description"] = "files / read / write / delete / rename / mkdir: the volume id from volumes; left out: the first";
+        body["properties"]["volume"]["description"] = "files / read / write / delete / rename / mkdir / attrib / label: the volume id from volumes; left out: the first";
         body["properties"]["to"]["type"] = "string";
         body["properties"]["to"]["description"] =
             "rename: the new name; a bare name stays in the file's directory, a path from the root moves it (iS-DOS, FAT)";
@@ -158,6 +160,13 @@
         body["properties"]["recursive"]["description"] = "files: the whole tree; delete: a directory with everything in it";
         body["properties"]["parents"]["type"] = "boolean";
         body["properties"]["parents"]["description"] = "mkdir: the missing directories on the way too";
+        body["properties"]["attributes"]["type"] = "string";
+        body["properties"]["attributes"]["description"] =
+            "attrib: the volume's attribute letters (volumes lists them): '+R-H' sets and clears, 'RA' leaves exactly these";
+        body["properties"]["time"]["type"] = "string";
+        body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
+        body["properties"]["label"]["type"] = "string";
+        body["properties"]["label"]["description"] = "label: the volume's new name (empty removes a FAT label)";
         body["properties"]["out"]["type"] = "string";
         body["properties"]["out"]["description"] = "read: write the file's bytes to this host file";
         body["properties"]["data"]["type"] = "string";

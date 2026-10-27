@@ -1,21 +1,32 @@
 // zxdisk - the files of any ZX Spectrum disk image through unreal-disk's DiskFs (unrealdisk/diskfs.h).
 //
-//   zxdisk volumes <image>                           the file systems on the disk: id, what it reads as, label, size, free
-//   zxdisk ls <image> [dir] [-r] [--volume id]       a directory's entries (-r: the whole tree under it)
-//   zxdisk cat <image> <file> [-o out] [--volume id] a file's bytes (to stdout without -o)
-//   zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]
+//   zxdisk volumes <image>                           the file systems on the disk: id, what it reads as, label, size,
+//   free zxdisk ls <image> [dir] [-r] [--volume id]       a directory's entries (-r: the whole tree under it) zxdisk
+//   cat <image> <file> [-o out] [--volume id] a file's bytes (to stdout without -o) zxdisk put <image> <host-file>
+//   [name] [--start n] [-o out-image] [--volume id]
 //                                                    a host file onto a floppy (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and
 //                                                    iS-DOS dir/name.ext), an older file of that name replaced
 //   zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]      delete a file or an empty directory (FAT, iS-DOS;
 //                                                    -r: a directory with everything in it)
-//   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id] rename a file (FAT, iS-DOS: move it or a directory)
-//   zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]    a new directory (FAT, iS-DOS; -p: the missing ones
+//   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id] rename a file (FAT, iS-DOS: move it or a
+//   directory) zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]    a new directory (FAT, iS-DOS; -p: the
+//   missing ones
 //                                                    on the way too)
-//   put, rm, mv and mkdir write the image back (or to -o, its extension picking the format)
+//   zxdisk attrib <image> <file> [+R-H|RA] [--time t] [-o out-image] [--volume id]
+//                                                    set or clear attribute letters (FAT RHSA, iS-DOS RWHD, +3DOS RSA;
+//                                                    "+R-H" changes these, "RA" sets exactly these) and the file's time
+//                                                    (FAT, iS-DOS; "YYYY-MM-DD HH:MM[:SS]" of the DOS clock, "now")
+//   zxdisk label <image> <name> [-o out-image] [--volume id]        the FAT volume label ("" removes it), the TR-DOS
+//                                                    disk title, the iS-DOS device name
+//   put, rm, mv, mkdir, attrib and label write the image back (or to -o, a floppy's extension picking the format); a
+//   hard disk image is changed in place, or copied to -o first and the copy changed
 //
 // <image>: a floppy in any format unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK, MGT, IMG, HFE, SCP, ...) with
-// TR-DOS, +3DOS, iS-DOS / TASiS or FAT12 (Sprinter DSS); else a raw hard disk or card image (512-byte sectors): MBR or
-// superfloppy FAT partitions (Estex DSS, NedoOS), iS-DOS devices (the whole disk or at cylinder boundaries).
+// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS or FAT12 (Sprinter DSS); else a raw hard disk or card image
+// (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the configuration
+// record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder boundaries), MDOS3
+// virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card). ATM CP/M, MB-02 and MDOS
+// are read only.
 // `--offset n` skips n bytes of a hard disk image's header (HDF: 22 + the identify block).
 //
 // Exit code 0 on success, 1 on errors, 2 on bad usage.
@@ -50,15 +61,21 @@ int Usage()
                  "       zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]\n"
                  "       zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id]\n"
                  "       zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]\n"
+                 "       zxdisk attrib <image> <file> [+R-H|RA] [--time t] [-o out-image] [--volume id]\n"
+                 "       zxdisk label <image> <name> [-o out-image] [--volume id]\n"
                  "       (hard disk images: --offset n skips a header)\n";
     return 2;
 }
 
-/// A raw hard disk image, read only: 512-byte sectors from `offset` bytes into the file
+/// A raw hard disk image: 512-byte sectors from `offset` bytes into the file, written in place when `writable`
 class FileBlockDevice : public BlockDevice
 {
 public:
-    FileBlockDevice(const std::string& path, uint64_t offset) : _in(path, std::ios::binary), _offset(offset), _path(path)
+    FileBlockDevice(const std::string& path, uint64_t offset, bool writable)
+        : _in(path, writable ? std::ios::binary | std::ios::in | std::ios::out : std::ios::binary | std::ios::in),
+          _offset(offset),
+          _path(path),
+          _writable(writable)
     {
         _in.seekg(0, std::ios::end);
         const auto size = static_cast<uint64_t>(_in.tellg());
@@ -76,16 +93,30 @@ public:
         _in.read(reinterpret_cast<char*>(dst), kSectorSize);
         return _in.gcount() == static_cast<std::streamsize>(kSectorSize);
     }
-    bool WriteSector(uint64_t, const uint8_t*) override { return false; }
-    bool IsWritable() const override { return false; }
+    bool WriteSector(uint64_t lba, const uint8_t* src) override
+    {
+        if (!_writable || lba >= _count)
+            return false;
+        _in.clear();
+        _in.seekp(static_cast<std::streamoff>(_offset + lba * kSectorSize));
+        _in.write(reinterpret_cast<const char*>(src), kSectorSize);
+        return static_cast<bool>(_in);
+    }
+    bool IsWritable() const override { return _writable; }
+    bool Flush()
+    {
+        _in.flush();
+        return static_cast<bool>(_in);
+    }
     std::string Describe() const override { return _path; }
     uint64_t ContentId() const override { return 0; }
 
 private:
-    std::ifstream _in;
+    std::fstream _in;
     uint64_t _offset = 0;
     uint64_t _count = 0;
     std::string _path;
+    bool _writable = false;
 };
 
 std::string Lower(std::string text)
@@ -111,7 +142,8 @@ struct Opened
     std::unique_ptr<DiskFs> fs;
 };
 
-bool Open(const std::string& path, uint64_t offset, Opened& out, std::string& error)
+/// `edit`: the hard disk image to change, `path` itself or the -o copy of it (empty: read only)
+bool Open(const std::string& path, uint64_t offset, const std::string& edit, Opened& out, std::string& error)
 {
     std::string format;
     if (offset == 0)
@@ -132,10 +164,21 @@ bool Open(const std::string& path, uint64_t offset, Opened& out, std::string& er
             return false;
         }
     }
-    out.device = std::make_unique<FileBlockDevice>(path, offset);
+    if (!edit.empty() && edit != path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::ofstream copy(edit, std::ios::binary | std::ios::trunc);
+        if (!in || !copy || !(copy << in.rdbuf()) || !copy.flush())
+        {
+            error = "cannot copy " + path + " to " + edit;
+            return false;
+        }
+    }
+    const std::string& opened = edit.empty() ? path : edit;
+    out.device = std::make_unique<FileBlockDevice>(opened, offset, !edit.empty());
     if (!out.device->IsOpen())
     {
-        error = "cannot read " + path;
+        error = "cannot " + std::string(edit.empty() ? "read " : "open for writing ") + opened;
         return false;
     }
     out.fs = std::make_unique<DiskFs>(*out.device);
@@ -148,6 +191,57 @@ bool ReadHostFile(const std::string& path, std::vector<uint8_t>& out)
     if (!in)
         return false;
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return true;
+}
+
+/// Seconds since 1970 of a civil date (no time zone)
+int64_t CivilSeconds(int year, int month, int day, int hour, int minute, int second)
+{
+    year -= month <= 2;
+    const int64_t era = (year >= 0 ? year : year - 399) / 400;
+    const int64_t yoe = year - era * 400;
+    const int64_t doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return ((era * 146097 + doe - 719468) * 24 + hour) * 3600 + minute * 60 + second;
+}
+
+/// The local clock as UTC seconds of the DOS wall clock (what a DOS machine would stamp)
+int64_t Now()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    return CivilSeconds(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
+}
+
+/// "YYYY-MM-DD HH:MM[:SS]" (or 'T' between) as UTC seconds of the DOS wall clock, "now" the local clock, else seconds
+bool ParseTime(const std::string& text, int64_t& out)
+{
+    if (text == "now")
+    {
+        out = Now();
+        return true;
+    }
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    char separator = 0;
+    const int fields = std::sscanf(text.c_str(), "%d-%d-%d%c%d:%d:%d", &year, &month, &day, &separator, &hour, &minute, &second);
+    if (fields >= 6 && (separator == ' ' || separator == 'T'))
+    {
+        if (year < 1980 || year > 2107 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 ||
+            second > 59 || hour < 0 || minute < 0 || second < 0)
+            return false;
+        out = CivilSeconds(year, month, day, hour, minute, second);
+        return true;
+    }
+    char* end = nullptr;
+    const long long seconds = std::strtoll(text.c_str(), &end, 10);
+    if (text.empty() || *end)
+        return false;
+    out = seconds;
     return true;
 }
 
@@ -173,6 +267,7 @@ int main(int argc, char** argv)
     uint32_t start = 0;
     bool recursive = false;
     bool parents = false;
+    std::string time;
     for (int i = 1; i < argc; i++)
     {
         const std::string a = argv[i];
@@ -183,7 +278,9 @@ int main(int argc, char** argv)
             return true;
         };
         std::string number;
-        if (a == "-r" || a == "--recursive")
+        if (args.size() == 3 && args[0] == "attrib" && a.size() > 1 && a[0] == '-' && a[1] != '-' && a != "-o")
+            args.push_back(a);  // attrib's "-R-H"
+        else if (a == "-r" || a == "--recursive")
             recursive = true;
         else if (a == "-p" || a == "--parents")
             parents = true;
@@ -195,6 +292,11 @@ int main(int argc, char** argv)
         else if (a == "-o")
         {
             if (!value(output))
+                return Usage();
+        }
+        else if (a == "--time")
+        {
+            if (!value(time))
                 return Usage();
         }
         else if (a == "--offset" || a == "--start")
@@ -215,9 +317,14 @@ int main(int argc, char** argv)
     if (args.size() < 2)
         return Usage();
     const std::string& verb = args[0];
+    const bool editing = verb == "put" || verb == "rm" || verb == "mv" || verb == "mkdir" || verb == "attrib" || verb == "label";
     Opened image;
     std::string error;
-    if (!Open(args[1], offset, image, error))
+    // volumes: a hard disk image opened as zxdisk would change it, to say whether its volumes take writes
+    bool opened = Open(args[1], offset, editing ? (output.empty() ? args[1] : output) : verb == "volumes" ? args[1] : std::string(), image, error);
+    if (!opened && verb == "volumes")
+        opened = Open(args[1], offset, std::string(), image, error);
+    if (!opened)
         return Fail(error);
     DiskFs& fs = *image.fs;
 
@@ -275,29 +382,46 @@ int main(int argc, char** argv)
         out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
         return out ? 0 : Fail("cannot write " + output);
     }
-    if (verb == "put" || verb == "rm" || verb == "mv" || verb == "mkdir")
+    if (editing)
     {
         if (args.size() < (verb == "mv" ? 4u : 3u))
             return Usage();
-        if (!image.floppy)
-            return Fail("put, rm, mv and mkdir change floppy images only");
-        if (verb == "put")
+        if (verb == "attrib")
+        {
+            if (args.size() < 4 && time.empty())
+                return Fail("name the attributes (+R-H, RA) or --time");
+            int64_t mtime = 0;
+            if (!time.empty() && !ParseTime(time, mtime))
+                return Fail("--time takes \"YYYY-MM-DD HH:MM[:SS]\" (1980..2107), \"now\" or seconds, not \"" + time + "\"");
+            if (args.size() > 3 && !fs.SetAttributes(volume, args[2], args[3], error))
+                return Fail(error);
+            if (!time.empty() && !fs.SetTime(volume, args[2], mtime, error))
+                return Fail(error);
+        }
+        else if (verb == "label")
+        {
+            if (!fs.SetLabel(volume, args[2], Now(), error))
+                return Fail(error);
+        }
+        else if (verb == "put")
         {
             std::vector<uint8_t> data;
             if (!ReadHostFile(args[2], data))
                 return Fail("cannot read " + args[2]);
             DiskFsWriteOptions options;
             options.start = static_cast<uint16_t>(start);
-            options.mtime = static_cast<int64_t>(std::time(nullptr));
+            options.mtime = Now();
             const std::string name = args.size() > 3 ? args[3] : BaseName(args[2]);
             if (!fs.Write(volume, name, data, options, error))
                 return Fail(error);
         }
         else if (verb == "rm" ? !fs.Delete(volume, args[2], error, recursive)
-                 : verb == "mkdir" ? !fs.MakeDirectory(volume, args[2], parents, static_cast<int64_t>(std::time(nullptr)), error)
+                 : verb == "mkdir" ? !fs.MakeDirectory(volume, args[2], parents, Now(), error)
                                    : !fs.Rename(volume, args[2], args[3], error))
             return Fail(error);
         const std::string target = output.empty() ? args[1] : output;
+        if (!image.floppy)
+            return image.device->Flush() ? 0 : Fail("cannot write " + target);
         const FloppySaveResult saved = FloppyFormats::Save({}, *image.floppy, target, false);
         if (!saved.saved)
             return Fail("cannot save " + target + (saved.reason.empty() ? std::string() : ": " + saved.reason));

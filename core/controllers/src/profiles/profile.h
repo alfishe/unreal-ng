@@ -77,6 +77,9 @@ struct Profile
 
     std::map<std::string, ConnectorPlan> connectors;
     std::vector<PlayerPin> players;
+    /// `joystick_keys`: the keys of the QAOP-style joystick the port reads may pick (`up:q,down:a,left:o,right:p,fire:m`,
+    /// the plug's `keys` option); empty = the plug's own. The game's own menu chooses the joystick, this is only its keys
+    std::string joystickKeys;
     JsonValue options;  ///< defaults of every binding of the profile (an object, maybe empty)
     /// layer ("play", "debug", a shift layer) -> control (`south`, `view+menu`) -> the binding as written
     std::vector<std::pair<std::string, JsonValue::Members>> layers;

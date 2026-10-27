@@ -1,4 +1,6 @@
-# Exolon (Hewson 1987) on a Pentagon with TR-DOS. Q A O P move; hold fire for a grenade. Three documents: the releases
+# Exolon (Hewson 1987) on a Pentagon with TR-DOS. The game's own menu picks keyboard (Q A O P + fire), Kempston or
+# Sinclair: the pad drives whichever the port reads show it uses (joystick_keys names the keyboard one's keys, so no
+# key is bound here that would hide the others). Hold fire for a grenade. Three documents: the releases
 # that fire with Space, the releases that fire with M (most of them), and the demo, whose code sits elsewhere.
 # Haptics (haptics.md §13 H5), checked by play on a Pentagon (7FFD = #10, page 0 at #C000) in every listed release:
 # #8366 fires the blaster, #9221 launches a grenade, #92D4 detonates it, #9CB9 kills Vitorc. Checked by play on the
@@ -13,16 +15,15 @@ schema: 1
 kind: play
 id: builtin/game/exolon
 label: Exolon
-extends: [scheme/qaop-space]
 match:
   machines: [PENTAGON]
   file_sha256:
     - "598021f0f0f850f0ad6c214369be8eb65a71ff3e878c60ed716066add15cb35a"
     - "368774dff15bfaa8e10dd20dcdd48ab21e150567da1701c0103c1a3fa2baf7c1"
     - "7685cccca17661658b7df61ad42425db3c06fd7b692216b7b266354c6767d9fd"
+joystick_keys: "up:q,down:a,left:o,right:p,fire:space"
 layers:
   play:
-    south:        { key: SPACE, label: Fire }
     north:        { key: Q, label: Jump }
     menu:         { key: "1", label: Start }
 haptics:
@@ -56,7 +57,6 @@ schema: 1
 kind: play
 id: builtin/game/exolon-m
 label: Exolon (M fires)
-extends: [scheme/qaop-space]
 match:
   machines: [PENTAGON]
   file_sha256:
@@ -81,9 +81,9 @@ match:
     - "b0bd5efd7551c24373b077dd37201debb1aacf8ba8ca40b33b8c28547201f66b"
     - "6f4587a0ff858714c752ce1af2d0635e874f8db5680d160d39a7c2efc564f613"
     - "377b553ae439cdbd79b47ebb03c33026e45e9929d519e989174a7cb5d3a223ad"
+joystick_keys: "up:q,down:a,left:o,right:p,fire:m"
 layers:
   play:
-    south:        { key: M, label: Fire }
     north:        { key: Q, label: Jump }
     menu:         { key: "1", label: Start }
 haptics:
@@ -113,10 +113,10 @@ schema: 1
 kind: play
 id: builtin/game/exolon-demo
 label: Exolon (demo)
-extends: [scheme/qaop-space]
 match:
   machines: [PENTAGON]
   file_sha256: ["fd4a6ac0da1daa7088dec4658a544688da3a8ad57cfa70bbe34661f5b3d487ee"]
+joystick_keys: "up:q,down:a,left:o,right:p,fire:space"
 layers:
   play:
     north:        { key: Q, label: Jump }

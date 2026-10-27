@@ -304,7 +304,7 @@ const std::vector<std::string>& MediaControl::Verbs()
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
                                                    "compose", "layers", "changes", "flatten", "volumes", "files",
-                                                   "read", "write", "delete", "rename", "mkdir"};
+                                                   "read", "write", "delete", "rename", "mkdir", "attrib", "label"};
     return verbs;
 }
 
@@ -336,6 +336,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"delete", {"volume", "recursive"}},
         {"mkdir", {"volume", "parents"}},
         {"rename", {"volume", "to"}},
+        {"attrib", {"volume", "attributes", "time"}},
+        {"label", {"volume", "label"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -413,7 +415,7 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Changes(request);
     else if (verb == "volumes" || verb == "files" || verb == "read")
         reply = Files(request, verb);
-    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir")
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir" || verb == "attrib" || verb == "label")
         reply = EditFiles(request, verb);
     else
         reply = Protect(request);
@@ -530,6 +532,11 @@ namespace
         n["fs"] = v.fs;
         n["system"] = v.system;
         n["label"] = v.label;
+        n["writable"] = v.writable;
+        if (!v.attributes.empty())
+            n["attributes"] = v.attributes;
+        n["times"] = v.times;
+        n["labels"] = v.labels;
         n["offset"] = v.offset;
         n["bytes"] = v.bytes;
         if (v.freeBytes >= 0)
@@ -658,6 +665,36 @@ namespace
         const int64_t days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
         return days * 86400 + t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec;
     }
+
+    /// "2026-10-26 14:30[:05]" (or with a T), "now", or seconds: UTC seconds of the DOS wall clock (no time zone)
+    bool ParseWallClock(const std::string& text, int64_t& out)
+    {
+        if (text == "now")
+        {
+            out = LocalWallClock();
+            return true;
+        }
+        if (!text.empty() && text.find_first_not_of("0123456789") == std::string::npos && text.size() <= 12)
+        {
+            out = std::stoll(text);
+            return true;
+        }
+        int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+        char separator = 0;
+        int read = 0;
+        const int fields = std::sscanf(text.c_str(), "%4d-%2d-%2d%c%2d:%2d%n:%2d%n", &year, &month, &day, &separator, &hour, &minute, &read,
+                                       &second, &read);
+        if (fields < 6 || (separator != ' ' && separator != 'T') || static_cast<size_t>(read) != text.size() || year < 1980 ||
+            year > 2107 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59)
+            return false;
+        const int64_t y = month <= 2 ? year - 1 : year;
+        const int64_t era = y / 400;
+        const int64_t yoe = y - era * 400;
+        const int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+        const int64_t days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+        out = days * 86400 + hour * 3600 + minute * 60 + second;
+        return true;
+    }
 }  // namespace
 
 MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::string& verb)
@@ -668,9 +705,22 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
         return reply;
     const Options& o = request.options;
     const std::string volume = o.count("volume") ? Trim(o.at("volume")) : std::string();
-    if (Trim(request.path).empty())
-        return Fail(MediaError::BadRequest, verb == "write" ? "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP, FAT / iS-DOS dir/name.ext)"
-                                                            : verb == "mkdir" ? "name the directory to make" : "name the file to " + verb);
+    if (Trim(request.path).empty() && verb != "label")
+        return Fail(MediaError::BadRequest, verb == "write"    ? "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP, FAT / iS-DOS dir/name.ext)"
+                                            : verb == "mkdir"  ? "name the directory to make"
+                                            : verb == "attrib" ? "name the file to change"
+                                                               : "name the file to " + verb);
+    // attrib: the letters and / or the time; label: the new name ("" removes a FAT label)
+    const std::string attributes = o.count("attributes") ? Trim(o.at("attributes")) : std::string();
+    int64_t mtime = 0;
+    const bool hasTime = o.count("time") != 0;
+    if (hasTime && !ParseWallClock(Trim(o.at("time")), mtime))
+        return Fail(MediaError::BadRequest, "option 'time': expected 2026-10-26 14:30[:05], now or seconds, got '" + o.at("time") + "'");
+    if (verb == "attrib" && attributes.empty() && !hasTime)
+        return Fail(MediaError::BadRequest, "give 'attributes' (+R-H changes, RA sets exactly) or 'time', or both");
+    if (verb == "label" && !o.count("label"))
+        return Fail(MediaError::BadRequest, "give the new name as 'label' (an empty one removes a FAT label)");
+    const std::string label = o.count("label") ? Trim(o.at("label")) : std::string();
     const std::string to = o.count("to") ? Trim(o.at("to")) : std::string();
     if (verb == "rename" && to.empty())
         return Fail(MediaError::BadRequest, "give the new name as 'to'");
@@ -771,6 +821,11 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
                 done = fs->Delete(volume, request.path, error, recursive);
             else if (verb == "mkdir")
                 done = fs->MakeDirectory(volume, request.path, parents, options.mtime, error);
+            else if (verb == "attrib")
+                done = (attributes.empty() || fs->SetAttributes(volume, request.path, attributes, error)) &&
+                       (!hasTime || fs->SetTime(volume, request.path, mtime, error));
+            else if (verb == "label")
+                done = fs->SetLabel(volume, label, options.mtime, error);
             else
                 done = fs->Rename(volume, request.path, to, error);
         };
@@ -779,6 +834,8 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
             refused = emulator->EditMemoryFromTool(verb == "write"    ? "media write"
                                                    : verb == "delete" ? "media delete"
                                                    : verb == "mkdir"  ? "media mkdir"
+                                                   : verb == "attrib" ? "media attrib"
+                                                   : verb == "label"  ? "media label"
                                                                       : "media rename",
                                                    edit);
         else
@@ -787,10 +844,13 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
             result = MediaResult::Fail(MediaError::Recording, refused);
         else if (!done)
         {
-            // "not found" (FAT), "no file x", "no x on the <device>" (the others)
+            // "not found", "no such entry" (FAT), "no file x", "no x on the <device>" (the others)
             const bool missing = error.find("not found") != std::string::npos || error.find("no file") != std::string::npos ||
+                                 error.find("no such entry") != std::string::npos ||
                                  (error.compare(0, 3, "no ") == 0 && error.find(" on the ") != std::string::npos);
-            const bool unable = error.find("read only") != std::string::npos || error.find("has no directories") != std::string::npos;
+            const bool unable = error.find("read only") != std::string::npos || error.find("has no directories") != std::string::npos ||
+                                error.find("has no file attributes") != std::string::npos ||
+                                error.find("keeps no file times") != std::string::npos || error.find("has no label") != std::string::npos;
             result = MediaResult::Fail(unable    ? MediaError::NotSupported
                                        : missing ? MediaError::UnreadableSource
                                                  : MediaError::BadRequest,
@@ -799,6 +859,22 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
         else
         {
             reply.body["volume"] = volume.empty() ? fs->Volumes().front().id : volume;
+            if (verb == "attrib")
+            {
+                // The entry as it is now
+                DiskFsEntry entry;
+                std::string ignored;
+                if (fs->Stat(volume, request.path, entry, ignored))
+                {
+                    reply.body["attributes"] = entry.attributes;
+                    if (entry.mtime)
+                        reply.body["mtime"] = entry.mtime;
+                }
+            }
+            if (verb == "label")
+                for (const DiskFsVolume& v : fs->Volumes())
+                    if (volume.empty() ? &v == &fs->Volumes().front() : v.id == volume)
+                        reply.body["label"] = v.label;
             reply.body["changes"] = medium->DescribeChanges();
             reply.body["access"] = AccessModeName(medium->Access());
         }
@@ -812,7 +888,8 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
         reply.result = result;
         return reply;
     }
-    reply.body["path"] = request.path;
+    if (verb != "label")
+        reply.body["path"] = request.path;
     if (verb == "write")
         reply.body["size"] = static_cast<uint64_t>(data.size());
     if (verb == "rename")

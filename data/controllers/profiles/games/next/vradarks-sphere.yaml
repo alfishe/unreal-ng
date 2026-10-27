@@ -1,0 +1,37 @@
+schema: 1
+kind: play
+id: builtin/game/vradarks-sphere
+label: Vradarks Sphere 1.2
+extends: [scheme/qaop-space]
+# Vradarks Sphere 1.2 (TAP, sha256 e1d7b708...). It is a 128K tape game with a custom headerless loader; it was
+# loaded and played on a Pentagon 128K only (machines below). It was not run on the Next: the tape is a 128K
+# Spectrum title, the Pentagon was enough, and no Next-only feature is needed.
+# Turn-based roguelike: one tile per key tap (Q up, A down, O left, P right, the cursor keys the same), SPACE
+# selects in the menu and dismisses a hint, ENTER shows the info page, E / H quit to the menu.
+#
+# Haptics from game events only, found with per-frame coverage diffs over idle / walk / fight frames and proven in
+# real time with exec probes (game.events fires), about 400 random-walk taps in one run:
+#   hurt   0x9B05  a creature hit the hero (fires together with the write of the hero HP byte, once per hit)
+#   killed 0x9B51  a creature dies (fires for the hero's own last hit points too; once per death)
+#   pickup 0xA2C9  any pickup: a coin, a life potion (HP 8 -> 10); the coin routine 0xA210 fires with it
+# The code is in the fixed 0x8000 bank, so no page qualifier is needed.
+# Left out: 0x9B22 (every attack, fires together with hurt), 0x9AB6 / 0x9DF8 (every bump or attack, per key tap),
+# 0xA210 (coin only, covered by pickup), a write probe on the hero HP at page 0 0xE403 (the 0xC000 bank flips).
+# Known limits: a distinct "hero died" address was not isolated (the death shows as hurt + killed); a spell or
+# a boss were not reached; the explicit death effect is not played.
+match:
+  machines: [PENTAGON]
+  file_sha256: ["e1d7b708f754b9965661d26667476a372d81c6817a38c6bb32eee159554f0d7e"]
+layers:
+  play:
+    south:        { key: SPACE, label: Select / dismiss hint }
+    west:         { key: ENTER, label: Info }
+events:
+  hurt:   { probe: exec, address: "0x9B05" }
+  killed: { probe: exec, address: "0x9B51" }
+  pickup: { probe: exec, address: "0xA2C9" }
+haptics:
+  rules:
+    - { on: hurt, play: hit }
+    - { on: killed, play: knock, target: handle.low }
+    - { on: pickup, play: pickup }

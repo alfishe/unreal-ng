@@ -1,8 +1,10 @@
 // unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--host URL] [--wait] [--dry-run]
-// [--seconds N] [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
+// [--seconds N] [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent] [--idle]
 // Plays a scenario (menus + actions, docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
-//   (no scenario) the built-in idle scenario: the UnrealNG look for the deck's model (sdb/idlescenario.h), until a
-//               scenario is loaded for a deck
+//   (no scenario) the data directory's product scenario (streamdeck/scenarios/unreal.deck.yaml) on decks of the
+//               model it is made for, the built-in idle scenario on the others (the UnrealNG look for the deck's
+//               model, sdb/idlescenario.h), until a scenario is loaded for a deck; --idle: the idle one on every deck
+//   UNREAL_STREAMDECK_USB=off: no USB deck is opened (own decks only; a test rig beside the user's deck)
 //   --viewers   Stream Deck Studio windows join on 127.0.0.1:PORT (device wire v2, default 37050, on by default):
 //               mirrors of the deck, or decks of their own with their own runtime
 //   --wait      no deck attached: serve the viewers (own decks work, mirrors wait) and take the first USB deck that
@@ -27,6 +29,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -79,8 +83,20 @@ struct OwnDeck
 // The deck to play on, or null. quiet: no error lines (--wait polls). mirror: an older Stream Deck Studio listening
 // on the wire port may get a copy (only when this daemon's hub does not listen there itself). A USB deck reconnects
 // after an unplug (sdb/reconnect.h); another deck there instead ends this one's runtime (deckStop).
+// The data directory's product scenario (scenarios.md §9): the start scenario of a run without one, on its model
+constexpr const char* kProductScenario = "unreal.deck.yaml";
+
+// UNREAL_STREAMDECK_USB=off: no USB deck is opened (a test rig beside the user's own daemon and deck: own decks only)
+bool UsbOff()
+{
+    const char* v = std::getenv("UNREAL_STREAMDECK_USB");
+    return v != nullptr && std::string(v) == "off";
+}
+
 std::unique_ptr<Device> TryOpen(const Args& a, bool quiet, bool mirror)
 {
+    if (UsbOff())
+        return nullptr;
     Args sel = a;
     if (!mirror && !sel.Has("mirror"))
         sel.opt["no-mirror"] = "1";
@@ -132,7 +148,7 @@ int CmdRun(const Args& a)
                      "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] "
                      "[--host URL] [--wait] [--dry-run] [--seconds N] [--device S|emu] [--mirror] "
                      "[--viewers [PORT] | --no-viewers] [--parent PID[,PID]] [--with-parent] [--companion FILE] "
-                     "[--no-surface] [--activity scenario|off|flash|line] [--lock FILE | --no-lock]\n");
+                     "[--no-surface] [--activity scenario|off|flash|line] [--lock FILE | --no-lock] [--idle]\n");
         return kBadUsage;
     }
     // The processes this run lives for (daemon.md §7): --parent PID[,PID], --with-parent (the starter)
@@ -197,6 +213,13 @@ int CmdRun(const Args& a)
     }
     DaemonDecks::Options dopt;
     dopt.startFile = a.pos.size() >= 2 ? a.pos[1] : std::string();
+    if (dopt.startFile.empty() && !a.Has("idle"))
+    {  // the product scenario of the data directory, on the model it is made for (the others: the idle one)
+        const auto product = data::Root() / "streamdeck" / "scenarios" / kProductScenario;
+        std::error_code ec;
+        if (!data::Root().empty() && std::filesystem::is_regular_file(product, ec))
+            dopt.defaultFile = product.generic_string();
+    }
     dopt.watchStart = a.Has("watch");
     DaemonDecks decks(dopt);
     decks.log = [](const std::string& line) {
@@ -451,7 +474,9 @@ int CmdRun(const Args& a)
         if (!dev)
         {
             dev = TryOpen(a, true, !hub);
-            if (!dev)
+            if (!dev && UsbOff())
+                std::printf("USB off (UNREAL_STREAMDECK_USB=off): no deck is opened, own decks only\n");
+            else if (!dev)
             {
                 std::printf("waiting for a Stream Deck (viewers%s are served meanwhile)\n", hub ? "" : " are not");
                 std::fflush(stdout);

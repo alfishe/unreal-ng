@@ -188,7 +188,7 @@ void EmulatorAPI::getMediaFiles(const HttpRequestPtr& req, std::function<void(co
 /// @brief POST /api/v1/emulator/{id}/media/{slot}/{verb}
 /// verb: insert, swap, eject, save, export, discard, rescan, create, protect, layers, changes, flatten, volumes,
 /// files, read, write (the bytes as base64 'data', a host file 'in', or an application/octet-stream body), delete,
-/// rename ('to'), mkdir ('parents').
+/// rename ('to'), mkdir ('parents'), attrib ('attributes', 'time'), label ('label').
 /// insert / swap also take the file itself (multipart/form-data or a raw body
 /// with X-Filename), staged like the /disk upload and deleted on eject
 void EmulatorAPI::postMediaVerb(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
