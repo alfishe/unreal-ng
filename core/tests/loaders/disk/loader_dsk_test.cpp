@@ -500,6 +500,130 @@ TEST_F(LoaderDSK_Test, Load_LongSector_KeepsTheDumpedBytes)
     removeFile(saved);
 }
 
+/// A CPDRead dump of a protection track (Star Raiders II, Driller, Tintin on the Moon ...): 16 sectors C = H = R = N
+/// = 0..15, the first seven read with their growing N (128 .. 6144 bytes stored, each running on into the fields
+/// after it), the rest ID only. The stored fields add up to more than the longest track: the longest are cut to fit,
+/// the bytes kept are the dumped ones, every sector is there
+TEST_F(LoaderDSK_Test, Load_OverlappingLongFields_CutToFit)
+{
+    std::vector<EdskSector> sectors;
+    const size_t stored[16] = { 128, 256, 512, 1024, 2048, 4096, 6144 };
+    for (uint8_t i = 0; i < 16; i++)
+        sectors.push_back({ i, i, i, i, static_cast<uint8_t>(i ? 0x20 : 0x80), static_cast<uint8_t>(i ? 0x20 : 0x00),
+                            patternBlock(0, i, stored[i]) });
+    const std::string path = writeEdsk("dsk-cpdread.dsk", sectors);
+
+    LoaderDSK loader(_context, path);
+    ASSERT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);
+    bool cutWarning = false;
+    for (const std::string& w : loader.lastWarnings()) cutWarning |= w.find("cut by") != std::string::npos;
+    EXPECT_TRUE(cutWarning);
+
+    DiskImage* image = loader.getImage();
+    DiskImage::Track* track = image->getTrackForCylinderAndSide(0, 0);
+    ASSERT_EQ(track->sectorCount(), 16u);
+    EXPECT_LE(track->rawSize(), DiskImage::RawTrack::MAX_TRACK_SIZE);
+    for (uint8_t r = 0; r < 16; r++)
+    {
+        const DiskImage::Sector* s = track->findSector(r);
+        ASSERT_NE(s, nullptr) << "sector " << int(r);
+        EXPECT_EQ(s->sizeCode(), r);
+        EXPECT_EQ(s->hasData, r < 7) << "sector " << int(r);
+    }
+    // Sectors up to N = 3 keep their whole field; the cut ones keep a prefix of the dump
+    EXPECT_EQ(sectorData(track->findSector(3)), patternBlock(0, 3, 1024));
+    const DiskImage::Sector* n6 = track->findSector(6);
+    const std::vector<uint8_t> dumped = patternBlock(0, 6, 6144);
+    EXPECT_EQ(0, std::memcmp(track->rawData() + n6->dataOffset, dumped.data(), 512));
+    EXPECT_FALSE(track->hasWeakBits()) << "a cut field is not taken for copies of a weak sector";
+
+    delete image;
+    removeFile(path);
+}
+
+/// The same CPDRead track dumped from a real disk (Licence To Kill, cylinder 39): 16 fields of 128 bytes with
+/// GAP#3 200, 390 bytes apart, no index mark. The long dumps hold the next ID fields, so the track is laid out as
+/// on the disk: one revolution, the stream equals the disk's, and every long field reads back as dumped
+TEST_F(LoaderDSK_Test, Load_OverlappingLongFields_LaidOutAsDumped)
+{
+    // The disk's stream: per sector sync, ID, GAP#2, sync, DAM, 128 bytes, CRC, GAP#3 200; 4E to the index
+    std::vector<uint8_t> disk;
+    std::vector<size_t> dataStart;
+    auto crcOf = [&disk](size_t from) {
+        const uint16_t crc = CRCHelper::crcWD1793(disk.data() + from, static_cast<uint16_t>(disk.size() - from));
+        disk.push_back(static_cast<uint8_t>(crc & 0xFF));
+        disk.push_back(static_cast<uint8_t>(crc >> 8));
+    };
+    for (uint8_t i = 0; i < 16; i++)
+    {
+        disk.insert(disk.end(), 12, 0x00);
+        disk.insert(disk.end(), 3, 0xA1);
+        const size_t id = disk.size();
+        disk.insert(disk.end(), { 0xFE, i, i, i, i });
+        crcOf(id);
+        disk.insert(disk.end(), 22, 0x4E);
+        disk.insert(disk.end(), 12, 0x00);
+        disk.insert(disk.end(), 3, 0xA1);
+        const size_t dam = disk.size();
+        disk.push_back(0xFB);
+        dataStart.push_back(disk.size());
+        const std::vector<uint8_t> field = patternBlock(39, i, 128);
+        disk.insert(disk.end(), field.begin(), field.end());
+        crcOf(dam);
+        disk.insert(disk.end(), 200, 0x4E);
+    }
+    ASSERT_EQ(disk.size(), 16u * 390u);
+    disk.resize(6250, 0x4E);
+
+    // CPDRead: sector i read with N = i from its data start on, round the index; N >= 7 stored without bytes
+    std::vector<EdskSector> sectors;
+    const size_t stored[16] = { 128, 256, 512, 1024, 2048, 4096, 6144 };
+    std::vector<std::vector<uint8_t>> dumps;
+    for (uint8_t i = 0; i < 16; i++)
+    {
+        std::vector<uint8_t> dump(stored[i]);
+        for (size_t b = 0; b < dump.size(); b++) dump[b] = disk[(dataStart[i] + b) % disk.size()];
+        dumps.push_back(dump);
+        sectors.push_back({ i, i, i, i, 0x20, 0x20, dump });
+    }
+    const std::string path = writeEdsk("dsk-cpdread-as-dumped.dsk", sectors);
+
+    LoaderDSK loader(_context, path);
+    ASSERT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);
+    bool laidOut = false;
+    for (const std::string& w : loader.lastWarnings()) laidOut |= w.find("laid out as dumped") != std::string::npos;
+    EXPECT_TRUE(laidOut);
+
+    DiskImage* image = loader.getImage();
+    DiskImage::Track* track = image->getTrackForCylinderAndSide(0, 0);
+    ASSERT_EQ(track->sectorCount(), 16u);
+    ASSERT_EQ(track->rawSize(), disk.size());
+    EXPECT_EQ(0, std::memcmp(track->rawData(), disk.data(), disk.size()));
+    for (uint8_t r = 0; r < 16; r++)
+    {
+        const DiskImage::Sector* s = track->findSector(r);
+        ASSERT_NE(s, nullptr) << "sector " << int(r);
+        EXPECT_EQ(s->sizeCode(), r);
+        EXPECT_EQ(s->idamOffset + 45u, dataStart[r]) << "sector " << int(r);
+        // Its field is in the dump of sector 6; the model's view of the last one (1024 bytes for N = 15) would run
+        // past the index, so the model has it ID only, its bytes stay in the stream
+        EXPECT_EQ(s->hasData, r != 15) << "sector " << int(r);
+        if (!s->hasData) continue;
+        EXPECT_EQ(s->dataOffset, dataStart[r]) << "sector " << int(r);
+        // What a uPD765 transfers: the stream from the data start on, round the index
+        if (r < 7)
+        {
+            std::vector<uint8_t> read(stored[r]);
+            for (size_t b = 0; b < read.size(); b++) read[b] = track->rawData()[(s->dataOffset + b) % track->rawSize()];
+            EXPECT_EQ(read, dumps[r]) << "sector " << int(r);
+        }
+    }
+    EXPECT_FALSE(track->hasWeakBits());
+
+    delete image;
+    removeFile(path);
+}
+
 TEST_F(LoaderDSK_Test, Load_Unformatted_Track)
 {
     DiskImage* image = load(EDSK_FIXTURE);
