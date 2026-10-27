@@ -2845,6 +2845,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading (feature `fastdisk`, on by default). When enabled, floppy controller timing is shortened and the TR-DOS ROM read loops are trapped, so disk access is almost instant. Refused while TTD holds it off (recording, replaying history, or sitting in history). | ✅ Implemented |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
 | `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. While a history the user recorded is kept (stopped, paused, loaded) the speed is refused too, with the reason (`TTD holds a history recorded at 1x: discard it to change the speed`): frame timing is part of the recording, so the control is refused rather than the history dropped; after a recording the speed stays 1x while its history is kept (it comes back only once there is none). A black box refuses nothing (it stops before the machine runs faster). Re-selecting the current speed changes nothing. The `set.speed` action is unavailable meanwhile (the `actions.unavailable` readout names it). | ✅ Implemented |
+| `setting effective_speed` | `setting effective` | none (read-only) | The CPU clock multiplier in effect: the host `speed` x the machine's own hardware turbo (TS-Conf 3.5 / 7 / 14 MHz, Scorpion, ATM). A guest raises it by itself, also while TTD records and holds the host speed at 1x. `setting list` shows it as `effective`. A value is refused: `Error: effective_speed is read-only ...`. Same number as WebAPI `effective_speed`, Lua/Python `get_speed().effective` and `emulator.stats` `cpu.multiplier`. | ✅ Implemented |
 | `setting turbo_audio <on\|off>` | | `on` or `off` | Keep generating audio (at a raised pitch) while turbo mode runs. Off (the default) mutes audio in turbo mode. Applied at once if turbo is running. | ✅ Implemented |
 | `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
 | `setting reset` | | | Reset all settings to default values | 🔮 Planned |
@@ -2862,6 +2863,7 @@ Commands to configure emulator instance behavior and performance characteristics
 2. **CPU Performance Settings**:
    - `speed` (alias `max_cpu_speed`): host speed multiplier 1, 2, 4, 8, 16, or `unlimited` (turbo mode)
    - `turbo_audio`: keep audio on in turbo mode
+   - `effective_speed` (alias `effective`): read-only, host speed x the machine's hardware turbo
    - Only 1x while TTD records; see "Acceleration lock" in the TTD section
    - `cpu_frequency`: Direct frequency control in MHz
    - Affects: instruction timing, video frame timing, audio sample rate
@@ -2886,6 +2888,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `fast_disk` | Boolean | `on` | `on`, `off` | Fast disk loading (backed by the `fastdisk` runtime feature) |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `speed` (alias `max_cpu_speed`) | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | Host speed multiplier; `unlimited` = turbo mode (feature `turbomode`) |
+| `effective_speed` (alias `effective`) | Integer | `1` | read-only | Host speed x the hardware turbo: the CPU clock multiplier in effect |
 | `turbo_audio` | Boolean | `off` | `on`, `off` | Audio stays on in turbo mode |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
 | `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |

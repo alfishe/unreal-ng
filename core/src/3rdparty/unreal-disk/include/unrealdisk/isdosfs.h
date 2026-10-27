@@ -116,6 +116,8 @@ public:
         uint16_t load = 0;   ///< the default load address
         uint16_t date = 0;   ///< MS-DOS date
         uint16_t time = 0;   ///< MS-DOS time (+28, which XiSD writes; the kernel ignores it)
+        bool continuous = false;  ///< MakeCatalogue: a continuous catalogue (TASiS mkdir.com /c)
+        uint32_t blocks = 0;      ///< MakeCatalogue: its size, 1-16 blocks (mkdir.com /s; 0: 2 Classic, 3 Chic)
     };
     /// `bytes` as the file `path` ("DIR/name.ext", the catalogue there already): an older file of that name (ASCII
     /// case ignored) is replaced, keeping its slot. False with the reason: no such catalogue, a bad name, a protected
@@ -133,8 +135,10 @@ public:
     /// not deeper than kMaxLevel
     bool Rename(const std::string& path, const std::string& to, std::string& error);
     /// A new empty catalogue `path` ("DIR/NAME", upper-cased) as mkdir.com makes it: segmented (status #21), a table
-    /// block, then one run of 2 blocks (Classic) or 3 (Chic); entry 0 names the parent, the level one deeper (+16
-    /// Classic, +23 Chic), NFILE 1; at most kMaxLevel levels under the root
+    /// block, then one run of 2 blocks (Classic) or 3 (Chic); continuous (status #61, TASiS mkdir.com /c) one run with
+    /// no table, +17 and +19 its first block; `options.blocks` sets the run (/s). Entry 0 is the parent's entry and
+    /// names the parent (+12), the level one deeper (+16 Classic, +23 Chic), NFILE 1; the other blocks are zero. At
+    /// most kMaxLevel levels under the root
     bool MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error);
     static constexpr uint32_t kMaxLevel = 6;   ///< mkdir.com refuses a parent of level 6
     /// The status bits SetAttributes changes: read, write and delete protection, hidden

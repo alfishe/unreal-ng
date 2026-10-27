@@ -37,3 +37,44 @@ haptics:
     - { on: hurt, play: hit }
     - { on: killed, play: thump }
     - { on: pickup, play: pickup, scale: 1.7 }
+---
+# Vradark's Sphere 1.2, the Next release (Vradark.snx, sha256 e6451f21...: a 128K snapshot whose music and graphics come
+# from the SD card's res/ and music/ folders, so start it from NextZXOS's Browser). The same game as the TAP above but
+# another build: none of the TAP's addresses is in this code. The events here are data, not code: the game keeps the
+# hero's numbers in RAM and the HUD reads them.
+# Found by tapping to a coin, a skeleton and a bug with memory snapshots around each HUD change (the screen text names
+# the event: "The coin's been found!", "Hero attacked Skeleton and killed him!", "Bug attacked Hero, hit 1, Left 7 HP"):
+#   hurt   #6C03       the hero's hit points (page 5): 8 -> 7 at a bug's bite
+#   killed #C011       the kill counter shown as the second line of the panel (n/50), page 0 in the #C000 window: +1 per
+#                      kill (a skeleton, a bug; 2 -> 3 -> 4 -> 5 in one run)
+#   pickup #C014       the gold shown at the bottom of the panel: +1 per coin (2 -> 3)
+#   died   #6C03 == 0  the hit points reach 0
+# Checked by play on a NEXT (real time, game.events monitor, a 170 s random walk): 8 `killed` and 14 `hurt` while the
+# panel's text named a kill or a bite each time, the death (game over, back to the title) fired `died`. Known limit: the
+# title and intro screens reuse the memory of #6C03, so they fire `hurt` / `died` too (about a dozen when the game is
+# loaded, a few more on the way back to the title after a death). Not run to the end: coins were checked by the gold byte
+# going 2 -> 3, not by the monitor.
+# Turn-based, so every event is one key tap; the controls are the TAP's (Q A O P, SPACE, ENTER).
+schema: 1
+kind: play
+id: builtin/game/vradarks-sphere-next
+label: Vradarks Sphere 1.2 (Next)
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["e6451f213f240f975f381428701e882b2bb8be828fe05bdbb11bc1d6beacfd76"]
+layers:
+  play:
+    south:        { key: SPACE, label: Select / dismiss hint }
+    west:         { key: ENTER, label: Info }
+events:
+  hurt:   { probe: write, address: "0x6C03", when: decreased }
+  died:   { probe: write, address: "0x6C03", when: "==", value: 0 }
+  killed: { probe: write, address: "page:0:0xC011", when: increased }
+  pickup: { probe: write, address: "page:0:0xC014", when: increased }
+haptics:
+  rules:
+    - { on: hurt, play: hit }
+    - { on: died, play: life-lost }
+    - { on: killed, play: thump }
+    - { on: pickup, play: pickup, scale: 1.7 }

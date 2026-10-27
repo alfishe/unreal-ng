@@ -193,6 +193,7 @@ media_write("A", "PROG.C", "\243\201", {start = 0x8000})  -- onto any file syste
 media_rename("A", "PROG.C", "GAME.C")                   -- a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
 media_delete("hd", "OLD.TXT", {volume = "p1"})
 media_mkdir("hd", "GAMES/NEW", {parents = true})         -- a FAT directory, an iS-DOS catalogue
+media_mkdir("A", "WORK", {continuous = true, blocks = 4}) -- an iS-DOS continuous catalogue of 4 blocks
 media_delete("hd", "GAMES", {recursive = true})          -- a directory with its contents
 media_attrib("hd", "GAME.COM", {attributes = "+R-H", time = "2026-10-26 14:30"})  -- FAT RHSA, iS-DOS RWHD, +3DOS RSA
 media_label("hd", "WORK DISK")                           -- FAT label, TR-DOS title, iS-DOS device name

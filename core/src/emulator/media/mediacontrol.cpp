@@ -334,7 +334,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"read", {"volume", "out"}},
         {"write", {"volume", "in", "data", "start", "header"}},
         {"delete", {"volume", "recursive"}},
-        {"mkdir", {"volume", "parents"}},
+        {"mkdir", {"volume", "parents", "continuous", "blocks"}},
         {"rename", {"volume", "to"}},
         {"attrib", {"volume", "attributes", "time"}},
         {"label", {"volume", "label"}},
@@ -729,6 +729,19 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
         return Fail(MediaError::BadRequest, "option 'recursive': expected true or false, got '" + it->second + "'");
     if (auto it = o.find("parents"); it != o.end() && !ParseBool(it->second, parents))
         return Fail(MediaError::BadRequest, "option 'parents': expected true or false, got '" + it->second + "'");
+    // mkdir: an iS-DOS catalogue continuous and / or of 1-16 blocks (TASiS mkdir.com /c /s)
+    DiskFsDirectoryOptions directory;
+    if (auto it = o.find("continuous"); it != o.end() && !ParseBool(it->second, directory.continuous))
+        return Fail(MediaError::BadRequest, "option 'continuous': expected true or false, got '" + it->second + "'");
+    if (auto it = o.find("blocks"); it != o.end())
+    {
+        const std::string text = Trim(it->second);
+        char* end = nullptr;
+        const unsigned long value = text.empty() ? 0 : std::strtoul(text.c_str(), &end, 10);
+        if (text.empty() || *end != 0 || value < 1 || value > 16)
+            return Fail(MediaError::BadRequest, "option 'blocks': expected 1-16, got '" + it->second + "'");
+        directory.blocks = static_cast<uint32_t>(value);
+    }
 
     // write: the bytes as base64 `data` or the host file `in`, one of them
     std::vector<uint8_t> data;
@@ -820,7 +833,10 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
             else if (verb == "delete")
                 done = fs->Delete(volume, request.path, error, recursive);
             else if (verb == "mkdir")
-                done = fs->MakeDirectory(volume, request.path, parents, options.mtime, error);
+            {
+                directory.mtime = options.mtime;
+                done = fs->MakeDirectory(volume, request.path, parents, directory, error);
+            }
             else if (verb == "attrib")
                 done = (attributes.empty() || fs->SetAttributes(volume, request.path, attributes, error)) &&
                        (!hasTime || fs->SetTime(volume, request.path, mtime, error));

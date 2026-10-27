@@ -1,10 +1,12 @@
 // MDOS: a D80 disk (MDOS3's boot disk cut out of its container), the slots of an MDOS3 container and of an MBR
-// partition of type #31, the copies of one file on different disks, a FAT chain that loops
+// partition of type #49, the copies of one file on different disks, a FAT chain that loops; writing files on a D80
+// and into a slot
 
 #include "unrealdisk/mdosfs.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -57,7 +59,10 @@ std::vector<uint8_t> ReadFile(DiskFs& fs, const std::string& volume, const std::
 class MemoryDevice : public BlockDevice
 {
 public:
-    explicit MemoryDevice(std::vector<uint8_t> bytes) : _bytes(std::move(bytes)) {}
+    explicit MemoryDevice(std::vector<uint8_t> bytes, bool writable = false)
+        : _bytes(std::move(bytes)), _writable(writable)
+    {
+    }
     uint64_t SectorCount() const override
     {
         return _bytes.size() / kSectorSize;
@@ -69,13 +74,16 @@ public:
         std::memcpy(dst, _bytes.data() + lba * kSectorSize, kSectorSize);
         return true;
     }
-    bool WriteSector(uint64_t, const uint8_t*) override
+    bool WriteSector(uint64_t lba, const uint8_t* src) override
     {
-        return false;
+        if (!_writable || lba >= SectorCount())
+            return false;
+        std::memcpy(_bytes.data() + lba * kSectorSize, src, kSectorSize);
+        return true;
     }
     bool IsWritable() const override
     {
-        return false;
+        return _writable;
     }
     std::string Describe() const override
     {
@@ -86,9 +94,23 @@ public:
         return 0;
     }
 
+    const std::vector<uint8_t>& Data() const
+    {
+        return _bytes;
+    }
+
 private:
     std::vector<uint8_t> _bytes;
+    bool _writable = false;
 };
+
+std::vector<uint8_t> Pattern(size_t size, uint8_t seed)
+{
+    std::vector<uint8_t> data(size);
+    for (size_t k = 0; k < size; k++)
+        data[k] = static_cast<uint8_t>(k * 7 + seed + (k >> 9));
+    return data;
+}
 }  // namespace
 
 TEST(MdosFs, D80DiskListsAndReads)
@@ -108,7 +130,8 @@ TEST(MdosFs, D80DiskListsAndReads)
     EXPECT_EQ(v.label, "bootdisk");
     EXPECT_EQ(v.bytes, 737280u);
     EXPECT_EQ(v.freeBytes, 7 * 512);
-    EXPECT_FALSE(v.writable);
+    EXPECT_TRUE(v.writable);
+    EXPECT_EQ(v.attributes, "HSPARWED");
 
     std::vector<DiskFsEntry> entries;
     std::string error;
@@ -289,4 +312,116 @@ TEST(MdosFs, LoopingChainFailsAndOtherDisksAreNoMdos)
     EXPECT_FALSE(mdos.Open(&why));
     for (const DiskFsVolume& v : DiskFs(*disk).Volumes())
         EXPECT_NE(v.fs, "mdos");
+}
+
+TEST(MdosFs, D80WriteDeleteRenameAttributesLabel)
+{
+    std::vector<uint8_t> bytes = Bytes("loaders/mdos/bootdisk.d80");
+    // Room for the test: run.B and TOOLS 128.P go (24 sectors back)
+    std::string format;
+    std::unique_ptr<DiskImage> disk = Parse(bytes, "bootdisk.d80", format);
+    ASSERT_TRUE(disk);
+    std::string error;
+    {
+        DiskFs fs(*disk);
+        ASSERT_TRUE(fs.Delete("", "run.B", error)) << error;
+        ASSERT_TRUE(fs.Delete("", "TOOLS 128.P", error)) << error;
+    }
+    DiskFs fs(*disk);
+    const int64_t free = fs.Volumes()[0].freeBytes;
+    ASSERT_GE(free, 20 * 512);
+
+    // A file of 3 sectors and a bit: the chain ends with #E00 + 100, the entry as MDOS writes one
+    const std::vector<uint8_t> data = Pattern(3 * 512 + 100, 1);
+    DiskFsWriteOptions options;
+    options.start = 0x8000;
+    ASSERT_TRUE(fs.Write("", "hello.B", data, options, error)) << error;
+    EXPECT_EQ(ReadFile(fs, "", "hello.B"), data);
+    DiskFsEntry entry;
+    ASSERT_TRUE(fs.Stat("", "hello.B", entry, error)) << error;
+    EXPECT_EQ(entry.start, 0x8000u);
+    EXPECT_EQ(entry.attributes, "....RWED");
+    EXPECT_EQ(entry.Field("extra"), 0);
+
+    // Written over: one entry left, the old sectors back
+    const std::vector<uint8_t> shorter = Pattern(512, 2);
+    ASSERT_TRUE(fs.Write("", "hello.B", shorter, options, error)) << error;
+    EXPECT_EQ(ReadFile(fs, "", "hello.B"), shorter);
+    std::vector<DiskFsEntry> entries;
+    ASSERT_TRUE(fs.List("", "", false, entries, error)) << error;
+    EXPECT_EQ(std::count_if(entries.begin(), entries.end(), [](const DiskFsEntry& e) { return e.name == "hello.B"; }),
+              1);
+
+    // An empty file takes no sector (#C00 as its first); a program keeps its length as param2
+    ASSERT_TRUE(fs.Write("", "empty.B", {}, {}, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "empty.B", entry, error)) << error;
+    EXPECT_EQ(entry.Field("sector"), 0xC00);
+    EXPECT_TRUE(ReadFile(fs, "", "empty.B").empty());
+    ASSERT_TRUE(fs.Write("", "prog.P", Pattern(40, 3), options, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "prog.P", entry, error)) << error;
+    EXPECT_EQ(entry.Field("param2"), 40);
+
+    // Too big, a bad name
+    EXPECT_FALSE(fs.Write("", "big.B", Pattern(static_cast<size_t>(free) + 512, 4), {}, error));
+    EXPECT_NE(error.find("not enough free sectors"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Write("", "elevenchars.B", data, {}, error));
+    EXPECT_FALSE(fs.Write("", "noType", data, {}, error));
+
+    // Rename, attributes: without D no delete
+    ASSERT_TRUE(fs.Rename("", "hello.B", "bye.C", error)) << error;
+    EXPECT_FALSE(fs.Rename("", "bye.C", "prog.P", error));
+    ASSERT_TRUE(fs.SetAttributes("", "bye.C", "HRW", error)) << error;
+    ASSERT_TRUE(fs.Stat("", "bye.C", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "H...RW..");
+    EXPECT_FALSE(fs.Delete("", "bye.C", error));
+    EXPECT_NE(error.find("D attribute"), std::string::npos) << error;
+    ASSERT_TRUE(fs.SetAttributes("", "bye.C", "+D", error)) << error;
+    ASSERT_TRUE(fs.Delete("", "bye.C", error)) << error;
+    ASSERT_TRUE(fs.Delete("", "empty.B", error)) << error;
+    ASSERT_TRUE(fs.Delete("", "prog.P", error)) << error;
+    ASSERT_TRUE(fs.SetLabel("", "renamed", 0, error)) << error;
+    EXPECT_EQ(fs.Volumes()[0].label, "renamed");
+
+    // The saved image reads the same, every sector free again
+    std::vector<uint8_t> out;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(LoaderMDOS({}, "").serialize(disk.get(), out, warnings));
+    std::unique_ptr<DiskImage> again = Parse(out, "again.d80", format);
+    ASSERT_TRUE(again);
+    MdosFileSystem mdos = MdosFileSystem::OnDisk(*again);
+    ASSERT_TRUE(mdos.Open());
+    EXPECT_EQ(mdos.Boot().name, "renamed");
+    EXPECT_EQ(static_cast<int64_t>(mdos.FreeSectors()) * 512, free);
+    std::vector<MdosFile> files;
+    ASSERT_TRUE(mdos.List(files, error)) << error;
+    EXPECT_EQ(files.size(), 107u);
+}
+
+TEST(MdosFs, Mdos3SlotWritesAndWriteProtection)
+{
+    std::vector<uint8_t> md3 = Bytes("loaders/mdos/mdos3-3slots.md3");
+    md3[2 * 1693 * 512 + 36] = '1';  // slot 2 write protected
+    MemoryDevice device(md3, true);
+    DiskFs fs(device);
+    ASSERT_EQ(fs.Volumes().size(), 3u);
+    EXPECT_TRUE(fs.Volumes()[1].writable);
+    EXPECT_FALSE(fs.Volumes()[2].writable);
+    std::string error;
+    EXPECT_FALSE(fs.Write("mdos-2", "x.B", Pattern(10, 5), {}, error));
+
+    const std::vector<uint8_t> data = Pattern(2000, 6);
+    ASSERT_TRUE(fs.Write("mdos-1", "new.B", data, {}, error)) << error;
+    ASSERT_TRUE(fs.SetLabel("mdos-1", "RENAMED SLOT", 0, error)) << error;
+    EXPECT_EQ(fs.Volumes()[1].label, "RENAMED SLOT");
+    EXPECT_EQ(fs.Volumes()[1].freeBytes, 955 * 512);  // as probed: the volume list is not refreshed
+
+    // A fresh look at the device: the file, the slot's name, nothing outside slot 1 changed
+    MemoryDevice reread(device.Data());
+    DiskFs again(reread);
+    ASSERT_EQ(again.Volumes().size(), 3u);
+    EXPECT_EQ(again.Volumes()[1].label, "RENAMED SLOT");
+    EXPECT_EQ(again.Volumes()[1].freeBytes, (955 - 4) * 512);
+    EXPECT_EQ(ReadFile(again, "mdos-1", "new.B"), data);
+    EXPECT_TRUE(std::equal(md3.begin(), md3.begin() + 1693 * 512, device.Data().begin()));
+    EXPECT_TRUE(std::equal(md3.begin() + 2 * 1693 * 512, md3.end(), device.Data().begin() + 2 * 1693 * 512));
 }

@@ -26,7 +26,7 @@ namespace
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
                                                  "compression", "parent", "volume", "out", "in", "data", "start", "to",
-                                                 "attributes", "time", "label"};
+                                                 "attributes", "time", "label", "blocks"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
@@ -429,22 +429,24 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
     out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
-        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS" << NEWLINE
-        << "                                 dir/name.ext), an older file of that name replaced; --start: the TR-DOS" << NEWLINE
-        << "                                 start / +3DOS CODE / iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
+        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, MDOS name.T, FAT and" << NEWLINE
+        << "                                 iS-DOS dir/name.ext, MB-02 dir/name, ATM CP/M USERn/NAME.TYP), an older file of that name replaced; --start: the" << NEWLINE
+        << "                                 TR-DOS / MDOS start, +3DOS CODE, iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
         << "                                 --header=false: +3DOS without its header" << NEWLINE;
-    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS);" << NEWLINE
+    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS, MB-02);" << NEWLINE
         << "                                 --recursive: a directory with everything in it" << NEWLINE;
-    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT and" << NEWLINE
-        << "                                 iS-DOS take a path from the root (/name: the root), moving the file or" << NEWLINE
+    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT," << NEWLINE
+        << "                                 iS-DOS and MB-02 take a path from the root (/name: the root), moving the file or" << NEWLINE
         << "                                 the directory" << NEWLINE;
-    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue); --parents:" << NEWLINE
-        << "                                 the missing ones on the way too" << NEWLINE;
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n] - a new directory (FAT, iS-DOS" << NEWLINE
+        << "                                 catalogue, MB-02); --parents: the missing ones on the way too; iS-DOS:" << NEWLINE
+        << "                                 --continuous a continuous catalogue, --blocks its size 1-16 (mkdir.com /c /s)" << NEWLINE;
     out << "  attrib <slot> <file> [+R-H | RA] [--time 2026-10-26T14:30[:05] | now] [--volume id]" << NEWLINE
-        << "                               - the attributes (FAT R H S A, iS-DOS R W H D, +3DOS R S A; +R-H changes," << NEWLINE
-        << "                                 RA sets exactly) and the date and time (FAT, iS-DOS) of a file or directory" << NEWLINE;
+        << "                               - the attributes (FAT R H S A, iS-DOS R W H D, +3DOS / CP/M R S A, MDOS HSPARWED;" << NEWLINE
+        << "                                 +R-H changes, RA sets exactly) and the date and time (FAT, iS-DOS, MB-02)" << NEWLINE
+        << "                                 of a file or directory" << NEWLINE;
     out << "  label <slot> <name> [--volume id] - the FAT volume label (\"\" removes it), TR-DOS disk title, iS-DOS" << NEWLINE
-        << "                                 device name" << NEWLINE;
+        << "                                 device name, MB-02 or MDOS disk name" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE

@@ -1411,33 +1411,43 @@ bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions&
         return false;
     }
 
-    // As $crfil lays it out: the slot (a growing parent takes its block first), the table block, one run of blocks
-    const uint32_t count = _boot.chic ? 3 : 2;
+    const uint32_t count = options.blocks ? options.blocks : _boot.chic ? 3 : 2;
+    if (count > kMaxCatalogueBlocks)
+    {
+        error = "an iS-DOS catalogue is 1 to " + std::to_string(kMaxCatalogueBlocks) + " blocks, not " +
+                std::to_string(count);
+        return false;
+    }
+
+    // As $crfil lays it out: the slot (a growing parent takes its block first), the table block (segmented), one run
     std::vector<uint8_t> trial = bits;
     for (const uint32_t grow : GrowthBlocks(parent, trial))
         Mark(trial, grow, true);
-    const uint32_t table = FirstFit(trial, _boot.blocks, 1);
-    if (table != UINT32_MAX)
+    const uint32_t table = options.continuous ? 0 : FirstFit(trial, _boot.blocks, 1);
+    if (table != UINT32_MAX && !options.continuous)
         Mark(trial, table, true);
     const uint32_t start = table == UINT32_MAX ? UINT32_MAX : FirstFit(trial, _boot.blocks, count);
     if (start == UINT32_MAX)
     {
-        error = "the device has no room: a catalogue needs a table block and " + std::to_string(count) + " blocks in a row";
+        error = "the device has no room: a catalogue needs " +
+                std::string(options.continuous ? "" : "a table block and ") + std::to_string(count) +
+                " blocks in a row";
         return false;
     }
     const std::vector<uint8_t> before = bits;
     uint32_t index = 0;
     if (!TakeSlot(parent, bits, index, error))
         return false;
-    Mark(bits, table, true);
+    if (!options.continuous)
+        Mark(bits, table, true);
     for (uint32_t k = 0; k < count; k++)
         Mark(bits, start + k, true);
 
     uint8_t e[32] = {};
     std::memcpy(e, name, 11);
-    e[11] = kExists | kCatalogue;
+    e[11] = kExists | kCatalogue | (options.continuous ? kContinuous : 0);
     PutWord(e + 14, count * kBlock);
-    PutWord(e + 17, table);
+    PutWord(e + 17, options.continuous ? start : table);
     PutWord(e + 19, start);
     PutWord(e + 30, options.date);
     std::memcpy(parent.raw.data() + index * 32, e, 32);
@@ -1453,7 +1463,7 @@ bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions&
     head[21] = 1;
     SetLevel(head, level);
     const uint8_t zero[kBlock] = {};
-    bool ok = Put(table, t) && Put(start, head);
+    bool ok = (options.continuous || Put(table, t)) && Put(start, head);
     for (uint32_t k = 1; k < count && ok; k++)
         ok = Put(start + k, zero);
     if (!ok || !StoreBitmap(before, bits) || !StoreEntry(parent, index) || !StoreEntry(parent, 0))

@@ -43,6 +43,7 @@
 #include "sdb/daemondecks.h"
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
+#include "sdb/deckpages.h"
 #include "sdb/devicewire.h"
 #include "sdb/eventloop.h"
 #include "sdb/pairing.h"
@@ -222,6 +223,14 @@ int CmdRun(const Args& a)
     }
     dopt.watchStart = a.Has("watch");
     DaemonDecks decks(dopt);
+    // each deck's page, kept over a restart of the daemon (a kill included): the deck opens where it was
+    DeckPages pages(DeckPages::DefaultFile());
+    auto keepPages = [&pages](Runtime& rt, const std::string& serial, const Scenario& sc) {
+        rt.RestorePath(pages.Get(serial, sc.name));
+        rt.onPathChanged = [&pages, serial](const std::string& scenario, const std::vector<std::string>& ids) {
+            pages.Set(serial, scenario, ids);
+        };
+    };
     decks.log = [](const std::string& line) {
         std::fprintf(stderr, "%s\n", line.c_str());
         std::fflush(stderr);
@@ -299,7 +308,9 @@ int CmdRun(const Args& a)
             RuntimeOptions ownOpt = opt;
             if (client)
                 ownOpt.executor = client->Executor(serial);
-            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(&m), nullptr, ownOpt);
+            const Scenario ownStart = decks.StartScenario(&m);
+            own->rt = std::make_unique<Runtime>(*own->dev, ownStart, nullptr, ownOpt);
+            keepPages(*own->rt, serial, ownStart);
             own->rt->onNoticeTap = pairTap;
             own->rt->onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
             if (client)
@@ -504,6 +515,7 @@ int CmdRun(const Args& a)
             if (client)
                 deckOpt.executor = client->Executor(serial);
             Runtime rt(*dev, start, nullptr, deckOpt);
+            keepPages(rt, serial, start);
             rt.onNoticeTap = pairTap;
             rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
             if (client)
@@ -521,6 +533,8 @@ int CmdRun(const Args& a)
             if (runStop)
                 deckStop = true;  // a stop between the loop's check and the reset above
             rt.Run(deckStop);
+            if (runStop)
+                rt.ShowStopped("UNREAL-NG STREAM DECK STOPPED");
             decks.Remove(serial);
             if (client)
                 client->RemoveDeck(serial);
