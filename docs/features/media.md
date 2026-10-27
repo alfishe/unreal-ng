@@ -88,7 +88,9 @@ on a +3) is `unknown-slot`, never drive A.
 | `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size and free bytes ([disk file systems](../emulator/design/disk-file-systems.md)) |
 | `files` | slot, path? | the entries of a directory (`path` empty: the root) of one volume: path, name, size, start, attributes, time and the fields only that file system has; `recursive` the whole tree. Read only, under the time-travel read tap (nothing journalled) |
 | `read` | slot, path | one file's bytes: base64 `data` up to 16 MiB, or written to `out` (the answer then names `savedPath`) |
-| `write` | slot, path | a file onto the TR-DOS (`NAME.T`) or +3DOS (`NAME.TYP`) floppy in the slot, an older file of that name replaced: the bytes as base64 `data` or a host file `in`; `start` the TR-DOS start / +3DOS CODE address (`#8000`, `0x8000`, `32768`), `header` false a +3DOS file without its header. Refused on a write-protected or read-only disk and on the read-only file systems (iS-DOS, FAT, hard disks). The disk is dirty until saved; a TTD session keeps it as a tool's edit |
+| `write` | slot, path | a file onto the disk in the slot: TR-DOS (`NAME.T`), +3DOS (`NAME.TYP`), iS-DOS / TASiS (`SHELL/new.txt`), FAT on a floppy, hard disk or card (long names); an older file of that name replaced: the bytes as base64 `data` or a host file `in`; `start` the TR-DOS start / +3DOS CODE / iS-DOS load address (`#8000`, `0x8000`, `32768`), `header` false a +3DOS file without its header. Refused on a write-protected or read-only disk. The reply's `access` says where it went: `session` dirty until saved, `writethrough` in the disk's file; a TTD session keeps it as a tool's edit |
+| `delete` | slot, path | a file (or an empty iS-DOS / FAT directory) off the disk; protected iS-DOS system files stay |
+| `rename` | slot, path | the file gets `to`: a bare name stays in its directory, a path from the root moves it (iS-DOS, FAT); a taken name is refused |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -580,6 +582,8 @@ media volumes hd
 media files A SHELL --recursive
 media read hd AUTOEXEC.BAT --volume p1 --out /tmp/autoexec.bat
 media write A PROG.C --in prog.bin --start #8000
+media rename A PROG.C GAME.C
+media delete hd OLD.TXT --volume p1
 media help
 ```
 

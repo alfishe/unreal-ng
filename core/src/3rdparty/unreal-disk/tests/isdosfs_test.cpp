@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 
 #include "testdata.h"
 #include "unrealdisk/floppyformats.h"
@@ -51,6 +52,7 @@ struct Tree
     size_t bytes = 0;
     uint32_t crc = 0;       ///< over each file's path (UTF-8) and body, in listing order (zxarc's golden.py)
     std::vector<std::string> root;
+    std::map<std::string, uint32_t> each;   ///< a CRC-32 per file body
 };
 
 Tree Walk(const IsdosFileSystem& fs)
@@ -78,6 +80,7 @@ Tree Walk(const IsdosFileSystem& fs)
         tree.bytes += body.size();
         tree.crc = Crc32(tree.crc, reinterpret_cast<const uint8_t*>(f.path.data()), f.path.size());
         tree.crc = Crc32(tree.crc, body.data(), body.size());
+        tree.each[f.path] = Crc32(0, body.data(), body.size());
     }
     return tree;
 }
@@ -223,4 +226,177 @@ TEST(IsdosFs_Test, DamageIsReported)
     ASSERT_TRUE(IsdosFileSystem::OnBytes(loop.data(), loop.size()).List(entries, &notes, error)) << error;
     ASSERT_FALSE(notes.empty());
     EXPECT_NE(notes.front().find("catalogue loop"), std::string::npos) << notes.front();
+}
+
+namespace
+{
+std::vector<uint8_t> Pattern(size_t size, uint8_t seed)
+{
+    std::vector<uint8_t> bytes(size);
+    for (size_t i = 0; i < size; i++)
+        bytes[i] = static_cast<uint8_t>(seed + i * 7 + (i >> 8));
+    return bytes;
+}
+
+std::vector<uint8_t> ReadBack(const IsdosFileSystem& fs, const std::string& path)
+{
+    IsdosFile f;
+    std::vector<uint8_t> data;
+    std::string error;
+    EXPECT_TRUE(fs.Find(path, f, error) && fs.Read(f, data, error)) << path << ": " << error;
+    return data;
+}
+}  // namespace
+
+TEST(IsdosFs_Test, WrittenFilesReadBackAsTheKernelLaysThemOut)
+{
+    auto disk = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    ASSERT_TRUE(fs.Writable());
+    const Tree before = Walk(fs);
+    uint32_t free0 = 0;
+    ASSERT_TRUE(fs.FreeBlocks(free0));
+    std::string error;
+
+    // A continuous file in a deleted slot of the root: FSUM = 0 - the sum of its bytes
+    const std::vector<uint8_t> text = Pattern(300, 1);
+    IsdosFileSystem::WriteOptions options;
+    options.load = 0x6000;
+    options.date = 0x5B5A;
+    ASSERT_TRUE(fs.Write("new.txt", text, options, error)) << error;
+    IsdosFile f;
+    ASSERT_TRUE(fs.Find("NEW.TXT", f, error)) << error;
+    EXPECT_EQ(f.status, 0x41);
+    EXPECT_EQ(f.load, 0x6000);
+    EXPECT_EQ(f.date, 0x5B5A);
+    uint16_t sum = 0;
+    for (const uint8_t b : text)
+        sum = static_cast<uint16_t>(sum + b);
+    EXPECT_EQ(static_cast<uint16_t>(f.checksum + sum), 0);
+    EXPECT_EQ(ReadBack(fs, "new.txt"), text);
+    uint32_t free1 = 0;
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free0 - free1, 2u);
+
+    // Written again: the same slot, the old blocks given back
+    const std::vector<uint8_t> longer = Pattern(1000, 9);
+    ASSERT_TRUE(fs.Write("NEW.TXT", longer, {}, error)) << error;
+    EXPECT_EQ(ReadBack(fs, "new.txt"), longer);
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free0 - free1, 4u);
+
+    // A small catalogue grows by a block of its own past its 16 slots
+    for (int i = 0; i < 20; i++)
+        ASSERT_TRUE(fs.Write("EDIT/KRYPTON/HELP/f" + std::to_string(i) + ".hlp", Pattern(10 + i, static_cast<uint8_t>(i)), {}, error))
+            << i << ": " << error;
+    for (int i = 0; i < 20; i++)
+        EXPECT_EQ(ReadBack(fs, "EDIT/KRYPTON/HELP/f" + std::to_string(i) + ".hlp"), Pattern(10 + i, static_cast<uint8_t>(i))) << i;
+
+    // Renamed in place, moved to another catalogue, deleted: the blocks come back
+    ASSERT_TRUE(fs.Rename("new.txt", "renamed.bin", error)) << error;
+    EXPECT_FALSE(fs.Find("new.txt", f, error));
+    ASSERT_TRUE(fs.Rename("renamed.bin", "SHELL/moved.bin", error)) << error;
+    EXPECT_FALSE(fs.Find("renamed.bin", f, error));
+    EXPECT_EQ(ReadBack(fs, "SHELL/moved.bin"), longer);
+    ASSERT_TRUE(fs.Rename("SHELL/moved.bin", "/top.bin", error)) << error;  // "/": from the root
+    EXPECT_EQ(ReadBack(fs, "top.bin"), longer);
+    ASSERT_TRUE(fs.Rename("top.bin", "SHELL/moved.bin", error)) << error;
+    ASSERT_TRUE(fs.Delete("SHELL/moved.bin", error)) << error;
+    for (int i = 0; i < 20; i++)
+        ASSERT_TRUE(fs.Delete("EDIT/KRYPTON/HELP/f" + std::to_string(i) + ".hlp", error)) << error;
+    uint32_t free2 = 0;
+    ASSERT_TRUE(fs.FreeBlocks(free2));
+    EXPECT_EQ(free2, free0 - 1);  // the catalogue keeps the block it grew by
+
+    // The rest of the disk is as it was
+    const Tree after = Walk(fs);
+    EXPECT_EQ(after.files, before.files);
+    EXPECT_EQ(after.catalogues, before.catalogues);
+    // device.sys spans blocks 0-2: the descriptor and the bitmap, which keeps the block the catalogue grew by
+    for (const auto& [path, crc] : before.each)
+        if (path != "device.sys")
+            EXPECT_EQ(after.each.count(path) ? after.each.at(path) : 0, crc) << path;
+
+    // More than 255 blocks: segmented (the disk's help files deleted for the room)
+    std::vector<IsdosFile> help;
+    ASSERT_TRUE(fs.ListDirectory("RES/HELP", help, error)) << error;
+    for (const IsdosFile& h : help)
+        ASSERT_TRUE(fs.Delete(h.path, error)) << h.path << ": " << error;
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    ASSERT_GE(free1, 280u);
+    const std::vector<uint8_t> big = Pattern(70000, 5);
+    ASSERT_TRUE(fs.Write("RES/HELP/big.bin", big, {}, error)) << error;
+    ASSERT_TRUE(fs.Find("RES/HELP/big.bin", f, error)) << error;
+    EXPECT_TRUE(f.Segmented());
+    EXPECT_EQ(ReadBack(fs, "RES/HELP/big.bin"), big);
+    ASSERT_TRUE(fs.FreeBlocks(free2));
+    EXPECT_EQ(free1 - free2, (70000u + 255) / 256 + 1);  // and its segment table
+    ASSERT_TRUE(fs.Write("RES/HELP/empty", {}, {}, error)) << error;  // an empty file: a segment table of none
+    EXPECT_TRUE(ReadBack(fs, "RES/HELP/empty").empty());
+    ASSERT_TRUE(fs.Delete("RES/HELP/big.bin", error)) << error;
+    ASSERT_TRUE(fs.Delete("RES/HELP/empty", error)) << error;
+    ASSERT_TRUE(fs.Delete("RES/HELP", error)) << error;  // an empty catalogue
+    EXPECT_FALSE(fs.Find("RES/HELP", f, error));
+    Walk(fs);
+}
+
+TEST(IsdosFs_Test, RefusalsSayWhy)
+{
+    auto disk = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    const std::vector<uint8_t> bytes = Pattern(10, 0);
+    std::string error;
+    EXPECT_FALSE(fs.Write("toolongname.txt", bytes, {}, error));
+    EXPECT_FALSE(fs.Write("bad*.txt", bytes, {}, error));
+    EXPECT_FALSE(fs.Write("NOWHERE/a.txt", bytes, {}, error));
+    EXPECT_NE(error.find("NOWHERE"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Write("SHELL", bytes, {}, error));
+    EXPECT_NE(error.find("catalogue"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Delete("device.sys", error));
+    EXPECT_NE(error.find("protected"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Rename("boot.sys", "x.sys", error));
+    EXPECT_FALSE(fs.Delete("SHELL", error));
+    EXPECT_NE(error.find("not empty"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Rename("SHELL/coca.com", "copy.com", error));
+    EXPECT_NE(error.find("already"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Rename("SHELL", "UTIL/SHELL", error));
+    EXPECT_FALSE(fs.Delete("SHELL/nothing.txt", error));
+    EXPECT_NE(error.find("no file"), std::string::npos) << error;
+
+    // A catalogue renamed: its own header names it too; Cyrillic names go in as CP866
+    ASSERT_TRUE(fs.Rename("SHELL", "shell2", error)) << error;
+    IsdosFile f;
+    ASSERT_TRUE(fs.Find("SHELL2/coca.com", f, error)) << error;
+    ASSERT_TRUE(fs.Write("SHELL2/файл.txt", bytes, {}, error)) << error;
+    EXPECT_FALSE(fs.Find("SHELL2/ФАЙЛ.txt", f, error));  // ASCII case only: Cyrillic is matched as stored
+    EXPECT_EQ(ReadBack(fs, "SHELL2/файл.txt"), bytes);
+
+    // Read only without a writer
+    const std::vector<uint8_t> device = Bytes("loaders/isdos/HDDNEMO.img");
+    IsdosFileSystem dump = IsdosFileSystem::OnBytes(device.data(), device.size());
+    EXPECT_FALSE(dump.Writable());
+    EXPECT_FALSE(dump.Write("a.txt", bytes, {}, error));
+    EXPECT_NE(error.find("read only"), std::string::npos) << error;
+}
+
+TEST(IsdosFs_Test, AWrittenFloppySavesAndLoads)
+{
+    auto disk = Load("loaders/isdos/tasis540.fdi");
+    ASSERT_NE(disk, nullptr);
+    std::string error;
+    // The disk is full: a file deleted for the room
+    IsdosFileSystem edit = IsdosFileSystem::OnDisk(*disk);
+    ASSERT_TRUE(edit.Delete("BOOT/cr_boot.com", error)) << error;
+    const std::vector<uint8_t> bytes = Pattern(700, 3);  // 3 blocks of its 4
+    ASSERT_TRUE(edit.Write("saved.bin", bytes, {}, error)) << error;
+    const std::string path = (unrealdisk::testing::ScratchFolder("isdos-save") / "saved.fdi").string();
+    ASSERT_TRUE(FloppyFormats::Save({}, *disk, path, false).saved);
+    auto again = std::unique_ptr<DiskImage>();
+    std::string format;
+    ASSERT_TRUE(FloppyFormats::Load({}, path, again, format).Ok());
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*again);
+    EXPECT_EQ(ReadBack(fs, "saved.bin"), bytes);
+    Walk(fs);  // every file still reads, no notes
 }

@@ -653,7 +653,9 @@ emu.media_volumes("hd")                                  # the file systems: TR-
 emu.media_files("A", "SHELL", recursive=True)            # a directory's entries; volume="p1" picks a volume
 emu.media_read("A", "read_me.txt", out="/tmp/r.txt")     # base64 data, or written to out
 data = emu.media_read_bytes("hd", "AUTOEXEC.BAT", volume="p1")  # bytes; RuntimeError when it fails
-emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto a TR-DOS / +3DOS floppy; in_="prog.bin" a host file
+emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file system of the disk; in_="prog.bin" a host file
+emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves (iS-DOS, FAT)
+emu.media_delete("hd", "OLD.TXT", volume="p1")
 emu.media(verb, slot, path, **options)                   # any verb
 ```
 
