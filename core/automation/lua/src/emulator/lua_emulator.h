@@ -1792,7 +1792,8 @@ public:
         // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
         // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
         // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
-        // names a host file), and media(verb, slot, path, opts).
+        // names a host file), media_delete(slot, file [, opts]), media_rename(slot, file, to [, opts]),
+        // and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -2211,7 +2212,7 @@ public:
         lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "changes", slot, "", sol::nullopt);
         });
-        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename
         lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "volumes", slot, "", sol::nullopt);
         });
@@ -2240,7 +2241,7 @@ public:
             base64::Decode(reply.body.find("data")->s, bytes);
             return {sol::make_object(view, std::string(bytes.begin(), bytes.end())), sol::make_object(view, sol::lua_nil)};
         });
-        // A file onto a slot's TR-DOS / +3DOS floppy: `bytes` a Lua string, or nil with opts["in"] a host file
+        // A file onto a slot's disk (TR-DOS, +3DOS, iS-DOS, FAT): `bytes` a Lua string, or nil with opts["in"] a host file
         lua.set_function("media_write", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
                                                     sol::optional<std::string> bytes, sol::optional<sol::table> opts) {
             if (!bytes)
@@ -2252,6 +2253,21 @@ public:
                     all[key] = value;
             all["data"] = base64::Encode(std::vector<uint8_t>(bytes->begin(), bytes->end()));
             return mediaCall(s, "write", slot, path, all);
+        });
+        lua.set_function("media_delete", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     sol::optional<sol::table> opts) {
+            return mediaCall(s, "delete", slot, path, opts);
+        });
+        // A bare `to` stays in the file's directory; a path from the root moves it (iS-DOS, FAT)
+        lua.set_function("media_rename", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     const std::string& to, sol::optional<sol::table> opts) {
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["to"] = to;
+            return mediaCall(s, "rename", slot, path, all);
         });
         for (const char* verb : {"insert", "swap"})
         {

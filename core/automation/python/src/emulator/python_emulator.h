@@ -1998,7 +1998,7 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
-            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename
             .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
             .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
@@ -2031,8 +2031,21 @@ namespace PythonBindings
                      }
                      return MediaCallPy(self, "write", slot, path, all);
                  }, py::arg("slot"), py::arg("path"), py::arg("data") = py::none(),
-                 "A file onto the TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy in a slot: data=bytes or in_='host file' "
-                 "(start=0x8000, header=False, volume=)")
+                 "A file onto the disk in a slot (TR-DOS NAME.T, +3DOS NAME.TYP, iS-DOS, FAT): data=bytes or "
+                 "in_='host file' (start=0x8000, header=False, volume=)")
+            .def("media_delete", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "delete", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "Delete a file (or an empty iS-DOS / FAT directory) on the disk (volume=)")
+            .def("media_rename", [](Emulator& self, const std::string& slot, const std::string& path, const std::string& to,
+                                    const py::kwargs& options) {
+                     py::kwargs all;
+                     for (const auto& item : options)
+                         all[item.first] = item.second;
+                     all["to"] = to;
+                     return MediaCallPy(self, "rename", slot, path, all);
+                 }, py::arg("slot"), py::arg("path"), py::arg("to"),
+                 "Rename a file on the disk: a bare name stays in its directory, a path from the root moves it (iS-DOS, FAT) "
+                 "(volume=)")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")

@@ -2,7 +2,7 @@
 
 // The TR-DOS file system on a disk image, both ways: list the catalog, read a file's sectors, write a file (an older
 // live file of the same name and type is deleted as TR-DOS deletes it, the new one goes after the last file), delete
-// a file. It works on any DiskImage with TR-DOS tracks (16 x 256-byte sectors), whatever format it was loaded from;
+// a file, rename a file. It works on any DiskImage with TR-DOS tracks (16 x 256-byte sectors), whatever format it was loaded from;
 // the caller saves the image (FloppyFormats::Save) or keeps it in a drive.
 //
 // Example: a blank TRD from LoaderTRD::format, Write("MAIN", 'H', 0, bytes) puts the file at track 1 sector 0, entry 0;
@@ -47,6 +47,10 @@ public:
 
     /// Marks every live NAME.T deleted (the first name byte #01; the sectors stay used, as TR-DOS leaves them)
     bool Delete(const std::string& name, char type, std::string& error);
+
+    /// Every live NAME.T takes the name `newName` and type `newType` in its catalog entry (the data stays). False when
+    /// there is none, or a live file of the new name and type is there already
+    bool Rename(const std::string& name, char type, const std::string& newName, char newType, std::string& error);
 
 private:
     DiskImage& _image;

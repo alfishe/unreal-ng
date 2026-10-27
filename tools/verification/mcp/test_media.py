@@ -95,5 +95,25 @@ def test_disk_write(s):
     expect(r.is_error and "'data'" in r.text, 'no bytes is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
+
+def test_disk_delete_and_rename_on_isdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'SHELL/new.txt', 'data': base64.b64encode(b'isdos').decode()})
+    expect('wrote SHELL/new.txt (5 bytes)' in r.text and 'unsaved:' in r.text, 'the iS-DOS write in the text', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'SHELL/new.txt', 'to': '/top.txt'})
+    expect('renamed SHELL/new.txt to /top.txt' in r.text, 'the move in the text', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'top.txt'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data) == b'isdos', 'the moved bytes read back', r.text)
+    r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': 'top.txt'})
+    expect('deleted top.txt' in r.text, 'the delete in the text', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'top.txt'}, ok=False)
+    expect(r.is_error, 'the deleted file is gone', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'read_me.txt'}, ok=False)
+    expect(r.is_error and "'to'" in r.text, 'rename without to is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

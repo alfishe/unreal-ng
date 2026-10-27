@@ -393,8 +393,77 @@ bool Plus3FileSystem::Delete(const std::string& name, std::string& error)
     return true;
 }
 
+bool Plus3FileSystem::ValidName(const std::string& name)
+{
+    const size_t dot = name.find('.');
+    const std::string base = name.substr(0, dot);
+    const std::string type = dot == std::string::npos ? std::string() : name.substr(dot + 1);
+    if (base.empty() || base.size() > 8 || type.size() > 3 || (dot != std::string::npos && type.empty()))
+        return false;
+    // Blanks inside a name stay (a TR-DOS name moved over keeps them), not in front
+    if (base[0] == ' ' || (!type.empty() && type[0] == ' '))
+        return false;
+    for (const char c : base + type)
+        if (c < ' ' || c >= 0x7F || std::strchr("<>.,;:=?*[]", c))
+            return false;
+    return true;
+}
+
+bool Plus3FileSystem::Rename(const std::string& name, const std::string& newName, std::string& error)
+{
+    if (!ValidName(newName))
+    {
+        error = "a +3DOS name is NAME.TYP: up to 8 and 3 characters, none of < > . , ; : = ? * [ ] (" + newName + ")";
+        return false;
+    }
+    Disk disk(_image);
+    std::vector<Entry> entries = disk.Ok() ? disk.Entries() : std::vector<Entry>{};
+    if (entries.empty())
+    {
+        error = "the disk has no +3DOS file system";
+        return false;
+    }
+    std::string wantedName, wantedType, targetName, targetType;
+    SplitName(name, wantedName, wantedType);
+    SplitName(newName, targetName, targetType);
+    const bool same = wantedName == targetName && wantedType == targetType;
+    for (const Entry& e : entries)
+        if (!same && Live(e) && Upper(e.Name()) == targetName && Upper(e.Type()) == targetType)
+        {
+            error = "the disk has a file " + newName + " already";
+            return false;
+        }
+    targetName.resize(8, ' ');
+    targetType.resize(3, ' ');
+    std::vector<Entry> changed;
+    for (Entry& e : entries)
+        if (Live(e) && Upper(e.Name()) == wantedName && Upper(e.Type()) == wantedType)
+        {
+            std::memcpy(e.raw + 1, targetName.data(), 8);
+            for (int k = 0; k < 3; ++k)
+                e.raw[9 + k] = static_cast<uint8_t>((e.raw[9 + k] & 0x80) | targetType[k]);
+            changed.push_back(e);
+        }
+    if (changed.empty())
+    {
+        error = "no file " + name + " on the disk";
+        return false;
+    }
+    if (!disk.WriteEntries(changed))
+    {
+        error = "the directory cannot be written";
+        return false;
+    }
+    return true;
+}
+
 bool Plus3FileSystem::Write(const std::string& name, const std::vector<uint8_t>& bytes, const WriteOptions& options, std::string& error)
 {
+    if (!ValidName(name))
+    {
+        error = "a +3DOS name is NAME.TYP: up to 8 and 3 characters, none of < > . , ; : = ? * [ ] (" + name + ")";
+        return false;
+    }
     {
         Plus3File old;
         std::string ignored;
