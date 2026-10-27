@@ -12,6 +12,7 @@
 #include "unrealdisk/blockdevice.h"
 #include "unrealdisk/diskfs.h"
 #include "unrealdisk/fatfs.h"
+#include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/loaders/loader_trd.h"
 
@@ -371,4 +372,106 @@ TEST(DiskFs_Test, IsdosOnAWritableHardDisk)
     EXPECT_EQ(ReadFile(fresh, "", "HDD_NEMO/odd.bin"), std::vector<uint8_t>(300, 0x5A));
     ASSERT_TRUE(fresh.Delete("", "HDD_NEMO/odd.bin", error)) << error;
     EXPECT_FALSE(Exists(fresh, "HDD_NEMO/odd.bin"));
+}
+
+/// Attributes, times and names of volumes: each file system takes what it keeps and says what it does not
+TEST(DiskFs_Test, AttributesTimesLabels)
+{
+    const int64_t when = FatVolumeReader::DosToUnix(((2024 - 1980) << 9) | (5 << 5) | 6, (7 << 11) | (8 << 5) | 5);
+    std::string error;
+    DiskFsEntry entry;
+
+    // FAT: R H S A, the time of a file and of a directory, the label in the root and the boot sector
+    MemoryDevice hdd(Bytes("machines/sprinter/dss_1_62_92.img"), true);
+    DiskFs fat(hdd);
+    ASSERT_EQ(fat.Volumes()[0].attributes, "RHSA");
+    EXPECT_TRUE(fat.Volumes()[0].times);
+    EXPECT_TRUE(fat.Volumes()[0].labels);
+    ASSERT_TRUE(fat.Write("", "a.txt", {1, 2, 3}, {}, error)) << error;
+    ASSERT_TRUE(fat.SetAttributes("", "a.txt", "+rh", error)) << error;
+    ASSERT_TRUE(fat.Stat("", "a.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "RH...A");
+    ASSERT_TRUE(fat.SetAttributes("", "a.txt", "-H", error)) << error;
+    ASSERT_TRUE(fat.Stat("", "a.txt", entry, error));
+    EXPECT_EQ(entry.attributes, "R....A");
+    ASSERT_TRUE(fat.SetAttributes("", "a.txt", "S", error)) << error;  // exactly
+    ASSERT_TRUE(fat.Stat("", "a.txt", entry, error));
+    EXPECT_EQ(entry.attributes, "..S...");
+    EXPECT_FALSE(fat.SetAttributes("", "a.txt", "D", error));  // the directory bit is no attribute to set
+    EXPECT_NE(error.find("RHSA"), std::string::npos) << error;
+    EXPECT_FALSE(fat.SetAttributes("", "a.txt", "", error));
+    EXPECT_FALSE(fat.SetAttributes("", "none.txt", "+R", error));
+    ASSERT_TRUE(fat.SetTime("", "a.txt", when, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "a.txt", entry, error));
+    EXPECT_EQ(entry.mtime, when);
+    ASSERT_TRUE(fat.MakeDirectory("", "Dir", false, 0, error)) << error;
+    ASSERT_TRUE(fat.SetTime("", "Dir", when, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "Dir", entry, error));
+    EXPECT_EQ(entry.mtime, when);
+    ASSERT_TRUE(fat.SetLabel("", "My Disk", when, error)) << error;
+    EXPECT_EQ(fat.Volumes()[0].label, "MY DISK");
+    {
+        DiskFs fresh(hdd);
+        EXPECT_EQ(fresh.Volumes()[0].label, "MY DISK");
+        uint8_t boot[512];
+        ASSERT_TRUE(hdd.ReadSector(0, boot));
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(boot + 43), 11), "MY DISK    ");
+    }
+    EXPECT_FALSE(fat.SetLabel("", "a.b", 0, error));
+    EXPECT_NE(error.find("label"), std::string::npos) << error;
+    EXPECT_FALSE(fat.SetLabel("", "TWELVE CHARS", 0, error));
+    ASSERT_TRUE(fat.SetLabel("", "", 0, error)) << error;
+    EXPECT_EQ(DiskFs(hdd).Volumes()[0].label, "");
+    ASSERT_TRUE(fat.SetLabel("", "AGAIN", 0, error)) << error;
+    EXPECT_EQ(DiskFs(hdd).Volumes()[0].label, "AGAIN");
+
+    // TR-DOS: the disk title only
+    auto trd = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
+    LoaderTRD loader({}, "");
+    ASSERT_TRUE(loader.format(trd.get()));
+    DiskFs trdos(*trd);
+    EXPECT_TRUE(trdos.Volumes()[0].attributes.empty());
+    ASSERT_TRUE(trdos.SetLabel("", "Games 1", 0, error)) << error;
+    EXPECT_EQ(DiskFs(*trd).Volumes()[0].label, "Games 1");
+    EXPECT_FALSE(trdos.SetLabel("", "TOO LONG!", 0, error));
+    ASSERT_TRUE(trdos.Write("", "A.C", {1}, {}, error)) << error;
+    EXPECT_FALSE(trdos.SetAttributes("", "A.C", "+R", error));
+    EXPECT_NE(error.find("no file attributes"), std::string::npos) << error;
+    EXPECT_FALSE(trdos.SetTime("", "A.C", when, error));
+    EXPECT_NE(error.find("no file times"), std::string::npos) << error;
+
+    // +3DOS: R S A in the type's high bits, kept by a rename; no times, no label
+    std::unique_ptr<DiskImage> plus3 = Load("loaders/dsk/plus3-blank.dsk");
+    ASSERT_NE(plus3, nullptr);
+    DiskFs p3(*plus3);
+    ASSERT_EQ(p3.Volumes()[0].attributes, "RSA");
+    ASSERT_TRUE(p3.Write("", "PROG.BIN", {1, 2}, {}, error)) << error;
+    ASSERT_TRUE(p3.SetAttributes("", "PROG.BIN", "+R+A", error)) << error;
+    ASSERT_TRUE(p3.Rename("", "PROG.BIN", "GAME.BIN", error)) << error;
+    ASSERT_TRUE(p3.Stat("", "GAME.BIN", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "R.A");
+    EXPECT_EQ(ReadFile(p3, "", "GAME.BIN"), (std::vector<uint8_t>{1, 2}));
+    EXPECT_FALSE(p3.SetTime("", "GAME.BIN", when, error));
+    EXPECT_FALSE(p3.SetLabel("", "X", 0, error));
+    EXPECT_NE(error.find("no label"), std::string::npos) << error;
+
+    // iS-DOS: R W H D, the date and time, the device name; system files stay
+    std::unique_ptr<DiskImage> isdos = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(isdos, nullptr);
+    DiskFs is(*isdos);
+    ASSERT_EQ(is.Volumes()[0].attributes, "RWHD");
+    ASSERT_TRUE(is.SetAttributes("", "read_me.txt", "+HD", error)) << error;
+    ASSERT_TRUE(is.Stat("", "read_me.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes.substr(1), "..HD");
+    EXPECT_FALSE(is.Delete("", "read_me.txt", error));  // delete protected
+    ASSERT_TRUE(is.SetAttributes("", "read_me.txt", "-D", error)) << error;
+    ASSERT_TRUE(is.SetTime("", "read_me.txt", when, error)) << error;
+    ASSERT_TRUE(is.Stat("", "read_me.txt", entry, error));
+    EXPECT_EQ(entry.mtime, when);
+    EXPECT_FALSE(is.SetAttributes("", "device.sys", "+H", error));
+    EXPECT_NE(error.find("system"), std::string::npos) << error;
+    ASSERT_TRUE(is.SetLabel("", "MY_DISK", 0, error)) << error;
+    EXPECT_EQ(DiskFs(*isdos).Volumes()[0].label, "MY_DISK");
+    EXPECT_FALSE(is.SetLabel("", "NINECHARS", 0, error));  // a Classic name has 8
+    ASSERT_TRUE(is.Delete("", "read_me.txt", error)) << error;
 }

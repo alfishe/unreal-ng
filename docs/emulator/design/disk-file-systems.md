@@ -12,8 +12,8 @@ the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's cor
 | File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
-| One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` by volume and path |
-| Command line | `tools/zxdisk/zxdisk.cpp` | `zxdisk volumes / ls / cat / put / rm [-r] / mv / mkdir [-p]` on any image file |
+| One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
+| Command line | `tools/zxdisk/zxdisk.cpp` | `zxdisk volumes / ls / cat / put / rm [-r] / mv / mkdir [-p] / attrib / label` on any image file, floppy or hard disk |
 
 In the emulator, `core/src/emulator/io/storage/fs/diskfs.h` adds `OpenDiskFs(Medium&)` (a slot's medium, block media
 under the time-travel read tap), and the old core headers (`iblockdevice.h`, `fatvolumereader.h`, `subrangedevice.h`,
@@ -21,7 +21,7 @@ under the time-travel read tap), and the old core headers (`iblockdevice.h`, `fa
 
 | User | What it reads through DiskFs |
 |---|---|
-| Media verbs (`core/src/emulator/media/mediacontrol.h`) | `volumes`, `files`, `read`, `write`, `delete`, `rename`, `mkdir` for CLI, REST, WebSocket, MCP, Python and Lua |
+| Media verbs (`core/src/emulator/media/mediacontrol.h`) | `volumes`, `files`, `read`, `write`, `delete`, `rename`, `mkdir`, `attrib`, `label` for CLI, REST, WebSocket, MCP, Python and Lua |
 | `disk catalog` (CLI), `GET /disk/{drive}/catalog` | the first file system of a drive (TR-DOS keeps its catalog fields) |
 | The assembler surfaces (`disk:A/NAME.T`, the project drive) and `zxasm` / `symconv` | the files of a drive or an image: the shared code of `unreal-asm/tools/common/diskfiles.h` |
 
@@ -74,15 +74,15 @@ the same files and bytes on the test images (`testdata/loaders/isdos/`).
 
 ## Surfaces
 
-| Surface | Volumes | Directory | File | Write | Delete, rename, mkdir |
-|---|---|---|---|---|---|
-| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents]` |
-| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`) |
-| WebSocket | the REST routes as a `call` | | | | |
-| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`) |
-| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=)` |
-| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=})` |
-| C++ (analyzers) | `OpenDiskFs(medium)->Volumes()`, or `DiskFs(image)` / `DiskFs(device)` | `List(volume, path, recursive, out, error)` | `Read(volume, path, data, error)` | `Write(volume, path, data, options, error)` | `Delete(volume, path, error, recursive)`, `Rename(volume, path, to, error)`, `MakeDirectory(volume, path, parents, mtime, error)` |
+| Surface | Volumes | Directory | File | Write | Delete, rename, mkdir | Attributes, time, label |
+|---|---|---|---|---|---|---|
+| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents]` | `media attrib <slot> <file> [+R-H \| RA] [--time "YYYY-MM-DD HH:MM"] [--volume id]`, `media label <slot> <name> [--volume id]` |
+| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`) | `POST /media/{slot}/attrib` (`path`, `attributes`, `time`, `volume`), `POST /media/{slot}/label` (`label`, `volume`) |
+| WebSocket | the REST routes as a `call` | | | | | |
+| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`) | `media` `attrib` (`path`, `attributes`, `time`, `volume`), `media` `label` (`label`, `volume`) |
+| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=)` | `emu.media_attrib(slot, path, attributes=, time=, volume=)`, `emu.media_label(slot, label, volume=)` |
+| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=})` | `media_attrib(slot, file, {attributes=, time=, volume=})`, `media_label(slot, label, {volume=})` |
+| C++ (analyzers) | `OpenDiskFs(medium)->Volumes()`, or `DiskFs(image)` / `DiskFs(device)` | `List(volume, path, recursive, out, error)` | `Read(volume, path, data, error)` | `Write(volume, path, data, options, error)` | `Delete(volume, path, error, recursive)`, `Rename(volume, path, to, error)`, `MakeDirectory(volume, path, parents, mtime, error)` | `SetAttributes(volume, path, letters, error)`, `SetTime(volume, path, mtime, error)`, `SetLabel(volume, label, mtime, error)` |
 
 `read` answers base64 `data` up to 16 MiB; a bigger file needs `out`. An empty slot, a tape or a CD answers
 `not-supported`; a disk with no file system found or a missing file `unreadable-source`.
@@ -92,7 +92,9 @@ C++ caller reads at a coherent moment (the emulator paused, parked, or on its ow
 
 `zxdisk` gives the same on image files: `zxdisk volumes <image>`, `zxdisk ls <image> [dir] [-r]`, `zxdisk cat <image>
 <file> [-o out]`, `zxdisk put <image> <host-file> [name] [--start n]`, `zxdisk rm <image> <file> [-r]`, `zxdisk mv <image>
-<file> <new-name>`, `zxdisk mkdir <image> <dir> [-p]` (`put`, `rm`, `mv` and `mkdir` on floppy images).
+<file> <new-name>`, `zxdisk mkdir <image> <dir> [-p]`, `zxdisk attrib <image> <file> [+R-H|RA] [--time t]`, `zxdisk
+label <image> <name>`. The writing verbs save a floppy back (or to `-o`, its extension picking the format); a hard
+disk or card image is changed in place, or copied to `-o` first and the copy changed.
 
 ## Writing
 
@@ -133,12 +135,32 @@ directories"). Per file system:
   the new parent, and the levels of it and of every catalogue below follow; refused when the deepest would pass 6.
   Names are upper-cased, the kernel compares all 11 bytes.
 
+## Attributes, times, labels
+
+`SetAttributes(volume, path, letters)` takes the volume's attribute letters (`DiskFsVolume::attributes`), any case:
+`+R-H` sets and clears these, `RA` sets exactly these and clears the rest. `Stat` / `List` show them in the entry's
+positional `attributes` string. `SetTime(volume, path, mtime)` sets a file's or directory's date and time, `mtime` the
+UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:MM[:SS]`, `now` or seconds; 1980 to
+2107). `SetLabel(volume, label, mtime)` names the volume. Per file system:
+
+| File system | Letters (`attributes`) | Entry string | Time | Label |
+|---|---|---|---|---|
+| FAT12 / 16 / 32 | `RHSA`: read only, hidden, system, archive | `RHSVDA` | 2-second steps, the entry's write date and time | the root's volume entry (made in a free slot, the FAT32 root grows for it; `""` deletes it) and the boot sector's copy at +43 / +71 (FAT32 also in the backup boot sector; `NO NAME` when cleared); up to 11 short-name characters, upper-cased |
+| iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
+| +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
+| TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
+
+On iS-DOS `device.sys`, `boot.sys` and the kernel file named by the descriptor keep their entries ("is a system
+file"). A file system without attributes, times or a label answers "the <system> volume '<id>' has no file
+attributes" / "keeps no file times" / "has no label" (`not-supported` on the media verbs). Volumes say which they take:
+`attributes` (the letters), `times`, `labels`.
+
 Volumes say `writable`: a floppy volume always (the emulator decides about the disk), a hard disk or card volume when
 its device takes writes. The others answer "the <system> volume '<id>' is read only".
 
-The media verbs `write`, `delete`, `rename` and `mkdir` do it on the disk in a slot: refused when the slot is write-protected,
+The media verbs `write`, `delete`, `rename`, `mkdir`, `attrib` and `label` do it on the disk in a slot: refused when the slot is write-protected,
 the disk read only (`access readonly`) or the volume not writable (`not-supported`), a missing file
-(`unreadable-source`), a file system with no directories for `mkdir` (`not-supported`), and for a bad name, a taken `to`, a missing `data` / `in` / `to` or a `start` above 65535
+(`unreadable-source`), a file system with no directories for `mkdir` or no attributes / times / label (`not-supported`), and for a bad name, a taken `to`, a missing `data` / `in` / `to`, a letter the volume does not have, a bad `time` or a `start` above 65535
 (`bad-request`). They run at a coherent moment (paused, stopped or between two frames) as a tool's edit
 (`OpKind::ToolEdit`): a TTD session keeps it. A floppy's undo log keeps every track as it was; a hard disk or card is
 read under the read tap and written through it, so its undo log keeps every sector the edit changed. A seek back
@@ -147,8 +169,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 ## Limits
 
-- No verb sets a volume label, attributes or a file's time.
 - iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
-- iS-DOS: a continuous catalogue that is full stays full; files are written with no R / W / hidden bits.
+- iS-DOS: a continuous catalogue that is full stays full; files are written with no R / W / hidden bits (`attrib` sets them after).
 - Not read: ATM CP/M partitions, MB-02, MDOS, other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.

@@ -137,6 +137,16 @@ public:
     /// Classic, +23 Chic), NFILE 1; at most kMaxLevel levels under the root
     bool MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error);
     static constexpr uint32_t kMaxLevel = 6;   ///< mkdir.com refuses a parent of level 6
+    /// The status bits SetAttributes changes: read, write and delete protection, hidden
+    static constexpr uint8_t kReadProtect = 0x04, kWriteProtect = 0x08, kHide = 0x10, kDeleteProtect = 0x80;
+    /// The status bits of `path` in `attributes` (kReadProtect | kWriteProtect | kHide | kDeleteProtect), the other
+    /// bits kept; a catalogue's entry 0 takes them too. System files and the kernel file are refused
+    bool SetAttributes(const std::string& path, uint8_t attributes, std::string& error);
+    /// The date (+30) and time (+28) of `path`; a catalogue's entry 0 takes them too
+    bool SetTime(const std::string& path, uint16_t date, uint16_t time, std::string& error);
+    /// The device name in the descriptor (+2: 8 characters, 11 on a Chic disk that has room for them), padded with
+    /// blanks; CP866 letters as in names
+    bool SetTitle(const std::string& title, std::string& error);
     /// `name` (UTF-8, Cyrillic as CP866) as the 8 + 3 bytes of a descriptor: 1-8 characters, a type of up to 3, the
     /// characters iS-DOS takes (letters, digits, # $ & + - = _ ` ! @ % ' ( ) { | } ~); a catalogue's in upper case
     static bool EncodeName(const std::string& name, bool catalogue, uint8_t out[11]);
@@ -181,6 +191,11 @@ private:
     /// The catalogue that holds `parts` but the last ("" the root)
     bool ParentOf(const std::vector<std::string>& parts, uint16_t& first, std::string& error) const;
     bool Locate(const std::string& path, Slot& out, std::string& error) const;
+    /// A live entry changed by `change` (its catalogue's entry 0 too when it is one) and stored
+    template <typename Change>
+    bool EditEntry(const std::string& path, std::string& error, Change change);
+    /// The descriptor's name width: 11 on a Chic disk without "DSK" at +10, else 8
+    static size_t TitleWidth(const uint8_t* descriptor);
     /// Refuses the entries that never change (system files, the kernel file)
     bool Fixed(const uint8_t* entry) const;
     bool LoadBitmap(std::vector<uint8_t>& bits, std::string& error) const;

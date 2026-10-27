@@ -140,5 +140,28 @@ def test_disk_catalogues_on_isdos(s):
         s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
 
 
+def test_disk_attributes_time_and_label(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('RWHD' in r.text, 'the volume lists its letters', r.text)
+    r = s.call('media', {'action': 'attrib', 'slot': 'A', 'path': 'read_me.txt', 'attributes': '+HD',
+                         'time': '1999-12-31 23:59:58'})
+    expect('changed read_me.txt: attributes' in r.text and 'HD' in r.text and '946684798' in r.text,
+           'attributes and time set, in the text', r.text)
+    r = s.call('media', {'action': 'attrib', 'slot': 'A', 'path': 'read_me.txt', 'attributes': '+Q'}, ok=False)
+    expect(r.is_error and 'RWHD' in r.text, 'a letter iS-DOS lacks is refused with the letters', r.text)
+    r = s.call('media', {'action': 'label', 'slot': 'A', 'label': 'MY_DISK'})
+    expect("labelled 'MY_DISK'" in r.text, 'the device named', r.text)
+    r = s.call('media', {'action': 'create', 'slot': 'B', 'format': 'trdos', 'discard': True})
+    r = s.call('media', {'action': 'label', 'slot': 'B', 'label': 'Games 1'})
+    expect("labelled 'Games 1'" in r.text, 'the TR-DOS title set', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'B', 'path': 'A.C', 'data': 'AA=='})
+    r = s.call('media', {'action': 'attrib', 'slot': 'B', 'path': 'A.C', 'attributes': '+R'}, ok=False)
+    expect(r.is_error and 'no file attributes' in r.text, 'TR-DOS has no attributes', r.text)
+    for slot in ('A', 'B'):
+        s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

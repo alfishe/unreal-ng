@@ -29,6 +29,9 @@ struct Plus3File
     uint8_t basicType = 0;       ///< the header's BASIC type (3 = CODE)
     uint16_t param1 = 0;         ///< the header's first parameter (CODE: the load address)
     uint16_t param2 = 0;
+    uint8_t attributes = 0;      ///< the type's high bits: kReadOnly (t1'), kSystem (t2'), kArchive (t3')
+
+    static constexpr uint8_t kReadOnly = 1, kSystem = 2, kArchive = 4;
 
     /// NAME.TYP (NAME when there is no type)
     std::string FullName() const { return type.empty() ? name : name + "." + type; }
@@ -71,6 +74,10 @@ public:
     /// Every entry of NAME.TYP takes `newName` (the attribute bits stay). False when there is no such file, the new
     /// name is no CP/M name or a file of that name is there already
     bool Rename(const std::string& name, const std::string& newName, std::string& error);
+
+    /// The attribute bits of every entry of NAME.TYP (Plus3File::kReadOnly | kSystem | kArchive), as +3DOS
+    /// SET ATTRIBUTES (and CP/M's SET) puts them into the high bits of the type
+    bool SetAttributes(const std::string& name, uint8_t attributes, std::string& error);
 
     /// `name` is a CP/M file name: 1-8 characters, an optional type of up to 3, printable ASCII without
     /// < > . , ; : = ? * [ ], no blank in front

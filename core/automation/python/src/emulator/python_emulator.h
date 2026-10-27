@@ -1998,7 +1998,7 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
-            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename, mkdir
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename, mkdir, attrib, label
             .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
             .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
@@ -2040,6 +2040,16 @@ namespace PythonBindings
             .def("media_mkdir", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "mkdir", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue (volume=, parents=True)")
+            .def("media_attrib", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "attrib", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "A file's attributes and time: attributes='+R-H' or 'RA', time='2026-10-26 14:30' (volume=)")
+            .def("media_label", [](Emulator& self, const std::string& slot, const std::string& label, const py::kwargs& options) {
+                     py::kwargs all;
+                     for (auto item : options)
+                         all[item.first] = item.second;
+                     all["label"] = label;
+                     return MediaCallPy(self, "label", slot, "", all);
+                 }, py::arg("slot"), py::arg("label"), "The volume's name: FAT label ('' removes it), TR-DOS title, iS-DOS device name (volume=)")
             .def("media_rename", [](Emulator& self, const std::string& slot, const std::string& path, const std::string& to,
                                     const py::kwargs& options) {
                      py::kwargs all;

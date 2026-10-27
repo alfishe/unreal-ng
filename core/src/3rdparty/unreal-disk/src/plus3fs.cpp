@@ -255,6 +255,9 @@ Plus3File Describe(Disk& disk, const std::vector<Entry>& group)
     f.user = group.front().User();
     f.name = group.front().Name();
     f.type = group.front().Type();
+    for (int k = 0; k < 3; ++k)
+        if (group.front().raw[9 + k] & 0x80)
+            f.attributes |= static_cast<uint8_t>(1 << k);
     const unsigned perEntry = g.ExtentMask() + 1u;   // logical extents an entry holds
     const Entry& last = group.back();
     // the records: whole entries before the last one, then the last one's logical extents and its records
@@ -442,6 +445,38 @@ bool Plus3FileSystem::Rename(const std::string& name, const std::string& newName
             std::memcpy(e.raw + 1, targetName.data(), 8);
             for (int k = 0; k < 3; ++k)
                 e.raw[9 + k] = static_cast<uint8_t>((e.raw[9 + k] & 0x80) | targetType[k]);
+            changed.push_back(e);
+        }
+    if (changed.empty())
+    {
+        error = "no file " + name + " on the disk";
+        return false;
+    }
+    if (!disk.WriteEntries(changed))
+    {
+        error = "the directory cannot be written";
+        return false;
+    }
+    return true;
+}
+
+bool Plus3FileSystem::SetAttributes(const std::string& name, uint8_t attributes, std::string& error)
+{
+    Disk disk(_image);
+    std::vector<Entry> entries = disk.Ok() ? disk.Entries() : std::vector<Entry>{};
+    if (entries.empty())
+    {
+        error = "the disk has no +3DOS file system";
+        return false;
+    }
+    std::string wantedName, wantedType;
+    SplitName(name, wantedName, wantedType);
+    std::vector<Entry> changed;
+    for (Entry& e : entries)
+        if (Live(e) && Upper(e.Name()) == wantedName && Upper(e.Type()) == wantedType)
+        {
+            for (int k = 0; k < 3; ++k)
+                e.raw[9 + k] = static_cast<uint8_t>((e.raw[9 + k] & 0x7F) | ((attributes >> k) & 1 ? 0x80 : 0));
             changed.push_back(e);
         }
     if (changed.empty())

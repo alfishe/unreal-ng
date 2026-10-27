@@ -573,3 +573,32 @@ TEST(IsdosFs_Test, ChicCatalogueOnAHardDiskDevice)
     EXPECT_EQ(ReadBack(fs, "NEW/x.bin"), Pattern(100, 1));
     Walk(fs);
 }
+
+/// A catalogue's attributes and time go into its parent entry and its own entry 0; the device name into block 0
+TEST(IsdosFs_Test, AttributesTimeAndTitle)
+{
+    auto disk = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    std::string error;
+    IsdosFile shell;
+    ASSERT_TRUE(fs.Find("SHELL", shell, error)) << error;
+    ASSERT_TRUE(fs.SetAttributes("SHELL", IsdosFileSystem::kHide | IsdosFileSystem::kDeleteProtect, error)) << error;
+    ASSERT_TRUE(fs.SetTime("SHELL", 0x5B5A, 0x1234, error)) << error;
+    const std::vector<uint8_t> outer = EntryIn(fs, fs.Boot().root, "SHELL      ");
+    const std::vector<uint8_t> head = RawBlock(fs, shell.first);
+    EXPECT_EQ(outer[11], 0x21 | 0x10 | 0x80);
+    EXPECT_EQ(head[11], 0x21 | 0x10 | 0x80);
+    EXPECT_EQ(Word(outer, 30), 0x5B5A);
+    EXPECT_EQ(Word(head, 30), 0x5B5A);
+    EXPECT_EQ(Word(head, 28), 0x1234);
+    ASSERT_TRUE(fs.SetAttributes("SHELL", 0, error)) << error;
+    EXPECT_EQ(RawBlock(fs, shell.first)[11], 0x21);
+
+    ASSERT_TRUE(fs.SetTitle("work", error)) << error;
+    EXPECT_EQ(fs.Boot().title, "work");
+    EXPECT_EQ(std::memcmp(RawBlock(fs, 0).data() + 2, "work    ", 8), 0);
+    EXPECT_EQ(IsdosFileSystem::OnDisk(*disk).Boot().title, "work");
+    EXPECT_FALSE(fs.SetTitle("123456789", error));
+    Walk(fs);
+}

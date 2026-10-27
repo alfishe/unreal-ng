@@ -194,6 +194,8 @@ media_rename("A", "PROG.C", "GAME.C")                   -- a bare name stays in 
 media_delete("hd", "OLD.TXT", {volume = "p1"})
 media_mkdir("hd", "GAMES/NEW", {parents = true})         -- a FAT directory, an iS-DOS catalogue
 media_delete("hd", "GAMES", {recursive = true})          -- a directory with its contents
+media_attrib("hd", "GAME.COM", {attributes = "+R-H", time = "2026-10-26 14:30"})  -- FAT RHSA, iS-DOS RWHD, +3DOS RSA
+media_label("hd", "WORK DISK")                           -- FAT label, TR-DOS title, iS-DOS device name
 media(verb, slot, path, opts)                           -- any verb
 ```
 
