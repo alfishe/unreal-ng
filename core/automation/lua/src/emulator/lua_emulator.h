@@ -3529,7 +3529,7 @@ public:
         });
         // bp_event(kind, {value=, vmask=, hits=, cpu=}) stops on a General Sound / NeoGS protocol event: the card's (int, nmi,
         // reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0) on the gs
-        // CPU, the host's (host_command, host_data, host_reply)
+        // CPU, the host's (host_command, host_data, host_reply) and the machine's (cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done)
         // on the main one; cpu defaults to the kind's side. The id; -1 and the reason when refused
         lua.set_function("bp_event", [this](const std::string& kindName, sol::optional<sol::table> options)
                                          -> std::tuple<int, sol::optional<std::string>> {

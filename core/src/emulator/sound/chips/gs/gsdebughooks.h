@@ -37,13 +37,31 @@ enum class GSCardEvent : uint8_t
     DmaStart,          ///< a NeoGS DMA module started: `value` the module (0 ZX-DMA, 1 SD, 2 MP3)
     DmaDone,           ///< a NeoGS DMA module ended: `value` the module, `port` 1 when it finished (interrupt), 0 aborted
     ConfigWrite,       ///< the card wrote NeoGS GSCFG0 (every write, a clock change or not): `value` the byte
+    // The machine's events, the main CPU's (platform-debugging P5; appended). The ZX Next tells them; `port` (the tap
+    // hit's `arg`) carries the detail
+    CpuInt,            ///< a maskable interrupt accepted: `value` the source (NextInterruptSource: 0 line, 1-2 UART RX,
+                       ///< 3-10 CTC 0-7, 11 ULA, 12-13 UART TX; #FE spurious), `port` the IM2 vector the controller gave
+    CpuReti,           ///< RETI ended the hardware IM2 source in service: `value` the source
+    CpuNmi,            ///< an NMI request: `value` the source (0 M1 button, 1 drive button, 2 I/O trap, 3 other), bit 7
+                       ///< set when the machine refused it
+    CpuRetn,           ///< RETN: `value` the session it ended (0 none, 1 Multiface, 2 DivMMC)
+    MachineReset,      ///< `value` 0 soft, 1 hard
+    DivMmcMap,         ///< the DivMMC automap mapped in: `value` the entry (0 RST, 1 NMI, 2 #3Dxx, 3 ROM 3 routine), `port`
+                       ///< the fetch address
+    DivMmcUnmap,       ///< the automap latch cleared: `value` why (1 a fetch in #1FF8-#1FFF, 2 RETN, 3 disabled), `port`
+                       ///< the fetch address
+    EsxDosCall,        ///< RST 8 into esxDOS (the DivMMC entry at #0008, or the esxDOS mode's trap): `value` the call
+                       ///< byte, `port` the return address
+    ZxnDmaStart,       ///< the zxnDMA began a transfer
+    ZxnDmaDone,        ///< the zxnDMA stopped: `value` 1 at the end of the block, 0 disabled or reset
     Count
 };
 
-/// The host side's events fire on the main CPU, the others on the card's
+/// The host side's events and the machine's fire on the main CPU, the others on the card's
 constexpr bool GSCardEventIsHostSide(GSCardEvent kind)
 {
-    return kind >= GSCardEvent::HostCommandWrite && kind <= GSCardEvent::HostReplyRead;
+    return (kind >= GSCardEvent::HostCommandWrite && kind <= GSCardEvent::HostReplyRead) ||
+           (kind >= GSCardEvent::CpuInt && kind < GSCardEvent::Count);
 }
 
 /// The surfaces' names ("int", "nmi", "reset", "page", "card_command", ...)
@@ -66,6 +84,16 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::DmaStart: return "dma_start";
         case GSCardEvent::DmaDone: return "dma_done";
         case GSCardEvent::ConfigWrite: return "gscfg0";
+        case GSCardEvent::CpuInt: return "cpu_int";
+        case GSCardEvent::CpuReti: return "cpu_reti";
+        case GSCardEvent::CpuNmi: return "cpu_nmi";
+        case GSCardEvent::CpuRetn: return "cpu_retn";
+        case GSCardEvent::MachineReset: return "machine_reset";
+        case GSCardEvent::DivMmcMap: return "divmmc_map";
+        case GSCardEvent::DivMmcUnmap: return "divmmc_unmap";
+        case GSCardEvent::EsxDosCall: return "esxdos_call";
+        case GSCardEvent::ZxnDmaStart: return "zxndma_start";
+        case GSCardEvent::ZxnDmaDone: return "zxndma_done";
         case GSCardEvent::Count: break;
     }
     return "unknown";

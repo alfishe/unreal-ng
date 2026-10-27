@@ -68,12 +68,12 @@ the phases that close them. Each phase is tested and committed on its own.
 | P2 | NeoGS: a `gscfg0` event (every write); DMA writes (SD, ZX-DMA) through the card's page-tied watchpoints. ZX-DMA start / stop are `dma_start` / `dma_done` of module 0 already; a flash write is a write watchpoint on a `romN` page | `GSCardTarget_Test.TheNeoGSDmaWritesHitThePagesWatchpoint`, `NeoGSDma` / `NeoGSZxDma` write reports | done |
 | P3 | `BRK_CHIPREG`: a sound chip's register write (chip, register, value mask), every plane | `ChipRegisterBreakpoint_Test` (the manager; a Pentagon's OUT stops after it) | done |
 | P4 | Condition operands for the extended machines (`MMU0-7`, `NR(x)`, `CPC`, `HC`, `VC`, `CPUSPEED`, `DFFD`, `P1FFD`, `EFF7`, `FF77`, `ROMPG0-3`; the Next answers the machine ones through `IBreakpointConditionMachine`), `--page bank8kN`, conditions on NEXTREG / copper / beam / magic / chip register; ZRCP: the Next is "ZX Spectrum Next" with eight 8K slots; DZRP: a stop DeZog has no breakpoint for is `OTHER` with its text; GDB `monitor mmu` / `monitor nextreg` | `BreakpointCondition_Test.TheExtendedMachinesLatchesSlotsAndSpeed`, `NextRegBreakpointMachine_Test.AConditionReads*`, `BreakpointManager_test.PageSpec_EightKBank`, `DezogZesaruxNextFixture`, `DezogDebugAdapter_test.AStopDeZogHasNo*`, `GdbSessionProtocolNext_Test` | done |
-| P5 | Next: DMA through watchpoints, machine events (DMA, interrupts, NMI, DivMMC automap, esxDOS), DivMMC / Multiface pages | Next DMA and DivMMC fixtures | |
+| P5 | Next: DMA reads and writes through the main CPU's watchpoints (`dma_read` / `dma_write`), machine events on the main CPU (`cpu_int`, `cpu_reti`, `cpu_nmi`, `cpu_retn`, `machine_reset`, `divmmc_map`, `divmmc_unmap`, `esxdos_call`, `zxndma_start`, `zxndma_done`; BRK_EVENT kinds behind `machineEventWatch`). DivMMC / Multiface pages moved to a later step | `NextMachineEvents_Test` | done |
 | P6 | TS-Conf: DMA through watchpoints, FMaps port breakpoints, raster breakpoint, interrupt events | TS-Conf DMA / raster fixtures | |
 | P7 | Sprinter: accelerator through watchpoints, Z84C15 events, journal events, PLD codes | Sprinter accelerator fixtures | |
 | P8 | FDC command events (all WD1793 machines) | TR-DOS boot stops on the first read sector | |
 
-P0-P4 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
+P0-P5 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
 P5, the first phase with machine events; P6-P8 add their kinds to it.
 
 ## Open decision

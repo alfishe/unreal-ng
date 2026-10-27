@@ -304,7 +304,10 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
         char where[16];
         std::snprintf(where, sizeof(where), " #%04X", payload->address);
         std::string text = "Breakpoint " + std::to_string(payload->_payloadNumber) + ": " +
-                           BreakpointHitKindName(payload->kind) + where;
+                           BreakpointHitKindName(payload->kind) +
+                           (payload->kind == BreakpointHitKind::Event
+                                ? std::string(" ") + GSCardEventName(static_cast<GSCardEvent>(payload->address))
+                                : std::string(where));
         if (payload->cpu != "main")
             text += " on cpu " + payload->cpu;
         const Z80State* z80 = emulator->GetZ80State();

@@ -11,9 +11,11 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/io/z80n/nexttiming.h"
+#include <cstring>
 #include <filesystem>
 
 #include "common/filehelper.h"
@@ -86,6 +88,16 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     // NextREG breakpoints: the board tells every access of the program with its door (the single choke points)
     _board->SetAccessHook([this](bool write, uint8_t reg, uint8_t value, NextRegSource source) { NextRegAccess(write, reg, value, source); });
     _interrupts->onEvent = [this](NextIntKind kind, const char* source, bool hasVector, uint8_t vector) {
+        if (_context->machineEventWatch && (kind == NextIntKind::IntAck || kind == NextIntKind::Reti)) [[unlikely]]
+        {
+            // The source by its index (NextInterruptSource::Source); #FE the spurious acknowledge
+            uint8_t index = std::strcmp(source, "spurious") == 0 ? 0xFE : 0xFF;
+            for (unsigned i = 0; i < NextInterruptSource::kSourceCount && index == 0xFF; i++)
+                if (std::strcmp(NextInterruptSource::SourceName(i), source) == 0)
+                    index = static_cast<uint8_t>(i);
+            NoteMachineEvent(kind == NextIntKind::IntAck ? GSCardEvent::CpuInt : GSCardEvent::CpuReti, index,
+                             hasVector ? vector : -1);
+        }
         if (!_intJournal.Enabled())
             return;
         NextIntEvent e;
@@ -119,8 +131,36 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         e.call = Mem().DirectReadFromZ80Memory(e.returnAddress);
         e.basicRom = Mem().BasicRomVisible();
     };
+    // The DivMMC's automap and esxDOS entries as machine events (platform-debugging P5)
+    _divMmc->eventWatch = &_context->machineEventWatch;
+    _divMmc->onWatchedEvent = [this](const NextDivMmcEvent& e) {
+        switch (e.kind)
+        {
+            case NextDivMmcKind::MapIn:
+            {
+                // NextDivMmcEntryName's classes: rst, nmi, 3dxx, rom3_routine
+                const uint16_t a = e.address;
+                const uint8_t code = a == 0x0066 ? 1 : (a < 0x40 && (a & 7) == 0) ? 0 : (a >> 8) == 0x3D ? 2 : 3;
+                NoteMachineEvent(GSCardEvent::DivMmcMap, code, e.address);
+                break;
+            }
+            case NextDivMmcKind::MapOut:
+            case NextDivMmcKind::Retn:
+            case NextDivMmcKind::Disabled:
+                NoteMachineEvent(GSCardEvent::DivMmcUnmap, static_cast<uint8_t>(e.kind), e.address);
+                break;
+            case NextDivMmcKind::EsxCall:
+                NoteMachineEvent(GSCardEvent::EsxDosCall, e.call, e.returnAddress);
+                break;
+            default:
+                break;
+        }
+    };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _esxDos = std::make_unique<NextEsxDos>(_esxDosHost);
+    _esxDos->onCall = [this](uint8_t call, uint16_t returnAddress) {
+        NoteMachineEvent(GSCardEvent::EsxDosCall, call, returnAddress);
+    };
     _m1Chain.owner = this;
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
@@ -991,6 +1031,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             const bool wasActive = _dma.Active();
             _dma.Write(value, z80Compatible);
             _dmaRequestLate = !wasActive && _dma.Active();
+            NoteDmaActivity();
         }
     }
     else if (static_cast<uint8_t>(port) == 0x57)
@@ -1053,8 +1094,18 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 void PortDecoder_Next::BindDma()
 {
     NextDma::Bus bus;
-    bus.readMemory = [this](uint16_t address) { return _context->pMemory->DirectReadFromZ80Memory(address); };
-    bus.writeMemory = [this](uint16_t address, uint8_t value) { Mem().DmaWrite(address, value); };
+    // In debug mode the accesses go through the main CPU's watchpoints (the DMA drives the CPU's address bus)
+    bus.readMemory = [this](uint16_t address) {
+        const uint8_t value = _context->pMemory->DirectReadFromZ80Memory(address);
+        if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
+            ReportDmaAccess(false, address, value);
+        return value;
+    };
+    bus.writeMemory = [this](uint16_t address, uint8_t value) {
+        Mem().DmaWrite(address, value);
+        if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
+            ReportDmaAccess(true, address, value);
+    };
     // the DMA's own cycles do not reach its ports ("allow dma to program itself? no", zxnext.vhd port_dma_rd / port_dma_wr)
     // dma_wait_n includes spi_wait_n (zxnext.vhd 1844): a byte to or from the SD card's data port waits until the card's 16 clocks passed
     auto waitSpi = [this](uint8_t low) {
@@ -1333,6 +1384,32 @@ void PortDecoder_Next::StepDma()
         if (moved == 0 || _dma.Waiting())
             break;
     }
+    NoteDmaActivity();
+}
+
+void PortDecoder_Next::ReportDmaAccess(bool write, uint16_t address, uint8_t value)
+{
+    if (!_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = write ? brk.HandleMemoryWrite(address, value) : brk.HandleMemoryRead(address, value);
+    if (id != BRK_INVALID) [[unlikely]]
+        FireBreakpoint(id, address, write ? BreakpointHitKind::DmaWrite : BreakpointHitKind::DmaRead);
+}
+
+void PortDecoder_Next::NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg)
+{
+    if (_context->machineEventWatch) [[unlikely]]
+        GSReportHostEvent(_context, kind, value, arg);
+}
+
+void PortDecoder_Next::NoteDmaActivity()
+{
+    const bool active = _dma.Active();
+    if (active == _dmaWasActive) [[likely]]
+        return;
+    _dmaWasActive = active;
+    NoteMachineEvent(active ? GSCardEvent::ZxnDmaStart : GSCardEvent::ZxnDmaDone, active || !_dma.EndOfBlock() ? 0 : 1);
 }
 
 /// region <Reset>
@@ -1421,6 +1498,8 @@ void PortDecoder_Next::PerformReset(bool hard)
     }
     _dmaRequestLate = false;
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    NoteDmaActivity();
+    NoteMachineEvent(GSCardEvent::MachineReset, hard ? 1 : 0);
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
     UpdateUartRoute(false);  // NR #0B went back to its reset value: the connector carries no UART
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
@@ -1894,6 +1973,7 @@ const char* PortDecoder_Next::MultifaceNmiRefusal() const
 bool PortDecoder_Next::GenerateDriveNmi()
 {
     const char* refusal = DriveNmiRefusal();
+    NoteMachineEvent(GSCardEvent::CpuNmi, static_cast<uint8_t>(1 | (refusal ? 0x80 : 0)));
     if (_intJournal.Enabled())
     {
         NextIntEvent e;
@@ -1941,6 +2021,8 @@ void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
 bool PortDecoder_Next::RaiseMultifaceNmi(const char* source)
 {
     const char* refusal = MultifaceNmiRefusal();
+    const uint8_t code = std::strcmp(source, "m1_button") == 0 ? 0 : std::strcmp(source, "io_trap") == 0 ? 2 : 3;
+    NoteMachineEvent(GSCardEvent::CpuNmi, static_cast<uint8_t>(code | (refusal ? 0x80 : 0)));
     if (_intJournal.Enabled())
     {
         NextIntEvent e;
@@ -1961,6 +2043,7 @@ void PortDecoder_Next::OnRetn()
 {
     // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)
     const bool multifaceActive = _multiface->IsActive();
+    NoteMachineEvent(GSCardEvent::CpuRetn, multifaceActive ? 1 : (_divMmc->NmiHold() ? 2 : 0));
     if (_intJournal.Enabled())
     {
         NextIntEvent e;

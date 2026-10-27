@@ -1165,7 +1165,8 @@ id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruc
 id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoGS); bp_remove(id, cpu="gs"), bp_list(cpu="gs") ...
                                     # cpu="ms": the MultiSound card's General Sound, the same way
 id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
-                                    # dma_start, dma_done, gscfg0, host_*);
+                                    # dma_start, dma_done, gscfg0, host_*; the ZX Next's cpu_int, cpu_nmi,
+                                    # esxdos_call, divmmc_map, zxndma_start, ...: the main CPU's);
                                     # cpu= defaults to the kind's side; ValueError with the reason when refused
 id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register write by the main CPU (ay, fm, saa,
                                     # opl4, opl4wave, dac); end= a range end, unit= one chip of the kind

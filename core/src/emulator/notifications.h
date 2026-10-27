@@ -331,8 +331,10 @@ enum class BreakpointHitKind : uint8_t
     Magic,
     Keyboard,  // the program read the keyboard and saw the key change (address: the port read)
     Event,     // a General Sound event (BRK_EVENT; address: the event kind)
-    DmaWrite,  // a bus master other than the CPU (a DMA) wrote a watched page (address: the offset in the 16 KB page)
-    ChipRegister  // a sound chip's register write (BRK_CHIPREG; address: the register)
+    DmaWrite,  // a bus master other than the CPU (a DMA) wrote a watched byte (address: the offset in the 16 KB page on a
+               // card, the CPU address on the Next, whose DMA drives the CPU's address bus)
+    ChipRegister,  // a sound chip's register write (BRK_CHIPREG; address: the register)
+    DmaRead        // the Next's DMA read a watched byte (address: the CPU address)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -354,6 +356,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::Event: return "event";
         case BreakpointHitKind::DmaWrite: return "dma_write";
         case BreakpointHitKind::ChipRegister: return "chip_register";
+        case BreakpointHitKind::DmaRead: return "dma_read";
     }
     return "execute";
 }

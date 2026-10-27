@@ -3202,7 +3202,10 @@ void BreakpointManager::RebuildFilters()
 
     // The chips report their register writes only while the main CPU has a chip register breakpoint
     if (!_target && _context)
+    {
         _context->chipRegisterWatch = _hotState.hasChipReg != 0;
+        _context->machineEventWatch = _hotState.hasEvent != 0;
+    }
 
     ApplyTapDemand(demand);
 

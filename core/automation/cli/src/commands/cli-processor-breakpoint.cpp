@@ -583,16 +583,21 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
     {
         std::stringstream ss;
         ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--group G] [note]" << NEWLINE
-           << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4). The card's events stop the" << NEWLINE
+           << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4) or a machine event. The card's events stop the" << NEWLINE
            << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
            << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
            << "  read the mailbox), card_reply (it wrote the reply), dac_fetch (a #6000-#7FFF read latched a DAC)," << NEWLINE
            << "  clock_change (NeoGS GSCFG0: the byte), dma_start, dma_done (NeoGS DMA: the module 0 ZX, 1 SD, 2 MP3)," << NEWLINE
            << "  gscfg0 (NeoGS: every GSCFG0 write, the byte)" << NEWLINE
            << "Host (the main CPU): host_command (OUT #BB), host_data (OUT #B3), host_reply (IN #B3)" << NEWLINE
+           << "Machine (the main CPU, ZX Next): cpu_int (the source: 0 line, 3-10 CTC, 11 ULA), cpu_reti, cpu_nmi" << NEWLINE
+           << "  (0 M1 button, 1 drive button, 2 I/O trap; bit 7 refused), cpu_retn, machine_reset (1 hard)," << NEWLINE
+           << "  divmmc_map (0 RST, 1 NMI, 2 #3Dxx, 3 ROM 3), divmmc_unmap, esxdos_call (the call byte)," << NEWLINE
+           << "  zxndma_start, zxndma_done" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
-           << "  bevent host_command               - the host writes any command";
+           << "  bevent host_command               - the host writes any command" << NEWLINE
+           << "  bevent esxdos_call --value 0x9A   - a program opens a file (F_OPEN)";
         session.SendResponse(ss.str());
         return;
     }

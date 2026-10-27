@@ -3264,8 +3264,8 @@ namespace PythonBindings
                 return id;
             }, "Add a General Sound / NeoGS protocol event breakpoint: the card's (int, nmi, reset, page, card_command, "
                "card_data, card_reply) stop the machine at the card's next instruction, the host's (host_command, "
-               "host_data, host_reply) after the main CPU's access; value / vmask filter the byte; cpu defaults to the "
-               "kind's side. Returns the id; ValueError with the reason when refused",
+               "host_data, host_reply) after the main CPU's access, the ZX Next's machine events (cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done) on "
+               "the main CPU; value / vmask filter the byte; cpu defaults to the kind's side. Returns the id; ValueError with the reason when refused",
                py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
             .def("bp_chipreg", [](Emulator& self, const std::string& chipName, int32_t reg, int32_t end, int32_t unit,
                                   int32_t value, int32_t vmask, const std::string& hits) -> int {

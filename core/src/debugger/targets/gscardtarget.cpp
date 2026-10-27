@@ -230,12 +230,12 @@ void GSCardTarget::onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t of
     _pending.page = ramPage;
 }
 
-void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value)
+void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;
     if (!debug || !context->pEmulator || !context->pCore || !context->pCore->GetZ80()->isDebugMode)
         return;
-    const uint16_t id = debug->GetBreakpointsManager()->HandleEvent(kind, value);
+    const uint16_t id = debug->GetBreakpointsManager()->HandleEvent(kind, value, arg);
     if (id != BRK_INVALID) [[unlikely]]
         context->pEmulator->OnBreakpointHit(id, static_cast<uint16_t>(kind), BreakpointHitKind::Event);
 }

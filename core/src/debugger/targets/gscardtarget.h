@@ -103,4 +103,4 @@ private:
 
 /// The host side of the mailbox (the main CPU's access to #B3 / #BB, inside its instruction): a host-side event
 /// breakpoint of the main CPU stops the machine there, as a port breakpoint does. Free without one
-void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value);
+void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg = -1);

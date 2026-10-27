@@ -220,3 +220,21 @@ whatever port pair, latch order or board the program reaches it through.
 | MCP | `control_execution` `bp_add` `type` `chipreg`, `chip`, `address`, `address_end`, `unit`, `value`, `value_mask` |
 | REST | `POST /breakpoints {type: "chipreg", chip, address, address_end, unit, value, value_mask}`; the listing has `chip`, `unit` |
 | WebSocket | the REST route as a `call` |
+
+### The ZX Next's machine (platform-debugging P5)
+
+- **DMA.** The zxnDMA drives the CPU's address bus, so its memory reads and writes go through the main CPU's
+  watchpoints on CPU addresses and on pages (`wp 0xE000 w`, `wp 0x0005 w --page bank8k33`), in debug mode. The stop's
+  access is `dma_write` or `dma_read`, its address the CPU address. In the emulator's own run the machine parks after
+  the DMA's byte, mid-transfer; a direct step ends after its instruction, the transfer going on (each byte counted).
+  The DMA's port cycles are port accesses: port breakpoints see them as `port_out` / `port_in`.
+- **Events.** On the main CPU, `bevent <kind>` and its plane forms (the table above): `cpu_int` (value: the source,
+  0 line, 1-2 UART RX, 3-10 CTC 0-7, 11 ULA, 12-13 UART TX, #FE spurious; the detail the IM2 vector), `cpu_reti`,
+  `cpu_nmi` (0 M1 button, 1 drive button, 2 I/O trap, 3 other; bit 7 when the machine refused it), `cpu_retn` (0 none,
+  1 Multiface, 2 DivMMC), `machine_reset` (0 soft, 1 hard), `divmmc_map` (0 RST, 1 NMI, 2 #3Dxx, 3 ROM 3 routine; the
+  detail the fetch address), `divmmc_unmap` (1 the #1FF8 exit, 2 RETN, 3 disabled), `esxdos_call` (the call byte; the
+  detail the return address; the DivMMC entry at #0008 or the esxDOS mode's trap), `zxndma_start`, `zxndma_done`
+  (1 the end of the block, 0 disabled or reset).
+- **Cost.** The machine tells its events only while `EmulatorContext::machineEventWatch` is set (an active event
+  breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte.
+- **Not yet.** DivMMC and Multiface RAM as pages a breakpoint can name; taps (script callbacks) on machine events.

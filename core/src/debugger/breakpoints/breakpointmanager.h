@@ -37,8 +37,8 @@ enum BreakpointTypeEnum : uint8_t
     BRK_BEAM,        // ZX Next: the beam reaches a place in the raster (line counter cvc of the copper, pixel clock hc)
     BRK_COPPER,      // ZX Next: the copper completes the instruction at a list index (a WAIT that became true, or a MOVE)
     BRK_MAGIC,       // ZX Next: the CPU completed a magic opcode (ED FF or DD 01: a NOP on the hardware), address = the opcode word
-    BRK_EVENT,       // A General Sound event (GSCardEvent), address = the kind; the value filter is nrValue / nrMask.
-                     // Card-side kinds on the card CPU's breakpoints, host-side kinds on the main CPU's
+    BRK_EVENT,       // A General Sound or machine event (GSCardEvent), address = the kind; the value filter is nrValue /
+                     // nrMask. Card-side kinds on the card CPU's breakpoints, host-side and machine kinds on the main CPU's
     BRK_CHIPREG,     // A sound chip's register write (chipregister.h): `chip` the SoundChipKind, `chipUnit` the chip of
                      // that kind (kSoundChipAnyUnit: any), the register z80address..EndAddress(); the value filter is
                      // nrValue / nrMask. The main CPU's only

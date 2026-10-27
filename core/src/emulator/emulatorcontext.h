@@ -309,6 +309,10 @@ public:
     /// while a chip register breakpoint is active (platform-debugging P3). Read on the chips' OUT paths
     bool chipRegisterWatch = false;
 
+    /// The machine tells its events (GSReportHostEvent: interrupts, NMI, the DivMMC automap, esxDOS calls, the DMA):
+    /// set by the main CPU's breakpoint manager while an event breakpoint is active (platform-debugging P5)
+    bool machineEventWatch = false;
+
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
     ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;

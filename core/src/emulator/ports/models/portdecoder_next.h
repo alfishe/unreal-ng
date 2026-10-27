@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "debugger/breakpoints/breakpointcondition.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "emulator/bus/bustap.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
@@ -325,6 +326,12 @@ private:
     NextMagicPort _magicPort;
     NextExtendedInput _extendedInput;  ///< the keyboard's extended keys and the pads' extra buttons; the machine's PS/2 sink
     void RecordInt(NextIntEvent event);
+    /// platform-debugging P5: a DMA access through the main CPU's watchpoints (in debug mode); a machine event to the
+    /// main CPU's event breakpoints (while one is set); the DMA's start and end, told when its activity changed
+    void ReportDmaAccess(bool write, uint16_t address, uint8_t value);
+    void NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg = -1);
+    void NoteDmaActivity();
+    bool _dmaWasActive = false;
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;
