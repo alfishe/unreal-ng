@@ -665,6 +665,10 @@ struct CONFIG
 	/// latency), 1..3 explicit.
 	int videoPresentDelayFrames;
 
+	/// Lip-sync trim in milliseconds ([VIDEO] LipSyncOffsetMs, -200..200): added to every frame's target time, the
+	/// time its sound is heard (frame presenter design, section 3). Positive = the picture later
+	int lipSyncOffsetMs = 0;
+
 	struct
 	{
 		unsigned fq, ayfq;

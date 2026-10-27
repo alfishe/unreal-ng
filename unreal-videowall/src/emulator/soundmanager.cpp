@@ -175,6 +175,7 @@ void AppSoundManager::stop()
 
     // Wipe ring buffer to prevent crackles during next emulation session
     _ringBuffer.clear();
+    _deviceDescriptor.clock.Reset();  // the stream jumped: the audio clock starts over
 }
 
 /// Audio playback callback
@@ -199,6 +200,18 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
 
     if (obj)
     {
+        // The audio clock (frame presenter design, section 3): this callback's time and where the ring's stream stands
+        {
+            AudioDeviceDescriptor& desc = obj->_deviceDescriptor;
+            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            desc.clock.OnDeviceCallback(nowNs, obj->_ringBuffer.getReadStereoFrames(), frameCount,
+                                        !obj->_ringBuffer.isEmpty(), desc.sampleRate.load(std::memory_order_relaxed),
+                                        desc.deviceBufferFrames.load(std::memory_order_relaxed) +
+                                            desc.deviceOutputLatencyFrames.load(std::memory_order_relaxed));
+        }
+
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
         // Hard resync (consumer thread, SPSC-safe): occupancy far beyond the
@@ -246,6 +259,7 @@ void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSampl
             static_cast<uint32_t>(appSoundManager->_ringBuffer.getOccupancyStereoFrames()),
             std::memory_order_relaxed);
         desc.framesEnqueued.fetch_add(numSamples / 2, std::memory_order_relaxed);
+        desc.streamWritten.store(appSoundManager->_ringBuffer.getWrittenStereoFrames(), std::memory_order_release);
         desc.enqueueErrors.store(appSoundManager->_ringBuffer.getEnqueueErrorCount(),
                                  std::memory_order_relaxed);
     }
@@ -299,6 +313,7 @@ void AppSoundManager::handleDeviceRerouted()
 
     // Frames queued in the ring were resampled for the previous device rate
     _ringBuffer.clear();
+    _deviceDescriptor.clock.Reset();  // the stream jumped: the audio clock starts over
     _deviceDescriptor.reinitCount.fetch_add(1, std::memory_order_relaxed);
 
     start();  // Logs the re-established device the same way as the initial start

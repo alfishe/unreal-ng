@@ -787,6 +787,36 @@ void MainLoop::OnFrameEnd()
         }
     }
 
+    // The frame's times (frame presenter design, section 3): when its sound is heard, when it ends on the emulated
+    // clock. The frames latched this frame get their target times from them
+    {
+        uint64_t audioEnd = 0;
+        uint32_t audioFrames = 0;
+        const bool haveAudio = _context->pSoundManager && _context->pSoundManager->takeFrameAudioEnd(&audioEnd, &audioFrames);
+        if (!_context->ttdReplayActive)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const std::chrono::microseconds frameDuration(_context->config.frame_duration_us);
+            FrameStampInput stamp;
+            stamp.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+            stamp.periodNs = std::chrono::duration_cast<std::chrono::nanoseconds>(frameDuration).count();
+            stamp.haveAudio = haveAudio;
+            stamp.audioEndStreamFrame = audioEnd;
+            stamp.audioFramesPerFrame = audioFrames;
+            // The deadline is the emulated clock only while it paces the frames: not in turbo, not in a run that
+            // never waited on it (stepping, a test's frame loop)
+            const auto frameEnd = _nextFrameTime + frameDuration;
+            if (!_context->config.turbo_mode && _nextFrameTime.time_since_epoch().count() != 0 &&
+                frameEnd > now - std::chrono::seconds(1) && frameEnd < now + std::chrono::seconds(1))
+            {
+                stamp.haveEmulated = true;
+                stamp.emulatedEndNs =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(frameEnd.time_since_epoch()).count();
+            }
+            _context->pScreen->StampPresentTiming(stamp);
+        }
+    }
+
     // HUD notifications: emit once per frame (zero overhead when HUD disabled)
     _context->pMemory->handleFrameEnd();
     _screen->handleFrameEnd();

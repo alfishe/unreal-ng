@@ -8,6 +8,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/video/frameclock.h"
 #include "emulator/video/map/videowritelog.h"
 #include "emulator/video/temporaleffects.h"
 #include "stdafx.h"
@@ -366,6 +367,37 @@ struct FrameSnapshot
 {
     std::vector<uint8_t> pixels;
     PictureGeometry geometry;
+};
+
+/// A frame served by time (Screen::CopyFrameAt / CopyNextFrame): which one, when it should be on screen, and the
+/// one after it (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, section 3)
+struct PresentFrameInfo
+{
+    uint64_t serial = 0;       ///< the frame's latch serial (never reused)
+    int64_t targetNs = 0;      ///< steady-clock time the frame should reach the screen
+    int64_t latchNs = 0;       ///< steady-clock time it was latched
+    FrameClockSource source = FrameClockSource::None;
+    PictureGeometry geometry;
+    /// CopyFrameAt: every frame's target is after the time asked for (start up): the oldest one is served
+    bool early = false;
+    /// CopyFrameAt: the frame after this one, if latched and timed; blend = where the time asked for lies
+    /// between the two targets (0 = this frame, 1 = the next one; 0 without a next frame)
+    uint64_t nextSerial = 0;
+    int64_t nextTargetNs = 0;
+    float blend = 0.0f;
+};
+
+/// What the emulation thread knows about the frame just ended, after its sound was delivered
+/// (Screen::StampPresentTiming)
+struct FrameStampInput
+{
+    int64_t nowNs = 0;
+    int64_t periodNs = 0;               ///< the machine frame's period
+    bool haveAudio = false;
+    uint64_t audioEndStreamFrame = 0;   ///< where the frame's sound ends in the audio ring's stream
+    uint32_t audioFramesPerFrame = 0;   ///< device frames of one machine frame
+    bool haveEmulated = false;
+    int64_t emulatedEndNs = 0;          ///< the frame's end on the emulated clock (MainLoop's deadline)
 };
 
 /// Display viewport configuration for cropping framebuffer to display
@@ -1003,6 +1035,31 @@ protected:
     TemporalEffects::WriteResult WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height,
                                                      const zxdlss::FrameReport& report);  // worker thread
     TemporalWindow _presentSlotWindow[PRESENT_SLOTS];  // where each slot's ZX frame is (under _presentMutex)
+
+    // Frame times (frame presenter design, section 3), under _presentMutex
+    struct PresentSlotTiming
+    {
+        int64_t latchNs = 0;
+        int64_t targetNs = 0;
+        float fraction = 1.0f;  // where in the machine frame it was latched (an external picture: mid-frame)
+        bool timed = false;
+        FrameClockSource source = FrameClockSource::None;
+    };
+    PresentSlotTiming _presentSlotTiming[PRESENT_SLOTS];
+    FrameClock _frameClock;                    // emulation thread, under _presentMutex for the stats readers
+    bool _stampingActive = false;              // a frame clock runs: untimed slots are pending, not unclocked
+    uint64_t _lastStampedSerial = 0;
+    bool _haveLastStamp = false;
+    uint64_t _lastStampAudioEnd = 0;
+    bool _lastStampHadAudio = false;
+    int64_t _lastStampEmulatedEnd = 0;
+    bool _lastStampHadEmulated = false;
+    std::atomic<bool> _frameClockResetPending{false};
+    void ResetSlotTimingLocked(size_t index);
+    /// The slots readers may be served by time, oldest first (caller holds _presentMutex)
+    size_t EligibleSlotsLocked(size_t* indices) const;
+    int64_t SlotTargetLocked(size_t index) const;
+    void MarkShownLocked(size_t index) const;
     TemporalFrame _temporalFrame;                      // emulation thread: reused every latch
 
     /// Emulation thread, at the latch, while an algorithm is selected: the frame's ZX
@@ -1122,6 +1179,27 @@ public:
         const uint32_t frameTStates = (_context && _context->config.frame) ? _context->config.frame : 71680;
         return static_cast<uint32_t>(static_cast<uint64_t>(frameTStates) * 10 / 35);
     }
+
+    /// region <Frames by time (frame presenter design, section 3)>
+
+    /// Emulation thread, frame end, after the frame's sound was delivered: give the frames latched since the last
+    /// call their target times (FrameClock: the audio clock, else the emulated clock, else the latch time)
+    void StampPresentTiming(const FrameStampInput& in);
+
+    /// Any thread: the newest frame whose target is at or before `hostNs` (steady clock, ns); the frame a refresh
+    /// reaching the screen at `hostNs` shows. `nextDst` (optional, `dstSize` bytes) receives the frame after it, for
+    /// blending. Frames latched but not timed yet are never served.
+    /// @return false when there is no frame or `dstSize` is too small
+    bool CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, uint8_t* nextDst = nullptr);
+
+    /// Any thread: the oldest timed frame latched after `afterSerial` (0 = the oldest held), for presenting each
+    /// frame once at its target. @return false when there is none yet
+    bool CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info);
+
+    /// Any thread: the frame clock's counters (which clock times the frames, carried steps, cuts)
+    FrameClock::Stats GetFrameClockStats();
+
+    /// endregion </Frames by time>
 
     /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
     /// Safe to call from any thread.

@@ -4,6 +4,7 @@
 #include <common/image/imagehelper.h>
 
 #include <cassert>
+#include <climits>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -1086,9 +1087,11 @@ void Screen::ResizePresentSlotsLocked(size_t size)
         _presentSlotShown[i] = false;
         _presentSlotReport[i] = zxdlss::FrameReport{};
         _presentSlotGeometry[i] = PictureGeometry{};
+        ResetSlotTimingLocked(i);
     }
     _presentBufferSize = size;
     _presentLatchCounter = 0;
+    _frameClockResetPending.store(true, std::memory_order_release);
 }
 
 /// region <Frame geometry>
@@ -1283,9 +1286,16 @@ void Screen::LatchExternalFrame()
     _presentSlotShown[index] = false;
     _presentSlotReport[index] = zxdlss::FrameReport{};
     _presentLatchCounter++;
-    _lastLatchTimestampUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch())
-                                    .count(),
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    ResetSlotTimingLocked(index);
+    _presentSlotTiming[index].latchNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    // The card's frame is complete here, inside the machine's frame: its sound ends at this fraction of the frame's
+    if (_context && _context->pCore && _context->config.frame)
+    {
+        const double fraction = static_cast<double>(_context->pCore->GetZ80()->t) / _context->config.frame;
+        _presentSlotTiming[index].fraction = static_cast<float>(std::clamp(fraction, 0.0, 1.0));
+    }
+    _lastLatchTimestampUs.store(std::chrono::duration_cast<std::chrono::microseconds>(now).count(),
                                 std::memory_order_release);
 }
 
@@ -1315,6 +1325,10 @@ void Screen::LatchFramebuffer()
         _presentSlotShown[index] = false;
         _presentSlotReport[index] = zxdlss::FrameReport{};
         _presentLatchCounter++;
+        ResetSlotTimingLocked(index);
+        _presentSlotTiming[index].latchNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
 
         // Temporal effect: the worker processes this frame and writes an older
         // one back (WriteTemporalOutput takes _presentMutex: Submit must not)
@@ -1373,6 +1387,18 @@ void Screen::FlushAndPresentFramebuffer()
     _presentSlotShown[0] = false;
     _presentSlotReport[0] = zxdlss::FrameReport{};
     _presentLatchCounter = 1;
+    // Shown at once: the sequence broke, the frame clock starts over with the next frame
+    ResetSlotTimingLocked(0);
+    {
+        const int64_t now =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        _presentSlotTiming[0].latchNs = now;
+        _presentSlotTiming[0].targetNs = now;
+        _presentSlotTiming[0].timed = true;
+        _presentSlotTiming[0].source = FrameClockSource::Latch;
+    }
+    _frameClockResetPending.store(true, std::memory_order_release);
 
     // The frame sequence broke: the temporal effect restarts, this frame shows raw
     if (_temporal)
@@ -1383,6 +1409,230 @@ void Screen::FlushAndPresentFramebuffer()
             std::chrono::steady_clock::now().time_since_epoch()).count(),
         std::memory_order_release);
 }
+
+/// region <Frames by time>
+
+void Screen::ResetSlotTimingLocked(size_t index)
+{
+    _presentSlotTiming[index] = PresentSlotTiming{};
+}
+
+void Screen::StampPresentTiming(const FrameStampInput& in)
+{
+    // The audio clock, when this instance's sound reaches a device
+    const AudioDeviceDescriptor* device =
+        _context ? _context->pAudioDeviceDescriptor.load(std::memory_order_acquire) : nullptr;
+    const int64_t offsetNs = _context ? static_cast<int64_t>(_context->config.lipSyncOffsetMs) * 1'000'000 : 0;
+    const int64_t period = in.periodNs > 0 ? in.periodNs : static_cast<int64_t>(NativeFramePeriodUs()) * 1000;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    _stampingActive = true;
+    if (_frameClockResetPending.exchange(false, std::memory_order_acq_rel))
+    {
+        _frameClock.Reset();
+        _haveLastStamp = false;
+    }
+
+    // Where the last frame end was: the start of this frame's sound and time
+    const bool prevAudio = _haveLastStamp && _lastStampHadAudio && in.haveAudio;
+    const uint64_t audioBegin =
+        prevAudio ? _lastStampAudioEnd
+                  : in.audioEndStreamFrame - std::min<uint64_t>(in.audioEndStreamFrame, in.audioFramesPerFrame);
+    const bool prevEmulated = _haveLastStamp && _lastStampHadEmulated && in.haveEmulated;
+    const int64_t emulatedBegin = prevEmulated ? _lastStampEmulatedEnd : in.emulatedEndNs - period;
+
+    // The video delay without the audio clock: one frame, or the temporal effect's look-ahead
+    const int64_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
+    const int64_t emulatedDelay = (temporal > 1 ? temporal : 1) * period;
+
+    // The untimed frames latched since the last stamp, oldest first (one per machine frame; an external picture
+    // at its own rate may give none or several)
+    size_t indices[PRESENT_SLOTS];
+    const size_t count = EligibleSlotsLocked(indices);
+    for (size_t k = 0; k < count; k++)
+    {
+        const size_t i = indices[k];
+        PresentSlotTiming& timing = _presentSlotTiming[i];
+        if (timing.timed || _presentSlotSerial[i] <= _lastStampedSerial)
+            continue;
+        const double f = timing.fraction;
+        const bool external = _presentSlotGeometry[i].source == FrameSource::External;
+
+        FrameTimingInput input;
+        input.latchNs = timing.latchNs;
+        input.periodNs = external && _externalFramePeriodUs ? static_cast<int64_t>(_externalFramePeriodUs) * 1000
+                                                            : period;
+        input.offsetNs = offsetNs;
+        input.emulatedDelayNs = emulatedDelay;
+        if (in.haveAudio && device)
+        {
+            const uint64_t streamFrame =
+                audioBegin + static_cast<uint64_t>(f * static_cast<double>(in.audioEndStreamFrame - audioBegin));
+            int64_t heard = 0;
+            if (device->clock.TimeOfStreamFrame(streamFrame, in.nowNs, &heard))
+            {
+                input.haveAudio = true;
+                input.audioNs = heard;
+            }
+        }
+        if (in.haveEmulated)
+        {
+            input.haveEmulated = true;
+            input.emulatedNs = emulatedBegin + static_cast<int64_t>(f * static_cast<double>(in.emulatedEndNs - emulatedBegin));
+        }
+
+        const FrameTimingResult result = _frameClock.Next(input);
+        timing.targetNs = result.targetNs;
+        timing.source = result.source;
+        timing.timed = true;
+        _lastStampedSerial = _presentSlotSerial[i];
+    }
+
+    _haveLastStamp = true;
+    _lastStampHadAudio = in.haveAudio;
+    _lastStampAudioEnd = in.audioEndStreamFrame;
+    _lastStampHadEmulated = in.haveEmulated;
+    _lastStampEmulatedEnd = in.emulatedEndNs;
+}
+
+size_t Screen::EligibleSlotsLocked(size_t* indices) const
+{
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || _presentLatchCounter == 0)
+        return 0;
+    const uint64_t held = std::min<uint64_t>(_presentLatchCounter, PRESENT_SLOTS);
+    size_t count = 0;
+    for (uint64_t k = held; k > 0; k--)
+    {
+        const size_t index = static_cast<size_t>((_presentLatchCounter - k) % PRESENT_SLOTS);
+        const PictureGeometry& g = _presentSlotGeometry[index];
+        if (_presentSlotSerial[index] == 0 || g.width == 0 || g.height == 0 ||
+            static_cast<size_t>(g.stride) * g.height != _presentBufferSize)
+            continue;
+        indices[count++] = index;
+    }
+    return count;
+}
+
+int64_t Screen::SlotTargetLocked(size_t index) const
+{
+    const PresentSlotTiming& timing = _presentSlotTiming[index];
+    if (timing.timed)
+        return timing.targetNs;
+    // No frame clock runs for this screen (no MainLoop): the latch time is the best there is. With one running, an
+    // untimed frame waits for its stamp
+    return _stampingActive ? INT64_MAX : timing.latchNs;
+}
+
+void Screen::MarkShownLocked(size_t index) const
+{
+    _presentSlotShown[index] = true;
+    _showingProcessed.store(_presentSlotProcessed[index], std::memory_order_relaxed);
+    _shownReport = _presentSlotReport[index];
+}
+
+bool Screen::CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, uint8_t* nextDst)
+{
+    if (dst == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (dstSize < _presentBufferSize)
+        return false;
+    size_t indices[PRESENT_SLOTS];
+    const size_t count = EligibleSlotsLocked(indices);
+
+    // Oldest first: the newest frame due by hostNs, and the first one after it
+    size_t chosen = PRESENT_SLOTS;
+    size_t next = PRESENT_SLOTS;
+    size_t oldest = PRESENT_SLOTS;
+    for (size_t k = 0; k < count; k++)
+    {
+        const int64_t target = SlotTargetLocked(indices[k]);
+        if (target == INT64_MAX)
+            continue;
+        if (oldest == PRESENT_SLOTS)
+            oldest = indices[k];
+        if (target <= hostNs)
+        {
+            chosen = indices[k];
+            next = PRESENT_SLOTS;
+        }
+        else if (next == PRESENT_SLOTS)
+        {
+            next = indices[k];
+        }
+    }
+    const bool early = chosen == PRESENT_SLOTS;
+    if (early)
+    {
+        if (oldest == PRESENT_SLOTS)
+            return false;
+        chosen = oldest;
+        next = PRESENT_SLOTS;
+    }
+
+    VideoUtils::CopyFrameBuffer(dst, _presentSlots[chosen], _presentBufferSize);
+    MarkShownLocked(chosen);
+    if (nextDst && next != PRESENT_SLOTS)
+        VideoUtils::CopyFrameBuffer(nextDst, _presentSlots[next], _presentBufferSize);
+    if (info)
+    {
+        *info = PresentFrameInfo{};
+        info->serial = _presentSlotSerial[chosen];
+        info->targetNs = SlotTargetLocked(chosen);
+        info->latchNs = _presentSlotTiming[chosen].latchNs;
+        info->source = _presentSlotTiming[chosen].source;
+        info->geometry = _presentSlotGeometry[chosen];
+        info->early = early;
+        if (next != PRESENT_SLOTS)
+        {
+            info->nextSerial = _presentSlotSerial[next];
+            info->nextTargetNs = SlotTargetLocked(next);
+            const int64_t span = info->nextTargetNs - info->targetNs;
+            if (span > 0)
+                info->blend = static_cast<float>(
+                    std::clamp(static_cast<double>(hostNs - info->targetNs) / static_cast<double>(span), 0.0, 1.0));
+        }
+    }
+    return true;
+}
+
+bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info)
+{
+    if (dst == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (dstSize < _presentBufferSize)
+        return false;
+    size_t indices[PRESENT_SLOTS];
+    const size_t count = EligibleSlotsLocked(indices);
+    for (size_t k = 0; k < count; k++)
+    {
+        const size_t index = indices[k];
+        if (_presentSlotSerial[index] <= afterSerial || SlotTargetLocked(index) == INT64_MAX)
+            continue;
+        VideoUtils::CopyFrameBuffer(dst, _presentSlots[index], _presentBufferSize);
+        MarkShownLocked(index);
+        if (info)
+        {
+            *info = PresentFrameInfo{};
+            info->serial = _presentSlotSerial[index];
+            info->targetNs = SlotTargetLocked(index);
+            info->latchNs = _presentSlotTiming[index].latchNs;
+            info->source = _presentSlotTiming[index].source;
+            info->geometry = _presentSlotGeometry[index];
+        }
+        return true;
+    }
+    return false;
+}
+
+FrameClock::Stats Screen::GetFrameClockStats()
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    return _frameClock.GetStats();
+}
+
+/// endregion </Frames by time>
 
 bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
 {
@@ -1438,9 +1688,7 @@ const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
     const size_t slot = (newest - delay) % PRESENT_SLOTS;
     if (index)
         *index = slot;
-    _presentSlotShown[slot] = true;
-    _showingProcessed.store(_presentSlotProcessed[slot], std::memory_order_relaxed);
-    _shownReport = _presentSlotReport[slot];
+    MarkShownLocked(slot);
     return _presentSlots[slot];
 }
 

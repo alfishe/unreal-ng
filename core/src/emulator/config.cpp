@@ -1076,6 +1076,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	{
 		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
 		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
+		config.lipSyncOffsetMs = (lipSync >= -200 && lipSync <= 200) ? (int)lipSync : 0;
 	}
 
 	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file

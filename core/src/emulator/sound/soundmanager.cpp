@@ -1992,6 +1992,17 @@ void SoundManager::handleFrameEnd()
         try
         {
             callback(obj, _deviceBuffer, deviceFrames * AUDIO_CHANNELS);
+
+            // The frame's sound ends where the callback left the ring's stream, or as many frames later as the delay
+            // line still holds it back
+            const AudioDeviceDescriptor* device = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
+            if (device)
+            {
+                _frameAudioEnd = device->streamWritten.load(std::memory_order_acquire) +
+                                 static_cast<uint64_t>(_outputDelayFrames) * deviceFrames;
+                _frameAudioFrames = static_cast<uint32_t>(deviceFrames);
+                _frameAudioEndValid = true;
+            }
         }
         catch (const std::exception& e)
         {
@@ -2004,6 +2015,20 @@ void SoundManager::handleFrameEnd()
             LOGERROR("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
         }
     }
+}
+
+bool SoundManager::takeFrameAudioEnd(uint64_t* streamFrame, uint32_t* deviceFramesPerFrame)
+{
+    const bool valid = _frameAudioEndValid;
+    _frameAudioEndValid = false;
+    if (valid)
+    {
+        if (streamFrame)
+            *streamFrame = _frameAudioEnd;
+        if (deviceFramesPerFrame)
+            *deviceFramesPerFrame = _frameAudioFrames;
+    }
+    return valid;
 }
 
 /// DRC PI controller (audio-sync design 5.1): holds ring occupancy at
