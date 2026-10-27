@@ -17,6 +17,8 @@ extends: [scheme/qaop-space]
 # The code is in the fixed 0x8000 bank, so no page qualifier is needed.
 # Left out: 0x9B22 (every attack, fires together with hurt), 0x9AB6 / 0x9DF8 (every bump or attack, per key tap),
 # 0xA210 (coin only, covered by pickup), a write probe on the hero HP at page 0 0xE403 (the 0xC000 bank flips).
+# Effects follow the sibling Vradark's Revenge, where the owner tuned them by feel: a death is a `thump`, a pickup is
+# `pickup` at 1.7x so a coin is felt.
 # Known limits: a distinct "hero died" address was not isolated (the death shows as hurt + killed); a spell or
 # a boss were not reached; the explicit death effect is not played.
 match:
@@ -33,5 +35,5 @@ events:
 haptics:
   rules:
     - { on: hurt, play: hit }
-    - { on: killed, play: knock, target: handle.low }
-    - { on: pickup, play: pickup }
+    - { on: killed, play: thump }
+    - { on: pickup, play: pickup, scale: 1.7 }
