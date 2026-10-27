@@ -3,7 +3,7 @@
 **Date:** 2026-10-26
 **Status:** design; measured in [POC 037](../../../tools/poc/037-frame-presenter/README.md)
 ([results](../../../tools/poc/037-frame-presenter/results.md)): fixed 60 Hz (Mac), 144 Hz and G-Sync (Windows);
-ProMotion is not measured yet (section 9).
+ProMotion on macOS 12: the 120 Hz grid only (section 9).
 **Owner decisions (2026-10-26):**
 - Sync is held by the sound. The audio device is the master clock; the display never paces the emulation and never
   changes its speed or the pitch.
@@ -106,15 +106,22 @@ The sound already has a precise clock: the audio device consumes samples at its 
 ring at its target. The frame's picture should reach the screen when the frame's sound reaches the speaker. So the
 frame's time is read off the audio path, not set by a frame count.
 
-**What the audio path records** (`SoundManager`, `AudioClock`, new):
+**What the audio path records** (`AudioClock` in `core/src/common/sound/audioclock.h`, a member of
+`AudioDeviceDescriptor`):
 
-- At each latch, `W(n)`: the total device-rate sample frames written to the ring up to the end of frame n's sound.
-  The emulation thread writes it into the frame's present slot.
-- In each device callback, a pair (total sample frames consumed, the callback's host time). The device's output
-  latency (miniaudio: period size x periods, 11.6 ms today) is added, so the pair says when that sample is heard.
-- A line through these pairs: host time = a + b x consumed. It is a least-squares fit over the last ~2 s, updated per
-  callback. `b` is the device's real sample period in host time, crystal error included. The callback times jitter
-  by milliseconds; the fit's line does not.
+- The ring counts its stream: every sample written, every sample removed (played, discarded by a hard resync, dropped
+  by a clear). After each enqueue the frontend publishes the write position (`streamWritten`).
+- At each frame end, `W(n)`: where frame n's sound ends in that stream. `SoundManager::takeFrameAudioEnd` reads it
+  after the frame's sound was delivered, plus the frames the ZX DLSS delay line still holds back.
+- In each device callback, a pair: the device position (frames the device asked for so far) and the callback's host
+  time. The device's output latency (period size x periods + the OS's latency, 11.6 ms today) is added, so the pair
+  says when that sample is heard.
+- A line through these pairs: host time = a + b x device position. It is an exponentially weighted least-squares fit
+  (~256 callbacks, 1.5-2.5 s), O(1) per callback in the device thread, published through a sequence lock. `b` is the
+  device's real sample period in host time, crystal error included. The callback times jitter by milliseconds; the
+  fit's line does not.
+- The stream maps onto the device position by one offset, taken at every callback that finds data. An underrun (the
+  device played silence) or a discard moves it, and every later sample with it.
 
 **The frame's target time:**
 
@@ -128,10 +135,14 @@ target(n) = a + b x W(n) + offset
 - Temporal effects (ZX DLSS, the gigascreen mixer) need their look-ahead before the target. They do not move the
   target. If an effect needs more time than the audio delay leaves, the audio delay grows by that much (the DRC
   target).
-- **Without a running audio device** (no device, sound disabled, turbo, a recording without playback) the same formula
-  runs on the emulated clock: `a` = the anchor's host time, `b x W(n)` = the frame's emulated time since the anchor.
-  The anchor is re-taken when `MainLoop`'s deadline re-anchors. Muting through the mixer does not stop the device, so
-  the audio clock stays.
+- **Without a running audio device** (no device, another instance has the sound, a held output) the emulated clock
+  stands in: the frame's end is `MainLoop`'s frame deadline, plus one period of delay (or the ZX DLSS look-ahead). In
+  turbo the latch time is used. Muting through the mixer does not stop the device, so the audio clock stays.
+- **Switching clocks does not jump** (`FrameClock`, `core/src/emulator/video/frameclock.h`). A step of more than 2 ms
+  against the cadence (the device appears or goes, an underrun moves the stream) is carried: that frame keeps the
+  cadence, and the carry is paid back by 0.2 ms per frame (1 % of a period). A break in the sequence (latches more
+  than 4 periods apart: a pause, a seek, a stall), turbo, or a step of more than 500 ms cuts to the new time at once.
+  Targets never go back: each is at least half a period after the last.
 
 Why this gives smooth targets: consecutive frames differ by their sample count, `b x (W(n+1) - W(n))`. That is the
 machine's frame period, changed by the DRC trim. The trim moves slowly and stays within ±0.5 %, so neighbouring
@@ -140,8 +151,13 @@ scheduler jitter to the screen (present interval error 1.2 ms p99), and targets 
 
 Two operations serve all policies:
 
-- `FrameAt(t)`: the newest frame whose target is ≤ t, and the next one (for a refresh at time t).
-- `Next()`: the oldest frame not yet presented, with its target (for present-at-time).
+- `Screen::CopyFrameAt(t)`: the newest frame whose target is ≤ t, and the next one with the blend weight (for a
+  refresh at time t).
+- `Screen::CopyNextFrame(serial)`: the oldest frame after the one last presented, with its target (for
+  present-at-time).
+
+A frame latched but not timed yet (between the latch and its frame end's stamp, `Screen::StampPresentTiming`) is never
+served. A screen no `MainLoop` stamps serves frames by their latch time.
 
 The latch time stays in the slot to check the deadline: a frame latched later than `target - margin` is late, and is
 counted.
@@ -242,8 +258,11 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
   computed when B arrives, and each refresh only warps by `w`. The audio delay (section 3) leaves 30+ ms for it.
 - **Not ZX DLSS.** ZX DLSS (`TemporalEffects`) reconstructs gigascreen pictures inside the core's present slots. This
   stage works on whatever the slots hold, after it, and never writes back.
-- The cost and quality are measured first in a POC on the scroller, sprite and gigascreen content of `testdata/`
-  (section 8).
+- **Measured in [POC 038](../../../tools/poc/038-motion-interpolation/conclusions.md):** on scrollers and moving
+  pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the
+  blend; 1.3-2.3 ms p50 per frame pair on one core without SIMD. Most games draw every 2nd-5th frame and gain
+  nothing: the stage interpolates only between consecutive emulated frames and never smooths a game's own cadence.
+  A per-pixel choice by 3x3 agreement keeps a coincidental match from drawing a wrong pixel.
 
 ### 4.5 Rejected: the display drives the emulation
 
@@ -403,12 +422,15 @@ Measured in POC 037 unless marked. The POC's frames are 384x288x4 bytes, a littl
 
 Each phase lands on its own with tests and docs.
 
-1. **Audio clock and frame times.** `AudioClock`, slot times, `FrameClock` (audio and emulated clock),
-   `CopyFrameAt` / `CopyNextFrame`, `LipSyncOffsetMs` replacing `AVSyncDelayFrames`. Unit tests on synthetic callback
-   and latch sequences: rates 48.83-61.13 Hz, callback jitter, a crystal 100 ppm off, DRC trim steps, the device
-   stopping and starting (the clock switch), pause and speed change, the ZX DLSS look-ahead. No visible change yet.
-2. **The GL path picks by time.** `GlPresenter` = today's window with `requestUpdate()` and `FrameAt`. This is the
-   first visible gain (Windows high refresh, A/V at every rate), and it is the fallback for everything after.
+1. **Audio clock and frame times** (done on the branch). `AudioClock`, the ring's stream positions, slot times,
+   `FrameClock` (audio, emulated and latch clocks, the carry), `CopyFrameAt` / `CopyNextFrame`, the
+   `[VIDEO] LipSyncOffsetMs` key. Unit tests on synthetic sequences: callback jitter, a crystal 100 ppm off, hours of
+   audio, underruns and discards, the device stopping (stale) and resetting, the clock switch, steps, gaps, turbo.
+   The frame-count path (`CopyPresentedFramebuffer`, `AVSyncDelayFrames`) is untouched: no visible change yet.
+2. **The GL path picks by time.** `GlPresenter` = today's window with `requestUpdate()` and `CopyFrameAt`. This is the
+   first visible gain (Windows high refresh, A/V at every rate), and it is the fallback for everything after. The
+   other readers of `CopyPresentedFramebuffer` (screenshots, recording, the video wall) move to time as well, and
+   `AVSyncDelayFrames` goes. Measured on a real device: the audio clock's target interval error (section 9).
 3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`.
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
    fallback, `ES_DISPLAY_REQUIRED`.
@@ -431,17 +453,17 @@ Each phase lands on its own with tests and docs.
 - **G-Sync needs the windowed setting.** Most users have the driver default (full screen only). The app cannot change
   it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. It then falls back to `b-vsync` and says so in
   the stats, with a hint where to enable it.
-- **ProMotion is not measured** (the MacBook Pro was not available to the POC). Apple's documentation for display
-  links speaks of frame rates that divide the panel's maximum (120, 60, 40, 30, 24 Hz). Whether
-  `presentDrawable:atTime:` gets arbitrary intervals (20 ms for 50 Hz) on the built-in panel is exactly what the
-  measurement has to show. If it does not, `c-vrr` there behaves like `b-vsync` at 120 Hz (a frame for 2 or 3
-  refreshes: 16.7 / 25 ms against 20 ms). That is still smoother than 60 Hz.
+- **ProMotion (MacBook Pro M1 Max, macOS 12.7, results section 2b): no free-running VRR.**
+  `presentDrawable:atTime:` puts a frame on the 120 Hz grid: a 50 Hz frame gets 16.7 or 25 ms, never 20 ms, and
+  7-12 % of the frames never reach the screen. So `c-vrr` there is `b-vsync` at 120 Hz, and smooth motion removes
+  the 2/3 cadence. Low Power Mode caps the panel at 60 Hz. macOS 14+ (`CAMetalDisplayLink`,
+  `preferredFrameRateRange`) is not measured: the machine has macOS 12.
 - **iOS / iPadOS.** The iOS host (ios-host-design.md, section 6.3) uses `CAMetalLayer` and `CADisplayLink`, the
   same APIs as the macOS presenter, so it shares that presenter. ProMotion iPhones and iPads (10-120 Hz) are adaptive,
   not free-running VRR: an app asks `CADisplayLink.preferredFrameRateRange`, and the system picks one of the panel's
   rates, which divide 120 (120, 60, 40, 30, 24 Hz...). 50 Hz is not among them. So the expectation is the 120 Hz beat
   (a frame for 2 or 3 refreshes), plus smooth motion on top; `presentDrawable:atTime:` with exact times has to be
-  measured on a device, as for the MacBook. Fixed 60 Hz iPhones and iPads get `b-vsync` and smooth motion. External
+  measured on a device; on the MacBook (macOS 12) it gave the 120 Hz grid only. Fixed 60 Hz iPhones and iPads get `b-vsync` and smooth motion. External
   displays on iPad have no VRR.
 - **The audio clock is designed, not measured.** The POC timed frames on a steady clock. Phase 1 has to show that the
   fitted line of a real device (miniaudio on CoreAudio and WASAPI) is as smooth: target interval error under 0.1 ms
