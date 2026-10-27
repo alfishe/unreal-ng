@@ -793,6 +793,9 @@ id = bp_nextreg_write(0x40, {to=0x44, doors="copper", value=0x01, vmask=0x03, hi
 id = bp_magic("ed_ff")         -- ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = bp_beam(99, {hc=255})     -- ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction 12..14
+id = bp(0x0038, {cpu="gs"})    -- the sound card CPU's (General Sound / NeoGS); bp_remove(id, "gs"), bp_list("gs") ...
+id, why = bp_event("card_command", {value=0x23})  -- a GS protocol event: int, nmi, reset, page, card_command, card_data,
+                               -- card_reply (the card's), host_command, host_data, host_reply (the main CPU's); cpu= defaults to the side
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)

@@ -1283,7 +1283,16 @@ void RegisterControlExecution(ToolRegistry& registry)
         "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
         "stops when the copper completes that instruction), keyboard (key, on: stops on the first keyboard read that sees the key "
         "go down / up), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
-        "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
+        "opcode - a NOP on the hardware, other emulators' debug trap; no address), event (a sound card's protocol "
+        "event, see event; no address)";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["description"] =
+        "For bp_*: whose breakpoints, main (default) or gs (the CPU of the General Sound / NeoGS card: execution, read, "
+        "write, port and card events; a gs stop parks the machine, wait reports the card instruction)";
+    schema["properties"]["event"]["type"] = "string";
+    schema["properties"]["event"]["description"] =
+        "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply (cpu gs), host_command, "
+        "host_data, host_reply (cpu main: the host's access to #B3 / #BB); value / value_mask filter the byte";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["oneOf"][0]["type"] = "integer";
@@ -1399,6 +1408,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
                 const std::string& id = idOrError;
+                // bp_*: the CPU whose breakpoints (the routes' ?cpu=)
+                const std::string cpuQuery = args.isMember("cpu") ? "?cpu=" + args["cpu"].asString() : std::string();
 
                 // Automation session (execution arbiter design §6a)
                 if (action == "take_control")
@@ -1518,7 +1529,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                 if (action == "bp_list")
                 {
                     // One line per breakpoint in the text: "#1 0x0038 X hits 3"
-                    ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "", [id, done](ToolResult result) {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints" + cpuQuery), nullptr, caller, "", [id, done](ToolResult result) {
                         if (result.isError)
                         {
                             done(std::move(result));
@@ -1526,13 +1537,20 @@ void RegisterControlExecution(ToolRegistry& registry)
                         }
                         const Json::Value& list = result.structured["breakpoints"];
                         std::ostringstream out;
-                        out << "Breakpoints of " << id << ": " << list.size();
+                        out << "Breakpoints of " << id;
+                        if (result.structured["cpu"].isString() && result.structured["cpu"].asString() != "main")
+                            out << " (" << result.structured["cpu"].asString() << " CPU)";
+                        out << ": " << list.size();
                         for (const Json::Value& bp : list)
                         {
                             out << "\n#" << bp["id"].asUInt() << " "
                                 << (bp["type"].asString() == "port" ? "port " : bp["type"].asString() == "nextreg" ? "NR " : bp["type"].asString() == "beam" ? "beam line "
-                                    : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "")
-                                << Hex16(bp["address"].asUInt()) << " "
+                                    : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "");
+                            if (bp["type"].asString() == "event")
+                                out << "event " << bp["event"].asString();
+                            else
+                                out << Hex16(bp["address"].asUInt());
+                            out << " "
                                 << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
                                 << (bp["write"].asBool() ? "W" : "")
                                 << " hits " << bp["hit_count"].asUInt();
@@ -1559,22 +1577,23 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body(Json::objectValue);
                     if (args.isMember("bp_id"))
                         body["id"] = args["bp_id"];
-                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset"), &body, caller,
+                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset" + cpuQuery), &body, caller,
                                 args.isMember("bp_id") ? "Hit counter reset" : "All hit counters reset", done);
                     return;
                 }
                 if (action == "bp_clear")
                 {
-                    ForwardCall("DELETE", Endpoint(id, "/breakpoints"), nullptr, caller, "Cleared all breakpoints on " + id, done);
+                    ForwardCall("DELETE", Endpoint(id, "/breakpoints" + cpuQuery), nullptr, caller, "Cleared all breakpoints on " + id, done);
                     return;
                 }
                 if (action == "bp_add")
                 {
                     const bool magic = args.isMember("type") && args["type"].asString().rfind("magic_", 0) == 0;
-                    const bool keyboard = args.isMember("type") && args["type"].asString() == "keyboard";
+                    const bool keyboard = args.isMember("type") && (args["type"].asString() == "keyboard" ||
+                                                                    args["type"].asString() == "event");
                     if (!magic && !keyboard && !args.isMember("address"))
                     {
-                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard)"));
+                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard / event)"));
                         return;
                     }
                     Json::Value body;
@@ -1583,12 +1602,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
                                             "note", "group", "doors", "value", "value_mask", "hc", "key", "on",
-                                            "condition", "condition_dialect"})
+                                            "condition", "condition_dialect", "event"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
                     // switch the feature on (it switches debug mode on too) and say so
-                    ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id,
+                    ForwardCall("POST", Endpoint(id, "/breakpoints" + cpuQuery), &body, caller, "Breakpoint added on " + id,
                                 [id, &caller, done](ToolResult added) {
                         if (added.isError)
                         {
@@ -1644,10 +1663,17 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 response.get("state", "").asString();
                         if (pause.get("reason", "none").asString() == "breakpoint")
                         {
-                            char where[48];
+                            char where[80];
                             std::snprintf(where, sizeof(where), " at breakpoint #%u (%04X)", pause.get("breakpoint_id", 0).asUInt(),
                                           pause.get("address", 0).asUInt());
                             text += where;
+                            // A card CPU's breakpoint: whose, and the card instruction of the access
+                            if (pause.isMember("cpu_pc"))
+                            {
+                                std::snprintf(where, sizeof(where), " of the %s CPU, its instruction at %04X",
+                                              pause.get("cpu", "").asString().c_str(), pause["cpu_pc"].asUInt());
+                                text += where;
+                            }
                         }
                         else if (pause.get("reason", "none").asString() != "none")
                             text += " (last stop: " + pause.get("reason", "").asString() + ")";
@@ -1687,14 +1713,14 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["select"] = args.isMember("select") ? args["select"].asString() : std::string("all");
                     if (action == "bp_remove")
                     {
-                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove"), &body, caller, "Breakpoints removed", done);
+                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove" + cpuQuery), &body, caller, "Breakpoints removed", done);
                         return;
                     }
                     if (action == "bp_toggle")
                         body["active"] = "toggle";
                     else
                         body["active"] = action == "bp_enable";
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller,
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active" + cpuQuery), &body, caller,
                                 action == "bp_toggle" ? "Breakpoints toggled"
                                 : action == "bp_enable" ? "Breakpoints enabled" : "Breakpoints disabled", done);
                     return;
@@ -1704,7 +1730,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["select"] = args["bp_id"].asString();
                     body["active"] = "toggle";
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller, "Breakpoint toggled", done);
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active" + cpuQuery), &body, caller, "Breakpoint toggled", done);
                     return;
                 }
                 if (action == "bp_groups")
@@ -1771,7 +1797,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["condition"] = args["condition"].asString();
                     if (args.isMember("condition_dialect"))
                         body["dialect"] = args["condition_dialect"].asString();
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/condition"), &body,
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/condition" + cpuQuery), &body,
                                 caller, "", [done](ToolResult result) {
                         if (!result.isError)
                             result.text = result.structured["condition"].isString()
@@ -1791,7 +1817,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     }
                     Json::Value body;
                     body[field] = args[field].asString();
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field), &body, caller,
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field + cpuQuery), &body, caller,
                                 action == "bp_note" ? "Note set" : "Group set", done);
                     return;
                 }
@@ -1833,11 +1859,11 @@ void RegisterControlExecution(ToolRegistry& registry)
                     std::string bpId = args["bp_id"].asString();
                     if (action == "bp_remove")
                     {
-                        ForwardCall("DELETE", Endpoint(id, "/breakpoints/" + bpId), nullptr, caller, "Breakpoint removed", done);
+                        ForwardCall("DELETE", Endpoint(id, "/breakpoints/" + bpId + cpuQuery), nullptr, caller, "Breakpoint removed", done);
                     }
                     else
                     {
-                        ForwardCall("PUT", Endpoint(id, "/breakpoints/" + bpId + (action == "bp_enable" ? "/enable" : "/disable")),
+                        ForwardCall("PUT", Endpoint(id, "/breakpoints/" + bpId + (action == "bp_enable" ? "/enable" : "/disable") + cpuQuery),
                                     nullptr, caller, action == "bp_enable" ? "Breakpoint enabled" : "Breakpoint disabled", done);
                     }
                     return;

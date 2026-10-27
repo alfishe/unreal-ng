@@ -2405,6 +2405,10 @@ bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementa
     if (_context->pSlotManager)
         _context->pSlotManager->FollowGeneralSoundSwitch(target);
 
+    // The card CPU debugger's hooks go to the new card (after the handoff above ran it)
+    if (_context->pDebugManager)
+        _context->pDebugManager->OnGeneralSoundCardCreated();
+
     LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
             hadModule ? " (module upload replayed)" : "");
     return portsRegistered;
@@ -2509,6 +2513,8 @@ bool SoundManager::attachToPorts()
                 generalSoundDeviceName().c_str());
         delete _gs;
         _gs = nullptr;
+        if (_context->pDebugManager)
+            _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone
         _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
                                       [](const AudioDeviceInfo& d) {
                                           return d.type == AudioSourceType::GeneralSound ||

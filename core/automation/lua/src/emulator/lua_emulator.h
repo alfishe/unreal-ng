@@ -460,17 +460,31 @@ protected:
     };
     /// endregion </Fields>
 
+    /// The breakpoints of a CPU by its name ("main" or none, "gs": the sound card's CPU); null when there is none
+    BreakpointManager* ScriptBreakpoints(const std::string& cpuName) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+        DebugCpuId cpu = DebugCpuId::Main;
+        if (!ctx || !ctx->pDebugManager || !DebugManager::ParseCpuName(cpuName, cpu))
+            return nullptr;
+        return ctx->pDebugManager->GetBreakpointsManager(cpu);
+    }
+
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=}. The breakpoint id; -1 and the reason when
-    /// refused
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=}. The breakpoint id; -1 and the reason
+    /// when refused
     std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
                                                                     uint16_t address,
                                                                     const sol::optional<sol::object>& options)
     {
-        Emulator* emulator = effectiveEmulator();
-        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        // cpu = "gs": the sound card CPU's breakpoint
+        std::string cpu;
+        if (options && options->is<sol::table>())
+            cpu = options->as<sol::table>().get<sol::optional<std::string>>("cpu").value_or("");
+        BreakpointManager* bpm = ScriptBreakpoints(cpu);
         if (!bpm)
-            return {-1, std::string("no emulator")};
+            return {-1, std::string(effectiveEmulator() ? "cpu must be 'main' or 'gs'" : "no emulator")};
         BreakpointSpec spec;
         spec.type = type;
         spec.access = access;
@@ -3513,39 +3527,68 @@ public:
                 return -1;
             return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
         });
+        // bp_event(kind, {value=, vmask=, hits=, cpu=}) stops on a General Sound / NeoGS protocol event: the card's (int, nmi,
+        // reset, page, card_command, card_data, card_reply) on the gs CPU, the host's (host_command, host_data, host_reply)
+        // on the main one; cpu defaults to the kind's side. The id; -1 and the reason when refused
+        lua.set_function("bp_event", [this](const std::string& kindName, sol::optional<sol::table> options)
+                                         -> std::tuple<int, sol::optional<std::string>> {
+            GSCardEvent kind = GSCardEvent::Count;
+            if (!ParseGSCardEvent(kindName.c_str(), kind))
+                return {-1, std::string("unknown event '") + kindName + "'"};
+            std::string cpu = GSCardEventIsHostSide(kind) ? "main" : "gs";
+            BreakpointSpec spec;
+            spec.type = BRK_EVENT;
+            spec.access = 0;
+            spec.address = static_cast<uint16_t>(kind);
+            std::string hits;
+            if (options)
+            {
+                const sol::table& t = *options;
+                cpu = t.get<sol::optional<std::string>>("cpu").value_or(cpu);
+                if (auto value = t.get<sol::optional<int32_t>>("value"))
+                {
+                    spec.nrValue = static_cast<uint8_t>(*value);
+                    spec.nrMask = 0xFF;
+                }
+                if (auto vmask = t.get<sol::optional<int32_t>>("vmask"))
+                    spec.nrMask = static_cast<uint8_t>(*vmask);
+                hits = t.get<sol::optional<std::string>>("hits").value_or("");
+                if (hits.empty())
+                    if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                        hits = std::to_string(*n);
+            }
+            BreakpointManager* bpm = ScriptBreakpoints(cpu);
+            if (!bpm)
+                return {-1, std::string(effectiveEmulator() ? "cpu must be 'main' or 'gs'" : "no emulator")};
+            std::string error;
+            if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                return {-1, error};
+            const uint16_t id = bpm->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID)
+                return {-1, error};
+            return {static_cast<int>(id), sol::nullopt};
+        });
         lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
             return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
         });
 
-        lua.set_function("bp_remove", [this](uint16_t id) -> bool {
-            if (!effectiveEmulator()) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return false;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        lua.set_function("bp_remove", [this](uint16_t id, sol::optional<std::string> cpu) -> bool {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->RemoveBreakpointByID(id) : false;
         });
 
-        lua.set_function("bp_clear", [this]() {
-            if (!effectiveEmulator()) return;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (bpm) bpm->ClearUserBreakpoints();
+        lua.set_function("bp_clear", [this](sol::optional<std::string> cpu) {
+            if (BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or("")))
+                bpm->ClearUserBreakpoints();
         });
 
-        lua.set_function("bp_enable", [this](uint16_t id) -> bool {
-            if (!effectiveEmulator()) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return false;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        lua.set_function("bp_enable", [this](uint16_t id, sol::optional<std::string> cpu) -> bool {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->ActivateBreakpoint(id) : false;
         });
 
-        lua.set_function("bp_disable", [this](uint16_t id) -> bool {
-            if (!effectiveEmulator()) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return false;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        lua.set_function("bp_disable", [this](uint16_t id, sol::optional<std::string> cpu) -> bool {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->DeactivateBreakpoint(id) : false;
         });
 
@@ -3634,11 +3677,8 @@ public:
             return true;
         });
 
-        lua.set_function("bp_count", [this]() -> size_t {
-            if (!effectiveEmulator()) return 0;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return 0;
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        lua.set_function("bp_count", [this](sol::optional<std::string> cpu) -> size_t {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->GetBreakpointsCount() : 0;
         });
 
@@ -3650,11 +3690,8 @@ public:
             return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
         });
 
-        lua.set_function("bp_list", [this]() -> std::string {
-            if (!effectiveEmulator()) return "";
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pDebugManager) return "";
-            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+        lua.set_function("bp_list", [this](sol::optional<std::string> cpu) -> std::string {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->GetBreakpointListAsString() : "";
         });
 

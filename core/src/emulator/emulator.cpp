@@ -1819,6 +1819,8 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->breakpointId = cause.breakpointId;
             payload->address = cause.address;
             payload->hitKind = cause.kind;
+            payload->cpu = DebugCpuName(cause.cpu);
+            payload->cpuPc = cause.cpuPc;
         }
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
         return;
@@ -3029,6 +3031,40 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
     return false;
 }
 
+void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId,
+                                     uint16_t address, BreakpointHitKind kind, uint16_t cpuPc)
+{
+    const BreakpointSnapshot bp = breakpoints.GetBreakpointById(breakpointId);
+    const bool hidden = bp && bp->hidden;
+    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc};
+    auto post = [&]() {
+        auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
+        payload->kind = kind;
+        payload->cpu = DebugCpuName(cpu);
+        payload->cpuPc = cpuPc;
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT, payload);
+    };
+
+    // A direct run (a step of the main CPU) ends after its current instruction; the card is on its boundary
+    if (IsDirectStepping())
+    {
+        if (!_directStop.hit)
+            _directStop = stop;
+        post();
+        return;
+    }
+
+    // The emulator's own run: pause with the cause, notify, park this thread (inside the card's catch-up: a host
+    // port access of the main CPU or the frame end) until Resume()
+    _pendingPauseOwner = bp ? bp->owner : std::string();
+    _pendingPauseCause = stop;
+    Pause();
+    _pendingPauseCause = BreakpointStop{};
+    _pendingPauseOwner.clear();
+    post();
+    WaitWhilePaused();
+}
+
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
 {
     Z80& z80 = *_core->GetZ80();
@@ -3245,6 +3281,8 @@ Emulator::DirectStepScope::~DirectStepScope()
         payload->breakpointId = _emulator._directStop.breakpointId;
         payload->address = _emulator._directStop.address;
         payload->hitKind = _emulator._directStop.kind;
+        payload->cpu = DebugCpuName(_emulator._directStop.cpu);
+        payload->cpuPc = _emulator._directStop.cpuPc;
         MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP, payload, true);
     }
 }
@@ -3265,7 +3303,7 @@ unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
     {
         ExecuteStep(skipBreakpoints);
         // An execution breakpoint stops the run before its instruction
-        if (!(_directStop.hit && _directStop.kind == BreakpointHitKind::Execute))
+        if (!(_directStop.hit && _directStop.kind == BreakpointHitKind::Execute && _directStop.cpu == DebugCpuId::Main))
             executed++;
     }
 
@@ -3648,7 +3686,7 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
-        if (_directStop.hit && _directStop.kind == BreakpointHitKind::Execute)
+        if (_directStop.hit && _directStop.kind == BreakpointHitKind::Execute && _directStop.cpu == DebugCpuId::Main)
             break;  // stopped before the breakpoint's instruction: nothing ran
 
         budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);

@@ -133,3 +133,36 @@ and measurements on [conditions-and-callbacks.md](../../../inprogress/2026-10-26
 | REST | `POST /breakpoints {condition, condition_dialect}` | `PUT /breakpoints/{bp_id}/condition {condition, dialect}` | `condition`, `match_count`, `condition_error` |
 | WebSocket | the REST routes as `call`s | the same | `breakpoints_changed` |
 | Catalogue | `dbg.bp_add` (condition, dialect) | - | - |
+
+## 8. The sound card CPU
+
+The General Sound / NeoGS card's Z80 has its own breakpoints (`GSCardTarget`, `core/src/debugger/targets/`, design
+on [gs-debugger §4](../../../inprogress/2026-09-27-gs-debugger/design.md)). `DebugManager::GetBreakpointsManager(cpu)`
+picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs`) the card's.
+
+- **Kinds.** Execute, memory read / write (addresses of the card's CPU, `--page romN` / `ramN` its flash / ROM and RAM
+  pages), port in / out, and the protocol events (`BRK_EVENT`). The card refuses the rest (NextREG, beam, keyboard)
+  and conditions.
+- **Events.** The card's: `int`, `nmi`, `reset`, `page` (a page switch), `card_command`, `card_data` (the card read the
+  host's command / data byte), `card_reply` (it wrote its reply). The host's: `host_command` (#BB), `host_data` (#B3 written),
+  `host_reply` (#B3 read), on the main CPU's manager; each kind on the other CPU is refused. `value` / `vmask` filter
+  the byte.
+- **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
+  instruction boundary, with the PC of the instruction that did it. The machine parks (pause) inside the card's
+  catch-up; a direct step of the main CPU ends after its instruction.
+- **Cost.** The hooks are on the card only while an active card breakpoint exists; without them the card runs its
+  fast loop unchanged.
+- **Stops.** The pause, the breakpoint payload, a step's stop and `wait` carry `cpu` (`main` or `gs`) and, for a card
+  stop, `cpu_pc` (the card instruction) beside the main PC.
+
+| Plane | The CPU | Event breakpoint |
+| :--- | :--- | :--- |
+| CLI | `--cpu gs` on `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpon`, `bpoff`, `bptoggle`, `bphits`, `bpgroup`, `bpnote` | `bevent <kind> [--value V [--vmask M]] [--hits ...] [--cpu ...]` |
+| Lua | `cpu="gs"` in the options; `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` take it last | `bp_event(kind, {value=, vmask=, hits=, cpu=})` |
+| Python | `cpu="gs"` keyword on `bp`, `bp_read`, `bp_write`, `bp_port_*`, `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` | `emu.bp_event(kind, value=, vmask=, hits=, cpu=)` |
+| MCP | `control_execution` `cpu` on every `bp_*` action except the groups | `bp_add` `type` `event`, `event` |
+| REST | `?cpu=gs` or the body's `cpu` on `/breakpoints...` (400 for another name) | `POST /breakpoints {type: "event", event, value, value_mask}` |
+| WebSocket | the REST routes as `call`s; `cpu` / `cpu_pc` in `breakpoint` events | the same |
+
+The event kind's default CPU is its side (`bevent card_reply` and `bp_event("int")` go to the card). The groups'
+listing (`GET /breakpoints/groups`) is the main CPU's only.

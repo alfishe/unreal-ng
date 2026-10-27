@@ -24,12 +24,17 @@ std::string CompactJson(const Json::Value& value)
     return Json::writeString(builder, value);
 }
 
-/// A stop's breakpoint fields (PauseEvent, protocol §3.16)
-void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
+/// A stop's breakpoint fields (PauseEvent, protocol §3.16): the CPU whose breakpoint it was, and for a card the
+/// instruction of the access (the main CPU's own position is in the registers)
+void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t address, BreakpointHitKind kind,
+                         const std::string& cpu, uint16_t cpuPc)
 {
+    event["cpu"] = cpu;
     event["breakpoint_id"] = breakpointId;
     event["address"] = address;
     event["access"] = BreakpointHitKindName(kind);
+    if (cpu != "main")
+        event["cpu_pc"] = cpuPc;
 }
 }  // namespace
 
@@ -208,7 +213,8 @@ void DebugEventHub::Publish(const std::string& emulatorId, const std::string& to
         event["topic"] = topic;
         event["seq"] = static_cast<Json::UInt64>(++_seq[emulatorId]);
         event["emulator"] = emulatorId;
-        event["cpu"] = "main";
+        if (!event.isMember("cpu"))
+            event["cpu"] = "main";
         // Under the lock: a sink removed is never called again (a sink only queues)
         for (const auto& [id, sink] : _sinks)
             if (sink)
@@ -247,7 +253,8 @@ void DebugEventHub::OnStateChange(Message* message)
             if (payload->pauseCause == PauseCause::Breakpoint)
             {
                 event["reason"] = "breakpoint";
-                AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind);
+                AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
+                                    payload->cpuPc);
             }
             else
                 event["reason"] = "pause";
@@ -272,7 +279,8 @@ void DebugEventHub::OnCpuStep(Message* message)
     event["event"] = "step_done";
     event["reason"] = payload->stopped ? "breakpoint" : "step";
     if (payload->stopped)
-        AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind);
+        AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
+                            payload->cpuPc);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 

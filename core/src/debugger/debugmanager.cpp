@@ -2,6 +2,7 @@
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/callbacks/scriptcallbacks.h"
+#include "debugger/targets/gscardtarget.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -33,6 +34,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _pcHistory = std::make_unique<PcHistory>(_context);
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
+    _gsTarget = std::make_unique<GSCardTarget>(_context);
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -61,6 +63,30 @@ DebugManager::DebugManager(EmulatorContext* context)
     _disassembler->SetLogger(_context->pModuleLogger);
 }
 
+BreakpointManager* DebugManager::GetBreakpointsManager(DebugCpuId cpu)
+{
+    if (cpu == DebugCpuId::GS)
+        return _gsTarget ? _gsTarget->GetBreakpointManager() : nullptr;
+    return _breakpoints;
+}
+
+bool DebugManager::ParseCpuName(const std::string& name, DebugCpuId& out)
+{
+    if (name.empty() || name == "main" || name == "z80")
+        out = DebugCpuId::Main;
+    else if (name == "gs" || name == "neogs")
+        out = DebugCpuId::GS;
+    else
+        return false;
+    return true;
+}
+
+void DebugManager::OnGeneralSoundCardCreated()
+{
+    if (_gsTarget)
+        _gsTarget->OnCardCreated();
+}
+
 DebugManager::~DebugManager()
 {
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
@@ -68,6 +94,7 @@ DebugManager::~DebugManager()
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
+    _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();
     _analyzerManager.reset();
     _editorMonitor = nullptr;

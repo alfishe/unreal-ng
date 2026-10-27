@@ -165,15 +165,26 @@ inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
     return result;
 }
 
+/// The breakpoints of a CPU by its name ("main" or "", "gs": the sound card's CPU); ValueError for another name
+inline BreakpointManager* PythonBreakpoints(Emulator& self, const std::string& cpuName)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!DebugManager::ParseCpuName(cpuName, cpu))
+        throw py::value_error("cpu must be 'main' or 'gs'");
+    EmulatorContext* ctx = self.GetContext();
+    return ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+}
+
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
 /// ApplyScriptOptions). The breakpoint id, or -1 when refused
 /// `condition` (empty: none) in `dialect` ("unreal", "c"); a condition that does not compile raises ValueError with
-/// the reason and its column, the other refusals answer -1
+/// the reason and its column, the other refusals answer -1. `cpu` "gs": the sound card CPU's breakpoint
 inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8_t access, uint16_t address,
                                   const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits,
-                                  const std::string& condition = "", const std::string& dialect = "")
+                                  const std::string& condition = "", const std::string& dialect = "",
+                                  const std::string& cpu = "")
 {
-    BreakpointManager* bpm = self.GetBreakpointManager();
+    BreakpointManager* bpm = PythonBreakpoints(self, cpu);
     if (!bpm)
         return -1;
     BreakpointSpec spec;
@@ -3114,49 +3125,54 @@ namespace PythonBindings
             
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                             const std::string& hits, const std::string& condition, const std::string& dialect,
+                             const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect);
+                                              dialect, cpu);
             }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
                "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile). -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                             const std::string& hits, const std::string& condition, const std::string& dialect,
+                             const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect);
+                                              dialect, cpu);
             }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
                "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile). -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                             const std::string& hits, const std::string& condition, const std::string& dialect,
+                             const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect);
+                                              dialect, cpu);
             }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
                "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile). -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect) -> int {
-                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits, condition, dialect);
+                             const std::string& condition, const std::string& dialect, const std::string& cpu) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits, condition, dialect,
+                                              cpu);
             }, "Add a port breakpoint (bp_port_in); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "")
+               py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect) -> int {
-                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits, condition, dialect);
+                             const std::string& condition, const std::string& dialect, const std::string& cpu) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits, condition, dialect,
+                                              cpu);
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "")
+               py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
                              int32_t vmask, const std::string& hits) -> int {
                 return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
@@ -3195,30 +3211,54 @@ namespace PythonBindings
                 return PythonScriptPositionBreakpoint(self, BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, 0, -1, hits);
             }, "Add a ZX Next magic-opcode breakpoint: stops after the CPU ran 'ed_ff' or 'dd_01' (a NOP / LD BC,nn on the hardware). -1 when refused",
                py::arg("opcode"), py::arg("hits") = "")
-            .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return false;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            .def("bp_event", [](Emulator& self, const std::string& kind, int32_t value, int32_t vmask, const std::string& hits,
+                                const std::string& cpu) -> int {
+                GSCardEvent event = GSCardEvent::Count;
+                if (!ParseGSCardEvent(kind.c_str(), event))
+                    throw py::value_error("unknown event '" + kind + "'");
+                BreakpointManager* bpm =
+                    PythonBreakpoints(self, cpu.empty() ? (GSCardEventIsHostSide(event) ? "main" : "gs") : cpu);
+                if (!bpm)
+                    return -1;
+                BreakpointSpec spec;
+                spec.type = BRK_EVENT;
+                spec.access = 0;
+                spec.address = static_cast<uint16_t>(event);
+                if (value >= 0)
+                {
+                    spec.nrValue = static_cast<uint8_t>(value);
+                    spec.nrMask = 0xFF;
+                }
+                if (vmask >= 0)
+                    spec.nrMask = static_cast<uint8_t>(vmask);
+                std::string error;
+                if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                    throw py::value_error(error);
+                const uint16_t id = bpm->AddBreakpoint(spec, error);
+                if (id == BRK_INVALID)
+                    throw py::value_error(error);
+                return id;
+            }, "Add a General Sound / NeoGS protocol event breakpoint: the card's (int, nmi, reset, page, card_command, "
+               "card_data, card_reply) stop the machine at the card's next instruction, the host's (host_command, "
+               "host_data, host_reply) after the main CPU's access; value / vmask filter the byte; cpu defaults to the "
+               "kind's side. Returns the id; ValueError with the reason when refused",
+               py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
+            .def("bp_remove", [](Emulator& self, uint16_t id, const std::string& cpu) -> bool {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->RemoveBreakpointByID(id) : false;
-            }, "Remove breakpoint by ID", py::arg("id"))
-            .def("bp_clear", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (bpm) bpm->ClearUserBreakpoints();
-            }, "Clear all breakpoints")
-            .def("bp_enable", [](Emulator& self, uint16_t id) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return false;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            }, "Remove breakpoint by ID (cpu 'gs': the sound card CPU's)", py::arg("id"), py::arg("cpu") = "")
+            .def("bp_clear", [](Emulator& self, const std::string& cpu) {
+                if (BreakpointManager* bpm = PythonBreakpoints(self, cpu))
+                    bpm->ClearUserBreakpoints();
+            }, "Clear all breakpoints (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
+            .def("bp_enable", [](Emulator& self, uint16_t id, const std::string& cpu) -> bool {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->ActivateBreakpoint(id) : false;
-            }, "Enable breakpoint", py::arg("id"))
-            .def("bp_disable", [](Emulator& self, uint16_t id) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return false;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            }, "Enable breakpoint (cpu 'gs': the sound card CPU's)", py::arg("id"), py::arg("cpu") = "")
+            .def("bp_disable", [](Emulator& self, uint16_t id, const std::string& cpu) -> bool {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->DeactivateBreakpoint(id) : false;
-            }, "Disable breakpoint", py::arg("id"))
+            }, "Disable breakpoint (cpu 'gs': the sound card CPU's)", py::arg("id"), py::arg("cpu") = "")
             .def("bp_note", [](Emulator& self, uint16_t id, const std::string& note) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
@@ -3305,24 +3345,20 @@ namespace PythonBindings
                 return true;
             }, "Hit counters back to 0: one breakpoint (id), or all (no id). False for an unknown id",
                py::arg("id") = -1)
-            .def("bp_count", [](Emulator& self) -> size_t {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return 0;
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            .def("bp_count", [](Emulator& self, const std::string& cpu) -> size_t {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointsCount() : 0;
-            }, "Get breakpoint count")
+            }, "Get breakpoint count (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
             .def("bp_groups", [](Emulator& self) {
                 StateNode args = StateNode::Object();
                 args["instance"] = self.GetId();
                 return StateNodeToPy(monitoring::Call("breakpoint_groups", args).body);
             }, "The breakpoint groups: {ok, instance, groups: [{name, total, active, ids}]} as WebAPI "
                "GET /api/v1/emulator/{id}/breakpoints/groups")
-            .def("bp_list", [](Emulator& self) -> std::string {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pDebugManager) return "";
-                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            .def("bp_list", [](Emulator& self, const std::string& cpu) -> std::string {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointListAsString() : "";
-            }, "Get formatted breakpoint list")
+            }, "Get formatted breakpoint list (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
             .def("bp_status", [](Emulator& self) -> py::dict {
                 py::dict result;
                 auto* ctx = self.GetContext();

@@ -329,7 +329,8 @@ enum class BreakpointHitKind : uint8_t
     Beam,
     CopperInstruction,
     Magic,
-    Keyboard  // the program read the keyboard and saw the key change (address: the port read)
+    Keyboard,  // the program read the keyboard and saw the key change (address: the port read)
+    Event      // a General Sound event (BRK_EVENT; address: the event kind)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -348,6 +349,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::CopperInstruction: return "copper";
         case BreakpointHitKind::Magic: return "magic";
         case BreakpointHitKind::Keyboard: return "keyboard";
+        case BreakpointHitKind::Event: return "event";
     }
     return "execute";
 }
@@ -373,6 +375,8 @@ public:
     uint16_t breakpointId{0xFFFF};
     uint16_t address{0};
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
+    std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
+    uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}
@@ -399,6 +403,10 @@ public:
     bool        hidden{false};
     /// The access the breakpoint fired on: a read / write watchpoint tells the direction by it
     BreakpointHitKind kind{BreakpointHitKind::Execute};
+    /// The CPU whose breakpoint it was ("main", "gs") and that CPU's instruction: for a card, the access was made by
+    /// the instruction at `cpuPc` and is reported at the next card instruction boundary (gs-debugger design §4.1)
+    std::string cpu{"main"};
+    uint16_t cpuPc{0};
 
     BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
         : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr), hidden(isHidden) {}
@@ -424,6 +432,8 @@ public:
     uint16_t breakpointId{0xFFFF};
     uint16_t address{0};
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
+    std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
+    uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
 
     explicit CpuStepPayload(const unreal::UUID& id) : emulatorId(id) {}
     explicit CpuStepPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}

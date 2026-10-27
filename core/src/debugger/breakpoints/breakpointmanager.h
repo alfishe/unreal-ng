@@ -14,7 +14,10 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "stdafx.h"
+
+class IDebugTarget;
 
 /// region <Types>
 
@@ -33,6 +36,8 @@ enum BreakpointTypeEnum : uint8_t
     BRK_BEAM,        // ZX Next: the beam reaches a place in the raster (line counter cvc of the copper, pixel clock hc)
     BRK_COPPER,      // ZX Next: the copper completes the instruction at a list index (a WAIT that became true, or a MOVE)
     BRK_MAGIC,       // ZX Next: the CPU completed a magic opcode (ED FF or DD 01: a NOP on the hardware), address = the opcode word
+    BRK_EVENT,       // A General Sound event (GSCardEvent), address = the kind; the value filter is nrValue / nrMask.
+                     // Card-side kinds on the card CPU's breakpoints, host-side kinds on the main CPU's
     // BRK_INTERRUPT     // Interrupt event
 };
 
@@ -117,7 +122,8 @@ struct BreakpointDescriptor
 
     // NextREG breakpoint: the register is z80address..EndAddress() (0..255), the access is ioType (IN read, OUT write),
     // the doors (BRK_NR_DOOR_*) a write may come through, and the value written / read must satisfy
-    // (value & nrMask) == (nrValue & nrMask); a zero mask accepts every value
+    // (value & nrMask) == (nrValue & nrMask); a zero mask accepts every value. An event breakpoint takes the same
+    // value filter
     uint8_t nrDoors = BRK_NR_DOOR_ALL;
     uint8_t nrValue = 0;
     uint8_t nrMask = 0;
@@ -256,6 +262,7 @@ struct BreakpointHotState
     uint8_t hasCopperPc = 0;      // 1 if any active copper-instruction breakpoint exists
     uint8_t hasMagic = 0;         // 1 if any active magic-opcode breakpoint exists
     uint8_t hasKeyboard = 0;      // 1 if any active keyboard breakpoint exists
+    uint8_t hasEvent = 0;         // 1 if any active General Sound event breakpoint exists
     // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
     // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
     uint8_t copperWatch = 0;
@@ -289,7 +296,7 @@ struct BreakpointSpec
     uint16_t spacePage = 0xFFFF;       // a page of another memory space ("vram5"); `address` & #3FFF is the offset
     uint16_t portMask = 0xFFFF;        // ports only
     uint8_t nrDoors = BRK_NR_DOOR_ALL; // NextREG only: the doors a write comes through
-    uint8_t nrValue = 0;               // NextREG only: (value & nrMask) == (nrValue & nrMask)
+    uint8_t nrValue = 0;               // NextREG and event: (value & nrMask) == (nrValue & nrMask)
     uint8_t nrMask = 0;                //   0: any value
     uint16_t beamHc = 0;               // BRK_BEAM only: the pixel clock in the row
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
@@ -353,6 +360,7 @@ protected:
 
     // Hot-path state for fast breakpoint checks: the gates and the filters (hotpath-matching-design.md §3)
     BreakpointHotState _hotState;
+    IDebugTarget* _target = nullptr;  // another CPU's breakpoints (the two-argument constructor)
 
     // The resolve side, painted at set time. A head is the id of an interned candidate set: the active
     // breakpoints covering that address, in id order (set 0 = none). The set only changes at a range
@@ -390,6 +398,12 @@ protected:
 public:
     BreakpointManager() = delete;  // Disable default constructors. C++ 11 feature
     BreakpointManager(EmulatorContext* context);
+    /// The breakpoints of another CPU (gs-debugger design §3.3): pages through `target`, the demand to `target`
+    /// (never to the main CPU, memory or feature switches), memory, port and card event breakpoints only, no
+    /// conditions yet. Null: the main CPU's manager
+    BreakpointManager(EmulatorContext* context, IDebugTarget* target);
+    /// The CPU these breakpoints are on (null: the main CPU)
+    IDebugTarget* Target() const { return _target; }
     // One per emulator, owning its descriptors and painted tables: never copied
     BreakpointManager(const BreakpointManager&) = delete;
     BreakpointManager& operator=(const BreakpointManager&) = delete;
@@ -623,7 +637,7 @@ public:
         /// keyboard, nextreg, beam, copper, magic
         uint32_t memory = 0, exec = 0, read = 0, write = 0;
         uint32_t port = 0, portIn = 0, portOut = 0;
-        uint32_t keyboard = 0, nextreg = 0, beam = 0, copper = 0, magic = 0;
+        uint32_t keyboard = 0, nextreg = 0, beam = 0, copper = 0, magic = 0, event = 0;
         std::vector<Group> groups;  ///< by name
     };
     BreakpointSummary GetSummary() const;
@@ -701,6 +715,11 @@ public:
     /// `door` is one BRK_NR_DOOR_* bit; `value` is what is written or what the read returns
     /// The copper completed the instruction at list index `pc`: the copper-instruction breakpoint that stops, or BRK_INVALID
     /// The CPU completed an instruction whose opcode word is `opcodeWord`: the magic breakpoint that stops, or BRK_INVALID
+    /// A General Sound event (BRK_EVENT): `value` the byte it carries (0 when none)
+    uint16_t HandleEvent(GSCardEvent kind, uint8_t value)
+    {
+        return _hotState.hasEvent ? ResolveEvent(kind, value) : BRK_INVALID;
+    }
     uint16_t HandleMagic(uint16_t opcodeWord)
     {
         return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
@@ -755,6 +774,7 @@ protected:
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
+    uint16_t ResolveEvent(GSCardEvent kind, uint8_t value);
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or

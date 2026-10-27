@@ -149,7 +149,7 @@ def test_script_callbacks_listed_and_managed(s):
            'active again, fresh statistics', r.text)
     r = s.call('control_execution', {'action': 'callback_policy', 'callback_id': int(cb), 'policy': 'sometimes'},
                ok=False)
-    expect(r.is_error and 'suspend, disable or ignore' in r.text, 'an unknown policy is refused', r.text)
+    expect(r.is_error and 'suspend, disable, ignore or unpaced' in r.text, 'an unknown policy is refused', r.text)
     r = s.call('control_execution', {'action': 'callback_remove', 'callback_id': int(cb)})
     expect(r.text == f'Callback {cb} removed', 'removed', r.text)
     event = ws.until(lambda m: m.get('event') == 'callbacks_changed' and m.get('removed') is True,

@@ -6,6 +6,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/listing/listingparser.h"
+#include "debugger/targets/debugcpuid.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
 #include <map>
@@ -44,6 +45,8 @@ protected:
     std::unique_ptr<class PcHistory> _pcHistory;
     std::unique_ptr<class AsmSyncService> _asmSync;
     std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
+    // The card CPU in the General Sound slot (gs-debugger design §3.2): its breakpoints and hooks
+    std::unique_ptr<class GSCardTarget> _gsTarget;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -73,6 +76,15 @@ public:
     AsmSyncService* GetAsmSyncService() { return _asmSync.get(); }
     /// Script callbacks (debugger/callbacks/scriptcallbacks.h)
     ScriptCallbackManager* GetScriptCallbacks() { return _scriptCallbacks.get(); }
+    /// The General Sound slot's card CPU (exists for the machine's lifetime; Available() while a card with a CPU is
+    /// fitted)
+    GSCardTarget* GetGSTarget() { return _gsTarget.get(); }
+    /// The breakpoints of a CPU: the main CPU's (GetBreakpointsManager), or a card's
+    BreakpointManager* GetBreakpointsManager(DebugCpuId cpu);
+    /// The CPU of a surface name ("main", "gs"; "neogs" names the same slot); false for an unknown name
+    static bool ParseCpuName(const std::string& name, DebugCpuId& out);
+    /// The General Sound slot's card was created or replaced (SoundManager): the card hooks follow it
+    void OnGeneralSoundCardCreated();
 
     /// endregion </Properties>
 

@@ -18,6 +18,30 @@
 #include <sstream>
 
 
+bool CLIProcessor::TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const
+{
+    cpu = DebugCpuId::Main;
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] != "--cpu")
+            continue;
+        if (i + 1 >= args.size() || !DebugManager::ParseCpuName(args[i + 1], cpu))
+        {
+            session.SendResponse("Error: --cpu needs main or gs");
+            return false;
+        }
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        break;
+    }
+    return true;
+}
+
+BreakpointManager* CLIProcessor::BreakpointsOf(Emulator& emulator, DebugCpuId cpu)
+{
+    EmulatorContext* context = emulator.GetContext();
+    return context && context->pDebugManager ? context->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+}
+
 bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
                                        BreakpointSpec& spec, std::string& error) const
 {
@@ -164,8 +188,13 @@ std::string CLIProcessor::AddBreakpointAndDescribe(BreakpointManager& manager, c
 }
 
 // HandleBreakpoint
-void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
@@ -191,7 +220,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
         session.SendResponse(ss.str());
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -209,8 +238,13 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
 }
 
 // HandleBPList - lines 1439-1468
-void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
 
     if (!emulator)
@@ -219,7 +253,7 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
         return;
     }
 
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -241,8 +275,13 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
 }
 
 // HandleWatchpoint
-void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
@@ -275,7 +314,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
         session.SendResponse("Invalid watchpoint type. Use 'r', 'w', or 'rw'.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -293,8 +332,13 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
 }
 
 // HandlePortBreakpoint
-void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
@@ -326,7 +370,7 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
         session.SendResponse("Invalid port breakpoint type. Use 'i', 'o', or 'io'.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -509,8 +553,8 @@ void CLIProcessor::HandleMagicBreakpoint(const ClientSession& session, const std
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Magic breakpoint"));
 }
 
-// HandleBPHits: bphits reset [id]
-void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& args)
+// HandleEventBreakpoint: bevent <kind> [--value V [--vmask M]] [--hits ..] [--group G] [note]
+void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -518,7 +562,64 @@ void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    GSCardEvent kind = GSCardEvent::Count;
+    if (!args.empty() && ParseGSCardEvent(args[0].c_str(), kind) && !GSCardEventIsHostSide(kind))
+        cpu = DebugCpuId::GS;  // a card event is the card CPU's: no --cpu gs needed
+    if (!TakeCpuOption(session, args, cpu))
+        return;
+    if (args.empty() || !ParseGSCardEvent(args[0].c_str(), kind))
+    {
+        std::stringstream ss;
+        ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--group G] [note]" << NEWLINE
+           << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4). The card's events stop the" << NEWLINE
+           << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
+           << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
+           << "  read the mailbox), card_reply (it wrote the reply)" << NEWLINE
+           << "Host (the main CPU): host_command (OUT #BB), host_data (OUT #B3), host_reply (IN #B3)" << NEWLINE
+           << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
+           << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
+           << "  bevent host_command               - the host writes any command";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    std::vector<std::string> rest = args;
+    rest[0] = "0";  // the kind is the breakpoint's address; the flags follow
+    BreakpointSpec spec;
+    spec.type = BRK_EVENT;
+    spec.access = 0;
+    std::string error;
+    if (!ParseBreakpointArgs(rest, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    spec.address = static_cast<uint16_t>(kind);
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Event breakpoint"));
+}
+
+// HandleBPHits: bphits reset [id]
+void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& rawArgs)
+{
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -546,8 +647,13 @@ void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<
 }
 
 // HandleBPClear - lines 1664-1836
-void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
 
     if (!emulator)
@@ -556,7 +662,7 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         return;
     }
 
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -723,8 +829,13 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
 }
 
 // HandleBPGroup - lines 1838-1940
-void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
 
     if (!emulator)
@@ -733,7 +844,7 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
         return;
     }
 
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -846,8 +957,13 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
 }
 
 // HandleBPActivate - lines 1942-2073
-void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
 
     if (!emulator)
@@ -856,7 +972,7 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
         return;
     }
 
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -982,8 +1098,13 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
 }
 
 // HandleBPDeactivate - lines 2075-2206
-void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
 
     if (!emulator)
@@ -992,7 +1113,7 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
         return;
     }
 
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -1142,15 +1263,20 @@ bool CLIProcessor::ApplyBreakpointSelection(const ClientSession& session, Breakp
 }
 
 // HandleBPToggle: bptoggle [all | <id> | <kind> | group:<name>]
-void CLIProcessor::HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPToggle(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -1252,15 +1378,20 @@ void CLIProcessor::HandleKeyBreakpoint(const ClientSession& session, const std::
 }
 
 // HandleBPCondition: bpcond <id> [--dialect c] [condition] (no condition: clear)
-void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");
@@ -1300,15 +1431,20 @@ void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::ve
 }
 
 // HandleBPNote: bpnote <id> [text] (no text: clear)
-void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // --cpu main|gs anywhere: whose breakpoints
+    std::vector<std::string> args = rawArgs;
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!TakeCpuOption(session, args, cpu))
+        return;
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
-    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, cpu);
     if (!bpManager)
     {
         session.SendResponse("Breakpoint manager not available");

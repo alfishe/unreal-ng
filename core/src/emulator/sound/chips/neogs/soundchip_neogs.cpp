@@ -9,6 +9,7 @@
 #include "3rdparty/digestpp/digestpp.hpp"
 #include "common/filehelper.h"
 #include "common/statebytes.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -414,6 +415,8 @@ void SoundChip_NeoGS::coldBoot()
 void SoundChip_NeoGS::fpgaReset()
 {
     Z80CpuReset(_cpu);
+    if (_debugHooks) [[unlikely]]
+        _debugHooks->onEvent(GSCardEvent::Reset, 0, 0);
     _mem.resetRegisters();
     writeGscfg0(GSCFG0_RESET);
     _ticksPerCycle = _nextTicksPerCycle;
@@ -934,7 +937,7 @@ void SoundChip_NeoGS::flush()
     int64_t target = 0;
     if (!GSHostClock::targetUnits(_context, TICKS_PER_SECOND, _frameStartZxTacts, _frameStartTicks, target))
         return;
-    _runner.runTo(target);
+    runTo(target);
 }
 
 void SoundChip_NeoGS::handleFrameStart()
@@ -972,7 +975,7 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
     if (_frameTicks <= 0)
         return;
 
-    _runner.runTo(_frameStartTicks + _frameTicks);
+    runTo(_frameStartTicks + _frameTicks);
     _zx.onFrameEnd();
 
     int samples = expectedSamples > 0
@@ -1044,6 +1047,7 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
+            GSReportHostEvent(_context, GSCardEvent::HostReplyRead, _mb.dataToHost);
             return _mb.dataToHost;
         case 0xBB: // status: bit 7 data, bit 0 command; bits 6:1 read as 1
             hostPortSync();
@@ -1082,11 +1086,13 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
             onHostDataWrite(value);
+            GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB:
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             onHostCommandWrite(value);
+            GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
             return;
         default:
             return;
@@ -1366,6 +1372,102 @@ void SoundChip_NeoGS::portWriteCb(Z80CPU* /*cpu*/, uint16_t port, uint8_t value,
 uint8_t SoundChip_NeoGS::intVectorCb(Z80CPU* /*cpu*/, void* userData)
 {
     return static_cast<SoundChip_NeoGS*>(userData)->_irq.vector();
+}
+
+void SoundChip_NeoGS::runToDebug(int64_t target)
+{
+    _runner.runToDebug(target, _debugHooks);
+}
+
+bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)
+{
+    if (!_cpu)
+        return false;
+    _debugHooks = hooks;
+    if (hooks)
+    {
+        Z80CpuSetMemoryBus(_cpu, &SoundChip_NeoGS::memReadDebugCb, this, &SoundChip_NeoGS::memWriteDebugCb, this);
+        Z80CpuSetPortBus(_cpu, &SoundChip_NeoGS::portReadDebugCb, this, &SoundChip_NeoGS::portWriteDebugCb, this);
+    }
+    else
+    {
+        Z80CpuSetMemoryBus(_cpu, &SoundChip_NeoGS::memReadCb, this, &SoundChip_NeoGS::memWriteCb, this);
+        Z80CpuSetPortBus(_cpu, &SoundChip_NeoGS::portReadCb, this, &SoundChip_NeoGS::portWriteCb, this);
+    }
+    return true;
+}
+
+// Debug bus (gsdebughooks.h): the plain access, then the hooks with the instruction's PC. Opcode and operand fetches
+// are not data reads; the mailbox ports and the page registers (MPAG, MPAGEX, PG0-PG3) are card events too
+uint8_t SoundChip_NeoGS::memReadDebugCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData)
+{
+    const uint8_t value = memReadCb(cpu, addr, m1State, userData);
+    if (m1State)
+        return value;
+    return static_cast<SoundChip_NeoGS*>(userData)->_debugHooks->onMemoryRead(Z80CpuInstructionPc(cpu), addr, value);
+}
+
+void SoundChip_NeoGS::memWriteDebugCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData)
+{
+    memWriteCb(cpu, addr, value, userData);
+    static_cast<SoundChip_NeoGS*>(userData)->_debugHooks->onMemoryWrite(Z80CpuInstructionPc(cpu), addr, value);
+}
+
+uint8_t SoundChip_NeoGS::portReadDebugCb(Z80CPU* cpu, uint16_t port, void* userData)
+{
+    IGSDebugHooks* hooks = static_cast<SoundChip_NeoGS*>(userData)->_debugHooks;
+    const uint8_t value = hooks->onPortIn(Z80CpuInstructionPc(cpu), port, portReadCb(cpu, port, userData));
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (!(low & 0xC0))
+    {
+        if ((low & 0x3F) == P_ZXCMD)
+            hooks->onEvent(GSCardEvent::CardCommandRead, port, value);
+        else if ((low & 0x3F) == P_ZXDATRD)
+            hooks->onEvent(GSCardEvent::CardDataRead, port, value);
+    }
+    return value;
+}
+
+void SoundChip_NeoGS::portWriteDebugCb(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData)
+{
+    portWriteCb(cpu, port, value, userData);
+    IGSDebugHooks* hooks = static_cast<SoundChip_NeoGS*>(userData)->_debugHooks;
+    hooks->onPortOut(Z80CpuInstructionPc(cpu), port, value);
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (low & 0xC0)
+        return;
+    const uint8_t p = low & 0x3F;
+    if (p == P_MPAG || p == P_MPAGEX || (p >= P_PG0 && p <= P_PG3))
+        hooks->onEvent(GSCardEvent::PageSwitch, port, value);
+    else if (p == P_ZXDATWR)
+        hooks->onEvent(GSCardEvent::CardReplyWrite, port, value);
+}
+
+GeneralSoundCard::CardPage SoundChip_NeoGS::mapCardAddress(uint16_t addr) const
+{
+    CardPage where;
+    where.kind = _mem.isFlash(addr >> 14) ? CardPage::Rom : CardPage::Ram;
+    where.page = static_cast<uint8_t>(_mem.physical(addr) / NeoGSMemory::PAGE_SIZE);
+    where.offset = static_cast<uint16_t>(addr & (NeoGSMemory::PAGE_SIZE - 1));
+    return where;
+}
+
+uint32_t SoundChip_NeoGS::cardPageCount(CardPage::Kind kind) const
+{
+    switch (kind)
+    {
+        case CardPage::Rom: return static_cast<uint32_t>(Flash29F040B::SIZE / NeoGSMemory::PAGE_SIZE);
+        case CardPage::Ram: return static_cast<uint32_t>(_mem.ramPages());
+        default: return 0;
+    }
+}
+
+bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const
+{
+    if (!_cpu)
+        return false;
+    Z80CpuGetRegisters(_cpu, &out);
+    return true;
 }
 
 uint16_t SoundChip_NeoGS::getCPUReg(GSCpuRegister reg) const

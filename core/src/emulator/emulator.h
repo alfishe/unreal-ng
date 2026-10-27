@@ -25,6 +25,7 @@
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/config.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
@@ -198,6 +199,9 @@ public:
         uint16_t breakpointId = 0xFFFF;
         uint16_t address = 0;
         BreakpointHitKind kind = BreakpointHitKind::Execute;
+        /// Whose breakpoint: another CPU's (a card) stopped the machine at that CPU's instruction `cpuPc`
+        DebugCpuId cpu = DebugCpuId::Main;
+        uint16_t cpuPc = 0;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -982,6 +986,12 @@ public:
     /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
     /// on from a breakpoint)
     bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// A breakpoint of another CPU (`breakpoints` that CPU's, gs-debugger design §4) at that CPU's instruction
+    /// boundary: the machine pauses with both positions - the main CPU wherever it stands (inside a host port access
+    /// or at the frame end), the other at `cpuPc` - and this thread parks until Resume(). A direct run records the
+    /// stop and ends after its current instruction
+    void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
+                               BreakpointHitKind kind, uint16_t cpuPc);
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
