@@ -1,0 +1,111 @@
+#pragma once
+
+#include "unrealdisk/detail/std.h"
+
+#include <string>
+#include <vector>
+// (emulator include dropped: emulator/emulatorcontext.h)
+#include "unrealdisk/diskimage.h"
+#include "unrealdisk/trdos.h"
+#include "unrealdisk/options.h"
+
+namespace unrealdisk
+{
+
+// TR-DOS uses 256 Bytes per sector (BPS) and 16 Sectors per track (SPT) for disks
+// 40 track 1 sided image length => 163840 bytes (1×40×16×256)
+// 40 track 2 sided image length => 327680 bytes
+// 80 track 1 sided image length => 327680 bytes
+// 80 track 2 sided image length => 655360 bytes
+// .trd file can be smaller than actual floppy disk, if last logical tracks are empty (contain no file data) they can be omitted
+// @see: https://sinclair.wiki.zxnet.co.uk/wiki/TR-DOS_filesystem
+// @see: https://formats.kaitai.io/tr_dos_image/
+
+class LoaderTRD
+{
+    /// region <Constants>
+public:
+    static constexpr const size_t TRD_SECTOR_SIZE = 256;        // Sector data size (without service fields) in bytes
+    static constexpr const size_t TRD_SECTORS_PER_TRACK = 16;   // Sectors per track
+    static constexpr const size_t TRD_SIDES = 2;                // Sides on disk
+    static constexpr const size_t TRD_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK;                     // Single side track size
+    static constexpr const size_t TRD_FULL_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK * TRD_SIDES;    // Full track size (both sides) in bytes
+
+    /// endregion </Constants>
+
+    /// region <Fields>
+protected:
+    LoaderOptions _options;
+    std::string _filepath;
+
+    DiskImage* _diskImage = nullptr;
+    std::vector<std::string> _warnings;
+    /// endregion </Fields>
+
+    /// region <Properties>
+public:
+    DiskImage* getImage();
+    void setImage(DiskImage* diskImage);
+    /// endregion </Properties>
+
+    /// region <Constructors / destructors>
+public:
+    LoaderTRD(const LoaderOptions& options, const std::string& filepath) : _options(options), _filepath(filepath) {};
+    virtual ~LoaderTRD() = default;
+    /// endregion </Constructors / destructors>
+
+    /// region <Basic methods>
+public:
+    bool loadImage();
+    /// A TRD image in memory as a new DiskImage (the caller owns it); null with the reason in `warnings`
+    DiskImage* parse(const uint8_t* data, size_t len, std::vector<std::string>& warnings);
+    bool writeImage();
+    bool writeImage(const std::string& path);  // Save As - write to specified path
+
+    /// Diagnostics collected by the last loadImage / writeImage call (e.g. why a save was refused)
+    const std::vector<std::string>& lastWarnings() const { return _warnings; }
+
+    /// TRD can only hold 16 x 256-byte sectors numbered 1..16 per track.
+    /// @param reason Filled with a human readable explanation when the image does not qualify
+    static bool isTrdosGeometry(DiskImage* diskImage, std::string* reason = nullptr);
+
+    // TR-DOS image specific method. Can be moved closer to generic TR-DOS functionality
+    bool format(DiskImage* diskImage);
+    bool validateTRDOSImage(DiskImage* diskImage);
+    bool validateTRDOSImage(DiskImage* diskImage, TRDValidationReport& report);
+    bool validateEmptyTRDOSImage(DiskImage* diskImage);
+    bool validateEmptyTRDOSImage(DiskImage* diskImage, TRDValidationReport& report);
+
+    /// endregion </Basic methods>
+
+    /// region <Helper methods>
+protected:
+    uint8_t getTrackNoFromImageSize(size_t filesize);
+    bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
+
+public:
+    /// The geometry of a .TRD file. The TR-DOS disk type in sector 9 (#E3:
+    /// #16 DS80, #17 DS40, #18 SS80, #19 SS40) decides when the file fits in
+    /// it (a TRD file may end after its last used track). Without a known
+    /// type: double-sided, 40 cylinders for exactly 320 KiB, else 80 (or the
+    /// cylinders the size needs above 80)
+    static void geometryForFile(const uint8_t* buffer, size_t fileSize, uint8_t& cylinders, uint8_t& sides);
+    void populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType);
+    /// endregion </Helper methods>
+};
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class LoaderTRDCUT : public LoaderTRD
+{
+public:
+    LoaderTRDCUT(const LoaderOptions& options, const std::string& filepath) : LoaderTRD(options, filepath) {};
+
+public:
+    using LoaderTRD::_diskImage;
+};
+#endif // _CODE_UNDER_TEST
+}  // namespace unrealdisk

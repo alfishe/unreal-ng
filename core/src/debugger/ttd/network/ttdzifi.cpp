@@ -3,7 +3,8 @@
 #include <cstring>
 
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
+#include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/io/serial/esp/zifinativemodule.h"
@@ -67,7 +68,7 @@ void TTDZiFi::TTDLoadState(const uint8_t* src)
     if (!native)
         return;
     const ttd::TTDInputJournal* journal =
-        _context->pTimeTravelManager ? &_context->pTimeTravelManager->GetInputJournal() : nullptr;
+        _context->pTimeTravelHooks ? &_context->pTimeTravelHooks->InputJournal() : nullptr;
     EspStack::ByteSource bytes = [journal](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
         if (!journal)
             return false;

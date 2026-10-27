@@ -6,6 +6,8 @@
 
 class MemoryAccessTracker;
 class HostBusOverlay;
+class Screen;
+struct BreakpointHotState;
 class Z80;
 class FeatureManager;
 class UlaContention;
@@ -113,6 +115,12 @@ protected:
 
     std::string _mappedMemoryFilepath;
 
+    // The buffer a shared memory migration replaced. Tool readers (debugger, WebAPI, GUI) read guest memory live
+    // from their own threads and the CPU hold does not stop them: one may still read through an old bank pointer.
+    // The buffer stays valid until the next migration or the destructor
+    uint8_t* _retiredMemory = nullptr;
+    bool _retiredMemoryMapped = false;
+
 protected:
     // Whole system memory
     uint8_t* _memory = nullptr;
@@ -162,6 +170,19 @@ protected:
     // Host bus overlay (hostbusoverlay.h): set only through Core (AddBusOverlay / RemoveBusOverlay),
     // read only by the overlay memory interfaces
     HostBusOverlay* _busOverlay = nullptr;
+
+    // A screen on the event rule (ScreenZX::CatchUpToStepStart): told before a CPU write into RAM page 5 or 7 lands
+    Screen* _videoWatch = nullptr;
+
+    // The fast write's hooks (docs/inprogress/2026-10-26-breakpoint-taps §5): one byte, zero when none is on, so
+    // MemoryWriteFast tests one load. Kept by RefreshWriteHooks
+    static constexpr uint8_t kWriteHookVideo = 0x01;  // _videoWatch is set
+    static constexpr uint8_t kWriteHookTap = 0x02;    // write taps are armed: test _tapFilter's write bit
+    uint8_t _writeHooks = 0;
+    bool _writeTapDemand = false;
+    const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
+    void RefreshWriteHooks();
+    void MemoryWriteTapped(uint16_t addr);
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
@@ -243,6 +264,25 @@ public:
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
     }
 
+    /// @brief The page time travel names a byte of window `bank` by: its RAM page, or - when the window shows the
+    /// fast RAM ("cache") - a virtual page of that space (ttdphyspage.h); kPhysPageNone for ROM
+    inline ttd::PhysPage TtdPageOfBank(uint8_t bank) const
+    {
+        const ttd::PhysPage ram = _bank_ram_page_cache[bank & 3];
+        return ram != ttd::kPhysPageNone ? ram : TtdSpacePageOfBank(bank);
+    }
+    /// The fast RAM's virtual page behind window `bank`, or kPhysPageNone (out of line: ROM and cache windows only)
+    ttd::PhysPage TtdSpacePageOfBank(uint8_t bank) const;
+
+    /// @brief A write or a data read of a byte the RAM-page hooks do not see - another memory space's virtual page
+    /// and the offset in it, or a RAM page an engine writes outside the CPU's bus (the Sprinter's accelerator) and
+    /// its Z80 address: the write journal, the access probe and the coverage index, as MemoryWriteDebug /
+    /// MemoryReadDebug do for the CPU's RAM accesses. `write` false: a read
+    void TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write);
+    /// A watchpoint on a page of another memory space (the Sprinter's video RAM, "vramN"): the access at `offset`
+    /// of that page, made through the CPU address `addr`, stops the run like a CPU-address watchpoint
+    void CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write);
+
     /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
     ///
     /// TR-DOS paging is gated structurally by the CF_SETDOSROM session flags
@@ -263,6 +303,9 @@ public:
     /// region <Initialization>
 public:
     void Reset();
+    /// Zero every RAM page the model has (config.ramsize): a snapshot commit starts from no trace of the program
+    /// before it - the pages the snapshot does not carry read 0, whatever ran there
+    void ClearModelRAM();
     void RandomizeMemoryContent();
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
 
@@ -270,6 +313,11 @@ public:
     void AllocateAndExportMemoryToMmap();
     /// Unmap the memory from the filesystem
     void UnmapMemory();
+    /// Close the shared memory handle and name; the mapped view stays valid
+    void CloseSharedMemory();
+    /// Keep a replaced buffer alive for the live readers (the previous retired one is released)
+    void RetireMemory(uint8_t* memory, bool mapped);
+    void ReleaseRetiredMemory();
     void SyncToDisk();
 
     /**
@@ -310,11 +358,15 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
-    static MemoryInterface* GetFastContendedMemoryInterface();   // Fast + video memory contention
+    /// stockRead: the fast read inside is MemoryReadFastStock instead of the virtual MemoryReadFast - for a memory
+    /// whose HasStockFastRead is true (the Z80 decides once, at its construction: the memory is created before it).
+    /// The plain fast interface keeps the virtual read: it calls the read directly, with nothing to inline it into,
+    /// and the stock pointer measured +1 % on Pentagon
+    static MemoryInterface* GetFastContendedMemoryInterface(bool stockRead = false);  // Fast + video memory contention
     static MemoryInterface* GetDebugContendedMemoryInterface();  // Debug + video memory contention
     /// The fast / debug interface, contended or not, plus the installed bus
     /// overlay (neogs-zxdma-design.md §5.2); selected only while one is installed
-    static MemoryInterface* GetOverlayMemoryInterface(bool debug, bool contended);
+    static MemoryInterface* GetOverlayMemoryInterface(bool debug, bool contended, bool stockRead = false);  // stockRead: as above
 
     /// Contended interfaces: the plain access (Plain = Fast / Debug) with the video logic's wait in front of
     /// accesses to a contended slot, every MREQ cycle alike (opcode fetch, operand, data). Selected only
@@ -346,9 +398,39 @@ public:
     /// The fast read ignores isExecution (no per-access tracking there), so
     /// the parameter is marked maybe_unused
     virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    /// Memory::MemoryReadFast itself, without the virtual dispatch: the fast interfaces of a memory that does not
+    /// override it (HasStockFastRead) read through it
+    uint8_t MemoryReadFastStock(uint16_t addr, [[maybe_unused]] bool isExecution)
+    {
+        return *(_bank_read[(addr >> 14) & 3] + (addr & 0x3FFF));
+    }
+    /// true while MemoryReadFast is this class's own: a model that overrides it answers false, and its fast
+    /// interfaces keep calling it through the vtable
+    virtual bool HasStockFastRead() const { return true; }
+    /// A halted CPU's idle opcode fetch at `addr` through the fast read, repeated: true when it reads a byte and
+    /// nothing else (an engine may then run such fetches in one go, Z84C15Engine). A model whose read has a side
+    /// effect in some window (a bus cycle on a card) answers false there
+    virtual bool RepeatFetchIsPure(uint16_t addr) const
+    {
+        (void)addr;
+        return true;
+    }
     virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
+
+    /// A model whose memory is not four 16K windows supplies its own plain (Fast / Debug) interface here;
+    /// Core::SelectMemoryInterface uses it instead of the stock one while no host bus overlay is installed.
+    /// The default - no interface of its own
+    virtual MemoryInterface* ModelMemoryInterface([[maybe_unused]] bool debug, [[maybe_unused]] bool contended) { return nullptr; }
+
+protected:
+    /// The debug access bookkeeping that follows the byte (tracking, TTD, breakpoints): MemoryReadDebug /
+    /// MemoryWriteDebug call these, and so does a derivative with its own mapping
+    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage);
+    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage);
+
+public:
 
     /// The inner access (Fast / Debug, contended or not), then the bus overlay
     /// for addresses in its window: the video logic's wait comes first, as on
@@ -364,6 +446,18 @@ public:
 
     /// Core::SelectMemoryInterface keeps this in step with the Z80's interface
     void SetBusOverlay(HostBusOverlay* overlay) { _busOverlay = overlay; }
+    /// The screen that catches up before a write into the ZX screen pages (5 and 7); nullptr: none
+    void SetVideoWatch(Screen* screen)
+    {
+        _videoWatch = screen;
+        RefreshWriteHooks();
+    }
+    /// Write taps are armed (BreakpointManager::ApplyTapDemand): the fast write tests @p filter's write bit and tells
+    /// the breakpoint manager of a marked address. Emulation thread or CPU held
+    void SetWriteTapDemand(bool on, const BreakpointHotState* filter);
+    /// Whether MemoryWriteFast is this machine's write (the hook lives there); a model with its own write interface
+    /// answers false and its write taps take the debug path
+    virtual bool SupportsWriteTapHook() const { return true; }
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// endregion </Emulation memory interface methods>
@@ -444,7 +538,7 @@ public:
 
     /// Contention cache of a slot / of all four (after the machine's contention rule changed)
     void UpdateSlotContention(uint8_t slot);
-    void RefreshSlotContention();
+    virtual void RefreshSlotContention();
     void RecordROMPageSwitch();
     /// endregion </Service methods>
 

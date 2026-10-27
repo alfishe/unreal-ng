@@ -4,6 +4,7 @@
  */
 
 #include "emulatorbinding.h"
+#include <optional>
 
 #include <QDebug>
 #include <QMetaObject>
@@ -16,33 +17,22 @@
 
 namespace
 {
-/// Pause() -> op -> Resume() bracket, same contract as the CLI/WebAPI tape
-/// handlers (design §7.1). Pause only when actually running; resume exactly
-/// then. RAII so an early return can never leave the emulator parked.
+/// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+/// an early return cannot leave it held.
 class EmulatorPauseBracket
 {
 public:
+    // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+    // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+    // pause somebody else asked for meanwhile
     explicit EmulatorPauseBracket(Emulator* emulator)
-        : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
     {
-        if (_wasRunning)
-        {
-            _emulator->Pause();
-            QThread::msleep(10);  // Give emulator time to pause
-        }
-    }
-
-    ~EmulatorPauseBracket()
-    {
-        if (_wasRunning)
-        {
-            _emulator->Resume();
-        }
+        if (emulator)
+            _hold.emplace(*emulator, "gui");
     }
 
 private:
-    Emulator* _emulator;
-    bool _wasRunning;
+    std::optional<Emulator::CpuHold> _hold;
 };
 }  // namespace
 
@@ -58,7 +48,7 @@ EmulatorBinding::~EmulatorBinding()
     unbind();
 }
 
-void EmulatorBinding::bind(Emulator* emulator)
+void EmulatorBinding::bind(std::shared_ptr<Emulator> emulator)
 {
     if (!emulator)
     {
@@ -79,7 +69,10 @@ void EmulatorBinding::bind(Emulator* emulator)
         unbind();
     }
 
-    m_emulator = emulator;
+    {
+        std::lock_guard<std::mutex> lock(m_emulatorMutex);
+        m_emulator = std::move(emulator);
+    }
 
     // Subscribe to per-emulator MessageCenter events
     subscribeToMessageCenter();
@@ -95,7 +88,7 @@ void EmulatorBinding::bind(Emulator* emulator)
     // This may emit ready() - but now bound() has already fired
     updateReadyState();
 
-    qDebug() << "EmulatorBinding: Bound to emulator" << QString::fromStdString(emulator->GetId());
+    qDebug() << "EmulatorBinding: Bound to emulator" << QString::fromStdString(m_emulator->GetId());
 }
 
 void EmulatorBinding::unbind()
@@ -109,7 +102,14 @@ void EmulatorBinding::unbind()
 
     unsubscribeFromMessageCenter();
 
-    m_emulator = nullptr;
+    // The reference goes last: the unbound() listeners may still read the instance (retired, not freed) while they
+    // clear; the free, when this was the last holder, runs after them
+    std::shared_ptr<Emulator> released;
+    {
+        std::lock_guard<std::mutex> lock(m_emulatorMutex);
+        released = std::move(m_emulator);
+        m_emulator = nullptr;
+    }
     m_state = StateUnknown;
     m_isReady = false;
     m_cachedPC = 0;
@@ -142,6 +142,17 @@ EmulatorStateEnum EmulatorBinding::state() const
 
 Emulator* EmulatorBinding::emulator() const
 {
+    return m_emulator.get();
+}
+
+EmulatorContext* EmulatorBinding::context() const
+{
+    return m_emulator ? m_emulator->GetContext() : nullptr;
+}
+
+std::shared_ptr<Emulator> EmulatorBinding::emulatorShared() const
+{
+    std::lock_guard<std::mutex> lock(m_emulatorMutex);
     return m_emulator;
 }
 
@@ -233,8 +244,9 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
     {
         isFrameRefresh = true;
         emulatorId = framePayload->_emulatorId;
-        // Filter: only process frames from our bound emulator
-        if (m_emulator && emulatorId != m_emulator->GetId())
+        // Filter: only process frames from our bound emulator. Off the GUI thread: a reference of our own
+        const std::shared_ptr<Emulator> bound = emulatorShared();
+        if (bound && emulatorId != bound->GetId())
         {
             return;
         }
@@ -409,7 +421,9 @@ void EmulatorBinding::unsubscribeFromMessageCenter()
 
 bool EmulatorBinding::produceTapeSnapshot(TapeUiSnapshot& out)
 {
-    EmulatorContext* context = m_emulator ? m_emulator->GetContext() : nullptr;
+    // Off the GUI thread (the frame-end callback): a reference of our own, the GUI thread may unbind meanwhile
+    const std::shared_ptr<Emulator> bound = emulatorShared();
+    EmulatorContext* context = bound ? bound->GetContext() : nullptr;
     if (!context || !context->pTape)
     {
         return false;
@@ -496,7 +510,7 @@ void EmulatorBinding::tapePlay()
         return;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
+    EmulatorPauseBracket bracket(m_emulator.get());
 
     // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
     // (FR-6), otherwise start at the consumption cursor
@@ -522,7 +536,7 @@ void EmulatorBinding::tapePause()
         return;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
+    EmulatorPauseBracket bracket(m_emulator.get());
 
     if (context->pTape->GetPlaybackState() == TapePlaybackState::Playing)
     {
@@ -551,7 +565,7 @@ void EmulatorBinding::tapeRewind()
         return;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
+    EmulatorPauseBracket bracket(m_emulator.get());
 
     // Rewind keeps the image and catalog (FR-5)
     if (context->pTape->EnsureImageLoaded())
@@ -568,7 +582,7 @@ void EmulatorBinding::tapeSeekToBlock(size_t index)
         return;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
+    EmulatorPauseBracket bracket(m_emulator.get());
 
     // Seek arms, play delivers (FR-4); forward and backward, consumed included
     if (context->pTape->EnsureImageLoaded())
@@ -587,7 +601,7 @@ bool EmulatorBinding::tapeGetBlockData(size_t index, std::vector<uint8_t>& out)
         return false;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
+    EmulatorPauseBracket bracket(m_emulator.get());
 
     // Raw byte copy of one parsed block (flag + payload + checksum for framed
     // blocks; empty for pulse/control entries). The copy is all that leaves

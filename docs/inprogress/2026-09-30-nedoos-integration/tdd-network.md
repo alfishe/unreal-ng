@@ -411,8 +411,33 @@ states, unsent TX bytes (up to 1536 per socket), per receive packet its
 PACKET-INFO and a journal reference (source, offset, length; up to 64
 packets per socket), per TCP backlog chunk a reference (up to 32), and the
 virtual network's tables (sockets, guest servers, leases). The loader takes
-the bytes from the journal; a state beyond the limits is saved as far as it
-goes and marked incomplete (logged at restore). The options considered:
+the bytes from the journal. The options considered are below.
+
+**Beyond the fixed arrays (owner decision 2026-10-08: no larger blobs).**
+The fixed part keeps its sizes. Two kinds of state do not fit it:
+- a list longer than its array;
+- received bytes the journal does not hold, because they arrived before the
+  recording started.
+
+Both go into an optional tail after the fixed part (`netstatetail.h`). The
+tail is written only when it has something, and a header byte flags it.
+The "incomplete" marker is gone: such a state restores whole. The only
+warning left at restore is for referenced bytes missing from the journal.
+
+The tail is a list of records `[u16 list][u16 owner][u32 index][u32 size][bytes]`:
+- an item past an array goes in that array's element format;
+- unjournaled bytes go inline, under the index of their packet, chunk or run.
+
+Blobs that carry it:
+- the ZXNETUSB adapters (W5300 TX, packets and backlog; virtual-network
+  sockets, servers and their queues, leases);
+- the serial port on #xxEF and the other 16550 + peer ports (echo queue,
+  received runs, unsent bytes, the ESP module's buffers and socket stack);
+- the machine serial peer.
+
+The ZiFi bridge was already variable-size and stores unjournaled bytes
+inline. The engine sizes a variable-size device's capture buffers by the
+state it reaches, not by the declared maximum (64 MiB for the adapters).
 
 | Option | How | Cost |
 |---|---|---|
@@ -671,6 +696,12 @@ Asked one at a time when the step needs them:
 | W5300 chip model | `w5300.*` | `w5300_test.cpp` (26 cases incl. the NedoOS UDP under-read, DHCP like wizcfg, ping) |
 | ZXNETUSB card (ports, reset, memory-mapped window) | `zxnetusb.*` | `zxnetusb_test.cpp`, `networkmanager_test.cpp` |
 | Fitting, config `[NETWORK]`, feature `network`, runtime change | `networkmanager.*`, `config.cpp`, `featuremanager.cpp`, shipped INIs | `networkmanager_test.cpp` |
+
+Since the ZX-bus slots (owner decision Q11, 2026-10-05) the runtime change of the ZX-bus cards (`card` = ZXNETUSB /
+ZXWIFI) is a slot change applied by a machine restart: every surface's network settings go through `SlotControl` verb
+`network`, which applies the other keys to the restarted machine; `NetworkManager::RequestChange` refuses a ZX-bus card
+change and keeps the in-place change of every other setting and of ATM2IOESP
+([ZX-bus slots tdd.md §16](../2026-10-03-zx-bus-slots/tdd.md#16-q11-as-built-the-network-card-change-is-a-slot-change-2026-10-05)).
 | TTD: NetEvent / NetLinkReset, network table, payload store, file section, checkpoint state (option A) | `debugger/ttd/*`, `network/ttdzxnetusb.*` | `ttdinputjournal_test.cpp`, `ttdzxnetusb_test.cpp` (record, seek, replay sealed, file round trip) |
 | Status and settings on every surface | WebAPI `GET /state/network`, `POST /network/config` (+ OpenAPI), MCP aspect `network`, CLI `network` / `network set`, Lua / Python `network_state()` / `network_configure()` | automation test filters |
 | Machine test: NedoOS W5300 kernel gets a DHCP lease, pings the gateway | `testdata/machines/zxevo/nedoos/sdcard-net/` | `NetworkManager_Test.NedoOsGetsALeaseAndPingsTheGateway` |

@@ -1,0 +1,79 @@
+;               HELP 4.18
+
+; SS/Q - PУC/LAT
+; SS/A - TAB
+; CS/2 - OVR/INS
+; CS/1 - END/HOME
+; CS/9 - MACROS PREFIX
+; CS/ENTER - MARK LINE
+; CS/SPC - УДAЛEHИE ПO KУPCOPУ
+
+; CS/3/4 - PgUp, PgDw
+; SS/W - DELETE LINE
+; SS/E - ПOMETKA ДЛЯ БЛOЧHЫX OПEPAЦИЙ
+; SS/Y/U - ПOИCK ПOMEЧEHHOЙ CTPOKИ UP/DOWN
+; SS/I - KOПИPOBAHИE ПOMEЧEHHOГO БЛOKA ИЛИ
+;        BCTABKA И3 БУФEPA
+; CS/9 + SS/I - KOПИPOBAHИE ПOMEЧEHHOГO
+;        БЛOKA B БУФEP
+; SS/S - OTMEHA ПOMETKИ
+; SS/D - УДAЛEHИE ПOMEЧEHHЫX (SS/E)
+; SS/F - ПOИCK ДAЛЬШE
+; SS/G - HAЧAЛO/KOHEЦ TEKCTA
+; SS/ENTER - BOCCTAHOBЛEHИE CTPOKИ
+
+
+; CS/SS - KOMAHДЫ:
+
+; Quit - BЫXOД
+; sTs  - 3AПУCK STS
+; neW  - УДAЛEHИE TEKCTA
+; Edit - PEДAKTИPOBAHИE
+; Run  - 3AПУCK OTACCEMБЛИPOBAHHOГO KOДA
+;        (cs/r = WAITKEY AFTER RUN);
+; aUto - BKЛ/OTKЛ ПOДTBEPЖДEHИЯ ENTER
+; save cOde - 3AПИCЬ OTACC. KOДA, EXT -
+;        OTMEHA
+; Assemble - ACCEMБЛИPOBAHИE. CS - CTOП.
+; Save text - 3AПИCЬ TEKCTA, EXT - OTMEHA
+; Find - BBOД MOДEЛИ ДЛЯ ПOИCKA. EXT - ПO-
+;        ИCK CTAPOЙ MOДEЛИ. ';' - ПEPBЫM
+; CИMBOЛOM, TO ПOИCK CTPИHГA, ИHAЧE ПOИCK
+; 3APE3APBИP. CЛOB (ECЛИ BO3MOЖHO):
+; Find 'LD A,B': - ПOИCK OПEPAЦИИ,
+; Find ';HL' - ПOИCK CЛOBA, PEГИCTPOBAЯ
+; ПAPA HL HAЙДEHA HE БУДET!
+
+; remarK - PEДAKTИPOBAHИE KOMMEHTAPИЯ
+; Load text - 3AГPУ3KA. EXT - AHAЛOГ NEW,
+;      EDIT - OTMEHA, SPC - ПEPE3AЧTEHИE
+; full Cat - KATAЛOГ (cs/c = DECIMAL)
+; laBels - CПИCOK METOK (cs/c = DECIMAL)
+; aNother - ПEPEKЛЮЧEHИE OKOH 1>2; 2,3>1
+; Mac edit - PEДAKTИP. MAKPOCOB
+
+
+; '.' = '#'
+; ' ' = ','
+; EX AF,AF = EX AF,AF'
+; (IX) = (IX+0)
+; % - BIN
+; ЛOГИЧECKИE OПEPAЦИИ:
+; ! - XOR
+; 'L - ЦИKЛ. CДBИГ BЛEBO,
+; 'R - BПPABO;
+; &L - MЛAДBИЙ БAЙT,
+; &H - CTAPШИЙ БAЙT;
+
+; PUSH HL:PUSH IX... = PUSH HL,IX...(+POP)
+; !ASSM !ON (!OFF) -...- !CONT
+; !ASSM n -...- !CONT - ПOBTOP N PA3
+; ENT - БE3 ПAPAMETPA
+; WORK - ПAPAMETP - AДPEC, C KOTOPOГO ПPO-
+; ГPAMMA ДOЛЖHA PAБOTATЬ (ПO УMOЛЧ. = ORG)
+; LOADTEXT/LOADCODE > INCLUDE/INCBIN
+; HX > IXh, LX > IXl
+
+;               BHИMAHИE!
+
+; OБЯ3ATEЛЬHO ПPOЧИTAЙTE ПOЛHOE OПИCAHИE.

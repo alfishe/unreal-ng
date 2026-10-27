@@ -1,0 +1,144 @@
+
+▒▒▒▒▒▒▒▒▒▒▒▒▒ D E S I G N! ▒▒▒▒▒▒▒▒▒▒▒▒▒
+■ Print   Format   Character   Options
+╔══════════════════╗
+║   Text           ║
+║   Block          ║
+╚══════════════════╝
+
+   ╔══════════════════╗
+   ║ paGe size      2 ║
+   ║ Line size      2 ║
+   ║ line Space     2 ║
+   ║ Columns        2 ║
+   ║ lEft           2 ║
+   ║ Rigth          2 ║
+   ║ Up             2 ║
+   ║ Doun           2 ║
+   ║ sKip page    345 ║
+   ║ First page   345 ║
+   ╟──────────────────╢
+   ║ page Numbers   х ║
+   ║ Paper       List ║
+   ║ print pAge every ║
+   ║ Justify   center ║
+   ╚══════════════════╝
+
+   ┌─ Name ──────────┐
+   │ ( ) Never       │
+   │ ( ) every File  │
+   │ ( ) every Page  │
+   └─────────────────┘
+   ┌─ Data ──────────┐
+   │ ( ) Never       │
+   │ ( ) every File  │
+   │ ( ) every Page  │
+   └─────────────────┘
+
+      ╔══════════════════╗
+      ║ Elite          х ║
+      ║ Proportional   х ║
+      ║ Condensed      х ║
+      ║ empHasized     х ║
+      ║ Double strike  х ║
+      ║ eXpanded       х ║
+      ║ Italic         х ║
+      ║ Underline      х ║
+      ║ Quality        х ║
+      ║ scRipt         х ║
+      ║ Super / sub    х ║
+      ╟──────────────────╢
+      ║ Graph one line х ║
+      ║ conVert        х ║
+      ╟──────────────────╢
+      ║ Char. draFt    1 ║
+      ║ Character set  1 ║
+      ╚══════════════════╝
+
+;                   center,right,full
+                   ╔══════════════════╗
+                   ║ Store setting    ║
+                   ║ Restore setting  ║
+                   ╟──────────────────╢
+                   ║ Action code ...  ║
+                   ║ Code table  ...  ║
+                   ╠══════════════════╣
+                   ║ Drivers         ║
+                   ║ interFace       ║
+                   ╚══════════════════╝
+            ╔══════════════════════╗
+            ║ Line feed         10 ║
+            ║ Carriage return   13 ║
+            ║ Format feed       12 ║
+            ║ Horizontal tab     9 ║
+            ╚══════════════════════╝
+
+   ╔════════ Printing ... ════════╗
+   ║                              ║
+   ║   Print in progressing ...   ║
+   ║ ██████████████████▒▒▒▒▒▒▒▒▒▒ ║
+   ╟──────────────────────────────╢
+   ║     Press BREAK for STOP     ║
+   ╚══════════════════════════════╝
+
+     ╔═════════ Printing ... ═════════╗
+     ║                                ║
+     ║    Print in progressing ...    ║
+     ║ Page  ████████████████▒▒▒▒▒▒▒▒ ║
+     ╟────────────────────────────────╢
+     ║ Total ████▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒ ║
+     ╠════════════════════════════════╣
+     ║      Press BREAK for STOP      ║
+     ╚════════════════════════════════╝
+
+     ;. 27,  53 ZA*;.27,52 Printer
+
+  АБВГДЕ абвгде └┴┬├─┼ рстуфх
+;. 27,104,2
+■       Scuare char
+;. 27,104,0
+■       normal char
+
+;w5        db %01101011,%11000000
+ ;         db  2, 4,24,20,ColMenu,0
+
+;t5
+; db #85,23,0,9,"Print options:",23,2,2
+
+;NameFlag db 1
+;DataFlag db 1
+;PageFlag db 1
+;PaperFlag db 1
+;JustFlag  db 1
+
+;12341234123412341234123412341234
+╔═══════ Print options: ═══════╗
+║                              ║
+║ ┌─ File Name:──────────────┐ ║
+║ │ ( ) Never                │ ║
+║ │ ( ) every File           │ ║
+║ │ ( ) every Page           │ ║
+║ └──────────────────────────┘ ║
+║ ┌─ Page ─────┐┌─ Paper ────┐ ║
+║ │ ( ) Every  ││ ( ) List   │ ║
+║ │ ( ) Even   ││ ( ) Roll   │ ║
+║ └────────────┘└────────────┘ ║
+║ ┌─ Justify ────────────────┐ ║
+║ │ ( ) Left      ( ) Center │ ║
+║ │ ( ) Right     ( ) Full   │ ║
+║ └──────────────────────────┘ ║
+╟──────────────────────────────╢
+║  Page Numbers           OFF  ║
+╟──────────────────────────────╢
+║              Ok              ║
+╚══════════════════════════════╝
+
+│              Today:
+│
+│         Day .......... 25
+│         Moon ...... April
+│         Year ....... 1998
+│                ok
+│
+
+

@@ -18,8 +18,8 @@ ProfiPagingState TTDProfiPaging::Snapshot() const
     const EmulatorState& state = _context->emulatorState;
 
     blob.pDFFD = state.pDFFD;
-    blob.switches = static_cast<uint8_t>((state.profi_turbo_switch ? 0x01 : 0) | (state.profi_cpm_switch ? 0x02 : 0));
-    std::memcpy(blob.profiPalette, state.profiPalette, sizeof(blob.profiPalette));
+    blob.switches = static_cast<uint8_t>((state.profi.turboSwitch ? 0x01 : 0) | (state.profi.cpmSwitch ? 0x02 : 0));
+    std::memcpy(blob.profiPalette, state.profi.palette, sizeof(blob.profiPalette));
 
     return blob;
 }
@@ -43,9 +43,9 @@ void TTDProfiPaging::TTDLoadState(const uint8_t* src)
 
     EmulatorState& state = _context->emulatorState;
     state.pDFFD = blob.pDFFD;
-    state.profi_turbo_switch = blob.switches & 0x01;
-    state.profi_cpm_switch = (blob.switches >> 1) & 0x01;
-    std::memcpy(state.profiPalette, blob.profiPalette, sizeof(blob.profiPalette));
+    state.profi.turboSwitch = blob.switches & 0x01;
+    state.profi.cpmSwitch = (blob.switches >> 1) & 0x01;
+    std::memcpy(state.profi.palette, blob.profiPalette, sizeof(blob.profiPalette));
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there - see

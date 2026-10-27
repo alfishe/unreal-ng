@@ -1,8 +1,15 @@
 #include "mainwindow.h"
+#include <emulator/video/displaygeometry.h>
+#include "loaders/snapshot/snapshotlauncher.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "emulator/savesnapshotchoices.h"
+#include <algorithm>
 
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "media/droptargetoverlay.h"
+#include "media/flattendialog.h"
+#include "media/core/closeprompt.h"
 #include "emulator/media/modelswitch.h"
 #include "emulator/machinevariants.h"
 
@@ -15,19 +22,25 @@
 #include "emulator/video/screenshotter.h"
 
 #include "base/featuremanager.h"
+#include "emulator/media/recentfiles.h"
 #include "widgets/ttdwidget.h"
+#include "widgets/windowrecorder.h"
+#include "widgets/windowviewprovider.h"
 #ifdef ENABLE_RECORDING
 #include "widgets/recordingwidget.h"
 #endif
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
+#include <vector>
 
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QPointer>
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -45,9 +58,19 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
+#include "controllers/controllersdialog.h"
+#include "controllers/controllersmenu.h"
+#include "controllers/controllertoast.h"
+#include "controllers/guiactions.h"
+#include "emulator/actions/actionregistry.h"
+#include "controllers/hostcontrollers.h"
+#include "controllers/surfacestatusicon.h"
+#include "controllers/streamdeckpage.h"
+#include "controllers/surfacetargets.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/symbolbundlepreferences.h"
 #include "emulator/filemanager.h"
 #include "emulator/hostkeyboardmenu.h"
 #include "emulator/keyboardmanager.h"
@@ -58,13 +81,18 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#include "cardslots/midiactivitywindow.h"
+#include "cardslots/slotchangecontroller.h"
+#include "cardslots/slotswindow.h"
+#include "nextlayers/nextlayerswindow.h"
+#include "osdkeyboard/osdkeyboardwindow.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
 #include "hud/qt/hudsettingsdialog.h"
 #include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
-#include "debugger/widgets/recordingpresets.h"
+#include "emulator/capture/recordingcontrol.h"
 #endif
 #include "base/featuremanager.h"
 #include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
@@ -76,13 +104,19 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
 #include "loaders/rzx/rzxreader.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "emulator/mousecapturecontroller.h"
+#include "emulator/companioncontroller.h"
+#include "emulator/remotecontrolguard.h"
 
 namespace
 {
@@ -103,9 +137,11 @@ int QuickDropTarget(const MediaPlan& plan)
 }
 
 // B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
-bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+// (asked of the machine state coordinator, which logs the refusal as the Qt UI's)
+bool RefusedWhileRecording(QWidget* parent, Emulator& emulator, Emulator::MediaChange change, uint8_t drive,
+                           const std::string& what)
 {
-    const std::string refusal = emulator.RecordingGuard(action);
+    const std::string refusal = emulator.AskMediaChange(change, drive, what);
     if (refusal.empty())
         return false;
     QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
@@ -168,8 +204,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _originalPalette = palette();
 
     // Register fullscreen shortcut with application-wide context
-    // (works even when menu bar is hidden in fullscreen mode)
-    auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    // (works even when menu bar is hidden in fullscreen mode).
+    // Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey: Ctrl+F is the machine's Symbol Shift + F)
+    auto* fullScreenShortcut = new QShortcut(QKeySequence(KeyboardManager::fullScreenKey()), this);
+    _fullScreenShortcut = fullScreenShortcut;
     fullScreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
 
@@ -177,10 +215,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
+    registerWindowView();
     // Windows that show the same moment as the screen refresh with it
     connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
         if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
             _ft812DebugWindow->refresh();
+    });
+
+    // A new video mode (or crop) resizes the window to it at the same zoom, until the user sizes it by hand
+    connect(_screenWrapper, &DeviceScreenWrapper::pictureGeometryChanged, this, [this]() {
+        updateScreenMinimumSize();  // at once: even a window sized by hand must not drop below 1x of the new mode
+        if (_refitPending)
+            return;
+        _refitPending = true;
+        QTimer::singleShot(0, this, [this]() {
+            _refitPending = false;
+            refitWindowToPicture();
+        });
     });
 
     // Forward drag/drop from GPU window to main window
@@ -255,6 +306,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create central UI binding for emulator state
     m_binding = new EmulatorBinding(this);
     connect(m_binding, &EmulatorBinding::stateChanged, this, &MainWindow::onBindingStateChanged);
+    // This window as a view of the core's TargetState (Stream Deck targeting.md): the instance it shows and the focus
+    // order decide what a surface following the focus drives, and what a WebAPI call without an id acts on (T-1)
+    _surfaceTargets = new SurfaceTargets(m_binding, tr("Main window"), this);
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
@@ -308,23 +362,152 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
     // Instantiate tape manager window (design §9.4): one instance per app
-    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    // session, hidden by default — View → Tape Manager shows it
     tapeManagerWindow = new TapeManagerWindow();
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
-    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media
     mediaPanelWindow = new MediaPanelWindow();
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
-    // Network window (network TDD §8): hidden by default, Tools → Network (Ctrl+5)
+    // Host game controllers (controller-manager ui-ux.md §8): the service runs for the whole session; the dialog is
+    // hidden until Tools → Controllers
+    _hostControllers = new HostControllers(m_binding, this);
+    _hostControllers->SetShortcutWindows(this, debuggerWindow);
+    _controllersDialog = new ControllersDialog(_hostControllers, this);
+    _controllersDialog->setSurfaceTargets(_surfaceTargets);
+    connect(_hostControllers, &HostControllers::notice, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
+    // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
+    // A seek's marks come back to the device that moved: it feels them (control surfaces architecture.md §9)
+    GuiActionHooks guiHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
+                            [this] { handleScreenshotRequested(); },
+                            [this](const QString& text) { statusBar()->showMessage(text, 3000); },
+                            [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
+                            [this](const std::string& device, const std::vector<std::string>& marks) {
+                                _hostControllers->PlayMarks(device, marks);
+                            }};
+    const auto showControllers = [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    };
+    guiHooks.showControllers = showControllers;
+    guiHooks.learn = [this, showControllers](const std::string& device) {
+        showControllers();
+        return _controllersDialog->openLearnWizard(device);
+    };
+    _guiActions = std::make_unique<GuiActions>(m_binding, std::move(guiHooks));
+    _controllersDialog->setActions(&_guiActions->Registry());
+    connect(_hostControllers, &HostControllers::actionTriggered, this,
+            [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
+    // The debugger closed: a debug.* context the GUI set returns to the default
+    connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
+    // The breakpoint list's "Add as Haptic Probe": a source of the loaded game's user profile (haptics.md §7)
+    connect(debuggerWindow, &DebuggerWindow::hapticProbeRequested, this,
+            [this](int kind, int address, int page, int portMask) {
+#ifdef ENABLE_CONTROLLERS
+                controllers::HapticProbe probe;
+                probe.kind = static_cast<controllers::HapticProbeKind>(kind);
+                probe.address = probe.end = static_cast<uint16_t>(address);
+                probe.page = page < 0 ? 0xFFFF : static_cast<uint16_t>(page);
+                probe.portMask = static_cast<uint16_t>(portMask);
+                QString name, error;
+                statusBar()->showMessage(_hostControllers->AddHapticProbe(probe, name, error)
+                                             ? tr("Haptic probe %1 added to this game's profile (rule: hit)").arg(name)
+                                             : error,
+                                         5000);
+#else
+                (void)kind, (void)address, (void)page, (void)portMask;
+#endif
+            });
+    _controllerToast = new ControllerToast(this);
+    connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
+        _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
+    });
+    connect(_controllerToast, &ControllerToast::keepRequested, this, [this] {
+#ifdef ENABLE_CONTROLLERS
+        QString error;
+        statusBar()->showMessage(_hostControllers->KeepAutoDecision(error) ? tr("Controller choice kept for this program")
+                                                                          : error,
+                                 5000);
+#endif
+    });
+    connect(_controllerToast, &ControllerToast::changeRequested, this, [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    });
+    // ui-ux.md §3.5: an unknown pad's first connection offers the learn wizard
+    connect(_hostControllers, &HostControllers::unknownDeviceConnected, this,
+            [this](const QString& name, const QString& device) {
+                _controllerToast->showText(tr("%1 connected: the emulator does not know this pad").arg(name),
+                                           QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Learn,
+                                           device);
+            });
+    connect(_controllerToast, &ControllerToast::learnRequested, this, [this](const QString& device) {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+        const QString why = _controllersDialog->openLearnWizard(device.toStdString());
+        if (!why.isEmpty())
+            statusBar()->showMessage(why, 5000);
+    });
+    // ui-ux.md §8: a pad's first connection on this computer, and a pad gone while the machine runs
+    connect(_hostControllers, &HostControllers::deviceConnected, this,
+            [this](const QString& name, const QString& connector, bool first) {
+                if (!first)
+                    return;
+                _controllerToast->showText(connector.isEmpty() ? tr("%1 connected").arg(name)
+                                                               : tr("%1 connected → %2").arg(name, connector),
+                                           QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Connected);
+            });
+    connect(_hostControllers, &HostControllers::deviceDisconnected, this, [this](const QString& name, bool paused) {
+        _controllerToast->showText(paused ? tr("%1 disconnected: paused").arg(name) : tr("%1 disconnected").arg(name),
+                                   QRect(mapToGlobal(QPoint(0, 0)), size()), ControllerToast::Kind::Disconnected);
+    });
+
+    // Network window (network TDD §8): hidden by default, Tools → Network
     networkWindow = new NetworkWindow();
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
     trafficWindow = new TrafficWindow();
     trafficWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(trafficWindow, Qt::RightEdge);
+
+    // Slot changes (ZX-bus slots, Q1 / Q6): every change restarts the machine; the window follows the new one
+    SlotChangeController::Hooks slotHooks;
+    slotHooks.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
+    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, const ModelSwitch::RunStateBefore& before) {
+        adoptEmulator(emulator, EmulatorOrigin::CreatedByGui);
+        ModelSwitch::StartAsBefore(*emulator, before, [&emulator]() { emulator->StartAsync(); });
+    };
+    slotHooks.restarting = [this](bool on) { _switchingModel = on; };
+    _slotChangeController = new SlotChangeController(std::move(slotHooks), this);
+    networkWindow->setController(_slotChangeController);   // the network cards are slots (Q11)
+
+    // Slots window: hidden by default, Machine -> Slots
+    _slotsWindow = new SlotsWindow();
+    _slotsWindow->setBinding(m_binding);
+    _slotsWindow->setController(_slotChangeController);
+    _dockingManager->addDockableWindow(_slotsWindow, Qt::RightEdge);
+
+    // Next layers: hidden by default, View -> Next Layers
+    _nextLayersWindow = new NextLayersWindow();
+    _nextLayersWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
+
+    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or osd.keyboard
+    _osdKeyboardWindow = new OsdKeyboardWindow(this);
+    _osdKeyboardWindow->setBinding(m_binding);
+
+    // MIDI activity: hidden by default, Tools -> MIDI Activity
+    _midiActivityWindow = new MidiActivityWindow();
+    _midiActivityWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(_midiActivityWindow, Qt::BottomEdge);
 
     // FT812 Debug (line-budget-metrics.md §3.3): hidden by default, Debug -> FT812 Debug,
     // offered only while the machine has the VDAC2 card
@@ -352,10 +535,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
 
     // Create and configure menu system
+    // The files opened lately live in <user data>/recent-files.json (the core keeps the list; every plane shows it);
+    // UNREAL_RECENT_FILES names another file, or "off" keeps it in memory (the verification scripts)
+    {
+        const QString recentEnv = qEnvironmentVariable("UNREAL_RECENT_FILES");
+        std::string store = recentEnv.toStdString();
+        if (store.empty())
+            if (const std::string folder = FileHelper::GetUserDataFolder(""); !folder.empty())
+                store = FileHelper::PathCombine(folder, "recent-files.json");
+        std::string recentError;
+        if (!store.empty() && store != "off" && !RecentFiles::Instance().SetStoreFile(store, &recentError))
+            qWarning() << "Recent files:" << QString::fromStdString(recentError);
+    }
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openRecentFileRequested, this, [this](const QString& path) {
+        if (!QFileInfo::exists(path))
+        {
+            QMessageBox::warning(this, tr("Recent Files"), tr("%1 is no longer there.").arg(path));
+            return;
+        }
+        loadFile(path);
+    });
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
     connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
@@ -363,8 +566,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::insertMediumRequested, this, &MainWindow::insertMediumDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::stopRzxRequested, this, &MainWindow::handleStopRzxRequested);
-    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
-    connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
+    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveSnapshotDialog);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
     connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
     connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
@@ -408,6 +610,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
+    connect(_menuManager, &MenuManager::stepOutRequested, this, &MainWindow::handleStepOut);
+    connect(_menuManager, &MenuManager::runToCursorRequested, this, &MainWindow::handleRunToCursor);
+    connect(_menuManager, &MenuManager::toggleBreakpointRequested, this, &MainWindow::handleToggleBreakpoint);
+    connect(_menuManager, &MenuManager::clearAllBreakpointsRequested, this, &MainWindow::handleClearAllBreakpoints);
+    connect(_menuManager, &MenuManager::showBreakpointsRequested, this, &MainWindow::handleShowBreakpoints);
+    connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
+    connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
@@ -417,6 +626,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
+    connect(_menuManager, &MenuManager::slotsWindowToggled, this, &MainWindow::handleSlotsWindowToggled);
+    connect(_menuManager, &MenuManager::nextLayersToggled, this, &MainWindow::handleNextLayersToggled);
+    connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, _menuManager, &MenuManager::setNextLayersChecked);
+    connect(_menuManager, &MenuManager::osdKeyboardToggled, this, &MainWindow::handleOsdKeyboardToggled);
+    connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
+    connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
+    connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
+    connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
     connect(_menuManager, &MenuManager::trafficWindowToggled, this, &MainWindow::handleTrafficWindowToggled);
     connect(trafficWindow, &TrafficWindow::visibilityChanged, _menuManager, &MenuManager::setTrafficWindowChecked);
     connect(trafficWindow, &TrafficWindow::seeked, this, &MainWindow::refreshViewport);
@@ -437,6 +654,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+    connect(_menuManager, &MenuManager::blackBoxToggled, this, &MainWindow::handleBlackBoxSettingChanged);
+    connect(_menuManager, &MenuManager::blackBoxMinutesChanged, this, &MainWindow::handleBlackBoxSettingChanged);
     connect(_menuManager, &MenuManager::videoRecordingDialogRequested, this, &MainWindow::openAdvancedRecordingDialog);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
@@ -448,14 +667,86 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
     connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
+    // Automation sessions: everything is locked while one holds the machine, except taking control back and the
+    // view (full screen) and leaving the application
+    _remoteControl = new RemoteControlGuard(this);
+    _remoteControl->exempt(_toolBarManager->takeBackAction());
+    _remoteControl->exempt(_toolBarManager->allowAgainAction());
+    _remoteControl->exempt(_menuManager->fullScreenAction());
+    _remoteControl->exempt(_menuManager->exitAction());
+    // Companion clients (docs/inprogress/2026-10-16-companion-client): pairing is approved here; listing and revoking
+    // stay possible during a session (revoking only takes power away)
+    _remoteControl->exempt(_menuManager->companionsAction());
+    _remoteControl->exempt(_menuManager->streamDeckAction());
+    _companions = new CompanionController(this);
+    connect(_menuManager, &MenuManager::controllersRequested, this, [this] {
+        if (_controllersDialog)
+        {
+            _controllersDialog->show();
+            _controllersDialog->raise();
+            _controllersDialog->activateWindow();
+        }
+    });
+    connect(_menuManager, &MenuManager::companionsRequested, _companions, &CompanionController::showCompanionsDialog);
+    // The Stream Deck daemon (Stream Deck integration daemon.md §7): started when a deck is attached, watched,
+    // restarted; Tools > Stream Deck... shows it, pairs it, sets its decks
+    _streamDeckSupervision = new StreamDeckSupervision(this);
+    _streamDeckDialog = new StreamDeckDialog(_companions, this);
+    connect(_menuManager, &MenuManager::streamDeckRequested, this, [this] {
+        _streamDeckDialog->show();
+        _streamDeckDialog->raise();
+        _streamDeckDialog->activateWindow();
+    });
+    connect(_streamDeckDialog, &StreamDeckDialog::surfacesRequested, _menuManager, &MenuManager::controllersRequested);
+    connect(_companions, &CompanionController::toastRequested, this, [this](const QString& title, const QString& body) {
+        if (statusBar())
+            statusBar()->showMessage(title + QStringLiteral(": ") + body, 8000);
+        if (!_hudModel)
+            return;
+        HudToastRequest toast;
+        toast.title = title.toStdString();
+        toast.icon = "remote";
+        toast.body = body.toStdString();
+        toast.dedupKey = "companion";
+        _hudModel->notify(toast);
+    });
+    _remoteControl->exempt(_fullScreenShortcut);
+    for (QObject* widget : _toolBarManager->remoteControlWidgets())
+        _remoteControl->exempt(widget);
+    connect(_toolBarManager, &ToolBarManager::takeBackControlRequested, _remoteControl, &RemoteControlGuard::takeBack);
+    connect(_toolBarManager, &ToolBarManager::allowRetakeRequested, _remoteControl, &RemoteControlGuard::allowAgain);
+    connect(_remoteControl, &RemoteControlGuard::sessionChanged, this, [this](bool active) {
+        updateRemoteControlUi();
+        if (!active)
+            updateMenuStates();  // the controls the lock gave back follow the machine's state again
+    });
+    connect(_remoteControl, &RemoteControlGuard::controlTakenBack, this, [this](const QString& who) {
+        if (_toolBarManager)
+            _toolBarManager->noteControlTakenBack(who);
+        updateRemoteControlUi();
+        if (statusBar())
+            statusBar()->showMessage(tr("Control taken back from %1").arg(who), 10000);
+        if (!_hudModel)
+            return;
+        HudToastRequest toast;
+        toast.title = tr("Control taken back").toStdString();
+        toast.icon = "remote";
+        toast.body = tr("%1 was told and may not take control again for a while (the toolbar: Allow Automation "
+                        "Again)")
+                         .arg(who)
+                         .toStdString();
+        toast.dedupKey = "remote-control";
+        _hudModel->notify(toast);
+    });
     connect(_toolBarManager, &ToolBarManager::ttdToggled, this, &MainWindow::handleTtdToggled);
 #ifdef ENABLE_RECORDING
     connect(_toolBarManager, &ToolBarManager::recordingToggled, this, &MainWindow::handleVideoRecordingToggled);
 #endif
     _toolBarManager->restoreSettings();
 
-    _ttdWidget = new TtdWidget(this, this);
+    _ttdWidget = new TtdWidget(this);
     _ttdWidget->setVisible(false);
+    connect(_ttdWidget, &TtdWidget::viewportRefreshRequested, this, &MainWindow::refreshViewport);
     ui->verticalLayout->insertWidget(0, _ttdWidget);
     connect(_ttdWidget, &TtdWidget::heightChanged, this, &MainWindow::adjustWindowHeightForTtdWidget);
     connect(_ttdWidget, &TtdWidget::visibilityChanged, this, [this](bool visible) {
@@ -468,6 +759,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             }
         }
     });
+    // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
+    _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
+    connect(_ttdWidget, &TtdWidget::visibilityChanged, _hostControllers, &HostControllers::OnTtdPanelVisible);
     connect(_ttdWidget, &TtdWidget::recordingStateChanged, this, [this](bool isRecording) {
         if (_toolBarManager)
         {
@@ -518,11 +812,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    _statusBarManager->setControllers(_hostControllers);
+    if (QMenu* controllers = _menuManager->machineControllersMenu())
+        connect(controllers, &QMenu::aboutToShow, this,
+                [this, controllers] { controllersmenu::Fill(controllers, _hostControllers); });
+    // ui-ux.md §8: the DEBUG tag in the HUD as well, while the HUD is on
+    connect(_statusBarManager, &StatusBarManager::controllerDebugLayerChanged, this, [this](bool held) {
+        if (!_hudModel)
+            return;
+        if (held)
+            _hudModel->setIndicator("controllers-debug", HudState::Alert, tr("DEBUG").toStdString(),
+                                    tr("pad").toStdString());
+        else
+            _hudModel->clearIndicator("controllers-debug");
+    });
+    connect(_statusBarManager, &StatusBarManager::controllersRequested, this, [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    });
+    // The surfaces driving this window, with Pin here / Unpin (targeting.md T-2); hidden while none is connected
+    statusBar()->insertPermanentWidget(0, new SurfaceStatusIcon(_surfaceTargets, statusBar()));
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
     connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
     connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
     connect(_menuManager, &MenuManager::crtEffectsToggled, this, &MainWindow::handleCrtEffectsToggled);
     connect(_menuManager, &MenuManager::crtProfileChanged, this, &MainWindow::handleCrtProfileChanged);
+    connect(_menuManager, &MenuManager::crtShaderChanged, this, &MainWindow::handleCrtShaderChanged);
     connect(_menuManager, &MenuManager::temporalBlendingToggled, this, &MainWindow::handleTemporalBlendingToggled);
 
     // Set GPU acceleration menu state
@@ -533,8 +849,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
 #endif
     _menuManager->setCrtEffectsEnabled(true);
+    _menuManager->setCustomShadersEnabled(_screenWrapper->isGPUAccelerated());
 
     _statusBarManager->restoreSettings();
+
+    // The picture as the user left it (View/*); the automation's published copy follows every change from here on
+    restoreViewSettings();
+    connectWindowDisplayPublishing();
 
     // Bring application window to foreground
     this->raise();
@@ -574,6 +895,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
     messageCenter.AddObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
 
+    ObserverCallbackMethod runControlCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
+    messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
     // Check if there's already a running emulator instance (started before UI)
@@ -596,6 +921,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
                     guard->handleEmulatorInstanceCreated(0, &msg);
                 }
             }
+        });
+    }
+
+    // UNREAL_QT_STRESS_WINDOWS (sanitizer stress, tools/sanitize/stress_round.sh --busy-gui): open the listed windows
+    // at startup so their refresh paths run while instances are created and removed. They stay open across rebinds
+    if (const QString windows = qEnvironmentVariable("UNREAL_QT_STRESS_WINDOWS"); !windows.isEmpty())
+    {
+        QPointer<MainWindow> guard(this);
+        QTimer::singleShot(500, this, [guard, windows]() {
+            if (guard)
+                guard->openStressWindows(windows);
         });
     }
 
@@ -626,6 +962,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
+    _guiActions.reset();  // the GUI actions leave the core registry before the windows they drive
+    WindowView::SetProvider(nullptr);  // the automation's "window" screenshots end with the window
 
     // Clean up automation resources first
     cleanupAutomation();
@@ -676,6 +1014,17 @@ MainWindow::~MainWindow()
         delete mediaPanelWindow;
     }
 
+    delete _controllerToast;
+    _controllerToast = nullptr;
+    delete _streamDeckDialog;
+    _streamDeckDialog = nullptr;
+    delete _streamDeckSupervision;  // the daemon's lease goes back: it ends unless the studio still holds it
+    _streamDeckSupervision = nullptr;
+    delete _controllersDialog;
+    _controllersDialog = nullptr;
+    delete _hostControllers;
+    _hostControllers = nullptr;
+
     if (networkWindow != nullptr)
     {
         _dockingManager->removeDockableWindow(networkWindow);
@@ -701,15 +1050,16 @@ MainWindow::~MainWindow()
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
-    if (_guiContext)
-        delete _guiContext;
-
     // Clean up menu manager (must be before dockingManager)
     if (_menuManager)
     {
         delete _menuManager;
         _menuManager = nullptr;
     }
+
+    // The view closes before its binding: `view:` pins on it fall back to following
+    delete _surfaceTargets;
+    _surfaceTargets = nullptr;
 
     // Clean up binding (must be before ui)
     if (m_binding)
@@ -744,7 +1094,7 @@ void MainWindow::showEvent(QShowEvent* event)
     if (!_initialFitDone)
     {
         _initialFitDone = true;
-        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(_startScale); });
 
         // Turbo render cap follows the display we are on (and moves with the window)
         applyDisplayRefreshRate();
@@ -765,32 +1115,187 @@ void MainWindow::applyDisplayRefreshRate()
              << "Hz, VRR" << _displayRefresh.variable << "(" << _displayRefresh.source << ")";
 }
 
+QSize MainWindow::pictureNativeSize() const
+{
+    // The screen draws a machine's raster in the CRT frame's 352:288 shape (wide framebuffers - TS-Conf 720x288, Profi
+    // 608x288 - are stretched into it): the window is sized for that frame, as DisplayGeometry defines it
+    QSize source(DisplayGeometry::kReferenceWidth, DisplayGeometry::kReferenceHeight);
+    if (_screenWrapper)
+    {
+        const QSize shown = _screenWrapper->pictureSourceRect().size().toSize();
+        if (shown.width() > 0 && shown.height() > 0)
+            source = shown;
+
+        // A video card's picture (the VDAC2's FT812, VGA modes) has square pixels: the window takes its own size
+        if (_screenWrapper->pictureAspect() > 0.0f)
+            return source;
+    }
+
+    const DisplayGeometry::Size frame = DisplayGeometry::DisplayFrame(static_cast<uint16_t>(source.width()),
+                                                                      static_cast<uint16_t>(source.height()));
+    return QSize(frame.width, frame.height);
+}
+
+void MainWindow::updateScreenMinimumSize()
+{
+    if (!ui->contentFrame)
+        return;
+
+    QSize minimum = pictureNativeSize();
+    if (QScreen* scr = screen())
+        minimum = minimum.boundedTo(scr->availableGeometry().size() - windowChrome());  // never beyond the display
+    ui->contentFrame->setMinimumSize(minimum);
+}
+
+QSize MainWindow::windowChrome()
+{
+    // Right after a resize() the content frame still has its old size until the layout runs: measure after it did
+    if (QLayout* mainLayout = layout())
+        mainLayout->activate();
+    if (QWidget* central = centralWidget())
+    {
+        if (QLayout* centralLayout = central->layout())
+            centralLayout->activate();
+    }
+
+    const QSize measured = size() - ui->contentFrame->size();
+    if (measured.width() >= 0 && measured.height() >= 0)
+        _chrome = measured;
+    return _chrome;  // a window not laid out yet gives nonsense: the last sane one stands
+}
+
 void MainWindow::fitWindowToScreen(int scale)
 {
     if (!_screenWrapper || !ui->contentFrame || isFullScreen() || isMaximized())
         return;
 
-    const QSize native = _screenWrapper->sizeHint();  // Viewport-cropped native size (352x288 by default)
-    const QSize chrome = size() - ui->contentFrame->size();  // Menu bar, toolbar, status bar, margins
-    const QSize target = native * scale + chrome;
+    const QSize native = pictureNativeSize();
+    const QSize chrome = windowChrome();
 
-    // Keep the window on screen: fall back to 1x if 2x does not fit
+    // Keep the window on screen: the zoom drops to the largest whole one that fits
+    int fitted = scale;
     if (QScreen* scr = screen())
     {
-        const QSize available = scr->availableGeometry().size();
-        if (scale > 1 && (target.width() > available.width() || target.height() > available.height()))
-        {
-            fitWindowToScreen(scale - 1);
-            return;
-        }
+        const QSize available = scr->availableGeometry().size() - chrome;
+        while (fitted > 1 && (native.width() * fitted > available.width() || native.height() * fitted > available.height()))
+            --fitted;
     }
 
-    resize(target);
+    _zoomFactor = fitted;
+    _fitTarget = native * fitted + chrome;
+    _fitClock.start();
+    resize(_fitTarget);
+}
+
+void MainWindow::registerWindowView()
+{
+    // The instance the screen shows, asked on the GUI thread; a guarded pointer, as a queued grab may outlive the window
+    QPointer<MainWindow> window(this);
+    auto shownEmulatorId = [window]() -> std::string {
+        if (!window || !window->_emulator)
+            return {};
+        return window->_emulator->GetId();
+    };
+    auto display = [window](const WindowDisplayChange* change, WindowDisplaySettings& out, std::string& error) {
+        if (!window || !window->_screenWrapper)
+        {
+            error = "The window is closed";
+            return false;
+        }
+        if (change)
+            window->applyWindowDisplay(*change);
+        out = window->windowDisplaySettings();
+        if (change)
+            window->publishWindowDisplay();  // the toggles read it at once
+        return true;
+    };
+    auto record = [window](WindowViewProvider::RecordAction action, const WindowRecordingRequest* request,
+                           WindowRecordingStatus& out, std::string& error) {
+        if (!window)
+        {
+            error = "The window is closed";
+            return false;
+        }
+        if (!window->_windowRecorder)
+            window->_windowRecorder = new WindowRecorder(window->_osdKeyboardWindow, window);
+        switch (action)
+        {
+            case WindowViewProvider::RecordAction::Start:
+                return window->_windowRecorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
+            case WindowViewProvider::RecordAction::Stop:
+                return window->_windowRecorder->stop(out, error);
+            case WindowViewProvider::RecordAction::Status:
+                window->_windowRecorder->status(out);
+                return true;
+        }
+        return false;
+    };
+    auto parameters = [window](const CrtParameterChange* change, CrtParameters& out, std::string& error) {
+        if (!window || !window->_screenWrapper)
+        {
+            error = "The window is closed";
+            return false;
+        }
+        if (change)
+            window->applyCrtParameters(*change);
+        out = window->crtParameters();
+        if (change)
+            window->publishWindowDisplay();
+        return true;
+    };
+    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display, parameters,
+                                                                  record));
+    schedulePublishWindowDisplay();
+}
+
+// windowDisplaySettings / applyWindowDisplay and the rest of the window's automation: mainwindow_picture.cpp
+
+void MainWindow::refitWindowToPicture()
+{
+    if (_userResizedWindow || !_initialFitDone || !_screenWrapper || !ui->contentFrame || isFullScreen() ||
+        isMaximized())
+        return;
+
+    const QSize native = pictureNativeSize();
+
+    // The window cannot go below the width its toolbar needs, and the toolbar wraps (changing the chrome's height)
+    // at the width we pick: two passes, the second with the chrome the first one produced
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const QSize chrome = windowChrome();
+        QSizeF picture(native.width() * _zoomFactor, native.height() * _zoomFactor);
+
+        // Larger than the display: shrink; smaller than the window's minimum: grow - the aspect ratio kept
+        if (QScreen* scr = screen())
+        {
+            const QSizeF available = QSizeF(scr->availableGeometry().size() - chrome);
+            if (picture.width() > available.width() || picture.height() > available.height())
+                picture.scale(available, Qt::KeepAspectRatio);
+        }
+        const QSizeF smallest = QSizeF(minimumSize() - chrome).expandedTo(QSizeF(1, 1));
+        if (picture.width() < smallest.width() || picture.height() < smallest.height())
+            picture.scale(smallest, Qt::KeepAspectRatioByExpanding);
+
+        const QSize target = picture.toSize() + chrome;
+        if (target == size())
+            return;
+
+        _fitTarget = target;
+        _fitClock.start();
+        resize(target);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     qDebug() << "QCloseEvent : Closing application";
+
+    // Unsaved media the policy leaves to the user: asked before anything is torn down (Cancel keeps the window)
+    if (!confirmUnsavedMedia())
+    {
+        event->ignore();
+        return;
+    }
 
     if (_toolBarManager)
     {
@@ -800,6 +1305,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         _statusBarManager->saveSettings();
     }
+    saveViewSettings();
 
     // ============================================================
     // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
@@ -885,6 +1391,16 @@ void MainWindow::closeEvent(QCloseEvent* event)
         delete mediaPanelWindow;
         mediaPanelWindow = nullptr;
     }
+    delete _controllerToast;
+    _controllerToast = nullptr;
+    delete _streamDeckDialog;
+    _streamDeckDialog = nullptr;
+    delete _streamDeckSupervision;  // the daemon's lease goes back: it ends unless the studio still holds it
+    _streamDeckSupervision = nullptr;
+    delete _controllersDialog;
+    _controllersDialog = nullptr;
+    delete _hostControllers;
+    _hostControllers = nullptr;
     if (networkWindow)
     {
         _dockingManager->removeDockableWindow(networkWindow);
@@ -918,6 +1434,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
+    schedulePublishWindowDisplay();  // a hand resize ends the whole scale
     if (_screenWrapper && ui->contentFrame) {
         // fitToParent() sets move+resize atomically, so no deferred
         // re-centering dance is needed anymore
@@ -951,6 +1468,13 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         if (!looksLikeMaximized)
         {
             _normalGeometry = currentGeom;
+
+            // A window-system resize we did not ask for is the user dragging the edge
+            // (not the window system's own steps towards our size: it animates a resize on some platforms)
+            constexpr qint64 kAnimationMs = 1500;
+            const bool ours = _fitClock.isValid() && _fitClock.elapsed() < kAnimationMs;
+            if (_initialFitDone && event->spontaneous() && !ours && event->size() != _fitTarget)
+                _userResizedWindow = true;
         }
     }
 
@@ -995,6 +1519,7 @@ void MainWindow::changeEvent(QEvent* event)
 {
     if (event->type() == QEvent::WindowStateChange)
     {
+        schedulePublishWindowDisplay();  // full screen / maximized: the automation's copy follows
         QWindowStateChangeEvent* stateEvent = static_cast<QWindowStateChangeEvent*>(event);
         Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates newState = windowState();
@@ -1436,9 +1961,15 @@ void MainWindow::toggleEmulatorStartStop()
         // manager, in log lines, and it is what TTD stores as emulator_id in a
         // session dump. It used to be "test", which is what every recording made
         // from this app was labelled with.
-        auto newEmulator = _nextEmulatorModel.empty()
+        // A one-shot request (a file that names its machine) wins over the Machine menu's choice
+        const bool oneShot = !_nextEmulatorModel.empty();
+        const std::string& startModel = oneShot ? _nextEmulatorModel : _pickedModel;
+        const uint32_t startRamKb = oneShot ? _nextEmulatorRamKb : _pickedRamKb;
+        auto newEmulator = startModel.empty()
             ? _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo)
-            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, _nextEmulatorRamKb, LoggerLevel::LogInfo);
+            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", startModel, startRamKb, LoggerLevel::LogInfo);
+        _pickedModel.clear();  // the menu follows the running machine from here
+        _pickedRamKb = 128;
 
         // Initialize emulator instance
         if (newEmulator)
@@ -1569,7 +2100,7 @@ void MainWindow::toggleEmulatorStartStop()
 void MainWindow::handleFullScreenShortcut()
 {
     // IMPORTANT: Release modifier keys (Ctrl, Shift) to prevent stuck keys in emulator.
-    // The fullscreen shortcut (Ctrl+F) sends a Ctrl press to the emulator. During
+    // The fullscreen shortcut (with its modifier keys) sends a modifier press to the emulator. During
     // window state transitions, the key release may be missed, causing the Ctrl key
     // to stay "stuck" in the emulator's keyboard state.
     if (_emulator)
@@ -1907,7 +2438,7 @@ void MainWindow::handleFullScreenShortcutLinux()
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
 
-            // Ensure keyboard focus for Ctrl+F to work
+            // Ensure keyboard focus for the fullscreen shortcut to work
             activateWindow();
             raise();
             if (_screenWrapper)
@@ -1975,6 +2506,117 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     _lastFrameCount = frameCount;
 }
 
+void MainWindow::handleSystemReset(int id, Message* message)
+{
+    // NC_SYSTEM_RESET: a reset may have read another ROM (the Sprinter's BIOS chosen at runtime) and with it made
+    // other symbol bundles; the ones the user switched off stay off. The notification names no instance: the window's
+    // own is checked on the GUI thread, which owns _emulator
+    (void)id;
+    (void)message;
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (_emulator && _emulatorOrigin == EmulatorOrigin::CreatedByGui && _emulator->GetDebugManager())
+                SymbolBundlePreferences::ApplySaved(_emulator->GetDebugManager()->GetLabelManager());
+        },
+        Qt::QueuedConnection);
+}
+
+void MainWindow::handleMediaChangesState(int id, Message* message)
+{
+    // NC_MEDIA_DIRTY / CLEAN / EJECTED / INSERTED arrive on the MessageCenter dispatch thread: the payload names its
+    // emulator, and only this window's one moves the mark. It is set on the GUI thread, which owns _emulator, from the
+    // manager's own state
+    (void)id;
+    auto* payload = message ? dynamic_cast<MediaSlotPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    const unreal::UUID emulatorId = payload->emulatorId;
+    QMetaObject::invokeMethod(
+        this,
+        [this, emulatorId]() {
+            if (_emulator && _emulator->GetUUID() == emulatorId)
+                updateUnsavedMediaMark();
+        },
+        Qt::QueuedConnection);
+}
+
+void MainWindow::updateUnsavedMediaMark()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    setWindowModified(context && context->pMediaManager && !context->pMediaManager->Unsaved().empty());
+}
+
+bool MainWindow::confirmUnsavedMedia()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    if (!context || !context->pMediaManager)
+        return true;
+    const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
+    if (!prompt.ask)
+        return true;  // the policy saves (or drops) every one of them as the emulator goes
+
+    QStringList lines;
+    for (const UnsavedMediumLine& m : prompt.media)
+        lines << QString("%1: %2 (%3) - %4")
+                     .arg(QString::fromStdString(m.slot), QString::fromStdString(m.source),
+                          QString::fromStdString(m.changes), QString::fromStdString(m.fate));
+    QMessageBox box(QMessageBox::Warning, tr("Unsaved Media"),
+                    tr("These media have unsaved changes:\n\n%1").arg(lines.join("\n")), QMessageBox::NoButton, this);
+    QPushButton* save = box.addButton(tr("Save..."), QMessageBox::AcceptRole);
+    QPushButton* drop = box.addButton(tr("Close Without Saving"), QMessageBox::DestructiveRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(save);
+    box.exec();
+
+    MediaControl control(context);
+    auto run = [&control](const std::string& verb, const std::string& slot, const std::string& path,
+                          const std::map<std::string, std::string>& options) {
+        return control.Execute(MediaRequest{verb, slot, path, options}).ToValue();
+    };
+    if (box.clickedButton() == drop)
+    {
+        // The core would keep an ask composite's changes as a delta: the user said no
+        for (const UnsavedMediumLine& m : prompt.media)
+            if (m.onRelease == "ask")
+                run("discard", m.slot, {}, {});
+        return true;
+    }
+    if (box.clickedButton() != save)
+        return false;
+
+    QStringList failed;
+    for (const UnsavedMediumLine& m : prompt.media)
+    {
+        if (!m.asks)
+            continue;
+        if (m.onRelease == "ask")
+        {
+            // The strategy dialog of the media panel (S1-S4, writes.save preselected)
+            const std::string slot = m.slot;
+            FlattenDialog dialog(
+                slot,
+                [&run, slot](const std::string& verb, const std::string& path, const std::map<std::string, std::string>& options) {
+                    return run(verb, slot, path, options);
+                },
+                _lastDirectory, this);
+            if (dialog.exec() != QDialog::Accepted)
+                return false;
+            continue;
+        }
+        const MediaReply saved = control.Execute(MediaRequest{"save", m.slot, {}, {}});
+        if (!saved.result.Ok())
+            failed << QString("%1: %2").arg(QString::fromStdString(m.slot), QString::fromStdString(saved.result.message));
+    }
+    if (failed.isEmpty())
+        return true;
+    return QMessageBox::question(this, tr("Unsaved Media"),
+                                 tr("These media could not be saved (export them from the Media panel):\n\n%1\n\n"
+                                    "Close anyway? Their changes will be lost.")
+                                     .arg(failed.join("\n")),
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+}
+
 void MainWindow::handleVideoModeChanged(int id, Message* message)
 {
     // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
@@ -2005,7 +2647,7 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
                 return;
 
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
@@ -2112,6 +2754,8 @@ void MainWindow::openSnapshotDialog()
                      buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
                      buildFilterGroup(tr("SPG Programs (TS-Conf)"), {"spg"}) + ";;" +
+                     buildFilterGroup(tr("NEX Programs (ZX Spectrum Next)"), {"nex"}) + ";;" +
+                     buildFilterGroup(tr("SNX Snapshots (NextZXOS)"), {"snx"}) + ";;" +
                      buildFilterGroup(tr("RZX Recordings"), {"rzx"}) + ";;" +
                      tr("All Files (*)");
 
@@ -2206,10 +2850,7 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     if (_emulator)
     {
         if (_emulator->IsRunning())
-        {
-            _emulator->Pause(false);
-            _emulator->Stop();
-        }
+            _emulator->Stop();  // parks and joins the emulation thread itself
         releaseEmulator();
     }
 
@@ -2251,7 +2892,7 @@ void MainWindow::handleZXPolyConfigurationRequested(const QString& configuration
         tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.")
             .arg(title),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (reply != QMessageBox::Yes)
+    if (reply != QMessageBox::Yes || !confirmUnsavedMedia())
     {
         if (_menuManager)
             _menuManager->updateMachineModelSelection(_emulator);
@@ -2344,6 +2985,11 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             _nextEmulatorModel = LoaderSPG::kModel;
             _nextEmulatorRamKb = LoaderSPG::kRamKb;
         }
+        else if (category == FileSnapshot && filePath.toLower().endsWith(".nex"))
+        {
+            _nextEmulatorModel = LoaderNex::kModel;
+            _nextEmulatorRamKb = LoaderNex::kRamKb;
+        }
 
         toggleEmulatorStartStop();
         _nextEmulatorModel.clear();
@@ -2356,8 +3002,6 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
-            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
-                break;
             // An RZX recording plays on the machine its start snapshot names
             if (_emulator && filePath.toLower().endsWith(".rzx"))
             {
@@ -2366,47 +3010,34 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                 _lastFrameCount = 0;
                 break;
             }
-            // An SZX file names its machine: another model is replaced by that one
-            // first (as the Machine menu does, media follow), the same one just loads
-            if (_emulator && filePath.toLower().endsWith(".szx"))
+            // An SZX file names its machine, an SPG runs on TS-Conf only: another model is replaced by the one the file
+            // needs first (as the Machine menu does, media follow). Choosing the file here is the explicit request, so
+            // the window switches whatever the automation default is
+            if (_emulator && (filePath.toLower().endsWith(".szx") || filePath.toLower().endsWith(".spg") ||
+                           filePath.toLower().endsWith(".nex")))
             {
-                szx::Machine machine;
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                // A ZX-Poly module takes a .zxp only: never replaced by another model, never given a single-machine snapshot
+                if (snapshot::IsZXPolyModule(*runningContext))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"),
+                                         QString::fromStdString(snapshot::ZXPolyRefusal(filePath.right(3).toLower().toStdString())));
+                    break;
+                }
+                SnapshotLauncher::Need need;
                 std::string error;
-                if (!LoaderSZX::ProbeMachine(file, machine, error))
+                if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))
                 {
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                EmulatorContext* runningContext = _emulator->GetContext();
-                if (!runningContext)
-                    break;  // removed by automation; the queued unbind follows
-                const CONFIG& running = runningContext->config;
-                if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
+                if (need.differs && !need.model.empty())
                 {
-                    const TMemModel* target = Config::FindModelByEnum(machine.model);
-                    qInfo() << "SZX saved on" << QString::fromStdString(szx::DescribeModel(machine.model, machine.ramKb))
-                            << "- replacing the running"
-                            << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
-                    if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
-                        break;
-                }
-            }
-            // An SPG is a TS-Conf program: another model is replaced by TS-Conf first
-            if (_emulator && filePath.toLower().endsWith(".spg"))
-            {
-                std::string error;
-                if (!LoaderSPG::Probe(file, error))
-                {
-                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
-                    break;
-                }
-                EmulatorContext* runningContext = _emulator->GetContext();
-                if (!runningContext)
-                    break;  // removed by automation; the queued unbind follows
-                if (runningContext->config.mem_model != MM_TSL)
-                {
-                    qInfo() << "SPG program - replacing the running machine by TS-Conf";
-                    if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
+                    qInfo() << "The file needs" << QString::fromStdString(need.description) << "- replacing the running"
+                            << QString::fromStdString(szx::DescribeModel(runningContext->config.mem_model, runningContext->config.ramsize));
+                    if (!switchMachineModel(need.model, need.ramKb))
                         break;
                 }
             }
@@ -2533,11 +3164,11 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
     {
         case FileKind::Floppy:
         {
-            if (RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
-                return;
             // fdd.a .. fdd.d. Quick reset into TR-DOS only from drive A of a running machine;
             // paused or stopped machines just mount
             const uint8_t drive = static_cast<uint8_t>(target.slotId.back() - 'a');
+            if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadDisk, drive, file))
+                return;
             const bool autostart = target.autostart && _autostartDisks && !mountOnly &&
                                    (freshlyStarted || (_emulator->IsRunning() && !_emulator->IsPaused()));
             std::string error;
@@ -2558,7 +3189,7 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
         }
         case FileKind::Tape:
         {
-            if (RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadTape, 0, file))
                 return;
             std::string error;
             if (!_emulator->LoadTape(file, &error))
@@ -2604,6 +3235,20 @@ void MainWindow::refuseFile(const QString& filePath, const QString& reason, Load
 
 void MainWindow::dropFiles(const QStringList& paths, bool mountOnly)
 {
+    // Under an automation session the machine takes nothing from the GUI (execution arbiter design §6a)
+    if (_remoteControl && _remoteControl->active())
+    {
+        if (_hudModel)
+        {
+            HudToastRequest toast;
+            toast.title = tr("Under remote control").toStdString();
+            toast.body = tr("An automation session controls this emulator: take control back first").toStdString();
+            toast.dedupKey = "remote-control-refused";
+            _hudModel->notify(toast);
+        }
+        return;
+    }
+
     if (paths.isEmpty())
         return;
     if (paths.size() == 1 || !_emulator)
@@ -2712,7 +3357,7 @@ void MainWindow::insertMediumDialog()
     _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
 }
 
-void MainWindow::saveFileDialog()
+void MainWindow::saveSnapshotDialog(const QString& preferred)
 {
     // Check if emulator is running
     if (!_emulator)
@@ -2721,13 +3366,25 @@ void MainWindow::saveFileDialog()
         return;
     }
 
-    // Show a file save dialog using the last save directory
-    // The format follows the extension; SZX keeps the most state (MEMPTR, the
-    // frame position, AY, Beta 128)
+    // The formats the machine can be saved in NOW: the dialog offers those only (a Pentagon 512 only .szx, a Sprinter at the DSS
+    // prompt none). SZX first: it keeps the most state (MEMPTR, the frame position, AY, Beta 128)
+    const std::vector<SaveSnapshotChoices::Choice> all = SaveSnapshotChoices::Build(_emulator->SnapshotSaveFormats());
+    const std::vector<SaveSnapshotChoices::Choice> offered = SaveSnapshotChoices::Offered(all, preferred);
+    if (offered.empty())
+    {
+        QMessageBox::warning(this, tr("Save Snapshot"),
+                             tr("This machine cannot be saved as a snapshot now.\n\n%1").arg(SaveSnapshotChoices::Refusals(all)));
+        return;
+    }
+    QStringList filters;
+    for (const SaveSnapshotChoices::Choice& choice : offered)
+        filters << choice.filter;
+
+    // The format follows the extension; the dialog starts with the first offered one
     QString selectedFilter;
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.szx",
-                                                    tr("SZX Snapshots (*.szx);;Z80 Snapshots (*.z80);;SNA Snapshots (*.sna)"),
-                                                    &selectedFilter);
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"),
+                                                    _lastSaveDirectory + "/snapshot." + offered.front().extension,
+                                                    filters.join(";;"), &selectedFilter);
 
     if (!filePath.isEmpty())
     {
@@ -2735,12 +3392,13 @@ void MainWindow::saveFileDialog()
         const QString lower = filePath.toLower();
         if (!lower.endsWith(".szx") && !lower.endsWith(".z80") && !lower.endsWith(".sna"))
         {
-            if (selectedFilter.contains("*.z80"))
-                filePath += ".z80";
-            else if (selectedFilter.contains("*.sna"))
-                filePath += ".sna";
-            else
-                filePath += ".szx";
+            QString extension = offered.front().extension;
+            for (const SaveSnapshotChoices::Choice& choice : offered)
+            {
+                if (selectedFilter == choice.filter)
+                    extension = choice.extension;
+            }
+            filePath += "." + extension;
         }
 
         // Save directory to settings (separate from open directory)
@@ -2749,9 +3407,8 @@ void MainWindow::saveFileDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save the snapshot
-        std::string file = filePath.toStdString();
-        bool result = _emulator->SaveSnapshot(file);
+        // Save the snapshot; a refusal (a format typed over the dialog's filter) says why
+        const bool result = _emulator->SaveSnapshot(filePath.toStdString());
 
         if (result)
         {
@@ -2760,50 +3417,9 @@ void MainWindow::saveFileDialog()
         else
         {
             qDebug() << "Failed to save snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save snapshot to:\n%1").arg(filePath));
-        }
-    }
-}
-
-void MainWindow::saveFileDialogZ80()
-{
-    // Check if emulator is running
-    if (!_emulator)
-    {
-        qDebug() << "No emulator running, cannot save snapshot";
-        return;
-    }
-
-    // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Z80 Snapshot"), _lastSaveDirectory + "/snapshot.z80",
-                                                    tr("Z80 Snapshots (*.z80);;All Files (*)"));
-
-    if (!filePath.isEmpty())
-    {
-        // Ensure .z80 extension
-        if (!filePath.toLower().endsWith(".z80"))
-        {
-            filePath += ".z80";
-        }
-
-        // Save directory to settings (separate from open directory)
-        QFileInfo fileInfo(filePath);
-        _lastSaveDirectory = fileInfo.absolutePath();
-        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
-        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
-
-        // Save the snapshot - Emulator::SaveSnapshot() handles .z80 extension
-        std::string file = filePath.toStdString();
-        bool result = _emulator->SaveSnapshot(file);
-
-        if (result)
-        {
-            qDebug() << "Z80 Snapshot saved successfully:" << filePath;
-        }
-        else
-        {
-            qDebug() << "Failed to save Z80 snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Could not save the snapshot to:\n%1\n\n%2")
+                                     .arg(filePath, QString::fromStdString(_emulator->LastSaveResult().reason)));
         }
     }
 }
@@ -3117,7 +3733,7 @@ void MainWindow::handlePauseEmulator()
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
         std::string emulatorId = _emulator->GetId();
-        _emulatorManager->PauseEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        _emulatorManager->PauseEmulator(emulatorId, execution::Origin::Gui);  // Use EmulatorManager for lifecycle
         updateMenuStates();
         qDebug() << "Emulator paused";
     }
@@ -3128,7 +3744,7 @@ void MainWindow::handleResumeEmulator()
     if (_emulator && _emulator->IsPaused())
     {
         std::string emulatorId = _emulator->GetId();
-        _emulatorManager->ResumeEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        _emulatorManager->ResumeEmulator(emulatorId, execution::Origin::Gui);  // Use EmulatorManager for lifecycle
         updateMenuStates();
         qDebug() << "Emulator resumed";
     }
@@ -3289,6 +3905,108 @@ void MainWindow::handleStepOver()
     }
 }
 
+void MainWindow::handleStepOut()
+{
+    submitGuiAction("run.step_out");
+}
+
+void MainWindow::handleRunToCursor()
+{
+    submitGuiAction("run.to_cursor");
+}
+
+void MainWindow::submitGuiAction(const char* id)
+{
+    if (!_emulator)
+        return;
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:menu";
+    origin.client = "menu";
+    QPointer<MainWindow> self(this);
+    // The actions worker runs it (a run never blocks the GUI thread); a refusal goes to the status bar
+    actions::ActionRegistry::Instance().Submit(id, actions::ActionValue{}, _emulator->GetId(), std::move(origin),
+                                               [self](actions::ActionResult result) {
+                                                   if (result.ok)
+                                                       return;
+                                                   const QString text = QString::fromStdString(result.message);
+                                                   QMetaObject::invokeMethod(
+                                                       QCoreApplication::instance(),
+                                                       [self, text] {
+                                                           if (self)
+                                                               self->statusBar()->showMessage(text, 5000);
+                                                       },
+                                                       Qt::QueuedConnection);
+                                               });
+}
+
+void MainWindow::handleToggleBreakpoint()
+{
+    if (debuggerWindow && debuggerWindow->isVisible())
+    {
+        debuggerWindow->toggleBreakpointAtCursor();
+        return;
+    }
+    // The debugger is hidden: at PC, as the core's dbg.breakpoint_toggle_pc
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    BreakpointManager* breakpoints = _emulator->GetBreakpointManager();
+    Z80State* z80 = _emulator->GetZ80State();
+    if (breakpoints == nullptr || z80 == nullptr)
+        return;
+    const uint16_t pc = z80->pc;
+    const QString where = QStringLiteral("#%1").arg(pc, 4, 16, QLatin1Char('0')).toUpper();
+    for (const auto& [id, bp] : breakpoints->GetAllBreakpoints())
+        if (bp && BreakpointManager::IsUserBreakpoint(*bp) && bp->type == BRK_MEMORY && !bp->isRange &&
+            bp->matchType == BRK_MATCH_ADDR && bp->memoryType == BRK_MEM_EXECUTE && bp->z80address == pc)
+        {
+            breakpoints->RemoveBreakpointByID(id);
+            statusBar()->showMessage(tr("Breakpoint at %1 removed").arg(where), 3000);
+            return;
+        }
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = pc;
+    std::string error;
+    if (breakpoints->AddBreakpoint(spec, error) == BRK_INVALID)
+        statusBar()->showMessage(tr("Breakpoint not set: %1").arg(QString::fromStdString(error)), 5000);
+    else
+        statusBar()->showMessage(tr("Breakpoint at %1 set").arg(where), 3000);
+}
+
+void MainWindow::handleClearAllBreakpoints()
+{
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    if (BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
+    {
+        // The user's breakpoints: the BASIC typer's control points and the debugger adapters' stay with their owners
+        breakpoints->ClearUserBreakpoints();
+        statusBar()->showMessage(tr("All breakpoints cleared"), 3000);
+    }
+}
+
+void MainWindow::handleShowBreakpoints()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->openBreakpoints();
+}
+
+void MainWindow::handleShowRegisters()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusRegistersPane();
+}
+
+void MainWindow::handleShowMemory()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusMemoryPane();
+}
+
 void MainWindow::handleDebuggerToggled(bool visible)
 {
     if (debuggerWindow)
@@ -3344,6 +4062,30 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::handleNextLayersToggled(bool visible)
+{
+    if (_nextLayersWindow)
+        _nextLayersWindow->setVisible(visible);
+}
+
+void MainWindow::handleOsdKeyboardToggled(bool visible)
+{
+    if (_osdKeyboardWindow)
+        _osdKeyboardWindow->setVisible(visible);
+}
+
+void MainWindow::handleSlotsWindowToggled(bool visible)
+{
+    if (_slotsWindow)
+        _slotsWindow->setVisible(visible);
+}
+
+void MainWindow::handleMidiActivityToggled(bool visible)
+{
+    if (_midiActivityWindow)
+        _midiActivityWindow->setVisible(visible);
+}
+
 void MainWindow::handleTrafficWindowToggled(bool visible)
 {
     if (trafficWindow)
@@ -3375,6 +4117,45 @@ void MainWindow::handleFt812DebugToggled(bool visible)
         _ft812DebugWindow->setVisible(visible && _emulator && Ft812DebugWindow::Offered(_emulator->GetContext()));
 }
 
+void MainWindow::releasePanelHolders()
+{
+    // The panels that keep the machine let go of it: a removed instance is freed by its last holder (BUGS.md #11)
+    if (_ttdWidget)
+        _ttdWidget->updateState(nullptr);
+    if (_toolBarManager)
+        _toolBarManager->updateState(nullptr);
+#ifdef ENABLE_RECORDING
+    if (_recordingWidget)
+        _recordingWidget->updateState(nullptr);
+#endif
+}
+
+void MainWindow::openStressWindows(const QString& list)
+{
+    const std::vector<std::pair<QString, void (MainWindow::*)(bool)>> windows = {
+        {"debugger", &MainWindow::handleDebuggerToggled},     {"ttd", &MainWindow::handleTtdToggled},
+        {"media", &MainWindow::handleMediaPanelToggled},       {"network", &MainWindow::handleNetworkWindowToggled},
+        {"slots", &MainWindow::handleSlotsWindowToggled},      {"nextlayers", &MainWindow::handleNextLayersToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
+        {"midi", &MainWindow::handleMidiActivityToggled},      {"tape", &MainWindow::handleTapeManagerToggled},
+        {"log", &MainWindow::handleLogWindowToggled},          {"keyboard", &MainWindow::handleOsdKeyboardToggled},
+    };
+    for (const QString& rawName : list.split(',', Qt::SkipEmptyParts))
+    {
+        const QString name = rawName.trimmed().toLower();
+        bool known = false;
+        for (const auto& [windowName, toggle] : windows)
+        {
+            if (name == "all" || name == windowName)
+            {
+                (this->*toggle)(true);
+                known = true;
+            }
+        }
+        if (!known)
+            qWarning() << "UNREAL_QT_STRESS_WINDOWS: unknown window" << name;
+    }
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -3389,7 +4170,7 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
-        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+        if (_emulator && RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadTape, 0, path.toStdString()))
             return;
         if (_emulator)
         {
@@ -3437,15 +4218,14 @@ void MainWindow::handleAudioSettingsRequested()
     // Open even without an active emulator: the widget shows a status
     // banner and greys out its controls when context is null, which is
     // less confusing than the menu item silently doing nothing
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
     // Create audio settings widget as a dialog
-    _audioSettingsWidget = new AudioSettingsWidget(context, this);
+    _audioSettingsWidget = new AudioSettingsWidget(m_binding ? m_binding->emulatorShared() : nullptr, this);
     _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
+    // The General Sound personality is a slot change (owner decision Q10): the machine restarts with the card
+    connect(_audioSettingsWidget, &AudioSettingsWidget::generalSoundCardRequested, this, [this](int kind) {
+        if (_emulator && _slotChangeController)
+            _slotChangeController->ApplyGeneralSound(_emulator->GetId(), kind, _audioSettingsWidget);
+    });
     _audioSettingsWidget->setWindowFlags(Qt::Dialog);
     _audioSettingsWidget->show();
     _audioSettingsWidget->raise();
@@ -3462,7 +4242,9 @@ void MainWindow::handleTemporalEffectsRequested()
     connect(dialog, &TemporalEffectsDialog::blendingChanged, this, [this](bool enabled) {
         if (_menuManager)
             _menuManager->setTemporalBlendingChecked(enabled);
+        schedulePublishWindowDisplay();
     });
+    connect(dialog, &TemporalEffectsDialog::settingsChanged, this, &MainWindow::schedulePublishWindowDisplay);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -3471,13 +4253,7 @@ void MainWindow::handleTemporalEffectsRequested()
 
 void MainWindow::handleHudSettingsRequested()
 {
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
-    auto* dialog = new HudSettingsDialog(context, this);
+    auto* dialog = new HudSettingsDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -3497,7 +4273,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
         if (context && context->pScreen)
         {
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
@@ -3603,6 +4379,17 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     QString displayName = QString("%1 %2K").arg(parts[0]).arg(ramSize);
     if (const MachineVariant* variant = MachineVariants::Find(modelName))
         displayName = QString::fromUtf8(variant->title);
+
+    // Nothing runs: nothing to destroy and nothing to confirm. The choice waits for Start
+    if (!_emulator)
+    {
+        _pickedModel = modelName;
+        _pickedRamKb = ramSize;
+        if (_menuManager)
+            _menuManager->setCurrentModelKey(modelSpec);
+        qInfo() << "Machine chosen for the next start:" << displayName;
+        return;
+    }
 
     // Confirm with user
     QMessageBox::StandardButton reply = QMessageBox::question(
@@ -3753,14 +4540,18 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
 
     _switchingModel = false;
 
-    // Media that could not follow are worth a word
-    if (!switched.media.detached.empty() || !switched.media.closed.empty())
+    // Cards and media that could not follow are worth a word (the cards: ZX-bus slots R-OP-9)
+    if (!switched.slotCarry.dropped.empty() || !switched.media.detached.empty() || !switched.media.closed.empty())
     {
         QStringList lines;
+        for (const SlotManager::CarryReport::Dropped& card : switched.slotCarry.dropped)
+            lines << tr("%1 = %2 not carried: %3")
+                         .arg(QString::fromStdString(card.slot), QString::fromStdString(card.card),
+                              QString::fromStdString(card.reason));
         for (const std::string& line : switched.media.lines)
             lines << QString::fromStdString(line);
         QMessageBox::information(this, tr("Switch Machine Model"),
-                                 tr("Media on %1:\n\n%2").arg(displayName, lines.join("\n")));
+                                 tr("Cards and media on %1:\n\n%2").arg(displayName, lines.join("\n")));
     }
 
     qInfo() << "MainWindow::switchMachineModel() - Successfully switched to model:" << displayName;
@@ -3800,13 +4591,7 @@ void MainWindow::openAdvancedRecordingDialog()
         return;
     }
 
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
-    _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
+    _videoRecordingWidget = new VideoRecordingWidget(m_binding ? m_binding->emulatorShared() : nullptr, nullptr);
     _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
     _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
     connect(_videoRecordingWidget, &QWidget::destroyed, this, [this]() {
@@ -3827,81 +4612,30 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Cannot start Quick Record: No active emulator instance";
         return;
     }
+    Emulator& emulator = *m_binding->emulator();
 
-    EmulatorContext* context = m_binding->emulator()->GetContext();
-    if (!context || !context->pRecordingManager)
+    // The core's preset (capture::RecordingControl, what every plane and cap.record_toggle start); a running
+    // recording is stopped first, as the menu always did
+    QString folder = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (folder.isEmpty())
+        folder = QString::fromStdString(capture::RecordingControl::UserRecordingsFolder());
+    QDir().mkpath(folder);
+    capture::RecordingControl control(emulator, folder.toStdString());
+    const capture::RecordingReply status = control.Execute("status");
+    if (const StateNode* recording = status.body.find("recording"); recording != nullptr && recording->b)
+        control.Execute("stop");
+
+    const capture::RecordingReply started = control.Execute("start", {{"preset", presetName.toStdString()}});
+    if (!started.ok)
     {
-        qDebug() << "Cannot start Quick Record: No recording manager";
+        qWarning() << "Quick Record:" << QString::fromStdString(started.message);
+        QMessageBox::warning(this, tr("Quick Record"),
+                             tr("The recording did not start:\n%1").arg(QString::fromStdString(started.message)));
         return;
     }
-
-    auto* rm = context->pRecordingManager;
-
-    // Recording subsystem is behind a master feature switch — Quick Record
-    // must enable it (the recording dialog does the same on show)
-    if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
-    {
-        context->pFeatureManager->setFeature(Features::kRecording, true);
-    }
-
-    // If already recording, stop first
-    if (rm->IsRecording())
-    {
-        rm->StopRecording();
-    }
-
-    // Find the preset
-    static RecordingPresetManager presetManager;
-    const RecordingPreset* preset = presetManager.findPreset(presetName);
-    if (!preset)
-    {
-        qDebug() << "Quick Record: Preset not found:" << presetName;
-        return;
-    }
-
-    // Apply preset to recording manager
-    rm->SetRecordingMode(preset->mode);
-    rm->SetVideoEnabled(!preset->videoCodec.isEmpty());
-
-    // Set audio source
-    rm->SelectAudioSource(AudioSourceType::MasterMix);
-
-    // Set video params via individual setters
-    if (!preset->videoCodec.isEmpty())
-    {
-        rm->SetVideoCodec(preset->videoCodec.toStdString());
-        rm->SetVideoBitrate(preset->videoBitrate);
-        rm->SetVideoFrameRate(preset->frameRate);
-    }
-
-    // Same defaults as the recording dialog: full frame, 2x nearest-neighbor
-    // (preserves multicolor detail through chroma subsampling; GIF ignores it)
-    rm->SetCaptureRegion(VideoCaptureRegion::FullFrame);
-    rm->SetScaleFactor(2);
-    rm->SetVideoResolution(0, 0);  // Derive from screen + capture region
-
-    // Generate output filename
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
-    QString defaultDir = preset->outputDir.isEmpty()
-        ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
-        : preset->outputDir;
-    QDir().mkpath(defaultDir);
-    QString filename = QString("%1/unreal_%2_%3.%4")
-        .arg(defaultDir)
-        .arg(timestamp)
-        .arg(preset->name.split(' ').first())
-        .arg(preset->container);
-
-    qDebug() << "Quick Record: Starting recording with preset" << presetName << "to" << filename;
-
-    // Start recording (StartRecording takes codec/bitrate directly)
-    std::string vidCodec = preset->videoCodec.toStdString();
-    std::string audCodec = preset->includeAudio ? preset->audioCodec.toStdString() : "";
-    if (!rm->StartRecording(filename.toStdString(), vidCodec, audCodec,
-                            preset->videoBitrate, preset->audioBitrate))
-    {
-        qDebug() << "Quick Record: Failed to start recording";
-    }
+    const StateNode* output = started.body.find("output");
+    qDebug() << "Quick Record: recording with preset" << presetName << "to"
+             << (output != nullptr ? QString::fromStdString(output->s) : QString());
 }
 #endif
 
@@ -3925,6 +4659,9 @@ void MainWindow::updateMenuStates()
     {
         _statusBarManager->setActiveEmulator(_emulator);
     }
+    // Last: the lock covers what the refresh above enabled
+    if (_remoteControl)
+        _remoteControl->setEmulator(_emulator);
 }
 
 void MainWindow::handleStatusBarToggled(bool visible)
@@ -3972,11 +4709,14 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     bool hudVisible = _hudWrapper ? _hudWrapper->isVisible() : false;
     bool crtEnabled = _screenWrapper->crtEffectsEnabled();
     CRTProfileParams crtParams = _screenWrapper->crtParams();
+    const QString crtShader = _screenWrapper->customShader();
     bool hasViewport = _screenWrapper->hasViewport();
     DisplayViewport savedViewport = _screenWrapper->displayViewport();
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
     int temporalHistorySize = _screenWrapper->temporalHistorySize();
     int temporalWeightMode = _screenWrapper->temporalWeightMode();
+    const float temporalDecay = _screenWrapper->temporalDecay();
+    const std::map<QString, float> presetValues = _screenWrapper->presetOverrides();
 
     // Detach from emulator before destroying
     _screenWrapper->detach();
@@ -3989,6 +4729,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    registerWindowView();
     connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
         if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
             _ft812DebugWindow->refresh();
@@ -4015,11 +4756,13 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     _hudWrapper->setVisible(hudVisible);
     _hudWrapper->setModel(_hudModel);
 
-    // Restore CRT effects (works for both GPU and software modes)
-    if (crtEnabled)
-    {
-        _screenWrapper->setCRTProfile(crtParams);
-    }
+    // Restore CRT effects (works for both GPU and software modes): the profile even when CRT is off, so switching it
+    // on again shows the chosen one. A custom shader needs the GPU: the software screen shows its base profile
+    _screenWrapper->setCRTProfile(crtParams);
+    if (!crtShader.isEmpty())
+        _screenWrapper->loadCustomShader(crtShader);
+    _screenWrapper->setPresetOverrides(presetValues);  // the preset's values set (none: nothing)
+    _screenWrapper->setCRTEffectsEnabled(crtEnabled);
 
     // Re-attach to emulator if one is running
     if (_emulator)
@@ -4029,7 +4772,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
         {
             Screen* screen = context->pScreen;
             auto& fb = screen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
                 return context && screen->CopyPresentedFramebuffer(dst, dstSize);
@@ -4046,6 +4789,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Restore temporal blending state
     _screenWrapper->setTemporalBlendingEnabled(temporalEnabled);
+    _screenWrapper->setTemporalDecay(temporalDecay);
     _screenWrapper->setTemporalHistorySize(temporalHistorySize);
     _screenWrapper->setTemporalWeightMode(temporalWeightMode);
 
@@ -4056,6 +4800,9 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 #endif
     _menuManager->setCrtEffectsEnabled(true);
     _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
+    _menuManager->setCustomShadersEnabled(_screenWrapper->isGPUAccelerated());
+    if (_screenWrapper->customShader().isEmpty())
+        _menuManager->setCrtProfile(crtProfileIndex(_screenWrapper->crtProfile()));
 
     // Show, resize and center the new widget
     _screenWrapper->widget()->show();
@@ -4092,6 +4839,40 @@ void MainWindow::handleCrtProfileChanged(int profileIndex)
     }
 }
 
+void MainWindow::handleCrtShaderChanged(const QString& name)
+{
+    if (!_screenWrapper)
+        return;
+    // A custom shader takes the current profile's parameters as its uniforms, Basic's when there is none
+    CRTProfileParams params = _screenWrapper->crtParams();
+    if (params.profile == CRTProfile::None)
+        params = CRTProfileParams::Basic();
+    if (!_screenWrapper->isGPUAccelerated())
+    {
+        _menuManager->setCrtProfile(crtProfileIndex(_screenWrapper->crtProfile()));
+        return;
+    }
+    _screenWrapper->setCRTProfile(params);
+    if (!_screenWrapper->loadCustomShader(name))
+    {
+        qWarning() << "Custom CRT shader" << name << "not loaded";
+        _menuManager->setCrtProfile(crtProfileIndex(params.profile));
+    }
+    _screenWrapper->setCRTEffectsEnabled(true);
+    _menuManager->setCrtEffectsChecked(true);
+}
+
+int MainWindow::crtProfileIndex(CRTProfile profile)
+{
+    const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
+    for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
+    {
+        if (profiles[index] == profile)
+            return index;
+    }
+    return 0;
+}
+
 void MainWindow::handleTemporalBlendingToggled(bool enabled)
 {
     if (_screenWrapper)
@@ -4108,6 +4889,7 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
 
 void MainWindow::handleScaleRequested(int scale)
 {
+    _userResizedWindow = false;  // a whole scale asked for: the window follows the picture again
     // Leave full screen / maximized first so the resize can take effect
     if (isFullScreen())
         handleFullScreenShortcut();
@@ -4330,18 +5112,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         {
                             debuggerWindow->setEmulator(nullptr);
                         }
+                        releasePanelHolders();
 
                         _screenWrapper->detach();
 
                         // Clear context from audio/video settings widgets
                         if (_audioSettingsWidget)
                         {
-                            _audioSettingsWidget->setContext(nullptr);
+                            _audioSettingsWidget->setEmulator(nullptr);
                         }
 #ifdef ENABLE_RECORDING
                         if (_videoRecordingWidget)
                         {
-                            _videoRecordingWidget->setContext(nullptr);
+                            _videoRecordingWidget->setEmulator(nullptr);
                         }
 #endif
 
@@ -4514,6 +5297,95 @@ void MainWindow::unsubscribeFromMessageBus()
     ObserverCallbackMethod selectionCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
+
+    ObserverCallbackMethod runControlCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
+    messageCenter.RemoveObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+}
+
+void MainWindow::handleRunControlChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+    if (_remoteControl)
+        QMetaObject::invokeMethod(_remoteControl, "refresh", Qt::QueuedConnection);
+    // A companion took control back (companion clients): the user did it from another device - say so
+    auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->event != "revoked" || payload->by.rfind("companion", 0) != 0)
+        return;
+    const QString by = QString::fromStdString(payload->by);
+    const QString from = QString::fromStdString(payload->client.empty() ? payload->surfaceLabel : payload->client);
+    QMetaObject::invokeMethod(
+        this,
+        [this, by, from]() {
+            if (statusBar())
+                statusBar()->showMessage(tr("Control taken back from %1 by %2").arg(from, by), 10000);
+            if (!_hudModel)
+                return;
+            HudToastRequest toast;
+            toast.title = tr("Control taken back").toStdString();
+            toast.icon = "remote";
+            toast.body = tr("%1 took control back from %2").arg(by, from).toStdString();
+            toast.dedupKey = "remote-control";
+            _hudModel->notify(toast);
+        },
+        Qt::QueuedConnection);
+}
+
+void MainWindow::updateRemoteControlUi()
+{
+    if (!_remoteControl)
+        return;
+    const bool active = _remoteControl->active();
+    // A session starts: one toast says who and from where
+    const QString who = _remoteControl->who();
+    if (active && who != _remoteControlAnnounced && _hudModel)
+    {
+        HudToastRequest toast;
+        toast.title = tr("Remote control").toStdString();
+        toast.body = (_remoteControl->implicit()
+                          ? tr("%1 drives it without taking control. Take control back from the toolbar")
+                          : tr("%1 controls the emulator. Take control back from the toolbar"))
+                         .arg(who)
+                         .toStdString();
+        toast.icon = "remote";
+        toast.dedupKey = "remote-control";
+        _hudModel->notify(toast);
+    }
+    _remoteControlAnnounced = active ? who : QString();
+    if (_toolBarManager)
+        _toolBarManager->setRemoteControl(active, _remoteControl->brief(), _remoteControl->describe(),
+                                          _remoteControl->hasCooldowns(), _remoteControl->sinceMs());
+    // The HUD shows the session whatever the user's HUD setting: turned off, it shows only the session (its
+    // indicator and toasts), a few seconds past the end so the take-back toast is seen; turned on, everything as set
+    // plus the session
+    if (active && !_hudOverlayVisible && _hudWrapper)
+    {
+        _hudShownForRemoteControl = true;
+        _hudWrapper->setVisible(true);
+    }
+    else if (!active && _hudShownForRemoteControl)
+    {
+        _hudShownForRemoteControl = false;
+        QTimer::singleShot(6000, this, [this]() {
+            if (_remoteControl && _remoteControl->active())
+                return;
+            if (_hudWrapper)
+                _hudWrapper->setVisible(_hudOverlayVisible);
+        });
+    }
+    if (_hudModel)
+    {
+        if (active)
+        {
+            // One of the HUD's own indicators: the antenna and the client's name (where from: the toast, the toolbar)
+            _hudModel->setIndicator("remote", HudState::Active, _remoteControl->name().toStdString(), {}, "remote");
+        }
+        else
+            _hudModel->clearIndicator("remote");
+    }
+    // A captured mouse goes back to the user: the machine takes nothing from the GUI meanwhile
+    if (active && _screenWrapper && _screenWrapper->mouseCapture() && _screenWrapper->mouseCapture()->isCaptured())
+        _screenWrapper->mouseCapture()->release();
 }
 
 void MainWindow::subscribeToPerEmulatorEvents()
@@ -4533,6 +5405,19 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.AddObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
+
+    ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
+    messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
+
+    // The title's unsaved mark follows the media (D-8)
+    ObserverCallbackMethod mediaCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMediaChangesState);
+    for (const char* topic : {NC_MEDIA_DIRTY, NC_MEDIA_CLEAN, NC_MEDIA_EJECTED, NC_MEDIA_INSERTED})
+        messageCenter.AddObserver(topic, observerInstance, mediaCallback);
+    updateUnsavedMediaMark();
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -4552,6 +5437,18 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
+
+    ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
+    messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
+
+    ObserverCallbackMethod mediaCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMediaChangesState);
+    for (const char* topic : {NC_MEDIA_DIRTY, NC_MEDIA_CLEAN, NC_MEDIA_EJECTED, NC_MEDIA_INSERTED})
+        messageCenter.RemoveObserver(topic, observerInstance, mediaCallback);
+    setWindowModified(false);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
@@ -4658,6 +5555,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
 
     // Store reference
     _emulator = emulator;
+    _emulatorOrigin = origin;
 
     // 0. The user's saved sound character (voicing, punch, room) - only on
     // instances this window created, before audio is bound (so before the
@@ -4667,6 +5565,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         EmulatorContext* soundContext = _emulator->GetContext();
         if (soundContext && soundContext->pSoundManager)
             SoundCharacterPreferences::ApplySaved(*soundContext->pSoundManager);
+        // The symbol bundles the user switched off stay off (handleSystemReset repeats it for a ROM chosen later)
+        if (_emulator->GetDebugManager())
+            SymbolBundlePreferences::ApplySaved(_emulator->GetDebugManager()->GetLabelManager());
     }
 
     // === BINDING SEQUENCE (single canonical order) ===
@@ -4684,7 +5585,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         try
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+            _screenWrapper->init(framebufferDesc, *context->pScreen);
 
             // Match the widget's crop to the emulator being adopted. Viewport crops are
             // absolute pixel insets, so one left over from the previous machine's overscan
@@ -4741,7 +5642,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // This is the SOLE source of truth for DebuggerWindow state
     if (m_binding)
     {
-        m_binding->bind(_emulator.get());
+        m_binding->bind(_emulator);
     }
 
     // Note: No setEmulator() call - binding signals handle DebuggerWindow state
@@ -4765,7 +5666,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 8. Update audio settings widget if open
     if (_audioSettingsWidget)
     {
-        _audioSettingsWidget->setContext(_emulator->GetContext());
+        _audioSettingsWidget->setEmulator(_emulator);
     }
 
     // 9. HUD Overlay binding
@@ -4777,7 +5678,10 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
             return HudSettingsDialog::isCategoryEnabled(QString::fromUtf8(categoryId));
         });
 
+        _hudModel->setAlwaysShownPrefix("remote");  // the automation session's indicator and toasts
+        _hudModel->setTheme(_hudTheme);             // the theme chosen (View/HudTheme, hud_theme)
         _hudWrapper->setModel(_hudModel);
+        updateRemoteControlUi();
 
         // Restore HUD visibility from session state (not from emulator defaults)
         if (_emulator->GetContext() && _emulator->GetContext()->pFeatureManager)
@@ -4791,6 +5695,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
+
+    // The published copy follows the new binding
+    schedulePublishWindowDisplay();
 
     if (_ttdWidget)
     {
@@ -4822,6 +5729,41 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
 
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
+
+    // The black box starts on an instance this window created (startup, model switch, a slot change's restart)
+    applyBlackBox();
+}
+
+void MainWindow::handleBlackBoxSettingChanged()
+{
+    applyBlackBox();
+}
+
+void MainWindow::applyBlackBox()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    ttd::TimeTravelController* controller = context ? context->pTimeTravelController : nullptr;
+    if (!controller)
+        return;   // v1 (UNREAL_TTD_BACKEND=v1) has no black box
+
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    const bool on = settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool();
+    const int minutes = std::clamp(settings.value(QStringLiteral("TimeTravel/BlackBoxMinutes"), 5).toInt(), 1, 24 * 60);
+
+    ttd::TTDControl control(context);
+    if (on && _emulatorOrigin == EmulatorOrigin::CreatedByGui)
+    {
+        if (!controller->IsRecording() && !controller->HasHistory())
+            (void)control.Execute({"start", {{"black_box", "true"}, {"minutes", std::to_string(minutes)}}});
+        else if (controller->IsBlackBox())
+            controller->SetBlackBoxMinutes(static_cast<uint32_t>(minutes));
+    }
+    else if (!on && controller->IsBlackBox())
+    {
+        if (controller->IsRecording())
+            (void)control.Execute({"stop", {}});
+        controller->SetBlackBox(false);
+    }
 }
 
 void MainWindow::unbindFromEmulator()
@@ -4854,6 +5796,7 @@ void MainWindow::unbindFromEmulator()
     {
         debuggerWindow->setEmulator(nullptr);
     }
+    releasePanelHolders();
 
     // 4. Device screen & HUD overlay
     if (_hudWrapper)
@@ -4866,7 +5809,7 @@ void MainWindow::unbindFromEmulator()
     // 5. Audio settings widget
     if (_audioSettingsWidget)
     {
-        _audioSettingsWidget->setContext(nullptr);
+        _audioSettingsWidget->setEmulator(nullptr);
     }
 
 #ifdef ENABLE_RECORDING
@@ -4876,7 +5819,7 @@ void MainWindow::unbindFromEmulator()
     // emulator instance until explicit stop or that instance is destroyed.
     if (_videoRecordingWidget)
     {
-        _videoRecordingWidget->setContext(nullptr);
+        _videoRecordingWidget->setEmulator(nullptr);
     }
 #endif
 
@@ -5094,13 +6037,10 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
-        EmulatorContext* context = nullptr;
-        if (state != StateStopped && state != StateUnknown &&
-            m_binding && m_binding->emulator())
-        {
-            context = m_binding->emulator()->GetContext();
-        }
-        _videoRecordingWidget->setContext(context);
+        std::shared_ptr<Emulator> emulator;
+        if (state != StateStopped && state != StateUnknown && m_binding)
+            emulator = m_binding->emulatorShared();
+        _videoRecordingWidget->setEmulator(std::move(emulator));
     }
 #endif
 }

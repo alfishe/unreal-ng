@@ -14,6 +14,9 @@ class ModuleLogger;
 /// region <Info>
 
 // See: https://worldofspectrum.org/faq/reference/formats.htm
+// .snx (NextZXOS, https://wiki.specnext.dev/File_Formats): the .sna layout; a 128K one may carry the program's private data
+// after its banks (NextZXOS leaves the file open as handle 0 for the program to read it). NextZXOS applies no legacy mode
+// (machine timing, speed) to it, and neither does this loader to any .sna
 
 /// endregion </Info>
 
@@ -61,37 +64,6 @@ typedef struct
 
 #pragma pack (pop)      // Restore default compiler behavior for structures
 
-struct SNAHeader
-{
-    uint8_t reg_I;
-
-    uint16_t reg_HL1;
-    uint16_t reg_DE1;
-    uint16_t reg_BC1;
-    uint16_t reg_AF1;
-
-    uint16_t reg_HL;
-    uint16_t reg_DE;
-    uint16_t reg_BC;
-    uint16_t reg_IY;
-    uint16_t reg_IX;
-
-    uint8_t reg_R;
-    uint16_t reg_AF;
-    uint16_t reg_SP;
-    uint8_t intMode;
-    uint8_t borderColor;
-
-    uint8_t ramDump48k[49152];
-};
-
-struct SNA128Header : public SNAHeader
-{
-    uint16_t reg_PC;
-    uint8_t port_7FFD;  // Determines current bank in #C000 - #FFFF bank
-    uint8_t is_TRDOS;
-};
-
 /// endregion </Types>
 
 class LoaderSNA
@@ -122,6 +94,12 @@ protected:
     bool _fileValidated = false;
     size_t _fileSize = 0;
     SNA_MODE _snapshotMode = SNA_UNKNOWN;
+    /// A NextZXOS .snx (from the path's extension or SetSnx): a 128K file has exactly the banks #7FFD leaves, private data may follow
+    bool _snx = false;
+    /// The banks of a 128K file after its extended header
+    size_t _extraBanks = 0;
+    /// The bytes of an .snx after its banks (the program's private data; not loaded)
+    size_t _privateBytes = 0;
     bool _stagingLoaded = false;
 
     // Staging memory buffers
@@ -130,7 +108,6 @@ protected:
     sna128Header _ext128Header{};
     uint8_t _memoryPages[8][PAGE_SIZE];
     bool _memoryPagesUsed[8];
-    uint8_t _borderColor = 0;
 
     // Snapshot pipeline (PLAN #84): the image built from the staging and the report of the plan step
     snapshot::Options _options;
@@ -152,7 +129,16 @@ public:
     /// region <Methods>
 public:
     bool load();
+    /// Save the machine's snapshot view (snapshot::SaveSnapshotFile): false = refused or not writable (logged)
     bool save();
+    /// Write an image captured by snapshot::CaptureImage as a .sna; `error` says why not
+    bool WriteImage(const snapshot::Image& image, std::string& error);
+
+    /// Read the data as a NextZXOS .snx (an in-memory image has no extension to say so)
+    void SetSnx(bool snx) { _snx = snx; }
+    bool IsSnx() const { return _snx; }
+    /// The private data an .snx carries after its banks, in bytes (valid after load / Stage)
+    size_t PrivateDataSize() const { return _privateBytes; }
 
     /// What the caller asked for (call before load(); the default lets the plan decide)
     void SetOptions(const snapshot::Options& options) { _options = options; }
@@ -180,13 +166,6 @@ protected:
     bool applySnapshotFromStaging();
     /// Image + plan step between staging and commit; false = refused (the report says why)
     bool planSnapshot();
-    
-    // Save helpers
-    SNA_MODE determineOutputFormat();
-    bool captureStateToStaging();
-    bool save48kFromStaging();
-    bool save128kFromStaging();
-    bool isPageEmpty(int pageNum);
     /// endregion </Helper methods>
 
     /// region <Debug methods>
@@ -215,7 +194,10 @@ public:
     using LoaderSNA::_fileValidated;
     using LoaderSNA::_fileSize;
     using LoaderSNA::_snapshotMode;
+    using LoaderSNA::_extraBanks;
+    using LoaderSNA::_privateBytes;
     using LoaderSNA::_stagingLoaded;
+    using LoaderSNA::_image;
 
     using LoaderSNA::_header;
     using LoaderSNA::_ext128Header;
@@ -232,12 +214,5 @@ public:
     using LoaderSNA::load128kToStaging;
     using LoaderSNA::applySnapshotFromStaging;
     using LoaderSNA::planSnapshot;
-    
-    // Save helpers
-    using LoaderSNA::determineOutputFormat;
-    using LoaderSNA::captureStateToStaging;
-    using LoaderSNA::save48kFromStaging;
-    using LoaderSNA::save128kFromStaging;
-    using LoaderSNA::isPageEmpty;
 };
 #endif // _CODE_UNDER_TEST

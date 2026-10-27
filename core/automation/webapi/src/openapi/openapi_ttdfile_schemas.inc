@@ -19,13 +19,16 @@
             "null = unknown, not checked on load";
         m["properties"]["peripheral_mask"]["type"] = "integer";
         m["properties"]["peripheral_mask"]["format"] = "uint64";
-        m["properties"]["peripheral_mask"]["description"] = "Bit i set: peripheral id i was fitted (TTD PeripheralId)";
+        m["properties"]["peripheral_mask"]["description"] =
+            "Bit i set: the device with TTD v1 peripheral id i was fitted (ids 0..63; a device without a v1 id is only "
+            "in `peripherals`)";
         m["properties"]["peripherals"]["type"] = "array";
         m["properties"]["peripherals"]["items"]["type"] = "string";
         m["properties"]["peripherals"]["description"] =
-            "Fitted devices by name, ascending id: turbosound, betadisk, tape, covox, tsfm, gs, scorpion-profrom, "
+            "Fitted devices by name, ascending v1 id: turbosound, betadisk, tape, covox, tsfm, gs, scorpion-profrom, "
             "kempston-mouse, atm-paging, profi-paging, moonsound, gs-lw, neogs, plus3-paging, upd765, evo-sdcard, "
-            "tsconf, ata, ds12887, evo-ps2, zxnetusb, evo-turbo-cache (idN for an id this build does not know)";
+            "tsconf, ata, ds12887, evo-ps2, zxnetusb, evo-turbo-cache, ...; a device without a v1 id by its instance "
+            "name (idN for an id this build does not know)";
         m["properties"]["not_recorded"]["type"] = "array";
         m["properties"]["not_recorded"]["items"]["type"] = "string";
         m["properties"]["not_recorded"]["description"] =

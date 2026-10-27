@@ -1366,6 +1366,113 @@ uint32_t fm_engine_base<RegisterType>::clock(uint32_t chanmask)
 
 
 //-------------------------------------------------
+//  [unreal-ng patch 6] idle fast path, see
+//  PATCHES.md §6
+//-------------------------------------------------
+
+template<class RegisterType>
+bool fm_engine_base<RegisterType>::idle() const
+{
+	if (m_modified_channels != 0 || m_active_channels != 0)
+		return false;
+	if (RegisterType::EG_CLOCK_DIVIDER != 1 && bitfield(m_env_counter, 0, 2) >= RegisterType::EG_CLOCK_DIVIDER)
+		return false;
+	for (uint32_t chnum = 0; chnum < CHANNELS; chnum++)
+		if (!m_channel[chnum]->idle())
+			return false;
+	return true;
+}
+
+template<class RegisterType>
+void fm_engine_base<RegisterType>::clock_idle(uint32_t count)
+{
+	if (count == 0)
+		return;
+	m_total_clocks += uint8_t(count);
+
+	// The periodic prepare() sweep: with nothing modified, every 4097th clock; on an idle engine it changes
+	// nothing but resetting the counter (the caches equal a fresh computation, the key state stays off, no CSM)
+	uint64_t left = count;
+	uint32_t prep = m_prepare_count;
+	if (prep < 4096)
+	{
+		const uint32_t toFire = 4096 - prep;
+		if (left <= toFire)
+		{
+			prep += uint32_t(left);
+			left = 0;
+		}
+		else
+		{
+			prep = 4096;
+			left -= toFire;
+		}
+	}
+	if (left > 0)
+	{
+		// From a count at or past 4096: the next clock prepares and restarts at 0, then 4096 increments
+		const uint64_t r = left % 4097;
+		prep = (r == 0) ? 4096 : uint32_t(r - 1);
+	}
+	m_prepare_count = prep;
+
+	// Envelope counter: x.2 with the divider's sub-count in the low bits
+	if (RegisterType::EG_CLOCK_DIVIDER == 1)
+		m_env_counter += 4 * count;
+	else
+	{
+		const uint64_t d = RegisterType::EG_CLOCK_DIVIDER;
+		const uint64_t linear = d * (m_env_counter >> 2) + bitfield(m_env_counter, 0, 2) + count;
+		m_env_counter = (uint32_t((linear / d) << 2)) | uint32_t(linear % d);
+	}
+
+	// A constant on the chips this is for (OPN: counter and AM held at 0)
+	m_regs.clock_noise_and_lfo();
+
+	for (uint32_t chnum = 0; chnum < CHANNELS; chnum++)
+		m_channel[chnum]->clock_idle(count);
+}
+
+template<class RegisterType>
+bool fm_channel<RegisterType>::idle() const
+{
+	for (uint32_t opnum = 0; opnum < m_op.size(); opnum++)
+		if (m_op[opnum] != nullptr && !m_op[opnum]->idle())
+			return false;
+	return true;
+}
+
+template<class RegisterType>
+void fm_channel<RegisterType>::clock_idle(uint32_t count)
+{
+	// The feedback taps shift in the last input, which only output() of an active channel changes
+	m_feedback[0] = (count >= 2) ? m_feedback_in : m_feedback[1];
+	m_feedback[1] = m_feedback_in;
+	for (uint32_t opnum = 0; opnum < m_op.size(); opnum++)
+		if (m_op[opnum] != nullptr)
+			m_op[opnum]->clock_idle(count);
+}
+
+template<class RegisterType>
+bool fm_operator<RegisterType>::idle() const
+{
+	// Release at full attenuation: clock_envelope adds an increment and clamps back to 0x3ff (a chip with a
+	// reverb stage leaves release on its own: not idle)
+	if (RegisterType::EG_HAS_REVERB)
+		return false;
+	return m_env_state == EG_RELEASE && m_env_attenuation >= 0x3ff && m_key_state == 0 && m_keyon_live == 0 &&
+	       !m_regs.op_ssg_eg_enable(m_opoffs) && m_cache.phase_step != opdata_cache::PHASE_STEP_DYNAMIC;
+}
+
+template<class RegisterType>
+void fm_operator<RegisterType>::clock_idle(uint32_t count)
+{
+	m_ssg_inverted = false;
+	m_phase += m_cache.phase_step * count;
+}
+
+
+//-------------------------------------------------
 //  output - compute a sum over the relevant
 //  channels
 //-------------------------------------------------

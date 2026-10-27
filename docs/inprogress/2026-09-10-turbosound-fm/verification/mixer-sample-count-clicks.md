@@ -28,6 +28,10 @@ Both TurboSound devices (`soundchip_turbosound.*`, `soundchip_turbosoundfm.*`, i
 
 With this, the device's per-frame count equals the mixer's on every frame by construction. The average rate is unchanged (903.168 samples per Pentagon frame at 44.1 kHz; `Multirate_Test` and `SoundAdaptivity_Test` unchanged), the legacy/TSFM bit-identity gate still holds, and the end-state capture of the tune has no zero samples.
 
+## Follow-up 2026-10-05: frames that are not 1x
+
+The "by construction" above holds while every frame is a 1x frame with the device rendering. A frame at a host speed multiplier moves the device's phase by the multiplied time and the mixer's by the base frame; a frame with the sound feature off moves only the mixer's. Since then the mixer pushes its frame-start phase to the device at every frame start (`ITurboSoundDevice::followSamplePhase`; the beeper and the Covox follow it with their blip streams), see [ISSUES.md](../ISSUES.md) #20.
+
 ## Not changed
 
 - The sub-audio FM content is what the tune leaves on the chip. A first-order high-pass on the FM path, matching the board's coupling capacitors, would hide it; it is not part of this fix.

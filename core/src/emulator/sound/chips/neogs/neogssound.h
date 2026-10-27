@@ -20,6 +20,8 @@
 
 #include <cstdint>
 
+#include "emulator/sound/mixerchannel.h"
+
 class NeoGSSound
 {
 public:
@@ -64,6 +66,21 @@ public:
             return product(0, side, gscfg0) + product(1, side + 1, gscfg0) + product(2, side + 4, gscfg0) +
                    product(3, side + 5, gscfg0);
         return 2 * (product(side, side, gscfg0) + product(side + 1, side + 1, gscfg0));
+    }
+
+    /// mix() with the mixer's host gain (Q15, per sample channel: MixerChannelGainQ15) on each product; equal to mix()
+    /// when every gain is unity. Host-side: the listening output only, never the board's state
+    int32_t mixGained(bool right, uint8_t gscfg0, const int32_t* gainQ15) const
+    {
+        const int side = right ? 2 : 0;
+        auto p = [&](int sampleChannel, int volumeChannel) {
+            return ApplyMixerGainQ15(product(sampleChannel, volumeChannel, gscfg0), gainQ15[sampleChannel]);
+        };
+        if (gscfg0 & CFG_8CHANS)
+            return p(side, side) + p(side + 1, side + 1) + p(side + 4, side + 4) + p(side + 5, side + 5);
+        if (gscfg0 & CFG_PAN4CH)
+            return p(0, side) + p(1, side + 1) + p(2, side + 4) + p(3, side + 5);
+        return 2 * (p(side, side) + p(side + 1, side + 1));
     }
 
     /// Sample value the multiplier sees (-128..127)

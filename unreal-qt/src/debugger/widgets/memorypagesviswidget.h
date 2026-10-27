@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef MEMORYPAGESVISWIDGET_H
 #define MEMORYPAGESVISWIDGET_H
 
@@ -17,7 +19,7 @@ public:
     explicit MemoryPagesVisWidget(QWidget *parent = nullptr);
     virtual ~MemoryPagesVisWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void reset();
     void refresh();
 
@@ -37,7 +39,7 @@ private:
     void updatePageDisplay();
     QColor getColorForPage(bool isROM, bool isAccessed, bool isMapped);
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QGridLayout* _gridLayout = nullptr;   // Grid layout inside scrollable container
     QWidget* _gridWidget = nullptr;       // Container widget for the grid
     QScrollArea* _scrollArea = nullptr;

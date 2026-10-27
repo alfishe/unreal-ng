@@ -1,0 +1,6 @@
+# VICE labels
+al C:0810 .start
+al C:C000 .player (DATA)
+al 1234 .noprefix
+al C:ZZZZ .bad
+al C:FFFF .top

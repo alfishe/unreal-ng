@@ -82,7 +82,10 @@ constexpr uint32_t kCoverageNoPageField = 0x100;
 /// @brief The key's page field for a physical page (kPhysPageNone -> bucket).
 inline uint32_t CoveragePageField(PhysPage physPage)
 {
-    return physPage == kPhysPageNone ? kCoverageNoPageField : (static_cast<uint32_t>(physPage) & 0xFFu);
+    if (physPage == kPhysPageNone)
+        return kCoverageNoPageField;
+    // A virtual page of another memory space (0x110.., ttdphyspage.h) keeps its own field: 9 bits, 23-bit keys
+    return SpaceOfPage(physPage) != TTDMemorySpace::Ram ? static_cast<uint32_t>(physPage) : (static_cast<uint32_t>(physPage) & 0xFFu);
 }
 
 /// @brief Build a coverage key from a physical page and Z80 address.

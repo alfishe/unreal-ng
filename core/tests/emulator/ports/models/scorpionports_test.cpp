@@ -255,29 +255,29 @@ TEST_F(ScorpionPorts_Test, InSevenFFDFamilySetsTurboFlipFlop)
     EmulatorState& state = _context->emulatorState;
 
     ReadPort(0x7FFD);
-    EXPECT_EQ(state.scorpion_turbo, 1) << "IN (#7FFD) - canonical turbo-on strobe";
+    EXPECT_EQ(state.scorpion.turbo, 1) << "IN (#7FFD) - canonical turbo-on strobe";
 
-    state.scorpion_turbo = 0;
+    state.scorpion.turbo = 0;
     ReadPort(0x7EFD);
-    EXPECT_EQ(state.scorpion_turbo, 1) << "IN (#7EFD) - same 01xxxxxxxx1xxx01 decode family";
+    EXPECT_EQ(state.scorpion.turbo, 1) << "IN (#7EFD) - same 01xxxxxxxx1xxx01 decode family";
 
-    state.scorpion_turbo = 0;
+    state.scorpion.turbo = 0;
     ReadPort(0x5FF5);
-    EXPECT_EQ(state.scorpion_turbo, 1) << "wild mirror 0101'1111'1111'0101 clocks it too";
+    EXPECT_EQ(state.scorpion.turbo, 1) << "wild mirror 0101'1111'1111'0101 clocks it too";
 }
 
 /// @brief IN from the #1FFD register family clears the flip-flop (3.5 MHz)
 TEST_F(ScorpionPorts_Test, InOneFFDFamilyClearsTurboFlipFlop)
 {
     EmulatorState& state = _context->emulatorState;
-    state.scorpion_turbo = 1;
+    state.scorpion.turbo = 1;
 
     ReadPort(0x1FFD);
-    EXPECT_EQ(state.scorpion_turbo, 0) << "IN (#1FFD) - canonical turbo-off strobe";
+    EXPECT_EQ(state.scorpion.turbo, 0) << "IN (#1FFD) - canonical turbo-off strobe";
 
-    state.scorpion_turbo = 1;
+    state.scorpion.turbo = 1;
     ReadPort(0x3FFD);
-    EXPECT_EQ(state.scorpion_turbo, 0) << "IN (#3FFD) - 00xxxxxxxx1xxx01 mirror clears";
+    EXPECT_EQ(state.scorpion.turbo, 0) << "IN (#3FFD) - 00xxxxxxxx1xxx01 mirror clears";
 }
 
 /// @brief Reads of unrelated ports never clock the flip-flop: keyboard
@@ -290,13 +290,13 @@ TEST_F(ScorpionPorts_Test, TurboStrobeInertForUnrelatedPorts)
 
     for (uint16_t port : ports)
     {
-        state.scorpion_turbo = 1;
+        state.scorpion.turbo = 1;
         ReadPort(port);
-        EXPECT_EQ(state.scorpion_turbo, 1) << "port " << std::hex << port << " must not clear the flip-flop";
+        EXPECT_EQ(state.scorpion.turbo, 1) << "port " << std::hex << port << " must not clear the flip-flop";
 
-        state.scorpion_turbo = 0;
+        state.scorpion.turbo = 0;
         ReadPort(port);
-        EXPECT_EQ(state.scorpion_turbo, 0) << "port " << std::hex << port << " must not set the flip-flop";
+        EXPECT_EQ(state.scorpion.turbo, 0) << "port " << std::hex << port << " must not set the flip-flop";
     }
 }
 
@@ -312,11 +312,11 @@ TEST_F(ScorpionPorts_Test, TurboStrobeDoesNotChangeInResults)
 TEST_F(ScorpionPorts_Test, ResetClearsTurboFlipFlop)
 {
     EmulatorState& state = _context->emulatorState;
-    state.scorpion_turbo = 1;
+    state.scorpion.turbo = 1;
 
     _context->pPortDecoder->reset();
 
-    EXPECT_EQ(state.scorpion_turbo, 0);
+    EXPECT_EQ(state.scorpion.turbo, 0);
 }
 
 /// endregion <Hardware turbo flip-flop (hardware-reference 13)>
@@ -469,7 +469,7 @@ TEST_F(ScorpionPorts_Test, KempstonJoystick_Port1F_ReadsZeroFromDriverPlane)
     ASSERT_TRUE(RebuildWithModel(MM_PROFSCORP, RAM_256));
 
     _context->emulatorState.flags &= ~CF_TRDOS;
-    _context->emulatorState.scorpionDosTrigger = 0;
+    _context->emulatorState.scorpion.dosTrigger = 0;
 
     // Page 5 (driver plane, where sub_0260h lives): service bit CLEAR.
     _context->emulatorState.p1FFD = 0x10;
@@ -488,7 +488,7 @@ TEST_F(ScorpionPorts_Test, KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos
 {
     ASSERT_TRUE(RebuildWithModel(MM_PROFSCORP, RAM_256));
 
-    _context->emulatorState.scorpionDosTrigger = 0;
+    _context->emulatorState.scorpion.dosTrigger = 0;
     _context->emulatorState.p1FFD = 0x10;
     _context->emulatorState.flags |= CF_TRDOS;
 

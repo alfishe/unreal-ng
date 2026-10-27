@@ -555,7 +555,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
             currentFrame >= 438 && gateWrites.size() < 800)
         {
             gateWrites.push_back({currentFrame, port, value, cpu->m1_pc,
-                                  static_cast<uint16_t>(state.aFF77), state.pFF77,
+                                  static_cast<uint16_t>(state.atm.aFF77), state.pFF77,
                                   static_cast<uint8_t>(state.flags & 0x3F)});
         }
         // Runtime execution-region histogram: which code page hosts the
@@ -611,7 +611,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
         if (type == 'I' && (port & 0x00FF) == 0xFF && currentFrame >= 445 && ffReads.size() < 400)
         {
             ffReads.push_back({currentFrame, port, value, cpu->m1_pc,
-                               static_cast<uint16_t>(state.aFF77), state.pFF77,
+                               static_cast<uint16_t>(state.atm.aFF77), state.pFF77,
                                static_cast<uint8_t>(state.flags & 0x3F)});
         }
         if (windowActive)
@@ -709,7 +709,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
                 for (int b = 0; b < 4; b++)
                 {
                     p.w[b] = memory->GetPhysPageForZ80Address((uint16_t)(b * 0x4000));
-                    unsigned fff7 = state.pFFF7[regSetPr + b];
+                    unsigned fff7 = state.atm.pFFF7[regSetPr + b];
                     p.expected[b] = (fff7 & 0x100) ? 0xFF : (uint8_t)(fff7 & 0xFF);  // ROM -> 0xFF
                 }
                 pageProbes.push_back(p);
@@ -798,7 +798,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
         uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
         std::cout << "[" << why << "] frame=" << currentFrame
                   << " pc=" << Hex(cpu->pc, 4)
-                  << " pFF77=" << Hex(state.pFF77) << " aFF77=" << Hex(state.aFF77 & 0xFFFF, 4)
+                  << " pFF77=" << Hex(state.pFF77) << " aFF77=" << Hex(state.atm.aFF77 & 0xFFFF, 4)
                   << " p7FFD=" << Hex(state.p7FFD) << " pEFF7=" << Hex(state.pEFF7)
                   << " mode=" << (int)(state.pFF77 & 7)
                   << " vp=" << (int)videoPage
@@ -862,10 +862,10 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
                 int regSet = (state.p7FFD & 0x10) ? 4 : 0;
                 uint8_t romBanks = (context->pCore && context->pCore->GetROM()) ? context->pCore->GetROM()->GetROMBanksLoaded() : 0;
                 std::cout << "[DERAIL] p7FFD=" << Hex(state.p7FFD) << " regSet=" << regSet
-                          << " romBanks=" << (int)romBanks << " aFF77=" << Hex(state.aFF77 & 0xFFFF, 4) << "\n";
+                          << " romBanks=" << (int)romBanks << " aFF77=" << Hex(state.atm.aFF77 & 0xFFFF, 4) << "\n";
                 for (int bank = 0; bank < 4; bank++)
                 {
-                    unsigned fff7 = state.pFFF7[regSet + bank];
+                    unsigned fff7 = state.atm.pFFF7[regSet + bank];
                     unsigned t = fff7 & 0x300;
                     unsigned page = fff7 & 0xFF;
                     const char* tname = (t == 0x000) ? "RAM7FFD" : (t == 0x100) ? "ROM7FFD" : (t == 0x200) ? "RAMfix" : "ROMfix";
@@ -935,7 +935,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
                       << " | pFFF7:";
             for (int b = 0; b < 4; b++)
             {
-                unsigned fff7 = state.pFFF7[regSet + b];
+                unsigned fff7 = state.atm.pFFF7[regSet + b];
                 std::cout << " w" << b << "=" << ((fff7 & 0x100) ? "ROM" : "RAM") << (fff7 & 0xFF);
             }
             std::cout << " | p0[0..7]=";
@@ -1335,7 +1335,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
                           << " x" << kv.second << "\n";
             }
         }
-        std::cout << "[F4] final: aFF77=" << Hex(state.aFF77, 4) << " pFF77=" << Hex(state.pFF77)
+        std::cout << "[F4] final: aFF77=" << Hex(state.atm.aFF77, 4) << " pFF77=" << Hex(state.pFF77)
                   << " flags=" << Hex((int)state.flags, 2)
                   << " (pFF77&7=mode " << (state.pFF77 & 7) << ")\n";
         std::cout << "[F4] runtime pc>>8 histogram, frames 455-525 (" << runtimeSamples << " samples):\n";
@@ -1830,7 +1830,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
                   << " | windows (7FFD.4=" << (int)((state.p7FFD & 0x10) ? 1 : 0) << "):";
         for (unsigned w = 0; w < 4; w++)
         {
-            unsigned fff7 = state.pFFF7[regSet + w];
+            unsigned fff7 = state.atm.pFFF7[regSet + w];
             std::cout << " w" << w << "=" << ((fff7 & 0x300) == 0x200 ? "RAM" : (fff7 & 0x300) == 0x100 ? "ROM7FFD" : (fff7 & 0x300) == 0x000 ? "RAM7FFD" : "ROM?") << ":" << (fff7 & 0xFF);
         }
         std::cout << "\n";
@@ -1863,8 +1863,8 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
     // loop after the $E08B HALT wakes)
     int regSet = (state.p7FFD & 0x10) ? 4 : 0;
     EXPECT_EQ(state.pFF77, 0xA8) << "game never switched to its EGA video mode";
-    EXPECT_EQ(state.pFFF7[regSet], 0x0200 | 12) << "w0 is not the RAM:12 module page";
-    EXPECT_EQ(state.pFFF7[regSet + 3], 0x0200 | 15) << "w3 is not the RAM:15 kernel page";
+    EXPECT_EQ(state.atm.pFFF7[regSet], 0x0200 | 12) << "w0 is not the RAM:12 module page";
+    EXPECT_EQ(state.atm.pFFF7[regSet + 3], 0x0200 | 15) << "w3 is not the RAM:15 kernel page";
 
     // ISR alive: interrupts enabled and the $FF63 frame ticker advanced
     // through the tail frames

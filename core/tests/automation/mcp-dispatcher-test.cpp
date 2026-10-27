@@ -18,6 +18,8 @@
 #include <json/json.h>
 
 #include <map>
+#include <memory>
+#include <utility>
 #include <string>
 
 #include "mcp-dispatcher.h"
@@ -39,6 +41,12 @@ public:
     };
 
     std::map<std::string, std::pair<int, Json::Value>> routes; // "METHOD path" → {status, body}
+    std::string session;          // the automation session the tools set (take_control / release_control)
+    bool revokeOnNextCheck = false;  // the user takes control back during the next call
+
+    void SetSession(const std::string& sessionId) override { session = sessionId; }
+    std::string Session() const override { return session; }
+    bool TakeRevoked() override { return std::exchange(revokeOnNextCheck, false); }
     std::pair<int, Json::Value> fallback{200, Json::Value()};
     std::vector<RecordedCall> calls;
 
@@ -152,6 +160,29 @@ TEST_F(McpDispatcher_Test, Initialize_EchoesSupportedClientVersion)
     EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2024-11-05");
 }
 
+// 2025-06-18 (structured tool output, the MCP-Protocol-Version header) is the current revision and accepted
+TEST_F(McpDispatcher_Test, Initialize_Speaks2025_06_18)
+{
+    Json::Value params;
+    params["protocolVersion"] = "2025-06-18";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("initialize", params));
+
+    EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2025-06-18");
+    EXPECT_STREQ(mcp::kProtocolVersion, "2025-06-18");
+    EXPECT_TRUE(mcp::IsSupportedProtocolVersion("2025-03-26")) << "older clients keep working";
+    EXPECT_FALSE(mcp::IsSupportedProtocolVersion("2099-01-01"));
+}
+
+// Origin check (DNS rebinding): only this machine's web origins may drive the server
+TEST(McpProtocol_Test, LocalOrigins)
+{
+    for (const char* local : {"http://localhost", "http://localhost:3000", "https://127.0.0.1:8295", "http://[::1]:5173"})
+        EXPECT_TRUE(mcp::IsLocalOrigin(local)) << local;
+    for (const char* foreign : {"http://evil.example", "http://localhost.evil.example", "http://127.0.0.1.nip.io",
+                                "null", "file://", "http://192.168.1.5:8080", "ftp://localhost"})
+        EXPECT_FALSE(mcp::IsLocalOrigin(foreign)) << foreign;
+}
+
 TEST_F(McpDispatcher_Test, Initialize_FallsBackForUnsupportedVersion)
 {
     Json::Value params;
@@ -222,18 +253,21 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllSixteenTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFiveTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 16u);
+    EXPECT_EQ(tools.size(), 25u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
-                              "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",
+                              "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
+                              "signature_info",
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
-                              "invoke_api",       "media",             "rzx_playback"};
+                              "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
+                              "companion_manage", "controllers",       "actions",           "streamdeck",
+                              "audio_mixer"};
     for (const char* name : expected)
     {
         bool found = false;
@@ -270,6 +304,208 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"]["content"][0]["text"].asString().empty());
     EXPECT_TRUE(response["result"].isMember("structuredContent"));
     EXPECT_FALSE(response["result"].isMember("isError"));
+}
+
+// By default content[] holds the human-readable text only; response_format "json" adds the structuredContent
+// serialized as JSON text (MCP 2025-06-18) for clients that hand the model only content[] (claude.ai connectors)
+TEST_F(McpDispatcher_Test, ToolsCall_DefaultReplyIsTextOnly)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_EQ(response["result"]["content"].size(), 1u) << response.toStyledString();
+    EXPECT_TRUE(response["result"].isMember("structuredContent")) << "programs still get the structured result";
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_ResponseFormatJsonEchoesStructuredContentAsText)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    params["arguments"]["response_format"] = "json";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 2u);
+    EXPECT_EQ(content[1]["type"].asString(), "text");
+    Json::Value echoed;
+    Json::CharReaderBuilder reader;
+    std::string errors;
+    const std::string text = content[1]["text"].asString();
+    std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+    ASSERT_TRUE(parser->parse(text.data(), text.data() + text.size(), &echoed, &errors)) << errors;
+    EXPECT_EQ(echoed, response["result"]["structuredContent"]);
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_BadResponseFormatIsAToolError)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    params["arguments"]["response_format"] = "xml";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("response_format"), std::string::npos);
+}
+
+// A misspelt argument ("addr" for "address") must not leave the tool's default in place: a read from 0 looks right
+TEST_F(McpDispatcher_Test, ToolsCall_UnknownArgumentIsAToolError)
+{
+    Json::Value params;
+    params["name"] = "memory_access";
+    params["arguments"]["action"] = "read";
+    params["arguments"]["addr"] = "0x8000";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("unknown argument 'addr'"), std::string::npos) << text;
+    EXPECT_NE(text.find("address"), std::string::npos) << text;
+}
+
+TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
+{
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
+    const Json::Value& tools = response["result"]["tools"];
+    ASSERT_GT(tools.size(), 0u);
+    for (const Json::Value& tool : tools)
+        EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("response_format")) << tool["name"].asString();
+}
+
+// A screenshot with include_image comes as an MCP image block (the model sees the picture); the JSON echo does not
+// repeat the base64
+TEST_F(McpDispatcher_Test, CaptureMediaScreenshot_PixelsAreAnImageBlock)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["format"] = "png";
+    body["area"] = "full";
+    body["width"] = 352;
+    body["height"] = 288;
+    body["size"] = 8;
+    body["data"] = "iVBORw0KGgo=";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "capture_media";
+    params["arguments"]["action"] = "screenshot";
+    params["arguments"]["include_image"] = true;
+    params["arguments"]["response_format"] = "json";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 3u) << response.toStyledString();
+    EXPECT_EQ(content[1]["type"].asString(), "image");
+    EXPECT_EQ(content[1]["mimeType"].asString(), "image/png");
+    EXPECT_EQ(content[1]["data"].asString(), "iVBORw0KGgo=");
+    EXPECT_EQ(content[2]["text"].asString().find("iVBORw0KGgo="), std::string::npos) << "no base64 in the text";
+    EXPECT_EQ(response["result"]["structuredContent"]["data"].asString(), "iVBORw0KGgo=");
+}
+
+// debug_code disassemble writes the listing into the text itself (one line per instruction, labels, targets) and
+// does not repeat the JSON
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_ListingInTheText)
+{
+    Json::Value body;
+    body["address"] = 0x7396;
+    body["count"] = 3;
+    Json::Value call;
+    call["address"] = 0x7396;
+    call["bytes"] = "CD0074";
+    call["mnemonic"] = "call #7400";
+    call["size"] = 3;
+    call["label"] = "engine";
+    call["target"] = 0x7400;
+    call["targetLabel"] = "draw";
+    body["instructions"].append(call);
+    Json::Value load;
+    load["address"] = 0x7399;
+    load["bytes"] = "DD7E05";
+    load["mnemonic"] = "ld a,(ix+5)";
+    load["size"] = 3;
+    load["effectiveAddress"] = 0x5C05;
+    body["instructions"].append(load);
+    Json::Value ret;
+    ret["address"] = 0x739C;
+    ret["bytes"] = "C9";
+    ret["mnemonic"] = "ret";
+    ret["size"] = 1;
+    body["instructions"].append(ret);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=3&address=0x7396"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "0x7396";
+    params["arguments"]["count"] = 3;
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 1u);
+    EXPECT_EQ(content[0]["text"].asString(),
+              "Disassembly [target emu-1]: 3 instruction(s) at 0x7396\n"
+              "engine:\n"
+              "7396  CD 00 74      call #7400            ; -> draw\n"
+              "7399  DD 7E 05      ld a,(ix+5)           ; ea #5C05\n"
+              "739C  C9            ret");
+    EXPECT_EQ(response["result"]["structuredContent"], body);
+}
+
+// A WebAPI error stays an error with the WebAPI message (no listing, no echo)
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_BadAddressIsAnError)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "address must be 0-65535";
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=16&address=zz"] = {400, error};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "zz";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address must be"), std::string::npos);
+}
+
+// inspect_state takes the address as debug_code does: "0x11CB" threw "Value is not convertible to UInt". A mnemonic that
+// names its target label itself gets no "-> label" note
+TEST_F(McpDispatcher_Test, InspectStateDisasm_HexStringAddress)
+{
+    Json::Value body;
+    body["address"] = 0x0005;
+    Json::Value jump;
+    jump["address"] = 0x0005;
+    jump["bytes"] = "C3CB11";
+    jump["mnemonic"] = "jp START-NEW (#11CB)";
+    jump["size"] = 3;
+    jump["target"] = 0x11CB;
+    jump["targetLabel"] = "START-NEW";
+    body["instructions"].append(jump);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=1&address=5"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "inspect_state";
+    params["arguments"]["aspects"].append("disasm");
+    params["arguments"]["address"] = "0x0005";
+    params["arguments"]["count"] = "1";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("0005  C3 CB 11      jp START-NEW (#11CB)"), std::string::npos) << text;
+    EXPECT_EQ(text.find("; -> START-NEW"), std::string::npos) << text;
+
+    params["arguments"]["address"] = "zz";
+    response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address (0-65535)"), std::string::npos);
 }
 
 TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
@@ -496,4 +732,126 @@ TEST_F(McpDispatcher_Test, PromptsGet_IsError)
     params["name"] = "anything";
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("prompts/get", params));
     EXPECT_EQ(response["error"]["code"].asInt(), mcp::kInvalidParams);
+}
+
+/// Automation sessions (execution arbiter design §6a): take_control keeps the session for every later call
+TEST_F(McpDispatcher_Test, TakeControlKeepsTheSessionAndReleaseControlDropsIt)
+{
+    Json::Value list;
+    list["count"] = 1;
+    Json::Value e;
+    e["id"] = "e1";
+    list["emulators"].append(e);
+    _caller->routes["GET /api/v1/emulator"] = {200, list};
+    Json::Value opened;
+    opened["session"] = "11111111-2222-4333-8444-555555555555";
+    _caller->routes["POST /api/v1/emulator/e1/control/session"] = {200, opened};
+
+    Json::Value params;
+    params["name"] = "control_execution";
+    params["arguments"]["action"] = "take_control";
+    params["arguments"]["client"] = "test agent";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    EXPECT_EQ(_caller->session, "11111111-2222-4333-8444-555555555555");
+    bool sawBody = false;
+    for (const auto& call : _caller->calls)
+        if (call.method == "POST" && call.path == "/api/v1/emulator/e1/control/session")
+            sawBody = call.body["surface"].asString() == "mcp" && call.body["client"].asString() == "test agent";
+    EXPECT_TRUE(sawBody);
+
+    params["arguments"]["action"] = "release_control";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(_caller->session.empty());
+}
+
+/// The user takes control back while a tool runs: whatever the tool made of the 409, the agent gets one final error
+/// that tells it to stop and not retry
+TEST_F(McpDispatcher_Test, ARevokedSessionTurnsTheResultIntoAStopError)
+{
+    _caller->revokeOnNextCheck = true;
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("revoked_by_user"), std::string::npos) << text;
+    EXPECT_NE(text.find("Do not retry"), std::string::npos) << text;
+}
+
+namespace
+{
+/// control_execution <action> on the one emulator "e1" of the fake; returns the tool result
+Json::Value ControlExecution(mcp::McpDispatcher& dispatcher, FakeApiCaller& caller, const std::string& action)
+{
+    Json::Value list;
+    list["count"] = 1;
+    Json::Value e;
+    e["id"] = "e1";
+    list["emulators"].append(e);
+    caller.routes["GET /api/v1/emulator"] = {200, list};
+    Json::Value params;
+    params["name"] = "control_execution";
+    params["arguments"]["action"] = action;
+    return DispatchSync(dispatcher, caller, Rpc("tools/call", params))["result"];
+}
+}  // namespace
+
+/// release_control without a session of its own: the WebAPI ends the implicit session it holds for this MCP server
+/// (no header needed); when there was none the agent is told who holds control instead of "send the header"
+TEST_F(McpDispatcher_Test, ReleaseControlWithoutASessionEndsTheImplicitOneOrSaysWhoHoldsControl)
+{
+    Json::Value released;
+    released["released"] = true;
+    _caller->routes["DELETE /api/v1/emulator/e1/control/session"] = {200, released};
+    Json::Value result = ControlExecution(*_dispatcher, *_caller, "release_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    EXPECT_NE(result["content"][0]["text"].asString().find("session ended"), std::string::npos);
+
+    Json::Value nothing;
+    nothing["released"] = false;
+    nothing["message"] = "This client holds no session here. Run control is held by webapi (Python-urllib/3.12) in an "
+                         "implicit session";
+    _caller->routes["DELETE /api/v1/emulator/e1/control/session"] = {200, nothing};
+    result = ControlExecution(*_dispatcher, *_caller, "release_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("Nothing to release"), std::string::npos) << text;
+    EXPECT_NE(text.find("Python-urllib/3.12"), std::string::npos) << text;
+    EXPECT_EQ(text.find("session ended"), std::string::npos) << text;
+}
+
+/// take_control names the session id (for a host script) and the implicit session it took over
+TEST_F(McpDispatcher_Test, TakeControlNamesTheSessionIdAndTheImplicitSessionItTookOver)
+{
+    Json::Value opened;
+    opened["session"] = "11111111-2222-4333-8444-555555555555";
+    opened["took_over"]["surface"] = "webapi";
+    opened["took_over"]["client"] = "Python-urllib/3.12";
+    opened["took_over"]["implicit"] = true;
+    _caller->routes["POST /api/v1/emulator/e1/control/session"] = {200, opened};
+    const Json::Value result = ControlExecution(*_dispatcher, *_caller, "take_control");
+    EXPECT_FALSE(result.isMember("isError")) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("11111111-2222-4333-8444-555555555555"), std::string::npos) << text;
+    EXPECT_NE(text.find("Took over the implicit session of webapi (Python-urllib/3.12)"), std::string::npos) << text;
+}
+
+/// A run the automation gate refuses (another client's session) is an error naming the holder, not "already running"
+TEST_F(McpDispatcher_Test, ARunRefusedByAnotherSessionIsAnErrorNotAlreadyRunning)
+{
+    Json::Value refused;
+    refused["error"] = "held_by_other";
+    refused["retry"] = false;
+    refused["message"] = "Run control is held by webapi (Python-urllib/3.12) in an implicit session";
+    _caller->routes["POST /api/v1/emulator/e1/resume"] = {409, refused};
+    const Json::Value result = ControlExecution(*_dispatcher, *_caller, "run");
+    EXPECT_TRUE(result["isError"].asBool()) << result.toStyledString();
+    const std::string text = result["content"][0]["text"].asString();
+    EXPECT_NE(text.find("held_by_other"), std::string::npos) << text;
+    EXPECT_NE(text.find("Python-urllib/3.12"), std::string::npos) << text;
+    EXPECT_EQ(text.find("already running"), std::string::npos) << text;
 }

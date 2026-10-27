@@ -253,6 +253,63 @@ TEST_F(ScreenTSConf_Test, VID5_ZxInFullWindowWrapsColumns)
     EXPECT_EQ(PixelAfterFrame(Fx(89), Fy(32)), ScreenTSConf::CramToRgba(ts.cram[0xF0])) << "paper";
 }
 
+/// VID-9: ZX mode addresses with the low 8 bits of the 9-bit row counter ([V] video_mode.v:204-205 addr_zx_gfx =
+/// {cnt_row[7:6], cnt_row[2:0], cnt_row[5:3], col}, addr_zx_atr = {110, cnt_row[7:3], col}; [U] drawers.cpp:104-105):
+/// rows 192..255 read the attribute area as pixels, row 256 is row 0 again (TS-Conf audit, video row 21)
+TEST_F(ScreenTSConf_Test, VID9_ZxRowsWrapAt256)
+{
+    TsConfState& ts = _decoder->GetState();
+    std::memset(_memory->RAMPageAddress(5), 0, PAGE_SIZE);
+    ts.cram[0xF2] = 0x7C00;
+    ts.cram[0xF3] = 0x001F;
+
+    // Row 200 = #C8: pixels at word {11, 000, 001, 0} = byte #1820, attributes at {110, 11001, 0} = byte #1B20
+    Ram(5, 0x1820) = 0x80;
+    Ram(5, 0x1B20) = 0x02;  // ink 2
+    Reg(TsConfReg::GYOffsL, 200);
+    EXPECT_EQ(PixelAfterFrame(Fx(140), Fy(80)), ScreenTSConf::CramToRgba(0x7C00)) << "row 200 at the window top";
+
+    // Row 256: the counter's bit 8 is not an address bit
+    Ram(5, 0x0000) = 0x80;
+    Ram(5, 0x1800) = 0x03;  // ink 3
+    Reg(TsConfReg::GYOffsL, 0x00);
+    Reg(TsConfReg::GYOffsH, 0x01);
+    EXPECT_EQ(PixelAfterFrame(Fx(140), Fy(80)), ScreenTSConf::CramToRgba(0x001F)) << "row 256 shows row 0";
+}
+
+/// VID-10: FLASH from a 5-bit frame counter, phase = bit 4: 16 frames as drawn, 16 with ink and paper swapped, for
+/// attribute bit 7 only ([V] video_sync.v:202-209 flash = flash_ctr[4], +1 at frame_start_s; video_render.v:43;
+/// [U] drawers.cpp:132 frame_counter & 0x10) (TS-Conf audit, video row 24)
+TEST_F(ScreenTSConf_Test, VID10_FlashSwapsEvery16Frames)
+{
+    TsConfState& ts = _decoder->GetState();
+    std::memset(_memory->RAMPageAddress(5), 0, PAGE_SIZE);
+    Ram(5, 0x0000) = 0x80;  // pixel set at (0, 0)
+    Ram(5, 0x1800) = 0x81;  // FLASH, ink 1, paper 0
+    Ram(5, 0x0001) = 0x80;  // pixel set at (8, 0)
+    Ram(5, 0x1801) = 0x01;  // no FLASH, ink 1
+    ts.cram[0xF1] = 0x7C00;
+    ts.cram[0xF0] = 0x03E0;
+    const uint32_t ink = ScreenTSConf::CramToRgba(0x7C00);
+    const uint32_t paper = ScreenTSConf::CramToRgba(0x03E0);
+
+    struct Case
+    {
+        uint32_t frame;
+        bool swapped;
+    };
+    for (const Case& c : {Case{15, false}, Case{16, true}, Case{31, true}, Case{32, false}})
+    {
+        SCOPED_TRACE(c.frame);
+        _context->emulatorState.frame_counter = c.frame;
+        EXPECT_EQ(PixelAfterFrame(Fx(140), Fy(80)), c.swapped ? paper : ink);
+        uint32_t* buffer = nullptr;
+        size_t size = 0;
+        Screen()->GetFramebufferData(&buffer, &size);  // the same frame
+        EXPECT_EQ(buffer[Fy(80) * 720 + Fx(148)], ink) << "attribute bit 7 clear: never swapped";
+    }
+}
+
 /// AUTO-1: the screen report names the TS mode with its geometry, its format
 /// and the RAM pages it reads
 TEST_F(ScreenTSConf_Test, AUTO1_ScreenModeReport)

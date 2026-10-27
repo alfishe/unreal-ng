@@ -21,7 +21,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -34,7 +34,7 @@ class TTD_Display_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
     Z80* _z80 = nullptr;
@@ -44,7 +44,7 @@ protected:
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         _screen = _context->pScreen;
         _z80 = _context->pCore->GetZ80();
@@ -116,9 +116,10 @@ TEST_F(TTD_Display_Test, SeekByFrame_ShowsFramesFinalPicture)
 {
     const auto live = RecordFinalPictures(8);
 
+    // A frame's final picture is its end (D13: {f, 0} is the frame's start, where the previous frame's picture shows)
     for (uint64_t f = live.begin()->first + 1; f < live.rbegin()->first; ++f)
     {
-        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));
         const auto shown = Framebuffer();
         EXPECT_GT(TopRowColors(shown, Width()), 1u) << "static decode shown for frame " << f;
         EXPECT_EQ(shown, live.at(f)) << "frame " << f << " is not the live final picture";
@@ -137,14 +138,15 @@ TEST_F(TTD_Display_Test, FrameSteps_LandOnBoundaryAndShowFinalPicture)
         ASSERT_TRUE(_ttd->StepForwardFrame());
         EXPECT_EQ(_ttd->CurrentPosition().frame, f);
         EXPECT_LT(_z80->t, 32u) << "frame step drifted into the frame (t=" << _z80->t << ")";
-        EXPECT_EQ(Framebuffer(), live.at(f)) << "step forward to frame " << f;
+        // A step lands at the frame's start (D13), which shows the frame before it drawn whole
+        EXPECT_EQ(Framebuffer(), live.at(f - 1)) << "step forward to frame " << f;
     }
     for (uint64_t f = last - 1; f >= first; --f)
     {
         ASSERT_TRUE(_ttd->StepBackFrame());
         EXPECT_EQ(_ttd->CurrentPosition().frame, f);
         EXPECT_LT(_z80->t, 32u);
-        EXPECT_EQ(Framebuffer(), live.at(f)) << "step back to frame " << f;
+        EXPECT_EQ(Framebuffer(), live.at(f - 1)) << "step back to frame " << f;
     }
 }
 
@@ -236,7 +238,7 @@ TEST_F(TTD_Display_Test, SeekByFrame_PlaneBMatchesLive)
 
     for (uint64_t f = live.begin()->first + 1; f < live.rbegin()->first; ++f)
     {
-        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));   // the frame's end (D13)
         const auto shown = planeB();
         std::set<uint16_t> borderColors;
         for (uint16_t v : shown)

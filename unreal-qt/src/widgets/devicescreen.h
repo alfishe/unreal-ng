@@ -12,7 +12,8 @@
 #include "framehistory.h"
 #include "crtprofiles.h"
 
-class CRTFilter;
+class CRTBeamModel;
+class CRTRenderer;
 
 class Emulator;  // Forward declaration
 class MouseCaptureController;
@@ -31,7 +32,9 @@ public:
     ~DeviceScreen() override;
 
 public:
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
     void detach();
 
     /// Largest ratio-conforming geometry inside the parent widget, centered.
@@ -110,11 +113,16 @@ public:
     int temporalHistorySize() const { return _frameHistory.historySize(); }
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
+    /// Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const { return _temporalDecay; }
 
-    // CRT effects (SIMD-accelerated)
+    // CRT effects (CRTRenderer / CRTBeamModel: the same picture as the GPU screen, bit for bit)
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
     void setCRTProfile(CRTProfile profile);
+    /// New values of the profile's parameters, the CRT switch kept
+    void setCRTParams(const CRTProfileParams& params);
     void setCRTProfile(const CRTProfileParams& params);
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
@@ -156,7 +164,8 @@ private:
     FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
 
-    static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    float ratio = kNativeRatio;  // the shape the picture is drawn in (init)
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown
@@ -170,9 +179,11 @@ private:
     QImage _blendedFrame;
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
+    float _temporalDecay = 0.5f;
 
     // CRT effects
-    std::unique_ptr<CRTFilter> _crtFilter;
+    std::unique_ptr<CRTRenderer> _crtRenderer;
+    std::unique_ptr<CRTBeamModel> _crtModel;  ///< the shader models (crt-lottes, ...)
     QImage _crtFrame;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;

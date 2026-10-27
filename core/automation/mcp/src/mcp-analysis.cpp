@@ -8,6 +8,7 @@
 //
 // analyze_performance actions:
 //   coverage_start/stop/read/gaps/clear → /coverage* endpoints
+//   coverage_export                     → POST /coverage/export {format?, start?, end?, path?, merge?}
 //   frame_cost                          → GET /frame_cost
 //   vdac2_line_budget                   → GET /vdac2/metrics[?lines=1&in_flight=1] (FT812 line metrics)
 //   vdac2_line_budget_set               → PUT /vdac2/metrics {margin?, measure_always?}
@@ -17,6 +18,11 @@
 //   porttrace                           → start → run_frames → stop → events
 //   gs_porttrace                        → General Sound coprocessor triage:
 //                                        start → run_frames → stop → counters+events
+//   profiler {profiler, op}             → POST /profiler/{opcode|memory|calltrace|porttrace}/{op}, /profiler/{op}
+//   gs_trace {op}                       → POST /control/audio/gs/porttrace {action}, GET /state/audio/gs/porttrace
+//   aylog {op}                          → POST /ay/log {action, capacity?}, GET /ay/log
+//   pchist {op}                         → POST /debug/pchist {enabled}, GET /debug/pchist?depth=
+//   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -61,10 +67,13 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["pattern_hex"]["type"] = "string";
     schema["properties"]["pattern_hex"]["description"] =
         "Hex byte pattern for find_bytes, e.g. \"CD 16 00\"; \"??\" = any byte, \"A?\" = any low nibble (alias: pattern)";
+    schema["properties"]["pattern"]["type"] = "string";
+    schema["properties"]["pattern"]["description"] = "find_bytes: the same as pattern_hex";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["description"] =
         "find_bytes address space: \"cpu\" (default, what is paged in now), \"ram\" (every RAM page; matches as page + "
-        "offset) or one page (\"ram5\", \"rom2\", \"cache0\"; start / end are offsets in it)";
+        "offset), one page (\"ram5\", \"rom2\", \"cache0\"; start / end are offsets in it) or a device memory region by "
+        "name or alias (\"vram\", \"neogs.ram\", \"tsconf.cram\"; memory_access regions lists them)";
     schema["properties"]["mask_hex"]["type"] = "string";
     schema["properties"]["mask_hex"]["description"] =
         "find_bytes mask as hex bytes, as long as the pattern: 1 bits must match (replaces the ?? wildcards)";
@@ -102,7 +111,27 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 {
                     suffix += "&address=" + AddressArg(args["address"]);
                 }
-                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Disassembly", done);
+                // The listing goes in the text itself: clients that pass only content[] to the model get the code
+                TargetResolver::ResolveFromArgs(args, caller, [suffix, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    const std::string id = idOrError;
+                    ForwardCall("GET", Endpoint(id, suffix), nullptr, caller, "", [id, done](ToolResult result) {
+                        if (result.isError)
+                        {
+                            done(std::move(result));
+                            return;
+                        }
+                        const Json::Value& body = result.structured;
+                        result.text = "Disassembly [target " + id + "]: " + std::to_string(body["instructions"].size()) +
+                                      " instruction(s) at " + Hex16(body["address"].asUInt()) + "\n" +
+                                      FormatDisasmListing(body);
+                        done(std::move(result));
+                    });
+                });
                 return;
             }
 
@@ -301,6 +330,18 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                             std::ostringstream out;
                             out << "Call trace: " << entryCount << " entries over " << acc.get("frames_run", 0).asUInt()
                                 << " frames [target " << id << "]";
+                            // One line per control-flow event (Z80CFType order): "0x02D6 jr -> 0x02C6 x7 sp 0x5BDF"
+                            static const char* const kTypes[] = {"jp", "jr", "call", "rst", "ret", "reti", "djnz"};
+                            if (acc["entries"].isObject() && acc["entries"]["entries"].isArray())
+                                for (const Json::Value& e : acc["entries"]["entries"])
+                                {
+                                    const unsigned type = e["type"].asUInt();
+                                    out << "\n" << Hex16(e["from_address"].asUInt()) << " "
+                                        << (type < 7 ? kTypes[type] : "?") << " -> " << Hex16(e["to_address"].asUInt());
+                                    if (e["loop_count"].asUInt() > 1)
+                                        out << " x" << e["loop_count"].asUInt();
+                                    out << " sp " << Hex16(e["sp"].asUInt());
+                                }
                             done(ToolResult::Ok(out.str(), std::move(acc)));
                         });
                     });
@@ -357,21 +398,41 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "frame_cost",
+    for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
-                               "vdac2_line_budget", "vdac2_line_budget_set"})
+                               "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
+                               "analyzers"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
+        "Analysis operation: executed-address coverage (coverage_export writes it as SkoolKit's code execution map for "
+        "sna2ctl.py / sna2skool.py -m: one $HHHH line per executed instruction start), per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
         "trace (on decoders with internal port codes - ZX-Evo decode arms - each event also carries code / code_name, "
         "and session.codes lists them), or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC "
         "fetches + event trace), or the TS-Conf VDAC2 card's FT812 line budget: vdac2_line_budget (the last finished "
         "frame's per-line cost against the line period; lines / in_flight add the per-line costs and the frame in "
         "flight, the latter on a paused machine) and vdac2_line_budget_set (margin = soft budget percent 0..50, "
         "measure_always = draw and measure every frame, also not shown). The metrics are part of the chip state: "
-        "after a time_travel seek they are those of that moment.";
+        "after a time_travel seek they are those of that moment. "
+        "profiler drives one profiler or trace (profiler: opcode, memory, calltrace, porttrace, or all; op: start, stop, "
+        "pause, resume, clear, status), gs_trace the General Sound port trace step by step (op: start, stop, pause, "
+        "resume, clear, events), aylog the AY register log (op: start + capacity?, stop, clear, status, read + limit?), "
+        "pchist the PC history (op: on, off, read + depth?), analyzers the analyzers (op: list, enable, disable, events, "
+        "clear; name: trdos, editor-input, coverage, aylog, audiocapture).";
+    schema["properties"]["profiler"]["type"] = "string";
+    schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
+        schema["properties"]["profiler"]["enum"].append(name);
+    schema["properties"]["profiler"]["description"] = "profiler: which one (all: memory + calltrace + opcode together)";
+    schema["properties"]["op"]["type"] = "string";
+    schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers: the operation";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture)";
+    schema["properties"]["depth"]["type"] = "integer";
+    schema["properties"]["depth"]["description"] = "pchist read: entries, newest first (default 64)";
+    schema["properties"]["capacity"]["type"] = "integer";
+    schema["properties"]["capacity"]["description"] = "aylog start: the ring's capacity in register writes";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -380,9 +441,20 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["max_ranges"]["type"] = "integer";
     schema["properties"]["max_ranges"]["description"] = "Maximum executed ranges for coverage_read (default 512, 0 = unlimited)";
     schema["properties"]["start"]["type"] = "string";
-    schema["properties"]["start"]["description"] = "coverage_gaps window start — integer or \"0x…\" hex string (default 0x4000)";
+    schema["properties"]["start"]["description"] =
+        "coverage_gaps / coverage_export window start — integer or \"0x…\" hex string (default 0x4000 for gaps, 0 for export)";
     schema["properties"]["end"]["type"] = "string";
-    schema["properties"]["end"]["description"] = "coverage_gaps window end (default 0xFFFF)";
+    schema["properties"]["end"]["description"] = "coverage_gaps / coverage_export window end (default 0xFFFF)";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["format"]["enum"].append("skoolkit-map");
+    schema["properties"]["format"]["description"] = "coverage_export: the file format (default skoolkit-map)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] =
+        "coverage_export: the file to write (on the emulator's host); without it the map comes back in the answer";
+    schema["properties"]["merge"]["type"] = "boolean";
+    schema["properties"]["merge"]["description"] =
+        "coverage_export: add the addresses of the map file already at path (several runs into one map)";
     schema["properties"]["max_gaps"]["type"] = "integer";
     schema["properties"]["max_gaps"]["description"] = "Maximum gap ranges for coverage_gaps (default 256)";
     schema["properties"]["limit"]["type"] = "integer";
@@ -407,7 +479,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
 
     registry.Register(
         "analyze_performance",
-        "Performance and coverage analysis: executed-address coverage (start/stop/read/gaps/clear), frame cost (active vs "
+        "Performance and coverage analysis: executed-address coverage (start/stop/read/gaps/clear, export as a SkoolKit "
+        "code execution map), frame cost (active vs "
         "halted t-states per frame), unified profiler control (opcode/memory/call-trace) with a combined report, and a "
         "one-shot port I/O trace over N frames.",
         std::move(schema),
@@ -470,9 +543,34 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 ResolveAndForward(args, "GET", suffix, nullptr, caller, "Coverage gaps", done);
                 return;
             }
+            if (action == "coverage_export")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"format", "path"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                for (const char* name : {"start", "end"})
+                    if (args.isMember(name) && !AddressArg(args[name]).empty())
+                        body[name] = AddressArg(args[name]);
+                if (args.isMember("merge"))
+                    body["merge"] = args["merge"].asBool();
+                // An agent may see only the text: the message, then the map itself (or where it was written)
+                ResolveAndForward(args, "POST", "/coverage/export", &body, caller, "Coverage map", [done](ToolResult result) {
+                    if (!result.isError && result.structured.isObject())
+                    {
+                        const Json::Value& r = result.structured;
+                        result.text = r.get("message", "Coverage map").asString() + " [" + r.get("start", "").asString() +
+                                      "-" + r.get("end", "").asString() + ", format " + r.get("format", "").asString() + "]";
+                        if (r.isMember("map"))
+                            result.text += "\n" + r["map"].asString();
+                    }
+                    done(std::move(result));
+                });
+                return;
+            }
             if (action == "frame_cost")
             {
-                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", done);
+                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", AppendFields(done));
                 return;
             }
             if (action == "vdac2_line_budget" || action == "vdac2_line_budget_set")
@@ -545,7 +643,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             }
             if (action == "profile_status")
             {
-                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", done);
+                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", AppendFields(done));
                 return;
             }
 
@@ -715,7 +813,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                         steps.push_back([&caller, id](Json::Value& acc, std::function<void(bool)> next) {
                             auto body = std::make_shared<Json::Value>();
                             (*body)["action"] = "start";
-                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                            caller.Call("POST", Endpoint(id, "/control/audio/gs/porttrace"), body.get(),
                                         [body, &acc, next](int status, Json::Value respBody) mutable {
                                             if (status < 200 || status >= 300)
                                             {
@@ -740,7 +838,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                         steps.push_back([&caller, id](Json::Value&, std::function<void(bool)> next) {
                             auto body = std::make_shared<Json::Value>();
                             (*body)["action"] = "stop";
-                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                            caller.Call("POST", Endpoint(id, "/control/audio/gs/porttrace"), body.get(),
                                         [body, next](int, Json::Value) { next(true); });
                         });
                         steps.push_back([&caller, id, limit](Json::Value& acc, std::function<void(bool)> next) {
@@ -784,10 +882,136 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "profiler" || action == "gs_trace" || action == "aylog" || action == "pchist" || action == "analyzers")
+            {
+                const std::string op = args.get("op", action == "analyzers" ? "list" : "status").asString();
+                std::string method = "POST";
+                std::string path;
+                Json::Value body(Json::objectValue);
+                bool hasBody = false;
+                std::string text;
+                if (action == "profiler")
+                {
+                    const std::string which = args.get("profiler", "all").asString();
+                    if (which != "opcode" && which != "memory" && which != "calltrace" && which != "porttrace" && which != "all")
+                    {
+                        done(ToolResult::Error("profiler: opcode, memory, calltrace, porttrace or all"));
+                        return;
+                    }
+                    if (op != "start" && op != "stop" && op != "pause" && op != "resume" && op != "clear" && op != "status")
+                    {
+                        done(ToolResult::Error("op: start, stop, pause, resume, clear or status"));
+                        return;
+                    }
+                    path = (which == "all" ? std::string("/profiler/") : "/profiler/" + which + "/") + op;
+                    if (op == "status")
+                        method = "GET";
+                    text = "Profiler " + which + ": " + op;
+                }
+                else if (action == "gs_trace")
+                {
+                    if (op == "events" || op == "status")
+                    {
+                        method = "GET";
+                        path = "/state/audio/gs/porttrace?events=" + std::to_string(args.get("limit", 32).asUInt());
+                    }
+                    else if (op == "start" || op == "stop" || op == "pause" || op == "resume" || op == "clear")
+                    {
+                        path = "/control/audio/gs/porttrace";
+                        body["action"] = op;
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: start, stop, pause, resume, clear or events"));
+                        return;
+                    }
+                    text = "GS port trace: " + op;
+                }
+                else if (action == "aylog")
+                {
+                    if (op == "status" || op == "read")
+                    {
+                        method = "GET";
+                        path = "/ay/log?limit=" + std::to_string(op == "status" ? 0u : args.get("limit", 32).asUInt()) +
+                               "&tail=true";
+                    }
+                    else if (op == "start" || op == "stop" || op == "clear")
+                    {
+                        path = "/ay/log";
+                        body["action"] = op;
+                        if (args.isMember("capacity"))
+                            body["capacity"] = args["capacity"];
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: start, stop, clear, status or read"));
+                        return;
+                    }
+                    text = "AY log: " + op;
+                }
+                else if (action == "pchist")
+                {
+                    if (op == "read" || op == "status")
+                    {
+                        method = "GET";
+                        path = "/debug/pchist?depth=" + std::to_string(args.get("depth", 64).asUInt());
+                    }
+                    else if (op == "on" || op == "off")
+                    {
+                        path = "/debug/pchist";
+                        body["enabled"] = op == "on";
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: on, off or read"));
+                        return;
+                    }
+                    text = "PC history: " + op;
+                }
+                else
+                {
+                    const std::string name = args.get("name", "").asString();
+                    if (op == "list")
+                    {
+                        method = "GET";
+                        path = "/analyzers";
+                    }
+                    else if (name.empty())
+                    {
+                        done(ToolResult::Error("analyzers " + op + " requires 'name' (list shows them)"));
+                        return;
+                    }
+                    else if (op == "enable" || op == "disable")
+                    {
+                        method = "PUT";
+                        path = "/analyzer/" + name;
+                        body["enabled"] = op == "enable";
+                        hasBody = true;
+                    }
+                    else if (op == "events" || op == "clear")
+                    {
+                        method = op == "events" ? "GET" : "DELETE";
+                        path = "/analyzer/" + name + "/events";
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: list, enable, disable, events or clear"));
+                        return;
+                    }
+                    text = "Analyzers: " + op + (name.empty() ? std::string() : " " + name);
+                }
+                ResolveAndForward(args, method, path, hasBody ? &body : nullptr, caller, text, done);
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
-                                            "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set"));
+                                            "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set, profiler, gs_trace, aylog, "
+                                            "pchist, analyzers"));
         });
 }
 

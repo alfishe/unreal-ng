@@ -1,0 +1,14 @@
+# The host keyboard's numpad as a joystick
+schema: 1
+kind: play
+id: builtin/play/keyboard-numpad
+label: Numpad joystick
+applies_to: { families: [keyboard] }
+layers:
+  play:
+    key.kp8: { retro: "auto:up" }
+    key.kp2: { retro: "auto:down" }
+    key.kp4: { retro: "auto:left" }
+    key.kp6: { retro: "auto:right" }
+    key.kp0: { retro: "auto:fire" }
+    key.kp5: { retro: "auto:fire2" }

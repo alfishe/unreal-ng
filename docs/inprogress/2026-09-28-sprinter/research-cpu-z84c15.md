@@ -64,6 +64,17 @@ next to this repository, see [materials.md](materials.md)). Sprinter code that e
 | User manual | "Z84C15", 21 MHz / 3.5 MHz; `#10..#1F, #EE, #EF, #F0, #F1, #F4` are "internal ports of the Z84C15" | `emulators/github/Sprinter200x/docs/sp2000_man.pdf` p. 4, p. 31 |
 | PLD source | the PLD generates the CPU clock: `CLK_Z80 = CLK21` in turbo, a 42 MHz / 12 = 3.5 MHz toggle otherwise | `emulators/gitlab/sprinter-computer-hard/ACEX/DCP.TDF:275`, `:279` |
 
+**The two clocks, from the PLD counter (2026-10-06).** `CT[1..0]` counts 0, 1, 2 on `CLK42` and `CT2`
+toggles each time `CT1` is set (`DCP.TDF:247-255`), so `CT2` has a 6-clock period: 42 / 6 = 7 MHz. `CLK21 =
+DFF(!CT0 xor CT2)` (`:279`) is 42 / 2 = 21 MHz. Without turbo, `CLK_Z80` is a toggle flip-flop enabled by
+`!CT2 & CT1`, true for one 42 MHz clock in six (`:275`): it flips every 6 clocks, a 12-clock period, 42 / 12 =
+3.5 MHz. `TURBO` is a single bit (`TB_SW & TURBO_HAND`, `:262`), so there is no third rate. The 7 MHz of `CT2`
+is the pixel clock of the 320-dot mode (the manual p. 15), never the CPU clock: the "3.5-7.0 MHz in the ZX
+Spectrum configuration" seen in secondary descriptions is not what the board does. Which software writes the
+turbo bit and when: [research-zx-mode.md](research-zx-mode.md) §4.1. The older Sprinter-97 design
+(`SPRINT08.TDF:7`) has a build-time constant `TURBO_MODE = 14 / 21 / 28` and a non-turbo clock from `CT3`
+(`:1527-1529`); that file is not the Sp2000 configuration.
+
 Decoding the part number `Z84C15 16 F S C`: `16` is the 16 MHz grade and `S` is the 0-70 °C range
 (DC2992 p. 4). Reading `F` as the QFP package follows Zilog's naming scheme, but this was not checked
 against a Zilog ordering table.

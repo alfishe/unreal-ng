@@ -9,12 +9,14 @@
 //   tsconf-video-sim sanity                      run the self-checks only
 //   tsconf-video-sim all <results-dir>           self-checks, then write zx-gxoffs.txt / txt-gxoffs.txt
 //   tsconf-video-sim line <mode> <gx> [vconf]    print one captured line (mode: zx, txt, 16c, 256c)
+//   tsconf-video-sim tsulatch [results-dir]      TSU latch cases: print the traces, write tsu-latch.txt
 //
 // Exit code 0 = all self-checks passed.
 
 #include "Vtbtop.h"
 #include "verilated.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -407,11 +409,300 @@ static void WriteResults(const std::string& dir)
     }
 }
 
+// ---------------------------------------------------------------------------
+// TSU latch timing (tsulatch): the TSU draws line L during line L - 1 from ts_start; the tile registers
+// T0/T1 G_PAGE, T0/T1 X_OFFS and PAL_SEL are latched at line_start (video_ports.v:153-165) and read by the
+// TSU when it hands an object to the renderer (video_ts.v:162-171). A pass that runs past line_start draws
+// its late tiles with line L's latch. Each case sets the "before" values, then writes the "after" values
+// during line L - 1 (dot 420: after ts_start, before line_start), and captures TS line `line` (the window).
+// TSU_CYCLES=1 in the environment prints the owner of each DRAM cycle at the start of the pass.
+
+static const uint8_t kTsMapPage = 0x30;   // T_MAP_PAGE
+static const uint8_t kTsVideoPage = 0xC0; // V_PAGE: zero memory, the graphics layer is index 0
+static const uint8_t kTsSpritePage = 0xA0;
+// Graphics bitmaps (tiles and sprites) at pages 80h..AFh: one byte per physical address
+static uint8_t TsGfxByte(uint32_t a) { return static_cast<uint8_t>(a * 7 + (a >> 8) * 13 + (a >> 17) * 101); }
+
+struct TsuRegs
+{
+    uint8_t palsel, t0gpage, t1gpage;
+    uint16_t t0x, t1x;
+};
+
+struct TsuCase
+{
+    const char* name;
+    uint8_t vconf;
+    uint8_t tsconf;
+    int s0;          // sprites in S0 (64x8 each, all on the line)
+    int s1;          // sprites in S1
+    TsuRegs before, after;
+    int line = 20;   // captured TS line (window line)
+};
+
+// Sprite d (0-based over all layers): x, tile and palette
+static uint16_t TsSpriteR1(int d) { return static_cast<uint16_t>(((d * 23) & 0x1FF) | (7 << 9)); }
+static uint16_t TsSpriteR2(int d) { return static_cast<uint16_t>(((d * 8) & 0x3F) | ((d & 7) << 6) | ((d & 15) << 12)); }
+
+struct TsuGo
+{
+    bool sprite;
+    int x, page, pal, slots;
+    bool late;
+};
+
+struct TsuRun
+{
+    std::vector<uint8_t> window;
+    std::vector<TsuGo> gos;
+    int split = -1;       // TSU DRAM cycles (tilemap + renderer) from ts_start to line_start
+    int dotsToLine = 0;   // DRAM cycles from ts_start to line_start
+    int videoBefore = 0;  // video DRAM cycles in that span
+    int freeBefore = 0;   // free DRAM cycles in that span
+    int tsuTotal = 0;     // TSU DRAM cycles of the whole pass
+};
+
+static void FillTsuMemory()
+{
+    std::fill(g_mem.begin(), g_mem.end(), 0);
+    for (uint32_t a = 0x80u * 16384u; a < 0xB0u * 16384u; a++) g_mem[a] = TsGfxByte(a);
+    // Tile map, every row the same: layer l column c = tile (c & 63) of bitmap row 1 + l, palette c & 3
+    for (int row = 0; row < 64; row++)
+        for (int l = 0; l < 2; l++)
+            for (int c = 0; c < 64; c++)
+            {
+                uint16_t e = static_cast<uint16_t>((c & 63) | ((1 + l) << 6) | ((c & 3) << 12));
+                uint32_t a = kTsMapPage * 16384u + row * 256 + l * 128 + c * 2;
+                g_mem[a] = e & 0xFF;
+                g_mem[a + 1] = e >> 8;
+            }
+}
+
+static TsuRun RunTsu(const TsuCase& tc, int pipeDelay)
+{
+    auto ctx = std::make_unique<VerilatedContext>();
+    ctx->randReset(0);
+    auto top = std::make_unique<Vtbtop>(ctx.get());
+    auto tick = [&]() {
+        top->clk = 0; top->eval();
+        top->clk = 1; top->eval();
+    };
+    top->clk = 0;
+    top->res = 1;
+    top->cpu_req = 0;
+    top->eval();
+    for (int i = 0; i < 8; i++) tick();
+    top->res = 0;
+    tick();
+
+    auto write = [&](CData& strobe, uint8_t value) {
+        top->xt_wr_data = value;
+        strobe = 1;
+        tick();
+        strobe = 0;
+        tick();
+    };
+    auto writeTileRegs = [&](const TsuRegs& r) {
+        write(top->palsel_wr, r.palsel);
+        write(top->t0gpage_wr, r.t0gpage);
+        write(top->t1gpage_wr, r.t1gpage);
+        write(top->t0x_offsl_wr, r.t0x & 0xFF);
+        write(top->t0x_offsh_wr, (r.t0x >> 8) & 1);
+        write(top->t1x_offsl_wr, r.t1x & 0xFF);
+        write(top->t1x_offsh_wr, (r.t1x >> 8) & 1);
+    };
+    write(top->vconf_wr, tc.vconf);
+    write(top->vpage_wr, kTsVideoPage);
+    write(top->border_wr, 0xEE);
+    write(top->tmpage_wr, kTsMapPage);
+    write(top->sgpage_wr, kTsSpritePage);
+    write(top->t0y_offsl_wr, 0);
+    write(top->t0y_offsh_wr, 0);
+    write(top->t1y_offsl_wr, 0);
+    write(top->t1y_offsh_wr, 0);
+    writeTileRegs(tc.before);
+    write(top->tsconf_wr, tc.tsconf);
+
+    // SFILE: S0 = s0 sprites (LEAP on the last), S1 = s1 sprites (LEAP on the last, or an inactive LEAP
+    // descriptor when s1 = 0), then an inactive LEAP descriptor that ends S2
+    std::vector<uint16_t> sfile(256, 0);
+    int d = 0;
+    auto sprite = [&](bool leap) {
+        sfile[d * 3] = static_cast<uint16_t>(tc.line | 0x2000 | (leap ? 0x4000 : 0));
+        sfile[d * 3 + 1] = TsSpriteR1(d);
+        sfile[d * 3 + 2] = TsSpriteR2(d);
+        d++;
+    };
+    auto leapOnly = [&]() { sfile[d * 3] = 0x4000; d++; };
+    for (int i = 0; i < tc.s0; i++) sprite(i == tc.s0 - 1);
+    if (tc.s0 == 0) leapOnly();
+    for (int i = 0; i < tc.s1; i++) sprite(i == tc.s1 - 1);
+    if (tc.s1 == 0) leapOnly();
+    leapOnly();
+    for (int i = 0; i < 256; i++)
+    {
+        top->zma = static_cast<uint8_t>(i);
+        top->zmd = sfile[i];
+        top->sfile_we = 1;
+        tick();
+        top->sfile_we = 0;
+        tick();
+    }
+
+    int rres = tc.vconf >> 6;
+    int targetV = kVpBeg[rres] + tc.line;
+    int firstDot = kHpBeg[rres];
+    int lastDot = kHpEnd[rres];
+    TsuRun run;
+    run.window.assign(lastDot - firstDot, 0);
+    // The "after" writes, one strobe per 28 MHz clock inside the observed loop (nothing is missed)
+    const std::vector<std::pair<CData*, uint8_t>> late = {
+        {&top->palsel_wr, tc.after.palsel},
+        {&top->t0gpage_wr, tc.after.t0gpage},
+        {&top->t1gpage_wr, tc.after.t1gpage},
+        {&top->t0x_offsl_wr, static_cast<uint8_t>(tc.after.t0x & 0xFF)},
+        {&top->t0x_offsh_wr, static_cast<uint8_t>((tc.after.t0x >> 8) & 1)},
+        {&top->t1x_offsl_wr, static_cast<uint8_t>(tc.after.t1x & 0xFF)},
+        {&top->t1x_offsh_wr, static_cast<uint8_t>((tc.after.t1x >> 8) & 1)},
+    };
+    size_t lateNext = 0;
+    bool inPass = false, afterLine = false;
+    int slots = 0;
+    long guard = 0;
+    while (true)
+    {
+        top->clk = 0;
+        for (const auto& w : late) *w.first = 0;
+        if (lateNext > 0 && lateNext < late.size())
+        {
+            top->xt_wr_data = late[lateNext].second;
+            *late[lateNext].first = 1;
+            lateNext++;
+        }
+        top->eval();
+        int v = top->ray_y;
+        int h = top->ray_x;
+        if (lateNext == 0 && v == targetV - 1 && h == 420)
+        {
+            top->xt_wr_data = late[0].second;
+            *late[0].first = 1;
+            lateNext = 1;
+            top->eval();
+        }
+        if (top->ts_start_o)
+        {
+            if (v == targetV - 1) inPass = true;
+            else if (v == targetV) inPass = false;
+        }
+        if (inPass)
+        {
+            if (top->c2_o && getenv("TSU_CYCLES") && h < 448 && (afterLine ? 0 : 1) && slots < 40)
+                printf("    dot %3d cycle %02X%s\n", h, top->curr_cycle_o, top->tsr_go_o ? " go" : "");
+            if (top->c2_o)
+            {
+                if (top->ts_next_o || top->tm_next_o)
+                    slots++;
+                else if (!afterLine && (top->curr_cycle_o & 2))
+                    run.videoBefore++;
+                else if (!afterLine && top->curr_cycle_o == 0)
+                    run.freeBefore++;
+                if (!afterLine) run.dotsToLine++;
+            }
+            if (top->tsr_go_o)
+                run.gos.push_back({top->tsr_sprite_o != 0, static_cast<int>(top->tsr_x_o), top->tsr_page_o, top->tsr_pal_o, slots, afterLine});
+            if (top->line_start_o && !afterLine)
+            {
+                afterLine = true;
+                run.split = slots;
+            }
+        }
+        if (v == targetV || v == targetV + 1)
+        {
+            // A 360-wide window ends at dot 447: its last dot arrives after the raster moved to the next line
+            int dot = h - pipeDelay + (v == targetV + 1 ? 448 : 0);
+            if (dot >= firstDot && dot < lastDot && top->c0_o) run.window[dot - firstDot] = top->vdata_o;
+        }
+        if (v == targetV + 1 && h > pipeDelay + 4) break;
+        if (v == targetV && !inPass && run.tsuTotal == 0) run.tsuTotal = slots;
+        top->clk = 1;
+        top->eval();
+        if (++guard > 4000000) { fprintf(stderr, "error: raster never reached line %d\n", targetV); exit(2); }
+    }
+    top->final();
+    return run;
+}
+
+static std::vector<TsuCase> TsuCases()
+{
+    // PAL_SEL keeps [3:0] = 0, so the graphics layer (zero memory) is index 0 in every mode
+    const TsuRegs a = {0x00, 0x80, 0x90, 0, 0};
+    const TsuRegs b = {0xE0, 0x88, 0x98, 13, 267};
+    return {
+        {"cross-t0-360-16c", 0xC1, 0xA0, 15, 2, a, b},
+        {"cross-t1-360-16c", 0xC1, 0xE0, 6, 0, a, b},
+        {"control-360-16c", 0xC1, 0xE0, 0, 0, a, b},
+        {"cross-t0-320-16c", 0x41, 0xA0, 14, 1, a, b},
+        {"cross-t0-256-16c", 0x01, 0xA0, 13, 1, a, b},
+        {"cross-t0-360-256c", 0xC2, 0xA0, 8, 1, a, b},
+        {"cross-t0-256-zx", 0x00, 0xA0, 16, 1, a, b},
+        {"control-256-zx", 0x00, 0xE0, 2, 0, a, b},
+        {"cross-t0-256-txt", 0x03, 0xA0, 8, 1, a, b},
+        {"cross-t0-320-txt", 0x83, 0xA0, 8, 1, a, b},
+        // The last 8 window lines have no tilemap prefetch (v_pf ends at vpix_end_ts - 9)
+        {"noprefetch-t0-360-16c", 0xC1, 0xA0, 16, 1, a, b, 284},
+        {"noprefetch-t1-320-16c", 0x41, 0xE0, 8, 0, a, b, 196},
+    };
+}
+
+static int RunTsuLatch(const char* dir)
+{
+    FillTsuMemory();
+    FILE* f = nullptr;
+    if (dir)
+    {
+        std::string path = std::string(dir) + "/tsu-latch.txt";
+        f = fopen(path.c_str(), "w");
+        if (!f) { perror(path.c_str()); return 3; }
+        fprintf(f, "# Generated by tools/machines/tsconf/rtl-sim (tsconf-video-sim tsulatch). Format: see README.md.\n");
+        fprintf(f, "# v_page=%02X t_map_page=%02X sg_page=%02X gfx=pages 80..AF byte(a) = a*7 + (a>>8)*13 + (a>>17)*101\n",
+                kTsVideoPage, kTsMapPage, kTsSpritePage);
+    }
+    for (const TsuCase& tc : TsuCases())
+    {
+        TsuRun r = RunTsu(tc, g_pipeDelay);
+        int late = 0;
+        for (const TsuGo& g : r.gos) late += g.late;
+        printf("%-20s split=%d dots=%d video=%d free=%d tsu=%d objects=%zu late=%d\n", tc.name, r.split, r.dotsToLine,
+               r.videoBefore, r.freeBefore, r.tsuTotal, r.gos.size(), late);
+        std::string gos;
+        for (const TsuGo& g : r.gos)
+        {
+            char b[48];
+            snprintf(b, sizeof b, " %c%d:%02X:%X:%d:%c", g.sprite ? 'S' : 'T', g.x, g.page, g.pal, g.slots, g.late ? 'L' : 'E');
+            gos += b;
+        }
+        printf("  go%s\n", gos.c_str());
+        if (f)
+        {
+            fprintf(f, "case %s vconf=%02X tsconf=%02X line=%d s0=%d s1=%d before=%02X,%02X,%02X,%d,%d after=%02X,%02X,%02X,%d,%d split=%d\n",
+                    tc.name, tc.vconf, tc.tsconf, tc.line, tc.s0, tc.s1, tc.before.palsel, tc.before.t0gpage, tc.before.t1gpage,
+                    tc.before.t0x, tc.before.t1x, tc.after.palsel, tc.after.t0gpage, tc.after.t1gpage, tc.after.t0x,
+                    tc.after.t1x, r.split);
+            fprintf(f, "go%s\n", gos.c_str());
+            fprintf(f, "idx");
+            for (uint8_t s : r.window) fprintf(f, " %02X", s);
+            fprintf(f, "\n");
+        }
+    }
+    if (f) fclose(f);
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
     {
-        fprintf(stderr, "usage: %s sanity | all <results-dir> | line <zx|txt|16c|256c> <gx> [vconf-hex]\n", argv[0]);
+        fprintf(stderr, "usage: %s sanity | all <results-dir> | line <zx|txt|16c|256c> <gx> [vconf-hex] | tsulatch [results-dir]\n", argv[0]);
         return 1;
     }
     FillZx();
@@ -439,6 +730,8 @@ int main(int argc, char** argv)
         PrintLine(RunLine(cfg, g_pipeDelay));
         return 0;
     }
+    if (cmd == "tsulatch")
+        return RunTsuLatch(argc >= 3 ? argv[2] : nullptr);
     bool ok = RunSanity();
     if (cmd == "all" && argc >= 3)
     {

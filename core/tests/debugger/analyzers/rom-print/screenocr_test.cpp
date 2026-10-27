@@ -311,7 +311,7 @@ TEST(ScreenOCRTextMode_Test, AtmTextModeIsReadFromTheCharacterCodes)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     context->emulatorState.pFF77 = FF77_TX | 0x20;
-    context->emulatorState.aFF77 = 0x0100;
+    context->emulatorState.atm.aFF77 = 0x0100;
     context->pScreen->InitRaster();
     ASSERT_EQ(context->pScreen->GetVideoMode(), M_ATMTX);
 

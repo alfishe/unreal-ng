@@ -6,6 +6,7 @@
 /// disk built from it. Shared by the boot tests and the TTD tests.
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -51,12 +52,16 @@ struct DssHddFile
 constexpr uint32_t kDssHddStart = 63, kDssHddFatSize = 32;
 constexpr uint32_t kDssHddRootLba = kDssHddStart + 1 + 2 * kDssHddFatSize;  ///< 128
 
+/// `totalSectors`: the disk's size (default 16 MiB; a larger one for programs with big data files, up to 128 MiB:
+/// FAT16 at 4 sectors per cluster); the FATs grow with it, so kDssHddRootLba holds for the default size only
 inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, const std::vector<DssHddFile>& files,
-                                        const std::vector<uint8_t>& mbrCode = {})
+                                        const std::vector<uint8_t>& mbrCode = {}, uint32_t totalSectors = 32768)
 {
-    constexpr uint32_t kTotal = 32768, kStart = kDssHddStart, kSectors = kTotal - kStart;
-    constexpr uint32_t kSpc = 4, kReserved = 1, kFatSize = kDssHddFatSize, kRootEntries = 512;
-    constexpr uint32_t kRootLba = kDssHddRootLba, kDataLba = kRootLba + kRootEntries * 32 / 512;
+    const uint32_t kTotal = totalSectors, kStart = kDssHddStart, kSectors = kTotal - kStart;
+    constexpr uint32_t kSpc = 4, kReserved = 1, kRootEntries = 512;
+    // One FAT entry per cluster, two bytes each, at least the default size's 32 sectors
+    const uint32_t kFatSize = std::max<uint32_t>(kDssHddFatSize, ((kSectors / kSpc + 2) * 2 + 511) / 512);
+    const uint32_t kRootLba = kStart + kReserved + 2 * kFatSize, kDataLba = kRootLba + kRootEntries * 32 / 512;
     std::vector<uint8_t> disk(static_cast<size_t>(kTotal) * 512);
     auto put16 = [&](size_t at, uint32_t v) { disk[at] = static_cast<uint8_t>(v); disk[at + 1] = static_cast<uint8_t>(v >> 8); };
     auto put32 = [&](size_t at, uint32_t v) { put16(at, v & 0xFFFF); put16(at + 2, v >> 16); };
@@ -81,7 +86,10 @@ inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, cons
     put16(bs + 14, kReserved);
     disk[bs + 16] = 2;
     put16(bs + 17, kRootEntries);
-    put16(bs + 19, kSectors);
+    if (kSectors < 0x10000)
+        put16(bs + 19, kSectors);
+    else
+        put32(bs + 32, kSectors);   // the 32-bit total for a volume of 65536 sectors and more
     disk[bs + 21] = 0xF8;
     put16(bs + 22, kFatSize);
     put16(bs + 24, 32);  // sectors per track
@@ -103,6 +111,7 @@ inline std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, cons
     {
         const DssHddFile& file = files[i];
         const uint16_t first = file.data.empty() ? 0 : next;
+        assert(file.data.size() <= (static_cast<size_t>(kTotal - kDataLba) - static_cast<size_t>(next - 2) * kSpc) * 512);
         const uint32_t clusters = static_cast<uint32_t>((file.data.size() + kSpc * 512 - 1) / (kSpc * 512));
         for (uint32_t c = 0; c < clusters; c++, next++)
             fat[next] = c + 1 < clusters ? static_cast<uint16_t>(next + 1) : 0xFFFF;

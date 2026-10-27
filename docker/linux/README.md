@@ -8,6 +8,9 @@ docker/linux/build.sh                     # build core-tests, host-native archit
 docker/linux/build.sh --test              # ...and run the tests
 docker/linux/build.sh --platform amd64    # force x86_64 (emulated on Apple Silicon, slow)
 docker/linux/build.sh --filter '*FatName*' --test
+docker/linux/build.sh --tsan --test --filter 'ExecutionArbiter*'   # ThreadSanitizer (-DSANITIZE=thread)
+docker/linux/build.sh --asan --test        # AddressSanitizer + UBSan; any list: --sanitize LIST
+docker/linux/build.sh --streamdeck --test  # the Stream Deck companion (daemon, sdctl, studio) and its two test suites
 docker/linux/build.sh --help
 ```
 
@@ -26,5 +29,9 @@ The tests' own scratch files (copies of test data, written images) go to a conta
 Desktop for Mac the checkout is a virtiofs bind mount, and creating a file with mode 0200 fails there with
 "Permission denied"; `std::filesystem::copy_file` creates its destination that way, so about twenty tests (CHD, media,
 disk save, snapshot paths) failed on the mount and pass on a real Linux host and on the tmpfs.
+
+`--streamdeck` configures from the repository root with `-DUNREAL_STREAMDECK=ON` into its own directory
+(`scratch/linux-<arch>-<type>-streamdeck/`) and installs `libudev-dev` in the container when the image lacks it (images
+built before `docker/Dockerfile.universal` listed it).
 
 Windows cross-builds: see `docker/windows/`.

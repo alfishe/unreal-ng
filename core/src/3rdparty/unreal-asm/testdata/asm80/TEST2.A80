@@ -1,0 +1,74 @@
+
+;;Advanced TEST 1999
+
+XXx  eqU 1
+	ret pE
+	call Po, XXx
+	Jp NC,2
+	jP (  Iy)
+	;---
+      PusH Iy
+    pop bC
+v eX aF,Af
+    ex (sP ), hL
+      ex ( Sp) ,iX
+	ld A,a
+	  ;---:
+	    im 0
+	      rL a
+	    RLc B
+	  RR (hL   )
+	sla ( iX+ XXx)
+	SRa (Iy -88)
+	sRl l
+	bIT 7, (Ix - 11 )
+	res 0, d
+	set   1 ,( Hl)
+	;----
+	adc a,a
+	ADc hl,bC
+	sBc Hl,Sp
+	;----
+	ADD a,B
+	add hL,sP
+	add Ix,iX
+	;----
+	deC h
+	dec dE
+	dec Iy
+	;----
+	inf
+	in e,(C)
+	in a,(154)
+	;----
+	jr nz,$ + 11
+	jR $-1
+	;----
+	oUT (c),d
+	Out (#1),A
+	;------------ *LD*
+	ld A,i
+	lD a,r
+	LD C , b
+	ld e, ( hL)
+	lD a,(dE)
+	lD a	,(ix +22  )
+	ld a,(8888)
+	;---
+	ld de, (33)
+	ld Ix,11
+	ld sp, iY
+	;/---
+	ld (iX+5),b
+	LD (hl),5
+	ld (de),a
+	;---
+	ld (8899^1 ),a
+	LD (11),De
+	ld (12),hl
+	lD (14),ix
+	;>>>>
+
+
+
+

@@ -6,13 +6,14 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
-#include <ctime>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
+#include "common/filemtime.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "platform/processinfo.h"
 
@@ -22,15 +23,33 @@ namespace
 {
     constexpr uint32_t kNoSuchProcess = 0x7FFFFFF0u;   // above every system's pid limit
 
+    /// The "now" of every test here: a fixed instant (2027-01-15 08:00:00 UTC), not the host's clock - the folders are dated
+    /// back from it and the cleanup is given the same instant
+    constexpr int64_t kNowUnixSeconds = 1800000000;
+
+    /// Dates @p path back by @p age from kNowUnixSeconds through the OS API: libstdc++ on Windows sets no folder's time
+    void SetAge(const fs::path& path, std::chrono::hours age)
+    {
+        const int64_t seconds = kNowUnixSeconds - std::chrono::seconds(age).count();
+        ASSERT_TRUE(SetMTimeUnixSeconds(path, seconds)) << FileHelper::FromFsPath(path);
+    }
+
     struct Root
     {
         std::string path = TestPathHelper::GetUniqueTestScratchPath("ttd-recordings");
-        fs::file_time_type now = fs::file_time_type::clock::now();
+        fs::file_time_type now;
 
         Root()
         {
             FileHelper::DeleteFolder(path);
             FileHelper::CreateFolders(path);
+            // kNowUnixSeconds as a file_time_type (its epoch differs between standard libraries): the time the file
+            // system reads back from a marker file dated to it
+            const fs::path marker = FileHelper::ToFsPath(FileHelper::PathCombine(path, "now.marker"));
+            std::ofstream(marker).put('x');
+            EXPECT_TRUE(SetMTimeUnixSeconds(marker, kNowUnixSeconds));
+            now = fs::last_write_time(marker);
+            fs::remove(marker);
         }
 
         /// A recording folder with one segment file, @p days old, owned by @p pid (0: no owner file)
@@ -42,10 +61,10 @@ namespace
             std::ofstream(FileHelper::ToFsPath(segment)) << "data";
             if (pid != 0)
                 std::ofstream(FileHelper::ToFsPath(FileHelper::PathCombine(folder, ttd::kRecordingOwnerFile))) << pid;
-            const fs::file_time_type when = now - std::chrono::hours(24 * days);
+            const std::chrono::hours age(24 * days);
             for (const auto& entry : fs::directory_iterator(FileHelper::ToFsPath(folder)))
-                fs::last_write_time(entry.path(), when);
-            fs::last_write_time(FileHelper::ToFsPath(folder), when);
+                SetAge(entry.path(), age);
+            SetAge(FileHelper::ToFsPath(folder), age);
             return folder;
         }
 
@@ -78,7 +97,7 @@ TEST(TTDRecordingFolders_Test, OnlyOldCrashedRecordingsAreDeleted)
     const std::string oldButRunning = root.Folder("2026-09-01-120000-tsl", 30, platform::CurrentProcessId());
     const std::string saved = FileHelper::PathCombine(root.path, "2026-09-01-120000-pentagon.ttd");
     std::ofstream(FileHelper::ToFsPath(saved)) << "saved";
-    fs::last_write_time(FileHelper::ToFsPath(saved), root.now - std::chrono::hours(24 * 60));
+    SetAge(FileHelper::ToFsPath(saved), std::chrono::hours(24 * 60));
 
     const std::vector<std::string> removed = root.Clean();
     EXPECT_EQ(removed.size(), 2u);
@@ -96,7 +115,7 @@ TEST(TTDRecordingFolders_Test, TheNewestFileDecidesTheAge)
     const std::string folder = root.Folder("2026-09-20-120000-pentagon", 10, kNoSuchProcess);
     const std::string late = FileHelper::PathCombine(folder, "segment-0001.ttd");
     std::ofstream(FileHelper::ToFsPath(late)) << "data";
-    fs::last_write_time(FileHelper::ToFsPath(late), root.now - std::chrono::hours(24));
+    SetAge(FileHelper::ToFsPath(late), std::chrono::hours(24));
     EXPECT_TRUE(root.Clean().empty());
     EXPECT_TRUE(FileHelper::FolderExists(folder));
 }

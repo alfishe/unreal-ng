@@ -10,6 +10,7 @@
 #include <common/stringhelper.h>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
@@ -553,7 +554,7 @@ TEST_F(LoaderTD0_Test, Load_TrdosSample_ThroughController)
 
     auto readSector = [&](uint8_t cyl, uint8_t side, uint8_t number) -> std::vector<uint8_t>
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         fdc.getDrive()->insertDisk(image);
         fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET |
                                (side ? WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_HEAD : 0);   // MFM: no DENSITY bit

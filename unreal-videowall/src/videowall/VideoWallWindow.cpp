@@ -20,6 +20,13 @@
 #endif
 
 #include <QAction>
+#include <QClipboard>
+#include <QFileDialog>
+#include <QGuiApplication>
+#include <QImage>
+#include <QMessageBox>
+#include <QRegularExpression>
+#include <QStatusBar>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -35,12 +42,16 @@
 #include <QScreen>
 #include <QShortcut>
 #include <QTimer>
+#include <QWindow>
 #include <QtConcurrent/QtConcurrent>
 #include <future>
 #include <unordered_set>
 #include <vector>
 
 #include "emulator/soundmanager.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/video/screenshotter.h"
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileGrid.h"
 #include "videowall/TileGridWrapper.h"
@@ -142,6 +153,28 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 
     resize(800, 600);
     setWindowTitle(tr("Unreal Speccy Video Wall"));
+
+    // One view of TargetState: its active instance is the focused tile's; it moves to the front when a window of the
+    // process gets the focus (focus moving to another program changes nothing: targeting.md §3 rule 2)
+    _surfaceView = actions::TargetState::Instance().RegisterView(tr("Video wall").toStdString(), "videowall");
+    actions::TargetState::Instance().Activated(_surfaceView);
+    connect(qApp, &QGuiApplication::focusWindowChanged, this, [this](QWindow* window) {
+        if (window != nullptr)
+            actions::TargetState::Instance().Activated(_surfaceView);
+    });
+    _surfaceTimer = new QTimer(this);
+    connect(_surfaceTimer, &QTimer::timeout, this, &VideoWallWindow::updateSurfaceView);
+    _surfaceTimer->start(200);
+}
+
+void VideoWallWindow::updateSurfaceView()
+{
+    std::shared_ptr<Emulator> focused = focusedEmulator();
+    const std::string id = focused ? focused->GetId() : std::string();
+    if (id == _surfaceActive)
+        return;
+    _surfaceActive = id;
+    actions::TargetState::Instance().SetActive(_surfaceView, id);
 }
 
 VideoWallWindow::~VideoWallWindow()
@@ -162,6 +195,10 @@ VideoWallWindow::~VideoWallWindow()
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_CREATED, _instanceCreatedObserverId);
         if (_singleSyncObserverId != 0)
             shutdownMessageCenter.RemoveObserverById(NC_VIDEOWALL_SINGLE_SYNC_MODE, _singleSyncObserverId);
+        // The view closes: `view:` pins on it fall back to following the focus
+        if (_surfaceTimer != nullptr)
+            _surfaceTimer->stop();
+        _surfaceView.Reset();
 
         // CRITICAL: Stop automation FIRST, before any Qt objects are destroyed.
         // The automation threads may reference Qt objects, so we must join all threads
@@ -298,7 +335,7 @@ void VideoWallWindow::createMenus()
     _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
     _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (single surface for all tiles)"));
     _gpuAccelerationAction->setCheckable(true);
-    _gpuAccelerationAction->setChecked(false);
+    _gpuAccelerationAction->setChecked(_useGPU);
     _gpuAccelerationAction->setEnabled(TileGridWrapper::isGPUAvailable());
     connect(_gpuAccelerationAction, &QAction::triggered, this, &VideoWallWindow::handleGpuAccelerationToggled);
 
@@ -314,10 +351,30 @@ void VideoWallWindow::createMenus()
     fastTapeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     connect(fastTapeAction, &QAction::triggered, this, &VideoWallWindow::toggleFastTapeForAllTiles);
 
-#ifdef ENABLE_RECORDING
     // Tools menu
     QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
 
+    // Screenshots: per emulator (the focused tile) and global (every emulator, the wall)
+    QAction* tileCopyAction = toolsMenu->addAction(tr("Copy &Tile Screenshot"));
+    tileCopyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    tileCopyAction->setStatusTip(tr("Copy the focused tile's frame, border included, to the clipboard"));
+    connect(tileCopyAction, &QAction::triggered, this, &VideoWallWindow::handleTileScreenshotToClipboard);
+
+    QAction* tileSaveAction = toolsMenu->addAction(tr("Save Tile Screenshot &As..."));
+    tileSaveAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    tileSaveAction->setStatusTip(tr("Save the focused tile's frame, border included, to a PNG or GIF file"));
+    connect(tileSaveAction, &QAction::triggered, this, &VideoWallWindow::handleTileScreenshotSaveAs);
+
+    QAction* allSaveAction = toolsMenu->addAction(tr("Save Screenshots of A&ll Emulators..."));
+    allSaveAction->setStatusTip(tr("Save the frame of every emulator to a folder, one PNG per emulator"));
+    connect(allSaveAction, &QAction::triggered, this, &VideoWallWindow::handleAllScreenshotsSave);
+
+    QAction* wallSaveAction = toolsMenu->addAction(tr("Save &Wall Screenshot As..."));
+    wallSaveAction->setStatusTip(tr("Save the wall as it is on the screen, every tile in its place, to a PNG file"));
+    connect(wallSaveAction, &QAction::triggered, this, &VideoWallWindow::handleWallScreenshotSaveAs);
+
+#ifdef ENABLE_RECORDING
+    toolsMenu->addSeparator();
     QAction* recordAction = toolsMenu->addAction(tr("&Record Video / Audio...\tCtrl+R"));
     recordAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(recordAction, &QAction::triggered, this, &VideoWallWindow::handleVideoRecordingRequested);
@@ -402,6 +459,155 @@ void VideoWallWindow::setupShortcutsLinux()
             this, &VideoWallWindow::toggleFullscreenMode);
     connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
             this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
+}
+
+void VideoWallWindow::showScreenshotMessage(const QString& text)
+{
+    statusBar()->showMessage(text, 5000);
+}
+
+std::shared_ptr<Emulator> VideoWallWindow::focusedEmulator() const
+{
+    if (_useGPU && _tileGridWrapper)
+    {
+        if (auto emulator = _tileGridWrapper->emulatorAt(_tileGridWrapper->focusedIndex()))
+            return emulator;
+    }
+    else if (_tileGrid)
+    {
+        for (EmulatorTile* tile : _tileGrid->tiles())
+        {
+            if (tile && tile->hasFocus())
+                return tile->emulator();
+        }
+        if (_audioBoundTile)
+            return _audioBoundTile->emulator();
+    }
+    return tileCount() == 1 ? emulatorAt(0) : nullptr;
+}
+
+/// Take the emulator's frame with the core Screenshotter: the whole presented frame, as every surface does
+static ScreenshotResult TakeEmulatorScreenshot(const std::shared_ptr<Emulator>& emulator, ScreenshotFormat format,
+                                               const std::string& saveTo = std::string())
+{
+    ScreenshotOptions options;  // the whole frame, the presented one
+    options.format = format;
+    options.saveTo = saveTo;
+    return Screenshotter::Take(emulator->GetId(), options);
+}
+
+void VideoWallWindow::handleTileScreenshotToClipboard()
+{
+    const std::shared_ptr<Emulator> emulator = focusedEmulator();
+    if (!emulator)
+    {
+        showScreenshotMessage(tr("Screenshot: click a tile first (no tile has the focus)"));
+        return;
+    }
+
+    const ScreenshotResult shot = TakeEmulatorScreenshot(emulator, ScreenshotFormat::Png);
+    const QImage image = shot.ok ? QImage::fromData(shot.bytes.data(), static_cast<int>(shot.bytes.size()), "PNG") : QImage();
+    if (image.isNull())
+    {
+        showScreenshotMessage(tr("Screenshot failed: %1").arg(QString::fromStdString(shot.errorMessage)));
+        return;
+    }
+    QGuiApplication::clipboard()->setImage(image);
+    showScreenshotMessage(tr("Screenshot of %1 copied to clipboard (%2x%3)")
+                              .arg(QString::fromStdString(emulator->GetId()))
+                              .arg(shot.width)
+                              .arg(shot.height));
+}
+
+void VideoWallWindow::handleTileScreenshotSaveAs()
+{
+    const std::shared_ptr<Emulator> emulator = focusedEmulator();
+    if (!emulator)
+    {
+        showScreenshotMessage(tr("Screenshot: click a tile first (no tile has the focus)"));
+        return;
+    }
+
+    const QString suggested = QDir(QDir::homePath()).filePath(QString("%1.png").arg(QString::fromStdString(emulator->GetId())));
+    QString selectedFilter;
+    const QString filePath = QFileDialog::getSaveFileName(this, tr("Save Tile Screenshot"), suggested,
+                                                          tr("PNG image (*.png);;GIF image (*.gif)"), &selectedFilter);
+    if (filePath.isEmpty())
+        return;
+
+    const bool gif = filePath.endsWith(".gif", Qt::CaseInsensitive);
+    const ScreenshotResult shot =
+        TakeEmulatorScreenshot(emulator, gif ? ScreenshotFormat::Gif : ScreenshotFormat::Png, filePath.toStdString());
+    if (!shot.ok)
+    {
+        showScreenshotMessage(tr("Screenshot failed: %1").arg(QString::fromStdString(shot.errorMessage)));
+        return;
+    }
+    showScreenshotMessage(tr("Screenshot saved to %1 (%2x%3)").arg(filePath).arg(shot.width).arg(shot.height));
+}
+
+void VideoWallWindow::handleAllScreenshotsSave()
+{
+    const int count = tileCount();
+    if (count == 0)
+    {
+        showScreenshotMessage(tr("Screenshot: there are no emulators on the wall"));
+        return;
+    }
+
+    const QString folder = QFileDialog::getExistingDirectory(this, tr("Save Screenshots of All Emulators"), QDir::homePath());
+    if (folder.isEmpty())
+        return;
+
+    // One file per emulator: the tile's number (its place on the wall) and the emulator's id
+    int saved = 0;
+    QStringList failed;
+    for (int index = 0; index < count; ++index)
+    {
+        const std::shared_ptr<Emulator> emulator = emulatorAt(index);
+        if (!emulator)
+            continue;
+
+        QString name = QString::fromStdString(emulator->GetId());
+        name.replace(QRegularExpression("[^A-Za-z0-9._-]"), "_");
+        const QString path = QDir(folder).filePath(QString("%1-%2.png").arg(index + 1, 3, 10, QChar('0')).arg(name));
+        const ScreenshotResult shot = TakeEmulatorScreenshot(emulator, ScreenshotFormat::Png, path.toStdString());
+        if (shot.ok)
+            ++saved;
+        else
+            failed << QString("%1: %2").arg(name, QString::fromStdString(shot.errorMessage));
+    }
+
+    if (failed.isEmpty())
+        showScreenshotMessage(tr("%1 screenshots saved to %2").arg(saved).arg(folder));
+    else
+        QMessageBox::warning(this, tr("Screenshots"),
+                             tr("%1 of %2 screenshots saved to %3.\n\nFailed:\n%4")
+                                 .arg(saved).arg(count).arg(folder, failed.join("\n")));
+}
+
+void VideoWallWindow::handleWallScreenshotSaveAs()
+{
+    QWidget* wall = (_useGPU && _tileGridWrapper) ? _tileGridWrapper->widget() : static_cast<QWidget*>(_tileGrid);
+    if (!wall)
+    {
+        showScreenshotMessage(tr("Screenshot: there is no wall"));
+        return;
+    }
+
+    const QString suggested = QDir(QDir::homePath()).filePath("videowall.png");
+    const QString filePath = QFileDialog::getSaveFileName(this, tr("Save Wall Screenshot"), suggested, tr("PNG image (*.png)"));
+    if (filePath.isEmpty())
+        return;
+
+    // grab() renders the widget as it is painted now: the GPU grid through its framebuffer, the CPU grid through its paint
+    const QImage image = wall->grab().toImage();
+    if (image.isNull() || !image.save(filePath, "PNG"))
+    {
+        showScreenshotMessage(tr("Screenshot failed: %1 could not be written").arg(filePath));
+        return;
+    }
+    showScreenshotMessage(tr("Wall screenshot saved to %1 (%2x%3)").arg(filePath).arg(image.width()).arg(image.height()));
 }
 
 void VideoWallWindow::handleVideoRecordingRequested()
@@ -1337,6 +1543,8 @@ void VideoWallWindow::toggleFastTapeForAllTiles()
 
 void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
 {
+    // The focused tile changes with the audio: report it once the focus has settled
+    QTimer::singleShot(0, this, &VideoWallWindow::updateSurfaceView);
     if (!_soundManager || !tile || !tile->emulator())
     {
         qWarning() << "VideoWallWindow::bindAudioToTile - Invalid parameters";
@@ -1420,6 +1628,8 @@ void VideoWallWindow::onTileClicked(EmulatorTile* tile)
 
 void VideoWallWindow::unbindAudioFromTile()
 {
+    // The focused tile changes with the audio: report it once the focus has settled
+    QTimer::singleShot(0, this, &VideoWallWindow::updateSurfaceView);
     // Clear pointer FIRST to prevent infinite recursion on secondary events
     EmulatorTile* tile = _audioBoundTile;
     _audioBoundTile = nullptr;
@@ -1601,7 +1811,7 @@ void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& 
         primaryTile->setSynchronousMode(true);
 
         // Ensure primary emulator is running
-        primaryEmulator->Resume();
+        primaryEmulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // Configure recording & bind HQ audio to tile (0, 0)
         VideowallRecorder::instance().setSynchronousMode(true);
@@ -1632,7 +1842,8 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
 
     if (enabled && !TileGridWrapper::isGPUAvailable())
     {
-        _gpuAccelerationAction->setChecked(false);
+        if (_gpuAccelerationAction)
+            _gpuAccelerationAction->setChecked(false);
         return;
     }
 
@@ -1745,6 +1956,7 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
 
             _audioBoundIndex = index;
             _tileGridWrapper->setFocusedIndex(index);
+            updateSurfaceView();
             qDebug() << "Audio bound to tile" << index;
         });
 
@@ -1832,7 +2044,14 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
         qInfo() << "Switched to software rendering";
     }
 
-    _gpuAccelerationAction->setChecked(_useGPU);
+    // The recorder grabs the grid it was pointed at: the old one is gone
+    VideowallRecorder::instance().setTargetWidget(_useGPU && _tileGridWrapper ? _tileGridWrapper->widget()
+                                                                            : static_cast<QWidget*>(_tileGrid));
+
+    // The menus are created after the event loop starts (initializeAfterEventLoopStart): a switch asked for before
+    // that (--gpu on the command line) finds no action yet, and createMenus checks it from _useGPU
+    if (_gpuAccelerationAction)
+        _gpuAccelerationAction->setChecked(_useGPU);
 }
 
 int VideoWallWindow::tileCount() const

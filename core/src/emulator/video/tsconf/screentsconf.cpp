@@ -139,7 +139,7 @@ const TsConfState* ScreenTSConf::State()
     return _ts;
 }
 
-void ScreenTSConf::InitRaster()
+void ScreenTSConf::DetectRaster()
 {
     const TsConfState* ts = State();
     const VideoModeEnum mode = ts ? ModeOf(ts->regs[TsConfReg::VConfig]) : M_TSZX;
@@ -227,6 +227,21 @@ ScreenState ScreenTSConf::DescribeScreenState() const
     }
     s.format = f;
     return s;
+}
+
+void ScreenTSConf::CatchUpToStepEnd()
+{
+    if (_catchUpOnEvents && State() && _engine)
+        DrawTo(_engine->StepEndRaster());
+}
+
+void ScreenTSConf::InitFrame()
+{
+    Screen::InitFrame();
+    // The draw cursor of the frame before stands at its end; the first catch-up of this one must not take it for "drawn already"
+    // (the per-instruction draw wraps it on its first call)
+    if (_catchUpOnEvents)
+        _prevTstate = 0;
 }
 
 void ScreenTSConf::DrawTo(uint32_t raster)

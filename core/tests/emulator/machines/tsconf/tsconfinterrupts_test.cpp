@@ -68,6 +68,53 @@ TEST_F(TsConfInterrupts_Test, INT2_FramePosition)
     EXPECT_TRUE(AssertedAt(0, TsConfInterrupts::kFrameTacts).empty());
 }
 
+/// INT-2b: VSINTH bits 7:4 (the auto-increment of the frame INT line) do nothing in the built firmware: the RTL stores
+/// them as vint_inc but the increment needs AUTO_INT, which no tune.v defines ([V] video_ports.v:86-93,
+/// video_top.v:253-257 int_start_s tied to 0); only bit 0 is the line's bit 8 ([U] vsinth:1, tsconf.h:253). One frame
+/// INT per frame, on the same line every frame (TS-Conf audit, interrupts row 4)
+TEST_F(TsConfInterrupts_Test, INT2b_VsIntHHighBitsAreIgnored)
+{
+    Reg(TsConfReg::VsIntH, 0xF0);  // increment 15, line bit 8 = 0
+    for (int frame = 0; frame < 3; frame++)
+    {
+        SCOPED_TRACE(frame);
+        const std::vector<uint32_t> asserted = AssertedAt(0, TsConfInterrupts::kFrameTacts);
+        ASSERT_EQ(asserted.size(), 32u) << "one 32-clock pulse per frame";
+        EXPECT_EQ(asserted.front(), 1u) << "line 0, HS_INT 1: the line does not move";
+        Ints().AcknowledgeInterrupt(asserted.back());
+        Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
+    }
+
+    Ints().Reset();
+    Reg(TsConfReg::VsIntH, 0xF1);  // bit 0: line 256
+    const std::vector<uint32_t> asserted = AssertedAt(0, TsConfInterrupts::kFrameTacts);
+    ASSERT_EQ(asserted.size(), 32u);
+    EXPECT_EQ(asserted.front(), 256u * TsConfInterrupts::kLineTacts + 1u);
+}
+
+/// TIM-0: the frame is 320 lines of 224 T = 71680 T ([V] video_sync.v:84 HPERIOD 448 dots = 224 T, :93-94 VPERIOD_50
+/// 320, :151 vcount wraps at vperiod - 1; [U] draw.h:9-10 VID_TACTS 224, VID_LINES 320): the machine's frame and
+/// line lengths, and the frame INT recurs every 71680 T (TS-Conf audit, video rows 1-2)
+TEST_F(TsConfInterrupts_Test, TIM0_FrameIs320LinesOf224T)
+{
+    EXPECT_EQ(_context->config.frame, 71680u);
+    EXPECT_EQ(_context->config.t_line, 224u);
+    EXPECT_EQ(TsConfInterrupts::kLineTacts, 224u);
+    EXPECT_EQ(TsConfInterrupts::kFrameTacts, 320u * 224u);
+
+    // The frame INT's pulse start in absolute T over two frames: one period apart
+    std::vector<uint32_t> starts;
+    for (uint32_t frame = 0; frame < 2; frame++)
+    {
+        const std::vector<uint32_t> asserted = AssertedAt(0, TsConfInterrupts::kFrameTacts);
+        ASSERT_FALSE(asserted.empty());
+        starts.push_back(frame * TsConfInterrupts::kFrameTacts + asserted.front());
+        Ints().AcknowledgeInterrupt(asserted.back());
+        Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
+    }
+    EXPECT_EQ(starts[1] - starts[0], 71680u);
+}
+
 /// INT-3: the line INT, 320 per frame, at the end of every line: raster tact 224 n ([V] video_sync.v:125
 /// line_start_s = the line's last fclk, int_lin set from the next tact; [U] line_t = 0, 224, ...). Was 224 n - 1:
 /// raster code timed to the line INT ran a tact early. The last line's event is tact 0 of the next frame
@@ -314,6 +361,54 @@ TEST(TsConfInterruptsCpu_Test, INT6_InterruptModesThroughTheCpu)
         EXPECT_EQ(memory.DirectReadFromZ80Memory(0xEFFF), 0x80) << "return address high";
         EXPECT_EQ(decoder->GetState().intPending & TsConfInt::Frame, 0) << "the latch was answered";
     }
+    manager->RemoveEmulator(emulator->GetUUID());
+}
+
+/// INT-13: a HALT in RAM wakes on the frame INT. The halted Z80 runs NOP M1 cycles (4 clocks) and samples /INT at the
+/// end of each; the INT pushes the address after the HALT ([V] the board's real Z80: top.v drives only /INT, zint.v:93;
+/// [U] op_system.h:15-16 `pc++` past the HALT, z80_main.inl:222-238). The frame event at tact 50 ([V] video_sync.v:132,
+/// int_start_s at dot 2 x HS_INT) is taken at the end of the first halted M1 after it (TS-Conf audit, interrupts
+/// row 23)
+TEST(TsConfInterruptsCpu_Test, INT13_HaltWakesAndReturnsPastTheHalt)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("tsconf-int13", "TSL", 4096, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    Z80& z80 = *context->pCore->GetZ80();
+    Memory& memory = *context->pMemory;
+    decoder->WriteRegister(TsConfReg::Page2, 0x02);  // RAM at #8000
+    decoder->WriteRegister(TsConfReg::Page3, 0x03);  // RAM at #C000 (the stack)
+    z80.t = 0;
+    decoder->GetInterrupts().Reset();
+    decoder->WriteRegister(TsConfReg::HsInt, 50);  // line 0, tact 50
+
+    memory.DirectWriteToZ80Memory(0x8000, 0x76);  // HALT
+    memory.DirectWriteToZ80Memory(0x8001, 0x00);
+    z80.im = 1;
+    z80.iff1 = z80.iff2 = 1;
+    z80.pc = 0x8000;
+    z80.sp = 0xF000;
+
+    uint32_t acceptedAt = 0;
+    bool accepted = false;
+    for (int guard = 0; guard < 40 && !accepted; guard++)
+    {
+        const uint32_t before = z80.t;
+        accepted = z80.StepInstruction(true).intAccepted;
+        if (accepted)
+            acceptedAt = before;
+        else
+            EXPECT_LT(before, 50u) << "/INT was up and not taken";
+    }
+    ASSERT_TRUE(accepted);
+    EXPECT_GE(acceptedAt, 50u);
+    EXPECT_LT(acceptedAt, 54u) << "within one 4-clock halted M1 of the event";
+    EXPECT_EQ(z80.pc, 0x0038);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xEFFE), 0x01) << "return address low: past the HALT";
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xEFFF), 0x80);
     manager->RemoveEmulator(emulator->GetUUID());
 }
 

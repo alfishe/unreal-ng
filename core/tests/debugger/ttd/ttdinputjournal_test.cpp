@@ -5,7 +5,7 @@
 ///   - TTDInputJournal data structure (Record / Size / Events / Clear /
 ///     DropAfter / PeekNextEventTimeOnOrAfter)
 ///   - Capture integration (DebugKeyboardManager::PressKey/ReleaseKey →
-///     TimeTravelManager::RecordInputEvent → journal)
+///     TimeTravelController::RecordInputEvent → journal)
 ///   - Capture suppression rules (no capture outside Recording, no
 ///     capture during replay)
 ///   - Lifecycle integration (StartRecording clears journal, StopRecording
@@ -30,7 +30,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/ttdinputjournal.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -216,7 +216,7 @@ TEST_F(TTD_InputJournal_Test, DropAfter_WithPastThreshold_ClearsAll)
 }
 
 // ===========================================================================
-// Capture integration — DebugKeyboardManager → TimeTravelManager → journal
+// Capture integration — DebugKeyboardManager → TimeTravelController → journal
 // ===========================================================================
 
 class TTD_InputJournal_Capture_Test : public ::testing::Test
@@ -224,7 +224,7 @@ class TTD_InputJournal_Capture_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -234,7 +234,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -397,14 +397,14 @@ protected:
 
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(Card(), nullptr) << "ATM710 must fit a GS card by default";
         ASSERT_TRUE(_context->pSoundManager->switchGeneralSoundCard(GSTypeKind::Z80));
@@ -515,11 +515,11 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_FromAnotherThreadIsAppliedByTheL
     ASSERT_TRUE(TestWait::For([this, writesBefore] {
         return Card()->getActivityCounters().hostDataWritten == writesBefore + 1;
     })) << "the loop thread applied the queued stimulus";
-    EXPECT_EQ(Card()->getDataFromHost(), 0x6B);
 
     // Paused and parked: applied before SubmitLiveInput returns, nothing left for the loop
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+    EXPECT_EQ(Card()->getDataFromHost(), 0x6B) << "the latch the loop wrote (read parked: the loop owns the card)";
     ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x5A)));
     EXPECT_FALSE(_context->HasStepWork(EmulatorContext::kStepWorkTtdInput)) << "nothing queued";
     EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore + 2) << "applied while parked";

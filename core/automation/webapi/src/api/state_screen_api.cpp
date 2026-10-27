@@ -15,6 +15,7 @@
 #include <emulator/platform.h>
 #include <emulator/video/screen.h>
 #include <emulator/video/screendigest.h>
+#include <emulator/video/viewportcontrol.h>
 #include <json/json.h>
 
 #include <sstream>
@@ -82,6 +83,75 @@ void EmulatorAPI::getStateScreen(const HttpRequestPtr& req, std::function<void(c
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// @brief PUT/POST /api/v1/emulator/{id}/state/screen/overscan
+/// @brief Pentagon overscan (384x304 frame) on / off and its viewport
+void EmulatorAPI::putStateScreenOverscan(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto reply = [&](HttpStatusCode status, const char* reason, Json::Value body) {
+        if (status != HttpStatusCode::k200OK)
+        {
+            body["error"] = reason;
+        }
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(status);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        Json::Value body;
+        body["message"] = "Emulator with specified ID not found";
+        reply(HttpStatusCode::k404NotFound, "Not Found", body);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
+    {
+        Json::Value body;
+        body["message"] = "Request must contain a boolean 'enabled' (and optionally 'viewport': " + VideoViewport::NameList() + ")";
+        reply(HttpStatusCode::k400BadRequest, "Bad Request", body);
+        return;
+    }
+    const bool enable = (*json)["enabled"].asBool();
+    if (json->isMember("viewport") && !(*json)["viewport"].isString())
+    {
+        Json::Value body;
+        body["message"] = "'viewport' takes a name: " + VideoViewport::NameList();
+        reply(HttpStatusCode::k400BadRequest, "Bad Request", body);
+        return;
+    }
+
+    // The viewport that crops the larger frame: the GUI's own default when overscan goes on is the symmetric one
+    const std::string viewport = json->isMember("viewport") ? (*json)["viewport"].asString() : std::string();
+    const VideoViewport::Result r = VideoViewport::SetOverscan(*emulator, enable, viewport);
+    if (!r.Ok())
+    {
+        Json::Value body;
+        body["message"] = r.error;
+        reply(r.status == 400 ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict,
+              r.status == 400 ? "Bad Request" : "Conflict", body);
+        return;
+    }
+    const bool changed = r.changed;
+
+    Screen* screen = emulator->GetContext()->pScreen;
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["overscan"] = emulator->IsOverscanMode();
+    ret["changed"] = changed;
+    ret["video_mode"] = Screen::GetVideoModeName(screen->GetVideoMode());
+    ret["framebuffer"] = std::to_string(screen->GetFramebufferDescriptor().width) + "x" +
+                         std::to_string(screen->GetFramebufferDescriptor().height);
+    ret["display"] = std::to_string(screen->GetDisplayWidth()) + "x" + std::to_string(screen->GetDisplayHeight());
+    ret["viewport"] = VideoViewport::NameOf(emulator->GetDisplayViewport());
+    reply(HttpStatusCode::k200OK, "OK", ret);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/screen/mode

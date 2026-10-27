@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef ULABEAMWIDGET_H
 #define ULABEAMWIDGET_H
 
@@ -16,7 +18,7 @@ public:
     explicit ULABeamWidget(QWidget* parent = nullptr);
     virtual ~ULABeamWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void reset();
     void refresh();
 
@@ -28,7 +30,7 @@ private:
     void createUI();
     void updateScreenImage();
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QLabel* _titleLabel = nullptr;
     QImage _screenImage;
 

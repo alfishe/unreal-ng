@@ -131,7 +131,7 @@ endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)
     # Link all as static
-    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive -liconv")
     set(common_libraries shlwapi ws2_32)
 endif (WIN32 AND MINGW)
 
@@ -151,13 +151,13 @@ if (WIN32 AND MINGW)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
-        recording
+        $<$<TARGET_EXISTS:recording>:recording>
     )
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
-        recording
+        $<$<TARGET_EXISTS:recording>:recording>
         benchmark::benchmark_main
     )
 endif()
@@ -165,14 +165,5 @@ endif()
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 
-# Copy resources using modern CMake syntax
-add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMENT "Copying runtime resource files to output directory"
-)
+# Runtime resources are copied once by the shared runtime-data target (root CMakeLists.txt)
+add_dependencies(${PROJECT_NAME} runtime-data)

@@ -56,6 +56,15 @@ Hot paths use cached booleans
 | **Call Trace** | `calltrace` | `ct` | OFF | Collect CALL/RET trace for debugging |
 | **Opcode Profiler** | `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution stats and trace (~12-18% CPU when ON) |
 
+#### Debug mode has one writer
+
+`FeatureManager` is the only code that writes `Z80::isDebugMode` (the instrumented memory path): it is the
+`debugmode` feature, or a TTD replay's hold. The manager listens to the machine state coordinator's mode
+broadcast (`coordinator::IModeListener`) and holds debug mode on while the machine replays recorded history,
+whatever the feature says; when the replay ends the feature has its say again, and a feature change during the
+replay keeps the hold. `Emulator::DebugOn` / `DebugOff` and the CLI `debugmode on|off` set the feature. Design:
+[machine state coordinator §11.6](../../../inprogress/2026-10-09-machine-state-coordinator/architecture.md).
+
 ### Performance Features
 
 | Feature | ID | Alias | Default | Use Case |

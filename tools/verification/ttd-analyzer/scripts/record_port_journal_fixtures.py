@@ -69,9 +69,11 @@ TAPE_QUERIES: List[Dict[str, Any]] = [
 ]
 
 
-def fit_classic_gs(api: EmulatorApi, base: str) -> None:
-    api.post(f"{base}/control/audio/gs", {"action": "switch_personality", "personality": "lle"})
-    run_frames(api, base, 1)  # the switch is applied at a frame boundary
+def fit_classic_gs(api: EmulatorApi, base: str) -> str:
+    """The classic GS in the machine's slots (it replaces a NeoGS; on the 128K an unrealistic fit on the edge
+    connector): a slot change that restarts the machine. Returns the new machine's base path"""
+    reply = api.post(f"{base}/slots/auto/plug", {"card": "gs", "replaceIfIncompatible": True})
+    return f"/emulator/{reply['restart']['emulatorId']}"
 
 
 def ask(api: EmulatorApi, base: str, path: Path, queries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -100,7 +102,7 @@ def record_dizzy(api: EmulatorApi) -> Dict[str, Any]:
     emu = api.create_instance("PENTAGON")
     base = f"/emulator/{emu}"
     try:
-        fit_classic_gs(api, base)
+        base = fit_classic_gs(api, base)
         api.post(f"{base}/snapshot/load", {"path": str(PROJECT_ROOT / "testdata/loaders/z80/dizzyx.z80")})
         run_frames(api, base, 50)
         api.post(f"{base}/ttd/start", {"journal": True})  # the write journal is on demand since D40
@@ -121,7 +123,7 @@ def record_tape(api: EmulatorApi) -> Dict[str, Any]:
     emu = api.create_instance("128K")
     base = f"/emulator/{emu}"
     try:
-        fit_classic_gs(api, base)
+        base = fit_classic_gs(api, base)
         api.post(f"{base}/tape/load", {"path": str(PROJECT_ROOT / "testdata/loaders/tap/greenberet.tap")})
         run_frames(api, base, 150)  # the 128K menu is up
         api.post(f"{base}/ttd/start", {"journal": True})  # the write journal is on demand since D40

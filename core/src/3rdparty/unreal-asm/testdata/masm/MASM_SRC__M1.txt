@@ -1,0 +1,1493 @@
+EXTEND  EQU     "a"
+        ORG     #C000
+        DI
+        CALL    TRAL
+        LD      HL,(#5C3D)
+        LD      (STKM+1),HL
+        LD      HL,RESID
+        LD      DE,#5C25
+        LD      BC,TRAL-RESID
+        LDIR
+        JP      DDA-#4000
+RESID   LD      HL,#C000
+RES1    LD      A,#14
+RES2    LD      BC,#7FFD
+        OUT     (C),A
+        JP      (HL)
+        JR      $-11
+TRAL    LD      HL,DDA
+        LD      DE,DDA-#4000
+        LD      A,(DE)
+        LDI
+        DEC     HL
+        LD      (HL),A
+        INC     HL
+        BIT     7,H
+        JR      NZ,$-8
+        LD      BC,#7FFD
+        RET
+STS     CALL    TRAL
+        LD      A,#17
+        LD      HL,#DB00
+        JP      #5C2D
+BAS     CALL    TRAL
+        EI
+        LD      A,#10
+        JP      #1E7D
+RUN1    PUSH    HL
+        CALL    TRAL
+        POP     HL
+        LD      A,#10
+        JP      #5C2D
+DDA     PHASE   $-#4000
+KOT     JP      BEGIN1
+ERR_0   LD      A,"0"
+        DEFB    33
+ERR_1   LD      A,"1"
+        DEFB    33
+ERR_2   LD      A,"2"
+        DEFB    33
+ERR_3   LD      A,"3"
+        DEFB    33
+ERR_4   LD      A,"4"
+        DEFB    33
+ERR_5   LD      A,"5"
+        DEFB    33
+ERR_6   LD      A,"6"
+        DEFB    33
+ERR_10  LD      A,"A"
+        DEFB    33
+ERR_11  LD      A,"B"
+        DEFB    33
+ERR_12  LD      A,"C"
+        DEFB    33
+ERR_7   LD      A,"?"
+        LD      SP,(SP1+1)
+        CALL    ERROR1
+        LD      A,#18
+        LD      (IKS),A
+RU      JP      0
+ERR_8   LD      A,"!"
+        DEFB    33
+ERR_9   LD      A,"E"
+SP1     LD      SP,0
+ERROR1  CALL    BANK16
+        PUSH    AF
+        LD      HL,(TEK_LIN)
+        CALL    PRN_LN
+        LD      A,7
+        LD      (COORDX),A
+        POP     AF
+        CALL    PRINTC
+        CALL    BANK10
+OO      LD      A,0
+        LD      DE,BUF_ED2
+        PUSH    DE
+        LD      H,D
+        LD      L,E
+        INC     DE
+        LD      BC,#003F
+        LD      (HL),#20
+        LDIR
+        POP DE
+        CALL    BANK16
+        LD      HL,BUF_ED1-1
+        CALL    TRAN_PS+1
+        LD      A,32
+        LD      (FL2),A
+        CALL    PRINTC
+        LD      HL,BUF_ED2
+        JP      PRINT0
+RUKA
+NOGA    CALL    BANK11
+        LD      (IY+0),L
+        LD      (IY+1),H
+        JR      BISS
+MERA    CALL    BANK11
+        LD      C,(IY+0)
+        LD      B,(IY+1)
+BISS    JP      BANK16
+RIAS    CALL    PHASE1
+        JR      BISS
+
+KOB     LD      A,(DE)
+        OR      A
+        RET     Z
+        INC     DE
+        CP      #22
+        JR      NZ,$+7
+        LD      A,(DE)
+        CP      #22
+        RET     NZ
+        INC     DE
+        LD      H,L
+        LD      L,A
+        JR      KOB
+KIM     CALL    TREAK
+        RET     NC
+        LD      L,0
+        LD      A,(DE)
+        INC     DE
+        CP      #22
+        JR      Z,KOB
+        CP      "$"
+        LD      HL,(TEK1)
+        RET     Z
+        DEC     DE
+        LD      A,(FLAG)
+        OR      A
+        JR      NZ,RIAS
+DEA     CPL
+        LD      (FL1),A
+SOFT    LD      A,(DE)
+        CALL    SKIN+10
+ERR_A   JP      C,ERR_4
+        LD      B,10
+DIKL    INC     DE
+        LD      A,(DE)
+        CP      ":"
+        JP      NZ,$+5
+        INC     DE
+        LD      A,(DE)
+        CALL    SKIN
+        RET     C
+        DJNZ    DIKL
+        INC     DE
+        RET
+PHASE1  CALL    BANK11
+        LD      A,(DE)
+        CALL    SKIN+10
+        JR      C,ERR_A
+        LD      HL,#D000
+        LD      C,L
+        LD      B,10
+        LD      (HL),A
+        INC     L
+        INC     DE
+        LD      A,(DE)
+        CP      ":"
+        JP      NZ,$+5
+        INC     DE
+        LD      A,(DE)
+        CALL    SKIN
+        JR      C,$+6
+        DJNZ    $-16
+        JR      $+7
+        LD      (HL),#20
+        INC     L
+        DJNZ    $-3
+        PUSH    DE
+        LD      (SP2+1),SP
+        LD      SP,#D000
+        POP     BC
+        LD      A,C
+        ADD     A,B
+        POP     BC
+        ADC     A,B
+        ADC     A,C
+        POP     BC
+        ADC     A,C
+        ADC     A,B
+        LD      HL,#C000
+        LD      (HL),A
+        LD      B,XH
+        LD      C,XL
+        CPI
+ADR_M   JP      NV,0
+CPIR_A  CPIR
+        JR      NZ,NSM
+        JP      B11MMM
+LIK_R   JR      Z,SKAI2
+SKAI    LD      HL,0
+        EXA
+NSM     JP      V,CPIR_A
+        LD      DE,(ADR_M+1)
+        LD      (XNC+1),DE
+XNC     JP      0
+
+SKAI2   LD      A,(FLAG)
+MAN     OR      A
+        JP      Z,ERR_3
+        LD      IY,0
+        ADD     IY,SP
+        POP     HL
+        LD      SP,(SP2+1)
+        POP     DE
+        AND     A
+        RET
+
+MET_P   LD      A,#FF
+        LD      (FL1),A
+SP2     LD      SP,0
+        POP     DE
+        SCF
+        RET
+FL1     NOP
+SIFAK   LD      A,0
+        OR      A
+        JR      Z,BRAK
+SAVHL   LD      HL,0
+        BIT     4,H
+        CALL    NZ,LOAD_IN
+        LD      A,(HL)
+        INC     HL
+        LD      (SAVHL+1),HL
+        CP      #FF
+        RET     NZ
+        XOR     A
+        LD      (SIFAK+1),A
+        CALL    BANK10
+BRAK    LD      HL,TEXT
+        LD      A,(HL)
+        INC     HL
+        LD      (BRAK+1),HL
+        RET
+PRB_A   LD      A,(SIFAK+1)
+        OR      A
+        CALL    Z,BANK10
+        LD      DE,BUF_ED1
+        CALL    SIFAK
+        LD      (OO+1),A
+        OR      A
+        JR      Z,BANKA
+        CP      #FF
+        JR      Z,BANKA
+        LD      B,A
+        CALL    SIFAK
+        LD      (DE),A
+        INC     DE
+        DJNZ    $-5
+        XOR     A
+        LD      (DE),A
+        CALL    SIFAK
+        SCF
+BANKA   JP      BANK16
+WRITE   EXX
+        LD      E,A
+        LD      A,0
+FLAG    EQU     $-1
+        OR      A
+        JR      Z,PICK
+        LD      HL,(ADR_TEK)
+        PUSH    HL
+        LD      BC,DDA-#4000
+        SBC     HL,BC
+        POP     HL
+        LD      BC,#7FFD
+        JR      C,PICK-5
+        LD      D,#14
+        BIT     6,H
+        JR      Z,$+4
+        LD      D,#10
+        OUT     (C),D
+        SET     6,H
+        LD      (HL),E
+        LD      A,#16
+        OUT     (C),A
+PICK    LD      HL,0
+ADR_TEK EQU     $-2
+        INC     HL
+        LD      (ADR_TEK),HL
+        LD      HL,0
+ADR_REM EQU     $-2
+        INC     HL
+        LD      (ADR_REM),HL
+        EXX
+        XOR     A
+        SCF
+        RET
+BIN     LD      L,H
+        INC     DE
+        LD      A,(DE)
+        SUB     #30
+        CCF
+        RET     NC
+        CP      2
+        RET     NC
+        RRA
+        RL      L
+        RL      H
+        JR      $-14
+TREAK   LD      H,0
+        CALL    NEXT_BT
+        CP      "#"
+        JR      Z,HOXOR
+        CP      "%"
+        JR      Z,BIN
+DECS    CALL    TKS
+        RET     C
+        PUSH    DE
+        INC     DE
+        LD      A,(DE)
+        LD      B,A
+        CALL    PH1
+        LD      A,B
+        JR      NC,$-7
+        POP     DE
+        CP      "H"
+        JR      Z,HOXOR+1
+        LD      A,(DE)
+        CALL    TKS
+        RET     C
+        LD      L,A
+KENT2   INC     DE
+        LD      A,(DE)
+        CALL    TKS
+        CCF
+        RET     NC
+        LD      B,H
+        LD      C,L
+        ADD     HL,HL
+        RET     C
+        ADD     HL,HL
+        RET     C
+        ADD     HL,BC
+        RET     C
+        ADD     HL,HL
+        RET     C
+        ADD     A,L
+        LD      L,A
+        JR      NC,KENT2
+        INC     H
+        JR      KENT2
+HOXOR   INC     DE
+        LD      A,(DE)
+        CALL    PH1
+        DEC     DE
+        RET     C
+        INC     DE
+        LD      L,A
+KENT    INC     DE
+        LD      A,(DE)
+        CALL    PH1
+        JR      C,SELKO
+        ADD     HL,HL
+        RET     C
+        ADD     HL,HL
+        RET     C
+        ADD     HL,HL
+        RET     C
+        ADD     HL,HL
+        RET     C
+        OR      L
+        LD      L,A
+        JR      KENT
+SELKO   LD      A,(DE)
+        INC     DE
+        CP      "H"
+        RET     Z
+        DEC     DE
+        OR      A
+        RET
+TKS     SUB #30
+        RET C
+        CP 10
+        CCF
+        RET
+PH1     SUB #30
+        RET C
+        CP #A
+        CCF
+        RET NC
+        SUB 7
+        CP #A
+        RET C
+        CP #10
+        CCF
+        RET
+TAB_OPR DEFB 65,4,66,4,67,4,68,4,69,4
+        DEFB "H",4
+        DEFB "L",4
+        DEFB "I",4
+        DEFB "R",4
+        DEFB "XH",4
+        DEFB "XL",4
+        DEFB "YH",4
+        DEFB "YL",4
+        DEFB "IX",4
+        DEFB "IY",4
+        DEFB "AF'",4
+        DEFB "AF",4
+        DEFB "HL",4
+        DEFB "DE",4
+        DEFB "BC",4
+        DEFB "M",4
+        DEFB "NC",4
+        DEFB "NV",4
+        DEFB "NZ" ,4
+        DEFB "P",4
+        DEFB "PE",4
+        DEFB "PO",4
+        DEFB "V",4
+        DEFB "Z",4
+        DEFB "SP",4
+        DEFB "{ ",8
+        DEFB "ORG ",8
+        DEFB "PHASE ",8
+        DEFB "UNPHASE",4
+        DEFB "AND ",8
+        DEFB "ADC ",8
+        DEFB "SBC ",8
+        DEFB "ADD ",8
+        DEFB "SUB ",8
+        DEFB "XOR ",8
+        DEFB "OR ",8
+        DEFB "CP ",8
+        DEFB "LD ",8
+        DEFB "IM ",8
+        DEFB "RST ",8
+        DEFB "EI",4
+        DEFB "DI",4
+        DEFB "EXX",4
+        DEFB "EXA",4
+        DEFB "INF",4
+        DEFB "LDIR",4
+        DEFB "LDDR",4
+        DEFB "OTIR",4
+        DEFB "OTDR",4
+        DEFB "OUTI",4
+        DEFB "OUTD",4
+        DEFB "RETI",4
+        DEFB "RETN",4
+        DEFB "INIR",4
+        DEFB "INDR",4
+        DEFB "CPIR",4
+        DEFB "CPDR",4
+        DEFB "NEG",4
+        DEFB "CPD",4
+        DEFB "CPI",4
+        DEFB "IND",4
+        DEFB "INI",4
+        DEFB "LDD",4
+        DEFB "LDI",4
+        DEFB "CCF",4
+        DEFB "CPL",4
+        DEFB "DAA",4
+        DEFB "HALT",4
+        DEFB "NOP",4
+        DEFB "RLA",4
+        DEFB "RLCA",4
+        DEFB "RRA",4
+        DEFB "RRCA",4
+        DEFB "SCF",4
+        DEFB "RLD",4
+        DEFB "RRD",4
+        DEFB "EX ",8
+        DEFB "RET",4
+        DEFB "CALL ",8
+        DEFB "JP ",8
+        DEFB "PUSH ",8
+        DEFB "POP ",8
+        DEFB "INC ",8
+        DEFB "DEC ",8
+        DEFB "OUT ",8
+        DEFB "IN ",8
+        DEFB "DJNZ ",8
+        DEFB "JR ",8
+        DEFB "BIT ",8
+        DEFB "RLC ",8
+        DEFB "RRC ",8
+        DEFB "RL ",8
+        DEFB "RR ",8
+        DEFB "SLA ",8
+        DEFB "SRA ",8
+        DEFB "SLI ",8
+        DEFB "SRL ",8
+        DEFB "RES ",8
+        DEFB "SET ",8
+        DEFB "EQU ",8
+        DEFB "BEGIN ",8
+        DEFB "END",4
+        DEFB "INCBIN ",8
+        DEFB "INCLUDE ",8
+        DEFB "DB ",8
+        DEFB "DEFB ",8
+        DEFB "DEFS ",8
+        DEFB "DEFW ",8
+        DEFB "DS ",8
+        DEFB "DW ",8
+        DEFB "DOWN ",8
+        DEFB "UP ",8
+        DEFB "SYSTEM",4
+        DEFB "STOPKEY",4
+        NOP
+TEK1    DEFW    0
+HEX2    EX      DE,HL
+        LD      A,D
+        CALL    HEX
+        LD      A,E
+HEX     LD      HL,BB1
+        LD      (HL),A
+        CALL    HX
+HX      XOR     A
+        RLD
+        ADD     A,#90
+        DAA
+        ADC     A,#40
+        DAA
+        JP      PRINTC
+SKIN    CP "."
+        RET Z
+        CP "0"
+        RET C
+        CP #3A
+        CCF
+        RET NC
+        CP "_"
+        RET Z
+        CP #3F
+        RET C
+        CP #5B
+        CCF
+        RET NC
+        CP "a"
+        RET C
+        CP #7B
+        CCF
+        RET
+BB1     NOP
+BUF_ED1 DEFS 65
+BUF_ED2 DEFS 65
+COORD
+COORDX  NOP
+COORDY  NOP
+COORD2
+COORDX2 NOP
+COORDY2 NOP
+BEGIN1  CALL    #0DAF
+MURA    CALL    RAZ
+        XOR     A
+        LD      (MAT+1),A
+        LD      HL,GAI
+        LD      (KOT+1),HL
+        CALL    BANK11
+        CALL    SIALS
+        CALL    PRINT
+WORK_NM DEFB "        ",0
+        CALL    PRM_K
+GAI     RES     5,(IY+1)
+        CALL    BANK10
+MASM_PR CALL PRINT
+        DEFB 16,0,7
+        DEFB "MASM128> ",0
+        LD      HL,COORDX
+        DEC     (HL)
+        LD      HL,(COORD)
+        LD      (COORD2),HL
+        CALL    KEYS
+        CALL    PRINTC
+        PUSH    AF
+        LD      A,13
+        CALL    PRINTC
+        POP     AF
+        LD      HL,TAB_KEY
+        LD      B,15
+LUNS    CP      (HL)
+        INC     HL
+        JP      Z,JMP_YES
+        INC     HL
+        INC     HL
+        DJNZ    LUNS
+        JR      BEGIN1
+TAB_KEY DEFB "E"
+        DEFW EDIT
+        DEFB "B"
+        DEFW BASIC
+        DEFB "W"
+        DEFW WORK
+        DEFB "A"
+        DEFW ASSEM
+        DEFB "L"
+        DEFW FILE_N
+        DEFB "I"
+        DEFW IMPORT
+        DEFB "C"
+        DEFW CATALOG
+        DEFB "F"
+        DEFW LD_FONT
+        DEFB "N"
+        DEFW NEW_NAM
+        DEFB "G"
+        DEFW MERGE
+        DEFB "S"
+        DEFW SAVE_F
+        DEFB "R"
+        DEFW RUN0
+        DEFB "Q"
+        DEFW STS_E
+        DEFB "J"
+        DEFW OBJ_INF
+        DEFB "O"
+        DEFW OBJ_SAV
+ASSEM   CALL    BANK16
+        JP      ASSEMBL
+STS_E   CALL    ZAPR
+        CALL    BASIC_
+        LD      HL,BEGIN1
+        LD      (KOT+1),HL
+        CALL    BANK14
+        JP      STS
+RUN0    CALL    ZAPR
+        LD      HL,GAI
+        LD      (KOT+1),HL
+RUN     LD      HL,0
+        LD      A,H
+        OR      L
+        JR      Z,SAPD
+        EXX
+        CALL    BASIC_
+        LD      DE,#5C25
+        PUSH    DE
+        CALL    BANK14
+        JP      RUN1
+MERGE   CALL    LEN_FIL
+        LD      C,4
+        CALL    DRIVER
+SAPD    JP      BEGIN1
+NEW_NAM LD      HL,BEGIN1
+        PUSH    HL
+NEW_NAN CALL    PRINT
+        DEFB    13,"File name: ",0
+        LD      DE,BUF_SRH+8
+        LD      C,8
+        CALL    INPUT
+        LD      HL,BUF_SRH
+        LD      DE,WORK_NM
+        CALL    BANK11
+        CALL    ILAZOP
+        JP      BANK10
+LD_FONT LD      C,3
+        CALL    DRIVER
+        JR      SAPD
+CATALOG CALL    BANK11
+        CALL    DIALOL
+        CALL    DOS
+LAHLZ   LD      HL,0
+LADEZ   LD      DE,0
+        LD      (HL),D
+        DEC     DE
+        LD      (HL),E
+        LD      HL,(COORD)
+        LD      (COORD2),HL
+        RES     5,(IY+1)
+        CALL    KEYS
+        JP      BEGIN1
+ANAL1   EX      (SP),HL
+        PUSH    AF
+        PUSH    HL
+        PUSH    DE
+        LD      HL,(#5C51)
+        LD      DE,PRINTC
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        POP     DE
+        POP     HL
+        LD      A,H
+        OR      L
+        CP      #6F
+        JR      NZ,ENDM
+        POP     AF
+        EX      (SP),HL
+        INC     SP
+        INC     SP
+        RET
+ENDM    POP     AF
+        EX      (SP),HL
+        RET
+IMPORT  CALL    ZAPR
+        LD      HL,TEXT
+        LD      C,2
+        CALL    DRIVER
+        JR      C,SDLP
+        LD      HL,TEXT
+        LD      D,H
+        LD      E,L
+        LD      B,0
+IMSK2   LD      A,(HL)
+        INC     A
+        JR      Z,IMSK_EN
+        DEC     A
+        JR      NZ,$+3
+        INC     HL
+        CP      #80
+        CALL    NC,DAMA
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        JR      IMSK2
+IMSK_EN DEC     A
+        LD      (DE),A
+        LD      HL,BUFNAME
+        LD      DE,WORK_NM
+        LD      BC,8
+        LDIR
+SDLP    JP      BEGIN1
+DAMA    PUSH    HL
+        LD      HL,TABU
+        SUB     #80
+        LD      C,A
+        ADD     HL,BC
+        CALL    BANK11
+        LD      A,(HL)
+        POP     HL
+        JP      BANK10
+FILE_N  CALL    PRINT
+        DEFB    16,0,9,"New file: ",0
+        LD      DE,REP_BUF+8
+        LD      C,8
+        CALL    INPUT
+        LD      HL,REP_BUF
+        LD      DE,WORK_NM
+        LD      A,(HL)
+        OR      A
+        JR      Z,ZCCK
+        LD      B,8
+LP_NEW  LD      A,(HL)
+        OR      A
+        JR      NZ,$+4
+        LD      A,32
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        DJNZ    LP_NEW
+        LD      HL,#FF00
+        LD      (TEXT),HL
+ZCCK    JR      SDLP
+WORK    CALL ZAPR
+        LD C,5
+        LD HL,TEXT
+        CALL DRIVER
+        JR      C,ZCCK
+        LD HL,BUFNAME
+        LD DE,WORK_NM
+        LD BC,8
+        LDIR
+        JR ZCCK
+        CALL    ZAPR
+BASIC_
+STKM    LD      HL,0
+        LD      (#5C3D),HL
+        LD      HL,#2758
+        LD      A,#C9
+        LD      (#5CC2),A
+        EXX
+        RET
+BASIC   CALL    ZAPR
+        CALL    BASIC_
+        LD      HL,BEGIN1
+        LD      (KOT+1),HL
+        CALL    BANK14
+        JP      BAS
+INVERT  LD      DE,(COORD2)
+        LD      A,E
+        SRL     A
+        LD      B,E
+        CALL    PREOB
+        LD      A,B
+        RRA
+        SBC     A,A
+        XOR     #F0
+        LD      C,A
+        LD      B,8
+        LD      A,(DE)
+        XOR     C
+        LD      (DE),A
+        INC     D
+        DJNZ    $-4
+        RET
+PRINT:  EX (SP),HL
+        PUSH AF
+PRINT1  LD A,(HL)
+        OR A
+        JR Z,$+8
+        CALL PRINTC
+        INC HL
+        JR PRINT1
+        POP AF
+        EX (SP),HL
+        RET
+PRINTC: PUSH    AF
+        PUSH    DE
+        PUSH    BC
+        CP      16
+        JR      Z,POSIT
+        PUSH    HL
+        CP      12
+        JR      Z,CLEAR
+        CP      13
+        JR      Z,ENTER
+        CP      32
+        JR      C,END1
+        SUB     #60
+SNS_1   DEFB    48,0
+        ADD     A,#60
+        CALL    PRINTK
+        LD      HL,COORDX
+        INC     (HL)
+        BIT     6,(HL)
+        JR      Z,END1
+KOD     LD      (HL),0
+        INC     HL
+        INC     (HL)
+MAT     LD      A,0
+        OR      A
+        JR      Z,END1
+SL      LD      A,15
+        DEC     A
+        LD      (SL+1),A
+        JR      NZ,DKM
+        LD      A,15
+        LD      (SL+1),A
+        STOPKEY
+DKM     LD A,(HL)
+        CP 23
+        JR NZ,END1
+        DEC (HL)
+        LD HL,#4100
+        LD D,H
+        LD E,L
+        LD A,23
+        CALL UK1
+END1    POP HL
+END3    POP BC
+        POP DE
+        POP AF
+        RET
+CLEAR   DI
+        LD HL,#4000
+        LD DE,#4001
+        LD BC,#17FF
+        LD (HL),L
+        LDIR
+        LD (COORD),BC
+        JR END1
+ENTER   LD HL,COORDX
+        JR KOD
+POSIT:
+        INC HL
+        LD A,(HL)
+        LD (COORDX),A
+        INC HL
+        LD A,(HL)
+        LD (COORDY),A
+        JR END3
+SCROL1: LD HL,#4100
+        LD D,H
+        LD E,L
+        LD A,21
+UK1:    EX AF,AF'
+        CALL LIK
+        CALL PER
+        EX DE,HL
+        CALL LIK
+        EX DE,HL
+        EX AF,AF'
+        DEC A
+        JR NZ,$-14
+        RET
+LIK:    LD A,L
+        ADD A,32
+        LD L,A
+        RET NC
+        LD A,H
+        ADD A,8
+        LD H,A
+        RET
+PREOB:  LD      C,A
+        LD A,D
+        AND 7
+        RRCA
+        RRCA
+        RRCA
+        OR C
+        LD E,A
+        LD A,D
+        AND #18
+        OR #40
+        LD D,A
+        RET
+PRINTK: SRL A
+        PUSH AF
+        LD H,0
+        ADD A,A
+        LD L,A
+        LD A,#11
+        LD BC,#7FFD
+        OUT (C),A
+        JP PR_RTC
+EXITI
+BNC     LD A,#11
+        LD BC,#7FFD
+        OUT (C),A
+        RET
+KEYS    LD      (IY+#30),0
+        PUSH    HL
+        PUSH    DE
+        CALL    INVERT
+        XOR     A
+        LD      HL,#5C08
+        LD      (HL),A
+        EI
+        HALT
+        OR      (HL)
+        JR      Z,$-2
+        DI
+        CALL    MESTO
+        PUSH    AF
+        LD      HL,20
+        LD      DE,20
+        CALL    #03B5
+        CALL    INVERT
+        POP     AF
+        POP     DE
+        POP     HL
+        DI
+        RET
+MEK     LD      HL,TB
+        LD      B,7
+        CP      (HL)
+        JR      Z,$+7
+        INC     HL
+        INC     HL
+        DJNZ    $-5
+        RET
+        INC     HL
+        LD      A,(HL)
+        RET
+TB      DEFB #C5,93
+        DEFB #C6,91
+        DEFB #E2,#7E
+        DEFB #C3,#7C
+        DEFB #CD,92
+        DEFB #CC,#7B
+        DEFB #CB,#7D
+BUFER_E DEFS 8
+ENT_S   LD      HL,BUFER_E
+        CALL    KEYS
+        CP      13
+        RET     Z
+        OR      A
+        RET
+MESTO   CP      65
+        RET     C
+        CP      91
+        JR      NC,$+5
+        ADD     A,32
+        RET
+        CP      97
+        RET     C
+        CP      #7B
+        JR      NC,MEK
+        SUB     32
+        RET
+LIN2    LD      A,L
+        SUB     32
+        LD      L,A
+        RET     NC
+        LD      A,H
+        SUB     8
+        LD      H,A
+        RET
+PER     PUSH    HL
+        PUSH    DE
+        LD      B,7
+LISK1   PUSH    HL
+        PUSH    DE
+        LD      A,B
+        LD      BC,32
+        LDIR
+        LD      B,A
+        POP     DE
+        POP     HL
+        INC     D
+        INC     H
+        DJNZ    LISK1
+        POP     DE
+        POP     HL
+        RET
+SAVE_F  LD      HL,BEGIN1
+        PUSH    HL
+        LD      A,(WORK_NM)
+        CP      32
+        CALL    Z,NEW_NAN
+        JR      SAVE_T
+ZAPR:
+EXPL    LD      A,1
+        OR      A
+        RET     NZ
+        CALL    BANK11
+        CALL    ZAPROS
+        CALL    BANK10
+        LD      (EXPL+1),A
+        RET     NC
+SAVE_T  LD      HL,WORK_NM
+        LD      DE,BUFNAME
+        LD      BC,8
+        LDIR
+        LD      A,#FF
+        LD      (EXPL+1),A
+        CALL    LEN_FIL
+        LD      DE,TEXT
+        SBC     HL,DE
+        LD      B,H
+        LD      C,L
+        INC     BC
+        EX      DE,HL
+        LD      C,6
+        INC     DE
+DRIVER  PUSH    HL
+        LD      HL,BANK10
+        LD      (BN+1),HL
+        POP     HL
+        DI
+        LD      (START_F),HL
+        LD      (LEN_F),DE
+        LD      A,C
+        LD      B,2
+        CP      5
+        JR      Z,LOADF
+        CP      9
+        JR      Z,LAOSD
+        INC     B
+        CP      2
+        JP      Z,IMPORTL
+        LD      B,0
+        CP      3
+        JP      Z,LOADS
+        INC     B
+        CP      4
+        JP      NZ,SAVEF
+        LD      HL,TXTM
+        JR      $+10
+LAOSD   LD      HL,TXTB
+        JR      $+5
+LOADF   LD      HL,TXTW
+        LD      (CTS+1),HL
+        LD      HL,NOFILES
+        LD      (NFCDT+1),HL
+        CALL    BANK16
+        CALL    PODG
+AGAINC  LD      A,(IX)
+        OR      A
+        JR      Z,ENDCP
+        DEC     A
+        JR      Z,NEXTL
+        LD      A,(IX+8)
+        CP      EXTEND
+        CALL    Z,PERENOS
+NEXTL   ADD     IX,DE
+        JR      AGAINC
+ENDCP   LD      A,0
+        LD      B,A
+        OR      A
+NFCDT   JP      Z,NOFILES
+        LD      (FILES),A
+        CALL    PRINT
+        DEFB    "Select ",0
+CTS     CALL    0
+        CALL    PRINT
+        DEFB    "file:",0
+        XOR     A
+        LD      (YK+1),A
+        LD      (FILE),A
+        LD      A,5
+        LD      (XK+1),A
+        LD      HL,#C000
+        CALL    PRINTN
+        DJNZ    $-3
+KROLL   CALL    IKUR
+NORT    CALL    OPKEY
+        LD      HL,(FILE)
+        CP      "O"
+        JR      Z,KL
+        CP      "P"
+        JR      Z,KR
+        CP      "A"
+        JR      Z,KD
+        CP      "Q"
+        JR      Z,KU
+        CP      13
+        JR      Z,KF1
+        CP      9
+        JR      Z,KR
+        CP      10
+        JR      Z,KD
+        CP      11
+        JR      Z,KU
+        CP      "0"
+        JR      Z,KF1
+        CP      " "
+KF1     JP      Z,KF
+        CP      8
+        JR      NZ,NORT
+KL      LD      A,L
+        CALL    IKUR
+        OR      A
+        JR      NZ,$+5
+        LD      A,(FILES)
+        DEC     A
+RETURN  LD      (FILE),A
+        JR      KROLL
+KR      LD      A,L
+        CALL    IKUR
+        INC     A
+        LD      HL,FILES
+        CP      (HL)
+        JR      NZ,RETURN
+        XOR     A
+        JR      RETURN
+KU      LD      A,L
+        SUB     6
+        JP      C,NORT
+        CALL    IKUR
+        SUB     6
+        JR      RETURN
+KD      LD      A,L
+        ADD     A,6
+        LD      HL,FILES
+        CP      (HL)
+        JP      NC,NORT
+        CALL    IKUR
+        ADD     A,6
+        JR      RETURN
+PEREN   LD      A,(IX+8)
+        CP      "C"
+        RET     NZ
+PERENOS PUSH    DE
+        EX      DE,HL
+        PUSH    IX
+        POP     HL
+        PUSH    BC
+        LD      BC,8
+        LDIR
+        POP     BC
+        LD      HL,ENDCP+1
+        INC     (HL)
+        POP     HL
+        EX      DE,HL
+        LD      A,(IX+11)
+        LD      (HL),A
+        INC     L
+        LD      A,(IX+12)
+        LD      (HL),A
+        INC     L
+        LD      A,(IX+14)
+        LD      (HL),A
+        INC     L
+        LD      A,(IX+15)
+        LD      (HL),A
+        LD      A,L
+        ADD     A,4
+        LD      L,A
+        INC     HL
+        RET
+PRINTN  PUSH    BC
+XK      LD      A,5
+        INC     A
+        CP      6
+        JR      C,SAVEX
+YK      LD      A,0
+        INC     A
+        LD      (YK+1),A
+        LD      (COORDY),A
+        XOR     A
+SAVEX   LD      (XK+1),A
+        RLCA
+        LD      C,A
+        RLCA
+        RLCA
+        ADD     A,C
+        INC     A
+        LD      (COORDX),A
+        LD      BC,#0808
+        CALL    PRINT0+2
+        ADD     HL,BC
+        POP     BC
+        RET
+NOFILES CALL    PRINT
+        DEFB    "NO MASM",0
+        JR      FLI
+NOFILEI CALL    PRINT
+        DEFB    "NO TASM",0
+        JR      FLI
+NOFILEC CALL    PRINT
+        DEFB    "NO FONT",0
+FLI     CALL    PRINT
+        DEFB    "-FILE(S)!",0
+        CALL    BANK11
+        JP      P30H
+DOS     LD      IX,ERROR
+        PUSH    IX
+        LD      (#5C3D),SP
+        LD      IY,#5C3A
+        LD      (IY),#FF
+        LD      IX,0
+        LD      (#5D0F),IX
+        CALL    #3D13
+ERROR   DI
+        LD      SP,(#5C3D)
+        POP     AF
+        LD      A,(#5D0F)
+        OR      A
+        RET     Z
+        LD      (ERS+1),A
+ERYS    LD      HL,0
+        LD      (#5D0F),HL
+        CP      8
+        JR      C,$+4
+        LD      A,8
+        LD      L,A
+        LD      A,#D
+        CALL    PRINTC
+        LD      BC,DOSER
+        ADD     HL,HL
+        ADD     HL,BC
+        LD      A,(HL)
+        INC     HL
+        LD      H,(HL)
+        LD      L,A
+        LD      A,(IY)
+        CP      #14
+        JP      Z,BREAK
+        LD      (IY),#FF
+        JP      (HL)
+DOSER   DEFW    P30H,E8,E8,E3,E4,E4,E6,E7,E8
+P30H    EI
+        LD      B,30
+        HALT
+        DJNZ    $-1
+        DI
+ERS     LD      A,0
+        SCF
+        RET
+BREAK   CALL    PRINT
+        DEFB    "BREAK",0
+        JR      P30H
+E3      CALL    PRINT
+        DEFB    "NO SPACE",0
+        JR      P30H
+E4      CALL    PRINT
+        DEFB    "MUCH FILES",0
+        JR      P30H
+E6      CALL    PRINT
+        DEFB    "NO DISK",0
+        JR      P30H
+E7      CALL    PRINT
+        DEFB    "DISK ERROR",0
+        JR      P30H
+E8      CALL    PRINT
+        DEFB    "*ERROR*",0
+        JR      P30H
+OPKEY   SET     3,(IY+#30)
+        EI
+        LD      (IY-#32),0
+OPK     LD      A,(#5C08)
+        OR      A
+        JR      Z,OPK
+        PUSH    AF
+        CALL    #1F54
+        JR      C,SELK
+        POP     HL
+        POP     AF
+        XOR     A
+        CCF
+        RET
+SELK    POP     AF
+        RET
+IKUR    LD      D,0
+        LD      A,(FILE)
+        LD      H,A
+        INC     D
+        SUB     6
+        JR      NC,$-3
+        ADD     A,7
+        LD      B,A
+        LD      A,#F6
+        ADD     A,10
+        DJNZ    $-2
+        LD      E,A
+        SRL     A
+        CALL    PREOB
+        LD      C,8
+        LD      L,E
+        LD      B,5
+        LD      A,(DE)
+        CPL
+        LD      (DE),A
+        INC     E
+        DJNZ    $-4
+        LD      E,L
+        INC     D
+        DEC     C
+        JR      NZ,$-11
+        LD      A,H
+        RET
+NAMEFIL CALL    PRINT
+BUFNAME DEFS    8,32
+        NOP
+        RET
+KF      CALL    IKUR
+        LD      L,A
+        LD      H,#C
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        LD      DE,BUFNAME
+        LD      BC,8
+        LDIR
+POT     LD      C,(HL)
+        INC     L
+        LD      B,(HL)
+        INC     L
+        LD      E,(HL)
+        INC     L
+        LD      D,(HL)
+        DEC     BC
+        INC     B
+        LD      C,5
+        CALL    PRINT
+        DEFB    #10,0,0,"Reading file: ",0
+        CALL    NAMEFIL
+BN      CALL    BANK10
+        LD      HL,(START_F)
+        PUSH    HL
+        CALL    DOS
+        POP     HL
+        RET     NC
+BRK     LD      A,0
+        OR      A
+        RET     Z
+        DEC     A
+        JR      Z,$+7
+        LD      (HL),0
+        INC     HL
+        JR      $-6
+        LD      (HL),#FF
+        RET
+SAVEF   DI
+        LD      HL,BUFNAME
+        LD      DE,#5CDD
+        LD      BC,8
+        LDIR
+        CALL    PRINT
+        DEFB    #D,"Saving file: ",0
+        CALL    NAMEFIL
+        LD      A,EXTEND
+        LD      (#5CE5),A
+        LD      C,#12
+        CALL    DOS
+        RET     C
+        LD      HL,0
+START_F EQU     $-2
+        LD      DE,0
+LEN_F   EQU     $-2
+        LD      C,#B
+        JP      DOS
+BANK16  PUSH    AF
+        LD      A,#16
+        JR      $+15
+BANK14  PUSH    AF
+        LD      A,#14
+        JR      $+10
+BANK11  PUSH    AF
+        LD      A,#11
+        JR      $+5
+BANK10  PUSH    AF
+        LD      A,#13
+        PUSH    BC
+        LD      BC,#7FFD
+        OUT     (C),A
+        LD      (BNC+1),A
+        POP     BC
+        POP     AF
+        RET
+LOADS   LD      HL,FONT
+        LD      (START_F),HL
+        LD      HL,#200
+        LD      (LEN_F),HL
+        LD      HL,BANK11
+        LD      (BN+1),HL
+        LD      HL,NOFILEC
+        LD      (NFCDT+1),HL
+        LD      HL,TXTF
+        LD      (CTS+1),HL
+        CALL    BANK16
+        CALL    PODG
+AGAIN2  LD      A,(IX)
+        OR      A
+        JP      Z,ENDCP
+        DEC     A
+        JR      Z,$+10
+        LD      A,(IX+13)
+        CP      2
+        CALL    Z,PEREN
+        ADD     IX,DE
+        JR      AGAIN2
+IMPORTL LD      HL,NOFILEI
+        LD      (NFCDT+1),HL
+        LD      HL,TXTI
+        LD      (CTS+1),HL
+        CALL    BANK16
+        CALL    PODG
+IPPL    LD      A,(IX)
+        OR      A
+        JP      Z,ENDCP
+        DEC     A
+        JR      Z,$+10
+        LD      A,(IX+8)
+        CP      "A"
+        CALL    Z,PERENOS
+NEXTP   ADD     IX,DE
+        JR      IPPL
+TXTW    CALL    PRINT
+        DEFB    "work ",0,#C9
+TXTI    CALL    PRINT
+        DEFB    "import ",0,#C9
+TXTM    CALL    PRINT
+        DEFB    "merge-",0,#C9
+TXTB    CALL    PRINT
+        DEFB    "buffer-",0,#C9
+TXTF    CALL    PRINT
+        DEFB    "FNT-",0,#C9
+FILE    NOP
+FILES   NOP
+OBJ_INF
+        CALL    BANK11
+        LD      HL,(RUN+1)
+        LD      A,L
+        OR      H
+        JP      Z,BEGIN1
+SK_MET  LD      HL,0
+        JP      ROBOCOP
+OBJ_SAV
+        LD      HL,(RUN+1)
+        LD      A,L
+        OR      H
+        JR      Z,ASSPIG
+        CALL    BANK11
+        CALL    FILE_OB
+        CALL    LEN_O_F
+        PUSH    HL
+        CALL    KASIK
+        LD      A,"C"
+        LD      (#5CE5),A
+        POP     DE
+        LD      HL,(RUN+1)
+        CALL    BANK14
+        CALL    #5B00
+        CALL    BANK11
+        CALL    KASIK
+        CALL    BANK10
+ASSPIG  JP      BEGIN1
+SOUSM   CALL    DRIVER+8
+        JP      BANK16
+PUT_B   CALL    BANK16
+        CALL    PUT
+        JR      I_I
+GET_B   CALL    BANK16
+        CALL    GET
+I_I     LD      HL,(LINE)
+        JP      POSIT_L
+

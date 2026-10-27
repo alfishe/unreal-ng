@@ -25,9 +25,9 @@ namespace
     /// Outside shadow #77 is the Z-Controller config port and #57 its data port
     void LeaveShadow(EmulatorState& state)
     {
-        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+        state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
         state.flags &= ~CF_TRDOS;
-        state.pBF = 0x00;
+        state.evo.pBF = 0x00;
     }
 }  // namespace
 

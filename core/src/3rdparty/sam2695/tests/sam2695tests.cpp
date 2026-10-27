@@ -1,7 +1,6 @@
 // libsam2695 test runner: runs every registered test (or those whose name contains argv[1]).
 #include "testfw.h"
 
-#include <chrono>
 #include <cstring>
 
 namespace sam2695test
@@ -20,14 +19,12 @@ int main(int argc, char** argv)
         if (filter != nullptr && std::strstr(t.name, filter) == nullptr)
             continue;
         const int before = gFailed;
-        const auto t0 = std::chrono::steady_clock::now();
         t.fn();
-        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         run++;
         const bool ok = gFailed == before;
         if (!ok)
             failedTests++;
-        std::printf("%s %-44s %8.2f ms\n", ok ? "  ok  " : "FAILED", t.name, ms);
+        std::printf("%s %s\n", ok ? "  ok  " : "FAILED", t.name);
     }
     std::printf("\nsam2695tests: %d tests, %d checks, %d failed checks, %d failed tests\n", run, gChecks, gFailed,
                 failedTests);

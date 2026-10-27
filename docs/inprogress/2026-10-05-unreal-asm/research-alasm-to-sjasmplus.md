@@ -1,0 +1,146 @@
+# unreal-asm: ALASM → sjasmplus (phase A5)
+
+| | |
+|---|---|
+| **Date** | 2026-10-05 |
+| **Code** | IR `include/unrealasm/ir.h`, plugins `src/dialects/` (`alasm` frontend, `sjasmplus` frontend and backend), `Convert` / `ConvertProject` in `include/unrealasm/dialect.h`, `zxasm convert` |
+| **Oracles** | the binaries ALASM built: The Link's objects on `testdata/machines/pentagon1024sl/TheLink.trd`, and a constructs sample assembled by ALASM 5.09 in the emulator |
+| **Result** | 18 of 19 The Link objects byte-equal (the 19th was built from an older version of its source); the constructs sample byte-equal; 513 sources from 21 disks convert, 508 of them come back unchanged through the sjasmplus frontend + backend |
+
+## 1. Example first
+
+An ALASM fragment and what `zxasm convert --to sjasmplus` writes:
+
+```text
+        LD A,1+2*3              LD A,(1+2)*3            ; ALASM computes left to right
+        LD HL,'table            LD HL,high table
+        LD BC,#1234<4           LD BC,+((#1234*#10001>>>12)&#FFFF)
+        DW 0-2/2                DW (0-2&#FFFF)/(2&#FFFF) ; 16-bit unsigned: #7FFF
+        IF0 ?debug              IF exist debug
+iy      EQU 7                   L_iy    EQU 7            ; a label, not the register
+        LD IY,iy                LD IY,L_iy
+        EXA                     EX AF,AF'
+        LD L,0,H,1              LD L,0
+                                LD H,1
+```
+
+The file `testdata/dialects/alasm-sjasmplus/constructs.alasm.txt` has every construct of this page; its sjasmplus
+form (`constructs.sjasmplus.asm`) assembles to `constructs.bin`, the 67 bytes ALASM 5.09 built from the original.
+
+## 2. How the conversion is built
+
+```mermaid
+flowchart LR
+    A["ALASM source<br/>(alasm codec: decoded text)"] --> F["alasm frontend<br/>left-to-right expressions,<br/>macro expansion where needed"]
+    F --> IR["IR (ir.h)<br/>Program · Line · Statement · Operand · Expr"]
+    S["sjasmplus source"] --> FS["sjasmplus frontend<br/>C-like priorities"] --> IR
+    IR --> B["sjasmplus backend<br/>parentheses by priority, renames,<br/>LOCAL blocks, DEVICE"]
+    B --> O["sjasmplus text<br/>(CP866 strings)"]
+```
+
+- **Expressions** are trees. The frontend reads its assembler's rules (ALASM: left to right, no priorities; sjasmplus:
+  C-like priorities); the backend writes parentheses wherever the target's priorities would read the tree
+  differently.
+- **Program-level arithmetic**: `Program::expressionBits = 16` and `unsignedArithmetic` tell the backend that the
+  source computed in 16-bit unsigned words; sjasmplus computes in 32-bit signed, so division gets `&#FFFF` masks and
+  ALASM's rotations are spelled out.
+- **A project**: `ConvertProject` converts all sources of a disk together: an `INCLUDE` wildcard resolves to the last
+  matching name (as ALASM does), macros defined in one file are known in the others (for the number of arguments).
+  `zxasm convert disk.trd --to sjasmplus -o dir` also extracts the files `INCBIN` names.
+
+## 3. ALASM facts the conversion relies on
+
+From ALASM 5.07's help (`AL50HELP`, on the [ALASMENG](http://alonecoder.nedopc.com/zx/ALASMENG.rar) disk) and checked
+in the emulator where marked.
+
+| Fact | Conversion |
+|---|---|
+| Expressions run left to right, 16-bit unsigned | parentheses by tree; `/` masked to 16 bits |
+| `'x` / `.x` high / low byte, `!` xor, `<` / `>` rotate a 16-bit word, postfix `~` inverts the result so far | `high` / `low`, `^`, the rotation formula, `~(...)` |
+| `?label` is 0 when the label is defined so far (ALASM is one pass), `#FFFF` when not, 1 when not defined but used before, 2 when it names a macro (help, "?label"; RAR's `IFN ?j\1-2` tells a macro call with two parameters from one with one) | `IF exist x` / `IF !exist x`; a test before a definition of x (ACE's `IFN ?H2PAG` around H2PAG itself) `IFNDEF __UNREALASM_DEF_x`, the definitions setting that DEFINE; before the first definition in its file of a name an earlier line outside a macro body uses, 1 (a name assigned with `=` or not defined in the file is left as above: an earlier INCLUDE may define it); a macro's name 2; inside an expression `((!exist x)*#FFFF)` |
+| An instruction operand starting with `(` is memory up to the matching `)`; the rest is ignored (**emulator**: `LD DE,(65536-46)*98/256` assembles as `LD DE,(#FFD2)`, the line is shown as a warning) | the same, with a warning |
+| Keywords are capitals; a lower-case `iy`, `b`, `hl` is a label | labels named like registers or conditions get `L_` (also when defined in another file) |
+| `LOCAL` / `ENDL`: labels inside are invisible outside, except `@name` (the `@` is part of the name, **emulator**: `JP shared` does not find `@shared`) and labels used outside the block | block labels get `__L<n>`; inside a macro sjasmplus' `.name`; `@name` is renamed (`L__name`): sjasmplus would read it as `name` |
+| `""` inside a text is one quote (`CP """` in ALASM's own sources); a text may run to the end of the line | the quote character |
+| ALASM 4.4x writes macro parameters as `:0`…`:9` (its SAVEOBJ 2.1) | read as `\0`…`\9` inside a macro |
+| The code 5.07 shows as `DD` is `DEFM` in older versions: `DD "text"` | a string |
+| A word in column 0 before `EQU` is a label even when a later version made it a keyword (`DD EQU 5`); `DATA:` is `DATA` | label |
+| A character constant is a 16-bit word, the first character in the low byte and the last in the high byte: `"AB"` = `#4241`, `"ABC"` = `#4341` (ALASM 5.09 in unreal-ng: `LD HL,"AB"` = `21 41 42`, `DW "ABC"` = `41 43`) | its value |
+| `ADD`, `ADC`, `SBC` without `A,` (`ADD B`, `ADC 5`, `SBC (HL)`) are errors (code `#00`): nothing is assembled (ALASM 5.09) | the line as a comment, with a warning |
+| A bare `DISPLAY` prints an empty line | `DISPLAY ' '` |
+| Macros: `\0`…`\9`; `\P` returns parameter 0 and shifts the numbering, `\R` restores it; `\C` is the symbol at the parameter pointer, `\N` moves it, `\S<c>` the text up to `<c>` (help, "MACRO") | named parameters `_arg0`…; a macro that glues a parameter to a name or uses `\P \R \C \N \S` is expanded at its calls; ALASM reads a DUP's body again each pass, so a DUP in such a macro with a constant count is unrolled, the pointer moving on (isosurf's `DUP 4 / ADDBIT \C\N`, 2026-10-21) |
+| A call may give fewer arguments than the macro uses, or more | empty arguments added; the macro declares as many parameters as its longest call (sjasmplus needs them to match) |
+| A label may be reassigned with `label=expr` later | its address definition is written `label=$`, its `EQU` as `=` (sjasmplus keeps both fixed otherwise) |
+| `IF0` (5.03 and later) and `IF` (the same code `#D3` before: ALASM 4.2's help "if the expression = 0, body 1"; **emulator**: ALASM 5.0) take the block on 0, `IFN` on not 0; `DUP` / `EDUP`; `REPEAT` / `UNTIL0` (`UNTIL`) | `IF (x)==0` / `IF x`; `DUP` / `EDUP`; a `WHILE` loop with a counter |
+| `DS n,a,b`: n times the pattern `a,b` (**emulator**: 8 bytes for `DS 4,#AA,#55`) | `DUP n` / `DB a,b` / `EDUP` |
+| `INCBIN "name",size` | `INCBIN "name",0,size` |
+| `ORG addr,page` and `{addr}` reads need memory pages | `DEVICE ZXSPECTRUM4096` added (ALASM's page numbers follow its memory driver: checked per project) |
+| `EXA`, `EXD`, `JZ` / `JNZ` / `JC` / `JNC`, `INF`, several operand groups on one line (`LD L,0,H,1`) | `EX AF,AF'`, `EX DE,HL`, `JR cc`, `IN F,(C)`, one instruction each |
+| A `LOCAL` block may hold an `INCLUDE`: the included file's labels are local too | the block is a sjasmplus `MODULE __UNREALASM_LB<n>`, globals used inside get `@` |
+| A file included more than once may define the same macro each time (ALASM replaces it) | sjasmplus refuses a second `MACRO` of a name: the definition is guarded by `IFNDEF __UNREALASM_M_<name>` / `DEFINE` / `ENDIF` (only in files included more than once); for z80asm too, which refuses it the same way; pasmo takes the same definition again |
+| `label=expr` defined once in each branch of an `IF` (never twice in one pass, not in a loop or macro) | `EQU`: a sjasmplus `=` label cannot be used before its line |
+| A `DISP` inside an `IF` that closes before `ENT` (ACE's `aceTO`: displaced only when `v1` is defined) | the `DISP` also `DEFINE`s `__UNREALASM_DISP`; the `ENT` is written `IFDEF __UNREALASM_DISP` / `ENT` / `UNDEFINE` / `ENDIF`: sjasmplus refuses an `ENT` without `DISP` |
+| A text holding a control character (`DB "Ё<#7F>Ї<"` in ACE's aceFROM) | the control character as a number, the text around it quoted (it was written as the UTF-8 bytes) |
+| An indented lone word no file of the project defines as a macro (rarLZ4's ` CRUNNACH3`) | a label: ALASM calls only a macro defined |
+| An indented word after a label in column 0 is the command (a macro call), not a label reference | a macro call |
+| A macro may be defined in another file of the project and used where it is not visible in the file itself (RAR's `c HUFFMAN`, defined in `rarcon30`) | the project's macros that need expanding (walking `\C` / `\N` parameters) are expanded in every ALASM file of the project |
+
+## 4. sjasmplus facts the backend relies on
+
+Checked with sjasmplus 1.23.1 (documentation and probe sources):
+
+| Fact | Consequence |
+|---|---|
+| `IFDEF` / `IFNDEF` see `DEFINE`s only, not labels | ALASM's `?label` becomes `exist label` |
+| Macros are looked up before directives and instructions, case-sensitively (`MACRO dB`: `dB 5` calls it, `DB 5` is the directive) | the frontend does the same; ALASM's lower-case `dB` macros keep working |
+| An instruction operand wholly in parentheses is memory; `+(...)` is a value | a value that prints wholly parenthesized gets `+` |
+| `high`, `low`, `and`, `or`, `mod`, `exist`, register and condition names are reserved whatever their case | labels with such names are renamed |
+| `=` defines a redefinable symbol (`DEFL`) | ALASM's `label=expr` stays `label=expr` |
+| `@name` is the global label `name` | a source's own `@` (ALASM, TASM) is renamed |
+| `/* ... */` block comments, `.3 INC HL` repeats, temporary labels `1` with `1B` / `1F`, `DS n,fill` with one fill value | the sjasmplus frontend keeps them (a sjasmplus source survives the round trip with the same symbol table) |
+| `IFDEF` / `IFNDEF` see `DEFINE`s only; `$$$` (physical address) only inside `DISP` | used for the TASM `PHASE` state and `INCBIN` slack |
+
+## 5. Oracle results
+
+| Project | Main source | Objects (from its `SAVEOBJ` table) | Byte-equal |
+|---|---|---|---|
+| The Link | GSTUNNE4 | TUNNELZX, TUNNELGS | 2 / 2 |
+| | GSROTAT7 | ROTATEZX, ROTPREGS, ROTATEGS | 3 / 3 |
+| | GSMULBA3 | MULBARZX, MULBARGS | 2 / 2 |
+| | GSRBAR24 | ROTBARZX, ROBPREGS, ROTBARGS | 3 / 3 |
+| | TEX28 | TEXZX, TEXGS | 2 / 2 |
+| | baba4 | BABAZX, BABAGS | 2 / 2 |
+| | baba5 | BABAZX, BABAGS | 1 / 2: the disk's BABAGS was built from baba4 |
+| | hedge12 | HEDGEZX1, HEDGEZX2, HEDGEGS | 3 / 3 |
+| constructs sample | constructs | 67 bytes at `#6000` assembled by ALASM 5.09 in the emulator | equal |
+| ALASM 5.0 probe | `U50` | `IF` / `IFN` on a zero expression, `REPEAT` / `UNTIL`, `DD`, `JNZ`, `EXD`: 11 bytes, ALASM 5.0 | equal |
+| ALASM 5.05 probe | `U505` | `REPEAT` / `UNTIL`, `IF0`, `DD` with commas, `JNZ`, `JC`, `EXA`, `EXD`: 18 bytes, ALASM 5.05 | equal |
+
+The GSTUNNE4 unit (source, the files it includes, the files it `INCBIN`s, ALASM's two objects) is part of the
+library's test data (`testdata/dialects/thelink`); with `UNREAL_ASM_SJASMPLUS` set, `unreal-asm-tests` assembles
+the converted unit and the constructs sample and compares them with ALASM's bytes.
+
+Bugs the oracle found on the way (all fixed): `?label` written as `IFDEF` (sjasmplus never took the branch:
+HEDGEGS 22 bytes short of labels); `\P` / `\R` not implemented (the last polygon of every KPOL took the wrong
+parameter); a value wholly in parentheses read as memory; signed division; register-named labels; ALASM 4.x's `IF`
+taken as "not 0" (found 2026-10-08 with the 5.0 probe: it is `IF0`'s old name).
+
+## 6. Round trip through the sjasmplus frontend
+
+Every converted source goes through the sjasmplus frontend and backend again; the text must stay the same. Of 513
+sources from 21 disks (the ALASM releases, Alone Coder's ACE, PT3 and CON sources, The Link, the testdata disks),
+508 do. The 5 others are not conversion errors:
+
+- `alcfg4_4` (3 copies) and `acemsg01` call a lower-case macro (`dB`, `dm`) defined in another file; converting the
+  file alone, the sjasmplus frontend cannot know it is a macro and reads the directive. `ConvertProject` knows it.
+- `AL444nfo` is a help text kept as an ALASM source, not a program.
+
+## 7. Limits and open items
+
+| Item | Note |
+|---|---|
+| `?label` of a name used before but not defined (1 in ALASM) | 1 when the use and the test are in the file that defines the name later (2026-10-21); a use in an earlier INCLUDE, or a test in a macro body, still reads `#FFFF` |
+| TASM frontend | D-9 named TASM → sjasmplus as the first pair; ALASM came first because The Link gives binaries to compare with. TASM is the next frontend (A5b) |
+| Column of comments | the IR keeps no columns: comments are written from column 32 |
+| ALASM's `DISPLAY` output | checked in ALASM 5.09 (2026-10-07): during a pass ALASM prints a line counter `#NNNN` at each new screen line, and `DISPLAY` writes after it: texts as they are, numbers as `#` and four hex digits with no separator (`DISPLAY "b",$` gives `b#6001`, `DISPLAY "c",3+4` gives `c#0007`). The `#004A end:` seen before is the line counter and the text. The switches (2026-10-19, typed in 5.09's editor and in a file the codec writes since): DISPLAY reads them as list items, the letter stored as a register keyword (`/D` #F1, `/H` #F3, `/A` #F5, `/L` #F4; `/T` a plain letter). `/D` prints the next number in decimal (`  100`), `/H` in hex (`#0064`), `/A` both (`  100=#0064`), `/T` the expression's text, `=` and the number (`100=#0064`), `/L` first in the line leaves out the line counter and the line break, so the text joins the line before. The earlier syntax errors (#00) came from the codec writing the letter as text. sjasmplus prints numbers as `0x6001` (or decimal with `/D`) and has no `#` form, so the output cannot be made identical; it has no effect on the code |
+| Labels and IR | the IR node set is the union of ALASM and sjasmplus; the TASM, STORM and ZX-ASM frontends may add node kinds (D-7) |

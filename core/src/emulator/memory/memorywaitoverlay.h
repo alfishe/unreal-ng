@@ -54,6 +54,21 @@ public:
     /// access of `kind` to `addr` that started at CPU clock `startClock` of
     /// the frame. Called only for slots marked by SetSlotWaits
     virtual uint32_t ExtraClocks(MemoryWaitAccess kind, uint16_t addr, uint32_t startClock) = 0;
+    /// The rule's phase period in CPU clocks: ExtraClocks depends on `startClock` only modulo it (the kind and
+    /// the address fixed). 0 (the default): not known - a halted CPU's idle fetches then run one by one
+    virtual uint32_t PhasePeriod() const { return 0; }
+
+    /// A slot without waits: no effect (period 1); with waits: the rule's phase period, when it has one
+    bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const final
+    {
+        if (!_slotWaits[addr >> 14])
+        {
+            period = 1;
+            return true;
+        }
+        period = PhasePeriod();
+        return period != 0;
+    }
 
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) final;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) final;

@@ -156,7 +156,7 @@ public:
     /// endregion </Lifecycle and state>
 };
 
-/// The modules the machine knows: Standard first (index 0), then Game (index 1).
+/// The modules the machine knows: Standard first (index 0), then Game (index 1), then TMK (index 2).
 /// Filled at start-up; tests add a stub module
 class SprinterPldConfigurationRegistry
 {
@@ -177,6 +177,7 @@ public:
 
     static constexpr size_t kStandardIndex = 0;
     static constexpr size_t kGameIndex = 1;
+    static constexpr size_t kTmkIndex = 2;
 
 private:
     std::vector<std::unique_ptr<SprinterPldConfiguration>> _modules;

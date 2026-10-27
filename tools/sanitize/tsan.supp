@@ -1,0 +1,39 @@
+# ThreadSanitizer suppressions: live reads that are races by design.
+# Use: TSAN_OPTIONS="suppressions=$PWD/tools/sanitize/tsan.supp" (see docs/testing/sanitizers.md, section 8).
+#
+# race_top matches the top frame of an access, the code that touches the memory itself. A plain race:
+# entry matches any frame of either stack, and every emulation-thread access has Core::CPUFrameCycle or
+# MainLoop::Run below it: such an entry would hide real races too. The one exception is anchored on a
+# global object (^...$), which race: also matches.
+#
+# Allowed here: a read of a byte or an aligned scalar whose worst case is a value one step older or newer.
+# Not allowed: containers, pointers to storage that can be reallocated or freed, read-modify-write.
+# Those are real bugs (BreakpointManager, the shared memory migration).
+
+# A. Tools read guest memory live (debugger views, WebAPI, Lua/Python, tests) while the CPU writes it.
+# The buffer is never freed while the instance lives (a shared memory migration retires the old one),
+# so a read sees the byte before or after the write
+race_top:Memory::DirectReadFromZ80Memory
+
+# C. Tests read the machine state live (frame counter, registers, flags) to wait for it or check it.
+# The top frame is in the test source itself: production code never matches
+race_top:_test.cpp
+race_top:testwaithelper.h
+
+# The machine time of a coordinator operation log entry (frame, t-state): an operation that does not hold
+# the CPU is stamped while it runs. The entry is shown by the status calls only
+race_top:CoordinatorPorts::Now
+
+# D. Feature flag caches: a component copies a feature's bool when it changes (on the thread that changed it), the
+# emulation thread reads its copy per instruction or per draw. The worst case is one draw or step with the old value.
+# Pointers are not here: Core::SelectMemoryInterface swaps the memory interface and stays reported
+race_top:Screen::UpdateFeatureCache
+race_top:Z80::UpdateFeatureCache
+race_top:FeatureManager::onFeatureChanged
+
+# Not a race: concurrent output to the synchronized standard streams is allowed ([iostream.objects]);
+# TSan sees libc++ resetting the field width inside the stream. Anchored on the global, not on a function
+race:^std::__1::cout$
+race:^std::__1::cerr$
+race:^std::cout$
+race:^std::cerr$

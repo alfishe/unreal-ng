@@ -2,7 +2,7 @@
 #include "emulator/rzx/rzxlauncher.h"
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "widgets/rzxpopover.h"
 #include "widgets/statusbarvideomode.h"
 
@@ -41,6 +41,7 @@
 #include "mainwindow.h"
 #include "menumanager.h"
 #include "widgets/statusindicator.h"
+#include "controllers/hostcontrollers.h"
 
 namespace
 {
@@ -75,6 +76,11 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _joystick = new StatusIndicator(QStringLiteral("joystick"), tr("Joystick"), _statusBar);
     _joystick->setBlinking(false);  // a held-buttons state LED, like sound
     _joystick->hide();
+    _debugLayer = new QLabel(tr("DEBUG"), _statusBar);
+    _debugLayer->setToolTip(tr("A game pad holds its debug layer key: it drives the debugger, not the game"));
+    _debugLayer->setStyleSheet(
+        "QLabel { color: #1a1a1a; background: #d9a032; border-radius: 3px; padding: 0 4px; font-weight: 600; }");
+    _debugLayer->hide();
 
     _sound->setBlinking(false);
     _sound->setCursor(Qt::PointingHandCursor);
@@ -138,6 +144,7 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _statusBar->addPermanentWidget(_videoMode);
     _statusBar->addPermanentWidget(_rzx);
     _statusBar->addPermanentWidget(_ttd);
+    _statusBar->addPermanentWidget(_debugLayer);
     _statusBar->addPermanentWidget(_joystick);  // leftmost of the device LEDs: before tape
     _statusBar->addPermanentWidget(_tape);
     _statusBar->addPermanentWidget(_hdd);
@@ -622,8 +629,37 @@ void StatusBarManager::restoreVisibility()
     }
 }
 
+void StatusBarManager::setControllers(HostControllers* controllers)
+{
+    if (_controllers == nullptr && controllers != nullptr)
+    {
+        _joystick->setCursor(Qt::PointingHandCursor);
+        connect(_joystick, &StatusIndicator::clicked, this, &StatusBarManager::controllersRequested);
+    }
+    _controllers = controllers;
+}
+
 void StatusBarManager::updateJoystick(EmulatorContext* context)
 {
+#ifdef ENABLE_CONTROLLERS
+    if (_controllers != nullptr)
+    {
+        // The connector LED: every connector of the machine, what is held on it and who drives it
+        const connectorview::Led led = context != nullptr ? _controllers->ConnectorLed() : connectorview::Led{};
+        if (_joystick->isVisible() != led.visible)
+            _joystick->setVisible(led.visible);
+        _joystick->setActive(led.visible && led.active);
+        if (led.visible)
+            _joystick->setLiveToolTip(led.toolTip);
+        const bool debug = _controllers->DebugLayerHeld();
+        if (_debugLayer->isHidden() == debug)  // hidden, not invisible: the status bar itself may be off
+        {
+            _debugLayer->setVisible(debug);
+            emit controllerDebugLayerChanged(debug);
+        }
+        return;
+    }
+#endif
     // Lit while a button is held (host keypad keys, CLI / WebAPI / MCP / Lua / Python input); shown only when
     // the machine decodes a Kempston joystick and one is fitted. Host keys arrive through the core mapping, so
     // there is no Qt key handling here: this only reads the device state
@@ -712,11 +748,13 @@ void StatusBarManager::updateBiosIssues(EmulatorContext* context)
 {
     // Checked when the machine changes and then every 25 ticks (5 s): a BIOS selected at runtime loads at the next
     // reset, so the label follows within seconds
-    if (context == _biosIssuesContext && _biosIssuesTicks++ % 25 != 0)
+    // By id, not by pointer: a new machine's context can sit at a removed one's address
+    const std::string emulatorId = context && context->pEmulator ? context->pEmulator->GetId() : std::string();
+    if (emulatorId == _biosIssuesEmulatorId && _biosIssuesTicks++ % 25 != 0)
         return;
-    if (context != _biosIssuesContext)
+    if (emulatorId != _biosIssuesEmulatorId)
         _biosIssuesTicks = 1;
-    _biosIssuesContext = context;
+    _biosIssuesEmulatorId = emulatorId;
     const std::vector<std::string> issues = DeviceState::SprinterBiosKnownIssues(context);
     if (issues.empty())
     {
@@ -788,7 +826,7 @@ void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
 /// history (Detached): where it is between the session's first and last frame
 void StatusBarManager::updateTtd(EmulatorContext* context)
 {
-    ttd::TimeTravelManager* ttd = context ? context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
     if (!ttd || ttd->GetState() != ttd::TTDSessionState::Detached)
     {
         _ttd->hide();
@@ -797,7 +835,7 @@ void StatusBarManager::updateTtd(EmulatorContext* context)
 
     // The published snapshot: this poll runs beside the machine's thread
     const ttd::TTDSessionInfo info = ttd->GetPublishedSessionInfo();
-    const uint64_t frame = ttd->CurrentPosition().frame;
+    const uint64_t frame = ttd::TTDSessionView(context).CurrentPosition().frame;
     const uint64_t span = info.currentEndFrame > info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
     const uint64_t done = frame > info.sessionStartFrame ? std::min(frame - info.sessionStartFrame, span) : 0;
     const double percent = span ? 100.0 * static_cast<double>(done) / static_cast<double>(span) : 100.0;

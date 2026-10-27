@@ -36,7 +36,7 @@ protected:
 
         // TR-DOS boot map: ROM in window 0, RAM in windows 1-3, the shadow ports open
         _decoder->ApplyBootROMDefaults(RM_DOS);
-        _context->emulatorState.pBF = 0x01;
+        _context->emulatorState.evo.pBF = 0x01;
     }
 
     void TearDown() override
@@ -46,7 +46,7 @@ protected:
     }
 
     void WriteBF(uint8_t value) { _decoder->DecodePortOut(0x00BF, value, 0x0000); }
-    uint8_t& Font(unsigned index) { return _context->emulatorState.atmFontRam[index]; }
+    uint8_t& Font(unsigned index) { return _context->emulatorState.atm.fontRam[index]; }
 };
 }  // namespace
 
@@ -119,9 +119,9 @@ TEST_F(EvoFontOverlay_Test, ResetKeepsTheLoadedFont)
 /// FNT-6: #0EBD is #FF until a text frame has been drawn, then the last glyph byte the renderer fetched
 TEST_F(EvoFontOverlay_Test, ReadbackStartsAtFF)
 {
-    _context->emulatorState.atmFontByte = 0xFF;
+    _context->emulatorState.atm.fontByte = 0xFF;
     EXPECT_EQ(_decoder->DecodePortIn(0x0EBD, 0x0000), 0xFF);
-    _context->emulatorState.atmFontByte = 0x3E;
+    _context->emulatorState.atm.fontByte = 0x3E;
     EXPECT_EQ(_decoder->DecodePortIn(0x0EBD, 0x0000), 0x3E);
 }
 
@@ -131,7 +131,7 @@ TEST_F(EvoFontOverlay_Test, TtdBlobRoundTrip)
     ttd::TTDEvoFontRam blob(_context);
     Font(0x0) = 0x11;
     Font(0x7FF) = 0xEE;
-    _context->emulatorState.atmFontByte = 0x42;
+    _context->emulatorState.atm.fontByte = 0x42;
 
     std::vector<uint8_t> saved(blob.TTDStateSize());
     blob.TTDSaveState(saved.data());
@@ -139,12 +139,12 @@ TEST_F(EvoFontOverlay_Test, TtdBlobRoundTrip)
 
     Font(0x0) = 0;
     Font(0x7FF) = 0;
-    _context->emulatorState.atmFontByte = 0;
+    _context->emulatorState.atm.fontByte = 0;
     EXPECT_NE(blob.TTDHashState(), hash);
 
     blob.TTDLoadState(saved.data());
     EXPECT_EQ(Font(0x0), 0x11);
     EXPECT_EQ(Font(0x7FF), 0xEE);
-    EXPECT_EQ(_context->emulatorState.atmFontByte, 0x42);
+    EXPECT_EQ(_context->emulatorState.atm.fontByte, 0x42);
     EXPECT_EQ(blob.TTDHashState(), hash);
 }

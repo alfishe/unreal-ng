@@ -19,4 +19,8 @@ namespace HeapCounter
     void Start();
     void Stop();
     int64_t Net();
+    /// The most the window held at once (Net() at its highest)
+    int64_t Peak();
+    /// Allocations made in the window, freed or not ("no allocation per call" checks)
+    int64_t Allocations();
 }  // namespace HeapCounter

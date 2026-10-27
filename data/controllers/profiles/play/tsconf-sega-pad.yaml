@@ -1,0 +1,13 @@
+# The TS-Config Kempston is 8 bits wide: a Sega pad on the Evo reads R L D U B C A START (retro-devices.md §2). The
+# buttons sit as RetroArch's Genesis core has them: west A, south B, east C, menu START
+schema: 1
+kind: play
+id: builtin/play/tsconf-sega-pad
+label: Sega pad (TS-Config)
+match: { machines: [TSL] }
+layers:
+  play:
+    west:  { retro: "auto:a" }
+    south: { retro: "auto:b" }
+    east:  { retro: "auto:c" }
+    menu:  { retro: "auto:start" }

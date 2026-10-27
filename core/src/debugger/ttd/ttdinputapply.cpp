@@ -7,11 +7,14 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -29,6 +32,8 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
     devices.portDecoder = context->pPortDecoder;
+    devices.slotManager = context->pSlotManager;
+    devices.controllers = context->pControllerManager;
     return devices;
 }
 
@@ -113,6 +118,21 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             joystick->SetState(ev.buttonMask);
             break;
 
+        case TTDInputKind::NextPad:
+            if (!devices.portDecoder)
+                return false;
+            return devices.portDecoder->ApplyPadState(ev.key, static_cast<uint16_t>(ev.dx));
+
+        case TTDInputKind::ConnectorState:
+            if (!devices.controllers)
+                return false;
+            return devices.controllers->ApplyConnectorState(ev.key, static_cast<uint16_t>(ev.dx));
+
+        case TTDInputKind::HostKeys:
+            if (!devices.controllers)
+                return false;
+            return devices.controllers->ApplyHostKeys(ev.key, static_cast<uint8_t>(ev.dx));
+
         case TTDInputKind::FrontPanelSwitch:
             if (!devices.portDecoder)
                 return false;
@@ -165,6 +185,17 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
                 return false;
             devices.network->ApplyHostFrame(payload, net->payloadLength);
             break;
+
+        case TTDInputKind::MidiPanic:
+        {
+            bool any = false;
+            if (devices.slotManager)
+            {
+                for (const std::unique_ptr<ICard>& card : devices.slotManager->Cards())
+                    any = card->MidiPanic() || any;
+            }
+            return any;
+        }
     }
     return true;
 }

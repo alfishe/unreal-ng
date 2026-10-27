@@ -384,7 +384,14 @@ public:
     /// region <Emulation events>
 public:
     void handleFrameStart();
-    void handleStep();
+    /// Called after every instruction (MainLoop::OnCPUStep): stopped it is one test here, no call
+    void handleStep()
+    {
+        if (_tapeStarted)
+            handleStepPlaying();
+    }
+    /// handleStep's work while the tape plays
+    void handleStepPlaying();
     void handleFrameEnd();
     /// endregion </Emulation events>
 

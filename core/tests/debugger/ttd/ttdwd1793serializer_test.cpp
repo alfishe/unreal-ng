@@ -21,6 +21,7 @@
 // (which touches live emulator state via processBeta128).
 #define _CODE_UNDER_TEST 1
 
+#include "_helpers/ttdrecordedstate.h"
 #include "emulator/io/fdc/wd1793.h"
 
 #include <gtest/gtest.h>
@@ -30,7 +31,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -384,26 +385,23 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     // pBetaDisk is populated by Init() only on Beta Disk models (Pentagon,
     // Scorpion, etc.). The default test model may or may not have one —
     // either outcome is a valid v1 result.
     WD1793* fdc = context->pBetaDisk;
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     if (fdc != nullptr)
     {
-        const auto fdcBlob = cp->peripheralBlobs.find(
-            static_cast<uint8_t>(ttd::PeripheralId::BetaDisk));
-        ASSERT_NE(fdcBlob, cp->peripheralBlobs.end());
-        const auto fdcState = ttd::TTDPeripheralRegistry::DecodeBlob(
-            static_cast<uint8_t>(ttd::PeripheralId::BetaDisk), fdcBlob->second);
+        const auto fdcState = ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::BetaDisk);
+        ASSERT_FALSE(fdcState.empty());
         EXPECT_EQ(fdcState.size(), 254u)
             << "fdcState blob must contain the 254-byte FDC subsystem payload "
             << "(controller 146 + 4×FDD 27) when a WD1793 is present";

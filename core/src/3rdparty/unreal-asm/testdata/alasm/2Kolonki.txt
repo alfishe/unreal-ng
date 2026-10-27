@@ -1,0 +1,248 @@
+;прозрачно пропускает коды курсива/двойного/подчеркнутого
+
+LINBUF  EQU #BE00
+WINBUF  EQU LINBUF+256
+
+NOBYTE=#5CE8
+        ORG #6000
+        DI
+        EI
+kolBEG
+        LD BC,6144
+        LD DE,#4001
+        LD H,D,L,C
+        LD (HL),L
+        LDIR
+        LD BC,767
+        LD (HL),7
+        LDIR
+        LD HL,TNUMS
+        LD D,#40
+CR
+        LD A,E
+        AND 224
+        ADD A,32
+        LD E,A
+        JR NC,PRTXT
+        LD D,72
+PRTXT
+        LD A,(HL)
+        INC HL
+        CP 13
+        JR Z,CR
+        CALL PRSYM
+        JR NC,PRTXT
+        LD HL,_SKIP
+        PUSH HL
+        LD HL,_HGT
+        PUSH HL
+        LD HL,_WIDTH
+        PUSH HL
+        LD E,#27
+VVV0
+        LD C,0
+        LD (IY-50),C
+        LD A,"=
+VVVDIG
+        CALL PRSYM
+VVV
+       CALL 8020
+       JR NC,VVVQQ
+        LD HL,23560
+        LD A,(HL)
+        LD (HL),H
+        LD B,A
+        ADD A,-13
+        JR Z,vvvok ;CY
+        SUB "0"-13
+        CP 10
+        JR NC,VVV
+        LD L,A
+        LD A,C
+        CP 25
+        JR NC,VVV;kolBEG
+        ADD A,A,A,A,A,C,A,A,A,L
+        LD C,A,A,B
+        JR VVVDIG
+vvvok
+        INC C
+        DEC C
+        JR Z,VVV
+VVVQQ  POP HL
+        LD (HL),C
+       EXA
+        LD A,E
+        ADD A,32
+        LD E,A
+        JP P,VVV0
+       EXA
+       RET NC
+        DI
+ALL2END
+        LD HL,(NOBYTE),B,H
+        INC B
+        XOR A
+        LD L,A,E,A
+        SUB B
+        LD D,A
+        PUSH DE
+        LD D,-1,H,B
+        DEC H
+        CALL H2PAG
+        LD C,17
+ALL0END PUSH AF,HL,DE,BC,DE,BC
+        CALL OUTME
+        LD D,'WINBUF
+        CALL LDIR0
+       POP BC,DE
+        LD A,C
+        CALL OUTME,LDIRWIN
+        POP BC,DE,HL
+        DEC D
+        BIT 6,D
+        SET 6,D
+        LD A,C
+        CALL Z,PRVPAG
+        LD C,A
+        POP AF
+        DEC H
+        BIT 6,H
+        SET 6,H
+        CALL Z,PRVPAG
+        DJNZ ALL0END
+        POP HL
+        LD D,B,E,B ;KUDA
+KOLOGO PUSH HL
+_HGT=$+1
+       LD B,0;HX
+       LD LX,B
+        CALL LINEDN
+        DJNZ $-3
+       EX (SP),HL
+;HL=1st adr from
+;(SP)=2nd adr from
+KOLO1
+        CALL RASTYAG
+_SKIP=$+1
+        LD B,0
+        LD A,32
+        CALL PUT
+        DJNZ $-5
+       EX (SP),HL
+        CALL RASTYAG
+        CALL PUTCR
+       EX (SP),HL
+        DEC LX
+        JR NZ,KOLO1
+;HL=1st adr from (нач 2-й колонки)
+;(SP)=2nd adr from (нач след страницы)
+
+       POP HL ;нач след страницы
+        LD A,#C ;перевод страницы
+        CALL PUT
+
+        CALL GET
+        JR NZ,KOLOGO
+        LD (NOBYTE),DE
+PRVPAG
+        SUB 3
+        AND 7
+        OR 16
+        RET
+LDIRWIN LD H,'WINBUF
+LDIR0   LD E,0,L,E
+        LD BC,256
+        LDIR
+        RET
+
+RASTQ   LD A,32
+        CALL PUT
+        DJNZ RASTQ
+        JR LF
+RASTYAG
+_WIDTH=$+2
+        LD BC,0
+RAST0
+        CALL GET
+        JR Z,RASTQ
+        INC HL
+        CP 13
+        JR Z,RASTQ
+        CALL PUT
+        CP 27
+        JR Z,RASTni-2
+        DEC C
+        JR NZ,RASTni+1
+        CP "-
+        JR NZ,RASTni
+;трехбайтные
+        LD C,1
+RASTni  INC B
+        DJNZ RAST0
+LINEDN
+LINEDN0 CALL GET
+        RET Z
+        INC HL
+        CP 13
+        JR NZ,LINEDN0
+LF
+        CALL GET
+        RET Z
+        CP 10
+        RET NZ
+        INC HL
+GET
+        PUSH HL
+        CALL H2PAG
+        XOR A
+        OR (HL)
+        POP HL
+        RET
+
+PUTCR   LD A,13
+PUT
+        EX DE,HL
+        PUSH HL
+       PUSH AF
+        CALL H2PAG
+       POP AF
+        LD (HL),A
+        POP HL
+        EX DE,HL
+        INC DE
+        RET
+
+H2PAG   LD A,H
+        SET 7,H,6,H
+        RLCA
+        RLCA
+        AND 3
+        XOR 1
+        INC A
+        XOR 18
+OUTME
+        PUSH BC
+        LD BC,#7FFD
+        OUT (C),A
+        POP BC
+        RET
+PRSYM
+        PUSH DE,HL
+        ADD A,A
+        PUSH AF
+        LD L,A,H,15
+        ADD HL,HL,HL,HL
+        LD B,8
+        LD A,(HL),(DE),A
+        INC L,D
+        DJNZ $-4
+        POP AF
+        POP HL,DE
+        INC E
+        RET
+TNUMS
+        DB "WIDTH",13
+        DB "HEIGHT",13
+        DB "SPACING",13
+        DB "(break=quit",")"+128
+DISPLAY $

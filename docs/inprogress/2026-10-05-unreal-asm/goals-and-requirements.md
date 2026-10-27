@@ -44,7 +44,7 @@ A user has `GAME.$H` (ALASM 4.4) on a TR-DOS disk.
 
 | ID | Goal |
 |---|---|
-| G-1 | **One codec per source format and sub-version**, decoding and encoding (decision D-1). Byte-exact round trip: `encode(decode(bytes)) == bytes` for every file the original assembler wrote. |
+| G-1 | **One codec per source format, covering every version of it**, decoding and encoding (decisions D-1, D-15). Byte-exact round trip: `encode(decode(bytes)) == bytes` for every file the original assembler wrote. |
 | G-2 | **Exact text.** Decoding gives the text the original assembler shows (its spelling, case and spacing), not a re-formatted approximation. |
 | G-3 | **Format conversion within a dialect**: any format / sub-version of a dialect to any other (tokenized ↔ tokenized, tokenized ↔ text), with a report of what the target cannot hold (a TASM 4 directive in a TASM 3 target). |
 | G-4 | **Dialect conversion through plugins**: frontends parse a dialect into a common Z80 source IR, backends write the IR in a dialect; N frontends + M backends instead of N × M converters; each plugin is a separate module of the framework. |
@@ -80,6 +80,7 @@ A user has `GAME.$H` (ALASM 4.4) on a TR-DOS disk.
 | D-11 | **Decoded text on the host is always UTF-8**; the original code page (CP866 / KOI8-R / CP1251 / ASCII) is recorded in the document so encoding back is exact (answer to Q-5). |
 | D-12 | **The CLI is `zxasm`** (`decode`, `encode`, `convert`, `detect`, `batch`, `formats`, `dialects`, `symbols`) (answer to Q-6). |
 | D-13 | **Universal encoding detectors are separate classes of the library** with their own public API (code page, line ends, text vs binary), usable outside the codecs (the emulator's media and text tools, other libraries) (owner, 2026-10-05). |
+| D-15 | **A codec detects and supports every version of its format** (owner, 2026-10-05): decoding finds the version (and reports every version the file is consistent with), encoding writes the version asked for; one codec per format, not per version (`tasm` = TASM 3.x and 4.x, `alasm` = ALASM 3.8 … 5.09). Conversion between versions re-tokenizes the text with the target's table; a keyword the target lacks stays text with a warning; meaning-level rewrites (ALASM 3.8 `DEFM "text"` → 5.x `DB "text"`) belong to the dialect plugins. |
 | D-14 | **Examples and test data are part of the library**: `core/src/3rdparty/unreal-asm/examples/` (small programs using the public API: decode, encode, convert, detect encodings, symbols) and `core/src/3rdparty/unreal-asm/testdata/` (the corpus each codec and plugin is tested on, with provenance) ship inside the library and build / run with it; a phase is not done without them (owner, 2026-10-05). |
 | D-4 | Order: first **text conversion between formats and their sub-versions** (codecs), then **assembler syntax conversion** as separate plugin modules in the framework. |
 

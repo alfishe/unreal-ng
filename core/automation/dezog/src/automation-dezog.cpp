@@ -94,6 +94,7 @@ bool AutomationDezog::start(uint16_t port)
     uint16_t resolvedPort = resolvePort(port);
 
     _adapter = std::make_unique<DezogDebugAdapter>();
+    _adapter->setSessionClientName("DeZog (DZRP)");
 
     dzrp::ServerConfig config;
     config.port = resolvedPort;

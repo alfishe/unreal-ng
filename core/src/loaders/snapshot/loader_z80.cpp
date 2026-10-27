@@ -1,4 +1,5 @@
 #include "loader_z80.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include <algorithm>
 #include <iterator>
@@ -124,7 +125,8 @@ snapshot::Image LoaderZ80::BuildImage() const
         case Z80_256K: image.memoryModel = snapshot::MemoryModel::Extended; break;
         default:
             image.memoryModel = snapshot::MemoryModel::Extended;
-            image.warnings.push_back("a SAM Coupe snapshot: this emulator has no such machine");
+            image.unsupported = "a SamRam / SAM Coupe snapshot: this emulator has no such machine";
+            image.warnings.push_back(image.unsupported);
             break;
     }
     image.timingHint = image.machineHint == "pentagon128" ? "pentagon" : _memoryMode == Z80_48K ? "48k" : "128k";
@@ -141,6 +143,8 @@ snapshot::Image LoaderZ80::BuildImage() const
         {
             image.extensions.push_back({"z80:rom-block", "rom", PAGE_SIZE, "ROM page " + std::to_string(idx), {}});
             image.warnings.push_back("the file carries a ROM block: Z80 snapshots with ROM blocks are not supported");
+            if (image.unsupported.empty())
+                image.unsupported = "the file carries a ROM block (a custom ROM): Z80 snapshots with ROM blocks are not supported";
         }
     }
 
@@ -172,6 +176,7 @@ snapshot::Image LoaderZ80::BuildImage() const
     }
     if (_hasTStates)
         image.framePosition = _tstatesFromInt;
+    image.ayAddressLatch = _portFFFD;
     image.border = static_cast<uint8_t>(_borderColor & 7u);
     if (_hasAyRegisters)
     {
@@ -201,277 +206,146 @@ bool LoaderZ80::planSnapshot()
 
 bool LoaderZ80::save()
 {
-    bool result = false;
-
-    // Capture current emulator state to staging buffers
-    if (!captureStateToStaging())
+    // Through the pipeline's save side: the machine's 128K view, the formats the machine can be saved in, the file written
+    // from the captured image (snapshot::SaveSnapshotFile). A refusal is logged and writes nothing
+    if (!_context)
     {
-        MLOGERROR("Failed to capture emulator state for Z80 save");
+        MLOGERROR("save: Invalid emulator context");
         return false;
     }
-
-    // Determine output format based on current emulator mode
-    _memoryMode = determineOutputFormat();
-
-    // Write V3 format file
-    result = saveV3FromStaging();
-
-    // Clean up staging memory
-    freeStagingMemory();
-
-    return result;
+    const snapshot::SaveResult result = snapshot::SaveSnapshotFile(*_context, snapshot::SaveFormat::Z80, _path);
+    if (!result.ok)
+        MLOGERROR("%s", result.text.c_str());
+    return result.ok;
 }
 
-Z80MemoryMode LoaderZ80::determineOutputFormat()
+bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std::vector<std::string>& warnings)
 {
-    // Check if emulator is in 128K mode by examining port 7FFD lock bit
-    // If locked and in 48K mode, use 48K format; otherwise use 128K
-    // The Scorpion's 256 KB has its own layout (16 pages, #1FFD)
-    const MEM_MODEL model = _context->config.mem_model;
-    if (model == MM_SCORP || model == MM_PROFSCORP)
-        return Z80_256K;
-
-    uint8_t port7FFD = _context->emulatorState.p7FFD;
-    bool isLocked = (port7FFD & 0x20) != 0;  // Bit 5 = lock
-
-    // Check current model - some models are always 48K
-    // For simplicity: if lock bit is set AND we're running as 48K, save as 48K
-    // Otherwise save as 128K to preserve all banks
-    if (isLocked)
+    // The layout: a 48K machine or a locked 128K with bank 0 on top is saved as a 48K program (three pages); a Scorpion's
+    // 16 pages are pages 3-18; the others have 8
+    const bool layout48 = snapshot::SavesAs48K(image);
+    const std::string& machine = image.machineHint;
+    uint8_t modelCode = Z80_MODEL3_128K;
+    if (layout48)
+        modelCode = Z80_MODEL3_48K;
+    else if (machine == "128k")
+        modelCode = Z80_MODEL3_128K;
+    else if (machine == "plus2")
+        modelCode = Z80_MODEL3_128K_2;
+    else if (machine == "plus2a")
+        modelCode = Z80_MODEL3_128K_2A;
+    else if (machine == "plus3")
+        modelCode = Z80_MODEL3_128K_3;
+    else if (machine == "pentagon128")
+        modelCode = Z80_MODEL3_P128K;
+    else if (machine == "scorpion256")
+        modelCode = Z80_MODEL3_ZS256K;
+    else
     {
-        // Check if only using 48K-visible pages
-        return Z80_48K;
-    }
-
-    return Z80_128K;
-}
-
-bool LoaderZ80::captureStateToStaging()
-{
-    if (_context == nullptr || _context->pCore == nullptr || _context->pMemory == nullptr)
-    {
+        error = "the .z80 format has no model for '" + machine + "'";
         return false;
     }
-
-    // Get current Z80 state from CPU - Z80 inherits from Z80Registers
-    Z80* z80 = _context->pCore->GetZ80();
-    if (z80 == nullptr)
+    std::vector<uint16_t> banks;
+    if (layout48)
+        banks = {5, 2, 0};
+    else
     {
-        return false;
+        const uint16_t count = machine == "scorpion256" ? 16 : 8;
+        for (uint16_t bank = 0; bank < count; bank++)
+            banks.push_back(bank);
     }
-    
-    // Copy register values directly from Z80 (which inherits Z80Registers)
-    _z80Registers.pc = z80->pc;
-    _z80Registers.sp = z80->sp;
-    _z80Registers.af = z80->af;
-    _z80Registers.bc = z80->bc;
-    _z80Registers.de = z80->de;
-    _z80Registers.hl = z80->hl;
-    _z80Registers.ix = z80->ix;
-    _z80Registers.iy = z80->iy;
-    _z80Registers.i = z80->i;
-    _z80Registers.r_low = z80->r_low;
-    _z80Registers.r_hi = z80->r_hi;
-    _z80Registers.iff1 = z80->iff1;
-    _z80Registers.iff2 = z80->iff2;
-    _z80Registers.im = z80->im;
-    _z80Registers.alt.af = z80->alt.af;
-    _z80Registers.alt.bc = z80->alt.bc;
-    _z80Registers.alt.de = z80->alt.de;
-    _z80Registers.alt.hl = z80->alt.hl;
-
-    // Capture port state
-    _port7FFD = _context->emulatorState.p7FFD;
-    _port1FFD = _context->emulatorState.p1FFD;
-    _tstatesFromInt = LoaderSZX::IntCountFromFramePosition(_context, z80->t);
-    _portFFFD = _context->emulatorState.pFFFD;
-
-    // Capture border color
-    _borderColor = _context->pScreen->GetBorderColor() & 0x07;
-
-    // Capture all RAM pages
-    Memory* memory = _context->pMemory;
-    for (int page = 0; page < MAX_RAM_PAGES; page++)
+    for (uint16_t bank : banks)
     {
-        uint8_t* srcPage = memory->RAMPageAddress(page);
-        if (srcPage != nullptr)
+        const auto it = image.banks.find(bank);
+        if (it == image.banks.end() || it->second.size() != PAGE_SIZE)
         {
-            _stagingRAMPages[page] = new uint8_t[PAGE_SIZE];
-            memcpy(_stagingRAMPages[page], srcPage, PAGE_SIZE);
+            error = "the machine state has no RAM bank " + std::to_string(bank);
+            return false;
         }
     }
 
-    _stagingLoaded = true;
-    return true;
-}
-
-bool LoaderZ80::saveV3FromStaging()
-{
-    // Open file for writing
-    FILE* outFile = FileHelper::OpenFile(_path, "wb");
-    if (outFile == nullptr)
-    {
-        MLOGERROR("Failed to open '%s' for writing", _path.c_str());
-        return false;
-    }
-
-    // Build V3 header
+    const snapshot::Cpu& cpu = image.cpu;
     Z80Header_v3 header = {};
+    header.reg_A = cpu.af >> 8;
+    header.reg_F = cpu.af & 0xFF;
+    header.reg_BC = cpu.bc;
+    header.reg_DE = cpu.de;
+    header.reg_HL = cpu.hl;
+    header.reg_SP = cpu.sp;
+    header.reg_I = cpu.i;
+    header.reg_R = cpu.r & 0x7F;   // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
+    header.flags = static_cast<uint8_t>(((cpu.r & 0x80) >> 7) | ((image.border & 0x07) << 1) | 0x20);   // 0x20 = compressed
+    header.reg_DE1 = cpu.de2;
+    header.reg_BC1 = cpu.bc2;
+    header.reg_HL1 = cpu.hl2;
+    header.reg_A1 = cpu.af2 >> 8;
+    header.reg_F1 = cpu.af2 & 0xFF;
+    header.reg_IY = cpu.iy;
+    header.reg_IX = cpu.ix;
+    header.IFF1 = cpu.iff1 ? 1 : 0;
+    header.IFF2 = cpu.iff2 ? 1 : 0;
+    header.im = cpu.im & 0x03;
+    header.reg_PC = 0;   // V1: PC = 0 says v2 / v3
 
-    // V1 fields - CPU registers
-    header.reg_A = _z80Registers.a;
-    header.reg_F = _z80Registers.f;
-    header.reg_BC = _z80Registers.bc;
-    header.reg_DE = _z80Registers.de;
-    header.reg_HL = _z80Registers.hl;
-    header.reg_SP = _z80Registers.sp;
-    header.reg_I = _z80Registers.i;
-    header.reg_R = _z80Registers.r_low & 0x7F;  // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
-
-    // Flags byte: bit 0 = R bit 7, bits 1-3 = border, bit 5 = compression
-    header.flags = (_z80Registers.r_hi >> 7) | ((_borderColor & 0x07) << 1) | 0x20;  // 0x20 = compressed
-
-    header.reg_DE1 = _z80Registers.alt.de;
-    header.reg_BC1 = _z80Registers.alt.bc;
-    header.reg_HL1 = _z80Registers.alt.hl;
-    header.reg_A1 = _z80Registers.alt.a;
-    header.reg_F1 = _z80Registers.alt.f;
-    header.reg_IY = _z80Registers.iy;
-    header.reg_IX = _z80Registers.ix;
-    header.IFF1 = _z80Registers.iff1 ? 1 : 0;
-    header.IFF2 = _z80Registers.iff2 ? 1 : 0;
-    header.im = _z80Registers.im & 0x03;
-
-    // V1: PC = 0 indicates v2/v3 format
-    header.reg_PC = 0;
-
-    // V2 fields
-    header.extendedHeaderLen = 54;  // V3 standard; 55 with the #1FFD byte below
-    header.newPC = _z80Registers.pc;
-    header.model = static_cast<Z80_Models_v2>(getModelCodeV3());
-    header.p7FFD = _port7FFD;
-    header.pFFFD = _portFFFD;
-    // +2A, +3 and Scorpion: byte 86 holds #1FFD (a 55-byte extended header)
-    const uint8_t modelCode = static_cast<uint8_t>(header.model);  // a v3 code in the v2-typed field
+    header.extendedHeaderLen = 54;   // V3 standard; 55 with the #1FFD byte
+    header.newPC = cpu.pc;
+    header.model = static_cast<Z80_Models_v2>(modelCode);   // a v3 code in the v2-typed field
+    header.p7FFD = image.paging.p7FFD.value_or(0);   // kept for a locked 128K that is saved as a 48K program, as it always was
     if (modelCode == Z80_MODEL3_128K_2A || modelCode == Z80_MODEL3_128K_3 || modelCode == Z80_MODEL3_ZS256K)
     {
         header.extendedHeaderLen = 55;
-        header.p1FFD = _port1FFD;
+        header.p1FFD = image.paging.p1FFD.value_or(0);
     }
 
-    // A 48K-mode snapshot of a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise
-    // readers (this loader included) ignore the AY bytes of a 48K snapshot
-    if (_memoryMode == Z80_48K && _context->config.mem_model != MM_SPECTRUM48)
+    // A 48K program on a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise readers (this
+    // loader included) ignore the AY bytes of a 48K snapshot
+    if (!image.ay.empty())
     {
-        header.r2 |= 0b0000'0100;
+        if (layout48)
+            header.r2 |= 0b0000'0100;
+        for (int i = 0; i < 16; i++)
+            header.ay[i] = image.ay[0].registers[i];
+        header.pFFFD = image.ay[0].selected;
     }
 
-    // AY registers - get from sound manager
-    if (_context->pSoundManager != nullptr)
-    {
-        SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
-        if (psg != nullptr)
-        {
-            for (int i = 0; i < 16; i++)
-            {
-                header.ay[i] = psg->readRegister(static_cast<uint8_t>(i));
-            }
-            // The selected register is the chip's own: a TurboSound decoder
-            // (Pentagon) routes #FFFD without updating emulatorState.pFFFD
-            header.pFFFD = psg->getCurrentRegisterIndex();
-        }
-    }
-
-    // V3 fields - T-state counter (optional, set to 0)
-    // The frame position, as libspectrum / Fuse encode it: a count-down within
-    // the current quarter of the frame and the quarter, both from the INT
+    // The frame position, as libspectrum / Fuse encode it: a count-down within the current quarter of the frame and the
+    // quarter, both from the INT
     const uint32_t quarter = std::max(1u, _context->config.frame / 4);
-    header.lowTCounter = static_cast<uint16_t>(quarter - (_tstatesFromInt % quarter) - 1);
-    header.highTCounter = static_cast<uint8_t>(((_tstatesFromInt / quarter) + 3) % 4);
+    const uint32_t tstates = image.framePosition.value_or(0);
+    header.lowTCounter = static_cast<uint16_t>(quarter - (tstates % quarter) - 1);
+    header.highTCounter = static_cast<uint8_t>(((tstates / quarter) + 3) % 4);
 
-    // Write header (first 30 bytes of V1)
-    fwrite(&header, sizeof(Z80Header_v1), 1, outFile);
+    std::vector<uint8_t> file;
+    auto append = [&](const void* bytes, size_t size) {
+        const uint8_t* p = static_cast<const uint8_t*>(bytes);
+        file.insert(file.end(), p, p + size);
+    };
+    append(&header, sizeof(Z80Header_v1));
+    const uint16_t extLen = header.extendedHeaderLen;
+    append(&extLen, sizeof(extLen));
+    append(&header.newPC, extLen);
 
-    // Write extended header length (2 bytes) then remaining V2/V3 header
-    uint16_t extLen = header.extendedHeaderLen;
-    fwrite(&extLen, sizeof(extLen), 1, outFile);
-    fwrite(&header.newPC, extLen, 1, outFile);
-
-    // Write memory pages
-    uint8_t compressBuffer[PAGE_SIZE + 1024];  // Extra space for worst case
-
-    if (_memoryMode == Z80_48K)
+    uint8_t compressBuffer[PAGE_SIZE + 1024];   // extra space for the worst case
+    for (uint16_t bank : banks)
     {
-        // 48K: write pages 5, 2, 0 (mapped to Z80 pages 8, 4, 5)
-        int pageMap48K[] = {8, 4, 5};    // Z80 page numbers
-        int ramMap48K[] = {5, 2, 0};     // Our RAM page numbers
-
-        for (int i = 0; i < 3; i++)
-        {
-            if (_stagingRAMPages[ramMap48K[i]] != nullptr)
-            {
-                size_t compressedSize = compressPage(_stagingRAMPages[ramMap48K[i]], PAGE_SIZE,
-                                                     compressBuffer, sizeof(compressBuffer));
-
-                MemoryBlockDescriptor desc;
-                desc.compressedSize = static_cast<uint16_t>(compressedSize);
-                desc.memoryPage = pageMap48K[i];
-
-                fwrite(&desc, sizeof(desc), 1, outFile);
-                fwrite(compressBuffer, compressedSize, 1, outFile);
-            }
-        }
-    }
-    else
-    {
-        // 128K: all 8 RAM pages (Z80 pages 3-10); Scorpion 256K: 16 (3-18)
-        const int pages = _memoryMode == Z80_256K ? 16 : 8;
-        for (int page = 0; page < pages; page++)
-        {
-            if (_stagingRAMPages[page] != nullptr)
-            {
-                size_t compressedSize = compressPage(_stagingRAMPages[page], PAGE_SIZE,
-                                                     compressBuffer, sizeof(compressBuffer));
-
-                MemoryBlockDescriptor desc;
-                desc.compressedSize = static_cast<uint16_t>(compressedSize);
-                desc.memoryPage = static_cast<uint8_t>(page + 3);  // Z80 pages: 3=RAM0, 4=RAM1, ..., 10=RAM7 (18=RAM15)
-
-                fwrite(&desc, sizeof(desc), 1, outFile);
-                fwrite(compressBuffer, compressedSize, 1, outFile);
-            }
-        }
+        std::vector<uint8_t> copy = image.banks.at(bank);
+        const size_t compressedSize = compressPage(copy.data(), PAGE_SIZE, compressBuffer, sizeof(compressBuffer));
+        MemoryBlockDescriptor desc;
+        desc.compressedSize = static_cast<uint16_t>(compressedSize);
+        // 48K: banks 5, 2, 0 are Z80 pages 8, 4, 5; 128K: Z80 pages 3-10 are banks 0-7 (Scorpion 3-18)
+        desc.memoryPage = layout48 ? (bank == 5 ? 8 : (bank == 2 ? 4 : 5)) : static_cast<uint8_t>(bank + 3);
+        append(&desc, sizeof(desc));
+        append(compressBuffer, compressedSize);
     }
 
-    fclose(outFile);
-
-    MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)",
-             _path.c_str(), (_memoryMode == Z80_48K) ? "48K" : (_memoryMode == Z80_256K ? "256K" : "128K"));
-
+    if (!FileHelper::SaveBufferToFile(_path, file.data(), file.size()))
+    {
+        error = "cannot write '" + _path + "'";
+        return false;
+    }
+    (void)warnings;
+    MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)", _path.c_str(), layout48 ? "48K" : (machine == "scorpion256" ? "256K" : "128K"));
     return true;
-}
-
-uint8_t LoaderZ80::getModelCodeV3()
-{
-    // The running model's v3 code; a 48K-mode save (the #7FFD lock set) stays 48K
-    if (_memoryMode == Z80_48K)
-        return Z80_MODEL3_48K;
-    switch (_context->config.mem_model)
-    {
-        case MM_PLUS2: return Z80_MODEL3_128K_2;
-        case MM_PLUS2A: return Z80_MODEL3_128K_2A;
-        case MM_PLUS3: return Z80_MODEL3_128K_3;
-        case MM_PENTAGON:
-            if (_context->config.ramsize > 128)
-                MLOGWARNING("Z80 save: .z80 has no Pentagon 512 / 1024 model; saved as a Pentagon 128 (pages 0-7)");
-            return Z80_MODEL3_P128K;
-        case MM_SCORP:
-        case MM_PROFSCORP: return Z80_MODEL3_ZS256K;
-        case MM_SPECTRUM128: return Z80_MODEL3_128K;
-        default:
-            MLOGWARNING("Z80 save: .z80 has no code for this model; saved as a 128K");
-            return Z80_MODEL3_128K;
-    }
 }
 
 bool LoaderZ80::validate()
@@ -569,6 +443,7 @@ bool LoaderZ80::validate()
 bool LoaderZ80::stageLoad()
 {
     bool result = false;
+    _image = snapshot::Image();   // staged afresh: an image built from an earlier staging is stale
 
     if (_fileValidated && _snapshotVersion != Unknown)
     {
@@ -610,14 +485,42 @@ void LoaderZ80::commitFromStage()
         PortDecoder& ports = *_context->pPortDecoder;
         Core& core = *_context->pCore;
 
+        // The commit reads the image (snapshot pipeline P9), not the staging buffers. load() has built it for the plan; a
+        // caller that stages and commits by hand has not
+        if (_image.format.empty())
+            _image = BuildImage();
+        const snapshot::Image& image = _image;
+        const snapshot::Cpu& cpu = image.cpu;
+        // load() refuses these in the plan, before anything is touched; a caller that commits by hand gets what it always got
+        if (!image.unsupported.empty())
+            throw std::logic_error("Not supported");
+
+        const Z80MemoryMode memoryMode = image.memoryModel == snapshot::MemoryModel::Mem48k    ? Z80_48K
+                                         : image.memoryModel == snapshot::MemoryModel::Mem128k ? Z80_128K
+                                                                                                : Z80_256K;
+        const uint8_t port7FFD128 = image.paging.p7FFD.value_or(0);
+        const uint8_t portFFFD = image.ayAddressLatch.value_or(0);
+
         // Reset Z80 and all peripherals for a clean state-independent load
-        // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean
-        core.Reset();
+        // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean; no RAM page keeps the program before it.
+        // The file has no clock: the program runs at the clock the machine ran at (ATM #FF77 turbo, as Xpeccy keeps it)
+        {
+            // The video mode of the 128K paging is set up once: the reset's on the way (the ATM's EGA) is not built
+            Screen::RasterDeferral raster(&screen);
+            core.ResetKeepingClock();
+            memory.ClearModelRAM();
+            // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+            ports.EnterSpectrum128Paging(cpu.pc);
+        }
 
         /// region <Apply port configuration>
-        switch (_memoryMode)
+        switch (memoryMode)
         {
             case Z80_48K: {
+                // The 48K BASIC, latches included (what the reset does for RM_SOS): the +2A / +3 take the ROM's high bit
+                // from #1FFD, which the shipped RESET=128 leaves at ROM 0 / 1
+                memory.SetROMMode(RM_SOS);
+
                 // Step 1: Unlock paging for state-independent loading
                 ports.UnlockPaging();
 
@@ -630,8 +533,8 @@ void LoaderZ80::commitFromStage()
                 // Step 3: Set port values via decoder (goes through hardware logic)
                 uint8_t port7FFD =
                     PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
-                ports.DecodePortOut(0x7FFD, port7FFD, _z80Registers.pc);
-                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+                ports.DecodePortOut(0x7FFD, port7FFD, cpu.pc);
+                ports.DecodePortOut(0xFFFD, portFFFD, cpu.pc);
 
                 // Step 4: Explicit state assignment
                 _context->emulatorState.p7FFD = port7FFD;
@@ -644,7 +547,7 @@ void LoaderZ80::commitFromStage()
                 // CRITICAL: Must fully unlock emulator state before applying snapshot
                 
                 // Extract RAM page for bank 3 from port 7FFD (bits 0-2)
-                uint8_t bank3Page = _port7FFD & 0x07;
+                uint8_t bank3Page = port7FFD128 & 0x07;
                 
                 // Step 1: Unlock paging via PortDecoder interface
                 // This allows subsequent port writes to succeed even if previously locked
@@ -664,16 +567,16 @@ void LoaderZ80::commitFromStage()
                 // #7FFD's lock bit would block it afterwards
                 const MEM_MODEL model = _context->config.mem_model;
                 const bool has1FFD = model == MM_PLUS2A || model == MM_PLUS3 || model == MM_SCORP || model == MM_PROFSCORP;
-                if (_hasPort1FFD && has1FFD)
+                if (image.paging.p1FFD && has1FFD)
                 {
-                    ports.DecodePortOut(0x1FFD, _port1FFD, _z80Registers.pc);
-                    _context->emulatorState.p1FFD = _port1FFD;
+                    ports.DecodePortOut(0x1FFD, *image.paging.p1FFD, cpu.pc);
+                    _context->emulatorState.p1FFD = *image.paging.p1FFD;
                 }
-                ports.DecodePortOut(0x7FFD, _port7FFD, _z80Registers.pc);
-                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+                ports.DecodePortOut(0x7FFD, port7FFD128, cpu.pc);
+                ports.DecodePortOut(0xFFFD, portFFFD, cpu.pc);
                 
                 // Step 4: Ensure emulatorState reflects snapshot's port value (including lock bit)
-                _context->emulatorState.p7FFD = _port7FFD;
+                _context->emulatorState.p7FFD = port7FFD128;
                 
                 // Step 5: Trigger ROM selection based on port 7FFD bit 4
                 memory.UpdateZ80Banks();
@@ -687,7 +590,7 @@ void LoaderZ80::commitFromStage()
         // Pre-fill whole border with color (visual only, no timing side effects)
         // Don't call Default_Port_FE_Out here - it triggers UpdateScreen() with stale t-state
         // Just set the visual state directly like SNA loader does
-        screen.FillBorderWithColor(_borderColor);
+        screen.FillBorderWithColor(image.border);
 
         // Keep the machine state in step with the picture. FillBorderWithColor
         // only paints; pFE is the port latch every consumer reads back, and
@@ -697,37 +600,19 @@ void LoaderZ80::commitFromStage()
         // border restored as white on seek.
         EmulatorState& borderState = _context->emulatorState;
         borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
-                                               (_borderColor & 0b0000'0111));
-        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+                                               (image.border & 0b0000'0111));
+        borderState.border_attr = static_cast<uint8_t>(image.border & 0b0000'0111);
 
         // AY registers: core.Reset() above cleared the chip, so the snapshot's
         // registers go in after it
-        commitPeripheralState();
+        commitPeripheralState(image);
 
         /// endregion </Apply port configuration>
 
         /// region <Transfer memory content>
 
-        for (size_t idx = 0; idx < MAX_ROM_PAGES; idx++)
-        {
-            uint8_t* ptr = _stagingROMPages[idx];
-
-            if (ptr != nullptr)
-            {
-                throw std::logic_error("Z80 snapshot loader: ROM pages transfer from snapshot not implemented yet");
-            }
-        }
-
-        for (size_t idx = 0; idx < MAX_RAM_PAGES; idx++)
-        {
-            uint8_t* ptr = _stagingRAMPages[idx];
-
-            if (ptr != nullptr)
-            {
-                uint8_t* targetPage = memory.RAMPageAddress(idx);
-                memcpy(targetPage, ptr, PAGE_SIZE);
-            }
-        }
+        for (const auto& bank : image.banks)
+            memcpy(memory.RAMPageAddress(bank.first), bank.second.data(), PAGE_SIZE);
 
         // Free used staging memory
         freeStagingMemory();
@@ -740,13 +625,35 @@ void LoaderZ80::commitFromStage()
         // Copy registers but preserve timing state (t) from Reset
         // memcpy would overwrite t to 0, but Reset set it to 3
         // SNA loader uses individual assignments which preserve t
+        Z80Registers regs = {};
+        regs.af = cpu.af;
+        regs.bc = cpu.bc;
+        regs.de = cpu.de;
+        regs.hl = cpu.hl;
+        regs.alt.af = cpu.af2;
+        regs.alt.bc = cpu.bc2;
+        regs.alt.de = cpu.de2;
+        regs.alt.hl = cpu.hl2;
+        regs.ix = cpu.ix;
+        regs.iy = cpu.iy;
+        regs.sp = cpu.sp;
+        regs.pc = cpu.pc;
+        regs.i = cpu.i;
+        regs.r_low = cpu.r & 0x7Fu;
+        regs.r_hi = cpu.r & 0x80u;
+        regs.iff1 = cpu.iff1 ? 1 : 0;
+        regs.iff2 = cpu.iff2 ? 1 : 0;
+        regs.im = cpu.im;
+        regs.memptr = 0;
+        regs.q = 0;
+
         uint32_t preservedT = z80->tt;
         Z80Registers* actualRegisters = static_cast<Z80Registers*>(z80);
-        memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
+        memcpy(actualRegisters, &regs, sizeof(Z80Registers));
         z80->tt = preservedT;  // Restore timing state
         // A v3 file stores the frame position (from the INT): resume there
-        if (_hasTStates)
-            z80->t = LoaderSZX::FramePositionFromIntCount(_context, _tstatesFromInt);
+        if (image.framePosition)
+            z80->t = LoaderSZX::FramePositionFromIntCount(_context, *image.framePosition);
 
         // Detect if CPU was halted when snapshot was taken
         // If PC points to HALT instruction (0x76), set halted state
@@ -1327,9 +1234,9 @@ void LoaderZ80::stagePeripheralState(const Z80Header_v2& header)
 /// @details Called after core.Reset(). The registers go through the chip's logic-level interface (the same one
 ///          the saver reads back from), then the selected register is restored. On a TurboSound machine this is
 ///          chip 0, the chip the reset leaves selected
-void LoaderZ80::commitPeripheralState()
+void LoaderZ80::commitPeripheralState(const snapshot::Image& image)
 {
-    if (!_hasAyRegisters || _context->pSoundManager == nullptr)
+    if (image.ay.empty() || _context->pSoundManager == nullptr)
         return;
 
     SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
@@ -1338,10 +1245,10 @@ void LoaderZ80::commitPeripheralState()
 
     for (uint8_t reg = 0; reg < 16; reg++)
     {
-        psg->writeRegister(reg, _ayRegisters[reg]);
+        psg->writeRegister(reg, image.ay[0].registers[reg]);
     }
 
-    psg->setRegister(_portFFFD & 0x0F);
+    psg->setRegister(image.ay[0].selected & 0x0F);
 }
 
 /// @brief Compress memory page using Z80 RLE compression
@@ -1390,10 +1297,16 @@ size_t LoaderZ80::compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t
             }
             else
             {
-                // Single ED: write as-is
+                // Single ED: write as-is, and the byte after it too. A run starting right after a single ED would read
+                // as ED ED ED nn: the start of a block of nn EDs (the format: no block begins directly after an ED)
                 if (dstPos + 1 > dstLen) break;
                 dst[dstPos++] = byte;
                 srcPos++;
+                if (srcPos < srcLen && src[srcPos] != 0xED)
+                {
+                    if (dstPos + 1 > dstLen) break;
+                    dst[dstPos++] = src[srcPos++];
+                }
             }
         }
         else if (runLen >= 5)
@@ -1648,7 +1561,7 @@ void LoaderZ80::freeStagingMemory()
         uint8_t* ptr = _stagingROMPages[idx];
         if (ptr != nullptr)
         {
-            delete ptr;
+            delete[] ptr;
             _stagingROMPages[idx] = nullptr;
         }
     }
@@ -1659,7 +1572,7 @@ void LoaderZ80::freeStagingMemory()
         uint8_t* ptr = _stagingRAMPages[idx];
         if (ptr != nullptr)
         {
-            delete ptr;
+            delete[] ptr;
             _stagingRAMPages[idx] = nullptr;
         }
     }

@@ -42,6 +42,13 @@ public:
     bool Collect(TimeTravelEngine& engine);
     /// At stop: the current file gets the rest and its index
     bool Finish(TimeTravelEngine& engine);
+    /// The holder streams' bytes for the session's last part (the ids declared in the params at construction)
+    void SetHolderStreams(std::vector<TTDHolderStream> streams)
+    {
+        _params.holderStreams = streams;
+        if (_writer)
+            _writer->SetHolderStreams(std::move(streams));
+    }
 
     bool Failed() const { return !_error.empty() || (_writer && _writer->Failed()); }
     std::string Error() const;

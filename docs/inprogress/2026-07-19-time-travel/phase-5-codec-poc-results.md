@@ -1328,7 +1328,7 @@ When remaining optimizations are implemented, add:
 
 # 10. Re-measurement on real recordings (2026-08-20)
 
-**Methodology**: `tools/poc/01-ttd-compression/`
+**Methodology**: `tools/poc/010-ttd-compression/`
 **Workloads**: four 300-frame sessions recorded through the emulator WebAPI,
 stored in `testdata/ttd/`
 
@@ -1415,11 +1415,11 @@ python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py \
     --out-dir "$(pwd)/testdata/ttd"
 
 # Extract codec input buffers from one fixture
-python3 tools/poc/01-ttd-compression/cpp/extract_real_buffers.py \
+python3 tools/poc/010-ttd-compression/cpp/extract_real_buffers.py \
     --ttd testdata/ttd/demo_across-the-edge-second.ttd \
-    --out tools/poc/01-ttd-compression/cpp/real_buffers.bin
+    --out tools/poc/010-ttd-compression/cpp/real_buffers.bin
 
 # Run from the repository root - the buffer path is relative to it
-./tools/poc/01-ttd-compression/cpp/build/bin/poc_codec_latency \
+./tools/poc/010-ttd-compression/cpp/build/bin/poc_codec_latency \
     --benchmark_filter='REAL'
 ```

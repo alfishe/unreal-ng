@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,7 +18,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
@@ -84,7 +86,9 @@ namespace
 
     /// A minimal FAT image: a VBR (raw, or behind an MBR when `mbr`) with a
     /// BPB of the requested flavour - enough for ProbeFatType, nothing more
-    std::string MakeFatImageFile(const char* name, FatType fs, bool mbr)
+    /// `total16`: the 16-bit sector count of a FAT16-family volume (0: a big one, the count in the 32-bit field;
+    /// under about 4 100: FAT12)
+    std::string MakeFatImageFile(const char* name, FatType fs, bool mbr, uint16_t total16Override = 16384)
     {
         std::vector<uint8_t> vbr(512, 0);
         vbr[0] = 0xEB;
@@ -99,8 +103,13 @@ namespace
         vbr[16] = 2;  // FAT copies
         const uint16_t rootEntries = fs == FatType::Fat32 ? 0 : 512;
         std::memcpy(&vbr[17], &rootEntries, 2);
-        const uint16_t total16 = fs == FatType::Fat32 ? 0 : 16384;  // 16 KiB of 1-sector clusters: over FAT12's 4085
+        const uint16_t total16 = fs == FatType::Fat32 ? 0 : total16Override;  // default: over FAT12's 4085 clusters
         std::memcpy(&vbr[19], &total16, 2);
+        if (fs != FatType::Fat32 && total16 == 0)
+        {
+            const uint32_t total32 = 200000;  // a FAT16 volume over 32 MiB keeps its size in the 32-bit field
+            std::memcpy(&vbr[32], &total32, 4);
+        }
         vbr[21] = 0xF8;
         const uint16_t fatSectors16 = fs == FatType::Fat32 ? 0 : 2;
         std::memcpy(&vbr[22], &fatSectors16, 2);
@@ -199,7 +208,7 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     missing.path = path + ".missing";
     EXPECT_EQ(manager.Insert("sd.test", missing).error, MediaError::UnreadableSource);
 
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -444,9 +453,65 @@ TEST(MediaManager_Test, Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages)
     EXPECT_EQ(refusedImage.error, MediaError::BadRequest);
     EXPECT_NE(refusedImage.message.find("fat16 volume"), std::string::npos) << refusedImage.message;
 
+    // FAT12 (a floppy-sized volume) and a FAT16 over 32 MiB are of the FAT16 family as well
+    MediaSource fat12Image;
+    fat12Image.path = MakeFatImageFile("matrix-fat12.img", FatType::Fat16, false, 2880);
+    const MediaResult refusedFat12 = manager.Insert("sd.test", fat12Image);
+    EXPECT_EQ(refusedFat12.error, MediaError::BadRequest) << "a FAT12 volume is not FAT32";
+    MediaSource bigFat16Image;
+    bigFat16Image.path = MakeFatImageFile("matrix-fat16-big.img", FatType::Fat16, false, 0);
+    const MediaResult refusedBig = manager.Insert("sd.test", bigFat16Image);
+    EXPECT_EQ(refusedBig.error, MediaError::BadRequest) << "the 32-bit sector count of a big FAT16 volume";
+
     MediaSource fat32Image;
     fat32Image.path = MakeFatImageFile("matrix-fat32-mbr.img", FatType::Fat32, true);
     ASSERT_TRUE(manager.Insert("sd.test", fat32Image).Ok()) << "FAT32 behind an MBR passes the probe";
+
+    // Several partitions: refused only when the slot reads none of them; one it cannot read is reported.
+    // Sector 0: an MBR with a FAT16 primary partition and an extended one; sector 2: its EBR, a FAT32 logical one
+    const auto vbrOf = [](const std::string& rawImage) {
+        std::vector<char> vbr(512);
+        std::ifstream(rawImage, std::ios::binary).read(vbr.data(), 512);
+        return vbr;
+    };
+    const std::vector<char> fat16Vbr = vbrOf(fat16Image.path);
+    const std::vector<char> fat32Vbr = vbrOf(MakeFatImageFile("matrix-fat32-raw.img", FatType::Fat32, false));
+    const auto table = [](std::initializer_list<std::pair<int, uint32_t>> entries) {
+        std::vector<char> sector(512, 0);
+        int i = 0;
+        for (const auto& [type, start] : entries)
+        {
+            sector[446 + i * 16 + 4] = static_cast<char>(type);
+            std::memcpy(&sector[446 + i * 16 + 8], &start, 4);
+            const uint32_t count = 1;
+            std::memcpy(&sector[446 + i * 16 + 12], &count, 4);
+            i++;
+        }
+        sector[510] = 0x55;
+        sector[511] = static_cast<char>(0xAA);
+        return sector;
+    };
+    const auto disk = [&](const char* name, const std::vector<char>& first, const std::vector<char>& logical) {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        for (const std::vector<char>& sector : {table({{0x06, 1u}, {0x05, 2u}}), first, table({{0x0B, 1u}}), logical})
+            out.write(sector.data(), 512);
+        const std::vector<char> pad(60 * 512, 0);
+        out.write(pad.data(), static_cast<std::streamsize>(pad.size()));
+        return path;
+    };
+    MediaSource mixed;
+    mixed.path = disk("matrix-mixed.img", fat16Vbr, fat32Vbr);
+    const MediaResult partly = manager.Insert("sd.test", mixed);
+    ASSERT_TRUE(partly.Ok()) << partly.message;
+    EXPECT_TRUE(std::any_of(partly.report.begin(), partly.report.end(), [](const std::string& l) {
+        return l.find("the guest will not see partition 1 fat16") != std::string::npos;
+    })) << "the logical FAT32 partition (5) is read, the primary FAT16 one is reported";
+    MediaSource fat16Only;
+    fat16Only.path = disk("matrix-fat16-two.img", fat16Vbr, fat16Vbr);
+    const MediaResult none = manager.Insert("sd.test", fat16Only);
+    EXPECT_EQ(none.error, MediaError::BadRequest);
+    EXPECT_NE(none.message.find("has none (partition 1 fat16, partition 5 fat16)"), std::string::npos) << none.message;
 
     // A non-FAT image is none of the matrix's business: the guest may format it
     MediaSource raw;
@@ -509,13 +574,15 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     manager.SetApplyNowProbe([&running] { return !running; });
     EXPECT_EQ(manager.Export("sd.test", path).error, MediaError::NotSupported) << "a running machine is paused first";
     manager.SetApplyNowProbe(nullptr);
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
 
 /// The media set is fixed while TTD records (integration-ttd-snapshots.md §2)
-TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
+/// M3 (Q4): while TTD records, a change is an event of the recording at the next frame boundary (the recording goes
+/// on); a caller that asks to end the recording ends it and changes the medium at once
+TEST(MediaManager_Test, RecordingTakesAChangeAtTheFrameBoundaryOrEndsWhenAsked)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
@@ -526,15 +593,18 @@ TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
     MediaManager& manager = *context->pMediaManager;
     FakeBlockSlot slot("sd.test");
     manager.RegisterSlot(slot);
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
 
-    EXPECT_EQ(manager.Insert("sd.test", MemoryMedium(8)).error, MediaError::Recording);
-    EXPECT_EQ(slot.attached, nullptr);
+    ASSERT_TRUE(manager.Insert("sd.test", MemoryMedium(8)).Ok());
+    EXPECT_EQ(slot.attached, nullptr) << "never inside a frame while recording";
+    manager.ApplyPending();
+    EXPECT_NE(slot.attached, nullptr);
+    EXPECT_TRUE(context->pTimeTravelController->IsRecording());
 
     InsertOptions end;
     end.endRecording = true;
     ASSERT_TRUE(manager.Insert("sd.test", MemoryMedium(8), end).Ok());
-    EXPECT_FALSE(context->pTimeTravelManager->IsRecording());
+    EXPECT_FALSE(context->pTimeTravelController->IsRecording());
     EXPECT_NE(slot.attached, nullptr);
 
     manager.UnregisterSlot("sd.test");
@@ -609,7 +679,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
 
     exported.reset();
     std::remove(image.c_str());
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
 }
 

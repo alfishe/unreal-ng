@@ -5,6 +5,7 @@
 
 #include "pch.h"
 #include "stdafx.h"
+#include "_helpers/emulatortesthelper.h"
 
 /// region <SetUp / TearDown>
 
@@ -25,17 +26,7 @@ void ScreenZX_Test::TearDown()
         _screenzx = nullptr;
     }
 
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>

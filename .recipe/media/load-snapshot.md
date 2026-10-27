@@ -6,6 +6,9 @@ and verify a snapshot actually took effect.
 An `.rzx` input recording loads the same way and then plays: see
 [play-rzx.md](play-rzx.md).
 
+The formats themselves (SNA, Z80, SZX, SPG, ZXP) are described in
+[docs/file-formats/snapshots/](../../docs/file-formats/snapshots/README.md).
+
 Snapshots are the cheapest way to reach a known state — much faster than
 booting through TR-DOS or tape. Use them as the entry point for
 [TTD](../analysis/ttd-recording.md) capture and for regression testing.
@@ -19,6 +22,7 @@ booting through TR-DOS or tape. Use them as the entry point for
 
 ```text
 load_software  {"path":"scratch/game.sna"}                    # load (local file → uploaded automatically)
+load_software  {"path":"scratch/game.sna","paused":true}      # paused first: poke / breakpoints before its first instruction
 invoke_api    {"method":"GET","path":"/api/v1/emulator/{id}/snapshot/info"}
 inspect_state {"aspects":["registers","screen_digest"]}     # PC landed where expected? same screen?
 invoke_api    {"method":"POST","path":"/api/v1/emulator/{id}/snapshot/save",
@@ -86,11 +90,14 @@ Snapshot format notes:
   model replaces the running machine by that model first, as the Machine menu
   does (media follow), then loads. The log
   lists what each block did (applied, approximated, ignored). Saving picks the
-  format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
+  format by the extension; an SZX saved on another model than the running one is refused (both named,
+  `modelMismatch`, HTTP 409) unless the call has `switch_model: true` or the configuration has `[SNAPSHOT]
+  SwitchModel=1`: then the machine is replaced by the file's model like for an SPG (new `emulator_id`,
+  `model_switched`); `switch_model: false` always refuses. ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.
 - `.spg` (TS-Conf "Spectrum Prog", the TS-Conf SDK's program format, v1.0 and
   v1.1) — runs on the TS-Conf machine only (`TSL`). `snapshot/load` takes
-  `switch_model` (default `true`): on another model the emulator switches to
+  `switch_model` (not given: `true` for an SPG): on another model the emulator switches to
   `TSL` first and the reply carries a NEW `emulator_id` (plus `model_switched`,
   `previous_emulator_id`, `model`); use that id from then on. With
   `"switch_model": false` (or `?switch_model=false`) the load is refused with
@@ -168,6 +175,34 @@ Save refuses to overwrite: if the file exists the answer is HTTP 409 Conflict
 ("File already exists. Use 'force: true' to overwrite."). Add `"force": true` to
 replace it, or use a new file name per save (`checkpoint-002.sna`).
 
+A save that cannot be made is **refused with the reason** and writes nothing (HTTP 400): `message`, `reason`, a
+machine-readable `needs` and `formats` (what the machine can be saved as right now). Ask first:
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/snapshot/formats" | jq .
+# { "view_available": true, "machine": "Pentagon 512", "view": "the machine's own memory",
+#   "formats": [ {"format":"sna","available":false,"reason":"the .sna format holds 128 KB (banks 0-7) ... save as .szx","needs":"format:szx"},
+#                {"format":"z80","available":false,"reason":"the .z80 format has no Pentagon 512 / 1024 model ...","needs":"format:szx"},
+#                {"format":"szx","available":true} ] }
+```
+
+What a snapshot holds, and which machine gives it, is in the
+[snapshot formats README](../../docs/file-formats/snapshots/README.md#how-a-snapshot-is-saved): the 128K view (banks 0-7, #7FFD, CPU,
+AY). A Sprinter gives it in a ZX mode only (`needs: zx_mode` at the DSS prompt or the BIOS), in the Spectrum's bank order and named
+by its launcher mode (`P128.ZX` is a Pentagon 128 in the file); TS-Conf and the ATMs give it while their memory is laid out as a
+Spectrum 128K (`needs: mode:128k` otherwise). A Pentagon 512 / 1024 saves as `.szx` only, a Scorpion as `.z80` / `.szx`; a 48K
+`.sna` with the stack in the ROM is refused (`needs: format:z80`). The save stops the emulator first and waits until it has parked
+(`needs: pause` if it does not within a second). Nothing is converted from one file format to another.
+
+| Surface | Save | Why it was refused | Which formats |
+|:--|:--|:--|:--|
+| WebAPI | `POST /snapshot/save {"path":...,"force":...}` | `reason`, `needs`, `formats` in the 400 answer | `GET /snapshot/formats` |
+| MCP | `invoke_api` the WebAPI routes above | the same | the same |
+| CLI | `snapshot save <file> [--force]` | printed with `needs` | `snapshot formats` |
+| Lua | `snapshot_save(path)` -> bool | `snapshot_save_report()` -> `{ok, message, format, machine, reason, needs, warnings}` | `snapshot_formats()` |
+| Python | `emu.snapshot_save(path)` -> bool | `emu.snapshot_save_report()`, `unreal.snapshot_save_report(emulator_id)` | `emu.snapshot_formats()`, `unreal.snapshot_formats(emulator_id)` |
+| Qt | File > Save Snapshot | a message box with the reason | the items and the dialog's filters follow the machine; a disabled item shows the reason as its tip |
+
 Save early, save often — they are the "known good" anchors for
 [bug-hunt workflows](../articles/bug-hunt-ttd.md). Saved snapshots land on the
 emulator host's filesystem; use `scratch/` paths.
@@ -223,17 +258,19 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Interactions to know
 
-- **TTD invalidate**: loading a snapshot while a TTD session holds history
-  makes the timeline invalid for further capture — start a fresh
-  `POST /ttd/start` after a snapshot load (details in
-  [ttd-recording.md](../analysis/ttd-recording.md)).
+- **ZX-Poly**: a ZX-Poly machine takes a `.zxp` and nothing else. A `.sna` / `.z80` / `.szx` / `.spg` is refused with `needs: format:zxp` (a snapshot of one machine means nothing to four modules in lockstep), `inspect` says `would_load: false`, and nothing is saved from a module (`needs: zxpoly`).
+
+- **TTD**: a snapshot load is never refused by a recording: it ENDS the
+  session like a reset does (the one TTD rule), the history stays browsable
+  and no new session starts unless the `ttdrestart` feature is on (or a black
+  box is armed). Details in [ttd-recording.md](../analysis/ttd-recording.md).
 - **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
   after loading if the program expects it. `.szx` does: saving links the
   file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with
   its current block; loading finds a linked image next to the snapshot first,
   then at the stored path, and inserts it with Session access (the linked
   file is never written). Images embedded in an `.szx` from another emulator
-  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  are loaded too. The classic GS card (a `gs` slot card), the Covox level and the
   Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot (or any snapshot with banks the machine does not have, e.g. a Scorpion 256K one on a 128K
   machine) is **refused** with the reason and what would work (`report.needs`: `model:128K`, `ram:256K`); nothing is written. A 48K

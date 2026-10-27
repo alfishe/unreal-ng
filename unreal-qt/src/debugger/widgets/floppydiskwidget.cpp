@@ -66,7 +66,7 @@ void FloppyDiskWidget::createUI()
     setLayout(mainLayout);
 }
 
-void FloppyDiskWidget::setEmulator(Emulator* emulator)
+void FloppyDiskWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     reset();

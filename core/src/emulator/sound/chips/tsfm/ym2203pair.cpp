@@ -1,6 +1,7 @@
 #include "ym2203pair.h"
 
 #include <algorithm>
+#include <limits>
 #include <cassert>
 #include <cstring>
 
@@ -31,9 +32,14 @@ void Ym2203Pair::reset()
     _chips[0]->resetChip();
     _chips[1]->resetChip();
 
+    // Render cursor (the rule, anchorRender): on a frame-relative axis the reset restarts the axis' time - the
+    // cursor goes to the frame origin; on a continuous axis time does not jump at a reset and the cursor keeps
+    // its place behind the chips
+    if (frameRelativeChipAxis())
+        anchorRender(0, 0, true);
+
     // Output stage: the FM hold / boxcar state and the decimators (state only; the rate-designed coefficients
     // and the slave wiring are preserved)
-    _renderT = _unity ? -kRenderLag : _chipT - kRenderLag;
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
@@ -99,6 +105,7 @@ void Ym2203Pair::rebaseFrame(uint64_t now)
     // call, so no time is lost or double-counted.
     if (_adoptCpuClock)
         return;
+    assert(!_config.continuousHostAxis && "a continuous host axis is never rebased");
     const int32_t delta = int32_t(_syncedT - now);
     if (delta == 0)
         return;
@@ -123,6 +130,7 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
         // clocking is skipped. Everything the CPU can observe stays exact - timers expire on their clock (CSM
         // key-on included), busy counts down, and the sample-clock phase keeps its alignment for the moment
         // synthesis resumes
+        c.fmIdleKnown = false;
         while (delta > 0)
         {
             const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());
@@ -151,8 +159,34 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
             c.fmClockPhase = period - 1;
         const int32_t toClock = period - c.fmClockPhase;
         const int32_t toTimer = c.intf.clocksToNextExpiry();  // INT32_MAX when both stopped
+
+        // An idle FM half (nothing sounding, nothing keyed; ymfm patch 6): every sample clock up to the next timer
+        // expiry at once - each a zero word at its own clock, as clockFmOnce() would give. The clock of the expiry
+        // itself goes the normal way: the expiry comes first there and may key on (CSM).
+        // The idle test walks every operator, so it comes last: most steps do not reach a sample clock at all
+        if (_fmIdleFastPath && toTimer > 1)
+        {
+            const int32_t n = std::min(delta, toTimer - 1);
+            if (n >= toClock && (c.fmIdleKnown || (c.fmIdleKnown = c.fm.fmIdle())))
+            {
+                c.intf.advance(n);
+                const int32_t samples = (c.fmClockPhase + n) / period;
+                int64_t t = t0 + toClock;
+                for (int32_t s = 0; s < samples; s++, t += period)
+                    c.words.push(uint64_t(t), 0);
+                c.fm.clockFmIdle(uint32_t(samples));
+                _fmIdleSamples += uint64_t(samples);
+                c.fmClockPhase = (c.fmClockPhase + n) % period;
+                delta -= n;
+                t0 += n;
+                continue;
+            }
+        }
+
         const int32_t n = std::min({delta, toClock, toTimer});
 
+        if (n == toTimer)
+            c.fmIdleKnown = false;  // a timer expires: CSM may key on
         c.intf.advance(n);  // counts down busy; fires expired timers exactly on their clock
         c.fmClockPhase += n;
         delta -= n;
@@ -162,6 +196,7 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
         {
             c.fmClockPhase = 0;
             const int16_t word = c.fm.clockFmOnce();
+            c.fmIdleKnown = false;
             c.words.push(uint64_t(t0), word);  // the owner drops these when nothing renders
         }
     }
@@ -187,6 +222,7 @@ void Ym2203Pair::writeData(int index, uint8_t value)
     {
         // FM register; sets busy itself; allowed while a board mutes FM
         c.fm.write_data(value);
+        c.fmIdleKnown = false;
         // Key-on mirror for the state report: 0x28 = ch (bits 0-1, 3 = none) | slot mask (bits 4-7)
         if (c.address == 0x28 && (value & 3) < 3)
             c.fmKeyOn[value & 3] = uint8_t(value >> 4);
@@ -285,6 +321,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
     // held on a half-tick grid of master / 8
     const double ssgRate = double(_config.masterClockHz) / 16.0;
     const double fmRate = double(_config.masterClockHz) / 8.0;
+    _channelRate = std::max<size_t>(rate, 1);
     if (!_channels)
         _channels = std::make_unique<ChannelOutputs>();
     FilterDecimator* master = &_channels->ssg[0][0];
@@ -298,6 +335,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
         }
         _channels->fm[i].configure(double(rate), quality, false, fmRate);
         _channels->fm[i].attachMaster(master);
+        _channels->fmZeroRun[i] = 0;
     }
 }
 
@@ -306,21 +344,38 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     if (!_channels)
         return 0;
 
-    // The cursor trails the synced master clock by the render lag; far outside that window the owner lost the
-    // timeline (a gap in rendering, a speed change): re-anchor
-    if (_renderT < _chipT - 4 * kRenderLag || _renderT > _chipT)
-        _renderT = _chipT - kRenderLag;
+    // The cursor was placed by the owner's beginChannelRender (the rule, anchorRender): the synced period's
+    // blocks end kRenderLag behind the chips. Rendering past the chips would consume every queued word at the first
+    // half-tick and hold the last one - a block-rate staircase instead of the chips' output (MS-7 owner report
+    // 2026-10-05, when the check looked at the block's start)
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;
+    size_t* const fmZeroRun = _channels->fmZeroRun;
+    // A muted or silent FM part feeds zeros, a silent SSG channel level 0.0: a decimator's output is exactly +0.0
+    // once its whole window is zero (FilterDecimator::window), so the FIR is skipped - the same output for a
+    // fraction of the cost (frame-cost profile 2026-10-06: the two FM FIRs were 12 % of an idle card frame; the
+    // SSG skip is measured in ym-decimator-prototype.md)
+    auto feedFm = [&](int i)
+    {
+        const double v = fmEnabled ? _chips[i]->out.hold : 0.0;
+        fmDec[i].feedSample(v);
+        fmZeroRun[i] = v == 0.0 ? fmZeroRun[i] + 1 : 0;
+    };
     for (size_t n = 0; n < frames; n++)
     {
+        // The outputs from here on in one quiet run while nothing sounds (renderQuietChannels)
+        if (const size_t quiet = renderQuietChannels(n, frames, block, fmEnabled))
+        {
+            n += quiet - 1;
+            continue;
+        }
         while (!master.hasOutput())
         {
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             applySsgWrites(_renderT);
             updateState(true);
@@ -328,37 +383,173 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             {
                 const double* levels = _chips[i]->ssg.left();  // per channel, before panning and DC removal
                 for (int ch = 0; ch < 3; ch++)
+                {
                     _channels->ssg[i][ch].feedSample(levels[ch]);
+                    size_t& run = _channels->ssgZeroRun[i][ch];
+                    run = levels[ch] == 0.0 ? run + 1 : 0;
+                }
             }
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT + 8);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             _renderT += 16;
         }
 
-        // Slaves first (a slave takes the output instant from the master's phase, before or after the master
-        // consumed it alike)
+        // All eight at one output instant; the order does not matter (a slave takes the instant from the master's
+        // phase, before or after the master consumed it alike). A silent channel - SSG or FM - outputs +0.0 once its
+        // whole window is zero (FilterDecimator::window); the others share one pass per design
+        // (FilterDecimator::getOutputs: the SSG decimators their coefficient rows, the FM ones theirs)
+        FilterDecimator* decimators[8];
+        float* targets[8];
+        size_t count = 0;
+        auto evaluate = [&](FilterDecimator& d, float* row)
+        {
+            decimators[count] = &d;
+            targets[count++] = row ? &row[n] : nullptr;
+        };
         for (int i = 0; i < 2; i++)
         {
-            const float fm = static_cast<float>(fmDec[i].getOutput());
-            if (block.fm[i])
-                block.fm[i][n] = fm;
             for (int ch = 0; ch < 3; ch++)
             {
-                if (i == 0 && ch == 0)
+                FilterDecimator& d = _channels->ssg[i][ch];
+                float* row = block.ssg[i][ch];
+                if (_channels->ssgZeroRun[i][ch] < d.window())
+                {
+                    evaluate(d, row);
                     continue;
-                const float v = static_cast<float>(_channels->ssg[i][ch].getOutput());
-                if (block.ssg[i][ch])
-                    block.ssg[i][ch][n] = v;
+                }
+                d.skipOutput();   // the master's phase moves as getOutput moves it
+                if (row)
+                    row[n] = 0.0f;
             }
         }
-        const float a0 = static_cast<float>(master.getOutput());
-        if (block.ssg[0][0])
-            block.ssg[0][0][n] = a0;
+        for (int i = 0; i < 2; i++)
+        {
+            if (fmZeroRun[i] < fmDec[i].window())
+            {
+                evaluate(fmDec[i], block.fm[i]);
+                continue;
+            }
+            if (block.fm[i])
+                block.fm[i][n] = 0.0f;
+        }
+        double values[8];
+        FilterDecimator::getOutputs(decimators, count, values);
+        for (size_t k = 0; k < count; k++)
+        {
+            if (targets[k])
+                *targets[k] = static_cast<float>(values[k]);
+        }
     }
     return frames;
+}
+
+size_t Ym2203Pair::renderQuietChannels(size_t n, size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled)
+{
+    if (!_quietTicksEnabled || !_channels || n >= frames)
+        return 0;
+    // The quiet now
+    int64_t nextEvent = std::numeric_limits<int64_t>::max();  // the first SSG write due, or FM word off 0
+    for (int i = 0; i < 2; i++)
+    {
+        const Ym2203Chip& c = *_chips[i];
+        if (!c.ssg.silentAtRest() || c.out.nativeTap->isActive())
+            return 0;
+        if (_channels->fmZeroRun[i] < FilterDecimator::history())
+            return 0;
+        for (int ch = 0; ch < 3; ch++)
+        {
+            if (_channels->ssgZeroRun[i][ch] < FilterDecimator::history())
+                return 0;
+        }
+        if (!c.ssgWrites.empty())
+            nextEvent = std::min<int64_t>(nextEvent, c.ssgWrites.front().t);
+        // feedFm feeds the gated hold: 0 now, and 0 after every word the run consumes (a muted part feeds 0 anyway)
+        if (fmEnabled)
+        {
+            if (c.out.hold != 0.0)
+                return 0;
+            for (size_t w = 0; w < c.words.size(); w++)
+            {
+                if (static_cast<double>(c.words.at(w).word) / 32768.0 != 0.0)
+                {
+                    nextEvent = std::min<int64_t>(nextEvent, int64_t(c.words.at(w).t));
+                    break;
+                }
+            }
+        }
+    }
+
+    // The outputs the run can take: each one's ticks with the master's own phase arithmetic (feedSample adds 1.0 a
+    // tick, skipOutput takes an output's worth), up to the one whose ticks would reach the event (an SSG write at or
+    // before a tick, a word at or before its second half)
+    FilterDecimator& master = _channels->ssg[0][0];
+    const double perOutput = master.samplesPerOutput();
+    double phase = master.phase();
+    uint64_t ticks = 0;
+    size_t outputs = 0;
+    for (size_t k = n; k < frames; k++)
+    {
+        double p = phase;
+        uint64_t t = 0;
+        while (!(p >= perOutput))
+        {
+            p += 1.0;
+            t++;
+        }
+        if (t > 0)
+        {
+            const int64_t lastTick = _renderT + 16 * int64_t(ticks + t - 1);
+            if (lastTick >= nextEvent || lastTick + 8 >= nextEvent)
+                break;
+        }
+        p -= perOutput;
+        phase = p;
+        ticks += t;
+        outputs++;
+    }
+    if (outputs == 0)
+        return 0;
+
+    // The run
+    const int64_t lastHalf = _renderT + 16 * int64_t(ticks) - 8;
+    for (int i = 0; i < 2; i++)
+    {
+        Ym2203Chip& c = *_chips[i];
+        while (!c.words.empty() && int64_t(c.words.front().t) <= lastHalf)
+        {
+            c.out.hold = static_cast<double>(c.words.front().word) / 32768.0;
+            c.words.pop();
+        }
+        _channels->fm[i].feedZerosIntoSilence(2 * size_t(ticks));
+        _channels->fmZeroRun[i] += 2 * size_t(ticks);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            _channels->ssg[i][ch].moveZerosIntoSilence(size_t(ticks));  // ssg[0][0], the master: setPhase below
+            _channels->ssgZeroRun[i][ch] += size_t(ticks);
+        }
+        c.ssg.advanceSilent(static_cast<uint32_t>(ticks));
+    }
+    master.setPhase(phase);  // the run's additions and output steps in their order
+    _renderT += 16 * int64_t(ticks);
+    _quietTicks += ticks;
+
+    for (size_t k = n; k < n + outputs; k++)
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            for (int ch = 0; ch < 3; ch++)
+            {
+                if (float* row = block.ssg[i][ch])
+                    row[k] = 0.0f;
+            }
+            if (float* row = block.fm[i])
+                row[k] = 0.0f;
+        }
+    }
+    return outputs;
 }
 
 /// endregion </Per-channel outputs>
@@ -424,6 +615,21 @@ void Ym2203Pair::loadChipState(int index, const uint8_t*& cur)
     cur += ymfmSize;
     ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/false);
     c.fm.save_restore(state);
+    c.fmIdleKnown = false;
+
+    // The key-on mirror (the state report's, not chip state) as the restored envelopes have it: an operator is
+    // keyed while its envelope is not releasing. 0x28 mask bits are S1, S2, S3, S4; operator numbers run in
+    // register order S1, S3, S2, S4
+    static const int kMaskBit[4] = {0, 2, 1, 3};
+    for (uint32_t ch = 0; ch < 3; ch++)
+    {
+        uint8_t mask = 0;
+        if (auto* channel = c.fm.fmEngine().debug_channel(ch))
+            for (uint32_t opnum = 0; opnum < 4; opnum++)
+                if (auto* op = channel->debug_operator(opnum); op && op->debug_eg_state() != ymfm::EG_RELEASE)
+                    mask = static_cast<uint8_t>(mask | (1u << kMaskBit[(op->opoffs() - ch) / 4 & 3]));
+        c.fmKeyOn[ch] = mask;
+    }
 
     c.ssg.TTDLoadState(cur);
     cur += c.ssg.TTDStateSize();

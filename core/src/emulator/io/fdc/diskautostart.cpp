@@ -26,6 +26,61 @@ constexpr uint16_t SYSVAR_K_CUR = 0x5C5B;
 constexpr uint16_t SYSVAR_WORKSP = 0x5C61;
 constexpr uint16_t SYSVAR_STKBOT = 0x5C63;
 constexpr uint16_t SYSVAR_STKEND = 0x5C65;
+
+/// An iS-DOS floppy that TR-DOS starts with RUN: track 0 has 1024-byte sectors 1, 2, 3, 4, 9 (256-byte blocks 0-19);
+/// block 0 (sector 1) is the device descriptor ("DSK" at +10 on Classic, +13 on Chic, 1024-byte sectors, the main
+/// catalogue's block at +20, the sector table at +64), and the main catalogue lists a live boot.sys at block 16, the
+/// start of sector 9. TR-DOS reads sector 9 first on RUN: its 1024 bytes overrun the 256-byte buffer and the iS-DOS
+/// loader in boot.sys takes over, so the sector carries no TR-DOS signature. Every iS-DOS system and data disk checked
+/// (88 images, Classic and Chic) has this boot.sys
+bool IsIsdosBootDisk(DiskImage& image)
+{
+    constexpr size_t BLOCK = 256;
+    constexpr size_t BLOCKS_PER_SECTOR = 4;
+    constexpr size_t ENTRY = 32;
+    constexpr uint16_t BOOT_SYS_BLOCK = 16;
+    static const uint8_t BOOT_SYS_NAME[11] = {'b', 'o', 'o', 't', ' ', ' ', ' ', ' ', 's', 'y', 's'};
+
+    DiskImage::Track* track0 = image.getTrack(0);
+    if (track0 == nullptr)
+        return false;
+    for (uint8_t id : {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4), uint8_t(9)})
+    {
+        const DiskImage::Sector* sector = track0->findSector(id);
+        if (sector == nullptr || !sector->hasData || sector->dataSize != BLOCK * BLOCKS_PER_SECTOR)
+            return false;
+    }
+
+    const uint8_t* desc = track0->findSector(1)->data;
+    const bool chic = std::memcmp(desc + 13, "DSK", 3) == 0;
+    const bool classic = std::memcmp(desc + 10, "DSK", 3) == 0;
+    if ((!chic && !classic) || desc[24] != BLOCKS_PER_SECTOR || desc[25] != 5)
+        return false;
+
+    // Block -> sector of track 0 through the descriptor's sector table (numbered from 0)
+    auto block = [&](uint16_t b) -> const uint8_t* {
+        if (b >= 5 * BLOCKS_PER_SECTOR)
+            return nullptr;
+        const DiskImage::Sector* sector = track0->findSector(static_cast<uint8_t>(desc[64 + b / BLOCKS_PER_SECTOR] + 1));
+        if (sector == nullptr || !sector->hasData || sector->dataSize != BLOCK * BLOCKS_PER_SECTOR)
+            return nullptr;
+        return sector->data + (b % BLOCKS_PER_SECTOR) * BLOCK;
+    };
+
+    // Entry 0 of a catalogue describes the catalogue itself; boot.sys is one of the first files of the main one
+    const uint8_t* catalogue = block(static_cast<uint16_t>(desc[20] | (desc[21] << 8)));
+    if (catalogue == nullptr)
+        return false;
+    for (size_t entry = 1; entry < BLOCK / ENTRY; entry++)
+    {
+        const uint8_t* file = catalogue + entry * ENTRY;
+        const bool live = (file[11] & 0x01) != 0;
+        const uint16_t first = static_cast<uint16_t>(file[17] | (file[18] << 8));
+        if (live && std::memcmp(file, BOOT_SYS_NAME, sizeof(BOOT_SYS_NAME)) == 0 && file[19] == 0xFF)
+            return first == BOOT_SYS_BLOCK && block(BOOT_SYS_BLOCK) == track0->findSector(9)->data;
+    }
+    return false;
+}
 }  // namespace
 
 DiskAutostart::DiskAutostart(EmulatorContext* context) : _context(context) {}
@@ -76,6 +131,12 @@ DiskAutostart::Plan DiskAutostart::MakePlan(DiskImage& image) const
     TrdosCatalog catalog;
     if (!catalog.Parse(image))
     {
+        if (IsIsdosBootDisk(image))
+        {
+            plan.action = Action::Boot;
+            plan.message = "Autostart: iS-DOS boot.sys";
+            return plan;
+        }
         plan.message = "Disk is not TR-DOS formatted - mounted only";
         return plan;
     }
@@ -183,20 +244,32 @@ void DiskAutostart::ArmCommand(const std::vector<uint8_t>& commandLine, const st
 void DiskAutostart::Disarm()
 {
     _armed = false;
+    _coldStartFinishPending = false;
     _name.clear();
     _commandLine.clear();
 }
 
 bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
 {
-    if (!_armed)
+    if (!IsHookPending())
         return false;
 
     // Only inside the TR-DOS ROM
     if (!(_context->emulatorState.flags & CF_TRDOS))
         return false;
 
-    const uint16_t eLine = static_cast<uint16_t>(cpu.rd(SYSVAR_E_LINE) | (cpu.rd(SYSVAR_E_LINE + 1) << 8));
+    bool changed = false;
+    if (_coldStartFinishPending)
+    {
+        _coldStartFinishPending = false;
+        changed = _context->pPortDecoder && _context->pPortDecoder->FinishAutostartColdStart(cpu.pc);
+    }
+
+    if (!_armed)
+        return changed;
+
+    const uint8_t eLineLow = cpu.rd(SYSVAR_E_LINE);   // one read per statement: the order is the CPU's
+    const uint16_t eLine = static_cast<uint16_t>(eLineLow | (cpu.rd(SYSVAR_E_LINE + 1) << 8));
     for (size_t i = 0; i < sizeof(BOOT_LINE); i++)
     {
         if (cpu.rd(static_cast<uint16_t>(eLine + i)) != BOOT_LINE[i])
@@ -205,7 +278,7 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
             _context->pModuleLogger->Warning(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC,
                                               "DiskAutostart: E_LINE does not hold RUN \"boot\" - name hook skipped");
             Disarm();
-            return false;
+            return changed;
         }
     }
 

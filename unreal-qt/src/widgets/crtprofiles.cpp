@@ -16,8 +16,6 @@ CRTProfileParams CRTProfileParams::None()
     p.contrast = 1.0f;
     p.saturation = 1.0f;
     p.scanlineWeight = 0.0f;
-    p.maskStrength = 0.0f;
-    p.maskType = CRTMaskType::None;
     return p;
 }
 
@@ -26,101 +24,10 @@ CRTProfileParams CRTProfileParams::Basic()
     CRTProfileParams p;
     p.profile = CRTProfile::Basic;
     p.curvature = 0.02f;
-    p.scanlineWeight = 0.3f;
-    p.scanlineAdaptive = false;  // Fixed scanlines on source resolution
+    p.scanlineWeight = 0.3f;  // On the source's lines
     p.bloomStrength = 0.1f;
     p.bloomRadius = 1.5f;
     p.gamma = 1.0f;  // Neutral gamma for CPU/GPU parity
-    return p;
-}
-
-CRTProfileParams CRTProfileParams::Aperture()
-{
-    CRTProfileParams p;
-    p.profile = CRTProfile::Aperture;
-    p.curvature = 0.015f;
-    p.cornerRadius = 0.02f;
-    p.scanlineWeight = 0.25f;
-    p.scanlineAdaptive = true;
-    p.maskType = CRTMaskType::Aperture;
-    p.maskStrength = 0.5f;
-    p.maskDotPitch = 0.0f;  // Auto-calculate from resolution
-    p.bloomStrength = 0.15f;
-    p.bloomRadius = 2.0f;
-    p.saturation = 1.1f;
-    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
-    return p;
-}
-
-CRTProfileParams CRTProfileParams::ShadowMask()
-{
-    CRTProfileParams p;
-    p.profile = CRTProfile::ShadowMask;
-    p.curvature = 0.025f;
-    p.cornerRadius = 0.03f;
-    p.scanlineWeight = 0.2f;
-    p.scanlineAdaptive = true;
-    p.maskType = CRTMaskType::ShadowMask;
-    p.maskStrength = 0.6f;
-    p.maskDotPitch = 0.0f;
-    p.bloomStrength = 0.12f;
-    p.bloomRadius = 1.8f;
-    p.saturation = 1.05f;
-    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
-    return p;
-}
-
-CRTProfileParams CRTProfileParams::SlotMask()
-{
-    CRTProfileParams p;
-    p.profile = CRTProfile::SlotMask;
-    p.curvature = 0.03f;
-    p.cornerRadius = 0.025f;
-    p.scanlineWeight = 0.35f;
-    p.scanlineAdaptive = true;
-    p.maskType = CRTMaskType::SlotMask;
-    p.maskStrength = 0.55f;
-    p.maskDotPitch = 0.0f;
-    p.bloomStrength = 0.18f;
-    p.bloomRadius = 2.2f;
-    p.saturation = 1.15f;
-    p.brightness = 1.1f;
-    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
-    return p;
-}
-
-CRTProfileParams CRTProfileParams::Megatron()
-{
-    // Sony Megatron-style: designed to scale with output resolution
-    // Simulates a real CRT with proper phosphor triads
-    CRTProfileParams p;
-    p.profile = CRTProfile::Megatron;
-    p.curvature = 0.02f;
-    p.cornerRadius = 0.015f;
-    p.overscan = 0.01f;
-
-    // No source-based scanlines - uses resolution-adaptive phosphor mask instead
-    p.scanlineWeight = 0.0f;
-    p.scanlineAdaptive = true;
-
-    // Phosphor mask simulates real CRT at target resolution (aperture grille style)
-    p.maskType = CRTMaskType::Aperture;
-    p.maskStrength = 0.7f;
-    p.maskDotPitch = 0.0f;  // Auto: calculates from output resolution
-
-    // Phosphor bloom is key to Megatron look
-    p.bloomStrength = 0.25f;
-    p.bloomRadius = 3.0f;
-
-    // Color adjustments for authentic CRT feel
-    p.saturation = 1.2f;
-    p.brightness = 1.05f;
-    p.contrast = 1.1f;
-    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
-
-    // Slight persistence for motion
-    p.persistence = 0.1f;
-
     return p;
 }
 
@@ -129,11 +36,14 @@ CRTProfileParams CRTProfileParams::FromProfile(CRTProfile profile)
     switch (profile)
     {
         case CRTProfile::Basic:      return Basic();
-        case CRTProfile::Aperture:   return Aperture();
-        case CRTProfile::ShadowMask: return ShadowMask();
-        case CRTProfile::SlotMask:   return SlotMask();
-        case CRTProfile::Megatron:   return Megatron();
-        default:                     return None();
+        case CRTProfile::None:       return None();
+        default:
+        {
+            // A model (CRTBeamModel): its own tables, the grading neutral
+            CRTProfileParams p = None();
+            p.profile = profile;
+            return p;
+        }
     }
 }
 
@@ -143,11 +53,31 @@ QString CRTProfileParams::ProfileName(CRTProfile profile)
     {
         case CRTProfile::None:       return "None";
         case CRTProfile::Basic:      return "Basic";
-        case CRTProfile::Aperture:   return "Aperture Grille";
-        case CRTProfile::ShadowMask: return "Shadow Mask";
-        case CRTProfile::SlotMask:   return "Slot Mask";
-        case CRTProfile::Megatron:   return "Megatron";
+        case CRTProfile::Lottes:      return "CRT Lottes";
+        case CRTProfile::Geom:        return "CRT Geom";
+        case CRTProfile::Easymode:    return "CRT Easymode";
+        case CRTProfile::GdvMini:     return "CRT GDV Mini";
+        case CRTProfile::Consumer:    return "CRT Consumer";
+        case CRTProfile::Pi:          return "CRT Pi";
+        case CRTProfile::Zfast:       return "zfast CRT";
         default:                     return "Unknown";
+    }
+}
+
+QString CRTProfileParams::ProfileKey(CRTProfile profile)
+{
+    switch (profile)
+    {
+        case CRTProfile::None:       return "none";
+        case CRTProfile::Basic:      return "basic";
+        case CRTProfile::Lottes:      return "crt-lottes";
+        case CRTProfile::Geom:        return "crt-geom";
+        case CRTProfile::Easymode:    return "crt-easymode";
+        case CRTProfile::GdvMini:     return "crt-gdv-mini";
+        case CRTProfile::Consumer:    return "crt-consumer";
+        case CRTProfile::Pi:          return "crt-pi";
+        case CRTProfile::Zfast:       return "zfast-crt";
+        default:                     return "unknown";
     }
 }
 
@@ -159,14 +89,20 @@ QString CRTProfileParams::ProfileDescription(CRTProfile profile)
             return "No CRT effects";
         case CRTProfile::Basic:
             return "Simple scanlines with slight curvature";
-        case CRTProfile::Aperture:
-            return "Aperture grille (vertical RGB stripes like Sony Trinitron)";
-        case CRTProfile::ShadowMask:
-            return "Traditional shadow mask CRT dot pattern";
-        case CRTProfile::SlotMask:
-            return "Slot mask pattern (arcade monitor style)";
-        case CRTProfile::Megatron:
-            return "Sony Megatron-style adaptive phosphor simulation";
+        case CRTProfile::Lottes:
+            return "crt-lottes model: gaussian beams, shadow mask, curvature, bloom";
+        case CRTProfile::Geom:
+            return "crt-geom model: lanczos, beams wider when bright, curved tube, dot mask";
+        case CRTProfile::Easymode:
+            return "crt-easymode model: sharp lanczos, scanlines by brightness, flat";
+        case CRTProfile::GdvMini:
+            return "crt-gdv-mini model: beams by brightness, aperture mask";
+        case CRTProfile::Consumer:
+            return "crt-consumer model: a soft consumer TV, glow, curvature";
+        case CRTProfile::Pi:
+            return "crt-pi model: light scanlines, RGB mask, curvature";
+        case CRTProfile::Zfast:
+            return "zfast-crt model: fast scanlines and a fine mask";
         default:
             return "";
     }
@@ -174,14 +110,8 @@ QString CRTProfileParams::ProfileDescription(CRTProfile profile)
 
 std::vector<CRTProfile> CRTProfileParams::AllProfiles()
 {
-    return {
-        CRTProfile::None,
-        CRTProfile::Basic,
-        CRTProfile::Aperture,
-        CRTProfile::ShadowMask,
-        CRTProfile::SlotMask,
-        CRTProfile::Megatron
-    };
+    return {CRTProfile::None,    CRTProfile::Basic,    CRTProfile::Lottes, CRTProfile::Geom, CRTProfile::Easymode,
+            CRTProfile::GdvMini, CRTProfile::Consumer, CRTProfile::Pi,     CRTProfile::Zfast};
 }
 
 // CRTShaderManager implementation
@@ -194,7 +124,7 @@ CRTShaderManager& CRTShaderManager::instance()
 
 QString CRTShaderManager::shaderDirectory() const
 {
-    // Look for shaders in multiple locations:
+    // A user's own shaders, first existing of:
     // 1. Application data directory: data/shaders/
     // 2. User config directory: ~/.config/unreal-ng/shaders/ (Linux)
     //                          ~/Library/Application Support/unreal-ng/shaders/ (macOS)
@@ -224,35 +154,32 @@ QString CRTShaderManager::shaderDirectory() const
 void CRTShaderManager::scanShaderDirectory()
 {
     _shaderFiles.clear();
+    _shaderPaths.clear();
 
-    QDir dir(shaderDirectory());
-    if (!dir.exists())
-        return;
-
-    QStringList filters;
-    filters << "*.glsl" << "*.frag" << "*.fs";
-
-    QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable);
-    for (const QFileInfo& fi : files)
+    // The shipped shaders (:/shaders resources), then the user's: a user file of the same name replaces a shipped one
+    const QStringList filters = {"*.glsl", "*.frag", "*.fs"};
+    for (const QString& path : {QStringLiteral(":/shaders"), shaderDirectory()})
     {
-        _shaderFiles.push_back(fi.baseName());
+        const QDir dir(path);
+        if (!dir.exists())
+            continue;
+        for (const QFileInfo& fi : dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name))
+        {
+            if (_shaderPaths.find(fi.baseName()) == _shaderPaths.end())
+                _shaderFiles.push_back(fi.baseName());
+            _shaderPaths[fi.baseName()] = fi.filePath();
+        }
     }
 }
 
 QString CRTShaderManager::loadShader(const QString& name) const
 {
-    QString dir = shaderDirectory();
-    QStringList extensions = {"glsl", "frag", "fs"};
-
-    for (const QString& ext : extensions)
-    {
-        QFile file(dir + "/" + name + "." + ext);
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-        {
-            QTextStream in(&file);
-            return in.readAll();
-        }
-    }
-
-    return QString();
+    const auto it = _shaderPaths.find(name);
+    if (it == _shaderPaths.end())
+        return QString();
+    QFile file(it->second);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QString();
+    QTextStream in(&file);
+    return in.readAll();
 }

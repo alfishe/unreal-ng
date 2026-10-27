@@ -34,6 +34,13 @@ emulator's Zilog NMOS Z80 target — there is no in-tree code path that claims t
 flavors, so there's nothing meaningful to assert. This is a deliberate scope decision, not a
 known failure.
 
+## The program itself
+
+`z80test_program_test.cpp` runs the real `z80full.sna` per model and reads the screen through
+OCR. It is `DISABLED_` (~5 s per model) and run on demand; it also covers port reads, which the
+vectors here only see on the Pentagon. Recipe and per-model results:
+[`docs/inprogress/2026-10-08-z80test-in-ear/`](../../../../docs/inprogress/2026-10-08-z80test-in-ear/README.md).
+
 ## Relationship to the ZEX suite and the Python reference model
 
 `tools/poc/017-z80-standalone-cpu/` separately runs the Kevin Horton ZEX family

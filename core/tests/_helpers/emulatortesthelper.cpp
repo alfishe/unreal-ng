@@ -8,8 +8,11 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/fdc/fdd.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/ports/portdecoder.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 
@@ -37,17 +40,19 @@ namespace
             ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
 
-        const char* value = kind == TurboSoundKind::FM       ? "FM"
-                            : kind == TurboSoundKind::None   ? "None"
-                            : kind == TurboSoundKind::Single ? "Single"
-                                                             : "AY";
-        const std::string to = std::string("TurboSound=") + value;
-        // The active line (not a comment): "TurboSound=" at a line start, its value up to the line end
-        size_t at = ini.find("\nTurboSound=");
+        // The shipped inis name the AY socket's board in [SLOTS] (ZX-bus slots SL-4): `ay-socket = <card>`, the
+        // card for each kind (TurboSound=AY was the two-AY TurboSound, `ts`; Single the machine's own AY, `ay`)
+        const char* value = kind == TurboSoundKind::FM       ? "tsfm"
+                            : kind == TurboSoundKind::None   ? "none"
+                            : kind == TurboSoundKind::Single ? "ay"
+                                                             : "ts";
+        const std::string to = std::string("ay-socket = ") + value;
+        // The active line (not a comment): "ay-socket" at a line start, its value up to the line end
+        size_t at = ini.find("\nay-socket");
         if (at == std::string::npos)
             return std::string();
         at++;
-        size_t end = ini.find_first_of("\r\n ;\t", at + strlen("TurboSound="));
+        size_t end = ini.find_first_of("\r\n;\t", at + strlen("ay-socket = "));
         if (end == std::string::npos)
             end = ini.size();
         ini.replace(at, end - at, to);
@@ -67,20 +72,31 @@ namespace
 std::unordered_map<uint32_t, BreakpointCallback> EmulatorTestHelper::_breakpointCallbacks;
 
 Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelName, LoggerLevel logLevel,
-                                                     RamPowerOn ramPowerOn)
+                                                     RamPowerOn ramPowerOn,
+                                                     const std::function<void(CONFIG&)>& configOverride)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
+
+    // The bare NEXT personality (the boot ROM and the card off), then the caller's override
+    const std::function<void(CONFIG&)> overrides =
+        [ram = Config::RamPowerOnOverride(ramPowerOn), configOverride](CONFIG& config)
+    {
+        ram(config);
+        config.next_boot_rom_path[0] = '\0';
+        config.next_sd_path[0] = '\0';
+        if (configOverride)
+            configOverride(config);
+    };
 
     // Create emulator with model name if specified
     std::shared_ptr<Emulator> emulator;
     if (!modelName.empty())
     {
-        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel, nullptr,
-                                                    Config::RamPowerOnOverride(ramPowerOn));
+        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel, nullptr, overrides);
     }
     else
     {
-        emulator = manager->CreateEmulator("test-emulator", logLevel, Config::RamPowerOnOverride(ramPowerOn));
+        emulator = manager->CreateEmulator("test-emulator", logLevel, overrides);
     }
 
     if (!emulator)
@@ -93,6 +109,11 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     // staged unreal.ini, which CMake re-copies on every build (RESET=128)
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
+
+    // The CMOS clock in its test mode: emulated time from one fixed instant instead of the host's live clock, so two
+    // runs read the same time to the microsecond (an ATM3 boot polls it) however fast the host runs them
+    if (PortDecoder* ports = emulator->GetContext()->pPortDecoder; ports && ports->RtcChip())
+        ports->RtcChip()->AnchorEmulatedTime(Ds12887::ToMicros({2026, 1, 1, 12, 0, 0}));
 
     // Test-speed defaults (2026-09-13): the two per-frame "HQ" features are
     // OFF for tests. Per-t-state screen rendering (screenhq) and the FIR
@@ -258,6 +279,32 @@ void EmulatorTestHelper::RemoveBreakpoint(Emulator* emulator, uint32_t breakpoin
     _breakpointCallbacks.erase(breakpointId);
 }
 
+void EmulatorTestHelper::ReleaseBareCore(Core*& core, EmulatorContext*& context)
+{
+    // The order of Emulator::Release: the drives first (WD1793's destructor skips the null ones), then the core
+    ReleaseDiskDrives(context);
+    delete core;
+    core = nullptr;
+    delete context;
+    context = nullptr;
+}
+
+void EmulatorTestHelper::ReleaseDiskDrives(EmulatorContext* context)
+{
+    if (context == nullptr)
+        return;
+
+    for (FDD*& drive : context->coreState.diskDrives)
+    {
+        if (drive != nullptr)
+        {
+            drive->ejectDisk();
+            delete drive;
+            drive = nullptr;
+        }
+    }
+}
+
 void EmulatorTestHelper::CleanupEmulator(Emulator* emulator)
 {
     if (emulator)
@@ -268,7 +315,13 @@ void EmulatorTestHelper::CleanupEmulator(Emulator* emulator)
 
         std::string uuid = emulator->GetUUID();
         EmulatorManager* manager = EmulatorManager::GetInstance();
-        manager->RemoveEmulator(uuid);
+        if (!manager->RemoveEmulator(uuid))
+        {
+            // Never registered (CreateEmulatorWithTurboSoundKind boots a bare instance): released here, or it lives
+            // on - a leaked Sprinter keeps its instance number and the next one's automatic MAC moves
+            emulator->Release();
+            delete emulator;
+        }
     }
 }
 

@@ -179,6 +179,11 @@ void AtModule::ResetSession()
 void AtModule::Boot(uint64_t afterUs)
 {
     ResetSession();
+    if (RestartIntoDownloadIfStrapped())
+    {
+        _op = Op::None;
+        return;
+    }
     Leave();
     _op = Op::Boot;
     _opDeadline = Now() + MicrosToT(afterUs);

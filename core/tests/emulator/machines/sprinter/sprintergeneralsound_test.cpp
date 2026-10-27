@@ -25,7 +25,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -377,7 +377,7 @@ TEST_P(SprinterProPlay_Test, PlaysTheTestModAtItsPitchAndTempo_ReplayMatches)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     const uint64_t startFrame = Frame();
 

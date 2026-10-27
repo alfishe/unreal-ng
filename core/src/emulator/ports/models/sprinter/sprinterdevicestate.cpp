@@ -521,7 +521,7 @@ StateNode AcceleratorSummary(PortDecoder_Sprinter& decoder, EmulatorContext* con
     a["mode_name"] = SprinterAccelerator::ModeName(st.mode);
     a["armed"] = (st.dir & SprinterAccelerator::kDirOn) != 0;
     a["dir"] = Hex8(st.dir);
-    a["length"] = static_cast<uint64_t>(SprinterAccelerator::Accesses(st.length));
+    a["length"] = static_cast<uint64_t>(accelerator->OperationAccesses());
     a["length_register"] = Hex8(st.length);
     a["function"] = SprinterAccelerator::FunctionName(st.fn);
     a["blocked"] = st.blocked != 0;
@@ -533,6 +533,23 @@ StateNode AcceleratorSummary(PortDecoder_Sprinter& decoder, EmulatorContext* con
     a["last_extra_clocks"] = static_cast<uint64_t>(st.lastExtraClocks);
     a["buffer_crc32"] = Hex32(Crc32(st.buffer, sizeof st.buffer));
     a["buffer_head"] = HexRow(st.buffer, 16);
+    if (const SprinterAccelTmkState* tmk = accelerator->Tmk())
+    {
+        // The TMK configuration's additions (tmk-accelerator.md)
+        StateNode t = StateNode::Object();
+        t["buffer_size"] = static_cast<uint64_t>(sizeof(st.buffer) + sizeof(tmk->bufferHigh));
+        t["ctrl"] = Hex8(tmk->ctrl);
+        t["clip_y"] = (tmk->ctrl & SprinterAccelerator::kCtrlClipY) ? ((tmk->ctrl & SprinterAccelerator::kCtrlClipYValue) ? "PORT_Y bit 7 = 1" : "PORT_Y bit 7 = 0") : "off";
+        t["clip_x"] = (tmk->ctrl & SprinterAccelerator::kCtrlClipX) ? ((tmk->ctrl & SprinterAccelerator::kCtrlClipXValue) ? "address bit 7 = 1" : "address bit 7 = 0") : "off";
+        t["rectangle"] = (tmk->ctrl & SprinterAccelerator::kCtrlRect) != 0;
+        t["length_x4"] = (tmk->ctrl & SprinterAccelerator::kCtrlLength4) != 0;
+        t["address_down"] = (tmk->ctrl & SprinterAccelerator::kCtrlAddressDown) != 0;
+        t["rect_width"] = static_cast<uint64_t>(tmk->rectWidth + 1u);
+        t["rect_counter"] = int(tmk->rectCounter);
+        t["buffer_high_crc32"] = Hex32(Crc32(tmk->bufferHigh, sizeof tmk->bufferHigh));
+        t["ports"] = "code #80 ACC_CTRL, code #81 ACC_RECT_W (write); the program maps them in the port table";
+        a["tmk"] = t;
+    }
     a["control"] = "LD B,B off, LD C,C fill, LD D,D length, LD E,E vertical fill, LD H,H double, LD L,L copy, "
                    "LD A,A vertical copy, HALT off; ALL_MODE bit 0 enables (sprinter-accelerator.md)";
     return a;
@@ -2209,6 +2226,9 @@ DeviceState::SprinterZxBrief ZxBriefLine(EmulatorContext* context)
             }
         }
     }
+    b.modeName = name;
+    if (!b.modeName.empty() && b.modeName.back() == '?')
+        b.modeName.pop_back();
     std::vector<std::string> parts;
     const unsigned ratio = context->emulatorState.hw_turbo_ratio ? context->emulatorState.hw_turbo_ratio : 1;
     if (pld.turbo)
@@ -2800,7 +2820,7 @@ StateNode SprinterJournal(EmulatorContext* context, const SprinterJournalQuery& 
     }
     else
     {
-        ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+        const ttd::ITimeTravelHooks* mgr = context->pTimeTravelHooks;
         StateNode events = StateNode::Array();
         if (!mgr)
             ret["error"] = "no TTD manager";

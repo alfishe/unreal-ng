@@ -59,6 +59,17 @@ TEST(FolderSnapshot_Test, TreeOrderSizesAndUtcTimes)
     EXPECT_TRUE(snapshot.Skipped().empty());
 }
 
+/// The scanned folder itself has a time: the volume label's date, and a mount point's when the folder is a layer
+TEST(FolderSnapshot_Test, RootCarriesTheFolderTime)
+{
+    ScratchFolder folder("snapshot-root-time");
+    folder.File("a.txt", "a");
+    ASSERT_TRUE(SetMTimeUnixSeconds(folder.Path(), 1700000000));  // after the file: adding it touched the folder
+    FolderSnapshot snapshot;
+    ASSERT_TRUE(FolderSnapshot::Scan(folder.Path(), {}, snapshot));
+    EXPECT_EQ(snapshot.Root().mtimeUtc, 1700000000);
+}
+
 TEST(FolderSnapshot_Test, ServiceFilesExcludesAndReasonsAreReported)
 {
     ScratchFolder folder("snapshot-skips");

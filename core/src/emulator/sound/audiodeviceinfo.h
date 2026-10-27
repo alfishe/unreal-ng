@@ -21,6 +21,20 @@ enum class AudioSourceType
     FM2,  // TSFM chip 1 FM-only buffer
     GeneralSoundMp3, // NeoGS MP3 decoder output (a separate analogue path on the board)
     CdAudio0, CdAudio1, CdAudio2, CdAudio3,  // CD-DA line output of the ATAPI CD drive on IDE unit 0..3 (ide0.master .. ide1.slave)
+    // ZX-MultiSound card rows (a slot-built card, emulator/slots/cards/multisound): the board's weights are applied
+    // before them, so unity volume is the real board's balance. The YM2203 pair per chip, as the TurboSound FM in the
+    // AY socket shows it
+    MultiSoundSsg1,  // MS SSG 1: the SSG part of YM2203 chip select 0 (U4)
+    MultiSoundSsg2,  // MS SSG 2: the SSG part of chip select 1 (U10)
+    MultiSoundFm1,   // MS FM 1: the FM part of chip select 0
+    MultiSoundFm2,   // MS FM 2: the FM part of chip select 1
+    MultiSoundSaa,   // MS SAA: the SAA1099
+    MultiSoundPcm,   // MS PCM: the four shared DACs (General Sound + SounDrive)
+    MultiSoundMidi,  // MS MIDI: the SAM2695 General MIDI synthesizer
+    // The ZX Spectrum Next's sound (NextAudio, a model audio source with parts): its three AY / YM chips and the
+    // four-channel DAC, each a row; the device mixes them in its one buffer at the part's gain
+    NextAy1, NextAy2, NextAy3,
+    NextDac,
     Custom
 };
 

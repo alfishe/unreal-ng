@@ -1,0 +1,2311 @@
+{
+ "format": "streamdeck-glyphs",
+ "version": 1,
+ "generated_by": "tools/icons/streamdeck_glyphs.py",
+ "groups": [
+  {
+   "id": "nav",
+   "title": "Navigation and deck"
+  },
+  {
+   "id": "run",
+   "title": "Run control"
+  },
+  {
+   "id": "machine",
+   "title": "Machine"
+  },
+  {
+   "id": "ttd",
+   "title": "Time travel"
+  },
+  {
+   "id": "debug",
+   "title": "Debugger"
+  },
+  {
+   "id": "media",
+   "title": "Media"
+  },
+  {
+   "id": "audio",
+   "title": "Audio"
+  },
+  {
+   "id": "video",
+   "title": "Video and capture"
+  },
+  {
+   "id": "input",
+   "title": "Input"
+  },
+  {
+   "id": "basic",
+   "title": "BASIC"
+  },
+  {
+   "id": "settings",
+   "title": "Settings"
+  },
+  {
+   "id": "status",
+   "title": "Status"
+  }
+ ],
+ "glyphs": [
+  {
+   "id": "nav.back",
+   "group": "nav",
+   "title": "Back",
+   "draw": "arrow pointing left"
+  },
+  {
+   "id": "nav.home",
+   "group": "nav",
+   "title": "Home",
+   "draw": "house"
+  },
+  {
+   "id": "nav.folder",
+   "group": "nav",
+   "title": "Menu (generic)",
+   "draw": "folder / drawer"
+  },
+  {
+   "id": "nav.prev_page",
+   "group": "nav",
+   "title": "Previous page",
+   "draw": "chevron left"
+  },
+  {
+   "id": "nav.next_page",
+   "group": "nav",
+   "title": "Next page",
+   "draw": "chevron right"
+  },
+  {
+   "id": "nav.target",
+   "group": "nav",
+   "title": "Target: follows focus",
+   "draw": "crosshair (ring with four ticks, centre dot)"
+  },
+  {
+   "id": "nav.target.on",
+   "group": "nav",
+   "title": "Target: pinned",
+   "draw": "push pin",
+   "variant_of": "nav.target"
+  },
+  {
+   "id": "nav.instances",
+   "group": "nav",
+   "title": "Instances / windows",
+   "draw": "two overlapping windows"
+  },
+  {
+   "id": "deck.menu",
+   "group": "nav",
+   "title": "Deck settings",
+   "draw": "a small key grid (the deck itself)"
+  },
+  {
+   "id": "deck.brightness",
+   "group": "nav",
+   "title": "Deck brightness",
+   "draw": "sun"
+  },
+  {
+   "id": "run.play",
+   "group": "run",
+   "title": "Run / continue (shown while paused)",
+   "draw": "play triangle"
+  },
+  {
+   "id": "run.pause",
+   "group": "run",
+   "title": "Pause (shown while running)",
+   "draw": "two pause bars"
+  },
+  {
+   "id": "run.stop",
+   "group": "run",
+   "title": "Stopped",
+   "draw": "stop square"
+  },
+  {
+   "id": "run.step_in",
+   "group": "run",
+   "title": "Step in",
+   "draw": "arrow down into a dot"
+  },
+  {
+   "id": "run.step_over",
+   "group": "run",
+   "title": "Step over",
+   "draw": "arc arrow over a dot"
+  },
+  {
+   "id": "run.step_out",
+   "group": "run",
+   "title": "Step out",
+   "draw": "arrow up out of a dot"
+  },
+  {
+   "id": "run.frame_step",
+   "group": "run",
+   "title": "Frame step",
+   "draw": "film frame with a small forward triangle"
+  },
+  {
+   "id": "run.wait_int",
+   "group": "run",
+   "title": "Run to interrupt",
+   "draw": "one square pulse (INT) with a forward triangle"
+  },
+  {
+   "id": "run.to_scanline",
+   "group": "run",
+   "title": "Run to scanline",
+   "draw": "raster lines, one highlighted, a triangle pointing at it"
+  },
+  {
+   "id": "run.n_scanlines",
+   "group": "run",
+   "title": "Run N scanlines",
+   "draw": "raster lines with a bracket over three of them"
+  },
+  {
+   "id": "run.turbo_hold",
+   "group": "run",
+   "title": "Turbo while held",
+   "draw": "fast-forward double triangle over a bar"
+  },
+  {
+   "id": "run.steps",
+   "group": "run",
+   "title": "Step N instructions",
+   "draw": "step-in arrow and the letter N"
+  },
+  {
+   "id": "run.frames",
+   "group": "run",
+   "title": "Run N frames",
+   "draw": "film frame and the letter N"
+  },
+  {
+   "id": "run.tstates",
+   "group": "run",
+   "title": "Run N t-states",
+   "draw": "clock pulse train and the letter T"
+  },
+  {
+   "id": "run.to_pixel",
+   "group": "run",
+   "title": "Run to the first paper pixel",
+   "draw": "a screen: border round the paper, the paper's top-left pixel lit, a triangle pointing at it"
+  },
+  {
+   "id": "run.until_pc",
+   "group": "run",
+   "title": "Run until PC",
+   "draw": "play triangle and a target crosshair"
+  },
+  {
+   "id": "run.to_cursor",
+   "group": "run",
+   "title": "Run to the cursor",
+   "draw": "play triangle and a mouse pointer"
+  },
+  {
+   "id": "run.step_line",
+   "group": "run",
+   "title": "Step a source line",
+   "draw": "source page (folded corner) and a step-in arrow"
+  },
+  {
+   "id": "run.to_line",
+   "group": "run",
+   "title": "Run to a source line",
+   "draw": "source page, one line lit, a triangle pointing at it"
+  },
+  {
+   "id": "run.pace",
+   "group": "run",
+   "title": "Pace (a preset)",
+   "draw": "metronome"
+  },
+  {
+   "id": "run.pace_next",
+   "group": "run",
+   "title": "Pace finer",
+   "draw": "metronome and a chevron right"
+  },
+  {
+   "id": "run.pace_prev",
+   "group": "run",
+   "title": "Pace coarser",
+   "draw": "metronome and a chevron left"
+  },
+  {
+   "id": "run.pace_toggle",
+   "group": "run",
+   "title": "Run at the pace (shown while stopped)",
+   "draw": "metronome, pendulum upright, a play triangle"
+  },
+  {
+   "id": "run.pace_toggle.on",
+   "group": "run",
+   "title": "Pause the pace (shown while pacing)",
+   "draw": "metronome, pendulum swung, pause bars",
+   "variant_of": "run.pace_toggle"
+  },
+  {
+   "id": "run.pace_stop",
+   "group": "run",
+   "title": "Stop the pace",
+   "draw": "metronome and a stop square"
+  },
+  {
+   "id": "run.pace_step",
+   "group": "run",
+   "title": "One step at the pace",
+   "draw": "metronome and a step mark (triangle and bar, >|)"
+  },
+  {
+   "id": "mach.reset",
+   "group": "machine",
+   "title": "Reset (hold)",
+   "draw": "circular arrow"
+  },
+  {
+   "id": "mach.cold_reset",
+   "group": "machine",
+   "title": "Restart (cold)",
+   "draw": "power symbol"
+  },
+  {
+   "id": "mach.nmi",
+   "group": "machine",
+   "title": "NMI",
+   "draw": "lightning bolt"
+  },
+  {
+   "id": "mach.turbo",
+   "group": "machine",
+   "title": "Turbo (off)",
+   "draw": "speed gauge, needle low"
+  },
+  {
+   "id": "mach.turbo.on",
+   "group": "machine",
+   "title": "Turbo (on)",
+   "draw": "speed gauge, needle high",
+   "variant_of": "mach.turbo"
+  },
+  {
+   "id": "mach.start",
+   "group": "machine",
+   "title": "Start a machine / machines menu",
+   "draw": "a ZX Spectrum (wedge with key rows)"
+  },
+  {
+   "id": "mach.chip",
+   "group": "machine",
+   "title": "Machine of another family",
+   "draw": "a CPU chip with pins"
+  },
+  {
+   "id": "mach.previous",
+   "group": "machine",
+   "title": "Previous model",
+   "draw": "a ZX Spectrum under an arrow pointing left"
+  },
+  {
+   "id": "mach.switch",
+   "group": "machine",
+   "title": "Front-panel switch (off)",
+   "draw": "lever toggle switch, lever to the left"
+  },
+  {
+   "id": "mach.switch.on",
+   "group": "machine",
+   "title": "Front-panel switch (on)",
+   "draw": "lever toggle switch, lever to the right, tip lit",
+   "variant_of": "mach.switch"
+  },
+  {
+   "id": "ttd.menu",
+   "group": "ttd",
+   "title": "Time travel",
+   "draw": "clock with an arrow turning back round it"
+  },
+  {
+   "id": "ttd.record",
+   "group": "ttd",
+   "title": "TTD recording (off)",
+   "draw": "record button, idle"
+  },
+  {
+   "id": "ttd.record.on",
+   "group": "ttd",
+   "title": "TTD recording (on)",
+   "draw": "record button, lit",
+   "variant_of": "ttd.record"
+  },
+  {
+   "id": "ttd.stop",
+   "group": "ttd",
+   "title": "Stop recording",
+   "draw": "stop square inside the record ring"
+  },
+  {
+   "id": "ttd.step_back_frame",
+   "group": "ttd",
+   "title": "Back one frame",
+   "draw": "bar and a triangle pointing left (|<)"
+  },
+  {
+   "id": "ttd.step_forward_frame",
+   "group": "ttd",
+   "title": "Forward one frame",
+   "draw": "triangle pointing right and a bar (>|)"
+  },
+  {
+   "id": "ttd.step_back_instruction",
+   "group": "ttd",
+   "title": "Back one instruction",
+   "draw": "code lines with a small triangle pointing left"
+  },
+  {
+   "id": "ttd.step_forward_instruction",
+   "group": "ttd",
+   "title": "Forward one instruction",
+   "draw": "code lines with a small triangle pointing right"
+  },
+  {
+   "id": "ttd.step_back_scanline",
+   "group": "ttd",
+   "title": "Back one scanline",
+   "draw": "raster lines with a triangle pointing left"
+  },
+  {
+   "id": "ttd.step_forward_scanline",
+   "group": "ttd",
+   "title": "Forward one scanline",
+   "draw": "raster lines with a triangle pointing right"
+  },
+  {
+   "id": "ttd.unit_back",
+   "group": "ttd",
+   "title": "Back one unit (the scrub unit)",
+   "draw": "ruler under a triangle pointing left"
+  },
+  {
+   "id": "ttd.unit_forward",
+   "group": "ttd",
+   "title": "Forward one unit (the scrub unit)",
+   "draw": "ruler under a triangle pointing right"
+  },
+  {
+   "id": "ttd.scrub_unit",
+   "group": "ttd",
+   "title": "Scrub unit (the next unit)",
+   "draw": "ruler with a pointer on one tick"
+  },
+  {
+   "id": "ttd.reverse_step",
+   "group": "ttd",
+   "title": "Reverse step",
+   "draw": "arrow up into a dot (step in, backwards)"
+  },
+  {
+   "id": "ttd.reverse_continue",
+   "group": "ttd",
+   "title": "Reverse continue",
+   "draw": "rewind double triangle (<<)"
+  },
+  {
+   "id": "ttd.go_start",
+   "group": "ttd",
+   "title": "Go to the start",
+   "draw": "bar and rewind double triangle (|<<)"
+  },
+  {
+   "id": "ttd.go_end",
+   "group": "ttd",
+   "title": "Go to the end",
+   "draw": "fast-forward double triangle and bar (>>|)"
+  },
+  {
+   "id": "ttd.resume_live",
+   "group": "ttd",
+   "title": "Back to live",
+   "draw": "play triangle with a live dot"
+  },
+  {
+   "id": "ttd.bookmark",
+   "group": "ttd",
+   "title": "Bookmarks / go to a bookmark",
+   "draw": "bookmark ribbon"
+  },
+  {
+   "id": "ttd.bookmark_add",
+   "group": "ttd",
+   "title": "Add a bookmark",
+   "draw": "ribbon with a plus"
+  },
+  {
+   "id": "ttd.bookmark_delete",
+   "group": "ttd",
+   "title": "Delete a bookmark",
+   "draw": "ribbon with a cross"
+  },
+  {
+   "id": "ttd.bookmark_prev",
+   "group": "ttd",
+   "title": "Previous bookmark",
+   "draw": "ribbon with a chevron left"
+  },
+  {
+   "id": "ttd.bookmark_next",
+   "group": "ttd",
+   "title": "Next bookmark",
+   "draw": "ribbon with a chevron right"
+  },
+  {
+   "id": "ttd.seek",
+   "group": "ttd",
+   "title": "Go to a frame",
+   "draw": "arrow pointing right into a bar"
+  },
+  {
+   "id": "ttd.find_last_write",
+   "group": "ttd",
+   "title": "Find the last write",
+   "draw": "magnifier over a pencil mark"
+  },
+  {
+   "id": "ttd.find_last",
+   "group": "ttd",
+   "title": "Find the last access",
+   "draw": "magnifier over a lit memory cell"
+  },
+  {
+   "id": "ttd.invalidate",
+   "group": "ttd",
+   "title": "Drop the history (hold)",
+   "draw": "waste bin"
+  },
+  {
+   "id": "ttd.history_limit",
+   "group": "ttd",
+   "title": "History limit",
+   "draw": "stacked frames under a limit bar"
+  },
+  {
+   "id": "ttd.journal",
+   "group": "ttd",
+   "title": "Input journal (off)",
+   "draw": "closed book"
+  },
+  {
+   "id": "ttd.journal.on",
+   "group": "ttd",
+   "title": "Input journal (on)",
+   "draw": "open book",
+   "variant_of": "ttd.journal"
+  },
+  {
+   "id": "ttd.journal_build",
+   "group": "ttd",
+   "title": "Build the write journal",
+   "draw": "closed book with a plus"
+  },
+  {
+   "id": "ttd.journal_build_cancel",
+   "group": "ttd",
+   "title": "Cancel the journal build",
+   "draw": "closed book with a cross"
+  },
+  {
+   "id": "ttd.dump",
+   "group": "ttd",
+   "title": "Save the session",
+   "draw": "tray with an arrow down into it"
+  },
+  {
+   "id": "ttd.load",
+   "group": "ttd",
+   "title": "Open a session",
+   "draw": "tray with an arrow up out of it"
+  },
+  {
+   "id": "ttd.export_clip",
+   "group": "ttd",
+   "title": "Export a range as a clip",
+   "draw": "film frame with an arrow down"
+  },
+  {
+   "id": "ttd.timecode",
+   "group": "ttd",
+   "title": "Time code",
+   "draw": "clock face"
+  },
+  {
+   "id": "debug.menu",
+   "group": "debug",
+   "title": "Debugger / open the debugger",
+   "draw": "bug"
+  },
+  {
+   "id": "dbg.mode",
+   "group": "debug",
+   "title": "Debug mode (off)",
+   "draw": "bug, dimmed"
+  },
+  {
+   "id": "dbg.mode.on",
+   "group": "debug",
+   "title": "Debug mode (on)",
+   "draw": "bug, lit",
+   "variant_of": "dbg.mode"
+  },
+  {
+   "id": "dbg.breakpoint_toggle_pc",
+   "group": "debug",
+   "title": "Breakpoint at PC",
+   "draw": "breakpoint mark with the PC arrow pointing at it"
+  },
+  {
+   "id": "dbg.breakpoints_clear",
+   "group": "debug",
+   "title": "Clear breakpoints",
+   "draw": "breakpoint mark with a cross"
+  },
+  {
+   "id": "dbg.breakpoint_hits_reset",
+   "group": "debug",
+   "title": "Reset hit counts",
+   "draw": "breakpoint mark with a 0"
+  },
+  {
+   "id": "dbg.breakpoint_toggle_cursor",
+   "group": "debug",
+   "title": "Breakpoint at the cursor",
+   "draw": "breakpoint mark with a mouse pointer"
+  },
+  {
+   "id": "dbg.bp_add",
+   "group": "debug",
+   "title": "Add a breakpoint",
+   "draw": "breakpoint mark with a plus"
+  },
+  {
+   "id": "dbg.bp_remove",
+   "group": "debug",
+   "title": "Remove breakpoints",
+   "draw": "breakpoint mark with a minus"
+  },
+  {
+   "id": "dbg.bp_enable",
+   "group": "debug",
+   "title": "Enable breakpoints",
+   "draw": "breakpoint mark with a check mark"
+  },
+  {
+   "id": "dbg.bp_disable",
+   "group": "debug",
+   "title": "Disable breakpoints",
+   "draw": "hollow breakpoint mark, struck through"
+  },
+  {
+   "id": "dbg.bp_toggle",
+   "group": "debug",
+   "title": "Breakpoints (disabled)",
+   "draw": "hollow breakpoint mark"
+  },
+  {
+   "id": "dbg.bp_toggle.on",
+   "group": "debug",
+   "title": "Breakpoints (enabled)",
+   "draw": "filled breakpoint mark",
+   "variant_of": "dbg.bp_toggle"
+  },
+  {
+   "id": "dbg.bp_group",
+   "group": "debug",
+   "title": "Breakpoint group (off)",
+   "draw": "three hollow breakpoint marks"
+  },
+  {
+   "id": "dbg.bp_group.on",
+   "group": "debug",
+   "title": "Breakpoint group (on)",
+   "draw": "three filled breakpoint marks",
+   "variant_of": "dbg.bp_group"
+  },
+  {
+   "id": "dbg.register_set",
+   "group": "debug",
+   "title": "Set a register",
+   "draw": "register bars and a pencil"
+  },
+  {
+   "id": "mem.write",
+   "group": "debug",
+   "title": "Write memory",
+   "draw": "memory grid and a pencil"
+  },
+  {
+   "id": "port.out",
+   "group": "debug",
+   "title": "Port OUT",
+   "draw": "chip with an arrow out to the right"
+  },
+  {
+   "id": "dbg.labels_toggle",
+   "group": "debug",
+   "title": "Labels",
+   "draw": "label tag"
+  },
+  {
+   "id": "dbg.focus_prev_pane",
+   "group": "debug",
+   "title": "Previous pane",
+   "draw": "two panes, the left one lit, arrow left"
+  },
+  {
+   "id": "dbg.focus_next_pane",
+   "group": "debug",
+   "title": "Next pane",
+   "draw": "two panes, the right one lit, arrow right"
+  },
+  {
+   "id": "dbg.cursor_up",
+   "group": "debug",
+   "title": "Cursor up",
+   "draw": "arrow up"
+  },
+  {
+   "id": "dbg.cursor_down",
+   "group": "debug",
+   "title": "Cursor down",
+   "draw": "arrow down"
+  },
+  {
+   "id": "dbg.cursor_left",
+   "group": "debug",
+   "title": "Cursor left",
+   "draw": "arrow left"
+  },
+  {
+   "id": "dbg.cursor_right",
+   "group": "debug",
+   "title": "Cursor right",
+   "draw": "arrow right"
+  },
+  {
+   "id": "dbg.page_up",
+   "group": "debug",
+   "title": "Page up",
+   "draw": "double chevron up under a bar"
+  },
+  {
+   "id": "dbg.page_down",
+   "group": "debug",
+   "title": "Page down",
+   "draw": "double chevron down over a bar"
+  },
+  {
+   "id": "dbg.memory_follow",
+   "group": "debug",
+   "title": "Memory follows the cursor",
+   "draw": "memory grid with an arrow pointing into it"
+  },
+  {
+   "id": "dbg.follow_pc",
+   "group": "debug",
+   "title": "Disassembly follows PC",
+   "draw": "code lines with the PC marker and an arrow down beside"
+  },
+  {
+   "id": "dbg.scroll_mode",
+   "group": "debug",
+   "title": "Scroll by bytes / instructions",
+   "draw": "code lines and an up-down arrow"
+  },
+  {
+   "id": "dbg.goto",
+   "group": "debug",
+   "title": "Disassembly at an address",
+   "draw": "arrow pointing at a lit code line"
+  },
+  {
+   "id": "sym.import",
+   "group": "debug",
+   "title": "Load symbols",
+   "draw": "label tag with an arrow up out of it"
+  },
+  {
+   "id": "sym.export",
+   "group": "debug",
+   "title": "Save symbols",
+   "draw": "label tag with an arrow down"
+  },
+  {
+   "id": "sym.import_source",
+   "group": "debug",
+   "title": "Labels from a source",
+   "draw": "source page and a label tag"
+  },
+  {
+   "id": "sym.import_live",
+   "group": "debug",
+   "title": "Labels from RAM",
+   "draw": "memory module and a label tag"
+  },
+  {
+   "id": "sym.drop",
+   "group": "debug",
+   "title": "Drop a symbol set",
+   "draw": "label tag with a cross"
+  },
+  {
+   "id": "sym.set",
+   "group": "debug",
+   "title": "Symbol set (off)",
+   "draw": "two stacked label tags, dim"
+  },
+  {
+   "id": "sym.set.on",
+   "group": "debug",
+   "title": "Symbol set (on)",
+   "draw": "two stacked label tags, lit, a check mark",
+   "variant_of": "sym.set"
+  },
+  {
+   "id": "prof.toggle",
+   "group": "debug",
+   "title": "Profiler / trace (off)",
+   "draw": "bar chart, all bars low"
+  },
+  {
+   "id": "prof.toggle.on",
+   "group": "debug",
+   "title": "Profiler / trace (on)",
+   "draw": "bar chart with peaks",
+   "variant_of": "prof.toggle"
+  },
+  {
+   "id": "prof.pause",
+   "group": "debug",
+   "title": "Pause the profiler (shown while it runs)",
+   "draw": "bar chart and pause bars"
+  },
+  {
+   "id": "prof.pause.on",
+   "group": "debug",
+   "title": "Resume the profiler (shown while paused)",
+   "draw": "bar chart and a play triangle",
+   "variant_of": "prof.pause"
+  },
+  {
+   "id": "prof.clear",
+   "group": "debug",
+   "title": "Clear the profiler",
+   "draw": "bar chart with a cross"
+  },
+  {
+   "id": "analyzer.toggle",
+   "group": "debug",
+   "title": "Analyzer (off)",
+   "draw": "scope screen with a flat trace"
+  },
+  {
+   "id": "analyzer.toggle.on",
+   "group": "debug",
+   "title": "Analyzer (on)",
+   "draw": "scope screen with a pulse trace",
+   "variant_of": "analyzer.toggle"
+  },
+  {
+   "id": "analyzer.clear",
+   "group": "debug",
+   "title": "Clear the analyzer",
+   "draw": "scope screen with a cross"
+  },
+  {
+   "id": "debug.disasm",
+   "group": "debug",
+   "title": "Disassembly",
+   "draw": "code lines with the PC marker"
+  },
+  {
+   "id": "debug.memory",
+   "group": "debug",
+   "title": "Memory",
+   "draw": "3 x 3 grid of cells, one lit"
+  },
+  {
+   "id": "debug.registers",
+   "group": "debug",
+   "title": "Registers",
+   "draw": "rows of register bars"
+  },
+  {
+   "id": "debug.stack",
+   "group": "debug",
+   "title": "Stack",
+   "draw": "stacked plates with an arrow down"
+  },
+  {
+   "id": "media.open",
+   "group": "media",
+   "title": "Open software",
+   "draw": "open folder with an arrow out of it"
+  },
+  {
+   "id": "media.open_recent",
+   "group": "media",
+   "title": "Open a recent file",
+   "draw": "folder with a clock"
+  },
+  {
+   "id": "media.software",
+   "group": "media",
+   "title": "Software (menu)",
+   "draw": "two stacked floppies"
+  },
+  {
+   "id": "media.tape",
+   "group": "media",
+   "title": "Tape (menu)",
+   "draw": "compact cassette"
+  },
+  {
+   "id": "media.tape.play",
+   "group": "media",
+   "title": "Tape play",
+   "draw": "play triangle in the media colour"
+  },
+  {
+   "id": "media.tape.pause",
+   "group": "media",
+   "title": "Tape pause",
+   "draw": "pause bars in the media colour"
+  },
+  {
+   "id": "media.tape.stop",
+   "group": "media",
+   "title": "Tape stop",
+   "draw": "stop square in the media colour"
+  },
+  {
+   "id": "media.tape.rewind",
+   "group": "media",
+   "title": "Tape rewind",
+   "draw": "rewind double triangle in the media colour"
+  },
+  {
+   "id": "media.tape.eject",
+   "group": "media",
+   "title": "Tape eject",
+   "draw": "cassette with an eject mark"
+  },
+  {
+   "id": "media.tape.load",
+   "group": "media",
+   "title": "LOAD \"\"",
+   "draw": "cassette with an arrow down"
+  },
+  {
+   "id": "media.disk",
+   "group": "media",
+   "title": "Disk (menu)",
+   "draw": "3.5\" floppy"
+  },
+  {
+   "id": "media.eject",
+   "group": "media",
+   "title": "Eject (disk)",
+   "draw": "eject mark (triangle over a bar)"
+  },
+  {
+   "id": "media.protect",
+   "group": "media",
+   "title": "Write protect (off)",
+   "draw": "open padlock"
+  },
+  {
+   "id": "media.protect.on",
+   "group": "media",
+   "title": "Write protect (on)",
+   "draw": "closed padlock",
+   "variant_of": "media.protect"
+  },
+  {
+   "id": "media.save",
+   "group": "media",
+   "title": "Save the medium",
+   "draw": "floppy with an arrow down"
+  },
+  {
+   "id": "media.create",
+   "group": "media",
+   "title": "New blank disk",
+   "draw": "floppy with a plus"
+  },
+  {
+   "id": "media.disk.cat",
+   "group": "media",
+   "title": "CAT (disk directory)",
+   "draw": "floppy with list lines"
+  },
+  {
+   "id": "media.cdrom",
+   "group": "media",
+   "title": "CD-ROM",
+   "draw": "compact disc"
+  },
+  {
+   "id": "media.hdd",
+   "group": "media",
+   "title": "Hard disk",
+   "draw": "hard disk drive"
+  },
+  {
+   "id": "media.insert",
+   "group": "media",
+   "title": "Insert a medium",
+   "draw": "floppy going into a drive slot"
+  },
+  {
+   "id": "media.swap",
+   "group": "media",
+   "title": "Swap disks",
+   "draw": "two floppies and two arrows round between them"
+  },
+  {
+   "id": "media.export",
+   "group": "media",
+   "title": "Save as another format",
+   "draw": "floppy with an arrow out to the right"
+  },
+  {
+   "id": "media.discard",
+   "group": "media",
+   "title": "Discard changes",
+   "draw": "floppy with an undo arrow"
+  },
+  {
+   "id": "media.rescan",
+   "group": "media",
+   "title": "Rescan",
+   "draw": "folder with a refresh arrow"
+  },
+  {
+   "id": "rzx.play",
+   "group": "media",
+   "title": "Play an RZX",
+   "draw": "film reel and a play triangle"
+  },
+  {
+   "id": "rzx.stop",
+   "group": "media",
+   "title": "Stop the RZX",
+   "draw": "film reel and a stop square"
+  },
+  {
+   "id": "rzx.seek",
+   "group": "media",
+   "title": "Seek the RZX",
+   "draw": "film reel and an arrow into a bar"
+  },
+  {
+   "id": "snapshot.quick_save",
+   "group": "media",
+   "title": "Quick save",
+   "draw": "memory module with an arrow down"
+  },
+  {
+   "id": "snapshot.quick_load",
+   "group": "media",
+   "title": "Quick load",
+   "draw": "memory module with an arrow up"
+  },
+  {
+   "id": "snapshot.save",
+   "group": "media",
+   "title": "Save a snapshot",
+   "draw": "memory module over a floppy"
+  },
+  {
+   "id": "audio.sound",
+   "group": "audio",
+   "title": "Sound on (menu, unmuted)",
+   "draw": "speaker with waves"
+  },
+  {
+   "id": "audio.muted",
+   "group": "audio",
+   "title": "Muted",
+   "draw": "speaker with a cross"
+  },
+  {
+   "id": "audio.volume_up",
+   "group": "audio",
+   "title": "Volume up",
+   "draw": "speaker with a plus"
+  },
+  {
+   "id": "audio.volume_down",
+   "group": "audio",
+   "title": "Volume down",
+   "draw": "speaker with a minus"
+  },
+  {
+   "id": "audio.source",
+   "group": "audio",
+   "title": "A sound source (on)",
+   "draw": "sound chip with a wave"
+  },
+  {
+   "id": "audio.source.on",
+   "group": "audio",
+   "title": "A sound source (muted)",
+   "draw": "sound chip with a wave, crossed out",
+   "variant_of": "audio.source"
+  },
+  {
+   "id": "audio.solo",
+   "group": "audio",
+   "title": "Solo a source (off)",
+   "draw": "headphones"
+  },
+  {
+   "id": "audio.solo.on",
+   "group": "audio",
+   "title": "Solo a source (on)",
+   "draw": "headphones, cups lit, a light between them",
+   "variant_of": "audio.solo"
+  },
+  {
+   "id": "audio.source_volume",
+   "group": "audio",
+   "title": "Set a volume",
+   "draw": "sound chip and a fader"
+  },
+  {
+   "id": "video.menu",
+   "group": "video",
+   "title": "Video (menu)",
+   "draw": "monitor"
+  },
+  {
+   "id": "video.overscan",
+   "group": "video",
+   "title": "Border / overscan (off)",
+   "draw": "screen, small border"
+  },
+  {
+   "id": "video.overscan.on",
+   "group": "video",
+   "title": "Border / overscan (on)",
+   "draw": "screen with the full border",
+   "variant_of": "video.overscan"
+  },
+  {
+   "id": "video.temporal",
+   "group": "video",
+   "title": "De-flicker (off)",
+   "draw": "two offset frames, outlined"
+  },
+  {
+   "id": "video.temporal.on",
+   "group": "video",
+   "title": "De-flicker (on)",
+   "draw": "two offset frames, merged / lit",
+   "variant_of": "video.temporal"
+  },
+  {
+   "id": "video.blending",
+   "group": "video",
+   "title": "Frame blending (off)",
+   "draw": "a ball with motion lines"
+  },
+  {
+   "id": "video.blending.on",
+   "group": "video",
+   "title": "Frame blending (on)",
+   "draw": "a ball with two fading ghosts behind it",
+   "variant_of": "video.blending"
+  },
+  {
+   "id": "video.viewport",
+   "group": "video",
+   "title": "Overscan viewport (next crop)",
+   "draw": "border and paper with crop marks on the corners"
+  },
+  {
+   "id": "video.crt",
+   "group": "video",
+   "title": "CRT effects (off)",
+   "draw": "CRT television, screen dark and plain"
+  },
+  {
+   "id": "video.crt.on",
+   "group": "video",
+   "title": "CRT effects (on)",
+   "draw": "CRT television, screen lit with scanlines",
+   "variant_of": "video.crt"
+  },
+  {
+   "id": "video.crt_profile",
+   "group": "video",
+   "title": "CRT profile (next)",
+   "draw": "CRT television and a chevron right"
+  },
+  {
+   "id": "video.crt_reset",
+   "group": "video",
+   "title": "Reset CRT parameters",
+   "draw": "CRT television and a circular arrow"
+  },
+  {
+   "id": "video.gpu",
+   "group": "video",
+   "title": "GPU acceleration (off)",
+   "draw": "graphics card, fan still"
+  },
+  {
+   "id": "video.gpu.on",
+   "group": "video",
+   "title": "GPU acceleration (on)",
+   "draw": "graphics card, fan lit with blades",
+   "variant_of": "video.gpu"
+  },
+  {
+   "id": "view.fullscreen",
+   "group": "video",
+   "title": "Full screen (off: enter)",
+   "draw": "four corners pointing out"
+  },
+  {
+   "id": "view.fullscreen.on",
+   "group": "video",
+   "title": "Full screen (on: leave)",
+   "draw": "four corners pointing in",
+   "variant_of": "view.fullscreen"
+  },
+  {
+   "id": "view.scale",
+   "group": "video",
+   "title": "Window scale (next)",
+   "draw": "small window and a diagonal arrow out of it"
+  },
+  {
+   "id": "view.toolbar",
+   "group": "video",
+   "title": "Toolbar (hidden)",
+   "draw": "window, an empty strip under the title"
+  },
+  {
+   "id": "view.toolbar.on",
+   "group": "video",
+   "title": "Toolbar (shown)",
+   "draw": "window, a row of buttons under the title",
+   "variant_of": "view.toolbar"
+  },
+  {
+   "id": "view.status_bar",
+   "group": "video",
+   "title": "Status bar (hidden)",
+   "draw": "window, an empty strip at the bottom"
+  },
+  {
+   "id": "view.status_bar.on",
+   "group": "video",
+   "title": "Status bar (shown)",
+   "draw": "window, a status strip at the bottom",
+   "variant_of": "view.status_bar"
+  },
+  {
+   "id": "view.next_layers",
+   "group": "video",
+   "title": "Next layers window (off)",
+   "draw": "three layer plates stacked tight"
+  },
+  {
+   "id": "view.next_layers.on",
+   "group": "video",
+   "title": "Next layers window (on)",
+   "draw": "three layer plates spread apart, the top one lit",
+   "variant_of": "view.next_layers"
+  },
+  {
+   "id": "view.next_layers_mode",
+   "group": "video",
+   "title": "Next layers mode (next)",
+   "draw": "layer plates and a chevron right"
+  },
+  {
+   "id": "view.next_layer",
+   "group": "video",
+   "title": "A Next layer (off)",
+   "draw": "one layer plate, an empty check box"
+  },
+  {
+   "id": "view.next_layer.on",
+   "group": "video",
+   "title": "A Next layer (on)",
+   "draw": "one layer plate, lit, a ticked check box",
+   "variant_of": "view.next_layer"
+  },
+  {
+   "id": "hud",
+   "group": "video",
+   "title": "HUD (off)",
+   "draw": "screen with one hollow overlay box"
+  },
+  {
+   "id": "hud.on",
+   "group": "video",
+   "title": "HUD (on)",
+   "draw": "screen with overlay readouts",
+   "variant_of": "hud"
+  },
+  {
+   "id": "hud.theme",
+   "group": "video",
+   "title": "HUD theme (next)",
+   "draw": "painter's palette"
+  },
+  {
+   "id": "hud.notice",
+   "group": "video",
+   "title": "A HUD notice (off)",
+   "draw": "empty speech bubble"
+  },
+  {
+   "id": "hud.notice.on",
+   "group": "video",
+   "title": "A HUD notice (on)",
+   "draw": "speech bubble with text lines",
+   "variant_of": "hud.notice"
+  },
+  {
+   "id": "cap.screenshot",
+   "group": "video",
+   "title": "Screenshot (capture menu)",
+   "draw": "photo camera"
+  },
+  {
+   "id": "cap.screenshot_save",
+   "group": "video",
+   "title": "Save a screenshot",
+   "draw": "camera with an arrow down"
+  },
+  {
+   "id": "cap.record",
+   "group": "video",
+   "title": "Record video (off)",
+   "draw": "video camera"
+  },
+  {
+   "id": "cap.record.on",
+   "group": "video",
+   "title": "Record video (on)",
+   "draw": "video camera with the record light on",
+   "variant_of": "cap.record"
+  },
+  {
+   "id": "cap.clip_last",
+   "group": "video",
+   "title": "Clip the last seconds",
+   "draw": "scissors"
+  },
+  {
+   "id": "cap.record_pause",
+   "group": "video",
+   "title": "Pause recording",
+   "draw": "video camera with pause bars"
+  },
+  {
+   "id": "cap.audio_capture",
+   "group": "video",
+   "title": "Capture audio",
+   "draw": "waveform and an arrow down"
+  },
+  {
+   "id": "input.key",
+   "group": "input",
+   "title": "A key (the key name is the label)",
+   "draw": "blank keycap"
+  },
+  {
+   "id": "input.keyboard",
+   "group": "input",
+   "title": "Keyboard (menu) / type text",
+   "draw": "keyboard"
+  },
+  {
+   "id": "input.macro",
+   "group": "input",
+   "title": "Key macro",
+   "draw": "keycap with a play triangle"
+  },
+  {
+   "id": "input.release_all",
+   "group": "input",
+   "title": "Release all keys and buttons",
+   "draw": "keycap with an arrow up"
+  },
+  {
+   "id": "input.mouse.left",
+   "group": "input",
+   "title": "Mouse button: left",
+   "draw": "mouse, the left button lit"
+  },
+  {
+   "id": "input.mouse.right",
+   "group": "input",
+   "title": "Mouse button: right",
+   "draw": "mouse, the right button lit"
+  },
+  {
+   "id": "input.mouse.middle",
+   "group": "input",
+   "title": "Mouse button: middle",
+   "draw": "mouse, the middle button lit"
+  },
+  {
+   "id": "input.mouse_release",
+   "group": "input",
+   "title": "Release the mouse",
+   "draw": "mouse with an arrow up"
+  },
+  {
+   "id": "input.joystick",
+   "group": "input",
+   "title": "Joystick (menu)",
+   "draw": "joystick"
+  },
+  {
+   "id": "input.joy.up",
+   "group": "input",
+   "title": "Joystick up",
+   "draw": "arrow up from a centre"
+  },
+  {
+   "id": "input.joy.down",
+   "group": "input",
+   "title": "Joystick down",
+   "draw": "arrow down from a centre"
+  },
+  {
+   "id": "input.joy.left",
+   "group": "input",
+   "title": "Joystick left",
+   "draw": "arrow left from a centre"
+  },
+  {
+   "id": "input.joy.right",
+   "group": "input",
+   "title": "Joystick right",
+   "draw": "arrow right from a centre"
+  },
+  {
+   "id": "input.joy.up_left",
+   "group": "input",
+   "title": "Joystick up + left",
+   "draw": "diagonal arrow"
+  },
+  {
+   "id": "input.joy.up_right",
+   "group": "input",
+   "title": "Joystick up + right",
+   "draw": "diagonal arrow"
+  },
+  {
+   "id": "input.joy.down_left",
+   "group": "input",
+   "title": "Joystick down + left",
+   "draw": "diagonal arrow"
+  },
+  {
+   "id": "input.joy.down_right",
+   "group": "input",
+   "title": "Joystick down + right",
+   "draw": "diagonal arrow"
+  },
+  {
+   "id": "input.joy.fire",
+   "group": "input",
+   "title": "Joystick fire",
+   "draw": "round fire button"
+  },
+  {
+   "id": "input.joystick_type",
+   "group": "input",
+   "title": "Joystick type / interface",
+   "draw": "joystick plug (9-pin D connector) with its cable"
+  },
+  {
+   "id": "osd.keyboard",
+   "group": "input",
+   "title": "On-screen keyboard",
+   "draw": "keyboard on a screen"
+  },
+  {
+   "id": "osd.keyboard_picture",
+   "group": "input",
+   "title": "Keyboard picture (next)",
+   "draw": "keyboard and a chevron right"
+  },
+  {
+   "id": "osd.quick_menu",
+   "group": "input",
+   "title": "Quick menu",
+   "draw": "window with menu lines"
+  },
+  {
+   "id": "basic.menu",
+   "group": "basic",
+   "title": "BASIC (menu) / LIST",
+   "draw": "program listing with line numbers"
+  },
+  {
+   "id": "basic.run",
+   "group": "basic",
+   "title": "RUN",
+   "draw": "listing with a play triangle"
+  },
+  {
+   "id": "basic.inject",
+   "group": "basic",
+   "title": "Write a BASIC program",
+   "draw": "listing with a plus"
+  },
+  {
+   "id": "basic.clear",
+   "group": "basic",
+   "title": "NEW (clear the program)",
+   "draw": "listing with a cross"
+  },
+  {
+   "id": "basic.mode.48",
+   "group": "basic",
+   "title": "48K BASIC",
+   "draw": "the number 48"
+  },
+  {
+   "id": "basic.mode.128",
+   "group": "basic",
+   "title": "128K BASIC",
+   "draw": "the number 128"
+  },
+  {
+   "id": "settings.menu",
+   "group": "settings",
+   "title": "Settings (menu)",
+   "draw": "gear"
+  },
+  {
+   "id": "settings.toggle",
+   "group": "settings",
+   "title": "A feature or setting (off)",
+   "draw": "switch, off"
+  },
+  {
+   "id": "settings.toggle.on",
+   "group": "settings",
+   "title": "A feature or setting (on)",
+   "draw": "switch, on",
+   "variant_of": "settings.toggle"
+  },
+  {
+   "id": "settings.value",
+   "group": "settings",
+   "title": "Set a value",
+   "draw": "three sliders"
+  },
+  {
+   "id": "set.speed",
+   "group": "settings",
+   "title": "Speed (menu, next speed)",
+   "draw": "speed gauge, needle in the middle"
+  },
+  {
+   "id": "status.ok",
+   "group": "status",
+   "title": "OK / done",
+   "draw": "check mark"
+  },
+  {
+   "id": "status.warn",
+   "group": "status",
+   "title": "Warning",
+   "draw": "warning triangle with !"
+  },
+  {
+   "id": "status.error",
+   "group": "status",
+   "title": "Error / failed",
+   "draw": "disc with a cross"
+  },
+  {
+   "id": "status.busy",
+   "group": "status",
+   "title": "Busy",
+   "draw": "hourglass"
+  },
+  {
+   "id": "status.offline",
+   "group": "status",
+   "title": "No connection to unreal-ng",
+   "draw": "unplugged plug"
+  },
+  {
+   "id": "status.hold",
+   "group": "status",
+   "title": "Hold to confirm",
+   "draw": "stopwatch"
+  }
+ ],
+ "actions": {
+  "run.pause_toggle": {
+   "face": "run.pause",
+   "face_on": "run.play",
+   "state": "run.state.paused"
+  },
+  "run.pause": {
+   "face": "run.pause"
+  },
+  "run.resume": {
+   "face": "run.play"
+  },
+  "run.step_in": {
+   "face": "run.step_in"
+  },
+  "run.step_over": {
+   "face": "run.step_over"
+  },
+  "run.step_out": {
+   "face": "run.step_out"
+  },
+  "run.frame_step": {
+   "face": "run.frame_step"
+  },
+  "run.wait_int": {
+   "face": "run.wait_int"
+  },
+  "run.to_scanline": {
+   "face": "run.to_scanline"
+  },
+  "run.n_scanlines": {
+   "face": "run.n_scanlines"
+  },
+  "run.turbo_hold": {
+   "face": "run.turbo_hold"
+  },
+  "run.steps": {
+   "face": "run.steps",
+   "label": "the count"
+  },
+  "run.frames": {
+   "face": "run.frames",
+   "label": "the count"
+  },
+  "run.tstates": {
+   "face": "run.tstates",
+   "label": "the count"
+  },
+  "ttd.record_toggle": {
+   "face": "ttd.record",
+   "face_on": "ttd.record.on",
+   "state": "toggle.ttd.record_toggle"
+  },
+  "ttd.start": {
+   "face": "ttd.record.on"
+  },
+  "ttd.stop": {
+   "face": "ttd.stop"
+  },
+  "ttd.step_back_frame": {
+   "face": "ttd.step_back_frame"
+  },
+  "ttd.step_forward_frame": {
+   "face": "ttd.step_forward_frame"
+  },
+  "ttd.step_back_instruction": {
+   "face": "ttd.step_back_instruction"
+  },
+  "ttd.step_forward_instruction": {
+   "face": "ttd.step_forward_instruction"
+  },
+  "ttd.step_back_scanline": {
+   "face": "ttd.step_back_scanline"
+  },
+  "ttd.reverse_step": {
+   "face": "ttd.reverse_step"
+  },
+  "ttd.reverse_continue": {
+   "face": "ttd.reverse_continue"
+  },
+  "ttd.resume_live": {
+   "face": "ttd.resume_live"
+  },
+  "ttd.bookmark_add": {
+   "face": "ttd.bookmark_add"
+  },
+  "ttd.bookmark_delete": {
+   "face": "ttd.bookmark_delete"
+  },
+  "ttd.bookmark_prev": {
+   "face": "ttd.bookmark_prev"
+  },
+  "ttd.bookmark_next": {
+   "face": "ttd.bookmark_next"
+  },
+  "ttd.seek": {
+   "face": "ttd.seek",
+   "params": {
+    "frame: 0": "ttd.go_start",
+    "bookmark": "ttd.bookmark"
+   }
+  },
+  "ttd.find_last_write": {
+   "face": "ttd.find_last_write"
+  },
+  "ttd.invalidate": {
+   "face": "ttd.invalidate"
+  },
+  "ttd.history_limit": {
+   "face": "ttd.history_limit",
+   "label": "the limit"
+  },
+  "ttd.journal": {
+   "face": "ttd.journal",
+   "face_on": "ttd.journal.on",
+   "state": "toggle.ttd.journal"
+  },
+  "ttd.dump": {
+   "face": "ttd.dump"
+  },
+  "ttd.load": {
+   "face": "ttd.load"
+  },
+  "mach.reset": {
+   "face": "mach.reset"
+  },
+  "mach.nmi": {
+   "face": "mach.nmi"
+  },
+  "mach.turbo_toggle": {
+   "face": "mach.turbo",
+   "face_on": "mach.turbo.on",
+   "state": "toggle.mach.turbo_toggle"
+  },
+  "mach.start": {
+   "face": "mach.start",
+   "params": {
+    "a model of another family": "mach.chip"
+   },
+   "label": "the model; a software key shows its thumbnail instead"
+  },
+  "mach.cold_reset": {
+   "face": "mach.cold_reset"
+  },
+  "cap.record_toggle": {
+   "face": "cap.record",
+   "face_on": "cap.record.on",
+   "state": "toggle.cap.record_toggle"
+  },
+  "cap.clip_last": {
+   "face": "cap.clip_last"
+  },
+  "cap.screenshot": {
+   "face": "cap.screenshot"
+  },
+  "cap.screenshot_save": {
+   "face": "cap.screenshot_save"
+  },
+  "osd.keyboard": {
+   "face": "osd.keyboard"
+  },
+  "osd.quick_menu": {
+   "face": "osd.quick_menu"
+  },
+  "input.key": {
+   "face": "input.key",
+   "label": "the key name (needs a label over the picture)"
+  },
+  "input.type": {
+   "face": "input.keyboard",
+   "label": "the text"
+  },
+  "input.macro": {
+   "face": "input.macro",
+   "label": "the macro name"
+  },
+  "input.joystick": {
+   "face": "input.joystick",
+   "params": {
+    "up": "input.joy.up",
+    "down": "input.joy.down",
+    "left": "input.joy.left",
+    "right": "input.joy.right",
+    "up+left": "input.joy.up_left",
+    "up+right": "input.joy.up_right",
+    "down+left": "input.joy.down_left",
+    "down+right": "input.joy.down_right",
+    "fire": "input.joy.fire"
+   }
+  },
+  "input.release_all": {
+   "face": "input.release_all"
+  },
+  "basic.run": {
+   "face": "basic.run",
+   "params": {
+    "LIST": "basic.menu",
+    "LOAD \"\"": "media.tape.load",
+    "CAT": "media.disk.cat"
+   },
+   "label": "other commands: the command"
+  },
+  "basic.inject": {
+   "face": "basic.inject"
+  },
+  "basic.clear": {
+   "face": "basic.clear"
+  },
+  "basic.mode": {
+   "params": {
+    "48k": "basic.mode.48",
+    "128k": "basic.mode.128"
+   }
+  },
+  "feature.toggle": {
+   "face": "settings.toggle",
+   "face_on": "settings.toggle.on",
+   "state": "toggle.feature.<name>",
+   "label": "the feature"
+  },
+  "set.speed": {
+   "face": "set.speed",
+   "label": "x1 x2 x4 x8 x16"
+  },
+  "set.toggle": {
+   "face": "settings.toggle",
+   "face_on": "settings.toggle.on",
+   "state": "toggle.set.toggle.<name>",
+   "params": {
+    "turbo_mode": "mach.turbo"
+   },
+   "label": "the setting"
+  },
+  "set.value": {
+   "face": "settings.value",
+   "label": "the setting and value"
+  },
+  "audio.mute_toggle": {
+   "face": "audio.sound",
+   "face_on": "audio.muted",
+   "state": "audio.mute.muted"
+  },
+  "audio.source_mute": {
+   "face": "audio.source",
+   "face_on": "audio.source.on",
+   "state": "toggle.audio.source_mute.<source>",
+   "label": "the source (AY 1, BEEPER, ...)"
+  },
+  "audio.volume_by": {
+   "params": {
+    "step > 0": "audio.volume_up",
+    "step < 0": "audio.volume_down"
+   },
+   "note": "a dial action; on a key with a fixed step"
+  },
+  "media.open": {
+   "face": "media.open",
+   "label": "a software key shows its thumbnail instead"
+  },
+  "media.tape": {
+   "face": "media.tape",
+   "params": {
+    "play": "media.tape.play",
+    "pause": "media.tape.pause",
+    "toggle": "media.tape.play",
+    "stop": "media.tape.stop",
+    "rewind": "media.tape.rewind",
+    "eject": "media.tape.eject"
+   }
+  },
+  "media.eject": {
+   "face": "media.eject",
+   "params": {
+    "tape": "media.tape.eject"
+   },
+   "label": "the drive"
+  },
+  "media.protect": {
+   "face": "media.protect",
+   "face_on": "media.protect.on",
+   "state": "media.disk.drives[<drive>].protected",
+   "label": "the drive"
+  },
+  "media.save": {
+   "face": "media.save",
+   "label": "the drive"
+  },
+  "media.create": {
+   "face": "media.create",
+   "label": "the drive"
+  },
+  "snapshot.quick": {
+   "params": {
+    "save": "snapshot.quick_save",
+    "load": "snapshot.quick_load"
+   }
+  },
+  "snapshot.save": {
+   "face": "snapshot.save"
+  },
+  "video.overscan_toggle": {
+   "face": "video.overscan",
+   "face_on": "video.overscan.on",
+   "state": "toggle.video.overscan_toggle"
+  },
+  "video.temporal": {
+   "face": "video.temporal",
+   "face_on": "video.temporal.on",
+   "state": "toggle.video.temporal"
+  },
+  "dbg.mode_toggle": {
+   "face": "dbg.mode",
+   "face_on": "dbg.mode.on",
+   "state": "debug.mode.enabled"
+  },
+  "dbg.open": {
+   "face": "debug.menu"
+  },
+  "dbg.breakpoints_clear": {
+   "face": "dbg.breakpoints_clear"
+  },
+  "dbg.breakpoint_hits_reset": {
+   "face": "dbg.breakpoint_hits_reset"
+  },
+  "dbg.breakpoint_toggle_pc": {
+   "face": "dbg.breakpoint_toggle_pc"
+  },
+  "dbg.labels_toggle": {
+   "face": "dbg.labels_toggle"
+  },
+  "dbg.focus_next_pane": {
+   "face": "dbg.focus_next_pane"
+  },
+  "dbg.focus_prev_pane": {
+   "face": "dbg.focus_prev_pane"
+  },
+  "dbg.cursor_up": {
+   "face": "dbg.cursor_up"
+  },
+  "dbg.cursor_down": {
+   "face": "dbg.cursor_down"
+  },
+  "dbg.cursor_left": {
+   "face": "dbg.cursor_left"
+  },
+  "dbg.cursor_right": {
+   "face": "dbg.cursor_right"
+  },
+  "dbg.page_up": {
+   "face": "dbg.page_up"
+  },
+  "dbg.page_down": {
+   "face": "dbg.page_down"
+  },
+  "dbg.memory_follow": {
+   "face": "dbg.memory_follow"
+  },
+  "run.to_pixel": {
+   "face": "run.to_pixel"
+  },
+  "run.until_pc": {
+   "face": "run.until_pc",
+   "label": "the address"
+  },
+  "run.to_cursor": {
+   "face": "run.to_cursor"
+  },
+  "run.step_line": {
+   "face": "run.step_line"
+  },
+  "run.to_line": {
+   "face": "run.to_line",
+   "label": "the line"
+  },
+  "run.pace_set": {
+   "face": "run.pace",
+   "label": "the preset (25fps, 1line, ...)"
+  },
+  "run.pace_next": {
+   "face": "run.pace_next"
+  },
+  "run.pace_prev": {
+   "face": "run.pace_prev"
+  },
+  "run.pace_toggle": {
+   "face": "run.pace_toggle",
+   "face_on": "run.pace_toggle.on",
+   "state": "toggle.run.pace_toggle"
+  },
+  "run.pace_stop": {
+   "face": "run.pace_stop"
+  },
+  "run.pace_step": {
+   "face": "run.pace_step"
+  },
+  "mach.previous": {
+   "face": "mach.previous"
+  },
+  "mach.switch": {
+   "face": "mach.switch",
+   "face_on": "mach.switch.on",
+   "state": "toggle.mach.switch.<name>",
+   "label": "the switch (TURBO, CP/M)"
+  },
+  "ttd.step_forward_scanline": {
+   "face": "ttd.step_forward_scanline"
+  },
+  "ttd.unit_back": {
+   "face": "ttd.unit_back"
+  },
+  "ttd.unit_forward": {
+   "face": "ttd.unit_forward"
+  },
+  "ttd.scrub_unit": {
+   "face": "ttd.scrub_unit",
+   "label": "the unit",
+   "note": "a text action; on a key with next / prev or a unit"
+  },
+  "ttd.seek_start": {
+   "face": "ttd.go_start"
+  },
+  "ttd.seek_end": {
+   "face": "ttd.go_end"
+  },
+  "ttd.bookmarks": {
+   "face": "ttd.bookmark"
+  },
+  "ttd.find_last": {
+   "face": "ttd.find_last",
+   "params": {
+    "access: write": "ttd.find_last_write"
+   },
+   "label": "other accesses: the access (read, execute, io)"
+  },
+  "ttd.journal_build": {
+   "face": "ttd.journal_build"
+  },
+  "ttd.journal_build_cancel": {
+   "face": "ttd.journal_build_cancel"
+  },
+  "ttd.export_clip": {
+   "face": "ttd.export_clip"
+  },
+  "dbg.breakpoint_toggle_cursor": {
+   "face": "dbg.breakpoint_toggle_cursor"
+  },
+  "dbg.bp_add": {
+   "face": "dbg.bp_add",
+   "label": "the kind and address"
+  },
+  "dbg.bp_remove": {
+   "face": "dbg.bp_remove",
+   "label": "the selection"
+  },
+  "dbg.bp_enable": {
+   "face": "dbg.bp_enable",
+   "label": "the selection"
+  },
+  "dbg.bp_disable": {
+   "face": "dbg.bp_disable",
+   "label": "the selection"
+  },
+  "dbg.bp_toggle": {
+   "face": "dbg.bp_toggle",
+   "face_on": "dbg.bp_toggle.on",
+   "state": "toggle.bp.<select>",
+   "label": "the selection"
+  },
+  "dbg.bp_group_toggle": {
+   "face": "dbg.bp_group",
+   "face_on": "dbg.bp_group.on",
+   "state": "toggle.bp_group.<group>",
+   "label": "the group"
+  },
+  "dbg.register_set": {
+   "face": "dbg.register_set",
+   "label": "the register and value"
+  },
+  "mem.write": {
+   "face": "mem.write",
+   "label": "the address"
+  },
+  "port.out": {
+   "face": "port.out",
+   "label": "the port and value"
+  },
+  "dbg.follow_pc": {
+   "face": "dbg.follow_pc"
+  },
+  "dbg.scroll_mode_toggle": {
+   "face": "dbg.scroll_mode"
+  },
+  "dbg.goto": {
+   "face": "dbg.goto",
+   "label": "the address"
+  },
+  "sym.import": {
+   "face": "sym.import"
+  },
+  "sym.export": {
+   "face": "sym.export"
+  },
+  "sym.import_source": {
+   "face": "sym.import_source"
+  },
+  "sym.import_live": {
+   "face": "sym.import_live"
+  },
+  "sym.drop": {
+   "face": "sym.drop",
+   "label": "the set"
+  },
+  "sym.set_toggle": {
+   "face": "sym.set",
+   "face_on": "sym.set.on",
+   "state": "toggle.sym_set.<id>",
+   "label": "the set"
+  },
+  "prof.toggle": {
+   "face": "prof.toggle",
+   "face_on": "prof.toggle.on",
+   "state": "toggle.profiler.<name>",
+   "label": "the profiler (opcode, memory, calltrace, ...)"
+  },
+  "prof.pause_toggle": {
+   "face": "prof.pause",
+   "face_on": "prof.pause.on",
+   "state": "toggle.profiler_paused.<name>",
+   "label": "the profiler"
+  },
+  "prof.clear": {
+   "face": "prof.clear",
+   "label": "the profiler"
+  },
+  "analyzer.toggle": {
+   "face": "analyzer.toggle",
+   "face_on": "analyzer.toggle.on",
+   "state": "toggle.analyzer.<name>",
+   "label": "the analyzer"
+  },
+  "analyzer.clear": {
+   "face": "analyzer.clear",
+   "label": "the analyzer"
+  },
+  "media.insert": {
+   "face": "media.insert",
+   "label": "the drive"
+  },
+  "media.swap": {
+   "face": "media.swap",
+   "label": "the drives"
+  },
+  "media.export": {
+   "face": "media.export",
+   "label": "the format"
+  },
+  "media.discard": {
+   "face": "media.discard",
+   "label": "the drive"
+  },
+  "media.rescan": {
+   "face": "media.rescan",
+   "label": "the drive"
+  },
+  "media.open_recent": {
+   "face": "media.open_recent",
+   "label": "the file; a software key shows its thumbnail instead"
+  },
+  "rzx.play": {
+   "face": "rzx.play",
+   "label": "the recording"
+  },
+  "rzx.stop": {
+   "face": "rzx.stop"
+  },
+  "rzx.seek": {
+   "face": "rzx.seek",
+   "label": "the frame or step"
+  },
+  "audio.source_solo": {
+   "face": "audio.solo",
+   "face_on": "audio.solo.on",
+   "state": "toggle.audio.source_solo.<source>",
+   "label": "the source (AY 1, BEEPER, ...)"
+  },
+  "audio.source_volume": {
+   "face": "audio.source_volume",
+   "label": "the source and volume"
+  },
+  "video.gpu_toggle": {
+   "face": "video.gpu",
+   "face_on": "video.gpu.on",
+   "state": "toggle.video.gpu_toggle"
+  },
+  "video.crt_toggle": {
+   "face": "video.crt",
+   "face_on": "video.crt.on",
+   "state": "toggle.video.crt_toggle"
+  },
+  "video.crt_profile": {
+   "face": "video.crt_profile",
+   "label": "the profile"
+  },
+  "video.crt_params_reset": {
+   "face": "video.crt_reset"
+  },
+  "video.blending": {
+   "face": "video.blending",
+   "face_on": "video.blending.on",
+   "state": "toggle.video.blending"
+  },
+  "video.viewport": {
+   "face": "video.viewport",
+   "label": "the crop (full, symmetric, ...)"
+  },
+  "view.fullscreen": {
+   "face": "view.fullscreen",
+   "face_on": "view.fullscreen.on",
+   "state": "toggle.view.fullscreen"
+  },
+  "view.scale": {
+   "face": "view.scale",
+   "label": "x1 x2 x3 x4"
+  },
+  "view.toolbar": {
+   "face": "view.toolbar",
+   "face_on": "view.toolbar.on",
+   "state": "toggle.view.toolbar"
+  },
+  "view.status_bar": {
+   "face": "view.status_bar",
+   "face_on": "view.status_bar.on",
+   "state": "toggle.view.status_bar"
+  },
+  "view.next_layers": {
+   "face": "view.next_layers",
+   "face_on": "view.next_layers.on",
+   "state": "toggle.view.next_layers"
+  },
+  "view.next_layers_mode": {
+   "face": "view.next_layers_mode",
+   "label": "the mode"
+  },
+  "view.next_layer": {
+   "face": "view.next_layer",
+   "face_on": "view.next_layer.on",
+   "state": "toggle.view.next_layer.<name>",
+   "label": "the layer (ULA, L2, TILES, SPRITES)"
+  },
+  "hud.toggle": {
+   "face": "hud",
+   "face_on": "hud.on",
+   "state": "toggle.hud.toggle"
+  },
+  "hud.theme": {
+   "face": "hud.theme",
+   "label": "the theme"
+  },
+  "hud.notice": {
+   "face": "hud.notice",
+   "face_on": "hud.notice.on",
+   "state": "toggle.hud.notice.<id>",
+   "label": "the notice"
+  },
+  "cap.record_pause": {
+   "face": "cap.record_pause"
+  },
+  "cap.audio_capture": {
+   "face": "cap.audio_capture",
+   "label": "the source"
+  },
+  "input.mouse_button": {
+   "face": "input.mouse.left",
+   "params": {
+    "right": "input.mouse.right",
+    "middle": "input.mouse.middle"
+   }
+  },
+  "input.mouse_release": {
+   "face": "input.mouse_release"
+  },
+  "input.joystick_type": {
+   "face": "input.joystick_type",
+   "label": "the kind (KEMPSTON, SINCLAIR 1, ...)"
+  },
+  "osd.keyboard_picture": {
+   "face": "osd.keyboard_picture",
+   "label": "the picture"
+  }
+ },
+ "pruned": {
+  "ctx.set": "set by entering a menu that names a context; never a key of its own",
+  "run.step_by": "a dial (delta) action: dials have a strip label, not a key face",
+  "ttd.jog_frames": "a dial (delta) action",
+  "ttd.jog_instructions": "a dial (delta) action",
+  "ttd.seek_by": "a dial (delta) action",
+  "ttd.scrub_back": "a level action of the GUI (held stick / trigger), not a key press",
+  "ttd.scrub_forward": "a level action of the GUI (held stick / trigger), not a key press",
+  "run.pace_by": "a dial (delta) action",
+  "video.crt_param_by": "a dial (delta) action",
+  "video.blending_decay_by": "a dial (delta) action"
+ },
+ "navigation": {
+  "back": "nav.back",
+  "home": "nav.home",
+  "menu (generic)": "nav.folder",
+  "previous page": "nav.prev_page",
+  "next page": "nav.next_page",
+  "target follows focus / pinned": [
+   "nav.target",
+   "nav.target.on"
+  ],
+  "instances": "nav.instances",
+  "deck settings": "deck.menu",
+  "brightness": "deck.brightness",
+  "menu: machines": "mach.start",
+  "menu: software": "media.software",
+  "menu: tape": "media.tape",
+  "menu: disk": "media.disk",
+  "menu: time travel": "ttd.menu",
+  "menu: time code": "ttd.timecode",
+  "menu: bookmarks": "ttd.bookmark",
+  "menu: debugger": "debug.menu",
+  "menu: disassembly": "debug.disasm",
+  "menu: memory": "debug.memory",
+  "menu: registers": "debug.registers",
+  "menu: stack": "debug.stack",
+  "menu: speed": "set.speed",
+  "menu: audio": "audio.sound",
+  "menu: video": "video.menu",
+  "menu: capture": "cap.screenshot",
+  "menu: joystick": "input.joystick",
+  "menu: keyboard": "input.keyboard",
+  "menu: BASIC": "basic.menu",
+  "menu: settings": "settings.menu"
+ }
+}

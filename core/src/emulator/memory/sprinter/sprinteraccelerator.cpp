@@ -7,8 +7,30 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 
+namespace
+{
+/// The opcodes a fetch may change the accelerator with even when no latch is set: a same-register LD r,r and
+/// HALT (ACC_MODE), the ALU group (FN_ACC), the prefixes (the prefix and ED latches)
+struct FetchMattersTable
+{
+    bool entries[256] = {};
+    constexpr FetchMattersTable()
+    {
+        for (int op = 0; op < 256; op++)
+        {
+            const bool sameRegister = (op & 0xC0) == 0x40 && ((op >> 3) & 0x07) == (op & 0x07);
+            const bool alu = (op & 0xC0) == 0x80;
+            const bool prefix = op == 0xCB || op == 0xDD || op == 0xED || op == 0xFD;
+            entries[op] = sameRegister || alu || prefix;
+        }
+    }
+};
+constexpr FetchMattersTable kFetchMatters;
+}  // namespace
+
 SprinterAccelerator::SprinterAccelerator(EmulatorContext* context, SprinterPldState& pld) : _context(context), _pld(pld)
 {
+    fetchMatters = kFetchMatters.entries;
 }
 
 void SprinterAccelerator::Reset()
@@ -26,6 +48,7 @@ void SprinterAccelerator::Reset()
     _state.aagr = 0;
     _writePending = false;
     RefreshWatch();
+    RefreshFetchQuiet();
 }
 
 bool SprinterAccelerator::IsEnabled() const
@@ -40,6 +63,7 @@ bool SprinterAccelerator::CheckEnabled()
     _state.mode = 0;
     _state.dir = 0;
     RefreshWatch();
+    RefreshFetchQuiet();
     return false;
 }
 
@@ -80,6 +104,31 @@ void SprinterAccelerator::OnOpcodeFetch([[maybe_unused]] uint16_t addr, uint8_t 
     _state.reti = (_state.edSeen && opcode == 0x4D) ? 1 : 0;
     _state.edSeen = opcode == 0xED ? 1 : 0;
     _state.prefix = (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD) ? 1 : 0;
+    RefreshFetchQuiet();
+}
+
+bool SprinterAccelerator::RepeatFetchIsInert([[maybe_unused]] uint16_t addr, uint8_t opcode) const
+{
+    // OnOpcodeFetch step by step, comparing instead of storing
+    if (_state.blocked && _state.reti)
+        return false;
+    const bool prefixed = _state.prefix != 0;
+    if (!IsEnabled())
+    {
+        if (_state.mode != 0 || _state.dir != 0)
+            return false;  // CheckEnabled clears them
+    }
+    else if (!prefixed && (opcode & 0xC0) == 0x40 && ((opcode >> 3) & 0x07) == (opcode & 0x07))
+    {
+        const uint8_t mode = opcode & 0x07;
+        if (_state.mode != mode || _state.dir != kDir[mode])
+            return false;
+    }
+    const uint8_t fn = (!prefixed && (opcode & 0xC0) == 0x80) ? static_cast<uint8_t>(~(opcode >> 3) & 0x07) : 0;
+    const uint8_t reti = (_state.edSeen && opcode == 0x4D) ? 1 : 0;
+    const uint8_t edSeen = opcode == 0xED ? 1 : 0;
+    const uint8_t prefix = (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD) ? 1 : 0;
+    return _state.fn == fn && _state.reti == reti && _state.edSeen == edSeen && _state.prefix == prefix;
 }
 
 void SprinterAccelerator::OnInterruptAcknowledge()
@@ -95,12 +144,15 @@ void SprinterAccelerator::OnInterruptAcknowledge()
 
 /// region <Data: the repeated accesses>
 
-uint8_t& SprinterAccelerator::BufferCell(uint8_t counter)
+uint8_t& SprinterAccelerator::BufferCell(uint16_t counter)
 {
     if (!_state.alt)
-        return _state.buffer[counter];
+    {
+        counter &= CounterMask();
+        return counter < sizeof(_state.buffer) ? _state.buffer[counter] : _tmk->bufferHigh[counter - sizeof(_state.buffer)];
+    }
 
-    // XCNT:XAGR += AAGR per access (MAME accel_buffer)
+    // XCNT:XAGR += AAGR per access (MAME accel_buffer); TMK: RAM_ADR = (0, 0, XCNT), the first 256 cells
     const uint8_t index = _state.xcnt;
     const uint16_t sum = static_cast<uint16_t>(((_state.xcnt << 8) | _state.xagr) + _state.aagr);
     _state.xcnt = static_cast<uint8_t>(sum >> 8);
@@ -119,12 +171,58 @@ uint8_t SprinterAccelerator::Combine(uint8_t fn, uint8_t buffer, uint8_t data)
     }
 }
 
-void SprinterAccelerator::Advance(uint16_t& addr)
+uint16_t SprinterAccelerator::StartCounter() const
+{
+    if (!_tmk)
+        return _state.length;  // 0: the 8-bit counter wraps, 256 accesses
+    // TMK ACC_CNT[9..0]: (0, 1, RGACC) for RGACC = 0, (0, 0, RGACC), or with ACC_CTRL bit 5 (RGACC, 0, 0)
+    if (_tmk->ctrl & kCtrlLength4)
+        return static_cast<uint16_t>(_state.length << 2);
+    return _state.length ? _state.length : 0x100;
+}
+
+uint32_t SprinterAccelerator::OperationAccesses() const
+{
+    if (_tmk && (_tmk->ctrl & kCtrlLength4))
+        return _state.length ? _state.length * 4u : 1024u;
+    return Accesses(_state.length);
+}
+
+bool SprinterAccelerator::TmkClips(uint16_t addr) const
+{
+    // SP2_ACEX.TDF GFX_CLIP = (CTRL0 & CTRL1 == AGR7) or (CTRL2 & CTRL3 == AO7): AGR is PORT_Y, AO the bus address
+    const uint8_t ctrl = _tmk->ctrl;
+    if ((ctrl & kCtrlClipY) && ((_pld.portY >> 7) & 1) == ((ctrl >> 1) & 1))
+        return true;
+    return (ctrl & kCtrlClipX) && ((addr >> 7) & 1) == ((ctrl >> 3) & 1);
+}
+
+void SprinterAccelerator::Advance(uint16_t& addr, uint16_t start, bool store)
 {
     if (_state.dir & kDirVertical)
+    {
         _pld.portY++;
-    else
+        return;
+    }
+    if (!_tmk)
+    {
         addr++;
+        return;
+    }
+    // TMK RECT_ENA = CTRL4 & ACC_DIR1 & a store: copy (LD L,L) only, the fill has no buffer bit. RECT_COUNTER steps
+    // with the address; at 0 the address goes back to the first one (AA_0) and AGR (PORT_Y) advances
+    if (store && (_tmk->ctrl & kCtrlRect) && (_state.dir & kDirBuffer))
+    {
+        if (_tmk->rectCounter == 0)
+        {
+            _tmk->rectCounter = _tmk->rectWidth;
+            addr = start;
+            _pld.portY++;
+            return;
+        }
+        _tmk->rectCounter--;
+    }
+    addr = static_cast<uint16_t>((_tmk->ctrl & kCtrlAddressDown) ? addr - 1 : addr + 1);
 }
 
 uint32_t SprinterAccelerator::ExtraClocks(uint32_t accesses, uint32_t ratio)
@@ -160,9 +258,10 @@ uint8_t SprinterAccelerator::OnRead(uint16_t addr, uint8_t value)
         return value;
 
     // The CPU's read is the first access; the PLD repeats it with the down-counter from RGACC
-    const uint32_t accesses = Accesses(_state.length);
+    const uint32_t accesses = OperationAccesses();
     const bool toBuffer = (_state.dir & kDirBuffer) != 0;
-    uint8_t counter = _state.length;
+    const uint16_t start = addr;
+    uint16_t counter = StartCounter();
     uint8_t data = value;
     for (uint32_t i = 0;; i++)
     {
@@ -173,7 +272,7 @@ uint8_t SprinterAccelerator::OnRead(uint16_t addr, uint8_t value)
             uint8_t& cell = BufferCell(counter);
             cell = Combine(_state.fn, cell, data);
         }
-        Advance(addr);
+        Advance(addr, start, false);
         if (i + 1 == accesses)
             break;
         counter--;
@@ -201,7 +300,7 @@ uint8_t SprinterAccelerator::BeforeWrite(uint16_t addr, uint8_t value)
     {
         _writePending = true;
         if (_state.dir & kDirBuffer)
-            return BufferCell(_state.length);  // copy: the first store is the buffer's
+            return BufferCell(StartCounter());  // copy: the first store is the buffer's
         return value;
     }
     if (_state.dir & kDirDouble)
@@ -228,17 +327,18 @@ void SprinterAccelerator::AfterWrite(uint16_t addr, uint8_t value)
         return;
     }
 
-    const uint32_t accesses = Accesses(_state.length);
+    const uint32_t accesses = OperationAccesses();
     const bool fromBuffer = (_state.dir & kDirBuffer) != 0;
-    uint8_t counter = _state.length;
-    Advance(addr);  // after the CPU's own store
+    const uint16_t start = addr;
+    uint16_t counter = StartCounter();
+    Advance(addr, start, true);  // after the CPU's own store
     for (uint32_t i = 1; i < accesses; i++)
     {
         counter--;
         const uint8_t data = fromBuffer ? BufferCell(counter) : value;
         if (_memory->AcceleratorReaches(addr))
             _memory->AcceleratorWrite(addr, data);
-        Advance(addr);
+        Advance(addr, start, true);
     }
 
     Charge(accesses);

@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
@@ -79,7 +79,7 @@ TEST(TrafficWindow_Test, RowsFilterDecodeAndSeekInsideTheRecording)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TTDSessionRef ttd(context);
     ASSERT_TRUE(ttd->StartRecording());
     emulator->RunNFrames(3);
     const uint64_t arpFrame = context->emulatorState.frame_counter;
@@ -92,7 +92,7 @@ TEST(TrafficWindow_Test, RowsFilterDecodeAndSeekInsideTheRecording)
     emulator->RunNFrames(1);         // ... at this frame boundary
 
     EmulatorBinding binding;
-    binding.bind(emulator.get());
+    binding.bind(emulator);
     TrafficWindow window;
     window.setBinding(&binding);
     QMetaObject::invokeMethod(&window, "refresh");

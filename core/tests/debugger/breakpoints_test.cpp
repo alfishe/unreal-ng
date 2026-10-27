@@ -82,14 +82,14 @@ TEST_F(BreakpointManager_test, addPortBreakpoint)
     const size_t initialCount = _brkManager->GetBreakpointsCount();
     const size_t expectedCount = initialCount + 1;
 
-    // Create port breakpoint descriptor
-    BreakpointDescriptor breakpoint;
-    breakpoint.type = BreakpointTypeEnum::BRK_IO;
-    breakpoint.ioType = BRK_IO_IN;  // Test with port input breakpoint
-    breakpoint.z80address = 0xFE;   // Test with port 0xFE
+    // Create port breakpoint descriptor (the manager owns it once added)
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_IN;  // Test with port input breakpoint
+    breakpoint->z80address = 0xFE;   // Test with port 0xFE
 
     // Add the breakpoint
-    uint16_t brkID = _brkManager->AddBreakpoint(&breakpoint);
+    uint16_t brkID = _brkManager->AddBreakpoint(breakpoint);
 
     if (brkID == BRK_INVALID)
     {
@@ -497,7 +497,7 @@ TEST_F(BreakpointManager_test, ownerDefaultsToInteractive)
     ASSERT_NE(brkID, BRK_INVALID);
 
     // Retrieve by ID and check owner
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->owner, BreakpointManager::OWNER_INTERACTIVE);
 }
@@ -510,7 +510,7 @@ TEST_F(BreakpointManager_test, ownerSetExplicitly)
     ASSERT_NE(brkID, BRK_INVALID);
 
     // Retrieve by ID and check owner
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->owner, "test_analyzer");
 }
@@ -547,9 +547,9 @@ TEST_F(BreakpointManager_test, multipleOwnersAtDifferentAddresses)
     ASSERT_NE(bp3, BRK_INVALID);
 
     // Check each breakpoint has correct owner using GetBreakpointById
-    BreakpointDescriptor* found1 = _brkManager->GetBreakpointById(bp1);
-    BreakpointDescriptor* found2 = _brkManager->GetBreakpointById(bp2);
-    BreakpointDescriptor* found3 = _brkManager->GetBreakpointById(bp3);
+    BreakpointSnapshot found1 = _brkManager->GetBreakpointById(bp1);
+    BreakpointSnapshot found2 = _brkManager->GetBreakpointById(bp2);
+    BreakpointSnapshot found3 = _brkManager->GetBreakpointById(bp3);
 
     ASSERT_NE(found1, nullptr);
     ASSERT_NE(found2, nullptr);
@@ -568,7 +568,7 @@ TEST_F(BreakpointManager_test, pageSpecificBreakpointDescriptorFields)
     ASSERT_NE(brkID, BRK_INVALID);
 
     // Find the breakpoint by ID
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
 
     ASSERT_NE(found, nullptr) << "Could not find page-specific breakpoint by ID";
 
@@ -594,7 +594,7 @@ TEST_F(BreakpointManager_test, removeBreakpointByID)
     EXPECT_EQ(countAfter, countBefore - 1);
 
     // Should not be found anymore
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
     EXPECT_EQ(found, nullptr);
 }
 
@@ -606,7 +606,7 @@ TEST_F(BreakpointManager_test, combinedMemoryBreakpointWithOwner)
 
     ASSERT_NE(brkID, BRK_INVALID);
 
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->owner, "combined_owner");
     EXPECT_TRUE(found->memoryType & BRK_MEM_READ);
@@ -625,8 +625,8 @@ TEST_F(BreakpointManager_test, portBreakpointsWithOwner)
     ASSERT_NE(bpOut, BRK_INVALID);
 
     // Both should be findable by ID
-    BreakpointDescriptor* foundIn = _brkManager->GetBreakpointById(bpIn);
-    BreakpointDescriptor* foundOut = _brkManager->GetBreakpointById(bpOut);
+    BreakpointSnapshot foundIn = _brkManager->GetBreakpointById(bpIn);
+    BreakpointSnapshot foundOut = _brkManager->GetBreakpointById(bpOut);
 
     ASSERT_NE(foundIn, nullptr);
     ASSERT_NE(foundOut, nullptr);
@@ -804,7 +804,7 @@ TEST_F(BreakpointManager_test, PageSpecific_RegisterExecuteInROM_Positive)
     EXPECT_GE(_brkManager->GetBreakpointsCount(), 1);
 
     // Verify descriptor fields
-    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot bp = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(bp, nullptr);
     EXPECT_EQ(bp->z80address, 0x3D00);
     EXPECT_EQ(bp->page, 3);
@@ -820,7 +820,7 @@ TEST_F(BreakpointManager_test, PageSpecific_RegisterReadInRAM_Positive)
 
     ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register read breakpoint in RAM page";
 
-    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot bp = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(bp, nullptr);
     EXPECT_EQ(bp->z80address, 0xC000);
     EXPECT_EQ(bp->page, 5);
@@ -835,7 +835,7 @@ TEST_F(BreakpointManager_test, PageSpecific_RegisterWriteInRAM_Positive)
 
     ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register write breakpoint in RAM page";
 
-    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot bp = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(bp, nullptr);
     EXPECT_EQ(bp->z80address, 0xD000);
     EXPECT_EQ(bp->page, 7);
@@ -851,7 +851,7 @@ TEST_F(BreakpointManager_test, PageSpecific_RegisterCombinedInPage_Positive)
 
     ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register combined breakpoint in page";
 
-    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot bp = _brkManager->GetBreakpointById(brkID);
     ASSERT_NE(bp, nullptr);
     EXPECT_TRUE(bp->memoryType & BRK_MEM_READ);
     EXPECT_TRUE(bp->memoryType & BRK_MEM_WRITE);
@@ -924,7 +924,7 @@ TEST_F(BreakpointManager_test, PageSpecific_RemoveByID_Positive)
     EXPECT_EQ(countAfter, countBefore - 1);
 
     // Verify it's really gone
-    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    BreakpointSnapshot found = _brkManager->GetBreakpointById(brkID);
     EXPECT_EQ(found, nullptr) << "Removed breakpoint should not be findable";
 }
 
@@ -1207,7 +1207,7 @@ TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
     EXPECT_NE(error.find("no page"), std::string::npos) << error;
     const uint16_t id = _brkManager->AddMemoryBreakpointInPageSpec(0xC000, BRK_MEM_EXECUTE, "ram7", error);
     ASSERT_NE(id, BRK_INVALID);
-    const BreakpointDescriptor* bp = _brkManager->GetAllBreakpoints().at(id);
+    const BreakpointSnapshot bp = _brkManager->GetBreakpointById(id);
     EXPECT_EQ(bp->matchType, BRK_MATCH_BANK_ADDR);
     EXPECT_EQ(bp->page, 7);
     EXPECT_EQ(BreakpointManager::PageSpecName(*bp), "ram7");
@@ -1227,7 +1227,7 @@ TEST_F(BreakpointManager_test, SetNoteAndGroup)
     ASSERT_NE(id, BRK_INVALID);
     EXPECT_TRUE(_brkManager->SetBreakpointNote(id, "main loop"));
     EXPECT_TRUE(_brkManager->SetBreakpointGroup(id, "game"));
-    const BreakpointDescriptor* bp = _brkManager->GetAllBreakpoints().at(id);
+    const BreakpointSnapshot bp = _brkManager->GetBreakpointById(id);
     EXPECT_EQ(bp->note, "main loop");
     EXPECT_EQ(bp->group, "game");
     EXPECT_NE(_brkManager->GetBreakpointListAsString().find("main loop"), std::string::npos);
@@ -1235,9 +1235,9 @@ TEST_F(BreakpointManager_test, SetNoteAndGroup)
 
     EXPECT_FALSE(_brkManager->SetBreakpointNote(id + 100, "x"));
     EXPECT_FALSE(_brkManager->SetBreakpointGroup(id, ""));
-    EXPECT_EQ(bp->group, "game") << "a refused group leaves the old one";
+    EXPECT_EQ(_brkManager->GetBreakpointById(id)->group, "game") << "a refused group leaves the old one";
     EXPECT_TRUE(_brkManager->SetBreakpointNote(id, ""));
-    EXPECT_TRUE(bp->note.empty());
+    EXPECT_TRUE(_brkManager->GetBreakpointById(id)->note.empty());
 }
 
 /// breakpoints_changed names what changed (protocol.md §5.2 {cpu, ids[]}): ids added, changed or removed
@@ -1312,7 +1312,7 @@ protected:
         s.addressEnd = to;
         return s;
     }
-    const BreakpointDescriptor& Bp(uint16_t id) { return *_bpm->GetAllBreakpoints().at(id); }
+    BreakpointDescriptor Bp(uint16_t id) { return *_bpm->GetBreakpointById(id); }
 };
 
 TEST_F(BreakpointMatching_Test, RangeHitsItsEndsAndMissesOneOutside)
@@ -1533,10 +1533,11 @@ TEST_F(BreakpointMatching_Test, ManyOverlappingRangesShareCandidateSets)
     EXPECT_EQ(_bpm->GetHotState()->hasWrite, 1);
     EXPECT_LE(_bpm->_candidateSets.size(), 2u * 10000u + 1u) << "a set per range boundary at most";
     // Brute force against the hot path on a sample of addresses
+    const BreakpointListByID all = _bpm->GetAllBreakpoints();
     for (uint32_t a = 0; a < 0x10000; a += 97)
     {
         uint16_t expect = BRK_INVALID;
-        for (const auto& [id, bp] : _bpm->GetAllBreakpoints())
+        for (const auto& [id, bp] : all)
             if (a >= bp->z80address && a <= bp->EndAddress())
             {
                 expect = id;
@@ -1547,3 +1548,109 @@ TEST_F(BreakpointMatching_Test, ManyOverlappingRangesShareCandidateSets)
 }
 
 /// endregion </Hot-path matching>
+
+// The list shows a low address with its leading zeros: the type column's std::left padded #0038 as "3800" before
+TEST_F(BreakpointManager_test, ListShowsALowAddressWithLeadingZeros)
+{
+    _brkManager->AddExecutionBreakpoint(0x0038);
+    _brkManager->AddMemWriteBreakpoint(0x5C78);
+    const std::string list = _brkManager->GetBreakpointListAsString();
+    EXPECT_NE(list.find("0x0038"), std::string::npos) << list;
+    EXPECT_EQ(list.find("0x3800"), std::string::npos) << list;
+    EXPECT_NE(list.find("0x5C78"), std::string::npos) << list;
+}
+
+/// A user's clear removes the user's breakpoints only: the BASIC typer's ROM control points (owned by the
+/// analyzer manager) and hidden step / trap breakpoints stay with their owners
+TEST_F(BreakpointManager_test, ClearUserBreakpointsKeepsOwnedAndHiddenOnes)
+{
+    const uint16_t user = _brkManager->AddExecutionBreakpoint(0x8000);
+    const uint16_t owned = _brkManager->AddExecutionBreakpoint(0x15DE, "analyzer_manager");
+
+    auto* hiddenDesc = new BreakpointDescriptor();
+    hiddenDesc->type = BRK_MEMORY;
+    hiddenDesc->memoryType = BRK_MEM_EXECUTE;
+    hiddenDesc->z80address = 0x9000;
+    hiddenDesc->hidden = true;
+    const uint16_t hidden = _brkManager->AddBreakpoint(hiddenDesc);
+    ASSERT_NE(user, BRK_INVALID);
+    ASSERT_NE(owned, BRK_INVALID);
+    ASSERT_NE(hidden, BRK_INVALID);
+
+    const auto& all = _brkManager->GetAllBreakpoints();
+    EXPECT_TRUE(BreakpointManager::IsUserBreakpoint(*all.at(user)));
+    EXPECT_FALSE(BreakpointManager::IsUserBreakpoint(*all.at(owned)));
+    EXPECT_FALSE(BreakpointManager::IsUserBreakpoint(*all.at(hidden)));
+
+    _brkManager->ClearUserBreakpoints();
+
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(user), 0u);
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(owned), 1u);
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(hidden), 1u);
+}
+
+/// The surfaces change breakpoints from their own threads (DeZog, ZRCP, WebAPI, the GUI) while the emulation thread
+/// walks them on every instruction. Here a breakpoint over all of memory counts every instruction without stopping,
+/// and another thread adds, lists and removes the same kind meanwhile: a removal freed the descriptor the hot path
+/// was counting on (TSan: a race on every change, ASan: a use after free). Runs ~100 ms: the machine must boot, run
+/// and be hit while the changes come, and each change waits for the main loop to park
+TEST_F(BreakpointManager_test, ChangesFromAnotherThreadWhileTheMachineRuns)
+{
+    Emulator* emulator = new Emulator(LoggerLevel::LogError);
+    ASSERT_TRUE(emulator->Init());
+    emulator->DebugOn();
+    EmulatorContext* context = emulator->GetContext();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    BreakpointManager* bpm = emulator->GetBreakpointManager();
+
+    // Counts every instruction, never stops (the 2^32-1th hit only)
+    auto everyInstruction = [] {
+        BreakpointSpec spec;
+        spec.access = BRK_MEM_EXECUTE;
+        spec.address = 0x0000;
+        spec.hasEnd = true;
+        spec.addressEnd = 0xFFFF;
+        spec.hitMode = BRK_HIT_EQUAL;
+        spec.hitTarget = 0xFFFFFFFFu;
+        return spec;
+    };
+    std::string error;
+    const uint16_t counter = bpm->AddBreakpoint(everyInstruction(), error);
+    ASSERT_NE(counter, BRK_INVALID) << error;
+
+    emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return bpm->GetBreakpointById(counter)->hitCount > 0; }, std::chrono::seconds(2)))
+        << "the machine runs through the breakpoint";
+
+    const uint32_t countedBefore = bpm->GetBreakpointById(counter)->hitCount;
+    std::atomic<int> changes{0};
+    std::thread surface([&] {
+        std::string threadError;
+        for (int i = 0; i < 50; i++)
+        {
+            const uint16_t id = bpm->AddBreakpoint(everyInstruction(), threadError);
+            if (id == BRK_INVALID)
+                break;
+            bpm->DeactivateBreakpoint(id);
+            bpm->ActivateBreakpoint(id);
+            if (bpm->GetAllBreakpoints().count(id) != 1 || !bpm->RemoveBreakpointByID(id))
+                break;
+            changes++;
+        }
+    });
+    surface.join();
+    // The 50 changes may all go through before the machine runs another instruction (each waits for the main loop to
+    // park): the machine still counting afterwards is the proof that the changes left it running
+    const bool counting = TestWait::For([&] { return bpm->GetBreakpointById(counter)->hitCount > countedBefore; },
+                                        std::chrono::seconds(2));
+    const uint32_t countedAfter = bpm->GetBreakpointById(counter)->hitCount;
+
+    emulator->Stop();
+    emulator->Release();
+    delete emulator;
+
+    EXPECT_EQ(changes.load(), 50) << "every change went through: " << error;
+    EXPECT_TRUE(counting) << "the machine runs on after the breakpoints changed: " << countedBefore << " -> "
+                          << countedAfter;
+}

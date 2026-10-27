@@ -725,7 +725,10 @@ Z80OPCODE opy_E1(Z80 *cpu) { // pop iy
 Z80OPCODE opy_E3(Z80 *cpu) { // ex (sp),iy
     uint16_t sp = cpu->sp & 0xFFFF;
 
-    uint16_t value = cpu->rd(sp) + 0x100 * cpu->rd(sp + 1);
+    // Low byte first, then high: two reads in one expression run in either order (MSVC reads SP+1 first)
+    const uint8_t low = cpu->rd(sp);
+    const uint8_t high = cpu->rd(sp + 1);
+    uint16_t value = low + 0x100 * high;
     cpuidle(cpu->sp + 1, 1);
 
     // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified

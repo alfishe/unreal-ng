@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/asm/sync/asmsyncservice.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -9,6 +10,8 @@
 #include "debugger/analyzers/basic-lang/editormonitor.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/analyzers/dss/dssanalyzer.h"
+#include "debugger/analyzers/nedoos/nedoosanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
@@ -27,6 +30,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _listing = new ListingParser(_context);
     _analyzerManager = std::make_unique<AnalyzerManager>(_context);
     _pcHistory = std::make_unique<PcHistory>(_context);
+    _asmSync = std::make_unique<AsmSyncService>(_context);
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -43,6 +47,8 @@ DebugManager::DebugManager(EmulatorContext* context)
     _analyzerManager->registerAnalyzer("coverage", std::make_unique<CoverageAnalyzer>());
     _analyzerManager->registerAnalyzer("aylog", std::make_unique<AYLogAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer("nedoos", std::make_unique<NedoOsAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer("dss", std::make_unique<DssAnalyzer>(_context));
 
     // Editor control points for verified command input (input-verification.md)
     auto editorMonitor = std::make_unique<EditorMonitor>(_context);
@@ -58,6 +64,7 @@ DebugManager::~DebugManager()
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
     // breakpoints through BreakpointManager - so it must go before _breakpoints is deleted
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
+    _asmSync.reset();   // its worker publishes into _labels: stopped first
     _commandTyper.reset();
     _analyzerManager.reset();
     _editorMonitor = nullptr;
@@ -123,11 +130,6 @@ ListingParser* DebugManager::GetListingParser()
 std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
 {
     return _disassembler;
-}
-
-AnalyzerManager* DebugManager::GetAnalyzerManager()
-{
-    return _analyzerManager.get();
 }
 
 DebugKeyboardManager* DebugManager::GetKeyboardManager()

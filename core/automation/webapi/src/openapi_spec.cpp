@@ -3,12 +3,15 @@
 // Split into modular .inc files - 2026-02-07
 
 #include <drogon/HttpResponse.h>
+#include <initializer_list>
 #include <json/json.h>
+#include <string>
 
 #include "emulator_api.h"
 
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotmatrix.h>
 
 using namespace drogon;
 using namespace api::v1;
@@ -28,8 +31,14 @@ void buildPaths(Json::Value& paths)
 {
 #include "openapi/openapi_interpreter.inc"
 #include "openapi/openapi_lifecycle.inc"
+#include "openapi/openapi_operations.inc"
 #include "openapi/openapi_tape_disk.inc"
 #include "openapi/openapi_media.inc"
+#include "openapi/openapi_slots.inc"
+#include "openapi/openapi_controllers.inc"
+#include "openapi/openapi_signature.inc"
+#include "openapi/openapi_streamdeck.inc"
+#include "openapi/openapi_monitoring.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_rzx.inc"
 #include "openapi/openapi_capture.inc"
@@ -40,10 +49,15 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_settings.inc"
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
+#include "openapi/openapi_next.inc"
 #include "openapi/openapi_cdaudio.inc"
 #include "openapi/openapi_memoryregion.inc"
 #include "openapi/openapi_moonsound.inc"
+#include "openapi/openapi_multisound.inc"
 #include "openapi/openapi_rtc.inc"
+#include "openapi/openapi_execution.inc"
+#include "openapi/openapi_session.inc"
+#include "openapi/openapi_companion.inc"
 #include "openapi/openapi_profi.inc"
 #include "openapi/openapi_isa.inc"
 #include "openapi/openapi_network.inc"
@@ -53,25 +67,35 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_analysis.inc"
 #include "openapi/openapi_video.inc"
 #include "openapi/openapi_temporal.inc"
+#include "openapi/openapi_window.inc"
 #include "openapi/openapi_stepping.inc"
+#include "openapi/openapi_pace.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
+#include "openapi/openapi_symbols.inc"
+#include "openapi/openapi_asm.inc"
 #include "openapi/openapi_assembly.inc"
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
 #include "openapi/openapi_vdac2.inc"
+#include "openapi/openapi_bus.inc"
 #include "openapi/openapi_ttd.inc"
 #include "openapi/openapi_ttdfile.inc"
+#include "openapi/openapi_machine.inc"
 }
 
 void buildSchemas(Json::Value& schemas)
 {
 #include "openapi/openapi_schemas.inc"
 #include "openapi/openapi_media_schemas.inc"
+#include "openapi/openapi_slots_schemas.inc"
 #include "openapi/openapi_joystick_schemas.inc"
+#include "openapi/openapi_next_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
+#include "openapi/openapi_window_schemas.inc"
+#include "openapi/openapi_operations_schemas.inc"
 }
 
 }  // namespace
@@ -132,6 +156,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagMedia["name"] = "Media";
     tagMedia["description"] = "Every media slot of the machine: insert, eject, swap, save, export (media-control-design.md)";
     tags.append(tagMedia);
+    Json::Value tagSlots;
+    tagSlots["name"] = "Slots";
+    tagSlots["description"] = "ZX-bus slots: buses, slots, cards; plug / remove / options applied by a machine restart";
+    tags.append(tagSlots);
     Json::Value tagDiskInsp;
     tagDiskInsp["name"] = "Disk Inspection";
     tagDiskInsp["description"] = "Low-level disk data inspection";
@@ -180,6 +208,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagDebug["name"] = "Debug Commands";
     tagDebug["description"] = "Breakpoints, registers, and debugging";
     tags.append(tagDebug);
+    Json::Value tagSymbols;
+    tagSymbols["name"] = "Symbols";
+    tagSymbols["description"] = "Symbol files in every format, symbol sets and their priorities (unreal-asm symbol module)";
+    tags.append(tagSymbols);
+    Json::Value tagAsm;
+    tagAsm["name"] = "Assembler Sources";
+    tagAsm["description"] = "Sources of ZX Spectrum assemblers: decode, encode, convert between dialects, the files of a disk (unreal-asm)";
+    tags.append(tagAsm);
     Json::Value tagMemProfiler;
     tagMemProfiler["name"] = "Memory Profiler";
     tagMemProfiler["description"] = "Track memory access patterns";
@@ -210,6 +246,12 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
         "Time-Travel Debug recorder control — start/stop recording, seek, step, "
         "resume, and inspect external-event markers (parent TDD §10.4)";
     tags.append(tagTTD);
+    Json::Value tagCompanions;
+    tagCompanions["name"] = "Companions";
+    tagCompanions["description"] =
+        "Companion clients: paired devices acting as the user's hands. With Authorization: Bearer <token> their "
+        "changes open no session (no remote control at the GUI, no lock), within the scopes the user granted";
+    tags.append(tagCompanions);
 
     spec["tags"] = tags;
 
@@ -222,6 +264,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     Json::Value schemas;
     buildSchemas(schemas);
     spec["components"]["schemas"] = schemas;
+    spec["components"]["securitySchemes"]["companionBearer"]["type"] = "http";
+    spec["components"]["securitySchemes"]["companionBearer"]["scheme"] = "bearer";
+    spec["components"]["securitySchemes"]["companionBearer"]["description"] =
+        "A companion token (unc_...), issued once at pairing or set in UNREAL_COMPANION_TOKENS";
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);
     addCorsHeaders(resp);

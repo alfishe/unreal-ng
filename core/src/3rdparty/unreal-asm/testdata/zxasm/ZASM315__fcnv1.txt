@@ -1,0 +1,95 @@
+;!0,0,0,0,0,173,173,
+
+         ░░░▌ Font Convert ▐░░░
+
+    █ █ █ version for ZAsm 3.15 █ █ █
+
+███▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀███
+███ (c) 2002 Rubts0FF                 ███
+███ ZAsm 3.15 edition .... 16.04.2018 ███
+███▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄███
+
+        CHD "D:"
+        INCLUDE "ovldef"
+
+Font1   EQU #6800
+Font2   EQU #7000
+
+        ORG Overlay
+
+        JP Start
+        DB NumVers
+        DW 0,0
+        DW OvlWins
+        DW OvlTokn
+        DS 8
+
+Start   RFS CLOSA
+        ld hl,FNC_MNU:RFS MENU:ret
+
+FNC_OPN RFS OUTFS:DB WN,#80,23,0,6
+ DB "Font Convert",23,2,3
+ DB "Screen to Standart",#D
+ DB "Standart to Screen",#ff:RET
+
+        DW FNC_OPN
+FNC_MNU DB 0,2
+ DB 2,1,0,0,#41:DW FntCnv
+ DB 3,1,0,0,#41:DW FntCnv
+
+FntCnv  call FntLoad:retnc
+        call FntCnv1:call FntSave:ret 
+
+FntCnv1 ld hl,Font1:ld de,Font2
+        ld a,(FNC_MNU):or a:jrz _2Std
+
+_2Scr   ld b,8:ld c,d 
+_2Scr1  ld a,(hl):ld (de),a:inc hl,d 
+        djnz _2Scr1:ld d,c 
+        inc e:jrnz _2Scr:ret 
+
+_2Std   ld b,8:ld c,h
+_2Std1  ld a,(hl):ld (de),a:inc de,h
+        djnz _2Std1:ld h,c
+        inc l:jrnz _2Std:ret 
+
+FntLoad ld a,(FNC_MNU):or #80
+        RFS PANEL:RFS CLOSA:retnc 
+        ld a,(23773+#D):cp 8:jrnz _NLoad
+        ld de,(23773+#E):ld bc,#0805
+        ld hl,Font1:call Tr_Dos:scf:retz
+_NLoad  and a:ret 
+
+FntSave ld a,(FNC_MNU):xor 1:add a,2
+        or #80:ld de,FntName
+        push de:RFS InFNM:pop hl:retnc 
+        call MakeNam0:ld de,Font2
+        ld hl,Font2+2048:RFS WFILE:ret 
+
+OvlWins
+w0
+ db 0
+ db %01101011,%11000000
+ db #02,#04,#12,#5,ColMenu
+
+ DB #FF
+
+OvlTokn
+ db "Load *.fn1",#ff
+ db "Load *.fnt",#ff
+ db "Save *.fnt",#ff
+ db "Save *.fn1",#ff
+
+FntName
+ DS 14,#20:DB #D
+
+          SAVEOBJ "fcnv.ovl"
+
+          ;23412341234123412341234
+          ╔════ Font Convert ════╗
+          ║                      ║
+          ║  Screen to Standart  ║
+          ║  Standart to Screen  ║
+          ╚══════════════════════╝
+
+

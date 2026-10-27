@@ -140,7 +140,7 @@ Row anatomy, left to right:
 
 | Element | Meaning |
 |---|---|
-| Name | Device name; "AY 1"/"AY 2" appear only when TurboSound present |
+| Name | Device name, after what sits in the AY socket: "AY" (the board chip), "TS AY 1"/"TS AY 2" (TurboSound), "TSFM SSG 1/2" + "TSFM FM 1/2" (TurboSound FM) |
 | ● / ○ | Activity dot: filled when the device produced non-silence in the last ~500 ms |
 | **M** | Mute — removes the device from the master mix |
 | **S** | Solo — only soloed devices are audible (DAW semantics, see 3.3) |

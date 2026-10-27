@@ -28,7 +28,8 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   Python `isa_*`, the port trace codes `isa_io` / `isa_mem`, hardware-reference §11 corrected. `ZxBusPresent()` stays
   `false` until I2 fits the adapter ([tdd.md](tdd.md) §14)
 - [x] I2 ZX-bus adapter + GS / NeoGS, ProPlay end to end vs MAME (2026-10-04, branch `sprinter-isa-i2-neogs`, as built in
-  [tdd.md](tdd.md) §14, MAME comparison in [i2-outcome.md](i2-outcome.md)): slot 1 = adapter + NeoGS by default,
+  [tdd.md](tdd.md) §14, MAME comparison in [i2-outcome.md](i2-outcome.md)): slot 1 = adapter + NeoGS by default (since
+  2026-10-04 the adapter ships empty, owner decision; the GS is added in `[SLOTS]` `isa.1`),
   `ZxBusPresent()` follows it, the NeoGS ZX-DMA needs host memory cycles (`ZxBusMemoryCycles`), the port journals record
   with the GS; ProPlay plays the generated MOD at MAME's pitch (0.00 cents) and timing, NeoGS waveform correlation
   0.9998; env-gated HDD test with TTD replay (exact on the classic GS)
@@ -59,6 +60,11 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
   **SN0-SN2 built 2026-10-03**: the NE2000 sits in slot 2 by default (`IsaBusDeviceCard` over `IIoBusDevice`); the
   ISA report gained resources, the Z80 path, conflicts and an access journal (`state/isa/journal`)
 - [ ] Deferred: I5 ZX-bus seam + MoonSound, I6 ESS688 / SB Pro, I7 SprinterJoy, I8 Sprinter-FT
+  - [x] I5's reporting part, folded into the ZX-bus slots' SL-8 (2026-10-06, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
+    §17.4): both ISA slots in the slot report (`machineSlots`), the adapter's ZX-bus a bus hosted by its slot, the GS
+    on it; the GS sits on the adapter its `[SLOTS] isa.N` line names; a GS card needs `[ISA] SlotN=ZXBUS`
+  - [ ] I5 proper: the adapter hands its I/O cycles to the claim table (any ZX-bus card behind it, MoonSound first);
+    until then the slot plan refuses non-GS cards behind it
 - [x] When I1 lands: research §10 corrections applied to the Sprinter `hardware-reference.md` §11; this folder linked
   from the Sprinter `TODO.md`
 - [x] T-ISA-15 A/B (`BM_HostFrame_*_Fast`, 2026-10-03, base f00ff9f17 vs the SN2 tree, interleaved, 3 rounds x 3

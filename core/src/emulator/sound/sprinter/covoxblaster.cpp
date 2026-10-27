@@ -27,6 +27,7 @@ CovoxBlaster::~CovoxBlaster()
 
 void CovoxBlaster::Reset()
 {
+    ++*_changes;  // SetChangeCounter
     // CBL_XX: MAME machine_reset (the PLD has no reset term; a new configuration starts at 0);
     // CBL_R[15] presets and [14..0] clear on /RESET: the DAC rests at #8000
     _s.control = 0;
@@ -116,6 +117,7 @@ void CovoxBlaster::Advance(uint32_t t)
 
 void CovoxBlaster::EndFrame(uint32_t frameLength, size_t samples)
 {
+    ++*_changes;  // SetChangeCounter
     if (frameLength > 0)
         Advance(frameLength - 1);
 
@@ -151,6 +153,7 @@ void CovoxBlaster::EndFrame(uint32_t frameLength, size_t samples)
 
 void CovoxBlaster::WriteControl(uint32_t t, uint8_t value)
 {
+    ++*_changes;  // SetChangeCounter
     Advance(t);
     _s.control = value;
 
@@ -178,6 +181,7 @@ void CovoxBlaster::WriteControl(uint32_t t, uint8_t value)
 
 void CovoxBlaster::WriteData(uint32_t t, uint8_t value, uint8_t addrHigh)
 {
+    ++*_changes;  // SetChangeCounter
     Advance(t);
 
     const bool cblOn = (_s.control & kControlCbl) != 0;
@@ -239,6 +243,11 @@ uint8_t CovoxBlaster::ApplyFeBits(uint32_t t, uint8_t keyboard)
 
 void CovoxBlaster::Acknowledge(uint32_t t)
 {
+    ++*_changes;  // SetChangeCounter
+    // The flip-flop as it stands at `t`: the request a play tick before `t` raised ends here too, whether or not
+    // IntRequested looked at it since (the PLD presets CBL_INT on any acknowledge)
+    if ((_s.control & kControlCbl) && !_s.intPending && t >= _s.nextTick)
+        Advance(t);
     if (!_s.intPending)
         return;
     Advance(t);

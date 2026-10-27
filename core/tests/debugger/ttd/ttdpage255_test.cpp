@@ -22,9 +22,10 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/ttdwriterecords.h"
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdcoverageindex.h"
 #include "debugger/ttd/ttddirtytracker.h"
@@ -52,7 +53,7 @@ class TTD_Page255_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     Z80* _z80 = nullptr;
     uint16_t _romRet = 0;  ///< Address of a RET in the ROM banked at 0x0000
@@ -63,7 +64,7 @@ protected:
         ASSERT_NE(_emulator, nullptr) << "ATM3 must be creatable (4 MB, pages 0..255)";
 
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         _z80 = _context->pCore->GetZ80();
         ASSERT_NE(_ttd, nullptr);
@@ -105,12 +106,12 @@ protected:
         // window 3 - "RAM from FFF7" (0x200 | page). Setting a bank directly
         // would not stick: every rebank recomputes the windows from these latches.
         EmulatorState& st = _context->emulatorState;
-        st.aFF77 |= PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+        st.atm.aFF77 |= PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
         st.p7FFD = 0;
-        st.pFFF7[0] = 0x300 | 28;
-        st.pFFF7[1] = 0x200 | 0x05;
-        st.pFFF7[2] = 0x200 | 0x02;
-        st.pFFF7[3] = 0x200 | kTopPage;
+        st.atm.pFFF7[0] = 0x300 | 28;
+        st.atm.pFFF7[1] = 0x200 | 0x05;
+        st.atm.pFFF7[2] = 0x200 | 0x02;
+        st.atm.pFFF7[3] = 0x200 | kTopPage;
         _memory->UpdateZ80Banks();
         ASSERT_EQ(_memory->GetRAMPageForBank(3), kTopPage) << "ATM manager did not bank page 255";
 
@@ -180,10 +181,8 @@ TEST_F(TTD_Page255_Test, WritesToPage255_AreJournaled)
     _ttd->SetEnableWriteJournal(true);
     Record(2);
 
-    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-    ASSERT_NE(journal, nullptr);
-    auto rec = journal->FindLast(UINT64_MAX, [](const ttd::TTDWriteRecord& r)
-                                 { return r.isIo == 0 && r.addr == kCounterAddr; });
+    auto rec = ttdtest::LastWriteRecord(*_ttd, [](const ttd::TTDWriteRecord& r)
+                                        { return r.isIo == 0 && r.addr == kCounterAddr; });
     ASSERT_TRUE(rec.has_value()) << "no journal record for the page-255 counter write";
     EXPECT_EQ(rec->physPage, kTopPage);
     EXPECT_EQ(rec->m1pc, kStoreInsn);
@@ -352,10 +351,8 @@ TEST_F(TTD_Page255_Test, Coverage_SurvivesSerialization)
                                                  kTopPage);
     EXPECT_FALSE(romAsPage255.touched);
 
-    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-    ASSERT_NE(journal, nullptr);
-    auto rec = journal->FindLast(UINT64_MAX, [](const ttd::TTDWriteRecord& r)
-                                 { return r.isIo == 0 && r.addr == kCounterAddr; });
+    auto rec = ttdtest::LastWriteRecord(*_ttd, [](const ttd::TTDWriteRecord& r)
+                                        { return r.isIo == 0 && r.addr == kCounterAddr; });
     ASSERT_TRUE(rec.has_value());
     EXPECT_EQ(rec->physPage, kTopPage);
 }

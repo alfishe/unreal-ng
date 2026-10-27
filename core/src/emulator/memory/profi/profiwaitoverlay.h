@@ -69,9 +69,17 @@ public:
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
     uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+    /// A repeated idle fetch: pure while no rule applies; with the v5 3.5 MHz rule (no hi-res, no host speed-up)
+    /// a ROM fetch waits the same every time and a RAM fetch by its start's parity inside a stretch of the frame
+    /// (RepeatFetchPureUntil). The other rules (turbo, hi-res) follow the frame position more finely: one by one
+    bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override;
+    /// The stretch of V5RamWait's rule that frame T-state `t` starts: up to the paper fetch window's edge
+    uint32_t RepeatFetchPureUntil(uint16_t addr, uint32_t t) const override;
 
 private:
     void Wait(uint16_t addr, bool write);
+    /// The v5 3.5 MHz rule at 1x with the CPU clock as the frame T-state (AccessStartClock == the fetch's T)
+    bool PlainV5Rule() const;
 
     Core* _core = nullptr;
     Z80* _cpu = nullptr;

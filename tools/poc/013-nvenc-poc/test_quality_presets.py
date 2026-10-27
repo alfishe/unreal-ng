@@ -17,7 +17,6 @@ import subprocess
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 # ── Config matching nvenc_encoder.cpp ──────────────────────────────────────
@@ -42,7 +41,7 @@ FPS = 50
 DURATION_SEC = 4.0
 NUM_FRAMES = int(FPS * DURATION_SEC)
 
-OUTPUT_DIR = Path(tempfile.gettempdir()) / "nvenc_quality_test"
+OUTPUT_DIR = Path(__file__).resolve().parents[3] / "scratch" / "nvenc_quality_test"
 
 
 def generate_animated_source(output_yuv: Path):

@@ -705,13 +705,13 @@ TEST_F(PortDecoderSprinter_Test, TraceCodeTable_NamesTheCodes)
 /// registers it with the BetaDisk on every Beta machine)
 TEST_F(PortDecoderSprinter_Test, Ttd_EveryDeclaredStateHasASerializer)
 {
-    const auto ids = _decoder->GetTTDModelStateIds();
+    const auto ids = _decoder->GetTTDModelStateTypes();
     const auto serializers = _decoder->CreateTTDSerializers();
-    for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
-                                 ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput})
+    for (ttd::TTDDeviceType id : {ttd::TTDDeviceType::SprinterPld, ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::SprinterVideoRam,
+                                 ttd::TTDDeviceType::Z84C15, ttd::TTDDeviceType::SprinterFastRam, ttd::TTDDeviceType::SprinterInput})
     {
         EXPECT_NE(std::find(ids.begin(), ids.end(), id), ids.end()) << "declared: id " << int(id);
-        EXPECT_TRUE(std::any_of(serializers.begin(), serializers.end(), [id](const auto& s) { return s->TTDPeripheralId() == id; }))
+        EXPECT_TRUE(std::any_of(serializers.begin(), serializers.end(), [id](const auto& s) { return s->TTDType() == id; }))
             << "serialized: id " << int(id);
     }
 }

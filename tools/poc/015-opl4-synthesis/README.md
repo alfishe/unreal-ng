@@ -92,3 +92,12 @@ behaviour kept): FM rhythm-mode noise uses a compact LFSR model; music-corpus
 VGM replay (§12.3 corpora), HDL co-simulation (§12.4) and hardware recordings
 remain future work — the co-simulation tier status (including openMSX) is
 documented in [cosim/README.md](cosim/README.md).
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — adopted: the library was vendored into the core as
+`core/src/3rdparty/opl4` (`d268e549f`, 2026-09-18, without the ymfm co-simulation) and drives the
+MoonSound device; this folder stays the research copy (unit tests in `tests/`, co-simulation in
+`cosim/README.md`). No separate measurement or conclusions file exists.
+
+Serves: `docs/inprogress/2026-09-13-moonsound/`.

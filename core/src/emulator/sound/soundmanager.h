@@ -4,8 +4,12 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/modulelogger.h"
@@ -23,6 +27,7 @@
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/audioactivityindicators.h"
 #include "emulator/sound/audiodeviceinfo.h"
+#include "emulator/sound/mixerchannel.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -30,6 +35,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
+class ICard;
 class SoundChip_Moonsound;
 
 /// The GS slot as other threads see it (SoundManager::generalSoundSlot)
@@ -65,6 +71,26 @@ protected:
     // requires a sound stack rebuild - applied only at frame boundaries via
     // requestCoreRate()/applyCoreRate().
     size_t _coreRate = CORE_SAMPLING_RATE;
+    std::mutex _frameAudioTapMutex;  ///< guards _frameAudioTaps; held while they run
+    std::vector<std::pair<uint64_t, std::function<void(const int16_t*, size_t, uint64_t)>>> _frameAudioTaps;
+    std::atomic<size_t> _frameAudioTapCount{0};
+    uint64_t _nextFrameAudioTapId = 1;
+
+    /// The haptic feed's sample streams (setHapticTaps): per source the last frame in mono at kHapticTapRate. The
+    /// emulation thread only
+    struct HapticTap
+    {
+        AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
+        uint32_t phase = 0;  ///< the decimator's position, carried over frames
+        int32_t sum = 0;
+        uint32_t summed = 0;
+        size_t count = 0;
+        std::array<int16_t, 256> samples{};
+    };
+    std::vector<HapticTap> _hapticTaps;
+    void captureHapticTaps(size_t samplesThisFrame);
 
     // Runtime core-rate pin (automation 'audio_rate': CLI setting, WebAPI
     // settings, Lua/Python set_audio_rate). Explicit intent for THIS run
@@ -83,6 +109,8 @@ protected:
     /// Personality factory shared by Init and switchGeneralSoundCard (GS
     /// design §5.1); nullptr for kinds that map to no device (NONE/NGS)
     GeneralSoundCard* createGeneralSoundCard(GSTypeKind kind) const;
+    /// switchGeneralSoundCard's change, as the coordinator's commit (the session ended already)
+    bool switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementation targetImplementation);
 
     // Live core-rate change request (device reroute, pin set/release).
     // Written from any thread via requestCoreRate(); APPLIED only at the next
@@ -113,10 +141,12 @@ protected:
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
     IModelAudioSource* _modelAudio = nullptr;
+    std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
-#ifdef UNREALNG_HAVE_OPL4
+    // Not under UNREALNG_HAVE_OPL4: the class must have one layout in every translation unit. Targets that read these
+    // headers without the core library's compile definitions (recording, the automation libraries) saw the class without
+    // this field, and every member below it 8 bytes off (found by gcc -flto, -Wodr)
     SoundChip_Moonsound* _moonsound = nullptr;
-#endif
     // SoundChip_SAA1099;
 
     // Pending GS personality switch request (gs_lightweight feature,
@@ -197,11 +227,12 @@ protected:
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
 
     // Wide mix bus (MoonSound integration design 5.2/D7). Enabled only while
-    // a MoonSound device is attached: sources sum into a float bus without
-    // per-add clipping, then a DC blocker + soft limiter run on the master and
-    // the result quantises to int16 once. The legacy integer path is a
-    // separate branch that stays byte-identical in every configuration
-    // without the device (R6) - it is not modified by this feature.
+    // a MoonSound device, a TSFM (TurboSound FM) or a card that wants it is
+    // fitted: sources sum into a float bus without per-add clipping, then a DC
+    // blocker + soft limiter run on the master and the result quantises to
+    // int16 once. The legacy integer path is a separate branch that stays
+    // byte-identical in every configuration without them (R6) - it is not
+    // modified by this feature.
     bool _wideMix = false;
     MasterLimiter _limiter;
     float _mixBus[MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS] = {};
@@ -248,6 +279,12 @@ public:
         _drcErrIntegral = 0.0;
     }
 
+    /// The machine's clock against the one its T-states are counted in (CPU_CLOCK_RATE): a Next at VGA 1 (CLK_28 28.571429 MHz) runs
+    /// 1.0204 times faster in real time. The stream stays CORE_RATE samples per machine time (recordings keep it); the device stage plays
+    /// it that much faster. 1.0: the stage is as before
+    void setMachineClockScale(double scale) { _machineClockScale = scale > 0.0 ? scale : 1.0; }
+    double getMachineClockScale() const { return _machineClockScale; }
+
 protected:
     static constexpr double DRC_MAX_TRIM = 0.005;
     static constexpr double DRC_KP = 0.08;
@@ -262,6 +299,7 @@ protected:
     static constexpr double DRC_ERR_DEADBAND = 0.02;
     double _drcOccFiltered = -1.0;  // <0 = uninitialized (seeded on first sample)
     double _drcErrIntegral = 0.0;
+    double _machineClockScale = 1.0;
 
     void updateDrcControl();
 
@@ -279,6 +317,8 @@ protected:
     // IDE units with a CD drive, as the mixer rows show them (bit n: unit n)
     uint8_t _cdUnitMask = 0;
     size_t _lastFrameSamples = 0;
+    size_t _lastTurboSoundSamples = 0;   // lastTurboSoundSamples()
+    uint64_t _lastTurboSoundPhase = 0;   // lastTurboSoundPhase()
 
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
@@ -291,13 +331,18 @@ protected:
     // Save to Wave file
     TinyWav _tinyWav;
 
-    // Feature cache flags (updated by FeatureManager::onFeatureChanged)
-    bool _feature_sound_enabled = true;
-    bool _feature_soundhq_enabled = true;
+    // Feature cache flags (updated by FeatureManager::onFeatureChanged on whatever thread toggled the feature, read by
+    // the emulation thread)
+    std::atomic<bool> _feature_sound_enabled{true};
+    std::atomic<bool> _feature_soundhq_enabled{true};
+    /// The thread that runs the frames (stored by handleFrameStart; a default id until the first frame). The
+    /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
+    std::atomic<std::thread::id> _emulationThread{};
 
     /// Turbo mode forces the low-quality DSP path without touching the user's
-    /// `soundhq` feature state; clearing the override restores the previous quality
-    bool _turboLowQualityOverride = false;
+    /// `soundhq` feature state; clearing the override restores the previous quality. Set on any thread (turbo
+    /// toggles come from automation), reaches the TurboSound device at the next frame start (handleFrameStart)
+    std::atomic<bool> _turboLowQualityOverride{false};
 
     /// Host output holds, one depth per reason (HostOutputHold guards only). Separate from _mute (the user's
     /// master mute): nothing but the user sets that one, so no hold can leave it changed
@@ -316,10 +361,21 @@ protected:
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
 
-    /// True while the character chains (punch / room) were skipped on the last
-    /// frame because HQ is off. When HQ comes back the chains' delay lines and
-    /// envelopes are reset before their first use, so no stale audio replays.
-    bool _chainsBypassed = false;
+    /// A gap in the chains' stream (sound off, turbo without audio): the next
+    /// frame with audio resets every character chain first, so no delay line or
+    /// envelope replays audio from before the gap. Sound HQ is not a gap: it
+    /// gates the chains (AudioCharacterChain::setActive), which ramp out / in
+    bool _chainsGap = false;
+    /// The TurboSound device and its render epoch the AY / FM chains run in: a
+    /// TTD restore (or another device) resets them
+    const ITurboSoundDevice* _chainsDevice = nullptr;
+    uint64_t _chainsDeviceEpoch = 0;
+    /// Reset every character chain (socket AY / FM, beeper, the cards' SSG rows)
+    void resetCharacterChains();
+    /// Reset every AY / SSG voicing stage (socket chips, the cards' SSG rows): filter state and pre-roll history
+    void resetVoicing();
+    /// Set by onStateRestored(), taken by the next frame with audio
+    std::atomic<bool> _stateRestored{false};
 
     /// endregion </Fields>
 
@@ -347,6 +403,20 @@ public:
     /// devices() directly (audiosettingswidget) sees it immediately, and
     /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
+
+    /// Device cores whose per-step sync is deferred catch up with the CPU
+    /// (ITurboSoundDevice::catchUp): called on the driving thread when the
+    /// machine stops being driven - the main loop parks, a direct run ends
+    void catchUpDeferredCores()
+    {
+        if (_turboSound)
+            _turboSound->catchUp();
+    }
+    /// A time-travel replay re-runs recorded history: the GS activity counters (session totals the automation
+    /// reports, not machine state) are kept as they stand before it and put back after, so replayed spans do not
+    /// count again
+    void beginReplayTelemetry();
+    void endReplayTelemetry();
 
     /// Host output hold: while any hold is active, handleFrameEnd hands nothing to the host audio callback - the
     /// frontend's ring sees exactly what it sees while the emulator is paused. For runs that are not paced to real
@@ -377,10 +447,12 @@ public:
 
         /// Gives the hold back (no-op when nothing is held); any thread
         void Release();
-        bool IsHeld() const { return _sound != nullptr; }
+        bool IsHeld() const { return _sound.load(std::memory_order_acquire) != nullptr; }
 
     private:
-        SoundManager* _sound = nullptr;
+        // Atomic: two threads may give the same hold back (a step-over ends on the emulation thread while the
+        // stepping thread cancels it); the exchange lets exactly one of them release it
+        std::atomic<SoundManager*> _sound{nullptr};
         HostHoldReason _reason = HostHoldReason::DirectRun;
         uint32_t _epoch = 0;
     };
@@ -417,10 +489,13 @@ public:
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`
     /// feature itself is left untouched, so leaving turbo re-enables the previous state.
     void setTurboLowQualityOverride(bool enabled);
-    bool isTurboLowQualityOverride() const { return _turboLowQualityOverride; }
+    bool isTurboLowQualityOverride() const { return _turboLowQualityOverride.load(std::memory_order_relaxed); }
 
     /// Effective DSP quality: the user's `soundhq` feature unless turbo overrides it
-    bool isHQActive() const { return _feature_soundhq_enabled && !_turboLowQualityOverride; }
+    bool isHQActive() const
+    {
+        return _feature_soundhq_enabled && !_turboLowQualityOverride.load(std::memory_order_relaxed);
+    }
 
     /// True while no audio is synthesised at all (turbo mode without audio request and
     /// not recording): AY / beeper / Covox / tape edge rendering is skipped, register and
@@ -434,13 +509,29 @@ public:
     /// sample count and the device's rendered count stay equal. Left behind,
     /// the mixer kept its pre-seek phase and read one never-rendered (zero)
     /// sample every few frames for the rest of the session
+    /// The machine state was restored (TTD checkpoint, return to the live state): the host-side post-processing of
+    /// every row (character chains, AY / SSG voicing) restarts on the next frame with audio, so no filter history,
+    /// delay line or envelope from the timeline that was left leaks into the restored one. Called by the restore,
+    /// with the machine held: the beeper and Covox drop their unread deltas at once
+    void onStateRestored();
+
     void adoptSamplePhase(uint64_t tstateRatePhase)
     {
         _sampleAccumulator = tstateRatePhase;
     }
 
+    /// The frame-start sample phase (T-states x rate, modulo CPU_CLOCK_RATE): the authority for how many samples
+    /// every frame has. Every device that keeps its own sample position follows it at each frame start
+    /// (ITurboSoundDevice::followSamplePhase, Beeper / Covox::followSamplePhase); at 1x the copies are equal by
+    /// construction
+    uint64_t samplePhase() const
+    {
+        return _sampleAccumulator;
+    }
+
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
+    EmulatorContext* getContext() const { return _context; }
 
     // TurboSound/AY chip access for debugging
     bool hasTurboSound() const
@@ -520,6 +611,7 @@ public:
     /// Must run on the emulation thread (same ownership as the frame
     /// lifecycle); no-op (true) when the requested personality is already
     /// fitted. GSTypeKind::NONE/BASS select no card - rejected.
+    /// An operation of the machine coordinator (OpKind::GsCardSwitch): the rules, the session's end, the log
     bool switchGeneralSoundCard(GSTypeKind target);
 
     /// Thread-safe variant for cross-thread callers (WebAPI actions, the
@@ -527,7 +619,8 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    /// Refused (false, reason in `error`) while a TTD user recording runs.
+    /// Refused (false, reason in `error`) where the coordinator's rules refuse it (TTD v1: while a user recording
+    /// runs) or the slot plan does
     bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 
     /// What the GS slot holds now, safe to read from any thread (the GUI,
@@ -559,10 +652,23 @@ public:
 #endif
 
     /// Wide mix bus + master limiter (MoonSound integration 5.2). Called with
-    /// true when a MoonSound device is attached, false when it is not; the
-    /// legacy integer path is used whenever the wide path is off (R6).
+    /// true when a MoonSound device, a TSFM or a card that wants it is fitted,
+    /// false when none is; the legacy integer path is used whenever the wide
+    /// path is off (R6).
     void enableWideMix(bool enable);
     bool wideMixEnabled() const { return _wideMix; }
+
+    /// region <Slot-built cards (ZX-bus slots card.h)>
+    /// A card's mixer rows join the registry (volume / mute / solo / capture / HUD like any row) and its frames run
+    /// with the machine's: FrameStart at every frame start, FrameEnd with the frame's sample count (0 in turbo
+    /// without audio). Called by SlotManager at machine creation and release
+    void attachSlotCard(ICard* card);
+    void detachSlotCard(ICard* card);
+    const std::vector<ICard*>& slotCards() const { return _slotCards; }
+    /// Why a row is silent by hardware ("shadowed by zxbus.1"); empty when nothing hides it
+    void setDeviceState(AudioSourceType type, const std::string& state);
+    std::string deviceState(AudioSourceType type) const;
+    /// endregion </Slot-built cards>
 
     /// Compatibility shim for tape audio. Routes amplitude into the beeper's
     /// blip_buf at the given T-state position. New code should use
@@ -574,7 +680,7 @@ public:
     AudioCharacterChain& getAYChain() { return _ayChain0; }
     AudioCharacterChain& getBeeperChain() { return _beeperChain; }
 
-    // Apply AY chain settings to both chips
+    // Apply AY chain settings to both chips (and the slot cards' SSG rows)
     void syncAYChainSettings();
 
     /// region <Sound character settings (thread-safe, applied at the next frame boundary)>
@@ -594,6 +700,22 @@ public:
     const VoicingStage& getAYVoicingStage(int chip) const
     {
         return chip == 1 ? _ayVoicing1 : _ayVoicing0;
+    }
+    /// The voicing stage of a slot card's SSG row (nullptr for a row that is not an SSG row)
+    const VoicingStage* getCardVoicingStage(AudioSourceType type) const
+    {
+        for (const CardSsgRow& v : _cardSsgRows)
+            if (v.type == type)
+                return v.stage.get();
+        return nullptr;
+    }
+    /// The AY character chain (punch, room) of a slot card's SSG row (nullptr for a row that is not an SSG row)
+    const AudioCharacterChain* getCardCharacterChain(AudioSourceType type) const
+    {
+        for (const CardSsgRow& v : _cardSsgRows)
+            if (v.type == type)
+                return v.chain.get();
+        return nullptr;
     }
 
     void setAYPunch(bool enabled);
@@ -618,9 +740,53 @@ public:
     AudioDeviceInfo* device(AudioSourceType type);
     const AudioDeviceInfo* device(AudioSourceType type) const;
     const int16_t* deviceBuffer(AudioSourceType type) const;
+    /// Whether the device has a frame buffer, without reading it: any thread may ask (the TurboSound buffers settle the
+    /// chips' deferred steps on a read, which only the emulator thread may do)
+    bool hasDeviceBuffer(AudioSourceType type) const;
     void setDeviceMute(AudioSourceType type, bool mute);
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);
+
+    /// region <Mixer channels (the channel layer, mixerchannels.h)>
+    /// A row's sub-channel with the user's state. Mute / solo / volume are the user's (visible at once, applied to the
+    /// device at the next frame start); solo is within the row: a soloed channel silences the row's other channels
+    struct MixerChannelState
+    {
+        MixerChannelDesc desc;
+        bool mute = false;
+        bool solo = false;
+        float volume = 1.0f;
+        float peak = 0.0f;  ///< the last frame's level (desc.hasMeter)
+    };
+    /// The channels of row `type` (empty when the row has none or is not fitted). Any thread
+    std::vector<MixerChannelState> mixerChannels(AudioSourceType type) const;
+    /// Change one channel of row `type` by its key ("a", "7"): muted / solo -1 keep, 0 / 1; volume < 0 keep, else 0..1.
+    /// False with `error` when the row has no such channel, or the channel has no volume. Any thread
+    bool setMixerChannel(AudioSourceType type, const std::string& channel, int muted, int solo, float volume,
+                         std::string& error);
+    /// endregion </Mixer channels>
+
+    /// AY stereo mode and chip model of the AY socket's chips (the TurboSound slot; a TSFM's SSG halves take the stereo
+    /// mode only, their YM2149 is fixed). Any thread: applied at the next frame start, and to a socket device fitted
+    /// later. The initial values are [SOUND] AYStereo and the chips' power-on model
+    void setAYStereoMode(AYStereoMode mode);
+    AYStereoMode getAYStereoMode() const
+    {
+        return static_cast<AYStereoMode>(_requestedAYStereo.load(std::memory_order_acquire));
+    }
+    /// False (nothing changed) when the socket holds a TurboSound FM: its SSG halves are fixed YM2149
+    bool setAYChipModel(AYChipModel model);
+    AYChipModel getAYChipModel() const
+    {
+        return static_cast<AYChipModel>(_requestedAYChipModel.load(std::memory_order_acquire));
+    }
+
+    /// YM2203 FM loudness trim in dB over the measured hardware level ([SOUND] TSFM_FmLevelDb), applied live to every YM2203 FM in the machine: the
+    /// TurboSound FM in the AY socket and every slot card with YM2203 FM (the ZX-MultiSound) - one calibration, shown
+    /// as one control. Returns false when the machine has no YM2203 FM
+    bool setFmTrimDb(double db);
+    /// The trim in force (the TSFM's, else the first card's); false when the machine has no YM2203 FM
+    bool fmTrimDb(double& db) const;
 
     // Legacy master volume controls (delegate to registry entries)
     void setAYVolume(double volume);
@@ -636,6 +802,12 @@ public:
 
     /// Stereo sample pairs the last finished frame mixed (0 after a frame without host audio)
     size_t lastFrameSamples() const { return _lastFrameSamples; }
+    /// The master mix of the last finished frame (interleaved stereo, lastFrameSamples() pairs): diagnostics, tests, captures
+    const int16_t* masterMix() const { return _outBuffer; }
+    /// What the TurboSound-slot device rendered in the last finished frame and its sample phase at that frame end, read
+    /// before the mix (diagnostics and tests): at 1x the count is lastFrameSamples() and the phase samplePhase()
+    size_t lastTurboSoundSamples() const { return _lastTurboSoundSamples; }
+    uint64_t lastTurboSoundPhase() const { return _lastTurboSoundPhase; }
 
     /// The resolved core audio rate (Hz) - recording and analysis consumers
     /// must read this instead of assuming 44100
@@ -678,6 +850,40 @@ public:
         _defaultDeviceSampleRate.store(rate, std::memory_order_release);
     }
 
+    /// A per-frame copy of the mixed sound, stereo int16 at getCoreRate(), taken where the recording takes it (before
+    /// mute): the GUI window recording's sound track. Called on the emulation thread at each frame end with the
+    /// frame's sample pairs and its frame_counter. While a tap is present the sound is synthesised in turbo and the
+    /// core rate stays, as while recording
+    using FrameAudioTap = std::function<void(const int16_t* samples, size_t sampleFrames, uint64_t frame)>;
+    uint64_t addFrameAudioTap(FrameAudioTap tap);
+    /// Returns once a call in progress has finished: the tap's state may go away after it
+    void removeFrameAudioTap(uint64_t id);
+    bool hasFrameAudioTaps() const { return _frameAudioTapCount.load(std::memory_order_acquire) > 0; }
+
+    /// region <Haptic taps (controller manager haptics.md §4)>
+    /// The sources the haptic feed's DSP filters read: at every frame end each one's frame, mono, decimated to
+    /// kHapticTapRate by a box average in integers (the same samples on every compiler), taken where the recording
+    /// takes the mix (before the mixer's volume and the user's mute). The Next's DAC part (NextDac, and COVOX on a
+    /// machine whose own DAC is a part) is rendered alone for it. Empty: no work. The emulation thread only (the
+    /// controller manager sets them at a frame boundary)
+    static constexpr uint32_t kHapticTapRate = 8000;
+    /// One tap: a source's buffer; `also` a second one summed into it (the Moonsound's FM and PCM); `dacChannel` 0..3
+    /// one channel of the Covox / Soundrive alone (Covox::SetChannelTap) instead of `source`
+    struct HapticTapSource
+    {
+        AudioSourceType source = AudioSourceType::MasterMix;
+        AudioSourceType also = AudioSourceType::Custom;
+        int dacChannel = -1;
+    };
+    void setHapticTaps(const std::vector<HapticTapSource>& sources);
+    void setHapticTaps(const std::vector<AudioSourceType>& sources);
+    size_t hapticTapCount() const { return _hapticTaps.size(); }
+    /// The last frame's samples of tap @p index (count 0: the source is not fitted or rendered nothing); a second
+    /// call for the same frame returns 0 (takeHapticTaps marks them read)
+    const int16_t* hapticTap(size_t index, size_t& count) const;
+    void takeHapticTaps();
+    /// endregion </Haptic taps>
+
     // DRC telemetry (tests / diagnostics)
     double getDrcRatio() const { return _drcResampler.getRatio(); }
     double getDrcFilteredOccupancyMs() const { return _drcOccFiltered; }
@@ -713,4 +919,62 @@ public:
     bool detachFromPorts();
 
     /// endregion </Port interconnection>
+
+    /// region <Slot-built cards: state>
+    // Kept at the end of the class, so the members above keep the offsets they had before slot-built cards
+private:
+    // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
+    // drives their frames and mixes their rows
+    std::vector<ICard*> _slotCards;
+    /// The slot cards' SSG rows (CardMixerRow::ssgRow) get what the AY socket's chips get: the AY / SSG tone voicing
+    /// (one stage per row, set up, requested, reset and invalidated together with _ayVoicing0 / _ayVoicing1) and then
+    /// the AY character chain (punch, room: configured, set up, reset and gated together with _ayChain0 /
+    /// _ayChain1, Sound HQ only). Both restart when the card restarts its render layers (a TTD restore)
+    struct CardSsgRow
+    {
+        ICard* card = nullptr;
+        AudioSourceType type = AudioSourceType::Custom;
+        std::unique_ptr<VoicingStage> stage;
+        std::unique_ptr<AudioCharacterChain> chain;
+        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage and the chain run in
+    };
+    std::vector<CardSsgRow> _cardSsgRows;
+    /// A card row's chain takes the socket chains' settings (chip type, punch preset, punch, room)
+    void configureCardChain(AudioCharacterChain& chain) const;
+    // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
+    std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
+    const int16_t* slotCardBuffer(AudioSourceType type) const;
+    bool wideMixNeeded() const;
+    /// endregion </Slot-built cards: state>
+
+    /// region <Mixer channels and parts: state>
+    // At the end of the class too (see above). The channel rows exist for the rows somebody read or changed: built on
+    // demand from MixerChannels::Describe, re-laid out when the device's channels change, dropped with their row
+    struct MixerChannelRow
+    {
+        AudioSourceType type = AudioSourceType::Custom;
+        std::vector<MixerChannelState> channels;
+        bool touched = false;  ///< changed by the user once: applied to the device at every frame start
+    };
+    mutable std::mutex _channelMutex;
+    mutable std::vector<MixerChannelRow> _channelRows;
+    /// The row of `type`, its layout built or refreshed (lock held); nullptr when the row has no channels
+    MixerChannelRow* channelRowLocked(AudioSourceType type) const;
+    /// Frame start (emulation thread): every touched row's effective channel state to its device
+    void applyMixerChannels();
+    /// Frame end (emulation thread): the metered channels' levels
+    void readMixerChannelMeters();
+    /// Frame start: the model audio source's part gains from the parts' rows (mute, solo, volume)
+    void applyModelAudioParts();
+    /// The part index of a row of the model audio source, -1 for another row
+    int modelAudioPart(AudioSourceType type) const;
+
+    // AY stereo mode / chip model: requested on any thread, applied at the frame start to the socket's chips
+    std::atomic<uint8_t> _requestedAYStereo{0};
+    std::atomic<uint8_t> _requestedAYChipModel{0};
+    uint8_t _appliedAYStereo = 0;
+    uint8_t _appliedAYChipModel = 0;
+    const ITurboSoundDevice* _appliedAYDevice = nullptr;
+    void applyAYSocketRequests();
+    /// endregion </Mixer channels and parts: state>
 };

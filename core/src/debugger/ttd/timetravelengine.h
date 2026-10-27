@@ -22,11 +22,13 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <deque>
 #include <map>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
+#include "debugger/ttd/engine/ttddeltabase.h"
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
 #include "debugger/ttd/engine/ttdmediajournal.h"
@@ -202,6 +204,10 @@ struct TTDEngineCaptureWork
     uint64_t compressInputBytes = 0;
     uint64_t deviceBlobBytes = 0;     ///< device state copied into the checkpoint
     uint64_t deviceStateBytes = 0;    ///< device state serialized for it (raw; TTDFrameInput)
+    /// Pieces of the device state regions compared this capture: the ones the
+    /// states reach now or reached last time, and the time-field anchors - not
+    /// the region's declared maximum (a network card declares 16 MB)
+    uint64_t devicePiecesOffered = 0;
 };
 
 class TimeTravelEngine
@@ -241,9 +247,15 @@ public:
 
     /// The recorded machine's devices (Phase 2), in restore order
     const TTDDeviceTable& Devices() const { return _devices; }
-    /// The state of the device with v1 id @p id at checkpoint @p index; false
-    /// when the device is not in the table or had no state there
-    bool DeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out) const;
+    /// The state of device @p key at checkpoint @p index; false when the
+    /// device is not in the table or had no state there
+    bool DeviceState(size_t index, const TTDDeviceKey& key, std::vector<uint8_t>& out) const;
+    /// The same for the device v1 saves under @p v1Id (the oracles that compare with v1)
+    bool DeviceStateOfV1Id(size_t index, uint8_t v1Id, std::vector<uint8_t>& out) const;
+    /// The device table index of @p key, or -1
+    int32_t DeviceIndex(const TTDDeviceKey& key) const;
+    /// The device table index of the device v1 saves under @p v1Id, or -1
+    int32_t DeviceIndexOfV1Id(uint8_t v1Id) const;
     /// Whether region @p region holds a device's state (not memory)
     bool IsDeviceStateRegion(uint32_t region) const
     {
@@ -333,6 +345,9 @@ public:
     const TTDMediaJournal& MediaReads() const { return _mediaReads; }
     const TTDPortJournal& BusReads() const { return _busReads; }
     const TTDPortJournal& BusWrites() const { return _busWrites; }
+    /// The bus journals' positions, for a caller that puts a replay's position back (a throwaway replay)
+    TTDPortJournal& BusReadsMutable() { return _busReads; }
+    TTDPortJournal& BusWritesMutable() { return _busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
     /// reads hand the CPU the recorded values, writes are checked
     void PlayBus(uint64_t readCursor, uint64_t writeCursor, uint64_t vectorCursor = 0)
@@ -418,6 +433,23 @@ public:
     const TTDEngineCheckpoint* Checkpoint(size_t index) const;
     /// Checkpoint index of @p position's frame boundary, or -1
     int64_t CheckpointIndexOf(const TTDPosition& position) const;
+    /// The last checkpoint held whose frame is at or before @p frame, or -1
+    /// when the held history starts after it
+    int64_t CheckpointAtOrBefore(uint64_t frame) const;
+    /// Drop the oldest segment - its checkpoints, versions and journal records -
+    /// when a later one is held; false when one segment is left. A ring does
+    /// this by itself; a holder with a limit of its own (bytes) calls it
+    bool DropOldestHeldSegment();
+    /// A recording resumed from the past (Phase 5, C2): forget everything after
+    /// checkpoint @p index - later checkpoints, their versions, the events,
+    /// bus, vector and media records after @p cut (records at it stay) - and
+    /// continue capturing from @p index as if it were the last capture. @p cut
+    /// lies in @p index's frame. Live memory is unknown afterwards (the next
+    /// RestoreToMemory writes every piece). The write journal is the holder's
+    /// to rebuild (Writes()). A session loaded from a file continues the same
+    /// way (it is no longer read-only). Branches that keep the old future come
+    /// with Phase 5, Step 2
+    bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
 
     /// Write region @p region as it was at checkpoint @p index into @p out
     /// (the region's pieces × 4 KB). Pieces the session had not seen at that
@@ -433,6 +465,15 @@ public:
     {
         const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
         return r ? r->changeCount : 0;
+    }
+    /// Those pieces with their new versions (PieceStore().Decode reads one)
+    std::vector<std::pair<uint32_t, TTDPieceId>> ChangesAt(size_t index, uint32_t region) const
+    {
+        std::vector<std::pair<uint32_t, TTDPieceId>> changes;
+        if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+            for (uint32_t k = 0; k < r->changeCount; ++k)
+                changes.emplace_back(ChangeAt(r->firstChange + k).piece, ChangeAt(r->firstChange + k).id);
+        return changes;
     }
     /// Whether checkpoint @p index holds a full table of @p region
     bool HasFullTable(size_t index, uint32_t region) const
@@ -462,6 +503,15 @@ public:
     /// and each live device's firmware against the recorded one. At most 64
     /// issues are listed; the message counts the rest
     TTDRestoreResult CheckSession() const;
+
+    /// The state device @p device (its index in Devices()) holds at checkpoint
+    /// @p index, without restoring anything (a load's guards read the
+    /// baseline's); false when the checkpoint holds none or it fails its
+    /// integrity check
+    bool DeviceStateAt(size_t index, uint32_t device, std::vector<uint8_t>& out) const
+    {
+        return ReadDeviceState(index, device, out) == DeviceStateRead::Ok;
+    }
 
     /// Tests only: damage the stored version of @p piece of @p region at
     /// checkpoint @p index (one flipped bit)
@@ -540,7 +590,7 @@ private:
         Missing,   ///< no state in this checkpoint (length 0), or no such device
         Damaged,   ///< a piece failed its integrity check: *damagedPiece
     };
-    DeviceStateRead ReadDeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out,
+    DeviceStateRead ReadDeviceState(size_t index, uint32_t device, std::vector<uint8_t>& out,
                                     uint32_t* damagedPiece = nullptr) const;
     /// Checkpoint @p index's entry for @p region, or null when it has none
     const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
@@ -564,8 +614,16 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
-    std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
+    std::vector<int32_t> _deviceRegion;                 ///< device table index -> its state region
     std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
+    /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
+    std::vector<uint32_t> _deviceExtent;
+    static constexpr uint32_t kExtentUnknown = 0xFFFFFFFFu;
+    /// Per region: a variable-size device state without time fields. Its scratch and delta base cover the pieces
+    /// the state reached, not the largest size (a network adapter declares 64 MiB and usually uses a few KiB)
+    std::vector<uint8_t> _growsWithState;
+    /// `v` covering pieces [0, pieces): a growing region's buffer grows to them, any other is the whole region
+    void CoverPieces(uint32_t region, std::vector<uint8_t>& v, uint32_t pieces) const;
     /// A time field's line, kept per device region and field while recording
     struct TimeLine
     {
@@ -585,9 +643,9 @@ private:
     std::vector<TTDSyncMiss> _syncMisses;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
-    /// Per region: its latest contents (allocated when the region's first
-    /// piece arrives), the base each new difference is computed against
-    std::vector<std::vector<uint8_t>> _deltaBase;
+    /// Per region: its latest contents, the base each new difference is
+    /// computed against (sparse: a uniform piece keeps only its value)
+    TTDDeltaBase _deltaBase;
     TTDFrameTable _frames;
     TTDPayloadStore _payloads;
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it

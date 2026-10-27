@@ -84,6 +84,32 @@ TEST(NetworkPanelModel_Test, OnlyTheChangedSettingsAreSent)
     EXPECT_EQ(changes, expected);
 }
 
+/// Apply splits a form change (owner decision Q11): the ZX-bus cards go through the slots (a restart), the rest is
+/// applied afterwards; ATM2IOESP keeps its card value in the rest (not a bus slot)
+TEST(NetworkPanelModel_Test, TheZxBusCardsGoThroughTheSlots)
+{
+    const NetworkForm before = NetworkFormFromState(State("none", true, "NONE", "NONE", "AT"));
+    NetworkForm after = before;
+    after.zxNetUsb = true;
+    after.hosts = "a.test=10.0.2.7";
+    NetworkFormApply split = NetworkFormSplitCards(before, after);
+    EXPECT_TRUE(split.cardChange);
+    EXPECT_EQ(split.zxBusCards, 0x01);
+    EXPECT_EQ(split.rest, (std::vector<std::pair<std::string, std::string>>{{"hosts", "a.test=10.0.2.7"}}));
+
+    after = before;
+    after.hostAccess = false;
+    split = NetworkFormSplitCards(before, after);
+    EXPECT_FALSE(split.cardChange) << "no card change: everything applies in place";
+    EXPECT_EQ(split.rest, (std::vector<std::pair<std::string, std::string>>{{"host_access", "off"}}));
+
+    after = before;
+    after.atm2IoEsp = true;
+    split = NetworkFormSplitCards(before, after);
+    EXPECT_FALSE(split.cardChange);
+    EXPECT_EQ(split.rest, (std::vector<std::pair<std::string, std::string>>{{"card", "atm2ioesp"}}));
+}
+
 TEST(NetworkPanelModel_Test, TheZxEvoOffersItsOwnPortAndTheAvr)
 {
     const NetworkAvailability a = NetworkFormAvailability(NetworkFormFromState(State("evo-avr", true, "NONE", "NONE", "AT")));

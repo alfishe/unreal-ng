@@ -1,0 +1,463 @@
+// ZX Spectrum Next: the real boot chain on the emulated Z80 - the boot ROM from the FPGA sources loads TBBLUE.FW
+// from a FAT16 card over SPI and jumps to #6000. The card is testdata/machines/zxnext/card (the collection's
+// cards/sn-test-card); UNREAL_NEXT_FIRMWARE points the tests at another distribution's folder. Design: design-boot-and-firmware.md section 2, research-fpga-vhdl.md section 14.
+
+#include "stdafx.h"
+#include "pch.h"
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <map>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <vector>
+
+#include "_helpers/busreport.h"
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
+#include "_helpers/ttddivergenceharness.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "emulator/video/next/nextvideorenderer.h"
+#include "emulator/video/screen.h"
+#include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/hostfolder/hostfolderfat.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/ports/models/portdecoder_next.h"
+
+namespace
+{
+/// The card folder: UNREAL_NEXT_FIRMWARE when set (another distribution), else testdata/machines/zxnext/card
+std::filesystem::path CardFolder()
+{
+    if (const char* folder = std::getenv("UNREAL_NEXT_FIRMWARE"))
+        return folder;
+    return TestPathHelper::FindProjectRoot() / "testdata/machines/zxnext/card";
+}
+}  // namespace
+
+class NextFirmware_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+    NextMemory* _memory = nullptr;
+    PortDecoder_Next* _ports = nullptr;
+
+    void SetUp() override
+    {
+        const std::filesystem::path folder = CardFolder();
+        if (!std::filesystem::exists(folder / "TBBLUE.FW"))
+            GTEST_SKIP() << "no card with TBBLUE.FW: " << folder;
+
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(
+            "NEXT", LoggerLevel::LogError, RamPowerOn::Zero,
+            [](CONFIG& config) { std::strncpy(config.next_boot_rom_path, "rom/next/nextboot.rom", sizeof config.next_boot_rom_path - 1); });
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+        _memory = dynamic_cast<NextMemory*>(_context->pMemory);
+        _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+        ASSERT_TRUE(_memory && _ports && _memory->HasBootRom());
+        _context->emulatorState.p7FFD = 0;
+        _memory->UpdateZ80Banks();
+
+        FolderSnapshot snapshot;
+        FolderScanOptions scan;
+        std::string error;
+        ASSERT_TRUE(FolderSnapshot::Scan(folder, scan, snapshot, &error)) << error;
+        FatVolumeOptions options;
+        std::vector<std::string> report;
+        auto card = HostFolderFat::Build(snapshot, options, &error, &report);
+        ASSERT_NE(card, nullptr) << error;
+        ASSERT_TRUE(_ports->InsertSdCard(0, std::move(card), SdCardSpi::WriteMode::Session));
+        _emulator->EnableTurboMode();
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+};
+
+namespace
+{
+std::vector<uint8_t> ReadFile(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+}  // namespace
+
+// The boot ROM initializes the card over SPI, reads TBBLUE.FW's index, copies the boot module to #6000 and jumps
+// to it (boot ROM off by the module's NR #03 write). ~100 blocks read by then
+TEST_F(NextFirmware_Test, BootRomLoadsTheFirmwareAndJumpsTo6000)
+{
+    int frames = 0;
+    for (; frames < 400; frames++)
+    {
+        _emulator->RunFrame(true);
+        if (_z80->pc >= 0x6000 && _z80->pc < 0x8000)
+            break;
+    }
+    EXPECT_LT(frames, 400);
+    EXPECT_GT(_ports->SdCard(0).blocksRead(), 20u);
+}
+
+// Bus analyzer, real software (mutation-tests.md R-NEXTZXOS): the boot ROM and TBBLUE.FW read the card over the Next's SPI
+// pair, traced and checked up to the jump to #6000. The one finding is a fact about the boot ROM, not the model: after each
+// block it drains the CRC with "INIR; INIR; NOP; IN A,(#EB); NOP; IN A,(#EB)" (#051D-#0525), and the second IN starts 15 CPU
+// clocks after the first (IN 11 + NOP 4) while a byte takes 16 (spi_master.vhd: a 4-bit counter on i_CLK_CPU; spi_wait_n
+// holds only the DMA). On the board that read is early too: the master returns the old byte and starts nothing. Harmless -
+// the ROM discards the CRC - so the count is pinned: one early access at #0525 per block, the existing counter agrees
+TEST_F(NextFirmware_Test, TheBootRomSdDriverOnTheBusHasOneKnownEarlyReadPerBlock)
+{
+    ASSERT_TRUE(bustest::Enable(_context, "next.spi"));
+    for (int frames = 0; frames < 400 && !(_z80->pc >= 0x6000 && _z80->pc < 0x8000); frames++)
+        _emulator->RunFrame(true);
+    ASSERT_TRUE(_z80->pc >= 0x6000 && _z80->pc < 0x8000);
+    const auto commands = bustest::Commands(_context, "next.spi");
+    EXPECT_TRUE(bustest::Has(commands, "CMD0"));
+    EXPECT_TRUE(bustest::Has(commands, "CMD17") || bustest::Has(commands, "CMD18"));
+    const auto byRule = bustest::FindingsByRule(_context, "next.spi");
+    ASSERT_EQ(byRule.size(), 1u) << bustest::Describe(byRule);
+    ASSERT_EQ(byRule.begin()->first, "early_access");
+    for (const std::string& f : bustest::Findings(_context, "next.spi"))
+        EXPECT_EQ(f, "early_access@0x0525") << "only the second CRC read";
+    EXPECT_EQ(static_cast<uint64_t>(byRule.begin()->second), _ports->SpiTooFastCount()) << "the existing counter sees the same";
+    EXPECT_GT(byRule.begin()->second, 0);
+}
+
+// The golden sequence of research-fpga-vhdl.md section 14 / design-boot-and-firmware.md section 2, as the real
+// firmware produces it on this machine: NR #07 = 3 first, the boot ROM off by NR #03, the ROMs written through the
+// NR #04 config mapping, the settings and the +3 port enables, NR #03 = machine type, NR #02 = soft reset - and the
+// personality ROM then runs from the system area the firmware filled
+TEST_F(NextFirmware_Test, FirmwareWritesTheRegistersAndSoftResetsIntoThePersonality)
+{
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    auto softResets = [&]() {
+        size_t n = 0;
+        for (const NextRegWrite& w : log)
+            n += (w.reg == 0x02 && (w.value & 3)) ? 1 : 0;
+        return n;
+    };
+    int frames = 0;
+    for (; frames < 3000 && softResets() == 0; frames++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+    }
+    ASSERT_EQ(softResets(), 1u) << "no soft reset after " << frames << " frames";
+
+    // The registers outside the palette / keymap / video setup, in order
+    std::vector<std::pair<uint8_t, uint8_t>> sequence;
+    for (const NextRegWrite& w : log)
+        if (w.reg <= 0x0A || (w.reg >= 0x80 && w.reg <= 0x85))
+            if (w.reg != 0x04)
+                sequence.push_back({w.reg, w.value});
+    ASSERT_GE(sequence.size(), 14u);
+    EXPECT_EQ(sequence[0], (std::pair<uint8_t, uint8_t>{0x07, 0x03})) << "28 MHz for the boot";
+    const std::vector<std::pair<uint8_t, uint8_t>> tail = {{0x05, 0x71}, {0x06, 0x9D}, {0x08, 0x1E}, {0x09, 0x00},
+                                                          {0x0A, 0x11}, {0x82, 0xDA}, {0x83, 0x3F}, {0x84, 0xFF},
+                                                          {0x85, 0x01}, {0x03, 0xB3}, {0x02, 0x01}};
+    // the first 11 entries of the tail are the init_registers / machine type / reset steps, the last in the log
+    // before the reset
+    size_t resetAt = 0;
+    for (size_t i = 0; i < sequence.size(); i++)
+        if (sequence[i].first == 0x02 && (sequence[i].second & 3))
+            resetAt = i;
+    ASSERT_GE(resetAt, tail.size());
+    for (size_t i = 0; i < tail.size(); i++)
+        EXPECT_EQ(sequence[resetAt + 1 - tail.size() + i], tail[i]) << "step " << i;
+    bool bootRomOff = false;
+    for (const NextRegWrite& w : log)
+        bootRomOff |= w.reg == 0x03 && w.value == 0x00;
+    EXPECT_TRUE(bootRomOff) << "NR #03 = 0 switches the boot ROM off before the ROMs are loaded";
+
+    // Run on: the personality starts from the system area, out of config mode, +3 machine type
+    for (int i = 0; i < 10; i++)
+        _emulator->RunFrame(true);
+    EXPECT_FALSE(_memory->InConfigMode());
+    EXPECT_FALSE(_memory->BootRomEnabled());
+    EXPECT_EQ(_ports->Board().MachineType(), 3);
+    const std::vector<uint8_t> rom = ReadFile(CardFolder() / "machines/next/enNextZX.rom");
+    ASSERT_EQ(rom.size(), 65536u);
+    EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(0), rom.data(), 4 * 16384), 0) << "the personality ROM is in the system area";
+    const std::vector<uint8_t> divmmc = ReadFile(CardFolder() / "machines/next/enNxtmmc.rom");
+    ASSERT_EQ(divmmc.size(), 8192u);
+    // DivMMC ROM: SRAM #010000 = the first half of ROM page 4
+    EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(4), divmmc.data(), 8192), 0) << "the DivMMC ROM";
+}
+
+// TTD over the boot (N11 "seek test over a NextZXOS boot"): recorded from power-on, every sampled frame a seek reaches has the live run's
+// CPU, latches, peripherals (the board, the SPI card), RAM and picture. The short run (~0.5 s) covers the boot ROM reading TBBLUE.FW over
+// SPI and the firmware's start at #6000; the long tier (UNREAL_LONG_TESTS=1) goes on through the soft reset to NextZXOS's welcome screen
+TEST_F(NextFirmware_Test, SeeksOverTheBootGiveTheLiveRunsState)
+{
+    _emulator->DisableTurboMode();  // a turbo frame is not drawn: the live picture must be the one a replay draws
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* controller = _context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
+    ASSERT_TRUE(controller->StartRecording()) << controller->GetUnavailableReason();
+
+    const size_t frames = TestTier::Long() ? 1800 : 60;
+    ttd::TTDDivergenceHarness harness(_emulator);
+    ttd::DivergenceHistory live = harness.RunLiveAndCapture(frames);
+    controller->StopRecording();
+    ASSERT_EQ(live.Size(), frames);
+    ASSERT_GT(_ports->SdCard(0).blocksRead(), 20u) << "the boot ROM read the card while recording";
+    if (TestTier::Long())
+        EXPECT_FALSE(_memory->InConfigMode()) << "the firmware's soft reset into the personality is in the recording";
+
+    // The reset leaves the CPU 3 T-states into frame 0 and the recording starts there: the picture of frame 0 holds
+    // what was drawn before the first checkpoint, which no replay has. Its state is still compared
+    live.frames.front().framebufferDigest = 0;
+
+    // Newest first: a seek that restored nothing would keep the end state and fail the older frames
+    std::vector<size_t> samples = harness.PickSampleFrames(frames, TestTier::Long() ? 100 : 20);
+    std::reverse(samples.begin(), samples.end());
+    for (size_t i : samples)
+    {
+        std::string failure;
+        EXPECT_TRUE(harness.VerifyReplayMatchesLive(i, live, &failure)) << "frame " << i << ": " << failure;
+    }
+}
+
+// Bring-up: run the personality ROM after the firmware's soft reset and list what it asks of the machine. Not a
+// gate (prints to stderr): UNREAL_NEXT_HUNT=<frames> runs it
+TEST_F(NextFirmware_Test, PersonalityRomStallHunt)
+{
+    const char* hunt = std::getenv("UNREAL_NEXT_HUNT");
+    if (!hunt)
+        GTEST_SKIP() << "UNREAL_NEXT_HUNT not set";
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    std::map<uint8_t, uint32_t> nrReads;
+    std::map<uint16_t, PortDecoder_Next::PortUse> inLog, outLog;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    _ports->Board().SetReadCounts(&nrReads);
+    _ports->SetPortLog(&inLog, &outLog);
+    int resetAt = -1;
+    const int total = std::atoi(hunt);
+    std::map<uint16_t, uint32_t> pcHist;
+    for (int f = 0; f < total; f++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        if (resetAt < 0)
+            for (const NextRegWrite& w : log)
+                if (w.reg == 0x02 && (w.value & 3))
+                    resetAt = f;
+        if (resetAt >= 0)
+            pcHist[_z80->pc & 0xFFF0]++;
+        // UNREAL_NEXT_SPACE=<frames after the reset>: hold SPACE for 8 frames from there (the welcome screen's "start")
+        if (const char* at = std::getenv("UNREAL_NEXT_SPACE"); at && resetAt >= 0)
+        {
+            const int start = resetAt + std::atoi(at);
+            if (f == start)
+                _context->pKeyboard->PressKey(ZXKEY_SPACE);
+            if (f == start + 8)
+                _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+        }
+    }
+    std::fprintf(stderr, "soft reset at frame %d of %d, pc=%04X sp=%04X iff=%d im=%d halted=%d mmu:", resetAt, total, _z80->pc, _z80->sp,
+                 _z80->iff1, _z80->im, _z80->halted);
+    for (unsigned i = 0; i < 8; i++)
+        std::fprintf(stderr, " %02X", _memory->GetMmu(i));
+    std::fprintf(stderr, " rom=%d type=%d bytes@pc-8:", _memory->GetRomSelect(), _ports->Board().MachineType());
+    for (int k = -8; k < 16; k++)
+        std::fprintf(stderr, " %02X", _memory->PeekSlot(static_cast<uint16_t>(_z80->pc + k)));
+    std::fprintf(stderr, "\nNR reads:");
+    for (auto& [r, n] : nrReads)
+        std::fprintf(stderr, " %02X x%u", r, n);
+    std::fprintf(stderr, "\nunhandled IN:");
+    for (auto& [p, u] : inLog)
+        std::fprintf(stderr, " %04X x%u(=%02X)", p, u.count, u.last);
+    std::fprintf(stderr, "\nunhandled OUT:");
+    for (auto& [p, u] : outLog)
+        std::fprintf(stderr, " %04X x%u(=%02X)", p, u.count, u.last);
+    std::fprintf(stderr, "\nNR writes after reset (distinct):");
+    std::map<uint16_t, uint32_t> wr;
+    bool after = false;
+    for (const NextRegWrite& w : log)
+    {
+        if (w.reg == 0x02 && (w.value & 3))
+            after = true;
+        else if (after)
+            wr[static_cast<uint16_t>(w.reg << 8 | w.value)]++;
+    }
+    for (auto& [k, n] : wr)
+        std::fprintf(stderr, " %02X=%02X x%u", k >> 8, k & 0xFF, n);
+    if (const char* dump = std::getenv("UNREAL_NEXT_DUMP"))
+    {
+        // the ULA screen (RAM bank 5 -> 16K page 5) and the Layer 2 banks (16K pages 8-10) as raw files for scratch conversion
+        std::ofstream ula(std::string(dump) + "/ula.bin", std::ios::binary);
+        ula.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(5)), 0x4000);
+        std::ofstream l2(std::string(dump) + "/l2.bin", std::ios::binary);
+        for (unsigned bank = 8; bank < 13; bank++)
+            l2.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(static_cast<uint16_t>(bank))), 0x4000);
+        {
+            // the emulator's own frame as RGBA with a small header (width, height) for scratch conversion
+            const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+            std::ofstream out(std::string(dump) + "/frame.rgba", std::ios::binary);
+            const uint32_t dims[2] = {fb.width, fb.height};
+            out.write(reinterpret_cast<const char*>(dims), sizeof dims);
+            out.write(reinterpret_cast<const char*>(fb.memoryBuffer), fb.memoryBufferSize);
+        }
+        std::ofstream ram7(std::string(dump) + "/ram7.bin", std::ios::binary);
+        ram7.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(7)), 0x4000);
+    }
+    {
+        // where does the text of the welcome screen stand: every RAM page, plain ASCII
+        const char* needles[] = {"Welcome", "NextZXOS", "Browser", "Tape Loader", "Calculator"};
+        for (const char* needle : needles)
+            for (uint16_t page = 0; page < 128; page++)
+            {
+                const uint8_t* ram = _memory->RAMPageAddress(page);
+                const size_t n = std::strlen(needle);
+                for (size_t i = 0; i + n <= 0x4000; i++)
+                    if (std::memcmp(ram + i, needle, n) == 0)
+                        std::fprintf(stderr, "\nfound '%s' in RAM page %u offset %04zX", needle, page, i);
+            }
+    }
+    std::fprintf(stderr, "\npc histogram (top):");
+    std::vector<std::pair<uint32_t, uint16_t>> top;
+    for (auto& [p, n] : pcHist)
+        top.push_back({n, p});
+    std::sort(top.rbegin(), top.rend());
+    for (size_t i = 0; i < top.size() && i < 8; i++)
+        std::fprintf(stderr, " %04X x%u", top[i].second, top[i].first);
+    std::fprintf(stderr, "\n");
+}
+
+// Where does the personality ROM restart from? Single-steps after the soft reset and reports the instructions that
+// landed on #0000 (UNREAL_NEXT_HUNT set)
+TEST_F(NextFirmware_Test, PersonalityRomRestartHunt)
+{
+    if (!std::getenv("UNREAL_NEXT_HUNT"))
+        GTEST_SKIP() << "UNREAL_NEXT_HUNT not set";
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    for (int f = 0; f < 3000; f++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        bool reset = false;
+        for (const NextRegWrite& w : log)
+            reset |= w.reg == 0x02 && (w.value & 3);
+        if (reset)
+            break;
+    }
+    // now inside the personality: report every arrival in the early init (#0000-#013F) from far away
+    int arrivals = 0;
+    uint16_t prev = _z80->pc;
+    for (long i = 0; i < 12'000'000 && arrivals < 8; i++)
+    {
+        _z80->EngineStep();
+        if (_z80->pc < 0x0140 && prev >= 0x0200 && (_z80->pc < 0x08 || _z80->pc > 0x40))
+        {
+            std::fprintf(stderr, "arrival #%04X from #%04X step %ld sp=%04X ret=%02X%02X rom=%d mmu0=%02X mmu1=%02X bytes@prev:", _z80->pc, prev, i,
+                         _z80->sp, _memory->PeekSlot(static_cast<uint16_t>(_z80->sp + 1)), _memory->PeekSlot(_z80->sp), _memory->GetRomSelect(),
+                         _memory->GetMmu(0), _memory->GetMmu(1));
+            for (int k = 0; k < 4; k++)
+                std::fprintf(stderr, " %02X", _memory->PeekSlot(static_cast<uint16_t>(prev + k)));
+            std::fprintf(stderr, "\n");
+            arrivals++;
+        }
+        prev = _z80->pc;
+    }
+}
+
+// The first user-visible milestone (A4): the real chain reaches the NextZXOS "Welcome" screen, SPACE starts the OS and
+// its main menu is drawn in the ULA screen (RAM bank 5): Browser, Command Line, NextBASIC, ... , the memory size of
+// 1792K and the date of the DS1307. The golden is the 6912 bytes of that screen (testdata/machines/zxnext/menu-ula.bin),
+// checked by eye against the jnext screenshot of the same boot. Boot-bound: ~800 frames at 28 MHz
+TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
+{
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    int frames = 0;
+    bool reset = false;
+    for (; frames < 3000 && !reset; frames++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        for (const NextRegWrite& w : log)
+            reset |= w.reg == 0x02 && (w.value & 3);
+    }
+    ASSERT_TRUE(reset);
+    const std::vector<uint8_t> golden = ReadFile(TestPathHelper::FindProjectRoot() / "testdata/machines/zxnext/menu-ula.bin");
+    ASSERT_EQ(golden.size(), 6912u);
+    auto differs = [&]() {
+        const uint8_t* screen = _memory->RAMPageAddress(5);
+        size_t different = 0;
+        for (size_t i = 0; i < golden.size(); i++)
+            different += screen[i] != golden[i] ? 1 : 0;
+        return different;
+    };
+    // the welcome screen: the ROM sits in its key wait (HALT, interrupts on) with the text drawn
+    auto inked = [&]() {
+        const uint8_t* screen = _memory->RAMPageAddress(5);
+        int n = 0;
+        for (int i = 0; i < 0x1800; i++)
+            n += screen[i] != 0 ? 1 : 0;
+        return n;
+    };
+    int waited = 0;
+    for (; waited < 1500 && !(_z80->halted && inked() > 2000); waited++)  // the welcome text inks ~2700 bytes
+        _emulator->RunFrame(true);
+    ASSERT_LT(waited, 1500) << "no welcome screen";
+    for (int i = 0; i < 50; i++)
+        _emulator->RunFrame(true);
+    _context->pKeyboard->PressKey(ZXKEY_SPACE);
+    for (int i = 0; i < 8; i++)
+        _emulator->RunFrame(true);
+    _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+    // the menu: check every 25 frames, stop at the first match
+    size_t different = differs();
+    for (int i = 0; i < 40 && different != 0; i++)
+    {
+        for (int f = 0; f < 25; f++)
+            _emulator->RunFrame(true);
+        different = differs();
+    }
+    EXPECT_EQ(different, 0u) << "bytes of the ULA screen that differ from the menu";
+
+    // The host turbo draws one frame in N (the decimation): leave it and run two frames, so the picture is the menu's
+    // whatever frame the boot ended on
+    _emulator->DisableTurboMode();
+    for (int i = 0; i < 2; i++)
+        _emulator->RunFrame(true);
+
+    // ScreenNext drew it: a 640 x 512 frame (the 320 x 256 grid, lines doubled) with the highlighted "Browser" bar in cyan
+    const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+    ASSERT_EQ(fb.width, 640u);
+    ASSERT_EQ(fb.height, 512u);
+    const NextVideoRegs& video = _ports->Board().Video();
+    const uint32_t cyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 5));
+    const uint32_t brightCyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 13));
+    const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+    size_t bar = 0;
+    for (size_t i = 0; i < size_t(fb.width) * fb.height; i++)
+        bar += (pixels[i] == cyan || pixels[i] == brightCyan) ? 1 : 0;
+    EXPECT_GT(bar, 2000u) << "the highlighted menu entry";
+}

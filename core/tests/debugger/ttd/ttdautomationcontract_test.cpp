@@ -1,7 +1,7 @@
 /// @file ttd_automation_contract_test.cpp
 /// @brief Phase 2+ Automation: TTD API contract test.
 ///
-/// Verifies that the TimeTravelManager surface — as consumed by all four
+/// Verifies that the TimeTravelController surface — as consumed by all four
 /// automation layers (CLI, WebAPI, Python, Lua) — works end-to-end.
 ///
 /// This is NOT a re-test of the engine internals (those have 230 dedicated
@@ -19,7 +19,7 @@
 ///
 /// If this test passes, the CLI handler, WebAPI endpoints, Python .def()
 /// bindings, and Lua set_function() bindings will all work correctly — they
-/// are thin wrappers around the same TimeTravelManager methods exercised here.
+/// are thin wrappers around the same TimeTravelController methods exercised here.
 
 #include <gtest/gtest.h>
 
@@ -33,6 +33,7 @@
 #endif
 #include <vector>
 
+#include "_helpers/ttdwriterecords.h"
 #include "_helpers/testpathhelper.h"
 
 #include "emulator/emulator.h"
@@ -40,7 +41,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdprobe.h"
 
@@ -80,7 +81,7 @@ class TTD_Automation_Contract_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
 
     void SetUp() override
@@ -89,9 +90,9 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        ASSERT_NE(_context->pTimeTravelManager, nullptr);
+        ASSERT_NE(_context->pTimeTravelController, nullptr);
 
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         _fm = _emulator->GetFeatureManager();
         ASSERT_NE(_fm, nullptr);
@@ -205,11 +206,11 @@ TEST_F(TTD_Automation_Contract_Test, Seek_WithResult_ReportsTargetHalt)
 
     // Seek to frame 5 (within bounds)
     ttd::TTDTimePoint target{5, 0};
-    ttd::TimeTravelManager::TTDSeekResult result;
+    ttd::TimeTravelController::TTDSeekResult result;
     bool reached = _ttd->SeekTo(target, &result);
 
     EXPECT_TRUE(reached);
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::Target);
+    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
     EXPECT_EQ(result.arrivedAt.frame, 5u);
 }
 
@@ -220,21 +221,23 @@ TEST_F(TTD_Automation_Contract_Test, Seek_OutOfBounds_ReportsOutOfRange)
 
     // Seek beyond the session end
     ttd::TTDTimePoint target{1000, 0};
-    ttd::TimeTravelManager::TTDSeekResult result;
+    ttd::TimeTravelController::TTDSeekResult result;
     bool reached = _ttd->SeekTo(target, &result);
 
     EXPECT_FALSE(reached);
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange);
+    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::OutOfRange);
 }
 
 TEST_F(TTD_Automation_Contract_Test, Seek_MarkerBarrier_ReportsExternalEvent)
 {
+    // The engine replays tape and disk from its journals: a marker that stops a seek is one without its data
+    // (a debugger edit that carries no bytes, a reset, an unclassified marker)
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);
     _emulator->RunTStates(500, true);
 
     // Record a marker mid-frame
-    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, "test disk write");
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, "test debugger poke");
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -245,13 +248,13 @@ TEST_F(TTD_Automation_Contract_Test, Seek_MarkerBarrier_ReportsExternalEvent)
 
     // Seek to a target past the marker
     ttd::TTDTimePoint target{1, markerT + 500};
-    ttd::TimeTravelManager::TTDSeekResult result;
+    ttd::TimeTravelController::TTDSeekResult result;
     bool reached = _ttd->SeekTo(target, &result);
 
     EXPECT_FALSE(reached);
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent);
-    EXPECT_EQ(result.blockingMarker.kind, ttd::TTDExternalEventKind::DiskWrite);
-    EXPECT_STREQ(result.blockingMarker.reason, "test disk write");
+    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::ExternalEvent);
+    EXPECT_EQ(result.blockingMarker.kind, ttd::TTDExternalEventKind::DebuggerEdit);
+    EXPECT_STREQ(result.blockingMarker.reason, "test debugger poke");
 }
 
 /// endregion
@@ -403,9 +406,9 @@ TEST_F(TTD_Automation_Contract_Test, FullRoundTrip_StartRecordSeekStepResume)
     // 5. Seek to mid-session
     uint64_t midFrame = info1.sessionStartFrame + 10;
     ttd::TTDTimePoint seekTarget{midFrame, 0};
-    ttd::TimeTravelManager::TTDSeekResult seekResult;
+    ttd::TimeTravelController::TTDSeekResult seekResult;
     EXPECT_TRUE(_ttd->SeekTo(seekTarget, &seekResult));
-    EXPECT_EQ(seekResult.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::Target);
+    EXPECT_EQ(seekResult.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
 
     // 6. Step back
     EXPECT_TRUE(_ttd->StepBackFrame());
@@ -443,7 +446,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     RunFrames(3);
     _ttd->StopRecording();
 
-    const size_t journalSizeBefore = _ttd->GetWriteJournal()->Size();
+    const size_t journalSizeBefore = ttdtest::WriteRecordCount(*_ttd);
     ASSERT_GT(journalSizeBefore, 0u);
     const size_t checkpointCount = _ttd->GetCheckpointCount();
     ASSERT_GT(checkpointCount, 0u);
@@ -460,7 +463,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     // Deserialize into a fresh emulator instance
     Emulator* emu2 = new Emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emu2->Init());
-    ttd::TimeTravelManager* ttd2 = emu2->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd2 = emu2->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd2, nullptr);
 
     {
@@ -471,7 +474,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
 
     // Verify round-trip preserves checkpoint count and journal records
     EXPECT_EQ(ttd2->GetCheckpointCount(), checkpointCount);
-    EXPECT_EQ(ttd2->GetWriteJournal()->Size(), journalSizeBefore);
+    EXPECT_EQ(ttdtest::WriteRecordCount(*ttd2), journalSizeBefore);
 
     // Verify the journal is queryable after load — this is the contract
     // shape that all automation surfaces rely on post-dump.

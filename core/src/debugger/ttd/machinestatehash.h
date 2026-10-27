@@ -15,7 +15,7 @@
 //   * Deterministic across runs, build configs, host pointer layouts.
 //   * Excludes ALL host-side / transient state: MemoryInterface pointers,
 //     trace_curs / mem_curs / isDebugMode, decoded opcode, EmulatorState
-//     pointer members (tape.play_pointer, vdbase, ...).
+//     pointer members (tape.play_pointer, ...).
 //   * Fast enough to call at every frame boundary on a hot path. The
 //     RAM digest dominates; everything else is O(1).
 //

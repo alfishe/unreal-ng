@@ -1,6 +1,7 @@
 #include "soundchip_ay8910_test.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -26,6 +27,9 @@ void SoundChip_AY8910_Test::TearDown()
         delete _soundChip;
         _soundChip = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>
@@ -455,3 +459,53 @@ TEST_F(SoundChip_AY8910_Test, OutputDcRemovalKeepsBassFundamental)
 }
 
 /// endregion </Output DC removal>
+
+/// region <Silent advance>
+
+// advanceSilent(k) (the quiet ticks of the AY devices) moves the generators as k updateState(true) do: every envelope
+// shape, short and long periods of the envelope, tones (0 included) and noise (periods 0-31), runs of 1-40 ticks; the whole generator
+// state (the TTD blob: tone, noise, envelope) compared after every run
+TEST_F(SoundChip_AY8910_Test, SilentAdvanceMovesTheGeneratorsAsTickByTick)
+{
+    uint32_t seed = 0xA51E7u;
+    auto next = [&seed]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return seed;
+    };
+    for (uint8_t shape = 0; shape < 16; shape++)
+    {
+        for (uint16_t envelopePeriod : {0, 1, 2, 3, 5, 31, 300})
+        {
+            const uint8_t noisePeriod = std::array<uint8_t, 5>{0, 1, 2, 5, 31}[(shape + envelopePeriod) % 5];
+            SoundChip_AY8910CUT batch(_context);
+            SoundChip_AY8910CUT ticks(_context);
+            for (SoundChip_AY8910CUT* chip : {&batch, &ticks})
+            {
+                chip->writeRegister(AY_A_FINE, 3);   // tone A: period 3
+                chip->writeRegister(AY_B_FINE, 0);   // tone B: period 0, not played
+                chip->writeRegister(AY_C_FINE, 0x34);
+                chip->writeRegister(AY_C_COARSE, 0x01);
+                chip->writeRegister(AY_NOISE_PERIOD, noisePeriod);
+                chip->writeRegister(AY_MIXER_CONTROL, 0x00);
+                chip->writeRegister(AY_ENVELOPE_PERIOD_FINE, static_cast<uint8_t>(envelopePeriod));
+                chip->writeRegister(AY_ENVELOPE_PERIOD_COARSE, static_cast<uint8_t>(envelopePeriod >> 8));
+                chip->writeRegister(AY_ENVELOPE_SHAPE, shape);
+            }
+            std::vector<uint8_t> a(batch.TTDStateSize()), b(ticks.TTDStateSize());
+            for (int run = 0; run < 400; run++)
+            {
+                const uint32_t length = 1 + next() % 40;
+                batch.advanceSilent(length);
+                for (uint32_t i = 0; i < length; i++)
+                    ticks.updateState(true);
+                batch.TTDSaveState(a.data());
+                ticks.TTDSaveState(b.data());
+                ASSERT_EQ(a, b) << "shape " << int(shape) << " envelope period " << envelopePeriod << " run " << run;
+            }
+        }
+    }
+}
+
+/// endregion </Silent advance>

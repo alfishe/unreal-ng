@@ -3,19 +3,26 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QMessageBox>
+#include <QSettings>
+#include <algorithm>
 #include <set>
 
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
+#include "widgets/slangpresetrunner.h"
 
 #include "base/featuremanager.h"
 #include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
+#include "emulator/keyboardmanager.h"
+#include "emulator/savesnapshotchoices.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/platform.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/machinevariants.h"
+#include "emulator/capture/recordingcontrol.h"
+#include "emulator/media/recentfiles.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
@@ -128,25 +135,21 @@ void MenuManager::createFileMenu()
 
     // Open Snapshot
     _openSnapshotAction = _fileMenu->addAction(tr("Open &Snapshot..."));
-    _openSnapshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) or a TS-Conf program (.spg)"));
+    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) a TS-Conf program (.spg) or a ZX Spectrum Next program (.nex)"));
     connect(_openSnapshotAction, &QAction::triggered, this, &MenuManager::openSnapshotRequested);
 
     // Open Tape
     _openTapeAction = _fileMenu->addAction(tr("Open &Tape..."));
-    _openTapeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     _openTapeAction->setStatusTip(tr("Load a tape file (.tap, .tzx)"));
     connect(_openTapeAction, &QAction::triggered, this, &MenuManager::openTapeRequested);
 
     // Open Disk
     _openDiskAction = _fileMenu->addAction(tr("Open &Disk..."));
-    _openDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
     // Insert Medium: a file, then the slot chooser with every slot that takes it
     _insertMediumAction = _fileMenu->addAction(tr("&Insert Medium..."));
-    _insertMediumAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
     _insertMediumAction->setStatusTip(tr("Put a disk, tape, CD, hard-disk or card image into a slot you choose"));
     connect(_insertMediumAction, &QAction::triggered, this, &MenuManager::insertMediumRequested);
 
@@ -169,26 +172,29 @@ void MenuManager::createFileMenu()
 
     _fileMenu->addSeparator();
 
-    // Save Snapshot submenu
+    // Save Snapshot submenu: the items follow what the running machine can be saved in (updateSaveSnapshotMenu)
     _saveSnapshotMenu = _fileMenu->addMenu(tr("&Save Snapshot"));
-    
-    // Save as SNA
-    _saveSnapshotSNAAction = _saveSnapshotMenu->addAction(tr("Save as .sna..."));
-    _saveSnapshotSNAAction->setShortcut(QKeySequence::Save);
-    _saveSnapshotSNAAction->setStatusTip(tr("Save current emulator state to SNA snapshot format"));
-    connect(_saveSnapshotSNAAction, &QAction::triggered, this, &MenuManager::saveSnapshotRequested);
-    
-    // Save as Z80
+    _saveSnapshotMenu->setToolTipsVisible(true);
+
+    _saveSnapshotAction = _saveSnapshotMenu->addAction(tr("Save Snapshot..."));
+    _saveSnapshotAction->setShortcut(QKeySequence::Save);
+    connect(_saveSnapshotAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested(QString()); });
+    _saveSnapshotMenu->addSeparator();
+
+    _saveSnapshotSZXAction = _saveSnapshotMenu->addAction(tr("Save as .szx..."));
+    connect(_saveSnapshotSZXAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("szx"); });
     _saveSnapshotZ80Action = _saveSnapshotMenu->addAction(tr("Save as .z80..."));
-    _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 v3 snapshot format"));
-    connect(_saveSnapshotZ80Action, &QAction::triggered, this, &MenuManager::saveSnapshotZ80Requested);
+    connect(_saveSnapshotZ80Action, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("z80"); });
+    _saveSnapshotSNAAction = _saveSnapshotMenu->addAction(tr("Save as .sna..."));
+    connect(_saveSnapshotSNAAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("sna"); });
+    // The answer depends on the machine's mode (a Sprinter at the DSS prompt, a TS-Conf in its native mode): ask at the moment the menu opens
+    connect(_saveSnapshotMenu, &QMenu::aboutToShow, this, [this]() { updateSaveSnapshotMenu(_activeEmulator.lock()); });
 
     // Save Disk submenu
     _saveDiskMenu = _fileMenu->addMenu(tr("Save &Disk"));
     
     // Save Disk (to original path)
     _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
-    _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     _saveDiskAction->setStatusTip(tr("Save disk image to its original file (TRD / SCL / UDI); non TR-DOS content is re-targeted to UDI"));
     connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
     
@@ -209,9 +215,35 @@ void MenuManager::createFileMenu()
 
     _fileMenu->addSeparator();
 
-    // Recent Files (placeholder)
-    _recentFilesAction = _fileMenu->addAction(tr("Recent Files"));
-    _recentFilesAction->setEnabled(false);  // TODO: Implement recent files
+    // Recent Files: the core's list (RecentFiles, the same every automation plane and the deck's media.open_recent
+    // show), built each time the submenu opens
+    _recentFilesMenu = _fileMenu->addMenu(tr("Recent &Files"));
+    _recentFilesMenu->setStatusTip(tr("Open one of the files opened lately"));
+    connect(_recentFilesMenu, &QMenu::aboutToShow, this, [this]() {
+        _recentFilesMenu->clear();
+        const std::vector<RecentFiles::Entry> files = RecentFiles::Instance().List();
+        if (files.empty())
+        {
+            _recentFilesMenu->addAction(tr("(none yet)"))->setEnabled(false);
+            return;
+        }
+        std::string kind;
+        for (const RecentFiles::Entry& entry : files)
+        {
+            if (!kind.empty() && entry.kind != kind)
+                _recentFilesMenu->addSeparator();
+            kind = entry.kind;
+            const QString path = QString::fromStdString(entry.path);
+            QAction* action = _recentFilesMenu->addAction(
+                QString("%1  (%2)").arg(QString::fromStdString(entry.name), QString::fromStdString(entry.kind)));
+            action->setStatusTip(path);
+            action->setToolTip(path);
+            connect(action, &QAction::triggered, this, [this, path]() { emit openRecentFileRequested(path); });
+        }
+        _recentFilesMenu->addSeparator();
+        connect(_recentFilesMenu->addAction(tr("Clear Recent Files")), &QAction::triggered, this,
+                []() { RecentFiles::Instance().Clear(); });
+    });
 
     _fileMenu->addSeparator();
 
@@ -228,11 +260,7 @@ void MenuManager::createEditMenu()
 
     // Preferences
     _preferencesAction = _editMenu->addAction(tr("&Preferences..."));
-#ifdef Q_OS_MAC
-    _preferencesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
-#else
-    _preferencesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
-#endif
+    _preferencesAction->setShortcut(QKeySequence::Preferences);
     _preferencesAction->setStatusTip(tr("Configure emulator settings"));
     _preferencesAction->setEnabled(false);  // TODO: Implement preferences dialog
 }
@@ -243,17 +271,29 @@ void MenuManager::createViewMenu()
 
     // Log Window
     _logWindowAction = _viewMenu->addAction(tr("&Log Window"));
-    _logWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
     _logWindowAction->setStatusTip(tr("Show/hide log window"));
     _logWindowAction->setCheckable(true);
     _logWindowAction->setChecked(true);
     connect(_logWindowAction, &QAction::triggered, this, &MenuManager::logWindowToggled);
 
+    // ZX Next: the layers of the last frame one by one, with a pixel inspector (design-layer-capture.md L4)
+    _nextLayersAction = _viewMenu->addAction(tr("&Next Layers"));
+    _nextLayersAction->setStatusTip(tr("ZX Spectrum Next: show/hide the per-layer view and the pixel inspector"));
+    _nextLayersAction->setCheckable(true);
+    _nextLayersAction->setChecked(false);
+    connect(_nextLayersAction, &QAction::triggered, this, &MenuManager::nextLayersToggled);
+
+    // The machine's own keyboard to click (POC 031 pictures, controller manager osd.keyboard)
+    _osdKeyboardAction = _viewMenu->addAction(tr("On-screen &Keyboard"));
+    _osdKeyboardAction->setStatusTip(tr("Show/hide the emulated machine's keyboard to click"));
+    _osdKeyboardAction->setCheckable(true);
+    _osdKeyboardAction->setChecked(false);
+    connect(_osdKeyboardAction, &QAction::triggered, this, &MenuManager::osdKeyboardToggled);
+
     _viewMenu->addSeparator();
 
     // Toolbar (transport toolbar under the menu bar)
     _toolBarAction = _viewMenu->addAction(tr("&Toolbar"));
-    _toolBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
     _toolBarAction->setStatusTip(tr("Show/hide toolbar"));
     _toolBarAction->setCheckable(true);
     _toolBarAction->setChecked(true);
@@ -261,7 +301,6 @@ void MenuManager::createViewMenu()
 
     // Status bar (device LEDs and FPS at the bottom of the window)
     _statusBarAction = _viewMenu->addAction(tr("&Status Bar"));
-    _statusBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
     _statusBarAction->setStatusTip(tr("Show/hide status bar"));
     _statusBarAction->setCheckable(true);
     _statusBarAction->setChecked(true);
@@ -269,7 +308,6 @@ void MenuManager::createViewMenu()
 
     // HUD overlay (on-screen toasts, indicators, picture augmentation)
     _hudOverlayAction = _viewMenu->addAction(tr("&HUD Overlay"));
-    _hudOverlayAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
     _hudOverlayAction->setStatusTip(tr("Show/hide on-screen HUD overlay (toasts, indicators)"));
     _hudOverlayAction->setCheckable(true);
     _hudOverlayAction->setChecked(false);
@@ -279,7 +317,6 @@ void MenuManager::createViewMenu()
 
     // GPU acceleration toggle
     _gpuAccelerationAction = _viewMenu->addAction(tr("&GPU Acceleration"));
-    _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
     _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (faster scaling, enables CRT effects)"));
     _gpuAccelerationAction->setCheckable(true);
     _gpuAccelerationAction->setChecked(false);
@@ -287,7 +324,6 @@ void MenuManager::createViewMenu()
 
     // CRT effects (scanlines, curvature - GPU only)
     _crtEffectsAction = _viewMenu->addAction(tr("C&RT Effects"));
-    _crtEffectsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature) - requires GPU acceleration"));
     _crtEffectsAction->setCheckable(true);
     _crtEffectsAction->setChecked(false);
@@ -302,16 +338,16 @@ void MenuManager::createViewMenu()
 
     // Temporal blending (gigascreen flicker smoothing) - works for both GPU and software
     _temporalBlendingAction = _viewMenu->addAction(tr("&Temporal Blending"));
-    _temporalBlendingAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
     _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
     _temporalBlendingAction->setCheckable(true);
     _temporalBlendingAction->setChecked(false);
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
 
     // Full Screen
-    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
-    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
-    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen\tCtrl+F"));
+    // Single full-screen entry: Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey).
+    // Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
+    _fullScreenAction = _viewMenu->addAction(
+        tr("&Full Screen") + "\t" + QKeySequence(KeyboardManager::fullScreenKey()).toString(QKeySequence::NativeText));
     // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
@@ -325,7 +361,6 @@ void MenuManager::createViewMenu()
     for (int scale = 1; scale <= 4; ++scale)
     {
         QAction* action = _scaleMenu->addAction(tr("%1x (%2x%3)").arg(scale).arg(352 * scale).arg(288 * scale));
-        action->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | (Qt::Key_0 + scale)));
         action->setStatusTip(tr("Resize the window to show the screen at %1x").arg(scale));
         connect(action, &QAction::triggered, this, [this, scale]() { emit scaleRequested(scale); });
         _scaleActions.push_back(action);
@@ -335,7 +370,6 @@ void MenuManager::createViewMenu()
 
     // Overscan mode (Pentagon only - 384x304 with extended border)
     _overscanAction = _viewMenu->addAction(tr("&Overscan Mode"));
-    _overscanAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     _overscanAction->setStatusTip(tr("Pentagon overscan mode (384x304) - shows invisible border areas"));
     _overscanAction->setCheckable(true);
     _overscanAction->setEnabled(false);  // Enabled only for Pentagon
@@ -472,6 +506,28 @@ void MenuManager::setCrtProfile(int profileIndex)
     }
 }
 
+void MenuManager::setCrtShader(const QString& name)
+{
+    if (!_crtProfileGroup)
+        return;
+    for (QAction* action : _crtProfileGroup->actions())
+    {
+        if (action->property("shaderName").toString() == name)
+            action->setChecked(true);
+    }
+}
+
+void MenuManager::setCustomShadersEnabled(bool enabled)
+{
+    if (!_crtProfileGroup)
+        return;
+    for (QAction* action : _crtProfileGroup->actions())
+    {
+        if (action->property("shaderName").isValid())
+            action->setEnabled(enabled);
+    }
+}
+
 void MenuManager::populateCrtProfileMenu()
 {
     if (!_crtProfileMenu || !_crtProfileGroup)
@@ -503,12 +559,27 @@ void MenuManager::populateCrtProfileMenu()
         index++;
     }
 
-    // Add separator and custom shaders section
+    // The libretro presets built in (GPU only), then the custom shaders
+    _crtProfileMenu->addSeparator();
+    const QStringList presets = SlangPresetRunner::availablePresets();
+    for (const QString& presetName : presets)
+    {
+        QAction* action = _crtProfileMenu->addAction(presetName);
+        action->setCheckable(true);
+        action->setStatusTip(tr("libretro shader preset %1 (GPU acceleration only)").arg(presetName));
+        action->setData(-1);
+        action->setProperty("shaderName", presetName);
+        _crtProfileGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, presetName]() { emit crtShaderChanged(presetName); });
+    }
     _crtProfileMenu->addSeparator();
 
     // Scan for custom shaders
     CRTShaderManager::instance().scanShaderDirectory();
     auto customShaders = CRTShaderManager::instance().availableShaders();
+    customShaders.erase(std::remove_if(customShaders.begin(), customShaders.end(),
+                                       [&presets](const QString& name) { return presets.contains(name); }),
+                        customShaders.end());
 
     if (!customShaders.empty())
     {
@@ -516,14 +587,12 @@ void MenuManager::populateCrtProfileMenu()
         {
             QAction* action = _crtProfileMenu->addAction(shaderName + " (custom)");
             action->setCheckable(true);
-            action->setStatusTip(tr("Custom shader: %1").arg(shaderName));
+            action->setStatusTip(tr("Custom shader: %1 (GPU acceleration only)").arg(shaderName));
             action->setData(-1);  // Custom shader marker
             action->setProperty("shaderName", shaderName);
             _crtProfileGroup->addAction(action);
 
-            connect(action, &QAction::triggered, this, [this, shaderName]() {
-                emit crtProfileChanged(-1);  // -1 = custom, use property
-            });
+            connect(action, &QAction::triggered, this, [this, shaderName]() { emit crtShaderChanged(shaderName); });
         }
     }
     else
@@ -538,6 +607,30 @@ void MenuManager::setMediaPanelChecked(bool checked)
     // Sync from the panel's own close box; setChecked never re-emits triggered
     if (_mediaPanelAction)
         _mediaPanelAction->setChecked(checked);
+}
+
+void MenuManager::setNextLayersChecked(bool checked)
+{
+    if (_nextLayersAction)
+        _nextLayersAction->setChecked(checked);
+}
+
+void MenuManager::setOsdKeyboardChecked(bool checked)
+{
+    if (_osdKeyboardAction)
+        _osdKeyboardAction->setChecked(checked);
+}
+
+void MenuManager::setSlotsWindowChecked(bool checked)
+{
+    if (_slotsWindowAction)
+        _slotsWindowAction->setChecked(checked);
+}
+
+void MenuManager::setMidiActivityChecked(bool checked)
+{
+    if (_midiActivityAction)
+        _midiActivityAction->setChecked(checked);
 }
 
 void MenuManager::setNetworkWindowChecked(bool checked)
@@ -574,27 +667,23 @@ void MenuManager::createRunMenu()
 
     // Start
     _startAction = _runMenu->addAction(tr("&Start"));
-    _startAction->setShortcut(QKeySequence(Qt::Key_F5));
     _startAction->setStatusTip(tr("Start emulation"));
     connect(_startAction, &QAction::triggered, this, &MenuManager::startRequested);
 
     // Pause
     _pauseAction = _runMenu->addAction(tr("&Pause"));
-    _pauseAction->setShortcut(QKeySequence(Qt::Key_F6));
     _pauseAction->setStatusTip(tr("Pause emulation"));
     _pauseAction->setEnabled(false);
     connect(_pauseAction, &QAction::triggered, this, &MenuManager::pauseRequested);
 
     // Resume
     _resumeAction = _runMenu->addAction(tr("Res&ume"));
-    _resumeAction->setShortcut(QKeySequence(Qt::Key_F7));
     _resumeAction->setStatusTip(tr("Resume emulation"));
     _resumeAction->setEnabled(false);
     connect(_resumeAction, &QAction::triggered, this, &MenuManager::resumeRequested);
 
     // Stop
     _stopAction = _runMenu->addAction(tr("S&top"));
-    _stopAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
     _stopAction->setStatusTip(tr("Stop emulation"));
     _stopAction->setEnabled(false);
     connect(_stopAction, &QAction::triggered, this, &MenuManager::stopRequested);
@@ -603,7 +692,6 @@ void MenuManager::createRunMenu()
 
     // Reset
     _resetAction = _runMenu->addAction(tr("&Reset"));
-    _resetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     _resetAction->setStatusTip(tr("Reset emulator"));
     connect(_resetAction, &QAction::triggered, this, &MenuManager::resetRequested);
 
@@ -615,26 +703,22 @@ void MenuManager::createRunMenu()
     _speedGroup->setExclusive(true);
 
     _speed1xAction = _speedMenu->addAction(tr("1x (Normal)"));
-    _speed1xAction->setShortcut(QKeySequence(Qt::Key_F1));
     _speed1xAction->setCheckable(true);
     _speed1xAction->setChecked(true);
     _speedGroup->addAction(_speed1xAction);
     connect(_speed1xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(1); });
 
     _speed2xAction = _speedMenu->addAction(tr("2x (Fast)"));
-    _speed2xAction->setShortcut(QKeySequence(Qt::Key_F2));
     _speed2xAction->setCheckable(true);
     _speedGroup->addAction(_speed2xAction);
     connect(_speed2xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(2); });
 
     _speed4xAction = _speedMenu->addAction(tr("4x (Very Fast)"));
-    _speed4xAction->setShortcut(QKeySequence(Qt::Key_F3));
     _speed4xAction->setCheckable(true);
     _speedGroup->addAction(_speed4xAction);
     connect(_speed4xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(4); });
 
     _speed8xAction = _speedMenu->addAction(tr("8x (Extreme)"));
-    _speed8xAction->setShortcut(QKeySequence(Qt::Key_F4));
     _speed8xAction->setCheckable(true);
     _speedGroup->addAction(_speed8xAction);
     connect(_speed8xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(8); });
@@ -651,8 +735,7 @@ void MenuManager::createRunMenu()
     // Not bare Tab: it is the file managers' panel-switch key (Wild Commander,
     // NedoOS), so a guest session silently turned turbo - and its audio mute -
     // on within seconds. Tab belongs to the guest
-    _turboModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab));
-    _turboModeAction->setStatusTip(tr("Ctrl+Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
+    _turboModeAction->setStatusTip(tr("Toggle maximum speed (no sync); unavailable while TTD is recording"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
@@ -671,32 +754,13 @@ void MenuManager::createMachineMenu()
     std::vector<TMemModel> models = manager->GetAvailableModels();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
 
-    // Only show supported models for now
-    // TODO: Enable other models as they become fully supported
-    std::set<MEM_MODEL> supportedModels = {
-        MM_PENTAGON,      // Pentagon 128K/512K/1024K
-        MM_SPECTRUM48,    // ZX-Spectrum 48K
-        MM_SPECTRUM128,   // ZX-Spectrum 128K
-        MM_PLUS2,         // ZX-Spectrum +2 (grey): 128K hardware, Amstrad ROM
-        MM_PLUS2A,        // ZX-Spectrum +2A (black): +3 without the floppy controller
-        MM_PLUS3,         // ZX-Spectrum +3 (uPD765A, design: docs/inprogress/2026-09-28-plus3-upd765)
-        MM_ATM450,        // ATM Turbo 2 v4.50 (design: docs/inprogress/2026-10-01-atm450)
-        MM_ATM710,        // ATM Turbo 2+ v7.10
-        MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
-        MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
-                          // docs/inprogress/2026-09-07-scorpion-zs256-clone)
-        MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
-                          // quadrant switching + #7EFD window; same design doc)
-        MM_PROFI,         // Profi v5 1024K (design: docs/inprogress/2026-09-21-profi)
-        MM_PROFI3,        // Profi v3 512K (design: docs/inprogress/2026-10-01-profi-v3-v5)
-        MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
-        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
-    };
+    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). GMX, KAY,
+    // QUORUM, LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
 
     for (const auto& model : models)
     {
-        // Skip unsupported models
-        if (supportedModels.find(model.Model) == supportedModels.end())
+        // Skip the models this build cannot create
+        if (!Config::IsModelCreatable(model))
             continue;
 
         QString shortName = QString::fromUtf8(model.ShortName);
@@ -832,13 +896,23 @@ void MenuManager::createMachineMenu()
 
     _machineMenu->addSeparator();
 
+    // The machine's buses, slots and cards (ZX-bus slots): plug / remove / options, a change restarts the machine
+    _slotsWindowAction = _machineMenu->addAction(tr("S&lots..."));
+    _slotsWindowAction->setStatusTip(tr("Show/hide the slots window: buses, slots and cards; plug, remove, options"));
+    _slotsWindowAction->setCheckable(true);
+    _slotsWindowAction->setChecked(false);
+    connect(_slotsWindowAction, &QAction::triggered, this, &MenuManager::slotsWindowToggled);
+    // Quick plugs per connector, swap the ports, reset the hand-made choices (controller manager ui-ux.md §8); the
+    // main window fills it each time it opens
+    _machineControllersMenu = _machineMenu->addMenu(tr("C&ontrollers"));
+    _machineControllersMenu->setStatusTip(tr("Plug a joystick into a connector, swap the joystick ports"));
+
+    _machineMenu->addSeparator();
+
     // MNI - the Scorpion "magic button" (design: 2026-09-07-scorpion-zs256-clone,
     // Task 6): NMI with the Shadow Monitor paged into #0000 so the handler at
-    // #0066 executes monitor code; plain NMI on other models. F11 at window
-    // level - the debugger window rebinds F11 to Step In while focused, and
-    // Full Screen lives on Ctrl+F.
+    // #0066 executes monitor code; plain NMI on other models.
     _mniAction = _machineMenu->addAction(tr("&MNI (NMI + Service Monitor)"));
-    _mniAction->setShortcut(QKeySequence(Qt::Key_F11));
     _mniAction->setStatusTip(tr("Non-maskable interrupt into the service monitor (plain NMI on other models)"));
     connect(_mniAction, &QAction::triggered, this, &MenuManager::mniRequested);
 
@@ -1060,7 +1134,6 @@ void MenuManager::createDebugMenu()
     // Debugger window. Hidden at start; while hidden the emulator runs without
     // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
     _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
-    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
     _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
     _debuggerAction->setCheckable(true);
     _debuggerAction->setChecked(false);
@@ -1079,58 +1152,85 @@ void MenuManager::createDebugMenu()
 
     // Step In
     _stepInAction = _debugMenu->addAction(tr("Step &In"));
-    _stepInAction->setShortcut(QKeySequence(Qt::Key_F8));
     _stepInAction->setStatusTip(tr("Execute one instruction"));
     connect(_stepInAction, &QAction::triggered, this, &MenuManager::stepInRequested);
 
     // Step Over
     _stepOverAction = _debugMenu->addAction(tr("Step &Over"));
-    _stepOverAction->setShortcut(QKeySequence(Qt::Key_F10));
     _stepOverAction->setStatusTip(tr("Execute instruction, skip calls"));
     connect(_stepOverAction, &QAction::triggered, this, &MenuManager::stepOverRequested);
 
     // Step Out
     _stepOutAction = _debugMenu->addAction(tr("Step O&ut"));
-    _stepOutAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F8));
     _stepOutAction->setStatusTip(tr("Execute until return from current function"));
-    _stepOutAction->setEnabled(false);  // TODO: Implement step out
+    connect(_stepOutAction, &QAction::triggered, this, &MenuManager::stepOutRequested);
 
-    // Run to Cursor
+    // Run to Cursor: the line of the disassembly's cursor (click a line); a breakpoint on the way stops it
     _runToCursorAction = _debugMenu->addAction(tr("Run to &Cursor"));
-    _runToCursorAction->setShortcut(QKeySequence(Qt::Key_F9));
-    _runToCursorAction->setStatusTip(tr("Execute until cursor position"));
-    _runToCursorAction->setEnabled(false);  // TODO: Implement run to cursor
+    _runToCursorAction->setStatusTip(tr("Execute until the line under the disassembly's cursor"));
+    connect(_runToCursorAction, &QAction::triggered, this, &MenuManager::runToCursorRequested);
 
     _debugMenu->addSeparator();
 
     // Toggle Breakpoint
     _toggleBreakpointAction = _debugMenu->addAction(tr("&Toggle Breakpoint"));
-    _toggleBreakpointAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
-    _toggleBreakpointAction->setStatusTip(tr("Toggle breakpoint at current address"));
-    _toggleBreakpointAction->setEnabled(false);  // TODO: Implement
+    _toggleBreakpointAction->setStatusTip(
+        tr("Toggle an execution breakpoint at the disassembly cursor (at PC while the debugger is hidden)"));
+    connect(_toggleBreakpointAction, &QAction::triggered, this, &MenuManager::toggleBreakpointRequested);
 
     // Clear All Breakpoints
     _clearAllBreakpointsAction = _debugMenu->addAction(tr("&Clear All Breakpoints"));
-    _clearAllBreakpointsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
-    _clearAllBreakpointsAction->setStatusTip(tr("Remove all breakpoints"));
-    _clearAllBreakpointsAction->setEnabled(false);  // TODO: Implement
+    _clearAllBreakpointsAction->setStatusTip(tr("Remove all your breakpoints"));
+    connect(_clearAllBreakpointsAction, &QAction::triggered, this, &MenuManager::clearAllBreakpointsRequested);
 
     // Show Breakpoints
     _showBreakpointsAction = _debugMenu->addAction(tr("Show &Breakpoints..."));
-    _showBreakpointsAction->setStatusTip(tr("Show breakpoints window"));
-    _showBreakpointsAction->setEnabled(false);  // TODO: Implement
+    _showBreakpointsAction->setStatusTip(tr("Show the breakpoint list and editor"));
+    connect(_showBreakpointsAction, &QAction::triggered, this, &MenuManager::showBreakpointsRequested);
 
     _debugMenu->addSeparator();
 
     // Show Registers
     _showRegistersAction = _debugMenu->addAction(tr("Show &Registers"));
-    _showRegistersAction->setStatusTip(tr("Show CPU registers"));
-    _showRegistersAction->setEnabled(false);  // TODO: Implement
+    _showRegistersAction->setStatusTip(tr("Show the debugger with the CPU registers in focus"));
+    connect(_showRegistersAction, &QAction::triggered, this, &MenuManager::showRegistersRequested);
 
     // Show Memory
     _showMemoryAction = _debugMenu->addAction(tr("Show &Memory"));
-    _showMemoryAction->setStatusTip(tr("Show memory viewer"));
-    _showMemoryAction->setEnabled(false);  // TODO: Implement
+    _showMemoryAction->setStatusTip(tr("Show the debugger with the memory view in focus"));
+    connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
+
+    // Time Travel: the black box (D29) - every machine this window creates keeps
+    // recording its last minutes; turbo and a host speed above 1x stay free (it
+    // stops while they run). Off by default; saved in the settings
+    _debugMenu->addSeparator();
+    QMenu* timeTravelMenu = _debugMenu->addMenu(tr("Time &Travel"));
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    _blackBoxAction = timeTravelMenu->addAction(tr("Always Record (&Black Box)"));
+    _blackBoxAction->setCheckable(true);
+    _blackBoxAction->setChecked(settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool());
+    _blackBoxAction->setStatusTip(tr("Keep recording the last minutes of every machine this window creates; it steps "
+                                     "aside while turbo or a host speed above 1x runs"));
+    connect(_blackBoxAction, &QAction::toggled, this, [this](bool on) {
+        QSettings s(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        s.setValue(QStringLiteral("TimeTravel/BlackBox"), on);
+        emit blackBoxToggled(on);
+    });
+    _blackBoxMinutesMenu = timeTravelMenu->addMenu(tr("Keep &Last"));
+    QActionGroup* minutesGroup = new QActionGroup(_blackBoxMinutesMenu);
+    const int savedMinutes = settings.value(QStringLiteral("TimeTravel/BlackBoxMinutes"), 5).toInt();
+    for (const int minutes : {1, 2, 5, 10, 30})
+    {
+        QAction* action = _blackBoxMinutesMenu->addAction(tr("%n minute(s)", nullptr, minutes));
+        action->setCheckable(true);
+        action->setChecked(minutes == savedMinutes);
+        minutesGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, minutes]() {
+            QSettings s(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+            s.setValue(QStringLiteral("TimeTravel/BlackBoxMinutes"), minutes);
+            emit blackBoxMinutesChanged(minutes);
+        });
+    }
 }
 
 void MenuManager::createToolsMenu()
@@ -1139,7 +1239,6 @@ void MenuManager::createToolsMenu()
 
     // Settings
     _settingsAction = _toolsMenu->addAction(tr("&Settings..."));
-    _settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
     _settingsAction->setStatusTip(tr("Configure emulator settings"));
     _settingsAction->setEnabled(false);  // TODO: Implement settings dialog
 
@@ -1165,12 +1264,26 @@ void MenuManager::createToolsMenu()
     _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
     connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
 
+    // Host game controllers (docs/inprogress/2026-10-17-controller-manager/ui-ux.md §8)
+    _controllersAction = _toolsMenu->addAction(tr("C&ontrollers..."));
+    _controllersAction->setStatusTip(tr("Game pads and joysticks: what they drive on this machine, and their bindings"));
+    connect(_controllersAction, &QAction::triggered, this, &MenuManager::controllersRequested);
+
+    // Companion clients: devices paired to act as the user's hands (docs/inprogress/2026-10-16-companion-client)
+    _companionsAction = _toolsMenu->addAction(tr("&Companions..."));
+    _companionsAction->setStatusTip(tr("Devices paired to control the emulator for you; revoke them here"));
+    connect(_companionsAction, &QAction::triggered, this, &MenuManager::companionsRequested);
+
+    // The Stream Deck companion: its daemon's supervision, pairing, decks (docs/inprogress/2026-10-19-streamdeck-integration)
+    _streamDeckAction = _toolsMenu->addAction(tr("Stream &Deck..."));
+    _streamDeckAction->setStatusTip(tr("The Stream Deck daemon: when it starts, its pairing, its decks' brightness"));
+    connect(_streamDeckAction, &QAction::triggered, this, &MenuManager::streamDeckRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
     // first opened; lives in Tools beside the other auxiliary windows, r7)
     _tapeManagerAction = _toolsMenu->addAction(tr("Tape &Manager"));
-    _tapeManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
     _tapeManagerAction->setStatusTip(tr("Show/hide tape manager window"));
     _tapeManagerAction->setCheckable(true);
     _tapeManagerAction->setChecked(false);
@@ -1178,7 +1291,6 @@ void MenuManager::createToolsMenu()
 
     // Media panel: every slot (floppy drives, SD card, ...) through MediaControl
     _mediaPanelAction = _toolsMenu->addAction(tr("M&edia"));
-    _mediaPanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_4));
     _mediaPanelAction->setStatusTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
     _mediaPanelAction->setCheckable(true);
     _mediaPanelAction->setChecked(false);
@@ -1187,14 +1299,18 @@ void MenuManager::createToolsMenu()
     // Network: ZX-Bus cards, the machine's serial port and what is plugged in,
     // the ZX-Evo AVR firmware, the virtual network, and their live state
     _networkWindowAction = _toolsMenu->addAction(tr("Net&work"));
-    _networkWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_5));
     _networkWindowAction->setStatusTip(tr("Show/hide the network window: cards, serial port, ESP module, virtual network"));
     _networkWindowAction->setCheckable(true);
     _networkWindowAction->setChecked(false);
     connect(_networkWindowAction, &QAction::triggered, this, &MenuManager::networkWindowToggled);
 
+    // The ZX-MultiSound's MIDI synthesizer as it plays: parts, programs, notes; Panic
+    _midiActivityAction = _toolsMenu->addAction(tr("M&IDI Activity"));
+    _midiActivityAction->setStatusTip(tr("Show/hide the MIDI activity window: the synthesizer's parts and notes"));
+    _midiActivityAction->setCheckable(true);
+    _midiActivityAction->setChecked(false);
+    connect(_midiActivityAction, &QAction::triggered, this, &MenuManager::midiActivityToggled);
     _trafficWindowAction = _toolsMenu->addAction(tr("Network &traffic"));
-    _trafficWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_6));
     _trafficWindowAction->setStatusTip(tr("Show/hide the network traffic window: frames and socket operations, decode, seek, pcapng"));
     _trafficWindowAction->setCheckable(true);
     _trafficWindowAction->setChecked(false);
@@ -1235,19 +1351,15 @@ void MenuManager::createToolsMenu()
     _quickRecordMenu = _toolsMenu->addMenu(tr("&Quick Record"));
     _quickRecordMenu->setStatusTip(tr("Quickly start recording with a preset"));
 
-    // Populate with preset names (will be connected via lambda to emit quickRecordRequested)
-    auto addPresetAction = [this](const QString& name) {
-        QAction* action = _quickRecordMenu->addAction(name);
-        connect(action, &QAction::triggered, this, [this, name]() {
-            emit quickRecordRequested(name);
-        });
-    };
-
-    addPresetAction(tr("Gameplay (MP4)"));
-    addPresetAction(tr("GIF Animation"));
-    addPresetAction(tr("High Quality (MKV)"));
-    // TODO: Re-add "Music (FLAC)" / "Audio Only (WAV)" when audio-only
-    // recording lands, and "Multi-Track (MKV)" when multi-track encoding lands.
+    // The core's presets (capture::RecordingPresets): the same ones every automation plane and the Stream Deck's
+    // cap.record_toggle start by id
+    for (const capture::RecordingPreset& preset : capture::RecordingPresets())
+    {
+        QAction* action = _quickRecordMenu->addAction(QString::fromUtf8(preset.title));
+        action->setStatusTip(QString::fromUtf8(preset.description));
+        const QString id = QString::fromUtf8(preset.id);
+        connect(action, &QAction::triggered, this, [this, id]() { emit quickRecordRequested(id); });
+    }
 #endif
 }
 
@@ -1273,30 +1385,10 @@ void MenuManager::createHelpMenu()
     _keyboardShortcutsAction->setStatusTip(tr("View keyboard shortcuts"));
     connect(_keyboardShortcutsAction, &QAction::triggered, []() {
         QMessageBox::information(nullptr, "Keyboard Shortcuts",
-                                 "Emulation:\n"
-                                 "F5 - Start\n"
-                                 "F6 - Pause\n"
-                                 "F7 - Resume\n"
-                                 "Ctrl+R - Reset\n"
-                                 "F11 - MNI (NMI + Service Monitor)\n\n"
-
-                                 "Speed:\n"
-                                 "F1 - 1x (Normal)\n"
-                                 "F2 - 2x (Fast)\n"
-                                 "F3 - 4x (Very Fast)\n"
-                                 "F4 - 8x (Extreme)\n"
-                                 "Tab - Toggle Turbo Mode\n\n"
-
-                                 "Debug:\n"
-                                 "F8 - Step In\n"
-                                 "F10 - Step Over\n"
-                                 "F9 - Run to Cursor\n"
-                                 "Ctrl+B - Toggle Breakpoint\n\n"
-
-                                 "View:\n"
-                                 "Ctrl+F - Full Screen\n"
-                                 "Ctrl+1 - Toggle Debugger\n"
-                                 "Ctrl+2 - Toggle Log Window");
+                                 tr("Only the platform's standard shortcuts are assigned for now:\n"
+                                    "Open, Save snapshot, Quit, Preferences, Help.\n"
+                                    "Full Screen: Ctrl+F (Cmd+F on macOS).\n\n"
+                                    "Every other command is in the menus."));
     });
 
     _helpMenu->addSeparator();
@@ -1310,7 +1402,7 @@ void MenuManager::createHelpMenu()
                               "<p>ZX Spectrum emulator</p>"
                               "<p>Version %1 - %2 @ %3</p>"
                               "<p>Built with Qt %4</p>"
-                              "<p>&copy; 2024 Unreal Speccy Project</p>")
+                              "<p>&copy; 2026 Unreal Speccy Project</p>")
                                .arg(QLatin1String(buildinfo::kVersion),
                                     QLatin1String(buildinfo::kGitBranch),
                                     QLatin1String(buildinfo::kGitCommit),
@@ -1328,6 +1420,13 @@ void MenuManager::applyPlatformSpecificSettings()
 
 void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 {
+    // Leased for the whole update, the helpers below included: an automation thread may remove the instance or
+    // switch its model meanwhile (2026-10-10: a WebAPI model switch freed the WD1793 this read). A retiring
+    // instance shows as none
+    const Emulator::ContextLease lease = activeEmulator ? activeEmulator->LeaseContext() : Emulator::ContextLease{};
+    if (!lease)
+        activeEmulator = nullptr;
+
     // Store weak reference to active emulator (for future queries)
     _activeEmulator = activeEmulator;
 
@@ -1342,6 +1441,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);
+    updateSaveSnapshotMenu(activeEmulator);
     
     // File menu - Save Disk menu and actions
     bool hasDiskLoaded = false;
@@ -1406,6 +1506,8 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug menu states
     _stepInAction->setEnabled(!isRunning || isPaused);
     _stepOverAction->setEnabled(!isRunning || isPaused);
+    _stepOutAction->setEnabled(emulatorExists && (!isRunning || isPaused));
+    _runToCursorAction->setEnabled(emulatorExists && (!isRunning || isPaused));
 
     // Overscan menu states (Pentagon only)
     // Only update overscan visibility when there's an active emulator
@@ -1452,7 +1554,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // The same predicate the core refuses on (FeatureManager::setFeature,
         // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
         bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
-                         (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
+                         (context && context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording());
         // Shortcuts change what the guest code does: off while recording AND while
         // replaying or positioned in history
         // An RZX playback holds them off the same way (the recording's CPU path)
@@ -1537,6 +1639,41 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     updateMachineModelSelection(activeEmulator);
 }
 
+void MenuManager::updateSaveSnapshotMenu(const std::shared_ptr<Emulator>& activeEmulator)
+{
+    if (!_saveSnapshotMenu)
+        return;
+    snapshot::SaveFormats formats;
+    if (activeEmulator)
+        formats = activeEmulator->SnapshotSaveFormats();
+    const std::vector<SaveSnapshotChoices::Choice> choices = SaveSnapshotChoices::Build(formats);
+    bool any = false;
+    for (const SaveSnapshotChoices::Choice& choice : choices)
+    {
+        if (choice.format == snapshot::SaveFormat::Nex)
+        {
+            any = any || choice.enabled;  // offered by the Save Snapshot dialog only
+            continue;
+        }
+        QAction* action = choice.format == snapshot::SaveFormat::Szx   ? _saveSnapshotSZXAction
+                          : choice.format == snapshot::SaveFormat::Z80 ? _saveSnapshotZ80Action
+                                                                       : _saveSnapshotSNAAction;
+        if (!action)
+            continue;
+        action->setEnabled(choice.enabled);
+        action->setStatusTip(choice.tip);
+        action->setToolTip(choice.tip);
+        any = any || choice.enabled;
+    }
+    if (_saveSnapshotAction)
+    {
+        const QString tip = any ? tr("Save the machine to a snapshot file") : QString::fromStdString(formats.view);
+        _saveSnapshotAction->setEnabled(any);
+        _saveSnapshotAction->setStatusTip(tip);
+        _saveSnapshotAction->setToolTip(tip);
+    }
+}
+
 void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator)
 {
     if (!_frontPanelTurboAction)
@@ -1552,6 +1689,14 @@ void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& acti
 void MenuManager::resetViewportSelection()
 {
     _viewportSymmetricAction->setChecked(true);
+}
+
+void MenuManager::setViewportSelection(int presetIndex)
+{
+    QAction* actions[] = {_viewportFullOverscanAction, _viewportSymmetricAction, _viewportStandardAction,
+                          _viewportScreenOnlyAction};
+    if (presetIndex >= 0 && presetIndex < 4 && actions[presetIndex])
+        actions[presetIndex]->setChecked(true);  // setChecked does not emit triggered
 }
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)

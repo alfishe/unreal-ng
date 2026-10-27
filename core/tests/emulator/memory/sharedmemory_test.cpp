@@ -277,6 +277,35 @@ TEST_F(SharedMemory_Test, RapidToggleDoesNotCrash)
     EXPECT_NE(memory->ROMBase(), nullptr);
 }
 
+// A tool reader (GUI refresh, WebAPI) reads guest memory live from its own thread; the CPU hold of the migration
+// does not stop it. It may have loaded a bank pointer just before the migration: that pointer must stay readable.
+// Before the fix, disabling shared memory unmapped the old view and this read faulted
+TEST_F(SharedMemory_Test, ReaderHoldingAnOldBankPointerSurvivesTheMigration)
+{
+    FeatureManager* fm = GetFeatureManager();
+    ASSERT_NE(fm, nullptr);
+    Memory* memory = GetMemory();
+    ASSERT_NE(memory, nullptr);
+
+    // Heap -> shared: the reader is in the heap buffer
+    memory->DirectWriteToZ80Memory(0x8000, 0x5A);
+    const volatile uint8_t* heapRead = memory->MapZ80AddressToPhysicalAddress(0x8000);
+    fm->setFeature(Features::kSharedMemory, true);
+    memory->UpdateFeatureCache();
+    ASSERT_TRUE(IsSharedMemoryActive());
+    EXPECT_EQ(*heapRead, 0x5A);
+
+    // Shared -> heap: the reader is in the mapped view
+    memory->DirectWriteToZ80Memory(0x8000, 0xA5);
+    const volatile uint8_t* sharedRead = memory->MapZ80AddressToPhysicalAddress(0x8000);
+    fm->setFeature(Features::kSharedMemory, false);
+    memory->UpdateFeatureCache();
+    ASSERT_FALSE(IsSharedMemoryActive());
+    EXPECT_EQ(*sharedRead, 0xA5);
+
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8000), 0xA5);
+}
+
 /// endregion </Feature Toggle Tests>
 
 /// region <Memory Base Address Consistency Tests>
@@ -613,27 +642,12 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
 
     // Wait for the emulator thread to actually reach the Run state
     // (Otherwise Pause() will be immediately overriden by Start())
-    // Millisecond granularity, not the original microseconds(250): on this
-    // Windows/MinGW toolchain, std::this_thread::sleep_for below ~1ms rounds
-    // down to effectively zero (Windows' coarse timer resolution vs POSIX's
-    // finer-grained nanosleep), so the loop was a near-instant busy-spin that
-    // gave StartAsync()'s freshly spawned OS thread almost no real wall-clock
-    // time to reach StateRun before the budget "ran out" - flaky on Windows,
-    // fine on platforms with precise sub-millisecond sleep_for. The loop
-    // still exits the moment the state flips, so the fast path (~1ms here)
-    // is unaffected; 2000 * 1ms = 2s is a generous ceiling for a thread start.
-    for (int i = 0; i < 2000 && _emulator->GetState() != StateRun; i++)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    ASSERT_EQ(_emulator->GetState(), StateRun) << "Emulator failed to reach StateRun";
+    ASSERT_TRUE(TestWait::For([&] { return _emulator->GetState() == StateRun; }, std::chrono::seconds(2)))
+        << "Emulator failed to reach StateRun";
 
     _emulator->Pause();
-    // Allow state to transition to Paused (same millisecond-granularity fix)
-    for (int i = 0; i < 2000 && _emulator->GetState() != StatePaused; i++)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    // Allow state to transition to Paused
+    TestWait::For([&] { return _emulator->GetState() == StatePaused; }, std::chrono::seconds(2));
     ASSERT_EQ(_emulator->GetState(), StatePaused) << "Emulator should be paused for rigorous memory testing";
 
     // 2. Enable Shared Memory feature

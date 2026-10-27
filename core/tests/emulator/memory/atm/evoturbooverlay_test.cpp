@@ -44,7 +44,7 @@ protected:
 
         // TR-DOS boot map: ROM in window 0, RAM in windows 1-3, the shadow ports open
         _decoder->ApplyBootROMDefaults(RM_DOS);
-        _context->emulatorState.pBF = 0x01;
+        _context->emulatorState.evo.pBF = 0x01;
         _z80->iff1 = 0;
     }
 
@@ -244,8 +244,8 @@ TEST_F(EvoTurboOverlay_Test, NoWaitsBelowFourteenMegahertzOrWithTheFeatureOff)
 /// The cache words are timing state: a seek restores them, and installs the overlay for the restored clock
 TEST_F(EvoTurboOverlay_Test, TtdBlobRestoresTheCacheWords)
 {
-    const auto ids = _decoder->GetTTDModelStateIds();
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::EvoTurboCache), ids.end());
+    const auto ids = _decoder->GetTTDModelStateTypes();
+    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::TTDDeviceType::EvoTurboCache), ids.end());
 
     SelectClock(true);
     Poke(0x8000, {0x00, 0x00});

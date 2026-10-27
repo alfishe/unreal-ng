@@ -148,6 +148,45 @@ uint32_t ProfiWaitOverlay::ExtraClocks(bool rom, uint32_t start) const
     return V5RamWait(start);
 }
 
+bool ProfiWaitOverlay::PlainV5Rule() const
+{
+    return _setup.v5 && !(_state->pDFFD & 0x80) && _state->hw_turbo_ratio_applied <= 1 &&
+           _state->current_z80_frequency_multiplier <= 1;
+}
+
+bool ProfiWaitOverlay::RepeatFetchIsPure(uint16_t addr, uint32_t& period) const
+{
+    period = 1;
+    if (!WaitsApply())
+        return true;
+    if (!PlainV5Rule())
+        return false;
+    // ROM: the one-shot's wait or none, every time; RAM: V5RamWait, by the start's parity inside a stretch
+    if (_setup.phase != 1 && !_memory->IsWindowRom(static_cast<uint8_t>(addr >> 14)))
+        period = 2;
+    return true;
+}
+
+uint32_t ProfiWaitOverlay::RepeatFetchPureUntil(uint16_t addr, uint32_t t) const
+{
+    if (!WaitsApply() || _setup.phase == 1 || _memory->IsWindowRom(static_cast<uint8_t>(addr >> 14)))
+        return UINT32_MAX;
+    // V5RamWait's stretches: a line's window, starts d in [224 L - 1, 224 L + 127), waits by parity; the border
+    // between two windows and the frame after the last one never wait
+    const int32_t paper = static_cast<int32_t>(_setup.paperStartT);
+    const int32_t d = static_cast<int32_t>(t) - paper;
+    if (d + 1 < 0)
+        return static_cast<uint32_t>(paper - 1);
+    const int32_t line = (d + 1) / kLineT;
+    if (line >= kPaperLines)
+        return UINT32_MAX;
+    if (d - kLineT * line < kFetchWindowT - 1)
+        return static_cast<uint32_t>(paper + kLineT * line + kFetchWindowT - 1);
+    if (line + 1 >= kPaperLines)
+        return UINT32_MAX;
+    return static_cast<uint32_t>(paper + kLineT * (line + 1) - 1);
+}
+
 void ProfiWaitOverlay::Wait(uint16_t addr, bool write)
 {
     if (!WaitsApply())

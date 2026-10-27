@@ -1,5 +1,5 @@
 /// @file ttd_reverse_executor_test.cpp
-/// @brief Tests for TimeTravelManager reverse-execution primitives.
+/// @brief Tests for TimeTravelController reverse-execution primitives.
 ///
 /// Phase 4 reverse execution. Tests the three public primitives:
 ///   - ReverseStepInstructions(n)  — back N M1 cycles
@@ -22,7 +22,7 @@
 #include "base/featuremanager.h"
 #include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -34,7 +34,7 @@ class TTD_Reverse_Executor_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -44,7 +44,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -84,12 +84,15 @@ protected:
 // State guards
 // ===========================================================================
 
-TEST_F(TTD_Reverse_Executor_Test, ReverseStepInstructions_WhileRecording_Refused)
+TEST_F(TTD_Reverse_Executor_Test, ReverseStepInstructions_WhileRecording_PausesTheRecording)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
 
-    EXPECT_FALSE(_ttd->ReverseStepInstructions(5));
+    // The engine (D8): the reverse step pauses the recording and browses
+    EXPECT_TRUE(_ttd->ReverseStepInstructions(5));
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused);
 
     _ttd->StopRecording();
 }
@@ -115,12 +118,14 @@ TEST_F(TTD_Reverse_Executor_Test, ReverseStepInstructions_AtSessionStart_Refused
     EXPECT_FALSE(_ttd->ReverseStepInstructions(64));
 }
 
-TEST_F(TTD_Reverse_Executor_Test, ReverseStepTStates_WhileRecording_Refused)
+TEST_F(TTD_Reverse_Executor_Test, ReverseStepTStates_WhileRecording_PausesTheRecording)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
 
-    EXPECT_FALSE(_ttd->ReverseStepTStates(100));
+    EXPECT_TRUE(_ttd->ReverseStepTStates(100));
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused);
 
     _ttd->StopRecording();
 }
@@ -138,13 +143,15 @@ TEST_F(TTD_Reverse_Executor_Test, ReverseStepTStates_AtSessionStart_Refused)
     EXPECT_FALSE(_ttd->ReverseStepTStates(100000));
 }
 
-TEST_F(TTD_Reverse_Executor_Test, ReverseContinue_WhileRecording_Refused)
+TEST_F(TTD_Reverse_Executor_Test, ReverseContinue_WhileRecording_PausesTheRecording)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
 
-    auto r = _ttd->ReverseContinue({0x0000});
-    EXPECT_FALSE(r.matched);
+    // The engine (D8): the search pauses the recording and browses
+    _ttd->ReverseContinue({0x0000});
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused);
 
     _ttd->StopRecording();
 }

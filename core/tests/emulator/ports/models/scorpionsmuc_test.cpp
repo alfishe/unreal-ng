@@ -246,7 +246,7 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
     {
         emulator->RunNFrames(90);
         printf("f%4d: PC=%04X pFFBA=%02X EEPROM[0]=%02X [FE]=%02X [FF]=%02X\n", frame,
-               z80->pc, state.pFFBA,
+               z80->pc, state.scorpion.pFFBA,
                decoder->GetSMUCNvram().GetEEPROMByte(0),
                decoder->GetSMUCNvram().GetEEPROMByte(0xFE),
                decoder->GetSMUCNvram().GetEEPROMByte(0xFF));
@@ -278,7 +278,7 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
         // iterations cannot change any outcome, they only cost ~1 s of wall
         // clock. A run that never reaches it still walks the full window and
         // prints every sample, so a failure keeps its whole diagnostic trail.
-        if (maxPanelRows >= 3 && state.pFFBA != 0x00 &&
+        if (maxPanelRows >= 3 && state.scorpion.pFFBA != 0x00 &&
             decoder->GetSMUCNvram().GetEEPROMByte(0) == 0x61)
         {
             break;
@@ -287,10 +287,10 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
     EXPECT_GE(maxPanelRows, 3);
 
     // Final state snapshot
-    printf("final: PC=%04X pFFBA=%02X maxPanelRows=%d\n", z80->pc, state.pFFBA, maxPanelRows);
+    printf("final: PC=%04X pFFBA=%02X maxPanelRows=%d\n", z80->pc, state.scorpion.pFFBA, maxPanelRows);
 
     // The service ROM opened at least one serial transaction on #FFBA
-    EXPECT_NE(state.pFFBA, 0x00);
+    EXPECT_NE(state.scorpion.pFFBA, 0x00);
 
     // First-boot format path: default byte 0x61 lands at EEPROM address 0
     EXPECT_EQ(decoder->GetSMUCNvram().GetEEPROMByte(0), 0x61);

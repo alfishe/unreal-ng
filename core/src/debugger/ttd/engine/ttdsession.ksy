@@ -145,6 +145,9 @@ types:
     seq:
       - id: id
         type: u2
+        doc: |
+          TTDRegionId: a kind's memory (0x00-0x3FFF); a further instance of that kind 0x4000 + n x 0x100 + the
+          kind's id (D23); device states from 0x8000 (one per device-table entry)
       - id: name
         type: str_vlq
       - id: owner_type
@@ -169,7 +172,7 @@ types:
         type: str_vlq
       - id: legacy_id
         type: u1
-        doc: the schema-1 peripheral id (PeripheralId)
+        doc: the schema-1 peripheral id (PeripheralId, frozen at 0-63); 0xFF = none (a device added after the freeze, D23)
       - id: layout_version
         type: u2
       - id: state_size
@@ -599,6 +602,15 @@ types:
         repeat-expr: segment_count.value
 
   write_block:
+    doc: |
+      Columns (EncodeWriteBlock): varint size of the time column, varint
+      first globalT, the varint time deltas, then per record u2 addresses,
+      u2 PCs, u1 values, u1 pages (low 8 bits), the I/O bits (1 bit per
+      record, LSB first) and - only in a block that has a page above 255 -
+      the page-high bits in the same layout: bit 8 of the page, set for a
+      virtual page of another memory space (0x110-0x11F the Sprinter's video
+      RAM, 0x120-0x12F its fast RAM; the address holds the offset in that
+      page). A block without the column has RAM pages only (all older ones)
     seq:
       - id: size
         type: vlq

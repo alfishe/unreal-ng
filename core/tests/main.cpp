@@ -5,8 +5,16 @@
 #include <ctime>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/ttdv1tests.h"
+#include "common/filehelper.h"
+#include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/memory/atm/evoflash.h"
 
 /// Tests share one process-wide EmulatorManager. An instance a test leaves
 /// registered outlives it and changes what later tests see (sole-instance
@@ -57,12 +65,38 @@ static void PinTimeZone()
 int main(int argc, char **argv)
 {
   PinTimeZone();
+  // No wall clock in a test: the adaptive turbo render decimation measures the host's speed, so two machines under
+  // load skipped different frames. Every loop of this process uses the fixed cadence
+  MainLoop::AdaptiveDefault() = false;
+  // Session journals (<image>.usession) never land next to test data: a test that wants one says journal: replay
+  SessionWriteMap::OverrideJournalDefault(false);
+  // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that
+  // checks that turns it on
+  MediaManager::SetSaveOnRelease(false);
+  // The engine records, as in the application; v1's own tests select v1 (TtdBackendListener below)
+  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
   ::testing::InitGoogleTest(&argc, argv);
+
+  // The settings folder (FileHelper::GetWritablePath) is this process's scratch folder: files a machine saves there
+  // on its own (the ZX-Evo's flashed ROM, NeoGS FlashWrite=persist, screenshots) never reach the user's settings and
+  // never leak from one test into another run; the folder goes away with the process's scratch folder
+  {
+    const std::string writable = TestPathHelper::GetUniqueTestScratchPath("writable");
+    std::error_code ec;
+    std::filesystem::create_directories(FileHelper::ToFsPath(writable), ec);
+    FileHelper::SetWritablePathOverride(writable);
+  }
+  // A test that flashes a ZX-Evo ROM must not change the ROM the next test boots: the flash's persistence file is
+  // off except in the tests of the persistence itself (EvoFlashPersist_Test)
+  EvoFlash::SetPersistenceAllowed(false);
 
   // Sound devices (AY / TurboSound / TSFM, General Sound, MoonSound) are left
   // out of every machine unless a test opts in with a SoundCardScope (see
   // soundcardscope.h for why)
   SoundCardScope::InstallPolicy();
+
+  // v1's own tests (the files in ttdv1tests.h) record with v1; every other test with the engine
+  ::testing::UnitTest::GetInstance()->listeners().Append(new ttdtest::TtdBackendListener());
 
   auto* leakGuard = new ManagerLeakGuard();  // owned by gtest once appended
   ::testing::UnitTest::GetInstance()->listeners().Append(leakGuard);

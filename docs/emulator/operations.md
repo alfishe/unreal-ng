@@ -2,6 +2,8 @@
 
 This document provides a comprehensive reference of all supported emulator operations across different interfaces: CLI, API, Lua, Python, and WebAPI. Focus is on programmatic operations that can be used in headless mode.
 
+Environment variables that change how the emulator, the tests and the tools run: [environment-variables.md](environment-variables.md).
+
 ## Core Operations Reference Table
 
 | **Category** | **Operation** | **CLI Command** | **API Method** | **Lua Interface** | **Python Interface** | **WebAPI Endpoint** | **Description** |
@@ -25,7 +27,7 @@ This document provides a comprehensive reference of all supported emulator opera
 | | Wait Interrupt | N/A | `BreakpointManager::AddExecutionBreakpoint()` | N/A | N/A | N/A | Wait for interrupt |
 | **Debug Control** | Debug On | N/A | `Emulator::DebugOn()` | N/A | N/A | N/A | Enable debug mode |
 | | Debug Off | N/A | `Emulator::DebugOff()` | N/A | N/A | N/A | Disable debug mode |
-| | Debug Mode Toggle | `debugmode <on\|off>` | N/A | N/A | N/A | N/A | Toggle debug memory mode |
+| | Debug Mode Toggle | `debugmode <on\|off>` | N/A | N/A | N/A | N/A | Toggle debug memory mode (sets the `debugmode` feature; a TTD replay holds it on) |
 | **Memory Operations** | Read Memory | `memory <addr>` | `Memory::ReadByte()` | N/A | N/A | N/A | Read memory byte |
 | | Write Memory | N/A | `Memory::WriteByte()` | N/A | N/A | N/A | Write memory byte |
 | | Read Memory Block | N/A | `Memory::ReadBlock()` | N/A | N/A | N/A | Read memory block |

@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
@@ -16,6 +17,7 @@
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
+#include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
 namespace ttd
@@ -31,10 +33,14 @@ enum ROMModeEnum : uint8_t;
 
 class ModuleLogger;
 class EmulatorContext;
+class EvoAvrWait;
+class EvoFlash;
 namespace snapshot
 {
 class ISnapshotCommitPolicy;
+class ISnapshotCapturePolicy;
 }
+class IStateTransferHost;
 class Memory;
 class Screen;
 class Beeper;
@@ -289,6 +295,13 @@ struct PortMapEntry
 };
 
 
+/// A raw-port mask / match pair: the device claims port p when (p & mask) == match
+struct PortMaskMatch
+{
+    uint16_t mask = 0x0000;
+    uint16_t match = 0x0000;
+};
+
 /// Base class to mark all devices connected to port decoder
 class PortDevice
 {
@@ -305,6 +318,15 @@ public:
     /// arming FM2 reg 05). The default keeps the legacy-priority rule (R6).
     virtual bool portDeviceClaimsRead(uint16_t) { return false; }
 
+    /// A read cycle as the slot claim table resolves it (slots::PortClaimTable::Read): the value and whether the
+    /// device drove the data bus at all. A card may answer IORQGE on a port and still leave the data bus floating
+    /// (the ZX-MultiSound on #BFFD). The default drives whatever portDeviceInMethod returns
+    virtual uint8_t portDeviceReadCycle(uint16_t port, bool& drives)
+    {
+        drives = true;
+        return portDeviceInMethod(port);
+    }
+
     /// Self-decoding hook for devices whose address pattern can't be
     /// expressed as a single exact key in PortDecoder's dispatch map -
     /// e.g. Covox/SoundDrive, which recognize several bus addresses via a
@@ -317,6 +339,13 @@ public:
     /// AY, memory latches, ...) never need to implement these.
     virtual bool tryClaimOut(uint16_t /*rawPort*/, uint8_t /*value*/) { return false; }
     virtual bool tryClaimIn(uint16_t /*rawPort*/, uint8_t& /*outValue*/) { return false; }
+
+    /// The raw ports tryClaimOut/In can accept, as the claims a self-decoding
+    /// device registers in the decoder's claim table (RegisterSelfDecodingDevice,
+    /// control path): a port none of them covers is never offered to the
+    /// device and costs the decoder one bit test. The default covers every
+    /// port, so tryClaimOut/In alone decide
+    virtual std::vector<PortMaskMatch> selfDecodingClaims() const { return { PortMaskMatch{} }; }
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
@@ -401,6 +430,7 @@ protected:
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
+    snapshot::ISnapshotCapturePolicy* _snapshotCapturePolicy = nullptr;   ///< not owned (SetSnapshotCapturePolicy)
     Keyboard* _keyboard = nullptr;
     Mouse* _mouse = nullptr;
     Tape* _tape = nullptr;
@@ -414,9 +444,30 @@ protected:
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
     // legitimate 0xFF values from devices like WD1793).
     bool _lastPortDecoded = false;
+    /// A slot card answers the Kempston joystick (SetSlotKempstonJoystick)
+    bool _slotKempstonJoystick = false;
 
     // Registered port handlers from external peripheral devices
-    std::map<uint16_t, PortDevice*> _portDevices;
+    // (RegisterPortHandler), keyed by the DECODED port the model decoders hand
+    // to PeripheralPortIn/Out. They live in a claim table of their own (ZX-bus
+    // slots SL-3): exact claims (mask #FFFF) on the decoded-port space, which
+    // is not the raw bus address the observers' table is keyed by. A decoded
+    // port no device claims costs one bit test, a claimed one a scan of its
+    // low byte's bucket (a few entries)
+#pragma push_macro("slots")
+#undef slots
+    slots::PortClaimTable _peripheralClaims;
+#pragma pop_macro("slots")
+    static constexpr uint16_t kPeripheralMask = 0xFFFF;
+
+    /// The device registered for this decoded port; nullptr when none
+    PortDevice* PeripheralDevice(uint16_t decodedPort) const
+    {
+        if (!_peripheralClaims.IsClaimed(decodedPort)) [[unlikely]]
+            return nullptr;
+        const auto* entry = _peripheralClaims.FirstMatch(decodedPort);   // auto: Qt units define `slots`
+        return entry ? entry->owner : nullptr;
+    }
 
     // The machine's IDE board ([HDD] Scheme): its latches; the channel is IdeController's
     IdeAdapter _ide;
@@ -425,23 +476,69 @@ protected:
     // (e.g. ZXM-MoonSound) decode the whole 16-bit address and observe every
     // cycle on their ports, but the model decode rules map those raw addresses
     // onto other devices (ULA #FE family, AY #FFFD, Beta-128 FDC registers).
-    // Registering such a card in the exclusive _portDevices map would steal
+    // Registering such a card in the exclusive peripheral port map would steal
     // the port from the original device (observed: MoonSound taking #7F killed
     // TR-DOS reads). Observers are therefore tapped at the Z80 I/O funnel with
     // the RAW port before the model decode runs - both devices see the cycle,
     // like on the shared hardware bus.
-    std::map<uint16_t, PortDevice*> _fullDecodeDevices;
+    //
+    // They live in the ZX-bus slots port claim table (emulator/slots/portclaimtable.h,
+    // docs/inprogress/2026-10-03-zx-bus-slots/architecture.md §4): a port no
+    // observer claims costs one bit test on every IN / OUT. Exact 16-bit
+    // observers (RegisterFullDecodePort) sit in slot kExactObserverSlot and
+    // low-byte observers (RegisterFullDecodeLowBytePort) in
+    // kLowByteObserverSlot, so the first claim in slot order is the exact one
+    // first, then the low-byte one - the lookup order of the two tables this
+    // replaces. Low-byte observers stand for cards like the ZXM-MoonSound that
+    // wire only A0..A7 into the CPLD, so every high-byte alias of the card
+    // ports reaches the card. Guest software relies on this: the Z80 immediate
+    // forms `out (n),a` / `in a,(n)` execute with A in the HIGH address byte
+    // (op_noprefix), and the card author's own driver (MoonService v0.3a)
+    // writes registers with `ld a,d / out (n),a` - the register number dirties
+    // the high byte and the card must still decode the write.
+#pragma push_macro("slots")
+#undef slots
+    slots::PortClaimTable _fullDecodeClaims;
+#pragma pop_macro("slots")
+    static constexpr uint8_t kExactObserverSlot = 0;
+    static constexpr uint8_t kLowByteObserverSlot = 1;
+    static constexpr uint16_t kExactObserverMask = 0xFFFF;
+    static constexpr uint16_t kLowByteObserverMask = 0x00FF;
 
-    // Low-byte full-decode observers (keyed by port & 0xFF). Cards like the
-    // ZXM-MoonSound wire only A0..A7 into the CPLD, so every high-byte alias
-    // of the card ports reaches the card. Guest software relies on this: the
-    // Z80 immediate forms `out (n),a` / `in a,(n)` execute with A in the HIGH
-    // address byte (op_noprefix), and the card author's own driver
-    // (MoonService v0.3a) writes registers with `ld a,d / out (n),a` - the
-    // register number dirties the high byte and the card must still decode
-    // the write. Lookup order in the notify taps: exact 16-bit table first,
-    // then this one.
-    std::array<PortDevice*, 256> _fullDecodeLowByteDevices {};
+    /// The low-byte observer covering this raw port (nullptr when none); claimed ports only
+    PortDevice* LowByteObserver(uint16_t rawPort) const;
+
+    /// The claimed-port cycles of slot-built cards: the claim table's resolution (architecture.md §4.3) with the
+    /// board's decode as its board side; a board the cards hide gets no cycle (the trace still records the access)
+    uint8_t ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove);
+    void WriteSlotCardCycle(uint16_t port, uint8_t value, uint16_t pc);
+
+    /// The claim resolution of the claimed cycle ReadCycle / WriteCycle is running: its port and whether a low-byte
+    /// card stands the board's decode down (a write: always; a read: when the card claims it, portDeviceClaimsRead).
+    /// Decided once per cycle, before the board decodes; the board's claim override (OverrideDecodeForFullDecodeClaim)
+    /// applies it instead of looking the port up again. Active only while that board decode runs
+    struct ClaimCycle
+    {
+        uint16_t port = 0x0000;
+        bool active = false;
+        bool standDown = false;
+    };
+    ClaimCycle _claimCycle;
+
+    /// Rebuilds the claim table after a registration change
+    void RebuildFullDecodeClaims();
+    /// Whether a low-byte card stands the board down for this cycle: the override's own decision outside a
+    /// ReadCycle / WriteCycle (direct DecodePortIn / Out calls: tests, tools)
+    bool LowByteCardStandsDown(uint16_t rawPort, bool isRead) const;
+
+    /// The claimed-port halves of the split-phase taps NotifyFullDecodeIn / Out (tests, tools)
+    void NotifyClaimedOut(uint16_t port, uint8_t value);
+    uint8_t NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsBus);
+    /// The claimed-port halves of ReadCycle / WriteCycle (out of line: the unclaimed path stays one bit test)
+    uint8_t ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrove);
+    void WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc);
+    bool OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decodedPort, PortDecodeDisposition& disp,
+                                      bool isRead);
 
     // Cached observer read for the current IN cycle: NotifyFullDecodeIn (Z80
     // funnel tap) stores the card's bus value before the model decode runs,
@@ -454,11 +551,23 @@ protected:
 
     // Self-decoding devices (see PortDevice::tryClaimOut/In) - tried, in
     // registration order, for any raw port no exact-match device or
-    // higher-priority model-specific decode claimed first. Kept separate
-    // from _portDevices because these devices recognize a MASK/MATCH
+    // higher-priority model-specific decode claimed first. Kept apart from
+    // the exact port map because these devices recognize a MASK/MATCH
     // pattern across several raw addresses, not one exact key (see
-    // Covox: mode-1/mode-2 SoundDrive ports)
-    std::vector<PortDevice*> _selfDecodingDevices;
+    // Covox: mode-1/mode-2 SoundDrive ports). Their claims
+    // (PortDevice::selfDecodingClaims) live in a claim table of their own
+    // (ZX-bus slots SL-3): the board offers them a port only after its own
+    // decode declined it, so they must not mark the bus-side observers' ports
+    // claimed; one slot, registration order = the table's sequence order. A
+    // port none of them covers costs one bit test
+#pragma push_macro("slots")
+#undef slots
+    slots::PortClaimTable _selfDecodingClaims;
+#pragma pop_macro("slots")
+
+    /// The claimed-port halves of DispatchSelfDecodingOut / In (out of line: the unclaimed path stays one bit test)
+    bool DispatchClaimedSelfDecodingOut(uint16_t rawPort, uint8_t value);
+    bool DispatchClaimedSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
 
     // Semantic tags passed via the RegisterPortHandler overload, so dynamic
     // devices land in the tag collections instead of the anonymous fallback
@@ -489,6 +598,8 @@ protected:
     // Frame-scoped rolling counters (debugger status panel); updated only while
     // the porttrace feature is on
     PortActivitySummary _activitySummary;
+    // Set by a switch-on (any thread), consumed by the emulator thread: only it writes the counters
+    std::atomic<bool> _activitySummaryResetPending{false};
 
     /// endregion </Port trace>
 
@@ -541,6 +652,13 @@ public:
     /// The frame ended (main loop, after the network pump): board devices that
     /// run on their own clock catch up (ATM Turbo 2+ keyboard controller)
     virtual void OnFrameEnd() {}
+    /// The ROM loader put a new image into the ROM pages (@p imageBanks 16 KB pages of it from the file): a board
+    /// whose ROM is a flash lays its saved flash over it (ZX-Evo: EvoFlash)
+    virtual void OnRomLoaded(uint16_t imageBanks) { (void)imageBanks; }
+    /// The board's ROM as a writable flash (ZX-Evo TS-Conf, ATM3), or null
+    virtual EvoFlash* GetEvoFlash() { return nullptr; }
+    /// Core::Release starts: memory, the CPU and every device still exist. Save what outlives the machine
+    virtual void BeforeRelease() {}
     /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
     /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
     virtual bool OnNmiAccepted() { return false; }
@@ -553,9 +671,14 @@ public:
     virtual void OnDosRomFetch([[maybe_unused]] uint16_t pc) {}
     /// endregion </Board NMI hooks>
 
-    /// The model decodes a Kempston joystick (#1F; Scorpion #FF1F) and answers Joystick::Read(). Machines
-    /// without the arm stay false: the host joystick keys are not bound there, the TTD blob is not carried
-    virtual bool HasKempstonJoystick() const { return false; }
+    /// The machine answers a Kempston joystick with Joystick::Read(): its board decodes one, or a fitted slot card
+    /// provides the function (the `kempston` interface on a 48K). False: the host joystick keys are not bound, the
+    /// TTD blob is not carried, the input calls warn and name the card that fits
+    bool HasKempstonJoystick() const { return _slotKempstonJoystick || BoardHasKempstonJoystick(); }
+    /// The model's own decode (#1F; Scorpion #FF1F). Machines without the arm stay false
+    virtual bool BoardHasKempstonJoystick() const { return false; }
+    /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
+    void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
     virtual bool IsFEPort(uint16_t port);
 
@@ -563,6 +686,9 @@ public:
     /// Z80::in() uses this to decide whether to apply the floating bus override:
     /// only unmapped ports (no device responded) get the floating bus byte.
     bool WasLastPortDecoded() const { return _lastPortDecoded; }
+    /// A read of a port nothing decoded sees the ULA's floating bus on the Spectrums; a board whose bus decode says otherwise
+    /// (the Next: only #xxFF and the +3 port) overrides this to keep the idle #FF
+    virtual bool FloatingBusDrives(uint16_t port) const { return (port & 0x0001) != 0; }
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
@@ -609,6 +735,8 @@ public:
     /// Re-read the porttrace feature flag from FeatureManager and instantiate or
     /// release the recorder accordingly. Called from FeatureManager::onFeatureChanged.
     void UpdateFeatureCache();
+    /// The model's own features (the Next's esxDOS mode), asked at the end of UpdateFeatureCache
+    virtual void UpdateModelFeatureCache() {}
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
     /// Once returned the pointer stays valid for the decoder's lifetime
@@ -687,6 +815,16 @@ public:
     /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
     virtual bool HasMachineMouse() const { return false; }
 
+    /// Pads beyond the Kempston byte: the ZX Next's two joystick connectors, 12 buttons each. A connector's state: bit 0 right, 1 left, 2 down,
+    /// 3 up, 4 B (fire), 5 C, 6 A, 7 START, 8 Y, 9 Z, 10 X, 11 MODE (zxnext.vhd i_JOY_LEFT / i_JOY_RIGHT). Connector 0 is the left one (the
+    /// host's pad: its low byte is the Kempston device), 1 the right one. Default: no pads
+    static constexpr unsigned kPadConnectors = 2;
+    static constexpr uint16_t kPadMask = 0x0FFF;
+    virtual bool HasPads() const { return false; }
+    virtual uint16_t PadState(unsigned connector) const { (void)connector; return 0; }
+    /// Set the whole state of a connector (the journaled input event TTDInputKind::NextPad lands here); false when there is no such pad
+    virtual bool ApplyPadState(unsigned connector, uint16_t state) { (void)connector; (void)state; return false; }
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///
@@ -698,7 +836,7 @@ public:
     /// The decoder owns those latches, so the decoder declares them. The
     /// declaration is deliberately split from the implementation:
     ///
-    ///   GetTTDModelStateIds()   - "I have state beyond the standard ports"
+    ///   GetTTDModelStateTypes()   - "I have state beyond the standard ports"
     ///   CreateTTDSerializers()  - "...and here is how to capture it"
     ///
     /// Declaring without implementing is a HARD ERROR at StartRecording: a
@@ -708,7 +846,7 @@ public:
     /// answer for any machine fully described by the standard 128K ports.
 
     /// Model-specific state this machine carries beyond TTDChipsetState.
-    virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
+    virtual std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const { return {}; }
 
     /// The TTD port journals isolate a replay when every outside input reaches the CPU through IN
     /// (ttd-port-read-journal.md §2). Two machine traits make TTD refuse the journals by default: an
@@ -720,12 +858,12 @@ public:
     /// and `/ttd/port-events` answers on the machine's recordings
     virtual bool TtdEnginesSealed() const { return false; }
 
-    /// A TTD session's baseline blobs against this machine's fixed population (expansion slots): false with
-    /// `why` refuses the session at load, as a General Sound personality mismatch does. Blobs are as stored
-    /// (TTDPeripheralRegistry::DecodeBlob opens one). Default: no slots, nothing to compare
-    virtual bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const
+    /// A TTD session's baseline device states (raw, by device) against this machine's fixed population
+    /// (expansion slots): false with `why` refuses the session at load, as a General Sound personality mismatch
+    /// does. Default: no slots, nothing to compare
+    virtual bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const
     {
-        (void)blobs;
+        (void)states;
         (void)why;
         return true;
     }
@@ -779,8 +917,12 @@ public:
     /// base of every real-time clock of the machine (Phase 3, Step 5)
     int64_t SessionWallMicros() const;
 
+    /// The machine's clock chip whether or not the guest can reach it now (RtcBinding may say absent); null = none.
+    /// Core::Reset rebases it: a reset zeroes the emulated time, not the battery clock
+    Ds12887* RtcChip() const { return _rtcChip; }
+
     /// Serializers for the ids above. Ownership transfers to the caller.
-    /// Every id from GetTTDModelStateIds() must be covered.
+    /// Every type from GetTTDModelStateTypes() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
     {
         return {};
@@ -807,6 +949,11 @@ public:
     /// endregion </Port trace>
 
 protected:
+    /// A model's clock chip: the machine's emulated time and the TTD session wall are its emulated time base (a TTD
+    /// recording, the tests' fixed start). Called once, from the constructor
+    void BindRtc(Ds12887& chip);
+    Ds12887* _rtcChip = nullptr;
+
     /// The IDE board decodes before the model's own ports (UnrealSpeccy io.cpp
     /// order). A model calls these first in DecodePortIn / DecodePortOut: when
     /// they return true the I/O is done, trace and breakpoints included
@@ -836,6 +983,14 @@ protected:
     void OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc,
                            const PortDecodeDisposition& disp = {});
 
+public:
+    /// A port write the CPU makes without a port cycle: the Z80N NEXTREG instruction writes a register the way OUT #243B,reg then
+    /// OUT #253B,value would, and is reported as that pair (one call per port). Port breakpoints, the port access tracker and the port trace
+    /// (rule PortTraceRule::kNoBusCycle) see it; no hardware is written here (the caller writes the register) and nothing goes to the TTD
+    /// journals (Z80NEngine::NextReg journals the pair itself)
+    void OnPortWriteWithoutBusCycle(uint16_t port, uint8_t value, uint16_t pc);
+
+protected:
     /// Build and push one PortTraceEvent. Only called when _portTraceFeatureCache is true.
     /// Exactly ONE event is recorded per Z80 I/O operation (single-event invariant) —
     /// inline handlers must never call this directly.
@@ -855,7 +1010,7 @@ public:
     uint8_t PeripheralPortIn(uint16_t port);
     void PeripheralPortOut(uint16_t port, uint8_t value);
 
-    /// Full-decode observer registration (see _fullDecodeDevices): the device
+    /// Full-decode observer registration (see _fullDecodeClaims): the device
     /// sees every Z80 IN/OUT on the exact raw port address IN ADDITION to the
     /// regular model decode - the shared-bus semantics of a real bus card.
     /// Duplicate registration of the same port is rejected, like RegisterPortHandler.
@@ -866,7 +1021,7 @@ public:
     void UnregisterFullDecodePort(uint16_t port, PortDevice* device);
 
     /// Low-byte full-decode observer registration (see
-    /// _fullDecodeLowByteDevices): the device sees every Z80 IN/OUT whose raw
+    /// _fullDecodeClaims): the device sees every Z80 IN/OUT whose raw
     /// port low byte matches, in addition to the regular model decode - the
     /// decode behaviour of a card that wires only A0..A7. Duplicate
     /// registration of the same low byte is rejected, like the exact variant.
@@ -896,6 +1051,7 @@ public:
             ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
             Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
+            NextUart,    ///< ZX Next: the two UARTs at #133B-#163B (ESP = UART 0 = attachSerialPeer, Pi = UART 1 = attachSecondSerialPeer)
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -907,6 +1063,10 @@ public:
 
         /// A port that is no 16550 on #xxEF (Atm2Kbc, Profi8251) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
+        /// A machine's second serial port (the Next's UART 1); empty = none
+        std::function<void(ISerialPeer* peer)> attachSecondSerialPeer;
+        /// The Next's joystick connector (NR #0B UART mode): a device plugged into it takes the UART the register selects
+        std::function<void(ISerialPeer* peer)> attachJoystickSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector
@@ -919,6 +1079,8 @@ public:
 
         /// The serial port's behavior (EvoAvr: by the configured AVR firmware)
         Uart16550::Params uart;
+        /// EvoAvr / ZiFi: the board AVR's wait (its main loop), shared by #xxEF and the Gluk clock port
+        EvoAvrWait* avrWait = nullptr;
 
         /// Which register an #xxEF access reaches (ComPort::RegisterOf);
         /// nullptr = A10..A8
@@ -974,6 +1136,24 @@ public:
     /// on the Sprinter, whose ISA ZX-bus adapter passes I/O cycles only (ISA open question Q7)
     virtual bool ZxBusMemoryCycles() const { return ZxBusPresent(); }
 
+    /// What the machine's expansion connector passes of one I/O cycle to its slot-built cards (ReadSlotCardCycle /
+    /// WriteSlotCardCycle). The default: the cards see every cycle and a read combines by the bus's read rule
+    struct SlotCycleGate
+    {
+        bool connected = true;        ///< the connector carries the cycle at all (false: the cards see nothing)
+        bool iorq = true;             ///< its /IORQ reaches the cards (false: only the cards that detect RD / WR see it)
+        bool byReadRule = true;       ///< a read combines the board and the cards by the bus's read rule; else the three below
+        bool boardData = true;        ///< (a board that drives) its data counts; false: #FF in its place
+        bool cardsWithBoard = false;  ///< (a board that drives) the cards' data is ANDed into it
+        bool cardsAlone = true;       ///< (a board that does not drive) the cards' data is the value; false: #FF
+    };
+    virtual SlotCycleGate SlotCardGate(uint16_t port, bool isRead) const
+    {
+        (void)port;
+        (void)isRead;
+        return {};
+    }
+
     /// The machine's own configuration events (machineeventjournal.h: the Sprinter's PLD changes), null for
     /// machines that keep none. The video change log lists the events of its frames (/video/changes)
     virtual MachineEventJournal* GetMachineEventJournal() { return nullptr; }
@@ -982,17 +1162,47 @@ public:
     /// the registration - a stale observer would keep firing into a dead object.
     void UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
 
+    /// region <Slot-built cards (ZX-bus slots, emulator/slots/card.h)>
+
+    /// Slot-built cards share the observers' claim table: their claims sit in slots kSlotCardSlotBase and up, after
+    /// the two legacy observer slots, so a port no card claims still costs the one bit test, and a claimed port's
+    /// first match tells which resolution runs. A port covered by a legacy observer first stays on the legacy path
+    /// (no slot-built card shares a port with one today)
+    static constexpr uint8_t kSlotCardSlotBase = 2;
+#pragma push_macro("slots")
+#undef slots
+
+    /// The bus the slot-built cards sit on: its arbitration, read rule and (BoardWins) the board ports hidden from
+    /// Iorq cards, and the machine's built-ins for the shadow report. SlotManager sets it before attaching the cards
+    void ConfigureSlotBus(slots::Arbitration arbitration, slots::ReadRule readRule,
+                          std::span<const slots::PortClaim> boardPorts, std::span<const slots::BuiltInDef> builtIns);
+    /// A card's claims in its slot order (>= kSlotCardSlotBase), cycle detection Iorq or RdWr
+    void AttachSlotCard(PortDevice* card, std::span<const slots::PortClaim> claims, uint8_t slotOrder,
+                        slots::CycleDetection detection);
+    void DetachSlotCard(PortDevice* card);
+    /// Whether a slot-built card's IORQGE claim hides this built-in's documented port from the board (CardWins)
+    bool IsBuiltInShadowed(const char* builtInId) const;
+    /// A socketed chip a card took out of its socket (Q7): the board's decode of its ports still runs, but nothing
+    /// on the board drives their reads any more
+    void SetBuiltInRemoved(const char* builtInId);
+    /// Where the claim table reads the ROM-fetch lock's M1 address and the DOS state (nullptr: never locked, never
+    /// DOS). The owner (SlotManager) keeps it alive while cards are attached
+    void BindSlotSignals(const slots::IClaimSignals* claimSignals);
+#pragma pop_macro("slots")
+
+    /// endregion </Slot-built cards>
+
     /// Whether a full-decode low-byte card currently claims this raw port's
     /// low address byte (A0..A7 decode of a card like the ZXM-MoonSound)
     bool IsLowByteClaimedByFullDecodeDevice(uint16_t rawPort) const
     {
-        return _fullDecodeLowByteDevices[rawPort & 0xFF] != nullptr;
+        return _fullDecodeClaims.IsClaimed(rawPort) && LowByteObserver(rawPort) != nullptr;
     }
 
-    /// Observer bus value cached by the Z80 funnel tap (NotifyFullDecodeIn)
-    /// for the given port - the value the claiming card drove onto the bus.
-    /// 0xFF when the tap has not serviced this port (direct DecodePortIn
-    /// calls outside Z80::in, e.g. unit tests)
+    /// Observer bus value cached by the claimed read cycle (ReadCycle, or the
+    /// split-phase NotifyFullDecodeIn) for the given port - the value the
+    /// claiming card drove onto the bus. 0xFF when no claimed cycle serviced
+    /// this port (direct DecodePortIn calls outside a bus cycle, e.g. tests)
     uint8_t GetCachedFullDecodeInValue(uint16_t rawPort) const
     {
         return (rawPort == _lastFullDecodeInPort) ? _lastFullDecodeInValue : 0xFF;
@@ -1021,8 +1231,18 @@ public:
     ///        AY/FDC) must answer exactly as if the card were not attached -
     ///        returning false here leaves decodedPort untouched so the
     ///        caller's normal decode chain runs.
+    ///
+    /// The decision is the claim table resolution's (ReadCycle / WriteCycle decide it once per cycle, before the
+    /// board decodes); the decoders only apply it at the point of their decode where the card's port space begins.
+    /// A direct DecodePortIn / Out call outside a bus cycle (tests, tools) decides it here.
     bool OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
-                                          PortDecodeDisposition& disp, bool isRead);
+                                          PortDecodeDisposition& disp, bool isRead)
+    {
+        // A port no observer claims never stands the model decode down: one bit test
+        if (!_fullDecodeClaims.IsClaimed(rawPort)) [[likely]]
+            return false;
+        return OverrideDecodeForClaimedPort(rawPort, decodedPort, disp, isRead);
+    }
 
     /// region <Full-decode clash analysis>
 
@@ -1040,10 +1260,16 @@ public:
 
     /// endregion </Full-decode clash analysis>
 
-    /// Z80 OUT tap: forward a raw-port write to the registered observer (if any).
-    void NotifyFullDecodeOut(uint16_t port, uint8_t value);
+    /// Split-phase OUT tap (tests, tools; the Z80 runs WriteCycle): forward a raw-port write to the registered
+    /// observer (if any). A port no observer claims costs one bit test
+    void NotifyFullDecodeOut(uint16_t port, uint8_t value)
+    {
+        if (_fullDecodeClaims.IsClaimed(port)) [[unlikely]]
+            NotifyClaimedOut(port, value);
+    }
 
-    /// Z80 IN tap: query the observer for a raw-port read. Returns the
+    /// Split-phase IN tap (tests, tools; the Z80 runs ReadCycle, which applies R6 itself): query the observer for a
+    /// raw-port read. Returns the
     /// observer's bus value (0xFF when none) and sets handled=true when an
     /// observer is registered; claimsBus=true when the observer claims the
     /// read (portDeviceClaimsRead). Z80::in() applies it with
@@ -1053,7 +1279,58 @@ public:
     /// claimed port is driven by the observer (armed card on the shared
     /// bus); an otherwise-undecoded port is driven by the observer too
     /// (floating bus suppressed for it).
-    uint8_t NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus);
+    uint8_t NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus)
+    {
+        // The cached observer value (_lastFullDecodeInValue) follows every IN, claimed or not
+        _lastFullDecodeInPort = port;
+        if (_fullDecodeClaims.IsClaimed(port)) [[unlikely]]
+            return NotifyClaimedIn(port, handled, claimsBus);
+        handled = false;
+        claimsBus = false;
+        _lastFullDecodeInValue = 0xFF;
+        return 0xFF;
+    }
+
+    /// region <Bus cycles (the Z80 I/O funnel)>
+
+    /// One I/O read cycle as the Z80 runs it (Z80::inFromBus): the claim table resolution and the board's decode in
+    /// one pass. A port no card claims is the board's alone (one bit test, then DecodePortIn). On a claimed port the
+    /// card sees the cycle first (its value is cached for the board's claim override), then the board decodes, and
+    /// the bus value follows the shared-bus rule R6: a port the board decoded keeps the board device's value unless
+    /// the card claims the read (portDeviceClaimsRead: an armed card); an otherwise-undecoded port is driven by the
+    /// card. cardDrove is true when a card drove the bus (the floating bus must not apply)
+    uint8_t ReadCycle(uint16_t port, uint16_t pc, bool& cardDrove)
+    {
+        if (!_fullDecodeClaims.IsClaimed(port)) [[likely]]
+        {
+            cardDrove = false;
+            return DecodePortIn(port, pc);
+        }
+        return ReadClaimedCycle(port, pc, cardDrove);
+    }
+
+    /// One I/O write cycle as the Z80 runs it (Z80::out): a claimed port's card sees the write first, then the board
+    /// decodes it (its claim override may stand down). A port no card claims costs one bit test
+    void WriteCycle(uint16_t port, uint8_t value, uint16_t pc)
+    {
+        if (_fullDecodeClaims.IsClaimed(port)) [[unlikely]]
+        {
+            WriteClaimedCycle(port, value, pc);
+            return;
+        }
+        DecodePortOut(port, value, pc);
+    }
+
+    /// endregion </Bus cycles (the Z80 I/O funnel)>
+
+    /// Test hook: see slots::PortClaimTable::SetScanTrapForTests (rebuilds the table)
+    void SetFullDecodeScanTrapForTests(PortDevice* trap);
+
+    /// The full-decode observers' claim table (read-only: reports and tests)
+#pragma push_macro("slots")
+#undef slots
+    const slots::PortClaimTable& GetFullDecodeClaims() const { return _fullDecodeClaims; }
+#pragma pop_macro("slots")
 
     /// Self-decoding device registration (see PortDevice::tryClaimOut/In).
     /// A device may only be registered once; unregister is a no-op if absent
@@ -1067,8 +1344,18 @@ public:
     /// have already declined the address - and use the return value to
     /// distinguish "a self-decoding peripheral claimed this" from "truly
     /// unmapped" for port-trace disposition. Stops at the first claim.
-    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
-    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
+    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+    {
+        if (!_selfDecodingClaims.IsClaimed(rawPort)) [[likely]]
+            return false;
+        return DispatchClaimedSelfDecodingOut(rawPort, value);
+    }
+    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+    {
+        if (!_selfDecodingClaims.IsClaimed(rawPort)) [[likely]]
+            return false;
+        return DispatchClaimedSelfDecodingIn(rawPort, outValue);
+    }
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions: clears the
     /// p7FFD lock bit, so subsequent port writes via DecodePortOut() are accepted
@@ -1076,6 +1363,25 @@ public:
     
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
     void LockPaging();
+
+    /// A 48K / 128K Spectrum snapshot is about to be committed (after the reset, before its #7FFD): bring the model's
+    /// paging into the plain Spectrum 128K form its program expects. The reset of an extended model leaves it in its
+    /// own form (the Pentagon 1024's #EFF7 enables 1 MB paging, where #7FFD bit 5 is a page bit, not the lock). Default:
+    /// nothing, the machine already behaves like a 128K
+    virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
+
+    /// A disk autostart's TR-DOS cold start (Reset(RM_DOS)) reached the TR-DOS command loop, right before it runs the
+    /// disk's program: leave the paging the way the user's own boot of a disk would. True when it changed the machine.
+    /// Default: nothing, the cold start already is that boot
+    virtual bool FinishAutostartColdStart(uint16_t pc) { (void)pc; return false; }
+
+    /// The guest's CPU clock select (the model's hardware turbo latch bits), read before a reset that stands in for
+    /// loading a program (Core::ResetKeepingClock: disk autostart, snapshot load) and put back after it with
+    /// RestoreClockSelect. A real reset clears the latch and the firmware sets the clock again; the quick reset skips
+    /// the firmware, so the program would run at the reset clock. Xpeccy keeps the clock the same way. Default: the
+    /// model has no clock select (0, nothing to restore)
+    virtual uint16_t GetClockSelect() const { return 0; }
+    virtual void RestoreClockSelect(uint16_t select) { (void)select; }
 
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked
@@ -1091,6 +1397,15 @@ public:
     /// Give the machine a policy (a decoder does it in its constructor; tests with a fake). Not owned: the policy
     /// must outlive its use, a machine's own policy lives as long as the decoder
     void SetSnapshotPolicy(snapshot::ISnapshotCommitPolicy* policy) { _snapshotPolicy = policy; }
+
+    /// A machine that holds a Spectrum state inside a running mode of its own (a Sprinter in a ZX mode): the banks behind its own
+    /// mapping, no reset to receive a state (MachineStateTransfer). nullptr = a plain machine
+    virtual const IStateTransferHost* GetStateTransferHost() const { return nullptr; }
+
+    /// The save side (P6): how this machine shows its 128K view to a snapshot. nullptr = the default rule for the model
+    /// (snapshotcapture.cpp): the Spectrum models as they are, TS-Conf and the ATMs by their live window map
+    virtual snapshot::ISnapshotCapturePolicy* GetSnapshotCapturePolicy() { return _snapshotCapturePolicy; }
+    void SetSnapshotCapturePolicy(snapshot::ISnapshotCapturePolicy* policy) { _snapshotCapturePolicy = policy; }
 
     /// endregion </Interaction with peripherals>
 

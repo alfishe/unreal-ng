@@ -1,11 +1,16 @@
 #pragma once
 
+#include "common/base64.h"
 #include "emulator/memory/devicememory.h"
+#include "emulator/execution/companionregistry.h"
+#include "emulator/execution/runpacer.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
+#include "emulator/video/next/nextlayerimage.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -28,6 +33,24 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/media/recentfiles.h>
+#include <emulator/capture/recordingcontrol.h>
+#include <cmath>
+#include <filesystem>
+#include <map>
+#include <system_error>
+#include <emulator/slots/slotcontrol.h>
+#include <emulator/io/controllers/controllercontrol.h>
+#include <emulator/actions/actionregistry.h>
+#include <emulator/actions/contextstate.h>
+#include <emulator/actions/surfacesapi.h>
+#include <emulator/companions/streamdeckapi.h>
+#include <emulator/monitoring/monitoringapi.h>
+#include <emulator/execution/automationgate.h>
+#include <emulator/sound/midi/midicontrol.h>
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -36,18 +59,28 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
+#include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "emulator/video/viewportcontrol.h"
+#include "emulator/video/windowrecording.h"
+#include "../../../windowdisplay.h"
+#include "../../../operationsstatus.h"
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
+#include "debugger/labels/symbolcontrol.h"
+#include "debugger/asm/asmcontrol.h"
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
@@ -58,6 +91,8 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
@@ -68,6 +103,14 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <common/stringhelper.h>
+#include <debugger/ports/nextregwrite.h>
+#include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
+#include <emulator/io/z80n/nextsdjournal.h>
+#include <emulator/bus/bustrace.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -141,32 +184,35 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
     }
 }
 
-
-/// The recorded machine of a TTD session / file as a Lua table (the same keys
-/// as the WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
-/// peripherals, general_sound, turbo_sound)
-inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRecordedMachine& m)
+#ifdef ENABLE_CONTROLLERS
+/// A host controllers reply (HostReply::ToValue) -> Lua table, as StateNodeToLua
+inline sol::object JsonValueToLua(sol::this_state s, const controllers::JsonValue& value)
 {
-    sol::table t = lua.create_table();
-    t["model_id"] = static_cast<unsigned>(m.modelId);
-    if (!m.model.empty())
-        t["model"] = m.model;
-    t["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
-    if (m.romSignature != 0)
-        t["rom_signature"] = "0x" + ttd::HashToString(m.romSignature);
-    t["peripheral_mask"] = m.peripheralMask;
-    sol::table list = lua.create_table();
-    for (size_t i = 0; i < m.peripherals.size(); ++i)
-        list[i + 1] = m.peripherals[i];
-    t["peripherals"] = list;
-    sol::table notRecorded = lua.create_table();
-    for (size_t i = 0; i < m.notRecorded.size(); ++i)
-        notRecorded[i + 1] = m.notRecorded[i];
-    t["not_recorded"] = notRecorded;
-    t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
-    t["turbo_sound"] = m.turboSound;
-    return t;
+    sol::state_view lua(s);
+    if (value.IsBool())
+        return sol::make_object(lua, value.AsBool());
+    if (value.IsNumber())
+        return sol::make_object(lua, value.AsNumber());
+    if (value.IsString())
+        return sol::make_object(lua, value.AsString());
+    if (value.IsObject())
+    {
+        sol::table t = lua.create_table();
+        for (const auto& [key, member] : value.GetMembers())
+            t[key] = JsonValueToLua(s, member);
+        return t;
+    }
+    if (value.IsArray())
+    {
+        sol::table t = lua.create_table();
+        for (size_t i = 0; i < value.Items().size(); i++)
+            t[i + 1] = JsonValueToLua(s, value.Items()[i]);
+        return t;
+    }
+    return sol::make_object(lua, sol::lua_nil);
 }
+#endif
+
 
 class LuaEmulator
 {
@@ -192,34 +238,211 @@ protected:
         return nullptr;
     }
 
-    /// Pause() -> op -> Resume() bracket shared by the mutating tape
-    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
-    /// pause only when actually running, resume exactly then. RAII so an
-    /// early return can never leave the emulator parked.
+    /// One time-travel verb through TTDControl, the layer every surface shares
+    /// (Phase 5, Step 1). Without an emulator: NotAvailable "no emulator"
+    ttd::TTDReply TtdRun(const std::string& verb, std::map<std::string, std::string> options = {}) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator)
+        {
+            ttd::TTDReply reply;
+            reply.error = ttd::TTDControlError::NotAvailable;
+            reply.message = "no emulator";
+            return reply;
+        }
+        return ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    }
+
+    /// A reply as a script sees it: the body, and on failure ok = false and
+    /// error = the message (a body that names its own error keeps it)
+    static StateNode TtdScriptValue(const ttd::TTDReply& reply)
+    {
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            if (!value.find("error"))
+                value["error"] = reply.message;
+        }
+        return value;
+    }
+
+    /// A Lua value as option text: true / false, an integer, a string; nothing else
+    static std::string TtdOptionText(const sol::object& o)
+    {
+        if (o.is<bool>())
+            return o.as<bool>() ? "true" : "false";
+        if (o.get_type() == sol::type::number)
+            return std::to_string(static_cast<long long>(o.as<double>()));
+        return o.is<std::string>() ? o.as<std::string>() : std::string();
+    }
+
+    /// A Lua argument as SymbolControl options: a string is `firstKey`, a table gives each key (a list of strings is a
+    /// comma list, as sets = {"a", "b"})
+    static std::map<std::string, std::string> SymbolOptions(const sol::object& arg, const std::string& firstKey)
+    {
+        std::map<std::string, std::string> options;
+        if (arg.is<std::string>() && !firstKey.empty())
+            options[firstKey] = arg.as<std::string>();
+        else if (arg.get_type() == sol::type::table)
+            for (const auto& [key, value] : arg.as<sol::table>())
+            {
+                if (!key.is<std::string>())
+                    continue;
+                if (value.get_type() == sol::type::table)
+                {
+                    std::string list;
+                    for (const auto& item : value.as<sol::table>())
+                        if (item.second.is<std::string>())
+                            list += (list.empty() ? "" : ",") + item.second.as<std::string>();
+                    options[key.as<std::string>()] = list;
+                }
+                else
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            }
+        return options;
+    }
+
+    sol::object symbolsRun(sol::this_state ts, const std::string& verb, std::map<std::string, std::string> options) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        SymbolReply reply;
+        if (!emulator)
+        {
+            reply.error = SymbolControlError::NotAvailable;
+            reply.message = "no emulator";
+        }
+        else
+            reply = SymbolControl(emulator->GetContext()).Execute({verb, std::move(options)});
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            value["error"] = reply.message;
+        }
+        return StateNodeToLua(ts, value);
+    }
+
+    sol::object asmRun(sol::this_state ts, const std::string& verb, std::map<std::string, std::string> options) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        const AsmReply reply = AsmControl(emulator ? emulator->GetContext() : nullptr).Execute({verb, std::move(options)});
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            value["error"] = reply.message;
+        }
+        return StateNodeToLua(ts, value);
+    }
+
+    sol::object symbolsCall(sol::this_state ts, const std::string& verb, const sol::object& arg, const std::string& firstKey) const
+    {
+        return symbolsRun(ts, verb, SymbolOptions(arg, firstKey));
+    }
+
+    /// A seek's answer as a table: the reply's fields; a refused seek has reached = false
+    sol::object TtdSeekValue(sol::this_state ts, const ttd::TTDReply& reply) const
+    {
+        StateNode value = TtdScriptValue(reply);
+        if (!value.find("reached"))
+            value["reached"] = false;
+        return StateNodeToLua(ts, value);
+    }
+
+    /// One slots verb (SlotControl) for the effective emulator. `opts`: the flags (replace, dry_run, media, adapter),
+    /// options = "..." or {name = value}, and - when `cardOptions` - any other key as a card option. A restart of the
+    /// instance this interpreter is bound to rebinds it to the new machine
+    SlotControlReply slotsCall(SlotControlRequest request, const sol::optional<sol::table>& opts, bool cardOptions)
+    {
+        auto text = [](const sol::object& value) -> std::string {
+            if (value.is<bool>())
+                return value.as<bool>() ? "true" : "false";
+            if (value.get_type() == sol::type::number)
+            {
+                const double number = value.as<double>();
+                return number == static_cast<double>(static_cast<long long>(number))
+                           ? std::to_string(static_cast<long long>(number))
+                           : std::to_string(number);
+            }
+            if (value.get_type() == sol::type::table)
+            {
+                std::string list;
+                for (const auto& item : value.as<sol::table>())
+                {
+                    if (item.second.is<std::string>())
+                        list += (list.empty() ? "" : ",") + item.second.as<std::string>();
+                }
+                return list.empty() ? "none" : list;
+            }
+            return value.is<std::string>() ? value.as<std::string>() : std::string();
+        };
+        auto addOption = [&request](const std::string& name, const std::string& value) {
+            request.options += (request.options.empty() ? "" : " ") + name + "=" + value;
+        };
+        if (opts)
+        {
+            for (const auto& [keyObject, value] : *opts)
+            {
+                if (!keyObject.is<std::string>())
+                    continue;
+                const std::string key = keyObject.as<std::string>();
+                if (key == "replace" || key == "replaceIfIncompatible" || key == "replace_if_incompatible")
+                    request.replaceIfIncompatible = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "dry_run" || key == "dryRun")
+                    request.dryRun = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "media" || key == "mediaDisposition")
+                    request.media = text(value);
+                else if (key == "adapter")
+                    request.adapter = text(value);
+                else if (key == "options" && value.is<std::string>())
+                    request.options += (request.options.empty() ? "" : " ") + value.as<std::string>();
+                else if (key == "options" && value.get_type() == sol::type::table)
+                {
+                    for (const auto& [name, v] : value.as<sol::table>())
+                    {
+                        if (name.is<std::string>())
+                            addOption(name.as<std::string>(), text(v));
+                    }
+                }
+                else if (cardOptions)
+                    addOption(key, text(value));
+            }
+        }
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator && request.verb != "matrix")
+        {
+            SlotControlReply none;
+            none.status = "no-machine";
+            none.httpStatus = 404;
+            none.message = "no emulator selected";
+            return none;
+        }
+        const bool bound = _emulator != nullptr && _emulator == emulator;
+        request.emulatorId = emulator ? emulator->GetId() : std::string();
+        emulator = nullptr;
+        SlotControlReply reply = SlotControl::Execute(request);
+        if (bound && reply.emulator)
+            _emulator = reply.emulator.get();   // the restarted machine; the manager owns it
+        return reply;
+    }
+
+    /// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+    /// an early return cannot leave it held.
     class EmulatorPauseBracket
     {
     public:
+        // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+        // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+        // pause somebody else asked for meanwhile
         explicit EmulatorPauseBracket(Emulator* emulator)
-            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
         {
-            if (_wasRunning)
-            {
-                _emulator->Pause();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
-            }
-        }
-
-        ~EmulatorPauseBracket()
-        {
-            if (_wasRunning)
-            {
-                _emulator->Resume();
-            }
+            if (emulator)
+                _hold.emplace(*emulator, "lua");
         }
 
     private:
-        Emulator* _emulator;
-        bool _wasRunning;
+        std::optional<Emulator::CpuHold> _hold;
     };
     /// endregion </Fields>
 
@@ -254,6 +477,74 @@ protected:
         }
         std::string error;
         if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_nextreg_write / bp_nextreg_read / bp_nextreg: `options` is nothing or a table {to=, doors=, value=, vmask=, hits=}
+    /// (to = register range end; doors "nextreg,port,copper"; value = stop only on it, vmask = the compared bits). The id, or -1
+    int AddScriptNextRegBreakpoint(uint8_t access, uint16_t reg, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = BRK_NEXTREG;
+        spec.access = access;
+        spec.address = reg;
+        std::string doors, hits;
+        int32_t to = -1, value = -1, vmask = -1;
+        if (options)
+        {
+            const sol::table& t = *options;
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            doors = t.get<sol::optional<std::string>>("doors").value_or("");
+            value = t.get<sol::optional<int32_t>>("value").value_or(-1);
+            vmask = t.get<sol::optional<int32_t>>("vmask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_beam / bp_copper (ZX Next): `options` is nothing or a table {hc=, to=, hits=} (hc: the pixel clock of a beam place; to: the
+    /// range end of copper list indexes). The id, or -1
+    int AddScriptPositionBreakpoint(BreakpointTypeEnum type, uint16_t position, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = BRK_IO_OUT;
+        spec.address = position;
+        std::string hits;
+        if (options)
+        {
+            const sol::table& t = *options;
+            spec.beamHc = static_cast<uint16_t>(t.get<sol::optional<int32_t>>("hc").value_or(0));
+            const int32_t to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            if (to >= 0)
+            {
+                spec.hasEnd = true;
+                spec.addressEnd = static_cast<uint16_t>(to);
+            }
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
             return -1;
         const uint16_t id = bpm->AddBreakpoint(spec, error);
         return id == BRK_INVALID ? -1 : static_cast<int>(id);
@@ -374,11 +665,6 @@ protected:
         buttons["right"] = state.IsPressed(MouseButton::Right);
         buttons["middle"] = state.IsPressed(MouseButton::Middle);
 
-        auto hex = [](uint8_t value) {
-            char text[8];
-            std::snprintf(text, sizeof(text), "0x%02X", value);
-            return std::string(text);
-        };
         sol::table ports = lua.create_table();
         ports["FADF"] = static_cast<int>(state.portButtons);  // integers, same as the WebAPI
         ports["FBDF"] = static_cast<int>(state.portX);  // integers, same as the WebAPI
@@ -479,12 +765,27 @@ protected:
         t["available"] = state.available;
         t["present"] = state.present;
         t["wired"] = state.wired;
+        t["fit"] = state.fit;
         t["state"] = static_cast<int>(state.state);
         t["port_value"] = static_cast<int>(state.portValue);
         t["buttons"] = buttons;
         t["pressed"] = pressed;
         t["button_names"] = names;
         t["keys"] = state.keys;
+        if (state.hasPads)
+        {
+            sol::table extras = lua.create_table();
+            for (size_t i = 0; i < state.leftExtraButtons.size(); i++)
+                extras[i + 1] = state.leftExtraButtons[i];
+            t["left_extras"] = extras;
+            sol::table rightPad = lua.create_table();
+            rightPad["state"] = static_cast<int>(state.rightPad);
+            sol::table rightButtons = lua.create_table();
+            for (size_t i = 0; i < state.rightButtons.size(); i++)
+                rightButtons[i + 1] = state.rightButtons[i];
+            rightPad["buttons"] = rightButtons;
+            t["right_pad"] = rightPad;
+        }
         if (state.pendingTapMask != 0)
         {
             sol::table pending = lua.create_table();
@@ -552,8 +853,15 @@ public:
             // Lifecycle control
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
-            "pause", sol::resolve<void(bool)>(&Emulator::Pause),
-            "resume", sol::resolve<void(bool)>(&Emulator::Resume),
+            "pause", [](Emulator& self) -> std::string {
+                execution::script::Check(self, execution::Origin::Lua, false);   // a pause opens no session
+                return execution::script::PauseStatus(
+                    self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua"));
+            },
+            "resume", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Lua);
+                self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
+            },
             "reset", &Emulator::Reset,
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
@@ -583,6 +891,7 @@ public:
                     case StateStopped: return "stopped";
                     case StateInitialized: return "initialized";
                     case StateResumed: return "resumed";
+                    case StateRetired: return "retired";
                     default: return "unknown";
                 }
             },
@@ -799,12 +1108,11 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
                 return false;
-            Z80State* z80 = emulator->GetZ80State();
-            if (!z80)
-                return false;
-            const bool set = Z80::SetRegisterValue(z80, name, value);
-            if (set)
-                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            // A tool edit (TTD records it); refused in the recorded past: a script error
+            std::string refused;
+            const bool set = emulator->SetRegisterFromTool("lua register", name, value, &refused);
+            if (!refused.empty())
+                throw std::runtime_error(refused);
             return set;
         });
 
@@ -820,7 +1128,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -834,7 +1142,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
@@ -1002,7 +1310,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 for (auto& pair : data) {
                     int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
                     uint8_t val = pair.second.as<uint8_t>();
@@ -1043,7 +1351,7 @@ public:
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 pagePtr[offset] = value;
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1090,7 +1398,7 @@ public:
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             int maxLen = PAGE_SIZE - offset;
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 int idx = 0;
                 for (auto& pair : data) {
                     if (idx >= maxLen) break;
@@ -1127,10 +1435,11 @@ public:
             out.push_back(t);
             return out;
         });
-        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live"|"window", path = "file"}]): a
         // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
         // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
-        // frame.beam = {line, tstate}).
+        // frame.beam = {line, tstate}), or the picture as the unreal-qt window draws it ("window": GUI only, area full;
+        // adds window = {viewport, picture, device_pixel_ratio, backend}).
         // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
         // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
         // instead of `data`; nil, error on a bad word, a missing emulator or no frame
@@ -1149,7 +1458,7 @@ public:
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return mouseError(s, "Unknown area '" + area + "': use full or screen");
                 if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
-                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
+                    return mouseError(s, "Unknown source '" + source + "': use presented, live or window");
                 if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
                     return mouseError(s, "Unknown format '" + format + "': use png or gif");
                 options.saveTo = opts->get_or<std::string>("path", "");
@@ -1192,6 +1501,15 @@ public:
                 frame["beam"] = beam;
             }
             t["frame"] = frame;
+            if (shot.fromWindow)
+            {
+                sol::table window = view.create_table();
+                window["viewport"] = rect(shot.window.viewport);
+                window["picture"] = rect(shot.window.picture);
+                window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+                window["backend"] = shot.window.backend;
+                t["window"] = window;
+            }
             if (!shot.savedFile.empty())
                 t["file"] = shot.savedFile;
             else
@@ -1199,6 +1517,78 @@ public:
             sol::variadic_results out;
             out.push_back(t);
             return out;
+        });
+        // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
+        // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
+        // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
+        // (next_layer_capture_control{enabled = true}) or no frame was completed yet
+        lua.set_function("capture_screen_layer", [this](sol::this_state s, const std::string& layer, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string format, alpha, path, size;
+            if (opts)
+            {
+                format = opts->get_or<std::string>("format", "");
+                size = opts->get_or<std::string>("size", "");
+                path = opts->get_or<std::string>("path", "");
+                sol::object a = (*opts)["alpha"];
+                if (a.get_type() == sol::type::boolean)
+                    alpha = a.as<bool>() ? "true" : "false";
+            }
+            const NextLayer::Result shot = NextLayer::Request(emulator->GetContext(), layer, format, alpha, path, size);
+            if (shot.status != NextLayer::Status::Ok) return mouseError(s, shot.message);
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["layer"] = NextLayer::KindName(shot.kind);
+            t["format"] = shot.rgba ? "rgba" : "png";
+            t["alpha"] = shot.alpha;
+            t["size_name"] = NextLayer::ScaleName(shot.scale);
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.size;
+            sol::table frame = view.create_table();
+            frame["sequence"] = shot.sequence;
+            frame["frame_number"] = shot.frameCounter;
+            t["frame"] = frame;
+            if (shot.kind == NextLayer::Kind::Ids)
+            {
+                sol::table legend = view.create_table();
+                for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+                {
+                    sol::table entry = view.create_table();
+                    const uint32_t c = NextLayer::IdColour(id);
+                    char colour[8];
+                    std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                    entry["id"] = id;
+                    entry["name"] = NextLayer::IdName(id);
+                    entry["colour"] = std::string(colour);
+                    legend[id + 1] = entry;
+                }
+                t["legend"] = legend;
+            }
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // next_layer_capture_control([{enabled = true|false}]): switch the per-layer record of the Next screen (on by default; takes effect at
+        // the next frame start); returns {available, enabled, frames, last_frame, bytes}. No argument: only report
+        lua.set_function("next_layer_capture_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+            }
+            return StateNodeToLua(s, DeviceState::NextLayerCaptureControl(emulator->GetContext(), enable));
         });
         lua.set_function("memory_regions", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
@@ -1340,13 +1730,69 @@ public:
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
 
+        // region <ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9)>
+        // slots_state(), slots_catalog(), slots_matrix([table]),
+        // slots_plug(slot, card [, opts]), slots_remove(slot [, opts]), slots_set(slot, opts), slots_gs(card [, opts]).
+        // slot: zxbus.1, zxbus.next, ay-socket ("" or "auto" for plug: the planner's choice).
+        // opts: {options = "dip=ym,saa" | {dip = "ym,saa"}, replace = true, dry_run = true, media = "save" | "discard",
+        //        adapter = "..."}; any other key is a card option (slots_set(slot, {dip = "ym,gs"})).
+        // Each returns the reply table every surface returns: ok, status, message and the verb's fields (the report,
+        // cards, tables; for a change the plan, restart = {restarted, emulatorId, ...}, media). A change restarts
+        // the machine: a script bound to the old instance follows it to the new one
+        lua.set_function("slots_state", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_catalog", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_matrix", [this](sol::this_state s, sol::optional<std::string> table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table.value_or("");
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_plug", [this](sol::this_state s, const std::string& slot, const std::string& card,
+                                              sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_remove", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        lua.set_function("slots_set", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_gs", [this](sol::this_state s, const std::string& card, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        // endregion </ZX-bus slots>
+
         // region <Media: every slot through MediaControl (media-control-design.md)>
         // media_list(), media_info(slot), media_formats([kind]),
         // media_insert(slot, path [, opts]), media_swap(slot, path [, opts]),
         // media_eject(slot [, opts]), media_save(slot [, path] [, opts]),
         // media_export(slot, path), media_discard(slot [, opts]),
         // media_rescan(slot [, opts]), media_create(slot [, opts]),
-        // media_protect(slot, on), and media(verb, slot, path, opts).
+        // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
+        // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
+        // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
+        // names a host file), and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -1389,6 +1835,347 @@ public:
             }
             return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
         };
+        // controllers(verb, [connector], [device], [{options}]) -> the reply table every surface returns: the machine's
+        // joystick connectors (list, get, plug, unplug, options, targets, auto, input; ControllerControl, as the
+        // CLI `controllers`, WebAPI /controllers and Python controllers_*)
+        lua.set_function("controllers", [this](sol::this_state s, const std::string& verb, sol::optional<std::string> connector,
+                                               sol::optional<std::string> device, sol::optional<sol::table> opts) {
+            controllers::ControllerRequest request;
+            request.verb = verb;
+            request.selector = connector.value_or("");
+            request.device = device.value_or("");
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
+        });
+        // actions() -> {instance, actions = {{id, label, group, kind, held, gui, scope, needs_pause, available, error,
+        // reason}, ...}}; action(id, [value], [params]) -> {ok, action, error, message, result}: the core
+        // ActionRegistry (control surfaces actions.md §6), as the CLI `action`, WebAPI /controllers/actions, MCP
+        // `actions` and Python actions() / action(). value by the action's kind: nil (a press), true / false, a number
+        // (delta steps or a 0..1 level), a string (text), or a table {pressed, delta, rate, level, text}. A changing
+        // action passes the script gate as the script's own control calls (an implicit session without one)
+        lua.set_function("actions", [this](sol::this_state s) {
+            Emulator* emulator = effectiveEmulator();
+            const std::string instance = emulator ? emulator->GetId() : std::string();
+            actions::ActionOrigin origin;
+            origin.origin = execution::Origin::Lua;
+            origin.identity = "lua|script";
+            StateNode body = StateNode::Object();
+            body["instance"] = instance;
+            body["rev"] = static_cast<int64_t>(actions::ActionRegistry::Instance().Revision());
+            StateNode& rows = body["actions"];
+            rows = StateNode::Array();
+            for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(instance, origin))
+            {
+                StateNode row = StateNode::Object();
+                row["id"] = status.info.id;
+                row["label"] = status.info.label;
+                row["group"] = status.info.group;
+                row["kind"] = actions::ValueKindName(status.info.kind);
+                row["held"] = status.info.held;
+                row["gui"] = status.info.gui;
+                row["scope"] = automation_gate::CompanionScopeName(status.scope);
+                row["needs_pause"] = status.needsPause;
+                row["toggle"] = status.info.toggle;
+                row["description"] = status.info.description;
+                if (!status.info.params.empty())
+                    row["params"] = status.info.params;
+                row["available"] = status.available;
+                if (!status.available)
+                {
+                    row["error"] = status.error;
+                    row["reason"] = status.reason;
+                }
+                rows.push(std::move(row));
+            }
+            return StateNodeToLua(s, body);
+        });
+        lua.set_function("action", [this](sol::this_state s, const std::string& id, sol::optional<sol::object> rawValue,
+                                          sol::optional<sol::table> params) {
+            auto fail = [&s, &id](const std::string& error, const std::string& message) {
+                StateNode out = StateNode::Object();
+                out["ok"] = false;
+                out["action"] = id;
+                out["error"] = error;
+                out["message"] = message;
+                return StateNodeToLua(s, out);
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("Not Found", "no emulator selected");
+            actions::ActionRegistry& registry = actions::ActionRegistry::Instance();
+            const std::optional<actions::ActionInfo> info = registry.Find(id);
+            if (!info)
+                return fail("Not Found", "unknown action '" + id + "'");
+            auto toNode = [](const sol::object& value) -> StateNode {
+                if (value.is<bool>())
+                    return StateNode(value.as<bool>());
+                if (value.get_type() == sol::type::number)
+                {
+                    const double number = value.as<double>();
+                    return number == std::floor(number) ? StateNode(static_cast<int64_t>(number)) : StateNode(number);
+                }
+                if (value.is<std::string>())
+                    return StateNode(value.as<std::string>());
+                return StateNode();
+            };
+            actions::ActionValue value;
+            value.kind = info->kind;
+            std::string error;
+            if (rawValue && rawValue->valid() && rawValue->get_type() != sol::type::lua_nil)
+            {
+                const sol::object& raw = *rawValue;
+                if (raw.is<bool>())
+                {
+                    value.pressed = raw.as<bool>();
+                    value.level = value.pressed ? 1.0 : 0.0;
+                }
+                else if (raw.get_type() == sol::type::number)
+                {
+                    value.delta = raw.as<double>();
+                    value.level = std::clamp(raw.as<double>(), 0.0, 1.0);
+                    value.pressed = value.level > 0;
+                }
+                else if (raw.is<std::string>())
+                {
+                    if (!actions::ValueFromText(info->kind, raw.as<std::string>(), value, error))
+                        return fail("Bad Request", error);
+                }
+                else if (raw.get_type() == sol::type::table)
+                {
+                    const sol::table table = raw.as<sol::table>();
+                    value.pressed = table.get_or("pressed", true);
+                    value.delta = table.get_or("delta", 0.0);
+                    value.rate = table.get_or("rate", 0.0);
+                    value.level = std::clamp(table.get_or("level", 0.0), 0.0, 1.0);
+                    value.text = table.get_or<std::string>("text", "");
+                }
+                else
+                    return fail("Bad Request", "value: nil, a boolean, a number, a string or a table");
+            }
+            if (params)
+                for (const auto& [key, item] : *params)
+                    if (key.is<std::string>())
+                        value.params[key.as<std::string>()] = toNode(item);
+            actions::ActionOrigin origin;
+            origin.origin = execution::Origin::Lua;
+            origin.identity = "lua|script";
+            const actions::ActionResult result = registry.Run(id, std::move(value), emulator->GetId(), origin);
+            StateNode out = StateNode::Object();
+            out["ok"] = result.ok;
+            out["action"] = id;
+            if (!result.ok)
+                out["error"] = result.error;
+            out["message"] = result.message;
+            out["result"] = result.body;
+            return StateNodeToLua(s, out);
+        });
+        // context() -> {instance, context, set, by, default}: the instance's surface context (actions::ContextState,
+        // control surfaces architecture §6), as the CLI `action context`, WebAPI GET /api/v1/controllers/context, MCP
+        // `actions` context and Python context(); set it with action("ctx.set", "ttd") ("" returns to the default)
+        lua.set_function("context", [this](sol::this_state s) {
+            Emulator* emulator = effectiveEmulator();
+            StateNode out = StateNode::Object();
+            if (!emulator)
+            {
+                out["ok"] = false;
+                out["error"] = "Not Found";
+                out["message"] = "no emulator selected";
+                return StateNodeToLua(s, out);
+            }
+            const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
+            out["ok"] = true;
+            out["instance"] = emulator->GetId();
+            out["context"] = info.context;
+            out["set"] = info.set;
+            out["by"] = info.by;
+            out["default"] = info.fallback;
+            return StateNodeToLua(s, out);
+        });
+        // surfaces(verb, {args}) -> the reply table of a control surfaces verb (actions::surfaces::Call: views, target,
+        // sessions, session, pin, readouts, activity, view_add, view_update, view_remove, session_open,
+        // session_close), as WebAPI /api/v1/surfaces/..., the CLI `surface`, MCP `actions` and Python surfaces()
+        lua.set_function("surfaces", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            std::function<StateNode(const sol::object&)> toNode = [&toNode](const sol::object& value) -> StateNode {
+                if (value.is<bool>())
+                    return StateNode(value.as<bool>());
+                if (value.get_type() == sol::type::number)
+                {
+                    const double number = value.as<double>();
+                    return number == std::floor(number) ? StateNode(static_cast<int64_t>(number)) : StateNode(number);
+                }
+                if (value.is<std::string>())
+                    return StateNode(value.as<std::string>());
+                if (value.get_type() == sol::type::table)
+                {
+                    const sol::table table = value.as<sol::table>();
+                    // A sequence is a list ({"run.state", "media.*"}), anything else an object ({view = "v1"})
+                    if (table.size() > 0)
+                    {
+                        StateNode array = StateNode::Array();
+                        for (size_t i = 1; i <= table.size(); i++)
+                            array.push(toNode(table[i]));
+                        return array;
+                    }
+                    StateNode object = StateNode::Object();
+                    for (const auto& [key, item] : table)
+                        if (key.is<std::string>())
+                            object[key.as<std::string>()] = toNode(item);
+                    return object;
+                }
+                return StateNode();
+            };
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                    if (key.is<std::string>())
+                        args[key.as<std::string>()] = toNode(item);
+            return StateNodeToLua(s, actions::surfaces::Call(verb.value_or("views"), args).body);
+        });
+        // streamdeck(verb, {args}) -> the reply table of a Stream Deck daemon verb (companion::streamdeck::Call:
+        // status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, brightness, packs, pack, udev),
+        // as WebAPI /api/v1/streamdeck/..., the CLI `streamdeck`, MCP `streamdeck` and Python streamdeck():
+        // streamdeck("pack", {deck = "A1B2C3", pack = "os4"})
+        lua.set_function("streamdeck", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (item.is<bool>())
+                        args[name] = StateNode(item.as<bool>());
+                    else if (item.get_type() == sol::type::number)
+                    {
+                        const double number = item.as<double>();
+                        args[name] = number == std::floor(number) ? StateNode(static_cast<int64_t>(number))
+                                                                  : StateNode(number);
+                    }
+                    else if (item.is<std::string>())
+                        args[name] = StateNode(item.as<std::string>());
+                }
+            return StateNodeToLua(s, companion::streamdeck::Call(verb.value_or("status"), args).body);
+        });
+        // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
+        // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
+        // debug.analyzers, controllers.state, game.events; an instance's name defaults to this emulator), as WebAPI
+        // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
+        lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            Emulator* emulator = effectiveEmulator();
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (item.get_type() == sol::type::number)
+                    {
+                        const double number = item.as<double>();
+                        args[name] = number == std::floor(number) ? StateNode(static_cast<int64_t>(number))
+                                                                  : StateNode(number);
+                    }
+                    else if (item.is<std::string>())
+                        args[name] = StateNode(item.as<std::string>());
+                }
+            const std::string name = verb.value_or("all");
+            if (args.find("instance") == nullptr && name != "all" && emulator != nullptr)
+                args["instance"] = emulator->GetId();
+            return StateNodeToLua(s, monitoring::Call(name, args).body);
+        });
+        // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
+        // (devices, profiles, bindings, haptics, rumble, light; HostInputControl, the process's, not the machine's)
+        auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
+#ifdef ENABLE_CONTROLLERS
+            controllers::HostRequest request;
+            request.verb = verb;
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            return JsonValueToLua(s, controllers::HostInputControl::Process(request).ToValue());
+#else
+            (void)verb;
+            (void)opts;
+            StateNode reply = StateNode::Object();
+            reply["ok"] = false;
+            reply["error"] = "unavailable";
+            reply["message"] = "built without host game controllers (ENABLE_CONTROLLERS=OFF)";
+            return StateNodeToLua(s, reply);
+#endif
+        };
+        lua.set_function("controllers_host", hostControllersCall);
+        // controllers_haptics([device]) -> devices[]: available or reason, actuators, the test effects
+        lua.set_function("controllers_haptics", [hostControllersCall](sol::this_state s, sol::optional<std::string> device) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (device && !device->empty())
+                opts["device"] = *device;
+            return hostControllersCall(s, "haptics", opts);
+        });
+        // controllers_rumble(device, [effect]) -> play a test effect (identify, low, high, clicks, left-trigger,
+        // right-trigger, swell)
+        lua.set_function("controllers_rumble", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::optional<std::string> effect) {
+            sol::table opts = sol::state_view(s).create_table();
+            opts["device"] = device;
+            opts["effect"] = effect.value_or("identify");
+            return hostControllersCall(s, "rumble", opts);
+        });
+        // controllers_output(device, pattern | {steps=, clicks=, marks=}) -> a control surface's outputs (the Surface
+        // Dial): a haptic pattern (tick, double, buzz), its steps per turn and clicks, or a seek's marks as its layer
+        // plays them
+        lua.set_function("controllers_output", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::object what) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (what.is<sol::table>())
+                for (const auto& [key, value] : what.as<sol::table>())
+                    opts[key] = value;
+            else if (what.is<std::string>())
+                opts["pattern"] = what.as<std::string>();
+            opts["device"] = device;
+            return hostControllersCall(s, "output", opts);
+        });
+        // controllers_light(device, color) -> a pad's light colour (#RRGGBB, r,g,b or off: a DualSense / DualShock 4
+        // light bar)
+        lua.set_function("controllers_light", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                    const std::string& color) {
+            sol::table opts = sol::state_view(s).create_table();
+            opts["device"] = device;
+            opts["color"] = color;
+            return hostControllersCall(s, "light", opts);
+        });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {
             return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);
@@ -1412,6 +2199,60 @@ public:
         lua.set_function("media_targets", [mediaCall](sol::this_state s, const std::string& path) {
             return mediaCall(s, "targets", "", path, sol::nullopt);
         });
+        // A composition descriptor (*.ucompose.yaml, or its JSON text) built without inserting it
+        lua.set_function("media_compose", [mediaCall](sol::this_state s, const std::string& descriptor,
+                                                      sol::optional<sol::table> opts) {
+            return mediaCall(s, "compose", "", descriptor, opts);
+        });
+        lua.set_function("media_layers", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "layers", slot, "", sol::nullopt);
+        });
+        // The guest's unsaved writes as file operations, with the layer each touched
+        lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "changes", slot, "", sol::nullopt);
+        });
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+        lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "volumes", slot, "", sol::nullopt);
+        });
+        lua.set_function("media_files", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                    sol::optional<sol::table> opts) {
+            return mediaCall(s, "files", slot, path.value_or(""), opts);
+        });
+        lua.set_function("media_read", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                   sol::optional<sol::table> opts) {
+            return mediaCall(s, "read", slot, path, opts);
+        });
+        // A file's bytes as a Lua string, or nil and the reason
+        lua.set_function("media_read_bytes", [this](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<std::string> volume) -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(s);
+            MediaRequest request{"read", slot, path, {}};
+            if (volume && !volume->empty())
+                request.options["volume"] = *volume;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(view, sol::lua_nil), sol::make_object(view, "no emulator selected")};
+            const MediaReply reply = MediaControl(emulator->GetContext()).Execute(request);
+            if (!reply.result.Ok())
+                return {sol::make_object(view, sol::lua_nil), sol::make_object(view, reply.result.message)};
+            std::vector<uint8_t> bytes;
+            base64::Decode(reply.body.find("data")->s, bytes);
+            return {sol::make_object(view, std::string(bytes.begin(), bytes.end())), sol::make_object(view, sol::lua_nil)};
+        });
+        // A file onto a slot's TR-DOS / +3DOS floppy: `bytes` a Lua string, or nil with opts["in"] a host file
+        lua.set_function("media_write", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<std::string> bytes, sol::optional<sol::table> opts) {
+            if (!bytes)
+                return mediaCall(s, "write", slot, path, opts);
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["data"] = base64::Encode(std::vector<uint8_t>(bytes->begin(), bytes->end()));
+            return mediaCall(s, "write", slot, path, all);
+        });
         for (const char* verb : {"insert", "swap"})
         {
             lua.set_function(std::string("media_") + verb,
@@ -1431,6 +2272,11 @@ public:
         lua.set_function("media_save", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
                                                    sol::optional<sol::table> opts) {
             return mediaCall(s, "save", slot, path.value_or(""), opts);
+        });
+        // A composite by a named strategy: strategy = "flat" (path) | "delta" | "commit"; plan, force
+        lua.set_function("media_flatten", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                      sol::optional<sol::table> opts) {
+            return mediaCall(s, "flatten", slot, path.value_or(""), opts);
         });
         lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
             return mediaCall(s, "export", slot, path, sol::nullopt);
@@ -1556,8 +2402,31 @@ public:
             return result;
         };
 
+        // Automation session (execution arbiter design §6a): the GUI shows it and locks its controls; when the user
+        // takes control back, control calls raise an error (revoked_by_user) - stop, do not retry, ask the user
+        lua.set_function("take_control", [this](sol::optional<std::string> client) {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                throw std::runtime_error("take_control: no emulator");
+            std::string reason;
+            if (!execution::script::TakeControl(*emulator, execution::Origin::Lua, client.value_or("lua"), reason))
+                throw std::runtime_error("take_control refused: " + reason + " (do not retry)");
+        });
+        lua.set_function("release_control", [this]() {
+            if (Emulator* emulator = effectiveEmulator())
+                execution::script::ReleaseControl(*emulator, execution::Origin::Lua);
+        });
+        // Companion clients (docs/inprogress/2026-10-16-companion-client): devices the user paired at the GUI to act
+        // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one
+        lua.set_function("companions", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, companion::CompanionRegistry::Instance().Report());
+        });
+        lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
+            return companion::CompanionRegistry::Instance().Revoke(idOrName);
+        });
         lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             emulator.RunSingleCPUCycle(skipBP.value_or(true));
             const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
@@ -1567,6 +2436,7 @@ public:
 
         lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
             return stepOutcome(sol::state_view(ts), emulator, executed);
@@ -1574,43 +2444,117 @@ public:
 
         lua.set_function("stepover", [this]() {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
         });
 
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
         lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
         });
 
         // Atomic stepping methods
         lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilScanline(scanline, skipBP.value_or(true));
         });
 
         lua.set_function("run_scanlines", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNScanlines(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_pixel", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilNextScreenPixel(skipBP.value_or(true));
         });
 
+        // The paced run (core execution::RunPacer; the same pacer as WebAPI /run_pace, the actions run.pace_* and the
+        // Qt speed control): pace() -> {preset, label, unit, interval_ms, running, stop_reason, presets}; the others
+        // answer the reply as a table with ok (false: error = the message) and the pace
+        auto paceReply = [](sol::this_state ts, const execution::RunReply& reply) -> sol::object {
+            StateNode value = reply.body;
+            value["ok"] = reply.Ok();
+            if (!reply.Ok())
+                value["error"] = reply.message;
+            return StateNodeToLua(ts, value);
+        };
+        auto pacerOf = [this]() -> std::shared_ptr<execution::RunPacer> {
+            Emulator* emulator = effectiveEmulator();
+            return emulator ? execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()))
+                            : nullptr;
+        };
+        lua.set_function("pace", [this](sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::lua_nil;
+            const auto pacer = execution::RunPacer::Find(emulator->GetId());
+            return StateNodeToLua(ts, pacer ? pacer->StateBody(true) : execution::RunPacer::DefaultStateBody(true));
+        });
+        // pace_set(preset [, interval_ms]): full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op
+        lua.set_function("pace_set", [this, paceReply, pacerOf](sol::this_state ts, const std::string& name,
+                                                                sol::optional<int> intervalMs) -> sol::object {
+            const auto pacer = pacerOf();
+            if (!pacer)
+                return sol::lua_nil;
+            size_t index = 0;
+            if (!execution::RunPacer::PresetIndex(name, index))
+                throw std::runtime_error("pace_set: preset full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line or 1op");
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
+            return paceReply(ts, pacer->Set(execution::script::RequesterOf(*effectiveEmulator(), execution::Origin::Lua),
+                                            index, intervalMs ? std::optional<int>(*intervalMs) : std::nullopt));
+        });
+        lua.set_function("pace_interval", [this, paceReply, pacerOf](sol::this_state ts, int intervalMs) -> sol::object {
+            const auto pacer = pacerOf();
+            if (!pacer)
+                return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
+            return paceReply(ts, pacer->Set(execution::script::RequesterOf(*effectiveEmulator(), execution::Origin::Lua),
+                                            std::nullopt, intervalMs));
+        });
+        for (const char* name : {"pace_next", "pace_prev", "pace_start", "pace_stop", "pace_toggle", "pace_step"})
+        {
+            const std::string verb = std::string(name).substr(5);
+            lua.set_function(name, [this, paceReply, pacerOf, verb](sol::this_state ts) -> sol::object {
+                const auto pacer = pacerOf();
+                if (!pacer)
+                    return sol::lua_nil;
+                Emulator& emulator = *effectiveEmulator();
+                if (verb != "stop")
+                    execution::script::Check(emulator, execution::Origin::Lua);
+                const execution::Requester requester = execution::script::RequesterOf(emulator, execution::Origin::Lua);
+                if (verb == "next" || verb == "prev")
+                    return paceReply(ts, pacer->Shift(requester, verb == "next" ? 1 : -1));
+                if (verb == "start")
+                    return paceReply(ts, pacer->Start(requester));
+                if (verb == "stop")
+                    return paceReply(ts, pacer->Stop());
+                if (verb == "toggle")
+                    return paceReply(ts, pacer->Toggle(requester));
+                return paceReply(ts, pacer->Step(requester));
+            });
+        }
+
         lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilInterrupt(skipBP.value_or(true));
         });
 
@@ -1706,8 +2650,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2));
-            return true;
+            // false: a character no key types, nothing typed
+            return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2)).empty();
         });
 
         lua.set_function("key_release_all", [this]() {
@@ -1718,11 +2662,11 @@ public:
         });
 
         // Tape operations
-        // ok, reason: the reason is set when TTD refuses the insert (recording)
+        // ok, reason: the reason is set when the insert is refused (TTD v1 while recording)
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
-            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+            if (std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
                 return {false, refusal};
             std::string reason;
             const bool loaded = emulator->LoadTape(path, &reason);
@@ -2259,10 +3203,7 @@ public:
                 return mouseError(s, "state must be an integer, a string or a table of button names");
             if (names.empty())
                 return joystickResult(s, *mgr, mgr->ReleaseAll());
-            const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-            if (mask == 0)  // the manager words the unknown-name error
-                return joystickResult(s, *mgr, mgr->Press(names));
-            return joystickResult(s, *mgr, mgr->SetStateChecked(mask));
+            return joystickResult(s, *mgr, mgr->SetNames(names));
         });
 
         lua.set_function("joystick_tap", [this](sol::this_state s, sol::object buttonsArg, sol::object framesArg) {
@@ -2312,12 +3253,11 @@ public:
                                               -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
-            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-                return {false, refusal, emulator->GetId()};
             SnapshotLoadRequest request;
             request.emulatorId = emulator->GetId();
             request.path = path;
-            request.switchModel = _emulator == nullptr;
+            if (_emulator != nullptr)
+                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: the launcher's default
             request.commit = commit.value_or("");
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
@@ -2354,6 +3294,24 @@ public:
         // ld_air_parity_quirk, ignore_later_snapshots, switch_model. The model
         // switches only when this interpreter follows the selected machine (a
         // bound one reports the mismatch: its machine must not be replaced)
+        // The files opened lately (RecentFiles; open one: action("media.open_recent", nil, {index = 0, kind = "tape"}))
+        lua.set_function("recent_files", [](sol::this_state ts, sol::optional<std::string> kind) -> sol::object {
+            const std::string k = kind.value_or("all");
+            if (k != "all" && !RecentFiles::IsKind(k))
+                throw sol::error("kind '" + k + "': all, snapshot, tape, disk, rzx, image or cd");
+            return StateNodeToLua(ts, RecentFiles::Instance().ToValue(k));
+        });
+        lua.set_function("recent_clear", [](sol::optional<std::string> kind) {
+            const std::string k = kind.value_or("all");
+            if (k != "all" && !RecentFiles::IsKind(k))
+                throw sol::error("kind '" + k + "': all, snapshot, tape, disk, rzx, image or cd");
+            RecentFiles::Instance().Clear(k);
+        });
+        // The core's recording presets (video_record("start", {preset = "gameplay"}))
+        lua.set_function("recording_presets", [](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, capture::RecordingPresetsValue());
+        });
+
         lua.set_function("rzx_play", [this](const std::string& path, sol::optional<sol::table> options) -> sol::table {
             sol::state_view view(*_lua);
             sol::table out = view.create_table();
@@ -2455,9 +3413,27 @@ public:
             return t;
         });
 
+        // snapshot_save(path) -> bool; false = refused or failed, snapshot_save_report() says why
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
             if (!effectiveEmulator()) return false;
             return effectiveEmulator()->SaveSnapshot(path);
+        });
+
+        // snapshot_save_report() -> table | nil: the last save {ok, message, format, path, machine, reason, needs, warnings}
+        lua.set_function("snapshot_save_report", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || emulator->LastSaveResult().path.empty())
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->LastSaveResult().ToStateNode());
+        });
+
+        // snapshot_formats() -> table: which formats this machine can be saved in right now {view_available, machine, view,
+        // formats = {{format, available, reason, needs, note}}}
+        lua.set_function("snapshot_formats", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->SnapshotSaveFormats().ToStateNode());
         });
 
         // Breakpoint management
@@ -2489,6 +3465,32 @@ public:
             return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
+        // ZX Next register breakpoints. Options: a table {to=, doors=, value=, vmask=, hits=} (to = register range end; doors
+        // "nextreg,port,copper" a write may come through; value = stop only on it, vmask = the compared bits). -1 when refused
+        lua.set_function("bp_nextreg_write", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_OUT, reg, options);
+        });
+        lua.set_function("bp_nextreg_read", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN, reg, options);
+        });
+        // bp_beam(line, {hc=}) stops when the beam passes the place (the copper's counters); bp_copper(index, {to=}) when the copper
+        // completes that list instruction. -1 when refused
+        lua.set_function("bp_beam", [this](uint16_t line, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_BEAM, line, options);
+        });
+        lua.set_function("bp_copper", [this](uint16_t index, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_COPPER, index, options);
+        });
+        // bp_magic("ed_ff" | "dd_01", {hits=}) stops after the CPU ran the magic opcode (a NOP / LD BC,nn on the hardware). -1 when refused
+        lua.set_function("bp_magic", [this](const std::string& opcode, sol::optional<sol::table> options) -> int {
+            if (opcode != "ed_ff" && opcode != "dd_01")
+                return -1;
+            return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
+        });
+        lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
+        });
+
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
             if (!effectiveEmulator()) return false;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -2502,7 +3504,7 @@ public:
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (bpm) bpm->ClearBreakpoints();
+            if (bpm) bpm->ClearUserBreakpoints();
         });
 
         lua.set_function("bp_enable", [this](uint16_t id) -> bool {
@@ -2537,6 +3539,48 @@ public:
             return bpm ? bpm->SetBreakpointGroup(id, group) : false;
         });
 
+        // Breakpoints by selection (BreakpointSelection: all, an id, a kind, group:<name>): bp_select(select, op) with op
+        // enable | disable | toggle | remove answers {select, selected, changed, active}; a refusal: ok = false, error
+        lua.set_function("bp_select", [this](sol::this_state ts, const std::string& select, const std::string& op) -> sol::object {
+            StateNode out = StateNode::Object();
+            std::string error;
+            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+            if (!bpm)
+                error = "no emulator";
+            else if (BreakpointSelection::Run(*bpm, select, op, out, error))
+                return StateNodeToLua(ts, out);
+            out["ok"] = false;
+            out["error"] = error;
+            return StateNodeToLua(ts, out);
+        });
+        // bp_key(key, {on = "press" | "release" | "both", hits =, group =, note =}): stops on the first keyboard read
+        // that sees the key ("any": any key) go down / up. The id, or nil and the reason
+        lua.set_function("bp_key", [this](sol::this_state ts, const std::string& key, sol::optional<sol::table> opts)
+                                       -> std::tuple<sol::object, sol::object> {
+            auto fail = [&ts](const std::string& why) {
+                return std::make_tuple(sol::make_object(ts, sol::lua_nil), sol::make_object(ts, why));
+            };
+            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+            if (!bpm)
+                return fail("no emulator");
+            BreakpointSpec spec;
+            std::string error;
+            const std::string on = opts ? opts->get_or<std::string>("on", "press") : std::string("press");
+            if (!BreakpointManager::ParseKeyboardInto(key, on, spec, error) ||
+                (opts && !BreakpointManager::ParseHitSpec(opts->get_or<std::string>("hits", ""), spec.hitMode,
+                                                          spec.hitTarget, error)))
+                return fail(error);
+            if (opts)
+            {
+                spec.group = opts->get_or<std::string>("group", "");
+                spec.note = opts->get_or<std::string>("note", "");
+            }
+            const uint16_t id = bpm->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID)
+                return fail(error);
+            return std::make_tuple(sol::make_object(ts, id), sol::make_object(ts, sol::lua_nil));
+        });
+
         lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
             if (!effectiveEmulator()) return false;
             BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
@@ -2553,6 +3597,14 @@ public:
             if (!ctx || !ctx->pDebugManager) return 0;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->GetBreakpointsCount() : 0;
+        });
+
+        // bp_groups() -> {ok, instance, groups = {{name, total, active, ids}}}: as GET .../breakpoints/groups
+        lua.set_function("bp_groups", [this](sol::this_state s) {
+            StateNode args = StateNode::Object();
+            if (Emulator* emulator = effectiveEmulator())
+                args["instance"] = emulator->GetId();
+            return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
         });
 
         lua.set_function("bp_list", [this]() -> std::string {
@@ -2738,6 +3790,61 @@ public:
             if (!ctx || !ctx->pDebugManager) return false;
             LabelManager* lm = ctx->pDebugManager->GetLabelManager();
             return lm && lm->SaveLabels(path);
+        });
+
+        // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP and
+        // Python): symbols_import("f.sym") or symbols_import{path=..., format=, set=, space=, base=, policy=},
+        // symbols_export{path=..., format=, sets={...}, pages=}, symbols_sets(), symbols_set(id, {enabled=, priority=}),
+        // symbols_drop(id), symbols_formats(), symbols_detect(path), symbols_scan(), symbols_import_live{scanner=, page=,
+        // offset=, set=, policy=}. A refusal: the table has ok = false, error = why
+        lua.set_function("symbols_formats", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "formats", {}); });
+        lua.set_function("symbols_sets", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "sets", {}); });
+        lua.set_function("symbols_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "detect", arg, "path"); });
+        lua.set_function("symbols_import", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "import", arg, "path"); });
+        lua.set_function("symbols_export", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "export", arg, "path"); });
+        lua.set_function("symbols_drop", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "drop", arg, "id"); });
+        // Assembler sources through AsmControl (the same verbs and fields as the WebAPI, CLI, MCP, Python and the Qt disk
+        // browser): asm_formats(), asm_dialects(), asm_files("A"), asm_detect(path), asm_decode(path) or asm_decode{path=,
+        // codec=, version=, output=}, asm_encode{text= | input=, codec=, version=, output=}, asm_convert{path=, to=, ...}.
+        // A path is a host file or "disk:A/NAME.T". A refusal: ok = false, error = why
+        lua.set_function("asm_formats", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "formats", {}); });
+        lua.set_function("asm_dialects", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "dialects", {}); });
+        lua.set_function("asm_files", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "files", SymbolOptions(arg, "drive")); });
+        lua.set_function("asm_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "detect", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_decode", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "decode", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_encode", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "encode", SymbolOptions(arg, "text")); });
+        lua.set_function("asm_convert", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "convert", SymbolOptions(arg, "path")); });
+        // The source an assembler holds in RAM (asm-synchronizer): asm_sync_status(), asm_sync_probe(), asm_sync_extract{as=, to=,
+        // output=}, asm_sync_watch{interval=, quiet=, as=, to=, output=} (live labels in live:sync:<assembler>), asm_sync_unwatch(),
+        // asm_sync_hints(), asm_sync_inject{text= | path=, from=, title=, force=, backup=} (a host source as the assembler's text);
+        // snapshot= (a .szx / .sna / .z80 file) makes status / probe / extract / inject work on that file (inject writes output=);
+        // asm_sync_push_watch{path=, from=, title=, force=, interval=, quiet=} injects each save of the host file, asm_sync_push_unwatch()
+        lua.set_function("asm_sync_status", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-status", SymbolOptions(arg, "assembler")); });
+        lua.set_function("asm_sync_probe", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-probe", SymbolOptions(arg, "snapshot")); });
+        lua.set_function("asm_sync_extract", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-extract", SymbolOptions(arg, "as")); });
+        lua.set_function("asm_sync_watch", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-watch", SymbolOptions(arg, "assembler")); });
+        lua.set_function("asm_sync_unwatch", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-unwatch", {}); });
+        lua.set_function("asm_sync_hints", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-hints", {}); });
+        lua.set_function("asm_sync_inject", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-inject", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_sync_push_watch", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-push-watch", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_sync_push_unwatch", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-push-unwatch", {}); });
+        lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
+        lua.set_function("symbols_import_source", [this](sol::this_state ts, sol::object arg) -> sol::object {
+            return symbolsCall(ts, "import-source", arg, "path");
+        });
+        lua.set_function("symbols_import_live", [this](sol::this_state ts, sol::optional<sol::table> opts) -> sol::object {
+            return symbolsRun(ts, "import-live", opts ? SymbolOptions(sol::make_object(ts, *opts), "") : std::map<std::string, std::string>{});
+        });
+        lua.set_function("symbols_set", [this](sol::this_state ts, sol::object id, sol::optional<sol::table> opts) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (opts)
+                options = SymbolOptions(sol::make_object(ts, *opts), "");
+            if (id.is<std::string>())
+                options["id"] = id.as<std::string>();
+            else
+                for (auto& [key, value] : SymbolOptions(id, "id"))
+                    options[key] = value;
+            return symbolsRun(ts, "set", std::move(options));
         });
 
         // Disassembly
@@ -3137,6 +4244,503 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::SprinterZxMode(emulator->GetContext(), deep.value_or(true)));
         });
+        // next_state() / next_regs() / next_mmu(): the ZX Spectrum Next reports (DeviceState::Next / NextRegs / NextMmu;
+        // available=false on other machines)
+        lua.set_function("next_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Next(emulator->GetContext()));
+        });
+        lua.set_function("next_regs", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextRegs(emulator->GetContext()));
+        });
+        lua.set_function("next_mmu", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextMmu(emulator->GetContext()));
+        });
+        // next_reg_journal([{regs="07,02", sources="nextreg,copper", since=N, from=F, to=F, limit=N}]): who wrote which NextREG,
+        // when (frame, T, PC) and through which door (DeviceState::NextRegJournalReport); nil + error on a bad option.
+        // Off by default: next_reg_journal_control({enabled=true}) first
+        lua.set_function("next_reg_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextRegJournalQuery query;
+            std::string error;
+            if (!NextRegJournalQueryFromStrings(text("regs"), text("sources"), text("since"), text("from"), text("to"), text("limit"),
+                                                query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegJournalReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_reg_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the NextREG journal
+        lua.set_function("next_reg_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_sd([{kinds="command,read,write", card=0|1, since=N, from=F, to=F, limit=N}]): the Next's SD cards, the SPI engine and the
+        // SD journal (DeviceState::NextSdReport); nil + error on a bad option. The journal is off by default: next_sd_journal_control({enabled=true}) first
+        lua.set_function("next_sd", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextSdJournalQuery query;
+            std::string error;
+            if (!NextSdJournalQueryFromStrings(text("kinds"), text("card"), text("since"), text("from"), text("to"), text("limit"), query,
+                                               error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextSdReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_sd_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the SD journal
+        lua.set_function("next_sd_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // Bus analyzer (docs/inprogress/2026-10-11-bus-analyzer): bus_list(), bus_events(bus, {kinds=, slot=, since=, from=, to=,
+        // limit=}), bus_findings(bus, {rules=, since=, limit=}), bus_control(bus|"all", {enabled=, checks=, clear=, capacity=, protocol_only=}),
+        // bus_sd_timing(bus, {profile="ideal|realistic|slow", seed=N, slot=N}), bus_export(bus, {format="vcd|jsonl", ...}) -> text.
+        // nil + error on a bad option or an unknown bus
+        auto busOption = [](const sol::optional<sol::table>& options, const char* key) -> std::string {
+            if (!options)
+                return std::string();
+            sol::object value = (*options)[key];
+            if (value.get_type() == sol::type::number)
+                return std::to_string(value.as<long long>());
+            if (value.get_type() == sol::type::string)
+                return value.as<std::string>();
+            return std::string();
+        };
+        auto busSwitch = [](const sol::optional<sol::table>& options, const char* key) -> int {
+            if (!options)
+                return -1;
+            sol::object value = (*options)[key];
+            return value.get_type() == sol::type::boolean ? (value.as<bool>() ? 1 : 0) : -1;
+        };
+        auto busReply = [](sol::this_state s, const StateNode& node) -> sol::variadic_results {
+            const StateNode* available = node.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+            {
+                const StateNode* description = node.find("description");
+                return mouseError(s, description ? description->s : "bus not available");
+            }
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, node));
+            return out;
+        };
+        lua.set_function("bus_list", [this, busReply](sol::this_state s) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            return busReply(s, DeviceState::BusList(emulator->GetContext()));
+        });
+        lua.set_function("bus_events", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                   sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusEventQuery query;
+            std::string error;
+            if (!BusEventQueryFromStrings(busOption(options, "kinds"), busOption(options, "slot"), busOption(options, "since"),
+                                          busOption(options, "from"), busOption(options, "to"), busOption(options, "limit"), query, error))
+                return mouseError(s, error);
+            return busReply(s, DeviceState::BusEvents(emulator->GetContext(), bus, query));
+        });
+        lua.set_function("bus_findings", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                     sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusFindingQuery query;
+            std::string error;
+            if (!BusFindingQueryFromStrings(busOption(options, "rules"), busOption(options, "since"), busOption(options, "limit"), query, error))
+                return mouseError(s, error);
+            return busReply(s, DeviceState::BusFindings(emulator->GetContext(), bus, query));
+        });
+        lua.set_function("bus_control", [this, busOption, busSwitch, busReply](sol::this_state s, const std::string& bus,
+                                                                               sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            const std::string capacity = busOption(options, "capacity");
+            return busReply(s, DeviceState::BusControl(emulator->GetContext(), bus, busSwitch(options, "enabled"), busSwitch(options, "checks"),
+                                                       busSwitch(options, "clear") == 1,
+                                                       capacity.empty() ? 0 : static_cast<size_t>(std::stoull(capacity)),
+                                                       busSwitch(options, "protocol_only")));
+        });
+        lua.set_function("bus_sd_timing", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                      sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            const std::string slot = busOption(options, "slot");
+            const std::string seed = busOption(options, "seed");
+            return busReply(s, DeviceState::BusSdTiming(emulator->GetContext(), bus, slot.empty() ? -1 : std::stoi(slot),
+                                                        busOption(options, "profile"), seed.empty() ? 0 : std::stoll(seed)));
+        });
+        lua.set_function("bus_export", [this, busOption](sol::this_state s, const std::string& bus,
+                                                         sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusEventQuery query;
+            std::string error;
+            const std::string limit = busOption(options, "limit");
+            if (!BusEventQueryFromStrings(busOption(options, "kinds"), busOption(options, "slot"), busOption(options, "since"),
+                                          busOption(options, "from"), busOption(options, "to"), limit.empty() ? "0" : limit, query, error))
+                return mouseError(s, error);
+            const std::string format = busOption(options, "format");
+            const std::string text = DeviceState::BusExport(emulator->GetContext(), bus, format.empty() ? "vcd" : format, query, error);
+            if (!error.empty())
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(sol::make_object(s, text));
+            return out;
+        });
+        // next_divmmc([{kinds="map_in,esx_call", since=N, from=F, to=F, limit=N}]): the Next's DivMMC, its automap entries and the
+        // DivMMC journal (DeviceState::NextDivMmcReport); nil + error on a bad option. The journal is off by default: next_divmmc_journal_control({enabled=true}) first
+        lua.set_function("next_divmmc", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextDivMmcJournalQuery query;
+            std::string error;
+            if (!NextDivMmcJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"), query,
+                                               error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextDivMmcReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_divmmc_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the DivMMC journal
+        lua.set_function("next_divmmc_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_audio() / next_input(): the Next's sound as configured (chips, pan, registers, DAC) and its joystick modes with the Kempston port
+        // (DeviceState::NextAudioReport / NextInputReport; no side effect on the machine)
+        lua.set_function("next_audio", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextAudioReport(emulator->GetContext()));
+        });
+        lua.set_function("next_input", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextInputReport(emulator->GetContext()));
+        });
+        // next_uart(): the Next's two UARTs (ESP, Pi) - baud, frame, FIFOs, status, interrupts, peers (DeviceState::NextUartReport; no side effect)
+        lua.set_function("next_uart", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextUartReport(emulator->GetContext()));
+        });
+        // next_nmi([{kinds="int_ack,nmi_request", since=N, from=F, to=F, limit=N}]): the Next's NMI sources, Multiface, interrupts, reset and the
+        // interrupt / NMI / reset journal (DeviceState::NextNmiReport); nil + error on a bad option. The journal is off by default:
+        // next_nmi_journal_control({enabled=true}) first
+        lua.set_function("next_nmi", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextIntJournalQuery query;
+            std::string error;
+            if (!NextIntJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextNmiReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nmi_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the interrupt / NMI / reset journal
+        lua.set_function("next_nmi_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_magic_port([{since=N, limit=N}]): the magic debug port - its setting and the text a program wrote to it (DeviceState::NextMagicPortReport)
+        lua.set_function("next_magic_port", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            uint64_t since = 0;
+            size_t limit = 200;
+            if (options)
+            {
+                sol::object a = (*options)["since"];
+                if (a.get_type() == sol::type::number)
+                    since = static_cast<uint64_t>(a.as<long long>());
+                sol::object b = (*options)["limit"];
+                if (b.get_type() == sol::type::number)
+                    limit = static_cast<size_t>(b.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortReport(emulator->GetContext(), since, limit));
+        });
+        // next_magic_port_control({enabled=true|false, port=N, mode="hex|dec|ascii|line", clear=true}): switch the magic port, choose its port and mode
+        lua.set_function("next_magic_port_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            int port = -1;
+            bool clear = false;
+            std::string mode;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object p = (*options)["port"];
+                if (p.get_type() == sol::type::number)
+                    port = static_cast<int>(p.as<long long>() & 0xFFFF);
+                sol::object m = (*options)["mode"];
+                if (m.get_type() == sol::type::string)
+                    mode = m.as<std::string>();
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortControl(emulator->GetContext(), enable, port, mode, clear));
+        });
+        // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
+        lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextDma(emulator->GetContext()));
+        });
+        lua.set_function("next_video", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextVideo(emulator->GetContext()));
+        });
+        // next_palette([{palette="sprites_1"|0-7|"all", range="0-15"}]): the 9-bit palettes (DeviceState::NextPalette); nil + error on a bad option
+        lua.set_function("next_palette", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                return std::string();
+            };
+            NextPaletteQuery query;
+            std::string error;
+            if (!NextPaletteQueryFromStrings(text("palette"), text("range"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPalette(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_ports([port [, "r"|"w"]]): the internal port enable word and which device answers `port` (a number is the port, a string is hex text)
+        lua.set_function("next_ports", [this](sol::this_state s, sol::optional<sol::object> port, sol::optional<std::string> access) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string portText;
+            if (port && port->get_type() == sol::type::number)
+                portText = StringHelper::Format("%llx", static_cast<unsigned long long>(port->as<long long>()));
+            else if (port && port->get_type() == sol::type::string)
+                portText = port->as<std::string>();
+            NextPortsQuery query;
+            std::string error;
+            if (!NextPortsQueryFromStrings(portText, access.value_or(""), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPorts(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nextreg([reg [, changed]]): one NextREG with decoded bits, or all of them, without side effects (a number is the register)
+        lua.set_function("next_nextreg", [this](sol::this_state s, sol::optional<sol::object> reg, sol::optional<bool> changed) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string regText;
+            if (reg && reg->get_type() == sol::type::number)
+                regText = StringHelper::Format("%llx", static_cast<unsigned long long>(reg->as<long long>()));
+            else if (reg && reg->get_type() == sol::type::string)
+                regText = reg->as<std::string>();
+            NextRegReadQuery query;
+            std::string error;
+            if (!NextRegReadQueryFromStrings(regText, changed.value_or(false) ? "true" : "", query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegRead(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_copper([{from=0, count=64, raw=true}]): the copper list as a disassembly with the control mode, write address and pc
+        // (DeviceState::NextCopper); next_sprites([{from=0, count=128, all=true}]): the 128 sprite attributes decoded, switches, flags,
+        // pattern memory summary (DeviceState::NextSprites); nil + error on a bad option
+        lua.set_function("next_copper", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextCopperQuery query;
+            std::string error;
+            if (!NextCopperQueryFromStrings(text("from"), text("count"), text("raw"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextCopper(emulator->GetContext(), query)));
+            return out;
+        });
+        lua.set_function("next_sprites", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextSpritesQuery query;
+            std::string error;
+            if (!NextSpritesQueryFromStrings(text("from"), text("count"), text("all"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextSprites(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_pixel(x, y [, sx]): the pixel inspector of the last captured Next frame (DeviceState::NextPixel; design-layer-capture.md): x 0-319,
+        // y 0-255, sx the sub-pixel 0 | 1. Returns {frame, pixel, winner = {layer, id}, colour = {rgb9, rgb}, layer_order, layers = {ula, layer2,
+        // tilemap, sprites: {opaque, rgb9, wins, why, source}}}; nil + error on a bad coordinate, on another machine, with the capture off or
+        // before the first frame
+        lua.set_function("next_pixel", [this](sol::this_state s, int64_t x, int64_t y, sol::optional<int64_t> sx) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            NextPixelQuery query;
+            std::string error;
+            if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx ? std::to_string(*sx) : std::string(), query, error))
+                return mouseError(s, error);
+            const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+            const StateNode* available = report.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                return mouseError(s, "This machine is not a ZX Spectrum Next");
+            const StateNode* ok = report.find("ok");
+            if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                return mouseError(s, report.find("message") ? report.find("message")->s : std::string("no frame"));
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, report));
+            return out;
+        });
+        // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"
+        // (default, the NEXTREG instruction), "port" or "internal"; returns the reply table, or nil + error
+        lua.set_function("next_nextreg_write", [this](sol::this_state s, int64_t reg, int64_t value, sol::optional<std::string> door) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            if (reg < 0 || reg > 255 || value < 0 || value > 255)
+                return mouseError(s, "reg and value must be 0..255");
+            NextRegWriteControl::Door which = NextRegWriteControl::Door::NextReg;
+            if (!NextRegWriteControl::ParseDoor(door.value_or(""), which))
+                return mouseError(s, "door must be nextreg, port or internal");
+            const NextRegWriteControl::Result result =
+                NextRegWriteControl::Write(emulator, static_cast<uint8_t>(reg), static_cast<uint8_t>(value), which, "lua");
+            if (!result.ok)
+                return mouseError(s, result.error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, NextRegWriteControl::ToState(result)));
+            return out;
+        });
         // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
         // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option
         lua.set_function("sprinter_pld_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
@@ -3223,43 +4827,50 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
-        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
-        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} [, opts]
+        //   -> the reply table (truthy) | nil, err, reply
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only).
+        // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot change
+        // applied by a restart (opts: replace, dry_run, media as for slots_plug; an interpreter bound to the machine
+        // follows the restarted one), the other keys go to the restarted machine; without one they apply in place
+        // (status "accepted")
+        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings,
+                                                     sol::optional<sol::table> opts) -> sol::variadic_results {
             sol::variadic_results out;
-            Emulator* emulator = effectiveEmulator();
-            NetworkManager* manager = (emulator && emulator->GetContext()->pCore)
-                                          ? emulator->GetContext()->pCore->GetNetworkManager()
-                                          : nullptr;
-            std::string error = emulator ? "no network support in this machine" : "No emulator selected";
-            if (manager)
+            SlotControlRequest request;
+            request.verb = "network";
+            for (const auto& [key, value] : settings)
             {
-                std::vector<std::pair<std::string, std::string>> kv;
-                for (const auto& [key, value] : settings)
-                {
-                    std::string text;
-                    if (value.get_type() == sol::type::boolean)
-                        text = value.as<bool>() ? "on" : "off";
-                    else if (value.get_type() == sol::type::number)
-                        text = std::to_string(value.as<long long>());
-                    else
-                        text = value.as<std::string>();
-                    kv.emplace_back(key.as<std::string>(), text);
-                }
-                NetworkManager::Change change;
-                if (NetworkManager::ParseChange(kv, change, error) && manager->RequestChange(change, error))
-                {
-                    out.push_back(sol::make_object(s, true));
-                    return out;
-                }
+                std::string text;
+                if (value.get_type() == sol::type::boolean)
+                    text = value.as<bool>() ? "on" : "off";
+                else if (value.get_type() == sol::type::number)
+                    text = std::to_string(value.as<long long>());
+                else
+                    text = value.as<std::string>();
+                request.settings.emplace_back(key.as<std::string>(), text);
+            }
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            sol::object table = StateNodeToLua(s, reply.ToValue());
+            if (reply.Ok())
+            {
+                out.push_back(table);
+                return out;
             }
             out.push_back(sol::make_object(s, sol::lua_nil));
-            out.push_back(sol::make_object(s, error));
+            out.push_back(sol::make_object(s, reply.message));
+            out.push_back(table);
             return out;
         });
 
         // CMOS clock: the same report and cell access every interface uses
         // (DeviceState::Rtc, RtcAccess). Cells are numbered as the guest numbers them
+        // The execution arbiter: intent and who set it, the command holding the CPU, queue, claim (DeviceState::Execution)
+        lua.set_function("execution_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Execution(emulator->GetContext()));
+        });
         lua.set_function("rtc_state", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -3476,6 +5087,23 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
         });
+        // ZX-MultiSound (DeviceState::MultiSound), its MIDI synthesizer (DeviceState::Midi) and the MIDI panic
+        // (MidiControl: every voice stops, a TTD live input); unavailable / (false, reason) without the card
+        lua.set_function("multisound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::MultiSound(ctx));
+        });
+        lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Midi(ctx));
+        });
+        lua.set_function("midi_panic", [this]() -> std::tuple<bool, std::string> {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (!ctx)
+                return {false, "no emulator selected"};
+            const MidiControlReply reply = MidiControl::Execute(ctx, "panic");
+            return {reply.ok, reply.message};
+        });
         // MoonSound: overview, or part "fm" / "pcm"
         lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -3499,6 +5127,33 @@ public:
         lua.set_function("gs_flash_save", [this]() -> bool {
             return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
         });
+        // ZX-Evo flash ROM (TS-Conf, ATM3): the saved flash (evoflashrequest.h). rom_flash_state() is nil on other
+        // machines; save / discard return true when accepted (discard: the shipped ROM returns at the next reset)
+        lua.set_function("rom_flash_state", [this](sol::this_state s) -> sol::object {
+            EvoFlash::PersistStatus st;
+            if (!_emulator || !EvoFlashGetStatus(_emulator->GetContext(), st))
+                return sol::make_object(s, sol::lua_nil);
+            sol::state_view lv(s);
+            sol::table t = lv.create_table();
+            t["machine"] = st.machine;
+            t["file"] = st.path;
+            t["file_exists"] = st.fileExists;
+            t["base_rom_sha256"] = st.baseDigest;
+            t["loaded_from_file"] = st.loadedFromFile;
+            t["unsaved"] = st.unsaved;
+            t["changes"] = st.changes;
+            sol::table others = lv.create_table();
+            for (size_t i = 0; i < st.otherImageFiles.size(); ++i)
+                others[i + 1] = st.otherImageFiles[i];
+            t["other_image_files"] = others;
+            return t;
+        });
+        lua.set_function("rom_flash_save", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestSave(_emulator->GetContext()));
+        });
+        lua.set_function("rom_flash_discard", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestDiscard(_emulator->GetContext()));
+        });
         // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
         // like the classic GS) or "mono"; applied at the next frame. False on
         // an unknown name
@@ -3518,12 +5173,12 @@ public:
         auto submitGS = [this](ttd::TTDInputKind kind, int value) -> bool {
             if (!effectiveEmulator() || value < 0 || value > 255) return false;
             auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+            if (!ctx || !ctx->pTimeTravelHooks) return false;
             if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound()) return false;
             ttd::TTDInputEvent ev;
             ev.kind = kind;
             ev.value = static_cast<uint8_t>(value);
-            return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+            return ctx->pTimeTravelHooks->SubmitLiveInput(ev);
         };
 
         lua.set_function("gs_reset", [submitGS]() { return submitGS(ttd::TTDInputKind::GSReset, 0); });
@@ -3554,23 +5209,16 @@ public:
             return gs ? (gs->getStatusRaw() | 0x7E) : -1;
         });
 
-        // Runtime personality switch (GS card personalities design §11.3):
-        // requested here, applied at the next frame boundary on the
-        // emulation thread - same semantics as the WebAPI switch_personality
-        // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
-            if (!effectiveEmulator()) return {false, ""};
-            auto* ctx = effectiveEmulator()->GetContext();
-            SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return {false, ""};
-
-            GSTypeKind target;
-            if (!gsParsePersonality(personality, target))
-                return {false, ""};
-
-            std::string refusal;  // a TTD recording refuses the switch (FR-4)
-            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-            return {requested, refusal};
+        // The General Sound personality: the card in the GS slot replaced as a slot change, applied by a machine
+        // restart (ZX-bus slots, owner decision Q10) - the same as slots_gs(card). Returns (ok, message); the reply
+        // table of slots_gs has the plan and the new emulator id
+        lua.set_function("gs_switch_personality", [this](const std::string& personality,
+                                                          sol::optional<sol::table> opts) -> std::tuple<bool, std::string> {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = personality;
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            return {reply.Ok(), reply.message};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw
@@ -3801,130 +5449,31 @@ public:
         // shape. No-op (return false / empty table) when TTD is unavailable.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_status", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table info = lua_view.create_table();
-            if (!emulator) { info["ttd_available"] = false; return info; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                info["state"]         = "idle";
-                info["ttd_available"] = false;
-                return info;
-            }
-            ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
-            info["state"]                    = ttd::TTDSessionStateToString(si.state);
-            info["session_start_frame"]      = si.sessionStartFrame;
-            info["current_end_frame"]        = si.currentEndFrame;
-            info["checkpoint_count"]         = static_cast<uint64_t>(si.checkpointCount);
-            info["page_store_bytes"]         = static_cast<uint64_t>(si.pageStoreBytes);
-            info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
-            info["baseline_frames_captured"] = si.baselineFramesCaptured;
-            info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
-            info["history_limit_frames"]     = si.historyLimitFrames;
-            info["history_limit_bytes"]      = si.historyLimitBytes;
-            info["history_bytes"]            = si.historyBytes;
-            info["evicted_checkpoints"]      = si.evictedCheckpoints;
-            info["loaded_from_file"]      = si.loadedFromFile;
-            info["source_path"]           = si.sourcePath;
-            info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
-            info["model_id"]              = si.modelId;
-            info["model_ram_pages"]       = si.modelRamPages;
-            info["write_journal_records"] = si.writeJournalRecords;
-            info["write_journal_bytes"]   = si.writeJournalBytes;
-            info["coverage_index_frames"] = si.coverageIndexFrames;
-            info["coverage_index_bytes"]  = si.coverageIndexBytes;
-            info["write_journal_enabled"]    = si.writeJournalEnabled;
-            info["write_journal_complete"]   = si.writeJournalComplete;
-            sol::table segments = lua_view.create_table();
-            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
-            {
-                sol::table span = lua_view.create_table();
-                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
-                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
-                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
-                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
-                segments[i + 1] = span;
-            }
-            info["write_journal_segments"] = segments;
-            info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
-            info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
-            info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
-            info["input_history_complete"]   = si.inputHistoryComplete;
-            info["port_journal_active"]      = si.portJournalActive;
-            if (!si.portJournalOffReason.empty())
-                info["port_journal_off_reason"] = si.portJournalOffReason;
-            info["port_read_count"]          = si.portReadCount;
-            info["port_write_count"]         = si.portWriteCount;
-            info["port_journal_bytes"]       = static_cast<uint64_t>(si.portJournalBytes);
-            info["port_replay_value_mismatches"] = si.portReplayValueMismatches;
-            info["port_replay_divergences"]  = si.portReplayDivergences;
-            if (!si.lastDropReason.empty())
-                info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
-            if (!si.unavailableReason.empty())
-                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
-            if (si.checkpointCount != 0)
-                info["machine"] = TtdRecordedMachineTable(lua_view, si.machine);  // the recorded machine
-            if (!si.recordedBy.empty())
-                info["recorded_by"] = si.recordedBy;  // the instance that recorded a loaded file
-            info["ttd_available"]            = true;
-            return info;
+        lua.set_function("ttd_status", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("status");
+            return StateNodeToLua(ts, reply.Ok() ? reply.body : ttd::TTDControl::StatusBody(nullptr));
         });
 
         // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
         // read without loading it: {ok, error | path, file_bytes, ..., machine, sections}
-        lua.set_function("ttd_file_info", [this](const std::string& path) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            ttd::TTDFileInfo fi;
-            std::string err;
-            if (!ttd::ReadTTDFileInfo(path, fi, err))
-            {
-                r["ok"] = false;
-                r["path"] = path;
-                r["error"] = err;
-                return r;
-            }
-            r["ok"] = true;
-            r["path"] = fi.path;
-            r["file_bytes"] = fi.fileBytes;
-            r["schema_version"] = static_cast<unsigned>(fi.schemaVersion);
-            r["flags"] = static_cast<unsigned>(fi.flags);
-            r["captured_at_unix_ms"] = fi.capturedAtUnixMs;
-            if (!fi.emulatorId.empty())
-                r["recorded_by"] = fi.emulatorId;
-            r["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState));
-            r["session_start_frame"] = fi.startFrame;
-            r["session_end_frame"] = fi.endFrame;
-            r["checkpoint_count"] = static_cast<uint64_t>(fi.checkpointCount);
-            r["page_slot_count"] = static_cast<uint64_t>(fi.pageStoreCount);
-            sol::table sections = lua_view.create_table();
-            sections["write_journal"] = fi.hasWriteJournal;
-            sections["write_journal_complete"] = fi.writeJournalComplete;
-            sections["coverage_index"] = fi.hasCoverageIndex;
-            sections["bookmarks"] = fi.hasBookmarks;
-            sections["input_journal"] = fi.hasInputJournal;
-            sections["external_events"] = fi.hasExternalEvents;
-            sections["port_journals"] = fi.hasPortJournals;
-            sections["top_clock_time"] = fi.topClockTime;
-            r["sections"] = sections;
-            r["machine"] = TtdRecordedMachineTable(lua_view, fi.machine);
-            r["peripherals_from_header"] = fi.peripheralsFromHeader;
-            return r;
+        lua.set_function("ttd_file_info", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}})));
         });
 
-        // ttd_start([journal]) - start recording; journal = true also records the
-        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
-        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+        // ttd_start([journal], [black_box], [minutes]) - start recording; journal = true also records the
+        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40).
+        // black_box = true records as the black box: the last `minutes` (default 5), turbo and host speed free
+        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt, sol::optional<bool> blackBoxOpt,
+                                             sol::optional<uint32_t> minutesOpt) -> bool {
+            std::map<std::string, std::string> options;
             if (journalOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
-            return ctx->pTimeTravelManager->StartRecording();
+                options["journal"] = journalOpt.value() ? "true" : "false";
+            if (blackBoxOpt.has_value())
+                options["black_box"] = blackBoxOpt.value() ? "true" : "false";
+            if (minutesOpt.has_value())
+                options["minutes"] = std::to_string(minutesOpt.value());
+            const ttd::TTDReply reply = TtdRun("start", options);
+            return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
         });
 
         // ttd_set_history_limit(frames, bytes) - bound the recorded history: while
@@ -3932,203 +5481,94 @@ public:
         // nil keeps the current value). Returns the limit now in force: frames, bytes
         lua.set_function("ttd_set_history_limit",
                          [this](sol::optional<uint64_t> frames, sol::optional<uint64_t> bytes) -> std::tuple<uint64_t, uint64_t> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {0, 0};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
-            ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
-                                                     bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
-            return {now.historyLimitFrames, now.historyLimitBytes};
+            std::map<std::string, std::string> options;
+            if (frames.has_value())
+                options["frames"] = std::to_string(frames.value());
+            if (bytes.has_value())
+                options["bytes"] = std::to_string(bytes.value());
+            const ttd::TTDReply reply = TtdRun("history-limit", options);
+            if (!reply.Ok())
+                return {0, 0};
+            return {static_cast<uint64_t>(reply.body.find("history_limit_frames")->i),
+                    static_cast<uint64_t>(reply.body.find("history_limit_bytes")->i)};
         });
 
         // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
         // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
-            return {false, "write journal not available"};
+            const ttd::TTDReply reply = TtdRun("journal", {{"enabled", enabled ? "true" : "false"}});
+            return {reply.Ok(), reply.message};
         });
 
         // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
         // frames from..to (default: the whole session) by replaying them, about
         // 2-4 ms per frame; not while recording. Returns a table: ok, error,
         // cancelled, frames_built, frames_covered, frames_refused, records
-        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                r["ok"] = false;
-                r["error"] = "TTD not available";
-                return r;
-            }
-            const ttd::TTDJournalBuildResult b =
-                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
-            r["ok"] = b.ok;
-            if (!b.ok)
-                r["error"] = b.error;
-            r["cancelled"] = b.cancelled;
-            r["frames_built"] = b.framesBuilt;
-            r["frames_covered"] = b.framesCovered;
-            r["frames_refused"] = b.framesRefused;
-            r["records"] = b.records;
-            return r;
+        lua.set_function("ttd_build_journal", [this](sol::this_state ts, sol::optional<uint64_t> fromOpt,
+                                                    sol::optional<uint64_t> toOpt) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (fromOpt.has_value())
+                options["from_frame"] = std::to_string(fromOpt.value());
+            if (toOpt.has_value())
+                options["to_frame"] = std::to_string(toOpt.value());
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build", options)));
+        });
+
+        // ttd_cancel_journal_build() -> {cancelled}: stops a write-journal build that runs (another thread's call)
+        lua.set_function("ttd_cancel_journal_build", [this](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build-cancel")));
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->GetEnableWriteJournal();
+            const ttd::TTDReply reply = TtdRun("journal");
+            return reply.Ok() && reply.body.find("write_journal_setting")->b;
         });
 
-        lua.set_function("ttd_stop", [this]() {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->StopRecording();
-        });
+        lua.set_function("ttd_stop", [this]() { (void)TtdRun("stop"); });
 
         // ok, reason: refused while recording (stop the recording first)
         lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
-                !refusal.empty())
-                return {false, refusal};
-            ctx->pTimeTravelManager->InvalidateSession(reason.value_or("lua invalidate").c_str());
-            return {true, ""};
+            const ttd::TTDReply reply = TtdRun("invalidate", {{"reason", reason.value_or("lua invalidate")}});
+            return {reply.Ok(), reply.message};
         });
 
-        lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            uint32_t tInFrame = tInFrameOpt.value_or(0);
-            ttd::TTDTimePoint target{frame, tInFrame};
-            ttd::TimeTravelManager::TTDSeekResult r;
-            bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
-            result["reached"] = reached;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            return result;
+        lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            // Without a T-state: the frame's end on the engine (D13), its start on v1
+            std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+            if (tInFrameOpt)
+                options["tinframe"] = std::to_string(*tInFrameOpt);
+            return TtdSeekValue(ts, TtdRun("seek", options));
         });
 
         lua.set_function("ttd_step_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackFrame();
+            const ttd::TTDReply reply = TtdRun("step-back");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardFrame();
+            const ttd::TTDReply reply = TtdRun("step-forward");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
-            ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+            // No frame: resume exactly where the machine stands
+            std::map<std::string, std::string> options;
             if (frameOpt)
             {
-                from.frame = *frameOpt;
-                from.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-            return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+            const ttd::TTDReply reply = TtdRun("resume", options);
+            return reply.Ok() && reply.body.find("resumed")->b;
         });
 
-        lua.set_function("ttd_position", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD not available";
-                return result;
-            }
-            ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
-            ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
-            sol::table current = lua_view.create_table();
-            current["frame"]    = pos.frame;
-            current["tinframe"] = pos.tInFrame;
-            result["current"]   = current;
-            sol::table sessionEnd = lua_view.create_table();
-            sessionEnd["frame"]    = end.frame;
-            sessionEnd["tinframe"] = end.tInFrame;
-            result["session_end"]  = sessionEnd;
-            return result;
+        lua.set_function("ttd_position", [this](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("position")));
         });
 
-        lua.set_function("ttd_markers", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.SnapshotEvents())
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = e.time.frame;
-                marker["tinframe"] = e.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-                marker["reason"]   = e.reason;
-                result[idx++]       = marker;
-            }
-            return result;
+        lua.set_function("ttd_markers", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("markers");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("markers") : StateNode::Array());
         });
 
         // -----------------------------------------------------------------
@@ -4136,112 +5576,41 @@ public:
         // Labels are keys: non-empty, at most 63 chars, unique per session.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label,
                                                      sol::optional<uint64_t> frameOpt,
-                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["added"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-
-            // Position omitted → current position (mark here).
-            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            // Position omitted: the current position (mark here)
+            std::map<std::string, std::string> options{{"label", label}};
             if (frameOpt)
             {
-                time.frame    = *frameOpt;
-                time.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-
-            std::string err;
-            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            const ttd::TTDReply reply = TtdRun("bookmark-add", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
             {
-                result["error"] = err;
-                return result;
+                value["added"] = false;
+                value["error"] = reply.message;
             }
-            result["added"]    = true;
-            result["label"]    = label;
-            result["frame"]    = time.frame;
-            result["tinframe"] = time.tInFrame;
-            return result;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
-            {
-                sol::table entry = lua_view.create_table();
-                entry["frame"]    = bm.time.frame;
-                entry["tinframe"] = bm.time.tInFrame;
-                entry["label"]    = bm.label;
-                result[idx++]     = entry;
-            }
-            return result;
+        lua.set_function("ttd_bookmarks", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("bookmarks");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->RemoveBookmark(label);
+            return TtdRun("bookmark-delete", {{"label", label}}).Ok();
         });
 
         // A bookmark seek IS a seek — identical result shape to ttd_seek
         // (plus the resolved label), so a real barrier between the restore
         // checkpoint and the target still surfaces as halt_reason
         // "external_event". A bookmark itself never halts anything.
-        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            ttd::TimeTravelManager::TTDSeekResult r;
-            std::string err;
-            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
-            result["reached"] = reached;
-            if (!err.empty())
-                result["error"] = err;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            result["bookmark"]    = label;
-            return result;
+        lua.set_function("ttd_seek_bookmark", [this](sol::this_state ts, const std::string& label) -> sol::object {
+            return TtdSeekValue(ts, TtdRun("seek", {{"bookmark", label}}));
         });
 
         // -----------------------------------------------------------------
@@ -4249,43 +5618,28 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            std::ofstream out(path, std::ios::binary);
-            if (!out.is_open()) return false;
-            std::string err;
-            return ctx->pTimeTravelManager->SerializeSession(out, err);
+            return TtdRun("dump", {{"path", path}}).Ok();
         });
 
         // Loading refuses a session recorded on a different machine model: a
         // checkpoint is raw RAM pages plus a chipset snapshot, so it only
         // restores into an instance of the model it came from. Returns a table
         // with ok/error so scripts can report the reason.
-        lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-            std::ifstream in(path, std::ios::binary);
-            if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
-            std::string err;
-            ctx->pTimeTravelManager->SetSessionSourcePath(path);
-            if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
-            result["ok"] = true;
-            result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
-            result["session_start_frame"] = info.sessionStartFrame;
-            result["current_end_frame"] = info.currentEndFrame;
-            return result;
+        lua.set_function("ttd_load", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("load", {{"path", path}})));
+        });
+
+        // ttd_export_clip(from_frame, to_frame, dir, [chunk]) - frames from..to as a lossless
+        // clip in dir (final picture, plane B when zxdlss is on, frame meta), one call instead
+        // of a seek and a capture per frame; not while recording. {ok, frames, bytes, planeb,
+        // width, height, seconds, path} or {ok = false, error}
+        lua.set_function("ttd_export_clip", [this](sol::this_state ts, uint64_t fromFrame, uint64_t toFrame,
+                                                    const std::string& dir, sol::optional<uint32_t> chunkOpt) -> sol::object {
+            std::map<std::string, std::string> options{
+                {"from", std::to_string(fromFrame)}, {"to", std::to_string(toFrame)}, {"path", dir}};
+            if (chunkOpt)
+                options["chunk"] = std::to_string(*chunkOpt);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("export-clip", options)));
         });
 
         // "When did the program ...": ttd_port_events(event, [arg], [options])
@@ -4295,83 +5649,22 @@ public:
         // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
         // port_mask, value, value_mask, match, trigger, ay_register; file = a
         // .ttd path searched without loading it)
-        lua.set_function("ttd_port_events", [this](const std::string& event, sol::object argObj,
-                                                     sol::object optionsObj) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            Emulator* emulator = effectiveEmulator();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD engine not available";
-                return result;
-            }
-            auto text = [](const sol::object& o) -> std::string {
-                if (o.is<bool>())
-                    return o.as<bool>() ? "true" : "false";
-                if (o.is<double>())
-                    return std::to_string(static_cast<long long>(o.as<double>()));
-                return o.is<std::string>() ? o.as<std::string>() : std::string();
-            };
-            ttd::TTDPortQuery q;
-            std::string err;
-            const std::string arg = (argObj.valid() && argObj.get_type() != sol::type::lua_nil) ? text(argObj) : "";
-            if (!ttd::BuildPortEventQuery(event, arg, q, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            std::string file;  // options.file: a .ttd on disk, searched without loading it
+        lua.set_function("ttd_port_events", [this](sol::this_state ts, const std::string& event, sol::object argObj,
+                                                     sol::object optionsObj) -> sol::object {
+            std::map<std::string, std::string> options{{"event", event}};
+            if (argObj.valid() && argObj.get_type() != sol::type::lua_nil)
+                options["arg"] = TtdOptionText(argObj);
             if (optionsObj.is<sol::table>())
-            {
                 for (const auto& [key, value] : optionsObj.as<sol::table>())
-                {
-                    if (key.as<std::string>() == "file")
-                    {
-                        file = text(value);
-                        continue;
-                    }
-                    if (!ttd::ApplyPortQueryOption(q, key.as<std::string>(), text(value), err))
-                    {
-                        result["error"] = err;
-                        return result;
-                    }
-                }
-            }
-            const ttd::TTDPortSearchResult found = file.empty()
-                                                       ? ctx->pTimeTravelManager->SearchPortEvents(q)
-                                                       : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
-            if (!found.ok)
-            {
-                result["error"] = found.error;
-                return result;
-            }
-            result["ok"] = true;
-            result["direction"] = ttd::PortDirectionName(q.direction);
-            result["count"] = static_cast<uint64_t>(found.hits.size());
-            result["truncated"] = found.truncated;
-            result["scanned"] = found.scanned;
-            sol::table hits = lua_view.create_table();
-            int i = 1;
-            for (const ttd::TTDPortHit& h : found.hits)
-            {
-                sol::table hit = lua_view.create_table();
-                hit["index"] = h.index;
-                hit["frame"] = h.record.frame;
-                hit["tinframe"] = h.record.tInFrame;
-                hit["port"] = h.record.port;
-                hit["value"] = h.record.value;
-                hit["pc"] = h.record.pc;
-                if (h.ayRegister >= 0)
-                    hit["ay_register"] = h.ayRegister;
-                hits[i++] = hit;
-            }
-            result["hits"] = hits;
-            return result;
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("port-events", options);
+            StateNode value = TtdScriptValue(reply);
+            if (reply.Ok())
+                value["ok"] = true;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
+        lua.set_function("ttd_find_last", [this](sol::this_state ts, sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
@@ -4380,144 +5673,62 @@ public:
                                                    sol::optional<uint32_t> beforeTinOpt,
                                                    sol::optional<uint32_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
-                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["found"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
-
-            ttd::TTDSearchQuery q;
+                                                   sol::optional<uint16_t> addrToOpt,
+                                                   sol::optional<std::string> spaceOpt) -> sol::object {
+            std::map<std::string, std::string> options;
             if (firstArgOpt.is<sol::table>())
             {
-                sol::table tbl = firstArgOpt.as<sol::table>();
-                if (tbl["addr"].valid())
+                // A table of options; the camelCase spellings are accepted as before
+                static const std::map<std::string, std::string> aliases = {
+                    {"addrFrom", "addr_from"}, {"addrTo", "addr_to"}, {"pcFrom", "pc_from"},
+                    {"pcTo", "pc_to"},         {"physPage", "phys_page"}};
+                for (const auto& [key, value] : firstArgOpt.as<sol::table>())
                 {
-                    uint16_t a = tbl["addr"].get<uint16_t>();
-                    q.addrFrom = q.addrTo = a;
-                }
-                else
-                {
-                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
-                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
-                }
-
-                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
-                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
-
-                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
-                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
-                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
-
-                sol::object pageObj = tbl["phys_page"];
-                if (!pageObj.valid())
-                    pageObj = tbl["physPage"];
-                if (pageObj.valid())
-                {
-                    const uint32_t page = pageObj.as<uint32_t>();
-                    if (page > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                if (tbl["before_frame"].valid())
-                {
-                    uint64_t f = tbl["before_frame"].get<uint64_t>();
-                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
-                }
-                else if (tbl["before"].valid())
-                {
-                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                    const std::string name = key.as<std::string>();
+                    const auto alias = aliases.find(name);
+                    options[alias == aliases.end() ? name : alias->second] = TtdOptionText(value);
                 }
             }
             else
             {
-                if (firstArgOpt.is<uint16_t>())
-                {
-                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
-                }
-                else
-                {
-                    q.addrFrom = addrFromOpt.value_or(0);
-                    q.addrTo = addrToOpt.value_or(0xFFFF);
-                }
-                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
-                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (firstArgOpt.get_type() == sol::type::number)
+                    options["addr"] = TtdOptionText(firstArgOpt);
+                if (addrFromOpt)
+                    options["addr_from"] = std::to_string(*addrFromOpt);
+                if (addrToOpt)
+                    options["addr_to"] = std::to_string(*addrToOpt);
+                if (accessOpt)
+                    options["access"] = *accessOpt;
+                if (valueOpt)
+                    options["value"] = std::to_string(*valueOpt);
+                if (pcFromOpt)
+                    options["pc_from"] = std::to_string(*pcFromOpt);
+                if (pcToOpt)
+                    options["pc_to"] = std::to_string(*pcToOpt);
                 if (physPageOpt)
-                {
-                    if (*physPageOpt > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
-                }
+                    options["phys_page"] = std::to_string(*physPageOpt);
+                if (spaceOpt)
+                    options["space"] = *spaceOpt;   // "vram" / "cache": the address is an offset in that memory
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
-                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
-            }
-
-            ttd::TTDExternalEvent marker{};
-            ttd::TTDSearchWindow window;
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
-            // TD-8: the part of history the search examined
-            if (window.searched)
-            {
-                result["covered_from"]          = window.from.frame;
-                result["covered_from_tinframe"] = window.from.tInFrame;
-                result["covered_to"]            = window.to.frame;
-                result["covered_to_tinframe"]   = window.to.tInFrame;
-            }
-            if (!found)
-            {
-                result["found"] = false;
-                if (marker.reason[0] != '\0')
                 {
-                    // A replay barrier stopped the search before any match
-                    result["blocked"]         = true;
-                    result["marker_frame"]    = marker.time.frame;
-                    result["marker_tinframe"] = marker.time.tInFrame;
-                    result["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-                    result["marker_reason"]   = marker.reason;
+                    options["before_frame"] = std::to_string(*beforeFrameOpt);
+                    options["before_tin"] = std::to_string(beforeTinOpt.value_or(0));
                 }
-                return result;
             }
-            result["found"]    = true;
-            result["frame"]    = found->time.frame;
-            result["tinframe"]  = found->time.tInFrame;
-            result["pc"]        = found->pc;
-            result["value"]     = found->value;
-            // nil = the access had no RAM page (ROM, cache, I/O)
-            if (found->physPage != ttd::kPhysPageNone)
-                result["phys_page"] = found->physPage;
-            result["access"]    = ttd::TTDAccessTypeToString(found->access);
-            return result;
+            StateNode value = TtdScriptValue(TtdRun("find-last", options));
+            if (!value.find("found"))
+                value["found"] = false;
+            return StateNodeToLua(ts, value);
         });
 
         lua.set_function("ttd_step_instruction_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "back"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "forward"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         // -----------------------------------------------------------------
@@ -4525,221 +5736,65 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepInstructions(
-                countOpt.value_or(1));
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"count", std::to_string(countOpt.value_or(1))}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
         lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"tstates", std::to_string(tstates)}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["matched"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
+        // ttd_reverse_step_scanlines(n): n scanlines of the machine back (lands on an instruction start)
+        lua.set_function("ttd_reverse_step_scanlines", [this](uint64_t scanlines) -> bool {
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"scanlines", std::to_string(scanlines)}});
+            return reply.Ok() && reply.body.find("reached")->b;
+        });
 
-            std::vector<uint16_t> pcs;
-            pcs.reserve(pcsTable.size());
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+            std::string pcs;
             for (auto& pair : pcsTable)
-            {
-                uint16_t pc = static_cast<uint16_t>(pair.second.as<uint32_t>());
-                pcs.push_back(pc);
-            }
-
-            auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-            result["matched"] = r.matched;
-            result["pc"]      = r.pc;
-            if (r.matched)
-            {
-                result["frame"]   = r.arrivedAt.frame;
-                result["tinframe"] = r.arrivedAt.tInFrame;
-            }
-            if (r.blockingMarker.reason[0] != '\0')
-            {
-                sol::table m = lua_view.create_table();
-                m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                m["reason"]   = r.blockingMarker.reason;
-                m["frame"]    = r.blockingMarker.time.frame;
-                m["tinframe"] = r.blockingMarker.time.tInFrame;
-                result["blocked_by_marker"] = m;
-            }
-            // TD-8: the part of history the search examined
-            if (r.window.searched)
-            {
-                result["covered_from"]          = r.window.from.frame;
-                result["covered_from_tinframe"] = r.window.from.tInFrame;
-                result["covered_to"]            = r.window.to.frame;
-                result["covered_to_tinframe"]   = r.window.to.tInFrame;
-            }
-            return result;
+                pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            if (!value.find("matched"))
+                value["matched"] = false;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_coverage_probe", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["touched"] = false;
-                return result;
-            }
-            uint64_t frame = 0;
-            if (argsTable["frame"].valid()) frame = argsTable.get<uint64_t>("frame");
-            std::string kindStr = "executed";
-            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
-            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-            ttd::TTDCoverageKindFromString(kindStr, kind);
-
-            uint16_t addrFrom = 0;
-            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
-            uint16_t addrTo = 0xFFFF;
-            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
-
-            std::optional<ttd::PhysPage> physPage;
-            if (argsTable["phys_page"].valid())
-            {
-                const uint32_t page = argsTable.get<uint32_t>("phys_page");
-                if (page > ttd::kPhysPageMax)
-                {
-                    result["index_available"] = false;
-                    result["error"] = "phys_page expects 0..255";
-                    return result;
-                }
-                physPage = static_cast<ttd::PhysPage>(page);
-            }
-
-            auto res = emulator->GetContext()->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
-            result["frame"] = res.frame;
-            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
-            result["touched"] = res.touched;
-            result["index_available"] = res.indexAvailable;
-            return result;
+        lua.set_function("ttd_coverage_probe", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-probe", options)));
         });
 
-        lua.set_function("ttd_coverage_scan", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["scanned_frames"] = 0;
-                result["matching_frames"] = 0;
-                result["frames"] = lua_view.create_table();
-                return result;
-            }
-            auto* mgr = emulator->GetContext()->pTimeTravelManager;
-            uint64_t fromFrame = 0;
-            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
-            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
-            std::string kindStr = "executed";
-            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
-            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-            ttd::TTDCoverageKindFromString(kindStr, kind);
-
-            uint16_t addrFrom = 0;
-            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
-            uint16_t addrTo = 0xFFFF;
-            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
-            size_t limit = 200;
-            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
-
-            std::optional<ttd::PhysPage> physPage;
-            if (argsTable["phys_page"].valid())
-            {
-                const uint32_t page = argsTable.get<uint32_t>("phys_page");
-                if (page > ttd::kPhysPageMax)
-                {
-                    result["index_available"] = false;
-                    result["error"] = "phys_page expects 0..255";
-                    return result;
-                }
-                physPage = static_cast<ttd::PhysPage>(page);
-            }
-
-            auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
-            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
-            result["scanned_frames"] = res.scannedFrames;
-            result["matching_frames"] = res.matchingFrames;
-            result["first_match"] = res.firstMatch;
-            result["last_match"] = res.lastMatch;
-            result["covered_from"] = res.coveredFrom;
-            result["covered_to"] = res.coveredTo;
-            result["truncated"] = res.truncated;
-            result["index_available"] = res.indexAvailable;
-
-            sol::table framesTbl = lua_view.create_table();
-            for (size_t i = 0; i < res.frames.size(); ++i)
-            {
-                framesTbl[i + 1] = res.frames[i];
-            }
-            result["frames"] = framesTbl;
-            return result;
+        lua.set_function("ttd_coverage_scan", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-scan", options)));
         });
 
-        lua.set_function("ttd_coverage_summary", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["buckets"] = lua_view.create_table();
-                return result;
-            }
-            auto* mgr = emulator->GetContext()->pTimeTravelManager;
-            uint64_t fromFrame = 0;
-            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
-            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
-            std::optional<ttd::TTDCoverageKind> optKind;
-            if (argsTable["kind"].valid())
-            {
-                ttd::TTDCoverageKind k;
-                if (ttd::TTDCoverageKindFromString(argsTable.get<std::string>("kind"), k)) optKind = k;
-            }
-            uint64_t bucketSize = 0;
-            if (argsTable["bucket_size"].valid()) bucketSize = argsTable.get<uint64_t>("bucket_size");
-            size_t limit = 100;
-            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
-
-            auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
-            result["from_frame"] = res.fromFrame;
-            result["to_frame"] = res.toFrame;
-            result["covered_from"] = res.coveredFrom;
-            result["covered_to"] = res.coveredTo;
-            result["bucket_size"] = res.bucketSize;
-            result["bucket_count"] = res.bucketCount;
-            result["index_available"] = res.indexAvailable;
-
-            sol::table bucketsTbl = lua_view.create_table();
-            for (size_t i = 0; i < res.buckets.size(); ++i)
-            {
-                sol::table bObj = lua_view.create_table();
-                bObj["frame_start"] = res.buckets[i].frameStart;
-                bObj["frame_end"] = res.buckets[i].frameEnd;
-                bObj["executed_distinct"] = res.buckets[i].executedDistinct;
-                bObj["written_distinct"] = res.buckets[i].writtenDistinct;
-                bObj["read_distinct"] = res.buckets[i].readDistinct;
-                bObj["has_keyframe"] = res.buckets[i].hasKeyframe;
-                bucketsTbl[i + 1] = bObj;
-            }
-            result["buckets"] = bucketsTbl;
-            return result;
+        lua.set_function("ttd_coverage_summary", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
         });
+
+        // A memory at a past checkpoint and what changed between two, from the store (no seek):
+        // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
+        // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}
+        for (const char* verb : {"memory-at", "memory-diff"})
+        {
+            const std::string name = std::string("ttd_") + (verb[7] == 'a' ? "memory_at" : "memory_diff");
+            lua.set_function(name, [this, verb](sol::this_state ts, sol::table argsTable) -> sol::object {
+                std::map<std::string, std::string> options;
+                for (const auto& [key, value] : argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+                return StateNodeToLua(ts, TtdScriptValue(TtdRun(verb, options)));
+            });
+        }
 
         // ====================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI:
@@ -5242,6 +6297,13 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
         });
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        lua.set_function("operations", [this](sol::this_state s, sol::optional<uint64_t> since,
+                                               sol::optional<uint64_t> limit) -> sol::object {
+            return StateNodeToLua(s, OperationsStatus::Report(effectiveEmulator(), since.value_or(0),
+                                                              static_cast<size_t>(limit.value_or(0))));
+        });
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         lua.set_function("video_temporal", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -5258,6 +6320,172 @@ public:
                 return StateNodeToLua(s, error);
             }
             return StateNodeToLua(s, TemporalStatus::Report(ctx));
+        });
+        // GUI window display settings (GPU, CRT effects / profile, temporal blending): the WindowDisplay report every
+        // interface returns. window_display() reads; window_display_set({gpu = true, crt_profile = "basic",
+        // blending = true, blending_frames = 3, blending_weights = "exponential", crt = false}) changes any of them the
+        // way the View menu does. Headless: {ok = false, error, kind = "no-window"}
+        lua.set_function("window_display", [](sol::this_state s) -> sol::object {
+            const WindowDisplay::Result r = WindowDisplay::Get();
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        });
+        lua.set_function("window_display_set", [](sol::this_state s, sol::table changes) -> sol::object {
+            WindowDisplayChange change;
+            WindowDisplay::Result bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            for (const auto& [k, v] : changes)
+            {
+                const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
+                std::string word;
+                // hud_notices = {["ram-page"] = false}, next_layers_shown = {sprites = false}: one key each
+                const char* prefix = key == "hud_notices" ? WindowDisplay::kHudNoticePrefix
+                                     : key == "next_layers_shown" ? WindowDisplay::kNextLayerPrefix
+                                                                  : nullptr;
+                if (prefix != nullptr && v.get_type() == sol::type::table)
+                {
+                    for (const auto& [id, flag] : v.as<sol::table>())
+                    {
+                        const std::string name = id.is<std::string>() ? id.as<std::string>() : std::string("?");
+                        const std::string onOff = flag.get_type() == sol::type::boolean ? (flag.as<bool>() ? "on" : "off")
+                                                                                        : std::string("?");
+                        if (!WindowDisplay::ApplyWord(change, prefix + name, onOff, bad.error))
+                            return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+                    }
+                    continue;
+                }
+                if (v.get_type() == sol::type::boolean)
+                    word = v.as<bool>() ? "on" : "off";
+                else if (v.get_type() == sol::type::number)
+                    word = WindowDisplay::NumberWord(v.as<double>());  // 0.3 stays 0.3, whatever the locale
+                else if (v.get_type() == sol::type::string)
+                    word = v.as<std::string>();
+                if (word.empty())
+                    bad.error = "'" + key + "' takes a boolean, a number or a string";
+                if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
+                    return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+            }
+            const WindowDisplay::Result r = WindowDisplay::Set(change);
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        });
+        // The active CRT profile's parameters: window_crt_params() reads {profile, kind, parameters = {{name, value,
+        // initial, minimum, maximum, step, description}, ...}}; window_crt_params_set({CRTgamma = 2.4}, {steps =
+        // {CRTgamma = -1}, reset = true | "name"}) sets values, moves by steps, resets. Headless: {ok = false, ...}
+        lua.set_function("window_crt_params", [](sol::this_state s) -> sol::object {
+            const WindowDisplay::ParametersResult r = WindowDisplay::GetCrtParameters();
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        });
+        lua.set_function("window_crt_params_set", [](sol::this_state s, sol::optional<sol::table> values,
+                                                     sol::optional<sol::table> options) -> sol::object {
+            CrtParameterChange change;
+            WindowDisplay::ParametersResult bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            auto numbers = [&](const sol::table& table, std::vector<std::pair<std::string, double>>& out) {
+                for (const auto& [k, v] : table)
+                {
+                    if (!k.is<std::string>() || v.get_type() != sol::type::number)
+                    {
+                        bad.error = "A parameter takes a number: {name = value}";
+                        return false;
+                    }
+                    out.emplace_back(k.as<std::string>(), v.as<double>());
+                }
+                return true;
+            };
+            if (values && !numbers(*values, change.values))
+                return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+            if (options)
+            {
+                const sol::object steps = (*options)["steps"];
+                if (steps.get_type() == sol::type::table && !numbers(steps.as<sol::table>(), change.steps))
+                    return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+                const sol::object reset = (*options)["reset"];
+                if (reset.get_type() == sol::type::boolean)
+                    change.resetAll = reset.as<bool>();
+                else if (reset.get_type() == sol::type::string)
+                    change.reset.push_back(reset.as<std::string>());
+            }
+            const WindowDisplay::ParametersResult r = WindowDisplay::SetCrtParameters(change);
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        });
+        // The GUI window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound):
+        // window_record(path, {keyboard = "default", codec = "h264", audio = true, scale = 2, picture_height = 1080,
+        // width = 3840, height = 2160, layout = "side"}) starts, window_record_frames(n) runs a paused machine n frames
+        // with every one recorded, window_record_stop() finishes the file, window_record_status() reads. The
+        // WindowRecording report every interface returns; refused: {ok = false, error, kind}
+        lua.set_function("window_record", [this](sol::this_state s, const std::string& path,
+                                                 sol::optional<sol::table> options) -> sol::object {
+            WindowRecording::Result bad;
+            bad.status = WindowRecording::Status::BadParameter;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                bad.error = "No emulator selected";
+                return StateNodeToLua(s, WindowRecording::ErrorNode(bad));
+            }
+            WindowRecordingRequest request;
+            request.path = path;
+            if (options)
+            {
+                for (const auto& [k, v] : *options)
+                {
+                    const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
+                    std::string word;
+                    if (v.get_type() == sol::type::boolean)
+                        word = v.as<bool>() ? "on" : "off";
+                    else if (v.get_type() == sol::type::number)
+                        word = WindowDisplay::NumberWord(v.as<double>());
+                    else if (v.get_type() == sol::type::string)
+                        word = v.as<std::string>();
+                    else
+                        bad.error = "'" + key + "' takes a boolean, a number or a string";
+                    if (!bad.error.empty() || !WindowRecording::ApplyWord(request, key, word, bad.error))
+                        return StateNodeToLua(s, WindowRecording::ErrorNode(bad));
+                }
+            }
+            const WindowRecording::Result r = WindowRecording::Start(emulator->GetId(), request);
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        });
+        lua.set_function("window_record_frames", [this](sol::this_state s, int frames) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            execution::script::Check(*emulator, execution::Origin::Lua);
+            const WindowRecording::Result r = WindowRecording::RunFrames(*emulator, frames);
+            if (!r.Ok())
+                return StateNodeToLua(s, WindowRecording::ErrorNode(r));
+            StateNode report = WindowRecording::Report(r.recording);
+            report["ran"] = r.ran;
+            return StateNodeToLua(s, report);
+        });
+        lua.set_function("window_record_stop", [](sol::this_state s) -> sol::object {
+            const WindowRecording::Result r = WindowRecording::Stop();
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        });
+        lua.set_function("window_record_status", [](sol::this_state s) -> sol::object {
+            const WindowRecording::Result r = WindowRecording::Get();
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        });
+        // The overscan frame's viewport (the machine's: answers headless too): video_viewport() reads, video_viewport_set
+        // ("symmetric" | "full" | "standard" | "screen_only" | "next" | "prev") crops it; {ok = false, error} refused
+        lua.set_function("video_viewport", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, VideoViewport::Report(*emulator));
+        });
+        lua.set_function("video_viewport_set", [this](sol::this_state s, const std::string& name) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            const VideoViewport::Result r = VideoViewport::SetViewport(*emulator, name);
+            if (!r.Ok())
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = r.error;
+                return StateNodeToLua(s, error);
+            }
+            return StateNodeToLua(s, VideoViewport::Report(*emulator));
         });
 
         // Halt/active cost of the last frame plus session averages
@@ -5290,6 +6518,164 @@ public:
             average["tstates_halted"] = static_cast<uint64_t>(state.tstates_halted_total);
             average["tstates_active"] = static_cast<uint64_t>(state.tstates_frame_total - state.tstates_halted_total);
             result["average"] = average;
+            return result;
+        });
+
+        // Profilers, traces and captures through tracecontrol (the catalogue's prof.* actions): trace(name, op, opts)
+        // with name opcode | memory | calltrace | coverage | porttrace | gsporttrace | pchist | aylog | audio | all, op
+        // start | stop | toggle | pause | resume | pause_toggle | clear | status, opts {keep=, capacity=, seconds=,
+        // source=, on=}. The answer {name, state, can_pause, ...}; a refusal: ok = false, error = why
+        lua.set_function("trace", [this](sol::this_state ts, const std::string& name, sol::optional<std::string> op,
+                                         sol::optional<sol::object> opts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            tracecontrol::Reply reply;
+            if (!emulator)
+                reply.error = "Conflict", reply.message = "no emulator";
+            else
+                reply = tracecontrol::Execute(*emulator, name, op.value_or("status"),
+                                              opts ? SymbolOptions(*opts, "") : tracecontrol::Options{});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The analyzers (GET /analyzers): analyzer_list(), analyzer_enable(name), analyzer_disable(name),
+        // analyzer_active(name) (nil: no such analyzer)
+        auto analyzers = [this]() -> AnalyzerManager* {
+            Emulator* emulator = effectiveEmulator();
+            auto* context = emulator ? emulator->GetContext() : nullptr;
+            return context && context->pDebugManager ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+        };
+        lua.set_function("analyzer_list", [this, analyzers]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (AnalyzerManager* manager = analyzers())
+            {
+                int index = 1;
+                for (const std::string& id : manager->getRegisteredAnalyzers())
+                    result[index++] = lua_view.create_table_with("id", id, "active", manager->isActive(id));
+            }
+            return result;
+        });
+        lua.set_function("analyzer_enable", [analyzers](const std::string& name) -> bool {
+            AnalyzerManager* manager = analyzers();
+            return manager && manager->activate(name);
+        });
+        lua.set_function("analyzer_disable", [analyzers](const std::string& name) -> bool {
+            AnalyzerManager* manager = analyzers();
+            return manager && manager->deactivate(name);
+        });
+        lua.set_function("analyzer_active", [analyzers](sol::this_state ts, const std::string& name) -> sol::object {
+            AnalyzerManager* manager = analyzers();
+            if (!manager || !manager->hasAnalyzer(name))
+                return sol::make_object(ts, sol::lua_nil);
+            return sol::make_object(ts, manager->isActive(name));
+        });
+
+        // OS-aware analyzers (nedoos, dss): analyzer_events(name, limit),
+        // analyzer_state(name) - tasks, page/block ownership, file handles
+        lua.set_function("analyzer_events", [this, analyzers](const std::string& name,
+                                                              sol::optional<unsigned> limitOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            AnalyzerManager* manager = analyzers();
+            IOSAnalyzer* osAnalyzer = manager ? dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(name)) : nullptr;
+            if (!osAnalyzer) { result["error"] = "not an OS analyzer"; return result; }
+
+            auto events = osAnalyzer->getOsEvents();
+            const size_t limit = limitOpt.value_or(50);
+            size_t index = 0;
+            size_t start = events.size() > limit ? events.size() - limit : 0;
+            for (size_t i = start; i < events.size(); i++)
+            {
+                sol::table item = lua_view.create_table();
+                item["timestamp"] = events[i].timestamp;
+                item["frame"] = events[i].frameNumber;
+                item["kind"] = OsEventKindName(events[i].kind);
+                item["severity"] = OsSeverityName(events[i].severity);
+                item["formatted"] = events[i].format();
+                item["pc"] = events[i].pc;
+                item["task"] = events[i].taskId;
+                result[index + 1] = item;
+                index++;
+            }
+            return result;
+        });
+        lua.set_function("analyzer_state", [this, analyzers](const std::string& name) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            AnalyzerManager* manager = analyzers();
+            IOSAnalyzer* osAnalyzer = manager ? dynamic_cast<IOSAnalyzer*>(manager->getAnalyzer(name)) : nullptr;
+            if (!osAnalyzer) { result["error"] = "not an OS analyzer"; return result; }
+
+            OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+            result["os"] = snapshot.os;
+            result["detected"] = snapshot.detected;
+            result["profile"] = snapshot.profile;
+
+            sol::table tasks = lua_view.create_table();
+            size_t index = 0;
+            for (const auto& task : snapshot.tasks)
+            {
+                sol::table item = lua_view.create_table();
+                item["id"] = task.id;
+                item["parent"] = task.parent;
+                item["flags"] = task.flags;
+                item["mainpg"] = task.mainpg;
+                item["name"] = task.name;
+                item["stdin"] = task.stdinFd;
+                item["stdout"] = task.stdoutFd;
+                item["stderr"] = task.stderrFd;
+                item["last_time"] = task.lastTime;
+                tasks[index + 1] = item;
+                index++;
+            }
+            result["tasks"] = tasks;
+
+            sol::table blocks = lua_view.create_table();
+            index = 0;
+            for (const auto& block : snapshot.blocks)
+            {
+                sol::table item = lua_view.create_table();
+                item["index"] = block.index;
+                item["owner"] = block.owner;
+                blocks[index + 1] = item;
+                index++;
+            }
+            result["blocks"] = blocks;
+
+            sol::table handles = lua_view.create_table();
+            index = 0;
+            for (const auto& handle : snapshot.handles)
+            {
+                sol::table item = lua_view.create_table();
+                item["index"] = handle.index;
+                item["owner"] = handle.owner;
+                item["name"] = handle.name;
+                item["position"] = handle.position;
+                item["size"] = handle.size;
+                handles[index + 1] = item;
+                index++;
+            }
+            result["handles"] = handles;
+
+            sol::table pipes = lua_view.create_table();
+            index = 0;
+            for (const auto& pipe : snapshot.pipes)
+            {
+                sol::table item = lua_view.create_table();
+                item["handle"] = pipe.handle;
+                item["open_sides"] = pipe.openSides;
+                item["reader"] = pipe.reader;
+                item["lines"] = pipe.lines;
+                item["queued"] = pipe.queued;
+                pipes[index + 1] = item;
+                index++;
+            }
+            result["pipes"] = pipes;
             return result;
         });
 
@@ -5355,6 +6741,57 @@ public:
                 index++;
             }
             result["ranges"] = ranges;
+            return result;
+        });
+
+        // coverage_export([path], [{format=, start=, ["end"]=, merge=}]) or coverage_export({path=, ...}): the coverage
+        // as SkoolKit's code execution map (coverageexport.h); without a path the map comes back in result.map
+        lua.set_function("coverage_export", [this](sol::object first, sol::object second) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            coverageexport::Options options;
+            const auto take = [&options](const sol::table& table) {
+                for (const auto& [key, value] : table)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (value.is<bool>())
+                        options[name] = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        options[name] = std::to_string(value.as<int64_t>());
+                    else if (value.is<std::string>())
+                        options[name] = value.as<std::string>();
+                }
+            };
+            if (first.is<std::string>())
+                options["path"] = first.as<std::string>();
+            else if (first.is<sol::table>())
+                take(first.as<sol::table>());
+            if (second.is<sol::table>())
+                take(second.as<sol::table>());
+
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            const coverageexport::Result r =
+                coverageexport::Export(manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr, options);
+            if (!r.Ok()) { result["error"] = r.message; return result; }
+            result["success"] = true;
+            result["format"] = r.format;
+            result["start"] = r.start;
+            result["end"] = r.end;
+            result["count"] = r.count;
+            if (r.path.empty())
+                result["map"] = r.text;
+            else
+            {
+                result["path"] = r.path;
+                result["merged"] = r.merged;
+            }
+            result["message"] = r.message;
             return result;
         });
 
@@ -5479,7 +6916,8 @@ public:
 
         // Buffered stereo audio capture (records into analyzer RAM, then export)
         // audio_mixer(): the per-device mixer (DeviceState::AudioMixer); audio_mixer_set(source, {muted=, solo=,
-        // volume=, gain_db=}) -> the mixer, or nil, error (AudioMixer::Apply; source "master" takes muted only)
+        // volume=, gain_db=}) -> the mixer, or nil, error (AudioMixer::Apply; source "master" takes muted only; a
+        // channel is "<source>.<channel>": "ay1.a", "gs.3", "moonsound_fm.7")
         lua.set_function("audio_mixer", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -5506,6 +6944,24 @@ public:
             sol::variadic_results out;
             out.push_back(StateNodeToLua(s, DeviceState::AudioMixer(emulator->GetContext())));
             return out;
+        });
+        // audio_mixer_get(source) -> one row ("ay1") or channel ("ay1.a"), or nil, error; audio_levels() -> every
+        // row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)
+        lua.set_function("audio_mixer_get", [this](sol::this_state s, const std::string& source) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            StateNode node;
+            std::string error;
+            if (!AudioMixer::Read(emulator->GetContext(), source, node, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, node));
+            return out;
+        });
+        lua.set_function("audio_levels", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, AudioMixer::Levels(emulator->GetContext()));
         });
 
         // audio_capture_start(seconds [, source]): source = a mixer key (beeper, ay1, covox, gs ...) records that
@@ -5728,139 +7184,66 @@ public:
 
         // Video recording control over the RecordingManager (mirrors POST /video/record)
 #ifdef ENABLE_RECORDING
-        lua.set_function("video_record", [this](const std::string& action, sol::optional<sol::table> optsOpt) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
+        lua.set_function("video_record", [this](sol::this_state ts, const std::string& action,
+                                                sol::optional<sol::table> optsOpt) -> sol::object {
+            sol::state_view lua_view(ts);
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            auto* context = emulator->GetContext();
-            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
-            if (!rm) { result["error"] = "recording manager not available"; return result; }
-
-            if (action == "start")
+            if (!emulator)
             {
-                if (rm->IsRecording() || rm->IsPaused())
+                sol::table result = lua_view.create_table();
+                result["error"] = "no emulator";
+                return result;
+            }
+            // capture::RecordingControl: the presets, modes and option rules every plane shares
+            std::map<std::string, std::string> options;
+            if (optsOpt.has_value() && optsOpt->valid())
+            {
+                for (const auto& [key, value] : *optsOpt)
                 {
-                    result["error"] = "a recording is already active — stop it first";
-                    return result;
-                }
-
-                sol::table opts = lua_view.create_table();
-                if (optsOpt.has_value() && optsOpt->valid()) opts = *optsOpt;
-
-                std::string format = opts.get_or<std::string>("format", "gif");
-                std::string extension = format;
-                if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
-                    extension = "mp4";
-                else if (format == "rawvideo")
-                    extension = "avi";
-
-                std::string filename = opts.get_or<std::string>("filename", "");
-                if (filename.empty())
-                {
-                    std::filesystem::path dir = std::filesystem::temp_directory_path() / "unreal-lua";
-                    std::error_code ec;
-                    std::filesystem::create_directories(dir, ec);
-                    static std::atomic<unsigned> counter{0};
-                    const long long stamp =
-                        static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
-                    filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
-                }
-
-                // Optional sound track: audio = "aac" (or true = aac); none = video only. Same rules as the
-                // WebAPI/CLI (RecordingRequest): the codec must fit the container, gif has no audio
-                std::string audio;
-                {
-                    const sol::object audioObj = opts["audio"];
-                    if (audioObj.valid() && audioObj.get_type() != sol::type::lua_nil)
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (value.get_type() == sol::type::boolean)
                     {
-                        if (audioObj.is<bool>())
-                            audio = audioObj.as<bool>() ? "aac" : "";
-                        else if (audioObj.is<std::string>())
-                            audio = RecordingRequest::NormalizeAudioCodec(audioObj.as<std::string>());
-                        else
-                        {
-                            result["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a boolean";
-                            return result;
-                        }
+                        // audio = true / false: aac or none, as before; other flags as text
+                        const bool on = value.as<bool>();
+                        options[name] = name == "audio" ? (on ? "aac" : "none") : (on ? "true" : "false");
                     }
-                }
-                const int videoBitrate = opts.get_or("video_bitrate", 0);
-                const int audioBitrate = opts.get_or("audio_bitrate", 0);
-                if (videoBitrate < 0 || audioBitrate < 0)
-                {
-                    result["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
-                    return result;
-                }
-                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
-                const std::string profile = RecordingRequest::NormalizeProfile(opts.get_or<std::string>("profile", ""));
-                const std::string acceleration =
-                    RecordingRequest::NormalizeAcceleration(opts.get_or<std::string>("acceleration", ""));
-                {
-                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
-                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
-                                             RecordingRequest::ValidateProfile(profile, format);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
-                                                                        static_cast<uint32_t>(audioBitrate), audio);
-                    if (!codecError.empty())
+                    else if (value.get_type() == sol::type::number)
                     {
-                        result["error"] = codecError;
-                        return result;
+                        const double number = value.as<double>();
+                        options[name] = number == std::floor(number) ? std::to_string(static_cast<long long>(number))
+                                                                     : std::to_string(number);
                     }
+                    else if (value.get_type() == sol::type::string)
+                        options[name] = value.as<std::string>();
                 }
-
-                float fps = opts.get_or("fps", 50.0f);
-                if (fps < 1.0f) fps = 1.0f;
-                if (fps > 100.0f) fps = 100.0f;
-                rm->SetVideoFrameRate(fps);
-
-                int scale = opts.get_or("scale", 1);
-                if (scale < 1) scale = 1;
-                if (scale > 4) scale = 4;
-                rm->SetScaleFactor(static_cast<uint32_t>(scale));
-
-                rm->SetOutputProfile(profile);
-                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
-
-                const std::string region = opts.get_or<std::string>("region", "full");
-                rm->SetCaptureRegion((region == "screen" || region == "main")
-                                         ? VideoCaptureRegion::MainScreen
-                                         : VideoCaptureRegion::FullFrame);
-
-                // Optional audio-rate pin (same switch as CLI videorecord
-                // --audio-rate): number or "auto"; applied at the next frame
-                // boundary so the recording is stamped with the requested rate
-                SoundManager* sound = context->pSoundManager;
-                bool hasAudioRate = false;
-                uint32_t audioRate = 0;
+            }
+            // audio_rate (a number or "auto", as the CLI's --audio-rate): the core rate pinned before the start, so
+            // the recording is stamped with it; applied at the next frame boundary
+            SoundManager* sound = emulator->GetContext() ? emulator->GetContext()->pSoundManager : nullptr;
+            if (auto rate = options.find("audio_rate"); rate != options.end())
+            {
+                const std::string text = rate->second;
+                options.erase(rate);
+                if (action == "start" || action == "toggle")
                 {
-                    const sol::object rateObj = opts["audio_rate"];
-                    if (rateObj.valid())
+                    uint32_t audioRate = 0;
+                    if (text != "auto")
                     {
-                        hasAudioRate = true;
-                        if (rateObj.is<int>())
+                        char* end = nullptr;
+                        const unsigned long parsed = std::strtoul(text.c_str(), &end, 10);
+                        if (text.empty() || end == nullptr || *end != '\0')
                         {
-                            audioRate = static_cast<uint32_t>(rateObj.as<int>());
-                        }
-                        else if (rateObj.is<std::string>() && rateObj.as<std::string>() == "auto")
-                        {
-                            audioRate = 0;
-                        }
-                        else
-                        {
+                            sol::table result = lua_view.create_table();
                             result["error"] = "audio_rate must be a number or 'auto'";
                             return result;
                         }
+                        audioRate = static_cast<uint32_t>(parsed);
                     }
-                }
-                if (hasAudioRate)
-                {
-                    if (!sound)
+                    if (sound == nullptr)
                     {
+                        sol::table result = lua_view.create_table();
                         result["error"] = "sound manager not available";
                         return result;
                     }
@@ -5869,108 +7252,25 @@ public:
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     if (sound->getCoreRate() != sound->getTargetCoreRate())
                     {
+                        sol::table result = lua_view.create_table();
                         result["error"] = "audio_rate not applied within 1s (emulator paused?) - "
                                           "resume it or call set_audio_rate before pausing";
                         return result;
                     }
                 }
-
-                FeatureManager* fm = context->pFeatureManager;
-                const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
-                if (featureWasOff) fm->setFeature(Features::kRecording, true);
-
-                const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-                if (wasRunning) emulator->Pause();
-
-                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                        static_cast<uint32_t>(audioBitrate));
-
-                if (wasRunning) emulator->Resume();
-
-                if (!started)
-                {
-                    if (featureWasOff) fm->setFeature(Features::kRecording, false);
-                    result["error"] = "recording start failed";
-                    result["message"] = rm->GetLastRecordingError();
-                    return result;
-                }
-
-                result["recording"] = true;
-                result["format"] = format;
-                result["fps"] = fps;
-                result["scale"] = scale;
-                result["profile"] = profile;
-                result["acceleration"] = acceleration;
-                if (rm->HasFixedOutput())
-                {
-                    result["output_width"] = rm->GetOutputWidth();
-                    result["output_height"] = rm->GetOutputHeight();
-                }
-                result["region"] = region;
-                if (sound)
-                    result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
-                result["audio"] = rm->HasAudio();
-                result["audio_codec"] = audio;
-                result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
-                result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
-                result["feature_auto_enabled"] = featureWasOff;
-                result["output"] = filename;
-                return result;
             }
-
-            if (action == "stop")
+            std::error_code ec;
+            const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-lua").string();
+            const capture::RecordingReply reply = capture::RecordingControl(*emulator, folder).Execute(action, options);
+            StateNode body = reply.body;
+            if (reply.ok && sound != nullptr && (action == "start" || action == "toggle"))
+                body["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+            if (!reply.ok)
             {
-                if (!rm->IsRecording() && !rm->IsPaused())
-                {
-                    result["error"] = "no active recording to stop";
-                    return result;
-                }
-                rm->StopRecording();
+                body["error"] = reply.message.empty() ? reply.error : reply.message;
+                body["code"] = reply.error;
             }
-            else if (action == "pause")
-            {
-                if (!rm->IsRecording())
-                {
-                    result["error"] = "no active recording to pause";
-                    return result;
-                }
-                rm->PauseRecording();
-            }
-            else if (action == "resume")
-            {
-                if (!rm->IsPaused())
-                {
-                    result["error"] = "recording is not paused";
-                    return result;
-                }
-                rm->ResumeRecording();
-            }
-            else
-            {
-                result["error"] = "unknown action '" + action + "' (expected start|stop|pause|resume)";
-                return result;
-            }
-
-            const RecordingManager::RecordingStats stats = rm->GetStats();
-            result["recording"] = rm->IsRecording();
-            result["paused"] = rm->IsPaused();
-            result["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
-            result["recorded_duration"] = stats.recordedDuration;
-            result["emulated_duration"] = stats.emulatedDuration;
-            result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
-            result["average_frame_time_ms"] = stats.averageFrameTime;
-            result["recent_fps"] = stats.recentFps;
-            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
-            result["video_codec"] = rm->GetVideoCodec();
-            result["profile"] = rm->GetOutputProfile();
-            result["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
-            result["audio"] = rm->HasAudio();
-            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
-            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
-            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
-            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
-            result["output"] = rm->GetOutputFilename();
-            return result;
+            return StateNodeToLua(ts, body);
         });
 
         // Current recording state + live statistics (mirrors GET /video/record/status)
@@ -6062,7 +7362,7 @@ public:
                 Memory* memory = emulator->GetMemory();
                 if (memory)
                 {
-                    emulator->EditMemoryFromTool("Lua assemble write", [&] {
+                    emulator->EditMemoryFromToolOrThrow("Lua assemble write", [&] {
                         uint32_t addr = asmResult.startAddress;
                         for (uint8_t b : asmResult.bytes)
                             memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);

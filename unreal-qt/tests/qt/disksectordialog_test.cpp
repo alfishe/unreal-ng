@@ -45,7 +45,7 @@ protected:
 
 TEST_F(DiskSectorDialog_Test, TypedBytesReachTheSector)
 {
-    DiskSectorDialog dialog(_emulator.get());
+    DiskSectorDialog dialog(_emulator);
     auto* view = dialog.findChild<QHexView*>();
     ASSERT_NE(view, nullptr);
     ASSERT_TRUE(view->isEnabled()) << "drive A, 0/0, sector 1 is shown at once";
@@ -63,7 +63,7 @@ TEST_F(DiskSectorDialog_Test, TypedBytesReachTheSector)
 
 TEST_F(DiskSectorDialog_Test, RefusalsAndMissingSectors)
 {
-    DiskSectorDialog dialog(_emulator.get());
+    DiskSectorDialog dialog(_emulator);
     auto spins = dialog.findChildren<QSpinBox*>();
     ASSERT_EQ(spins.size(), 3);  // cylinder, side, sector
     spins[2]->setValue(10);      // +3DOS tracks have IDs 1-9

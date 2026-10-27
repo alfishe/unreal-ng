@@ -31,8 +31,8 @@ void ScreenAlco::DrawRange(uint32_t from, uint32_t to, VideoModeEnum mode, const
     const uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
     const uint8_t* const pageVideo = _memory->RAMPageAddress(videoPage);
     const uint8_t* const pagePair = _memory->RAMPageAddress(videoPage ^ 1);
-    const uint32_t* const palette = state.atmPalette;
-    const uint32_t borderColor = palette[(state.border_attr & 0x07) | ((state.atmBorderBright & 1) << 3)];
+    const uint32_t* const palette = state.atm.palette;
+    const uint32_t borderColor = palette[(state.border_attr & 0x07) | ((state.atm.borderBright & 1) << 3)];
     const bool p16 = mode == M_P16;
 
     for (uint32_t t = from; t <= to; ++t)

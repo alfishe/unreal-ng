@@ -90,6 +90,52 @@ TEST_F(PortDecoder_TSConf_Test, REG1_OnlyFourRegistersAreReadable)
         EXPECT_EQ(In(static_cast<uint16_t>((reg << 8) | 0xAF)), 0xFF) << "register " << int(reg);
 }
 
+/// REG-1b: the DMA address, length and count registers are write-only: no readback of the live counters, during a
+/// transfer or after it; only DMA_STATUS answers ([V] zports.v:415-445 the read mux has XSTAT, DMASTAT, PAGE2/3,
+/// default #FF; [U] io.cpp:1012-1032 no read case for them) (TS-Conf audit, dma row 34)
+TEST_F(PortDecoder_TSConf_Test, REG1b_DmaRegistersReadFF)
+{
+    Reg(TsConfReg::DmaSAl, 0x02);
+    Reg(TsConfReg::DmaSAh, 0x00);
+    Reg(TsConfReg::DmaSAx, 0x10);
+    Reg(TsConfReg::DmaDAl, 0x00);
+    Reg(TsConfReg::DmaDAh, 0x00);
+    Reg(TsConfReg::DmaDAx, 0x14);
+    Reg(TsConfReg::DmaLen, 0xFF);
+    Reg(TsConfReg::DmaNum, 0x07);
+    Reg(TsConfReg::DmaCtrl, 0x01);  // 2048 words: still running at the reads below
+    ASSERT_EQ(In(0x27AF), 0x80) << "busy";
+    static constexpr uint8_t kRegs[] = {TsConfReg::DmaSAl, TsConfReg::DmaSAh, TsConfReg::DmaSAx, TsConfReg::DmaDAl,
+                                        TsConfReg::DmaDAh, TsConfReg::DmaDAx, TsConfReg::DmaLen, TsConfReg::DmaNum};
+    for (uint8_t reg : kRegs)
+        EXPECT_EQ(In(static_cast<uint16_t>((reg << 8) | 0xAF)), 0xFF) << "busy, register " << int(reg);
+
+    _decoder->GetDma().Reset();
+    ASSERT_EQ(In(0x27AF), 0x00) << "idle";
+    for (uint8_t reg : kRegs)
+        EXPECT_EQ(In(static_cast<uint16_t>((reg << 8) | 0xAF)), 0xFF) << "idle, register " << int(reg);
+}
+
+/// REG-2b: STATUS[2:0] = VDAC_VER of the firmware build, literally: 0 the standard build, 3 IDE_VDAC, 7 IDE_VDAC2,
+/// with PWR_UP (bit 6) on the first read after power-on; bits 7, 5 (FDR_VER), 4:3 are 0 ([V] zports.v:230-248
+/// VDAC_VER, :418-423 dout = {0, pwr_up_reg, FDR_VER, 2'b0, VDAC_VER}; [U] io.cpp:1017-1022 pwr_up | (vdac2 ? 7 :
+/// vdac)) (TS-Conf audit, memory-ports row 3)
+TEST_F(PortDecoder_TSConf_Test, REG2b_StatusReportsTheBuild)
+{
+    for (uint8_t build : {uint8_t(0), uint8_t(3), uint8_t(7)})
+    {
+        SCOPED_TRACE(int(build));
+        _context->config.ts_vdac = build;
+        _decoder->PowerOn();
+        _decoder->reset();
+        EXPECT_EQ(In(0x00AF), 0x40 | build) << "first read: PWR_UP";
+        EXPECT_EQ(In(0x00AF), build);
+    }
+    _context->config.ts_vdac = 0;
+    _decoder->PowerOn();
+    _decoder->reset();
+}
+
 /// REG-2 (hs §3.3): STATUS PWR_UP is set until the first read
 TEST_F(PortDecoder_TSConf_Test, REG2_StatusPowerUpClearsAfterTheFirstRead)
 {
@@ -169,6 +215,23 @@ TEST_F(PortDecoder_TSConf_Test, P7F6_Decode)
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Page3], 0x00) << "#7FFC is not #FD";
     Out(0x7EFD, 0x06);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::Page3], 0x06);
+}
+
+/// P7F-8: there is no #1FFD or #DFFD port: #1FFD (A15 = 0, low byte #FD) is #7FFD, #DFFD (A15 = 1) is the AY
+/// register select (A14 = 1: BC1) ([V] zports.v:624 p7ffd_wr = !a[15] && loa == PORTFD, :633-635 ay_hit = loa == PORTFD
+/// && a[15], ay_bc1 = a[14]; [U] io.cpp:674-688 no #1FFD for TSL, :790 (port & 0xC0FF) == 0xC0FD) (TS-Conf audit,
+/// memory-ports row 16)
+TEST_F(PortDecoder_TSConf_Test, P7F8_1FFDIsPagingAndDFFDIsTheAy)
+{
+    const TsConfState& ts = _decoder->GetState();
+    EXPECT_EQ(_decoder->ClassifyPort(0x1FFD), PortDecoder_TSConf::PortArm::Paging7FFD);
+    Out(0x1FFD, 0x03);
+    EXPECT_EQ(ts.regs[TsConfReg::Page3], 0x03) << "#1FFD pages like #7FFD";
+
+    EXPECT_EQ(_decoder->ClassifyPort(0xDFFD), PortDecoder_TSConf::PortArm::Ay);
+    Out(0xDFFD, 0x07);
+    EXPECT_EQ(ts.regs[TsConfReg::Page3], 0x03) << "#DFFD does not page";
+    EXPECT_EQ(ts.MemConfig() & TsConfMemConfig::Rom128, 0);
 }
 
 /// P7F-7: bit 3 switches V_PAGE to 7 at once

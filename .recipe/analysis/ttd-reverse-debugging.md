@@ -1,8 +1,10 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
-Precondition: a recorded session that is **stopped/detached** — see [ttd-recording.md](ttd-recording.md).
-`find-last`, `reverse-step` and `reverse-continue` return `409` while
-recording is active; the coverage queries answer at any time. Session rules
+Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
+On the engine (`backend: "engine"`, the default) `find-last`, `reverse-step`
+and `reverse-continue` while recording pause the recording and answer; on v1
+they return `409` until the recording is stopped. The coverage queries answer
+at any time. Session rules
 (states, what wipes history, markers):
 [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
@@ -28,7 +30,7 @@ time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind"
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
 
-# reverse travel (session must be stopped/detached):
+# reverse travel (pauses a running recording on the engine; v1: stop it first):
 time_travel {"action":"find_last","addr":16384,"access":"write"}
 time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","access":"write",
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
@@ -63,6 +65,7 @@ Query fields (combine freely; at least one criterion required):
 | `value` | the byte written/read, 0..255 |
 | `pc_from` / `pc_to` | restrict by the PC that performed the access |
 | `phys_page` | 0..255 (JSON number): only accesses to this physical RAM page |
+| `space` | `ram` (default) / `vram` / `cache`: the Sprinter's video RAM or fast RAM, the address fields then offsets in it (inside one 16 KB page) |
 | `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` only counts together with `before_frame`) |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value`
@@ -80,6 +83,21 @@ Result — the most recent match in recorded history:
 ```
 
 `phys_page` is `null` when the access had no RAM page (ROM, I/O).
+The answer also carries `space` and `addr` - or, for `space: "vram"` /
+`"cache"`, `offset`.
+
+**Who drew this pixel on the Sprinter?** Its byte lives in the video RAM, not
+at a Z80 address (a graphics window shows it at `PORT_Y * 1024 + (addr & 0x3FF)`).
+Ask by the video RAM offset; the writer may be the CPU through the window or
+the accelerator, both answer with the instruction's PC:
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" -H 'Content-Type: application/json' \
+     -d '{"addr":"0x4805","space":"vram"}'
+# {"found":true,..,"pc":32781,"space":"vram","offset":18437,"phys_page":null,"access":"write"}
+```
+
+The fast RAM (`space: "cache"`, offsets 0..0xFFFF) works the same way.
 `found: false` ⇒ nobody touched it in the recorded window, or a replay
 barrier blocked the search — then the response also carries
 `"blocked": true` and `marker_frame`, `marker_tinframe`, `marker_kind`,
@@ -161,6 +179,25 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
   "no", just "unknown"
 - Use scan to shortlist frames, then `seek` to them and inspect
 
+### memory-at / memory-diff — any memory at a past checkpoint, without seeking
+
+The engine stores every recorded memory at every checkpoint. These two read that store; the machine stays where it is. Use them when the question is "what was in it then" rather than "who wrote it":
+
+- `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
+- Both read checkpoint boundaries (frame starts) by default. `at_frame` names the checkpoint read, the newest at or before the frame asked.
+- memory-at takes `tinframe` for a point inside the frame, on `ram`, `ramN`, `vram` and `cache`. It applies the frame's writes up to that point from the write journal; without the journal it builds the journal for that one frame by replay. The bytes are what a seek to frame:tinframe shows, and the machine does not move. Other memories refuse `tinframe` (their writes are not journaled): seek there.
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-at" -H 'Content-Type: application/json' \
+     -d '{"space":"ram5","offset":"0x1C78","length":2,"frame":150}'
+# {"space":"ram","offset":89208,"length":2,"frame":150,"at_frame":150,"exact":true,"hex":"6500"}
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-diff" -H 'Content-Type: application/json' \
+     -d '{"space":"neogs.ram","from_frame":150,"to_frame":600,"limit":20}'
+# {"changed_bytes":812,"ranges":[{"offset":4096,"length":64},...],"truncated":false,...}
+```
+
+A typical chain: memory-diff narrows "what changed between two frames" to a few ranges. find-last (`space` for video / fast RAM) or reverse-continue then names the instruction behind one of them. MCP: `time_travel` `memory_at` / `memory_diff`. CLI: `ttd memory-at` / `ttd memory-diff`. Lua: `ttd_memory_at{...}`. Python: `emu.ttd_memory_at(...)`.
+
 ## Workflow: crash post-mortem (summary)
 
 1. Record through the crash in development mode
@@ -188,6 +225,7 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
   `phys_page` in the result, and takes an optional `phys_page` filter;
   coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.
 - **Reverse travel across a marker** (tape transport command, WD1793
-  sector/track write, debugger memory edit) halts with the marker
-  description — replay cannot reproduce the event, so it will not cross it.
+  sector/track write, debugger memory edit): the engine replays them and
+  crosses; v1 halts with the marker description, as its replay cannot
+  reproduce the event.
   Keyboard/mouse input is journaled and is not a barrier.

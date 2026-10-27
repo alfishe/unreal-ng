@@ -4,14 +4,16 @@
 #include <QPointer>
 #include <QImage>
 #include <functional>
+#include <map>
 #include <memory>
 
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 #include "crtprofiles.h"
+#include "slangpresetrunner.h"
 
 class Emulator;
 class DeviceScreen;
-class DeviceScreenGL;
 class DeviceScreenGLWindow;
 class MouseCaptureController;
 
@@ -24,6 +26,8 @@ class DeviceScreenWrapper : public QObject
 
 signals:
     void screenInitialized();
+    /// The native picture size changed: a new framebuffer (video mode) or another crop
+    void pictureGeometryChanged();
     void filesDropped(const QStringList& paths);
     void dragEntered(const QString& filePath);
     void dragLeft();
@@ -45,7 +49,16 @@ public:
     ~DeviceScreenWrapper();
 
     /// @brief Initialize with framebuffer dimensions and memory
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
+    /// @brief Initialize with an emulator's framebuffer, in the shape the screen shows it (see PictureAspect)
+    void init(const FramebufferDescriptor& framebuffer, const Screen& screen);
+    /// @brief Width : height a screen's current picture is drawn in: its own for a video card's picture
+    /// (square pixels), 0 (the CRT frame's 352:288) for the machine's raster
+    static float PictureAspect(const FramebufferDescriptor& framebuffer, const Screen& screen);
+    /// @brief The shape init() was given (0 = the CRT frame's 352:288)
+    float pictureAspect() const { return _pictureAspect; }
 
     /// @brief Detach from current framebuffer
     void detach();
@@ -108,6 +121,11 @@ public:
     /// screen's scale (FT812 Debug) line their rows up with it
     QRect pictureGlobalRect() const;
     QRectF pictureSourceRect() const;
+    /// @brief The picture as this screen draws it, for the automation's screenshot source "window" (WindowView):
+    /// letterbox excluded, CRT shader and HUD included, in device pixels. GUI thread only
+    /// @p hud false leaves the HUD out (the window recording; the GPU screen only)
+    /// @p pictureHeight > 0: the picture alone at that height in device pixels (the GPU screen only)
+    bool grabWindowView(WindowViewGrab& out, std::string& error, bool hud = true, int pictureHeight = 0);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }
@@ -130,9 +148,22 @@ public:
     CRTProfile crtProfile() const;
     /// @brief Get current CRT profile parameters
     CRTProfileParams crtParams() const;
+    /// New values of the profile's parameters (curvature, scanlines, ...): the profile, the switch and a custom shader
+    /// stay
+    void setCRTParams(const CRTProfileParams& params);
+
+    /// The active libretro preset's parameters (GPU only; none without a preset)
+    std::vector<SlangPresetRunner::Parameter> presetParameters() const;
+    bool setPresetParameter(const QString& name, float value);
+    void resetPresetParameters();
+    /// The values set on the active preset, for a backend switch and the settings
+    std::map<QString, float> presetOverrides() const;
+    void setPresetOverrides(const std::map<QString, float>& overrides);
 
     /// @brief Load custom shader from file
     bool loadCustomShader(const QString& name);
+    /// The custom shader shown in place of the built-in CRT (empty: none; always empty without the GPU)
+    QString customShader() const;
     /// @brief Get list of available custom shaders
     static std::vector<QString> availableShaders();
 
@@ -145,6 +176,9 @@ public:
     /// @brief Set temporal weight mode (0=equal, 1=exponential)
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const;
+    /// @brief Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const;
 
 protected:
     /// GPU backend: Tab / Shift+Tab that reach the window container (the container has the Qt focus while the
@@ -165,4 +199,5 @@ private:
     // Track viewport state for getters
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+    float _pictureAspect = 0.0f;
 };

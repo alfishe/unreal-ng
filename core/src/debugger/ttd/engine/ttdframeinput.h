@@ -30,7 +30,7 @@ struct TTDChangedPiece
 /// without region memory)
 struct TTDDeviceStateInput
 {
-    uint8_t id = 0;                  ///< the device's v1 id (TTDDeviceDescriptor::legacyId)
+    uint32_t device = 0;             ///< the device's index in the session's device table
     const uint8_t* bytes = nullptr;  ///< valid during the call
     size_t size = 0;
 };

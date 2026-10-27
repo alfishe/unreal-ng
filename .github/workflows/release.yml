@@ -26,6 +26,9 @@
 #   Linux    x86_64   .AppImage (portable) and .deb (Ubuntu 24.04+ / Debian 13+)
 #   macOS    x86_64, arm64   .dmg (macOS 12+)
 #   Windows  x86_64 (MSVC), x86_64-MinGW, arm64   portable .zip
+# Every package carries the Stream Deck companion (-DUNREAL_STREAMDECK=ON): the daemon
+# unreal-streamdeck and Stream Deck Studio (layout per platform:
+# docs/inprogress/2026-10-19-streamdeck-integration/packaging.md).
 #
 # Dependencies: everything except Qt is vendored and linked statically. Qt comes
 # from the Qt SDK - on Linux baked into the project's build image
@@ -33,8 +36,9 @@
 # and is shipped inside each package (private copy), so no package relies on
 # libraries of the user's system beyond
 # the OS itself (glibc/X11/GL on Linux, system frameworks on macOS, Win32).
-# TLS is off in release builds: the WebAPI serves plain HTTP on localhost, so
-# neither OpenSSL nor c-ares is needed.
+# The WebAPI has no TLS in release builds (plain HTTP on localhost, no c-ares). The
+# emulated network modules do (UNREAL_HOST_TLS): OpenSSL is linked statically on
+# macOS (built here for the minimum macOS) and comes from the toolchain elsewhere.
 #
 # ==============================================================================
 
@@ -56,6 +60,8 @@ on:
       - 'cmake/**'
       - '.github/workflows/release.yml'
       - 'tools/package-appimage.sh'
+      - 'companions/streamdeck/linux/**'
+      - 'companions/streamdeck/studio/install/**'
       - 'install/**'
       - 'unreal-qt/install/**'
       - 'unreal-videowall/install/**'
@@ -80,6 +86,12 @@ env:
   # cmake/MacOSDeploymentTarget.cmake) because CMake otherwise targets the
   # runner's own OS version. Qt 6.9 supports macOS 12 and later.
   MACOS_DEPLOYMENT_TARGET: '12.0'
+  # OpenSSL for host-side TLS of the emulated network modules (UNREAL_HOST_TLS; the WebAPI's
+  # trantor stays without TLS). macOS builds it statically for MACOS_DEPLOYMENT_TARGET: the
+  # runner's Homebrew OpenSSL is built for the runner's macOS and would land in the bundles
+  # as a dylib requiring it.
+  OPENSSL_VERSION: '3.5.9'
+  OPENSSL_SHA256: '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a'
   # Enable symbol packaging for rolling snapshots only
   PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
@@ -119,6 +131,11 @@ jobs:
       - name: Configure CMake
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # hidapi's hidraw backend (the Stream Deck companion) enumerates through libudev; the
+          # image has it since docker/Dockerfile.universal added it, older images do not
+          if ! pkg-config --exists libudev; then
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends libudev-dev
+          fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_QT_APPS=ON \
@@ -130,6 +147,7 @@ jobs:
             -DQT_INSTALL_PATH=/opt/qt/current \
             -DUNREAL_PACKAGE_VERSION="$UNREAL_PACKAGE_VERSION" \
             -DUNREAL_BUNDLE_QT=ON \
+            -DUNREAL_STREAMDECK=ON \
             -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64
 
       - name: Build
@@ -143,6 +161,10 @@ jobs:
         run: |
           cmake --build build --parallel 1 --target package_symbols_linux
           mv build/packages/UnrealNG-Symbols-Linux.tar.gz build/packages/UnrealNG-Symbols-Linux-x86_64.tar.gz
+          # the Stream Deck companion's symbols beside the apps'
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Linux-x86_64.tar.gz > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.debug$" symbols.txt; done
+          rm symbols.txt
 
       - name: Stage suite for AppImage
         run: cmake --build build --parallel 1 --target package_suite_linux
@@ -156,6 +178,20 @@ jobs:
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
             PATH=/usr/bin:/bin APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
             build/packages/UnrealNG-Suite-Linux-x86_64.AppImage --help
+
+      # AppRun starts unreal-qt only; the companion is checked in the extracted image
+      - name: Verify the Stream Deck companion in the AppImage
+        working-directory: build/packages
+        run: |
+          rm -rf squashfs-root
+          APPIMAGE_EXTRACT_AND_RUN=1 ./UnrealNG-Suite-Linux-x86_64.AppImage --appimage-extract > /dev/null
+          test -f squashfs-root/usr/lib/udev/rules.d/70-unreal-streamdeck.rules
+          test -f squashfs-root/usr/bin/streamdeck/themes/unrealng/theme.json   # data beside the daemon
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
+            PATH=/usr/bin:/bin squashfs-root/usr/bin/unreal-streamdeck --help
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
+            PATH=/usr/bin:/bin QT_QPA_PLATFORM=offscreen squashfs-root/usr/bin/unreal-streamdeck-studio --help
+          rm -rf squashfs-root
 
       - name: Upload DEB
         uses: actions/upload-artifact@v7
@@ -215,6 +251,14 @@ jobs:
           QT_QPA_PLATFORM=offscreen unreal-qt --help
           test -f /usr/lib/unreal-ng/configs/pentagon512k/unreal.ini
           test -f /usr/lib/unreal-ng/rom/README-ROMS.md
+          test -f /usr/lib/unreal-ng/midi/generaluser-gs.sf2
+          test -f /usr/share/unreal-ng/examples/01-section-timing/demo.sna
+          test -f /usr/share/unreal-ng/examples/lib/unreal_webapi.py
+          # The Stream Deck companion: the daemon, the studio (the package's Qt) and the udev rule
+          test -f /usr/lib/udev/rules.d/70-unreal-streamdeck.rules
+          test -f /usr/lib/unreal-ng/streamdeck/themes/unrealng/theme.json   # data beside the real binaries
+          unreal-streamdeck --help
+          QT_QPA_PLATFORM=offscreen unreal-streamdeck-studio --help
 
   # ========================================
   # Windows MSVC Build (x86_64 and native arm64)
@@ -275,6 +319,7 @@ jobs:
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DUNREAL_STREAMDECK=ON \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
@@ -287,7 +332,11 @@ jobs:
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
         shell: bash
-        run: cmake --build build --parallel 1 --target package_symbols_windows
+        run: |
+          cmake --build build --parallel 1 --target package_symbols_windows
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Windows-MSVC.zip | tr -d '\r' > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.pdb$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         shell: bash
@@ -305,6 +354,13 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-qt.exe --help
+          # The Stream Deck companion beside it: the daemon, its data, the studio on the same Qt DLLs
+          test -f streamdeck/themes/unrealng/theme.json
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-streamdeck.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
+            /usr/bin/timeout 60 ./unreal-streamdeck-studio.exe --help
 
       - name: Name packages
         shell: bash
@@ -382,6 +438,7 @@ jobs:
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DUNREAL_STREAMDECK=ON \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
@@ -394,7 +451,11 @@ jobs:
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
         shell: msys2 {0}
-        run: cmake --build build --parallel 1 --target package_symbols_mingw
+        run: |
+          cmake --build build --parallel 1 --target package_symbols_mingw
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Windows-MinGW.zip | tr -d '\r' > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.debug$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         shell: msys2 {0}
@@ -412,6 +473,13 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-qt.exe --help
+          # The Stream Deck companion beside it: the daemon, its data, the studio on the same Qt DLLs
+          test -f streamdeck/themes/unrealng/theme.json
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-streamdeck.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
+            /usr/bin/timeout 60 ./unreal-streamdeck-studio.exe --help
 
       - name: Name packages
         shell: bash
@@ -473,13 +541,37 @@ jobs:
       - name: Install build dependencies
         run: brew install ninja
 
+      - name: Cache OpenSSL
+        id: openssl-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-macos${{ env.MACOS_DEPLOYMENT_TARGET }}-${{ matrix.arch }}
+
+      - name: Build OpenSSL (static, minimum macOS)
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o openssl.tar.gz "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+          echo "${OPENSSL_SHA256}  openssl.tar.gz" | shasum -a 256 -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          ./Configure "darwin64-${{ matrix.arch }}-cc" no-shared no-tests no-docs \
+            --prefix="$RUNNER_TEMP/openssl" --libdir=lib \
+            -mmacosx-version-min=${{ env.MACOS_DEPLOYMENT_TARGET }}
+          make -j"$(sysctl -n hw.ncpu)" build_libs
+          make install_dev
+
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOS_DEPLOYMENT_TARGET }} \
+            -DOPENSSL_ROOT_DIR="${{ runner.temp }}/openssl" \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
             -DBUILD_QT_APPS=ON \
+            -DUNREAL_STREAMDECK=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DTRANTOR_USE_TLS=none \
@@ -495,6 +587,9 @@ jobs:
         run: |
           cmake --build build --parallel 1 --target package_symbols_macos
           mv build/packages/UnrealNG-Symbols-macOS.tar.gz build/packages/UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz
+          cmake -E tar tf build/packages/UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.dSYM/Contents/Info.plist$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         run: |
@@ -507,7 +602,7 @@ jobs:
         run: |
           target="${{ env.MACOS_DEPLOYMENT_TARGET }}"
           fail=0
-          for app in UnrealNG "Screen Viewer" "Video Wall"; do
+          for app in UnrealNG "Screen Viewer" "Video Wall" "UnrealNG.app/Contents/Applications/Stream Deck Studio"; do
             plist=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "build/packages/UnrealNG-Suite/$app.app/Contents/Info.plist")
             if [ "$plist" != "$target" ]; then
               echo "::error::$app.app LSMinimumSystemVersion=$plist, expected $target"; fail=1
@@ -524,6 +619,30 @@ jobs:
             fi
           done < <(find build/packages/UnrealNG-Suite -type f -print0)
           exit $fail
+
+      # The Stream Deck companion: the daemon a helper of UnrealNG.app, the studio nested in it on its Qt
+      # (packaging.md section 3), the link at the DMG root, both signed and starting from the bundle
+      - name: Verify the Stream Deck companion in the bundle
+        working-directory: build/packages/UnrealNG-Suite
+        run: |
+          studio="UnrealNG.app/Contents/Applications/Stream Deck Studio.app"
+          test -x UnrealNG.app/Contents/MacOS/unreal-streamdeck
+          test -f UnrealNG.app/Contents/Resources/streamdeck/themes/unrealng/theme.json
+          test -x "$studio/Contents/MacOS/unreal-streamdeck-studio"
+          test "$(readlink "Stream Deck Studio.app")" = "$studio"
+          test ! -e "$studio/Contents/Frameworks"   # Qt once, in UnrealNG.app
+          codesign --verify --deep --strict UnrealNG.app
+          codesign --verify --strict "$studio"
+          UnrealNG.app/Contents/MacOS/unreal-streamdeck --help
+          # cocoa from UnrealNG.app/Contents/PlugIns (the only platform plugin macdeployqt deploys)
+          DYLD_PRINT_LIBRARIES=1 "$studio/Contents/MacOS/unreal-streamdeck-studio" --help \
+            2> libs.txt || { cat libs.txt; exit 1; }
+          if grep -v "$PWD/UnrealNG.app/" libs.txt | grep -E 'Qt[A-Za-z]+\.framework|libqcocoa'; then
+            echo "::error::the studio loads Qt from outside UnrealNG.app"; exit 1
+          fi
+          rm libs.txt
+          # and through the DMG root's link
+          "Stream Deck Studio.app/Contents/MacOS/unreal-streamdeck-studio" --help > /dev/null
 
       - name: Upload package
         uses: actions/upload-artifact@v7

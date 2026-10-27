@@ -1,0 +1,16 @@
+; labels with and without colons, forward and backward references, equ and defl
+        org     8000h
+start:  ld      hl,table
+        ld      b,count
+loop    ld      a,(hl)
+        inc     hl
+        djnz    loop
+        jp      start
+count   equ     3
+table:  defb    1,2,3
+var     defl    5
+        defb    var
+var     defl    var+1
+        defb    var
+end_label:
+        defw    end_label-start

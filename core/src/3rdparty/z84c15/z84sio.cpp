@@ -7,12 +7,14 @@ namespace Z84Lib
 
 void Z84Sio::Reset()
 {
+    _version++;  // StateVersion
     ResetChannel(0);
     ResetChannel(1);
 }
 
 void Z84Sio::ResetChannel(uint8_t ch)
 {
+    _version++;  // StateVersion
     Channel& c = _ch[ch & 1];
     const uint8_t vector = c.wr[2];  // WR2 (the vector) survives a channel reset
     c = Channel{};
@@ -27,6 +29,7 @@ void Z84Sio::LatchTopStatus(Channel& c)
 
 bool Z84Sio::Receive(uint8_t ch, uint8_t value)
 {
+    _version++;  // StateVersion
     Channel& c = _ch[ch & 1];
     if (c.fifoCount >= kFifoDepth)
     {
@@ -47,6 +50,7 @@ bool Z84Sio::Receive(uint8_t ch, uint8_t value)
 
 uint8_t Z84Sio::ReadData(uint8_t ch)
 {
+    _version++;  // StateVersion
     Channel& c = _ch[ch & 1];
     c.rxFirstIp = 0;
     if (c.fifoCount == 0)
@@ -67,12 +71,14 @@ uint8_t Z84Sio::ReadData(uint8_t ch)
 
 void Z84Sio::WriteData(uint8_t ch, uint8_t value)
 {
+    _version++;  // StateVersion
     if (_transmit)
         _transmit(ch & 1, value);
 }
 
 uint8_t Z84Sio::ReadControl(uint8_t ch)
 {
+    _version++;  // StateVersion
     Channel& c = _ch[ch & 1];
     const uint8_t reg = c.pointer;
     c.pointer = 0;
@@ -101,6 +107,7 @@ uint8_t Z84Sio::ReadControl(uint8_t ch)
 
 void Z84Sio::WriteControl(uint8_t ch, uint8_t value)
 {
+    _version++;  // StateVersion
     Channel& c = _ch[ch & 1];
     if (c.pointer != 0)
     {

@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef SPEEDCONTROLWIDGET_H
 #define SPEEDCONTROLWIDGET_H
 
@@ -10,36 +12,12 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QWidget>
+#include <atomic>
 #include <vector>
 
+#include "emulator/state/statenode.h"
+
 class Emulator;
-
-/// @brief How a preset executes its step
-enum class StepType
-{
-    FullSpeed,   // Resume normal execution
-    Frame,       // Call RunFrame()
-    Opcodes,     // Call RunOpcodes(N)
-    TStates,     // Call RunTStates(N)
-    Scanlines    // Call RunNScanlines(N) — drift-free line stepping
-};
-
-/// @brief Per-preset configuration for the speed control slider
-struct PresetConfig
-{
-    const char* label;       // Display label
-    StepType stepType;       // How to execute
-    int fixedIntervalMs;     // Fixed timer interval (0 = use spinner, -1 = no timer)
-    int spinnerMin;          // Spinner minimum (ms), 0 = disabled
-    int spinnerMax;          // Spinner maximum (ms), 0 = disabled
-    int spinnerStep;         // Spinner step increment (ms)
-
-    // T-state calculation: result = (F * frameNum + L * lineNum) / divisor
-    // F = t-states per frame, L = t-states per scanline
-    int frameNum = 0;        // Frame multiplier numerator
-    int lineNum = 0;         // Scanline multiplier numerator
-    int divisor = 1;         // Divisor for fractional values
-};
 
 /// @brief Draws evenly-spaced vertical tick marks aligned to a companion QSlider
 class TickMarkWidget : public QWidget
@@ -98,39 +76,39 @@ private:
     QSlider* _slider;
 };
 
-/// @brief Step granularity selector with audio player-style controls.
-/// Provides configurable speed presets from full-speed to 1 T-state.
-/// QTimer orchestrates repeated calls to existing Emulator step methods.
+/// @brief The pace ladder with audio player-style controls: a client of the core's paced run (execution::RunPacer,
+/// core/src/emulator/execution/runpacer.h). The slider, the interval, play / pause and the step go through the
+/// actions run.pace_set / run.pace_toggle / run.pace_step on the instance's actions worker (never blocking the GUI
+/// thread); the widget shows the pacer's state from NC_RUN_PACE, so a deck dial, a script or the WebAPI moving the pace
+/// moves the slider too. The pacer steps on its own thread and stops at a breakpoint.
 class SpeedControlWidget : public QGroupBox
 {
     Q_OBJECT
 
 public:
     explicit SpeedControlWidget(QWidget* parent = nullptr);
+    ~SpeedControlWidget() override;
 
     /// @brief Set the emulator instance to control
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
-    /// @brief Execute one step at the current granularity
+    /// @brief Execute one step at the current granularity (run.pace_step)
     void executeStep();
 
     /// @brief Returns true if slider is at position 0 (full speed)
     bool isFullSpeed() const;
 
-    /// @brief Returns true if the auto-step timer is running
+    /// @brief Returns true if the paced run runs
     bool isRunning() const;
 
-    /// @brief Stop auto-stepping if active
+    /// @brief Stop the paced run if it runs (the machine stays paused)
     void stop();
 
-    /// @brief Access the preset collection
-    static const std::vector<PresetConfig>& presets();
-
 signals:
-    /// @brief Emitted after each step so parent can refresh UI
+    /// @brief Emitted after each paced step so parent can refresh UI
     void stepped();
 
-    /// @brief Emitted when auto-stepping starts/stops
+    /// @brief Emitted when the paced run starts/stops
     void runningChanged(bool running);
 
 private slots:
@@ -138,21 +116,28 @@ private slots:
     void onPlayPauseClicked();
     void onStepForwardClicked();
     void onStepBackwardClicked();
-    void onTimerTick();
 
 private:
+    /// Show the pacer's state (GUI thread)
+    void syncFromPacer();
     void updateLabel();
-    unsigned getTStatesForPreset(int position) const;
-    int getTimerIntervalMs(int position) const;
+    /// Run a pace action on the instance's actions worker; a refusal goes to the label's tooltip
+    void submit(const char* action, const StateNode& params = StateNode::Object());
+    void subscribe();
+    void unsubscribe();
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QSlider* _slider = nullptr;
     QLabel* _label = nullptr;
     QToolButton* _stepBackButton = nullptr;
     QToolButton* _playPauseButton = nullptr;
     QSpinBox* _intervalSpinBox = nullptr;  // Auto-run interval in ms
     QToolButton* _stepForwardButton = nullptr;
-    QTimer* _timer = nullptr;
+    bool _running = false;
+    bool _syncing = false;  ///< the controls follow the pacer: their signals do not submit
+    uint64_t _paceObserver = 0;
+    uint64_t _stepObserver = 0;
+    std::shared_ptr<std::atomic<bool>> _stepPending = std::make_shared<std::atomic<bool>>(false);
 };
 
 #endif  // SPEEDCONTROLWIDGET_H

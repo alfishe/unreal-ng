@@ -174,6 +174,7 @@ namespace
         {0x56, PcKey::IntlBackslash}, {0x57, PcKey::Function11}, {0x58, PcKey::Function12},
         {0x11C, PcKey::KeypadEnter}, {0x11D, PcKey::RightCtrl}, {0x135, PcKey::KeypadDivide},
         {0x137, PcKey::PrintScreen}, {0x138, PcKey::RightAlt}, {0x145, PcKey::NumLock},
+        {0x146, PcKey::Pause},  // Ctrl+Pause (Break) comes as E0 46
         {0x147, PcKey::Home}, {0x148, PcKey::Up}, {0x149, PcKey::PageUp}, {0x14B, PcKey::Left},
         {0x14D, PcKey::Right}, {0x14F, PcKey::End}, {0x150, PcKey::Down}, {0x151, PcKey::PageDown},
         {0x152, PcKey::Insert}, {0x153, PcKey::Delete}, {0x15B, PcKey::LeftGui}, {0x15C, PcKey::RightGui},
@@ -425,6 +426,13 @@ std::vector<PcKey> FromZxKey(ZXKeysEnum key)
         case ZXKEY_EXT_BAR: return FromCharacter('|');
         case ZXKEY_EXT_BACKSLASH: return FromCharacter('\\');
         case ZXKEY_EXT_DBLQUOTE: return FromCharacter('"');
+        case ZXKEY_EXT_SEMICOLON: return FromCharacter(';');
+        case ZXKEY_EXT_APOSTROPHE: return FromCharacter('\'');
+        case ZXKEY_EXT_COLON: return FromCharacter(':');
+        case ZXKEY_EXT_QUESTION: return FromCharacter('?');
+        case ZXKEY_EXT_LESS: return FromCharacter('<');
+        case ZXKEY_EXT_GREATER: return FromCharacter('>');
+        case ZXKEY_EXT_UNDERSCORE: return FromCharacter('_');
 
         default: return {};
     }

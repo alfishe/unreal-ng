@@ -110,6 +110,7 @@ public Q_SLOTS:
     void setGroupLength(unsigned int l);
     void setScrollSteps(int scrollsteps);
     void setReadOnly(bool r);
+    bool isReadOnly() const { return m_readonly; }  // unreal-ng: the remote-control lock restores it
     void setAutoWidth(bool r);
 
 private:

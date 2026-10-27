@@ -1,0 +1,6 @@
+Copper stopped (mode 0), write address 8 (word 4, msb next), pc 0, line offset 0, 4 word(s) in the list
+> 0	0x9864  WAIT line 100 hpos 12
+  1	0x1505  MOVE NR #15 <- #05  (Sprite and Layers System)
+  2	0x0703  MOVE NR #07 <- #03  (CPU Speed)
+  3	0xFFFF  HALT
+  4	0x0000  NOP

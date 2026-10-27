@@ -214,9 +214,11 @@ bool Inject(EmulatorContext* context, const std::string& link, const std::string
     bool ok = false;
     auto edit = [&]() { ok = gateway->Inject(link, frame); };
     if (context->pEmulator)
-        context->pEmulator->EditMemoryFromTool(source ? source : "network frame", edit);
+        error = context->pEmulator->EditMemoryFromTool(source ? source : "network frame", edit);   // the recorded past
     else
         edit();
+    if (!error.empty())
+        return false;
     if (!ok)
         error = "link: no card with that port key (see state/network ethernet_gateway.ports)";
     return ok;

@@ -192,7 +192,7 @@ GUI's activity and dirty display.
 | Consumer | What it stores | Restore |
 |---|---|---|
 | **Universal snapshot (UNS)** | per slot: source reference (path, `ContentId`), format, access, and the layer **at the snapshot's version**: either embedded (the pieces of that version, compressed; small for typical sessions) or a reference to a spill file plus version id | re-attach the source (drift is refused and reported), rebuild the layer at that version, and continue writing from there |
-| **TTD v2** | each checkpoint holds, per medium, the id of the version current at that moment (a few bytes: versions are cut at checkpoints after writes) | a seek sets each medium's head to the checkpoint's version. It is cheap, because it only switches the reference table. A replay then reads exactly what the machine read the first time |
+| **TTD v2** (built 2026-10-10 without the change layer: the media manager's undo log, `MediaUndoLog`, gives the versions) | each checkpoint holds, per medium, the id of the version current at that moment (a few bytes: versions are cut at checkpoints after writes) | a seek sets each medium's head to the checkpoint's version. It is cheap, because it only switches the reference table. A replay then reads exactly what the machine read the first time |
 | **TTD v1** | nothing: v1 records at port level, works with the media present, loads and stores none | — |
 
 This is the "restore the disk subsystem at any moment" feature. It covers floppy, SD and IDE alike,

@@ -15,17 +15,33 @@ A step from the execution breakpoint the machine is stopped at runs that instruc
 on from a breakpoint). A machine that sits at an address with a breakpoint without having stopped
 there (fresh reset, a jump done by a seek) stops on the first step, without executing.
 
-Memory breakpoints need debug mode (and the `breakpoints` feature, on with debug mode).
+Memory breakpoints need debug mode and the `breakpoints` feature. The feature can be off while debug mode is on
+(seen 2026-10-10 on a `PENTAGON` created through the WebAPI): the breakpoint is added `active` but its `hit_count`
+stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` (it switches debug mode on too; `PUT /debugmode` alone
+does not switch the feature on) and check `GET /features` when a breakpoint
+never fires. A memory breakpoint stops during the access, so the PC is inside or just past the writing instruction
+([articles/program-state-reverse.md](../articles/program-state-reverse.md)).
 
 **Ranges.** Any execution, read or write breakpoint can cover a range: `address` + `address_end`. A
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them
 into a per-address table when they are set).
+
+**By label.** An execution, read or write breakpoint's `address` (and `address_end`) can be a label's name:
+`{"type":"exec","address":"Sparkles.End"}` sets it at that label's CPU address (MCP `bp_add` the same). Load the
+labels first (`symbols/import`); an unknown name is refused.
 
 **On a page (physical).** A breakpoint can name a page - `{"kind":"ram","page":32}` in JSON,
 `ram32` / `rom3` / `cache0` in text. It then watches that page at offset `address & #3FFF`, through
 whatever slot shows the page: code a TS-Conf or 128K program pages into `#C000` one moment and `#8000`
 the next, RAM 5 that a 128K shows at `#4000` and, when paged in, at `#C000`. `slot_only` keeps it to the
 slot of `address`. A page the machine does not have is refused.
+
+**On the Sprinter's video RAM.** `vram0`..`vram15` (`{"kind":"vram","page":1}`) names a 16 KB page of the
+256 KB video RAM, which the CPU never sees at a fixed address: a read or write watchpoint there fires
+when a graphics window (or the accelerator) touches that byte, whatever `PORT_Y` and window it went through. The
+address is the offset in the page: `wp 0x0805 w --page vram1` is video RAM `#4805`. The stop names the CPU
+address of the access. Execution breakpoints are refused there. The fast RAM needs nothing new: it is the
+`cache0`..`cache3` pages.
 
 **Masked ports.** `port_mask`: the breakpoint matches every port where `(port & mask) == (address &
 mask)`. A Spectrum decodes ports partly, so `#FE` with mask `#00FF` catches the keyboard read whatever
@@ -54,6 +70,7 @@ curl -s $BASE/emulator/$EMU/breakpoints | jq '.breakpoints[] | {id, address, add
 | Lua | `bp(a, {to=e})` | `bp(a, "ram32")`, `{page=, slot_only=}` | `bp_port_in(p, {mask=})` | `{hits=">=5"}`; `bp_reset_hits([id])` |
 | Python | `emu.bp(a, to=e)` | `page="ram32", slot_only=True` | `emu.bp_port_in(p, mask=)` | `hits=">=5"`; `emu.bp_reset_hits([id])` |
 | MCP | `bp_add` `address_end` | `page`, `slot_only` | `port_mask` | `hits`; action `bp_reset_hits` |
+| ZX Next | CLI `bnextreg 0x07 w --via copper`, `bbeam 99 --hc 255`, `bcopper 12`; WebAPI/MCP types `nextreg_write`/`nextreg_read`/`nextreg` (`doors`, `value`, `value_mask`), `beam` (`hc`), `copper`; Lua/Python `bp_nextreg_write`, `bp_beam`, `bp_copper`; magic opcodes `bmagic edff|dd01`, types `magic_ed_ff`/`magic_dd_01`, `bp_magic("ed_ff")` (stops after the NOP / `LD BC,nn` ran; none armed = no cost) | | | |
 | unreal-qt | Breakpoint editor: "to", "Page", "This slot only", "Mask", "Hits" fields; the list shows them | | | |
 
 **Notes and groups.** `POST /breakpoints` takes `note` and `group` (MCP `bp_add` too); the CLI takes the

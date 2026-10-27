@@ -1,4 +1,5 @@
 #include "automation-cli.h"
+#include "emulator/monitoring/clientstats.h"
 
 #include <stdio.h>
 
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "common/threadhelper.h"
+#include "emulator/coordinator/machineop.h"
 
 // Use the platform-agnostic functions from platform_sockets.h
 
@@ -131,12 +133,12 @@ void AutomationCLI::stop()
         threadToJoin = std::move(_thread);
     }
 
-    // Close all active client connections to unblock any threads waiting on recv()
+    // Wake every client thread waiting on recv(): a shutdown, not a close - each thread closes its own socket, so a
+    // number is never closed twice (or closed under a connection that reused it)
     std::vector<SOCKET> clientSocketsCopy;
     {
         std::lock_guard<std::mutex> lock(_clientSocketsMutex);
         clientSocketsCopy = _activeClientSockets;
-        _activeClientSockets.clear();
     }
 
     for (SOCKET clientSocket : clientSocketsCopy)
@@ -145,13 +147,13 @@ void AutomationCLI::stop()
         {
             try
             {
-                std::cout << "Closing client socket: " << clientSocket << std::endl;
+                std::cout << "Shutting down client socket: " << clientSocket << std::endl;
                 // Send a message to the client before closing
                 std::ostringstream shutdownMsg;
                 shutdownMsg << NEWLINE << "Server is shutting down. Goodbye!" << NEWLINE;
                 std::string msg = shutdownMsg.str();
                 send(clientSocket, msg.c_str(), msg.length(), 0);
-                close(clientSocket);
+                shutdownSocket(clientSocket);
             }
             catch (const std::exception& e)
             {
@@ -192,19 +194,6 @@ void AutomationCLI::stop()
         {
             std::cerr << "Error joining CLI thread: " << e.what() << std::endl;
         }
-    }
-
-    // Final cleanup of any remaining client sockets
-    {
-        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-        for (SOCKET clientSocket : _activeClientSockets)
-        {
-            if (clientSocket != INVALID_SOCKET)
-            {
-                close(clientSocket);
-            }
-        }
-        _activeClientSockets.clear();
     }
 
     // Detach client handler threads instead of joining
@@ -304,11 +293,9 @@ void AutomationCLI::run()
 
                 if (clientSocket != INVALID_SOCKET)
                 {
-                    // Add to active client sockets
-                    {
-                        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-                        _activeClientSockets.push_back(clientSocket);
-                    }
+                    // The client's thread owns its socket: it registers it in _activeClientSockets and is the only
+                    // one that closes it. A second close here raced it: the number, reused by the next connection,
+                    // got closed under that new client by the old one's thread (the new client saw EOF at once)
 
                     // Handle client in a separate thread
                     // CRITICAL: Store thread in vector for proper cleanup (don't detach!)
@@ -324,71 +311,7 @@ void AutomationCLI::run()
                 }
             }
 
-            // Check for any disconnected clients and remove them
-            // CRITICAL: Check _stopThread BEFORE iterating sockets to avoid race with stop()
-            // If stop() is called, it closes all sockets. We must NOT access them after that.
-            if (!_stopThread)
-            {
-                std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-                auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](SOCKET sock) {
-                    // First check if socket is still valid (not already closed)
-                    if (sock == INVALID_SOCKET)
-                    {
-                        return true;  // Remove invalid sockets
-                    }
-
-                    // CRITICAL: Check if socket FD is within valid range for fd_set
-                    // FD_SETSIZE is typically 1024 on Linux. Using FD_SET with a larger
-                    // value triggers __fdelt_chk abort. This can happen during shutdown
-                    // when many file descriptors are open.
-                    // NOTE: This check is ONLY needed on Unix where fd_set is a bitmap.
-                    // On Windows, fd_set is an array of SOCKET handles, so skip this check.
-#ifndef _WIN32
-                    if (sock >= FD_SETSIZE)
-                    {
-                        // Socket FD is too large for select(), treat as potentially invalid
-                        // and remove it from tracking. The socket will be closed elsewhere.
-                        return true;
-                    }
-#endif
-
-                    fd_set set;
-                    FD_ZERO(&set);
-                    FD_SET(sock, &set);
-                    timeval tv = {0, 0};
-
-                    // Use select to check if socket is readable
-                    int selectResult = select(sock + 1, &set, NULL, NULL, &tv);
-                    if (selectResult < 0)
-                    {
-                        // select() failed - socket is likely closed or invalid
-                        return true;
-                    }
-
-                    if (selectResult == 1 && FD_ISSET(sock, &set))
-                    {
-                        // Socket is readable, check if it's closed by attempting to peek
-                        char dummy;
-                        int recvResult = recv(sock, &dummy, 1, MSG_PEEK);
-                        return recvResult == 0;  // recv returns 0 when connection is closed
-                    }
-
-                    return false;  // Socket appears to be still connected
-                });
-
-                if (it != _activeClientSockets.end())
-                {
-                    for (auto i = it; i != _activeClientSockets.end(); ++i)
-                    {
-                        if (*i != INVALID_SOCKET)
-                        {
-                            close(*i);
-                        }
-                    }
-
-                    _activeClientSockets.erase(it, _activeClientSockets.end());
-                }
-            }
+            // Disconnected clients leave on their own: their thread unregisters and closes the socket
         }
     }
     catch (const std::exception& e)
@@ -416,6 +339,9 @@ std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
 void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
     ThreadHelper::setThreadName("cli-client");
+    coordinator::SetThreadSource(coordinator::OpSource::Cli);   // the operation log names this client's operations
+    // host.clients: this connection is open while this function runs (every return)
+    const monitoring::ClientConnection counted(monitoring::ClientPlane::Cli);
 
     // Buffer to store the current line of input
     std::string lineBuffer;
@@ -585,6 +511,7 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                     try
                     {
                         // Process the command
+                        monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Cli);
                         processor->ProcessCommand(session, lineBuffer);
                         lineBuffer.clear();
 

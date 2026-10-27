@@ -19,6 +19,9 @@ void Memory_Test::TearDown()
         delete _memory;
         _memory = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>

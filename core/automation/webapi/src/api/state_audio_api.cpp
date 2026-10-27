@@ -4,6 +4,7 @@
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/slots/slotcontrol.h>
 #include <json/json.h>
 
 #include <bitset>
@@ -35,7 +36,7 @@ extern void ReplyDeviceState(const StateNode& node, std::function<void(const Htt
 // visible here without an EmulatorAPI instance.
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay
-void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
@@ -90,7 +91,7 @@ void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay/{chip}
-void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& /*req*/,
                                        std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                        const std::string& chipStr) const
 {
@@ -180,7 +181,7 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay/register/{reg}
-void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& /*req*/,
                                           std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                           const std::string& chipStr, const std::string& regStr) const
 {
@@ -348,8 +349,8 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
             decoding["channel_a_noise_enabled"] = ((regValue & 0x08) == 0);
             decoding["channel_b_noise_enabled"] = ((regValue & 0x10) == 0);
             decoding["channel_c_noise_enabled"] = ((regValue & 0x20) == 0);
-            decoding["porta_direction"] = ((regValue & 0x40) ? "input" : "output");
-            decoding["portb_direction"] = ((regValue & 0x80) ? "input" : "output");
+            decoding["porta_direction"] = ((regValue & 0x40) ? "output" : "input");
+            decoding["portb_direction"] = ((regValue & 0x80) ? "output" : "input");
             break;
         case 8:
         case 9:
@@ -400,12 +401,12 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
             break;
         case 14:  // I/O Port A
             decoding["description"] = "I/O Port A";
-            decoding["direction"] = ((registers[7] & 0x40) ? "input" : "output");
+            decoding["direction"] = ((registers[7] & 0x40) ? "output" : "input");
             decoding["value"] = (int)regValue;
             break;
         case 15:  // I/O Port B
             decoding["description"] = "I/O Port B";
-            decoding["direction"] = ((registers[7] & 0x80) ? "input" : "output");
+            decoding["direction"] = ((registers[7] & 0x80) ? "output" : "input");
             decoding["value"] = (int)regValue;
             break;
     }
@@ -418,7 +419,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/beeper
-void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
@@ -555,7 +556,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     {
         Json::Value error;
         error["error"] = "Not Found";
-        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+        error["message"] = "General Sound card not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs, or [SLOTS] zxbus.N = gs)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k404NotFound);
@@ -687,7 +688,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         ttd::TTDInputEvent ev;
         ev.kind = inputKind;
         ev.value = static_cast<uint8_t>(value);
-        if (!context->pTimeTravelManager || !context->pTimeTravelManager->SubmitLiveInput(ev))
+        if (!context->pTimeTravelHooks || !context->pTimeTravelHooks->SubmitLiveInput(ev))
         {
             Json::Value error;
             error["error"] = "Conflict";
@@ -722,29 +723,37 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     }
     else if (action == "switch_personality")
     {
-        // HTTP thread: request the frame-boundary switch (the synchronous
-        // switchGeneralSoundCard deletes/recreates the card and belongs to
-        // the emulation thread)
-        std::string refusal;
-        const bool requested = soundManager->requestGeneralSoundCardSwitch(personalityKind, &refusal);
-        if (!requested && !refusal.empty())
-        {
-            // A TTD recording refuses the switch (FR-4): say why
-            Json::Value error;
-            error["error"] = "Conflict";
-            error["message"] = refusal;
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k409Conflict);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
+        // The personality is the card in the GS slot (ZX-bus slots, owner decision Q10): a slot replace applied by a
+        // restart of the machine through SlotControl, like every slot change - a new emulator id, the media follow.
+        // Anything else the plan would remove needs "replaceIfIncompatible"; refused while TTD records
+        SlotControlRequest change;
+        change.verb = "gs";
+        change.emulatorId = emulator->GetId();
+        change.card = json->get("personality", "").asString();
+        change.replaceIfIncompatible = json->get("replaceIfIncompatible", false).asBool();
+        change.dryRun = json->get("dryRun", false).asBool();
+        change.media = json->get("mediaDisposition", "").asString();
         GSCardImplementation requestedImpl = GSCardImplementation::LLE;
         (void)gsImplementationOf(personalityKind, requestedImpl);
-        ret["personality"] = gsImplementationShortName(requestedImpl);
-        ret["current"] = gsImplementationShortName(gs->implementation());
-        ret["requested"] = requested;
-        ret["note"] = "applied at the next frame boundary";
+        const std::string previous = gsImplementationShortName(gs->implementation());
+        gs = nullptr;
+        soundManager = nullptr;
+        context = nullptr;
+        emulator.reset();   // nothing here may keep the old machine alive across the restart
+
+        const SlotControlReply reply = SlotControl::Execute(change);
+        Json::Value out = StateNodeToJson(reply.ToValue());
+        out["action"] = action;
+        out["personality"] = gsImplementationShortName(requestedImpl);
+        out["previous"] = previous;
+        out["requested"] = reply.Ok();
+        if (reply.status == "applied")
+            out["note"] = "the machine was restarted with the new General Sound card (a new emulator id)";
+        auto resp = HttpResponse::newHttpJsonResponse(out);
+        resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     else if (action == "dump_module")
     {
@@ -821,7 +830,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     else if (action == "sd_insert" || action == "sd_eject" || action == "flash_save")
     {
         // Checked here, carried out on the machine's thread (neogsmedia.h);
-        // insert / eject are refused while a TTD recording runs
+        // insert / eject follow the media rules (while TTD records: an event at the next frame boundary)
         NeoGSMediaResult result;
         if (action == "sd_insert")
         {
@@ -916,7 +925,7 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
     {
         Json::Value error;
         error["error"] = "Not Found";
-        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+        error["message"] = "General Sound card not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs, or [SLOTS] zxbus.N = gs)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k404NotFound);
@@ -1020,7 +1029,7 @@ void EmulatorAPI::postControlAudioGSPortTrace(const HttpRequestPtr& req, std::fu
     {
         Json::Value error;
         error["error"] = "Not Found";
-        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+        error["message"] = "General Sound card not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs, or [SLOTS] zxbus.N = gs)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k404NotFound);
@@ -1097,7 +1106,7 @@ void EmulatorAPI::getStateAudioCovox(const HttpRequestPtr& req, std::function<vo
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/channels
-void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& /*req*/,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const
 {
@@ -1400,6 +1409,59 @@ void EmulatorAPI::setAudioMixer(const HttpRequestPtr& req, std::function<void(co
         return reply(err, HttpStatusCode::k400BadRequest);
     }
     reply(StateNodeToJson(DeviceState::AudioMixer(emulator->GetContext())), HttpStatusCode::k200OK);
+}
+
+/// @brief GET /api/v1/emulator/{id}/audio/mixer/{source} - one row ("ay1") or channel ("ay1.a"): muted, solo, audible,
+/// volume, gain_db, peak, active, the row's channels
+void EmulatorAPI::getAudioMixerSource(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id, const std::string& source) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    StateNode node;
+    std::string error;
+    if (!emulator)
+    {
+        body["error"] = "Not Found";
+        body["message"] = "Emulator not found with ID: " + id;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else if (!AudioMixer::Read(emulator->GetContext(), source, node, error))
+    {
+        body["error"] = "Not Found";
+        body["message"] = error;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else
+        body = StateNodeToJson(node);
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/audio/levels - the mixer's levels (the topic audio.mixer pushes the same value)
+void EmulatorAPI::getAudioLevels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (!emulator)
+    {
+        body["error"] = "Not Found";
+        body["message"] = "Emulator not found with ID: " + id;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else
+        body = StateNodeToJson(AudioMixer::Levels(emulator->GetContext()));
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 }  // namespace v1

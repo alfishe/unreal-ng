@@ -13,7 +13,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/io/keyboard/keyboard.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -42,14 +42,14 @@ protected:
     SoundCardScope _gs{TestSound::GeneralSound};
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);

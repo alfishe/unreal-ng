@@ -5,12 +5,15 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <random>
 #include <set>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/testwaithelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
@@ -442,6 +445,217 @@ TEST_F(WD1793_Ports_Test, DiskChangeDuringReadSectorEndsTheCommandWithoutTouchin
     EXPECT_FALSE(Busy());
 }
 
+/// The turbo loader of "Shock Megademo" (MiSTer ZX-Spectrum issue #3) does, per sector,
+/// #2FC3 (SEEK #18) and then #2F1B at once: sector register and READ SECTOR are written while
+/// the SEEK may still be busy, with no wait for INTRQ. The chip latches the sector register
+/// even when busy and ignores the READ; the ROM's INI loop ends on the SEEK's INTRQ, the
+/// status is non-zero (head loaded), so #2F1B retries the READ - which must find the sector
+/// written before. Dropping the sector write while busy makes every retry read the wrong sector
+TEST_F(WD1793_Ports_Test, SectorRegisterWrittenDuringSeekIsUsedByTheRetriedRead)
+{
+    // Tracks 0 and 1 (side 0), every sector with its own content
+    for (uint8_t cyl = 0; cyl < 2; cyl++)
+    {
+        DiskImage::Track* track = _disk->getTrackForCylinderAndSide(cyl, 0);
+        if (cyl > 0)
+            track->formatTrack(cyl, 0);
+        for (uint8_t sec = 0; sec < 16; sec++)
+        {
+            uint8_t data[256];
+            for (int i = 0; i < 256; i++)
+                data[i] = static_cast<uint8_t>(((cyl << 4) | sec) ^ i);
+            track->writeSectorData(sec, data, sizeof(data));
+        }
+    }
+
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);             // #1FF3 with A = #3C: drive A, side 0 (bit 4 is inverted)
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    // Zero-distance seeks on track 0, then a one-step seek (busy for the 6 ms step) to track 1
+    const struct { uint8_t cyl, sec; } reads[] = {{0, 1}, {0, 2}, {1, 1}, {1, 2}};
+    for (const auto& r : reads)
+    {
+        std::string where = StringHelper::Format("cyl %d sec %d", r.cyl, r.sec);
+
+        _fdc->portDeviceOutMethod(WD1793::PORT_7F, r.cyl);  // #2A53: OUT (C),A with C = #7F
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x18);   // #2FC3: SEEK, h = 1, no verify
+        Advance(150);                                       // back through #3D2F and into #2F1B
+        bool busyAtSectorWrite = Busy();
+        _fdc->portDeviceOutMethod(WD1793::PORT_5F, r.sec);  // #2F1B: OUT (#5F),A
+        EXPECT_EQ(_fdc->getSectorRegister(), r.sec) << where << ": the sector register is latched even while busy";
+        if (r.cyl == 1 && r.sec == 1)
+        {
+            EXPECT_TRUE(busyAtSectorWrite) << "the step case must hit the busy controller";
+        }
+
+        // #2F1B: READ SECTOR, INI loop at #3FE5 (INTRQ ends it before DRQ), up to 20 attempts
+        std::vector<uint8_t> got;
+        uint8_t status = 0xFF;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            got.clear();
+            _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+            for (uint64_t spent = 0; spent < 4 * Z80_FREQUENCY; spent += 50)
+            {
+                Advance(50);
+                if (Intrq())
+                    break;
+                if (Drq())
+                    got.push_back(_fdc->portDeviceInMethod(WD1793::PORT_7F));
+            }
+            status = _fdc->portDeviceInMethod(WD1793::PORT_1F);
+            if ((status & 0x7F) == 0)
+                break;
+        }
+
+        EXPECT_EQ(status & 0x7F, 0) << where << ": the retried read must succeed";
+        ASSERT_EQ(got.size(), 256u) << where;
+        for (int i = 0; i < 256; i++)
+            ASSERT_EQ(got[i], static_cast<uint8_t>(((r.cyl << 4) | (r.sec - 1)) ^ i)) << where << " byte " << i;
+    }
+}
+
+/// The error bits of a Type II command reach the CPU: after INTRQ the status read on #1F shows
+/// RECORD NOT FOUND, CRC ERROR and WRITE PROTECT. The status read used to rebuild these bits from
+/// flags the commands never set, so TR-DOS and programs read #00 after a failed command
+TEST_F(WD1793_Ports_Test, TypeIIErrorBitsReachTheStatusPort)
+{
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);             // drive A, side 0
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    auto statusAfter = [&](uint8_t command) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, command);
+        RunUntilNotBusy();
+        EXPECT_FALSE(Busy());
+        EXPECT_TRUE(Intrq());
+        return _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    };
+
+    // No sector 17 on the track: READ SECTOR and WRITE SECTOR end with RNF
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 17);
+    EXPECT_EQ(statusAfter(0x80) & 0x7F, WD1793::WDS_NOTFOUND) << "READ SECTOR";
+    EXPECT_EQ(statusAfter(0xA0) & 0x7F, WD1793::WDS_NOTFOUND) << "WRITE SECTOR";
+
+    // A data field with a bad CRC
+    DiskImage::Sector* sector = _disk->getTrackForCylinderAndSide(0, 0)->getSector(0);
+    ASSERT_NE(sector, nullptr);
+    sector->setDataCRC(static_cast<uint16_t>(sector->dataCRC() ^ 0xFFFF));
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, WD1793::WDS_CRCERR) << "READ SECTOR, bad data CRC";
+
+    // A write-protected disk: WRITE SECTOR ends at once with WRITE PROTECT
+    _fdc->getDrive()->setWriteProtect(true);
+    EXPECT_EQ(statusAfter(0xA0) & 0x7F, WD1793::WDS_WRITEPROTECTED) << "WRITE SECTOR, write protected";
+    _fdc->getDrive()->setWriteProtect(false);
+
+    // The next command starts with clean error bits
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 2);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0) << "a good read after the failed ones";
+}
+
+/// XAS 9.10 (port trace 2026-10-09): SAVE wrote nothing to the disk. After every disk operation XAS
+/// ends with OUT #1F,#D0, then STEP #20 (u = 0, h = 0) and OUT #3F with the cylinder it used. The STEP
+/// goes the way the last SEEK went, so the head ends one cylinder past the track register (as the chip
+/// and MAME / Unreal Speccy do). The next operation misses its sector, and XAS recovers: on an error
+/// status it reads the ID under the head (READ ADDRESS), loads the track register with its C and
+/// seeks again. With RNF lost in the status read, XAS took the failed catalog read for a good one and
+/// sent WRITE SECTOR to the wrong cylinder: no DRQ, nothing written
+TEST_F(WD1793_Ports_Test, Xas910SaveRecoversFromTheStepItIssuesAfterEveryOperation)
+{
+    for (uint8_t cyl = 0; cyl < 8; cyl++)
+        for (uint8_t side = 0; side < 2; side++)
+            _disk->getTrackForCylinderAndSide(cyl, side)->formatTrack(cyl, side);
+    FDD* drive = _fdc->getDrive();
+
+    auto command = [&](uint8_t value) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, value);
+        RunUntilNotBusy();
+        return _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    };
+    auto seek = [&](uint8_t system, uint8_t cyl) {
+        _fdc->portDeviceOutMethod(0xFF, system);
+        _fdc->portDeviceOutMethod(WD1793::PORT_7F, cyl);
+        command(0x18);  // SEEK, h = 1, no verify
+    };
+    auto epilogue = [&](uint8_t system, uint8_t cyl) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xD0);
+        Advance(446);
+        _fdc->portDeviceOutMethod(0xFF, system);
+        command(0x20);                                  // STEP, no update, h = 0
+        _fdc->portDeviceOutMethod(WD1793::PORT_3F, cyl);
+    };
+
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);
+    command(0x08);  // RESTORE
+
+    // LOAD: the source on cylinder 6, side 1
+    seek(0x2C, 6);
+    epilogue(0x2C, 6);
+    ASSERT_EQ(drive->getTrack(), 7) << "STEP after a SEEK in steps in";
+    ASSERT_EQ(_fdc->getTrackRegister(), 6);
+
+    // SAVE, catalog read: SEEK 0 lands on cylinder 1, the sector is not found and the CPU must see it
+    seek(0x3C, 0);
+    ASSERT_EQ(drive->getTrack(), 1);
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);
+    EXPECT_EQ(command(0x80) & 0x7F, WD1793::WDS_NOTFOUND) << "the catalog read fails visibly";
+
+    // XAS's recovery: READ ADDRESS, track register = C, SEEK again
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xC0);
+    std::vector<uint8_t> id;
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            id.push_back(_fdc->portDeviceInMethod(WD1793::PORT_7F));
+    }
+    ASSERT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0);
+    ASSERT_EQ(id.size(), 6u);
+    EXPECT_EQ(id[0], 1) << "the ID under the head names cylinder 1";
+    _fdc->portDeviceOutMethod(WD1793::PORT_3F, id[0]);
+    seek(0x3C, 0);
+    EXPECT_EQ(drive->getTrack(), 0);
+
+    // The file's sector: cylinder 6, side 1, sector 4 - WRITE SECTOR raises DRQ and takes 256 bytes
+    seek(0x2C, 6);
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 4);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xA0);
+    size_t written = 0;
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceOutMethod(WD1793::PORT_7F, static_cast<uint8_t>(0x5A ^ written++));
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0);
+    EXPECT_EQ(written, 256u);
+    DiskImage::Sector* sector = _disk->getTrackForCylinderAndSide(6, 1)->getSector(3);
+    ASSERT_NE(sector, nullptr);
+    EXPECT_EQ(sector->data[0], 0x5A);
+    EXPECT_EQ(sector->data[255], static_cast<uint8_t>(0x5A ^ 255));
+}
+
 /// endregion </Status bits behavior>
 
 /// region <FDD related>
@@ -456,7 +670,7 @@ TEST_F(WD1793_Test, FDD_Motor_StartStop)
     // Internal logging messages with specified level (Warning for regular test runs, Debug for triaging)
     _context->pModuleLogger->SetLoggingLevel(LogDebug);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Reset WDC internal time marks
     fdc.resetTime();
@@ -602,7 +816,7 @@ TEST_F(WD1793_Test, FDD_Motor_Prolong)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Reset WDC internal time marks
     fdc.resetTime();
@@ -671,7 +885,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Since, when counting Index pulses, we have a check: if (diskInserted && motorOn)
     // Then we should insert a disk image
@@ -752,7 +966,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     // Internal logging messages are done on Info level
     _context->pModuleLogger->SetLoggingLevel(LogDebug);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Reset WDC internal time marks
     fdc.resetTime();
@@ -860,7 +1074,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_Stability)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc.resetTime();
 
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
@@ -919,7 +1133,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_Stability)
 /// Test that FDD starts in sleep mode
 TEST_F(WD1793_Test, SleepMode_StartsInSleepMode)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // After construction and reset, FDD should be sleeping
     EXPECT_TRUE(fdc._sleeping) << "FDD should start in sleep mode";
@@ -929,7 +1143,7 @@ TEST_F(WD1793_Test, SleepMode_StartsInSleepMode)
 /// Test that handleStep returns immediately when sleeping
 TEST_F(WD1793_Test, SleepMode_HandleStepSkipsWhenSleeping)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Reset time counters
     fdc.resetTime();
@@ -953,7 +1167,7 @@ TEST_F(WD1793_Test, SleepMode_HandleStepSkipsWhenSleeping)
 /// Test that wakeUp() transitions from sleeping to awake
 TEST_F(WD1793_Test, SleepMode_WakeUp)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Verify FDD starts sleeping
     EXPECT_TRUE(fdc._sleeping);
@@ -973,7 +1187,7 @@ TEST_F(WD1793_Test, SleepMode_WakeUp)
 /// Test that wakeUp() is idempotent when already awake
 TEST_F(WD1793_Test, SleepMode_WakeUpIdempotent)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Wake up first time
     fdc._time = 10000;
@@ -993,7 +1207,7 @@ TEST_F(WD1793_Test, SleepMode_WakeUpIdempotent)
 /// Test that enterSleepMode() transitions from awake to sleeping
 TEST_F(WD1793_Test, SleepMode_EnterSleepMode)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Wake up first
     fdc._time = 10000;
@@ -1012,7 +1226,7 @@ TEST_F(WD1793_Test, SleepMode_AutoSleepAfterIdleTimeout)
 {
     static constexpr size_t const SLEEP_TIMEOUT_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Wake up the FDD
     fdc._time = 0;
@@ -1041,7 +1255,7 @@ TEST_F(WD1793_Test, SleepMode_NoAutoSleepWhileMotorRunning)
 {
     static constexpr size_t const SLEEP_TIMEOUT_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Wake up the FDD
     fdc._time = 0;
@@ -1065,7 +1279,7 @@ TEST_F(WD1793_Test, SleepMode_NoAutoSleepWhileFSMActive)
 {
     static constexpr size_t const SLEEP_TIMEOUT_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Wake up the FDD
     fdc._time = 0;
@@ -1091,7 +1305,7 @@ TEST_F(WD1793_Test, SleepMode_NoAutoSleepWhileFSMActive)
 /// _lastTime, so an unchanged _lastTime proves process() was skipped.
 TEST_F(WD1793_Test, SleepMode_AwakeIdleMotorOffSkipsFsmPerStep)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     fdc._time = 0;
     fdc.wakeUp();
@@ -1128,7 +1342,7 @@ TEST_F(WD1793_Test, SleepMode_AwakeIdleMotorOffSkipsFsmPerStep)
 /// Test that port access wakes up FDD (simulated via wakeUp call)
 TEST_F(WD1793_Test, SleepMode_PortAccessWakesUp)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Verify FDD starts sleeping
     EXPECT_TRUE(fdc._sleeping);
@@ -1147,7 +1361,7 @@ TEST_F(WD1793_Test, SleepMode_CompleteLifecycle)
 {
     static constexpr size_t const SLEEP_TIMEOUT_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Phase 1: Start in sleep mode
     EXPECT_TRUE(fdc._sleeping) << "Phase 1: Should start sleeping";
@@ -1189,7 +1403,7 @@ TEST_F(WD1793_Test, FSM_DelayRegister)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Set up random numbers generator>
     std::mt19937 generator(FSM_RANDOM_SEED);
@@ -1225,7 +1439,7 @@ TEST_F(WD1793_Test, FSM_DelayCounters)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Set up random numbers generator>
     std::mt19937 generator(FSM_RANDOM_SEED);
@@ -1310,7 +1524,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
 
@@ -1441,7 +1655,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Remember initial FDD state
     uint8_t initialFDDTrack = fdc._selectedDrive->getTrack();
@@ -1528,7 +1742,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
     // Disable all logging except error messages
     //_context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Verify reads the ID fields of track 0 (C = 0 must match the Track Register): a formatted disk is needed
     DiskImage diskImage(MAX_CYLINDERS, 1);
@@ -1640,7 +1854,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_AlreadyAtTrack0_BusyStaysVisible)
     static constexpr size_t const PAST_HOLD_TSTATES = BUSY_HOLD_TSTATES * 4;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 10;  // Tick size used to step the FSM
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Already at track 0
     fdc._selectedDrive->setTrack(0);
@@ -1693,7 +1907,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
     for (int i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -1793,7 +2007,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
     for (uint8_t stepRate = 0; stepRate < 4; stepRate++)
@@ -1898,7 +2112,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_AlreadyAtTargetTrack_BusyStaysVisible)
     static constexpr size_t const PAST_HOLD_TSTATES = BUSY_HOLD_TSTATES * 4;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 10;  // Tick size used to step the FSM
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Already at the requested track
     fdc._selectedDrive->setTrack(5);
@@ -1952,7 +2166,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
     for (size_t i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -2044,7 +2258,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
     for (size_t i = MAX_CYLINDERS - 1; i > 0; i--)
@@ -2140,7 +2354,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Main test loop>
     for (size_t i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -2234,7 +2448,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
     // Internal logging messages are done on Info level
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     for (int i = MAX_CYLINDERS - 1; i >= 1; i--)
     {
@@ -2327,7 +2541,7 @@ TEST_F(WD1793_Test, NoPointerIntoADiskImageOutlivesItsCommandOrADiskChange)
     auto disk = std::make_unique<DiskImage>(MAX_CYLINDERS, MAX_SIDES);
     disk->getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(disk.get());
     fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
@@ -2419,7 +2633,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     ASSERT_NE(diskImage, nullptr) << "Disk image is null after loading";
     /// endregion </Load disk image>
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(diskImage);
 
     // De-activate WD1793 reset (active low), Set active drive A, MFM / double density (port #FF bit 6 clear)
@@ -2590,7 +2804,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
         }
     }
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // De-activate WD1793 reset, Set active drive A, MFM mode
@@ -2677,7 +2891,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track)
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // De-activate WD1793 reset, Set active drive A, MFM mode
@@ -2755,7 +2969,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // Set write protection
@@ -2825,7 +3039,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
     EXPECT_EQ(formatValid, true) << "Empty test TRD image was not formatted properly";
     /// endregion </Create empty disk image>
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // De-activate WD1793 reset (active low), Set active drive A, MFM / double density (port #FF bit 6 clear)
@@ -2970,7 +3184,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
     ASSERT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // Enable write protection on the drive
@@ -3021,7 +3235,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // De-activate WD1793 reset, Set active drive A
@@ -3121,7 +3335,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
     // De-activate WD1793 reset, Set active drive A
@@ -3204,7 +3418,7 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
     // Disable all logging except error messages
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A, MFM / double density (port #FF bit 6 clear)
     fdc._beta128Register =
@@ -3287,7 +3501,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
@@ -3353,7 +3567,7 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
@@ -3440,7 +3654,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ImmediateInterrupt)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // De-activate WD1793 reset
     fdc._beta128Register =
@@ -3484,7 +3698,7 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterrupt)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // De-activate WD1793 reset
     fdc._beta128Register =
@@ -3536,7 +3750,7 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
     // Disable all logging except error messages
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     /// region <Interrupt during idle>
     {
@@ -3684,8 +3898,9 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
         // live drive state is invalid - the FDD starts at a randomized track, so a stale TRK00
         // (set while the head was once at track 0) made this check fail ~1/81 runs.
         bool isTrack0 = fdc.getStatusRegister() & WD1793::WDS_TRK00;
-        bool DRQ = fdc._beta128status & DRQ;
-        bool INTRQ = fdc._beta128status & INTRQ;
+        // The class's bits: a local named DRQ would read itself here, uninitialized
+        bool DRQ = (fdc._beta128status & WD1793::DRQ) != 0;
+        bool INTRQ = (fdc._beta128status & WD1793::INTRQ) != 0;
 
         EXPECT_EQ(isBusy, false);
         EXPECT_EQ(isCRCError, false);
@@ -3870,7 +4085,7 @@ TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk and start motor
     fdc._beta128Register =
@@ -3943,7 +4158,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ConditionsClearedByNewCommand)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Set I2 condition
     const uint8_t forceInterruptI2 = 0b1101'0100;  // I2=1
@@ -3971,7 +4186,7 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterruptEvenAfterTransitions)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup
     fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
@@ -4019,7 +4234,7 @@ TEST_F(WD1793_Test, WriteTrack_F5_Sets_CrcStartPosition)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup for Write Track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4055,7 +4270,7 @@ TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_HighFirst)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup for Write Track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4127,7 +4342,7 @@ TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4174,7 +4389,7 @@ TEST_F(WD1793_Test, ReadSector_CRCError_SetsStatusBit)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4248,7 +4463,7 @@ TEST_F(WD1793_Test, ReadSector_DeletedDataMark_SetsStatusBit5)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4321,7 +4536,7 @@ TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track (sectors have normal 0xFB DAM by default)
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4401,7 +4616,7 @@ TEST_F(WD1793_Test, ReadSector_LostData_When_DRQ_Not_Serviced)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4475,7 +4690,7 @@ TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4560,7 +4775,7 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_30ms_Delay_At1MHz)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with formatted track
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4627,7 +4842,7 @@ TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
 
     // Setup: Insert disk with 80 cylinders
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -4688,6 +4903,8 @@ namespace
         uint8_t drive, track, side, sector;
         bool motorOn, busy, diskInserted, writeProtected;
     };
+    // Written by the MessageCenter worker, read by the test: every access holds the mutex
+    std::mutex g_fddStatesMutex;
     std::vector<CapturedFddState> g_fddStates;
     bool g_fddStateObserverRegistered = false;
 
@@ -4697,21 +4914,21 @@ namespace
         {
             auto* p = static_cast<FDDStatePayload*>(msg->obj);
             const FDDStateInfo& s = p->_state;
+            std::lock_guard lock(g_fddStatesMutex);
             g_fddStates.push_back({s.driveId, s.track, s.side, s.sector,
                                    s.motorOn, s.busy, s.diskInserted, s.writeProtected});
         }
     }
 
-    bool waitForFddStates(size_t count, int timeoutMs = 500)
+    std::vector<CapturedFddState> fddStates()
     {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (g_fddStates.size() >= count)
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return g_fddStates.size() >= count;
+        std::lock_guard lock(g_fddStatesMutex);
+        return g_fddStates;
+    }
+
+    bool waitForFddStates(size_t count)
+    {
+        return TestWait::For([count] { return fddStates().size() >= count; });
     }
 }
 
@@ -4723,9 +4940,12 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
         MessageCenter::DefaultMessageCenter().AddObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
         g_fddStateObserverRegistered = true;
     }
-    g_fddStates.clear();
+    {
+        std::lock_guard lock(g_fddStatesMutex);
+        g_fddStates.clear();
+    }
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc.resetTime();
     DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
     fdc.getDrive()->insertDisk(&diskImage);
@@ -4739,31 +4959,51 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
     // Beta128 system register: bits[1:0] drive, bit2 = 1 (no reset), bit4 = 0 -> top side
     fdc.processBeta128(0b0000'0101);
     ASSERT_TRUE(waitForFddStates(1)) << "Drive/side select must publish the FDD state";
-    EXPECT_EQ(g_fddStates.back().drive, 1) << "Drive B selected";
-    EXPECT_EQ(g_fddStates.back().side, 1);
-    EXPECT_FALSE(g_fddStates.back().motorOn);
-    EXPECT_FALSE(g_fddStates.back().diskInserted) << "the disk is in drive A; drive B is empty";
+    EXPECT_EQ(fddStates().back().drive, 1) << "Drive B selected";
+    EXPECT_EQ(fddStates().back().side, 1);
+    EXPECT_FALSE(fddStates().back().motorOn);
+    EXPECT_FALSE(fddStates().back().diskInserted) << "the disk is in drive A; drive B is empty";
 
-    // Same value again: nothing changed -> no new notification
+    // Same value again: nothing changed -> no new notification. The motor start after it is one, and the worker
+    // delivers in order: a re-published state would arrive between the two
     fdc.processBeta128(0b0000'0101);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    EXPECT_EQ(g_fddStates.size(), 1u) << "Unchanged state must not be re-published";
-
-    // Motor start is a state change
     fdc.startFDDMotor();
     ASSERT_TRUE(waitForFddStates(2));
-    EXPECT_TRUE(g_fddStates.back().motorOn);
+    EXPECT_EQ(fddStates().size(), 2u) << "Unchanged state must not be re-published";
+    EXPECT_TRUE(fddStates()[1].motorOn);
 
     // Sector register change (as done by the #5F port write and READ ADDRESS)
     fdc._sectorRegister = 7;
     fdc.notifyFDDStateChanged();
     ASSERT_TRUE(waitForFddStates(3));
-    EXPECT_EQ(g_fddStates.back().sector, 7);
-    EXPECT_EQ(g_fddStates.back().drive, 1);
-    EXPECT_TRUE(g_fddStates.back().motorOn);
+    EXPECT_EQ(fddStates().back().sector, 7);
+    EXPECT_EQ(fddStates().back().drive, 1);
+    EXPECT_TRUE(fddStates().back().motorOn);
 
     // Motor stop
     fdc.stopFDDMotor();
     ASSERT_TRUE(waitForFddStates(4));
-    EXPECT_FALSE(g_fddStates.back().motorOn);
+    EXPECT_FALSE(fddStates().back().motorOn);
+}
+
+// A time-travel restore brings back the drive, its motor and track, and posts them (NC_FDD_STATE_CHANGED): the status
+// bar and the HUD show the restored drive, not the one before the seek (state registry §5: "stale after a seek")
+TEST_F(WD1793_Test, TtdRestoreRepublishesTheDriveState)
+{
+    WD1793TestCUT fdc(_context);
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    fdc._selectedDrive->setMotor(true);
+    fdc.notifyFDDStateChanged();
+    ASSERT_TRUE(fdc._publishedFddState.motorOn);
+    std::vector<uint8_t> blob(fdc.TTDStateSize());
+    fdc.TTDSaveState(blob.data());
+
+    fdc._selectedDrive->setMotor(false);
+    fdc.notifyFDDStateChanged();
+    ASSERT_FALSE(fdc._publishedFddState.motorOn) << "the live run stopped the motor and said so";
+
+    fdc.TTDLoadState(blob.data());
+    EXPECT_TRUE(fdc._selectedDrive->getMotor());
+    EXPECT_TRUE(fdc._publishedFddState.motorOn) << "the restored motor is posted";
 }

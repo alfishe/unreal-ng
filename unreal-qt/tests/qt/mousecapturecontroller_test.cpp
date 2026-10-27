@@ -49,7 +49,9 @@ protected:
         surface.setCursorHidden = [](bool) {};
         surface.takeFocus = [] {};
         surface.allowNativeCapture = false;
-        surface.warpCursor = [](QPoint) {};
+        // A simulated pointer: the warp moves it, the backend reads it
+        surface.warpCursor = [this](QPoint global) { _cursor = global; };
+        surface.cursorPosition = [this] { return _cursor; };
         _controller->setSurface(surface);
         _controller->setSourceSizeProvider([] { return QSizeF(320, 240); });
         _controller->setHostSettingsProvider([this] {
@@ -78,6 +80,7 @@ protected:
     std::unique_ptr<MouseCaptureController> _controller;
     bool _fitted = true;
     std::string _releaseKey;
+    QPoint _cursor;
 };
 }  // namespace
 
@@ -269,13 +272,46 @@ TEST_F(MouseCaptureController_Test, WarpBackendMeasuresTravelFromTheCenter)
     ASSERT_TRUE(_controller->isCaptured());
 
     const QPoint center = _screen.mapToGlobal(_screen.rect().center());
+    ASSERT_EQ(_cursor, center) << "capture warps the pointer to the center";
     {
         QMouseEvent warpEcho(QEvent::MouseMove, QPointF(0, 0), QPointF(center), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
         _controller->handleMouseMove(&warpEcho);  // the move the capture's own warp generates
     }
-    QMouseEvent move(QEvent::MouseMove, QPointF(0, 0), QPointF(center + QPoint(20, -10)), Qt::NoButton, Qt::NoButton,
-                     Qt::NoModifier);
+    _cursor = center + QPoint(20, -10);
+    QMouseEvent move(QEvent::MouseMove, QPointF(0, 0), QPointF(_cursor), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     EXPECT_TRUE(_controller->handleMouseMove(&move));
     EXPECT_EQ(sumX, 10) << "20 host pixels at 2x";
     EXPECT_EQ(sumY, 5) << "10 up on screen = 5 up for the mouse";
+    EXPECT_EQ(_cursor, center) << "warped back";
+}
+
+/// Moves queued before a warp still carry pre-warp positions (Windows delivers them
+/// late when its message queue is busy). Measured against the center again they
+/// repeated the same travel and the guest pointer leapt; the travel is where the
+/// pointer is now, so a stale move reports nothing
+TEST_F(MouseCaptureController_Test, StaleMovesBeforeTheWarpAreNotCountedAgain)
+{
+    int sumX = 0, sumY = 0;
+    MouseCaptureController::Poster poster;
+    poster.move = [&](int dx, int dy) {
+        sumX += dx;
+        sumY += dy;
+    };
+    _controller->setPoster(poster);
+    _controller->setSourceSizeProvider([] { return QSizeF(320, 240); });  // 1x
+    _controller->capture();
+    ASSERT_TRUE(_controller->isCaptured());
+    const QPoint center = _cursor;
+
+    // The user moves 30 pixels right in three steps; Windows queues all three before
+    // the first is handled
+    const QPoint queued[] = {center + QPoint(10, 0), center + QPoint(20, 0), center + QPoint(30, 0)};
+    _cursor = queued[2];
+    for (const QPoint& at : queued)
+    {
+        QMouseEvent move(QEvent::MouseMove, QPointF(0, 0), QPointF(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        EXPECT_TRUE(_controller->handleMouseMove(&move));
+    }
+    EXPECT_EQ(sumX, 30) << "30 pixels of travel, counted once (not 10 + 20 + 30)";
+    EXPECT_EQ(sumY, 0);
 }

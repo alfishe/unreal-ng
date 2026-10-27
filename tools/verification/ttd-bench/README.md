@@ -75,6 +75,7 @@ Other sessions running on the same machine inflate timings. Check `uptime` befor
 | BM-6 | `bm6_restore_{cpu_chipset,devices,memory,screen}_us_p50` | Checkpoint restore time, split by component |
 | BM-7 | `bm7_file_bytes`, `bm7_file_bpf`, `bm7_{save,load}_s_per_gb`, `bm7_first_seek_ms` | Session file size, save and load speed, and time to the first seek after loading |
 | BM-8 | `bm8_capture_us_dirty{0,1,4,16,64}` | Capture time after writing 0 to 64 pieces of 4 KB each |
+| BM-9 | `bm9_<region>_bytes`, `_bpf`, `_vpf`, `_first_bytes`, `_steady_bpf`, `_steady_vpf` | Every region of the engine (memory by name, device states as `device.<instance>`): size; stored bytes and versions per recorded frame; bytes stored by the end of the first frame (every piece once); the steady rate after it. Engine backends only. The source of the state registry's Size and Variability columns ([e6-comparison.md](../../../docs/inprogress/2026-09-25-ttd-v2-migration/e6-comparison.md)) |
 | - | `turbo_ratio` | The hardware clock ratio (1 = base clock) in effect at the end of the run: proof that the configuration really ran as named |
 
 Each seek position is measured three times (`seekRepeats`) and the fastest run is kept. The spread between positions (how far the target is from its checkpoint, where it lies in the frame) stays in the data, while a single measurement slowed by the scheduler does not.

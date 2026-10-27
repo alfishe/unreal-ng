@@ -1,0 +1,31 @@
+; TYPED IN XAS 7.447 FOR THE FORMAT RESEAH
+start   ORG   #6000
+        ENT
+        LD    HL,text
+        LD    DE,#4000
+loop    LD    A,(HL)
+        OR    A
+        RET   Z
+        RST   16
+        INC   HL
+        JR    loop
+        LD    (IX+5),A
+        LD    A,(IY-1)
+        OUT   (#fe),A
+        PUSH  BC,DE,HL
+        POP   HL,DE,BC
+        EX    AF,AF'
+        EX    (SP),HL
+text    DB    "HELLO",13,0
+        DW    start,loop+1
+        DS    5,#ff
+        DM    "ABC"
+        BIT   7,(HL)
+        IM    2
+        JP    (HL)
+        DJNZ  loop
+        CP    "A"
+        SUB   10;SUB
+cnt     EQU   5
+lab2    NOP;LABEL ONLY
+

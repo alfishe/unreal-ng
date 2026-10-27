@@ -76,15 +76,30 @@ are ever synthesized:
 
 | Disk content | Action |
 |:--|:--|
-| Not TR-DOS format (CP/M, +3 DSK, MGT...) | Mount only |
+| Not TR-DOS format (CP/M, +3 DSK, MGT, blank...): no TR-DOS id `#10` at byte `#E7` of track 0 sector 9, or catalog entries pointing outside a track | Mount only |
 | Has a `boot.B` file | Quick reset + direct entry into TR-DOS, boots it |
 | No `.B` files at all | Mount only |
 | Exactly **one** `.B` file (no `boot`) | Quick reset + direct entry; a one-shot hook rewrites TR-DOS's cold-start `RUN "boot"` into `RUN "<name>"` — disk stays untouched. If the loaded TR-DOS ROM lacks that cold-start hook, a generated one-line `boot.B` (`RUN "<name>"`) is injected into the image instead, so the image **is modified** (and the action degrades to mount only when the disk is full) |
 | Several `.B` files (no `boot`) | Injects the bundled Unreal commander as `boot.B` and boots it — you get a file menu on screen |
 
+The TR-DOS check is the one TR-DOS itself makes: TR-DOS 5.03 / 5.04T test only
+the id byte `#10` at `#E7` of sector 9 when they read a catalog ("Disc Error"
+otherwise); the disk type byte `#E3` is decoded (bit 0: 40 tracks, bit 3: one
+side), never checked. A disk whose type byte is not `#16-#19` (for example `#00`
+on some real disks) is a TR-DOS disk and autostarts.
+
 "Direct entry" pages the TR-DOS ROM in at `PC=0` and runs it — that is why
 no keyboard timing is needed and why this is reliable where typed
 `RANDOMIZE USR 15616` can race.
+
+When the cold start reaches the TR-DOS command loop, the model may adjust its
+paging once, before the program runs (`PortDecoder::FinishAutostartColdStart`).
+`ATM710`: the ATM2 DOS ROM's cold start leaves `#7FFD` pages at RAM 24-31
+(resident probe), so the autostart lays the windows out like the BIOS's
+"SPECTRUM 128" entry — 128K programs see pages 0-7
+([atm710.md](../machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)).
+`ATM450`: the same probe leaves `#FDFD = 3`; the autostart clears it
+([atm450.md](../machines/atm/atm450.md#software-for-the-atm-turbo-2-and-the-tr-dos-cold-start)).
 
 ### Confirm the program is running
 

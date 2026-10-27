@@ -25,7 +25,7 @@
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include <memory>
 #include <thread>
 #include "emulator/notifications.h"
@@ -65,50 +65,28 @@ void Emulator_Test::DestroyEmulator()
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
 {
+    // Instances are created, initialised, stopped and released over and over without one leaking into the next. How long
+    // that takes is a speed of the host: no clock here
     constexpr int iterations = 20;
-
-    // Profiling accumulators (microseconds)
-    uint64_t totalConstruct = 0, totalInit = 0, totalStop = 0, totalRelease = 0, totalDelete = 0;
 
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)
     {
-        auto t0 = std::chrono::high_resolution_clock::now();
         Emulator* emulator = new Emulator(LoggerLevel::LogError);
-        auto t1 = std::chrono::high_resolution_clock::now();
 
         if (emulator)
         {
             if (emulator->Init())
             {
-                auto t2 = std::chrono::high_resolution_clock::now();
                 emulator->Stop();
-                auto t3 = std::chrono::high_resolution_clock::now();
                 emulator->Release();
-                auto t4 = std::chrono::high_resolution_clock::now();
-
-                totalInit += std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-                totalStop += std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count();
-                totalRelease += std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
 
                 successCounter++;
             }
 
-            auto t5 = std::chrono::high_resolution_clock::now();
             delete emulator;
-            auto t6 = std::chrono::high_resolution_clock::now();
-
-            totalConstruct += std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-            totalDelete += std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
         }
     }
-
-    GTEST_LOG_(INFO) << "Profiling (" << iterations << " iterations):";
-    GTEST_LOG_(INFO) << "  Construct: " << totalConstruct / 1000 << " ms (" << totalConstruct / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Init:      " << totalInit / 1000 << " ms (" << totalInit / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Stop:      " << totalStop / 1000 << " ms (" << totalStop / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Release:   " << totalRelease / 1000 << " ms (" << totalRelease / iterations << " us/iter)";
-    GTEST_LOG_(INFO) << "  Delete:    " << totalDelete / 1000 << " ms (" << totalDelete / iterations << " us/iter)";
 
     if (successCounter != iterations)
     {
@@ -140,11 +118,7 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             // startup flag handling, so a Stop() issued afterwards is
             // guaranteed to be honoured - unlike IsRunning(), which
             // StartAsync() raises before the worker even starts
-            auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
+            TestWait::For([&] { return emulator->GetState() == StateRun; }, std::chrono::seconds(2));
 
             if (!emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to start" << std::endl;
@@ -573,7 +547,9 @@ TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
     EXPECT_EQ(format, Emulator::BlankDiskFormat::Plus3);
     EXPECT_TRUE(Emulator::ParseBlankDiskFormat("unformatted", format));
     EXPECT_EQ(format, Emulator::BlankDiskFormat::Unformatted);
-    EXPECT_FALSE(Emulator::ParseBlankDiskFormat("trdos", format));
+    EXPECT_TRUE(Emulator::ParseBlankDiskFormat("trdos", format));
+    EXPECT_EQ(format, Emulator::BlankDiskFormat::Trdos);
+    EXPECT_FALSE(Emulator::ParseBlankDiskFormat("dos", format));
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -684,18 +660,18 @@ TEST(Emulator_DirectRunBreakpoint_Test, HitCountIgnoresSteppingOnFromTheStop)
     BreakpointManager& brk = *emulator->GetBreakpointManager();
     const uint16_t id = brk.AddBreakpoint(spec, error);
     ASSERT_NE(id, BRK_INVALID) << error;
-    const BreakpointDescriptor& bp = *brk.GetAllBreakpoints().at(id);
+    auto hits = [&] { return brk.GetBreakpointById(id)->hitCount; };
 
     // Six instructions, then the loop: arrivals 1 and 2 run on, the 3rd stops before the JR
     EXPECT_EQ(emulator->RunNCPUCycles(100, false), 8u);
     EXPECT_TRUE(emulator->LastDirectStop().hit);
-    EXPECT_EQ(bp.hitCount, 3u);
+    EXPECT_EQ(hits(), 3u);
 
     emulator->RunSingleCPUCycle(false);  // the JR runs: leaving the stop is not an arrival
-    EXPECT_EQ(bp.hitCount, 3u);
+    EXPECT_EQ(hits(), 3u);
     EXPECT_FALSE(emulator->LastDirectStop().hit);
     emulator->RunSingleCPUCycle(false);  // the next arrival counts, and the 4th does not stop
-    EXPECT_EQ(bp.hitCount, 4u);
+    EXPECT_EQ(hits(), 4u);
     EXPECT_FALSE(emulator->LastDirectStop().hit);
     emulator->Release();
 }
@@ -1059,9 +1035,13 @@ TEST_F(EmulatorHostAudioResume_Test, StepOverASoundingSubroutineIsSilent)
     EXPECT_EQ(_sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
 }
 
-/// StepOver registers a handler on the shared BREAKPOINT topic that captures its emulator and FeatureManager. It must
-/// be gone with the emulator: a breakpoint event of another instance with a colliding id used to reach the dead
-/// handler, which locked the destroyed FeatureManager's mutex and aborted the process
+/// A step over across a CALL resumes the machine to a temporary breakpoint. Its end (the breakpoint removed, the
+/// deactivated ones back, the feature flags restored) runs on the emulation thread when the breakpoint fires: it
+/// used to run in a MessageCenter observer on the dispatcher thread, which (1) outlived a destroyed emulator and (2)
+/// erased from the breakpoint map while the emulation thread read it - the machine stopped right after the step
+/// over runs `JR $` across the still-armed breakpoint, and GetBreakpointById crashed on the emulation thread. No
+/// handler is registered any more; the temporary breakpoint is gone when the step ends, and stopping the machine
+/// while the step runs is safe. (~10 ms: two short paced runs)
 TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
 {
     MessageCenter& center = MessageCenter::DefaultMessageCenter();
@@ -1074,17 +1054,64 @@ TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
         for (size_t i = 0; i < sizeof(program); i++)
             emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
         emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+        BreakpointManager* breakpoints = emulator->GetBreakpointManager();
+        ASSERT_NE(breakpoints, nullptr);
         emulator->DebugOn();
         emulator->StartAsync();
         emulator->Pause();
+        const size_t breakpointsBefore = breakpoints->GetBreakpointsCount();
+
+        // A step over that reaches its breakpoint: the machine parks after the CALL, the temporary breakpoint gone
         emulator->GetZ80State()->pc = 0x8001;  // the CALL
         emulator->GetZ80State()->sp = 0xFF00;
-        emulator->StepOver();  // registers the handler, resumes to the temporary breakpoint
-        EXPECT_GT(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "StepOver registered no handler: the test checks nothing";
+        emulator->StepOver();
+        EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step over registers no handler";
+        ASSERT_TRUE(TestWait::For([&] { return emulator->IsPaused() && emulator->GetZ80State()->pc == 0x8004; },
+                                  std::chrono::seconds(5)))
+            << "the step over did not stop after the CALL, pc " << emulator->GetZ80State()->pc;
+        EXPECT_EQ(breakpoints->GetBreakpointsCount(), breakpointsBefore) << "the temporary breakpoint outlived the step";
+
+        // A step over the machine is stopped in the middle of (the crash): the stop and the release clean up
+        emulator->GetZ80State()->pc = 0x8001;
+        emulator->GetZ80State()->sp = 0xFF00;
+        emulator->StepOver();
         emulator->Stop();
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
     }
     EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step-over handler outlived its emulator";
+}
+
+/// A step over a CALL whose next instruction already has a breakpoint of the user's uses that breakpoint and leaves it:
+/// the end of the step removed it as its own temporary one (BUGS.md 2026-10-11 #12). (~10 ms: a short paced run)
+TEST(EmulatorStepOverObserver_Test, StepOverKeepsTheUsersBreakpointAfterTheCall)
+{
+    auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("stepover-keeps-bp", "PENTAGON",
+                                                                            LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};  // DI; CALL #8010; JR $
+    for (size_t i = 0; i < sizeof(program); i++)
+        emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+    BreakpointManager* breakpoints = emulator->GetBreakpointManager();
+    ASSERT_NE(breakpoints, nullptr);
+    const uint16_t users = breakpoints->AddExecutionBreakpoint(0x8004);  // the instruction after the CALL
+    ASSERT_NE(users, BRK_INVALID);
+    emulator->DebugOn();
+    emulator->StartAsync();
+    emulator->Pause();
+    const size_t breakpointsBefore = breakpoints->GetBreakpointsCount();
+
+    emulator->GetZ80State()->pc = 0x8001;  // the CALL
+    emulator->GetZ80State()->sp = 0xFF00;
+    emulator->StepOver();
+    EXPECT_TRUE(TestWait::For([&] { return emulator->IsPaused() && emulator->GetZ80State()->pc == 0x8004; },
+                              std::chrono::seconds(5)))
+        << "the step over did not stop after the CALL, pc " << emulator->GetZ80State()->pc;
+    EXPECT_EQ(breakpoints->GetBreakpointsCount(), breakpointsBefore) << "the user's breakpoint was removed";
+    EXPECT_TRUE(breakpoints->GetAllBreakpoints().count(users)) << "the user's breakpoint was removed";
+
+    emulator->Stop();
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
 }
 
 TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
@@ -1095,7 +1122,7 @@ TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     SoundManager* sound = context->pSoundManager;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);

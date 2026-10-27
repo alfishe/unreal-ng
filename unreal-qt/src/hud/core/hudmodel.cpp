@@ -27,6 +27,7 @@ namespace HudCategory
     constexpr const char* AudioMoonSound = "audio-moonsound";
     constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
     constexpr const char* AudioCdda = "audio-cdda";
+    constexpr const char* AudioMultiSound = "audio-multisound";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -57,6 +58,13 @@ namespace HudCategory
             case AudioSource::NeoGSDma:   return AudioNeoGSDma;  // Data movement, not sound: its own switch
             case AudioSource::NeoGSTransfer: return AudioNeoGSDma;
             case AudioSource::CdAudio:    return AudioCdda;
+            case AudioSource::MultiSoundSsg1:
+            case AudioSource::MultiSoundSsg2:
+            case AudioSource::MultiSoundFm1:
+            case AudioSource::MultiSoundFm2:
+            case AudioSource::MultiSoundPcm:
+            case AudioSource::MultiSoundSaa:
+            case AudioSource::MultiSoundMidi: return AudioMultiSound;  // one category, one indicator per row
             default: return nullptr;
         }
     }
@@ -681,6 +689,22 @@ void HudModel::setChangedCallback(std::function<void()> callback)
     _changedCallback = std::move(callback);
 }
 
+void HudModel::setAlwaysShownPrefix(std::string prefix)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _alwaysShownPrefix = std::move(prefix);
+    publishLocked();
+}
+
+bool HudModel::AlwaysShownLocked(const HudElement& element) const
+{
+    if (_alwaysShownPrefix.empty())
+        return false;
+    const std::string indicator = "ind/" + _alwaysShownPrefix;
+    return element.id.compare(0, indicator.size(), indicator) == 0 ||
+           element.dedupKey.compare(0, _alwaysShownPrefix.size(), _alwaysShownPrefix) == 0;
+}
+
 void HudModel::setCategoryFilter(std::function<bool(const char*)> filter)
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -689,9 +713,17 @@ void HudModel::setCategoryFilter(std::function<bool(const char*)> filter)
 
 bool HudModel::isCategoryEnabled(const char* categoryId) const
 {
-    if (!_categoryFilter)
+    // The filter is installed after construction (observers are already live on the MessageCenter worker), so
+    // copy it under the lock and call the copy outside it: reading the std::function while setCategoryFilter()
+    // assigns it crashed in the handler thunk (null call target)
+    std::function<bool(const char*)> filter;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        filter = _categoryFilter;
+    }
+    if (!filter)
         return true;  // No filter = all enabled
-    return _categoryFilter(categoryId);
+    return filter(categoryId);
 }
 
 void HudModel::subscribeFeatureObserver()
@@ -787,25 +819,33 @@ void HudModel::publishLocked()
     snapshot->toastPosition = _toastPosition;
     snapshot->indicatorPosition = _indicatorPosition;
 
-    if (_enabled.load(std::memory_order_relaxed))
+    // HUD off: only the always-shown elements (the automation session's), if any
+    const bool all = _enabled.load(std::memory_order_relaxed);
+    if (all || !_alwaysShownPrefix.empty())
     {
+        auto shown = [this, all](const HudElement& element) { return all || AlwaysShownLocked(element); };
+
         // 1. Augmented background / picture elements
         for (const auto& aug : _augmentations)
         {
-            snapshot->elements.push_back(aug);
+            if (shown(aug))
+                snapshot->elements.push_back(aug);
         }
 
         // 2. Indicators (active only)
         for (const auto& ind : _indicators)
         {
-            if (ind.state != HudState::Off)
+            if (ind.state != HudState::Off && shown(ind))
             {
                 snapshot->elements.push_back(ind);
             }
         }
 
         // 3. Toasts: priority descending, then age ascending
-        std::vector<HudElement> sortedToasts = _toasts;
+        std::vector<HudElement> sortedToasts;
+        for (const auto& toast : _toasts)
+            if (shown(toast))
+                sortedToasts.push_back(toast);
         std::stable_sort(sortedToasts.begin(), sortedToasts.end(), [](const HudElement& a, const HudElement& b) {
             if (static_cast<uint8_t>(a.priority) != static_cast<uint8_t>(b.priority))
                 return static_cast<uint8_t>(a.priority) > static_cast<uint8_t>(b.priority);
@@ -1023,7 +1063,7 @@ void HudModel::onBreakpoint(int, Message* message)
         auto bpMgr = _context->pDebugManager->GetBreakpointsManager();
         if (bpMgr)
         {
-            auto* bp = bpMgr->GetBreakpointById(static_cast<uint16_t>(p->_payloadNumber));
+            const BreakpointSnapshot bp = bpMgr->GetBreakpointById(static_cast<uint16_t>(p->_payloadNumber));
             if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
             {
                 isHidden = true;
@@ -1475,6 +1515,28 @@ void HudModel::onAudioActivity(int, Message* message)
             break;
         case AudioSource::CdAudio:
             key = "cdda"; label = "CD"; icon = "cdaudio";  // Red Book audio from an ATAPI CD drive
+            break;
+        // ZX-MultiSound: one indicator per row, labelled like its mixer row (the YM2203 pair as the TSFM's AY / FM)
+        case AudioSource::MultiSoundSsg1:
+            key = "ms-ssg1"; label = "MS AY 1"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundSsg2:
+            key = "ms-ssg2"; label = "MS AY 2"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundFm1:
+            key = "ms-fm1"; label = "MS FM 1"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundFm2:
+            key = "ms-fm2"; label = "MS FM 2"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundPcm:
+            key = "ms-pcm"; label = "MS PCM"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundSaa:
+            key = "ms-saa"; label = "MS SAA"; icon = "multisound";
+            break;
+        case AudioSource::MultiSoundMidi:
+            key = "ms-midi"; label = "MS MIDI"; icon = "multisound";
             break;
         default:
             return;

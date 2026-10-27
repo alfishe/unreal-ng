@@ -2,13 +2,16 @@
 
 #import <AppKit/AppKit.h>
 
+#include <QGuiApplication>
 #include <QWidget>
 
 namespace
 {
 NSWindow* NativeWindow(QWidget* widget)
 {
-    if (!widget)
+    // Only the Cocoa platform's window ids are NSViews: offscreen (the sanitizer stress, CI) hands out its own ids,
+    // and messaging one crashed docking the first tool window
+    if (!widget || QGuiApplication::platformName() != QLatin1String("cocoa"))
         return nil;
     // winId() creates the native window when needed; on Cocoa it is the NSView
     NSView* view = reinterpret_cast<NSView*>(widget->window()->winId());

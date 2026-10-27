@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
@@ -28,6 +29,7 @@
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
 #include "stdafx.h"
@@ -112,9 +114,10 @@ bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
 
 PortDecoder::~PortDecoder()
 {
-    _portDevices.clear();
-    _fullDecodeDevices.clear();
-    _fullDecodeLowByteDevices.fill(nullptr);
+    _peripheralClaims.Clear();
+    _peripheralClaims.Build();
+    _fullDecodeClaims.Clear();
+    _fullDecodeClaims.Build();
 }
 /// endregion </Constructors / Destructors>
 
@@ -142,6 +145,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_ATM3:
         case MM_TSL:
         case MM_SPRINTER:
+        case MM_NEXT:
             return true;
         default:
             return false;
@@ -211,6 +215,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
         case MM_SPRINTER:
             result = new PortDecoder_Sprinter(context);
             break;
+        case MM_NEXT:
+            result = new PortDecoder_Next(context);
+            break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.
             // Route through the context's module logger with the same gating.
@@ -232,6 +239,13 @@ uint16_t PortDecoder::IoPc() const
 {
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     return z80 ? z80->m1_pc : 0;
+}
+
+void PortDecoder::BindRtc(Ds12887& chip)
+{
+    chip.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    chip.SetSessionWall([this]() { return SessionWallMicros(); });
+    _rtcChip = &chip;
 }
 
 int64_t PortDecoder::SessionWallMicros() const
@@ -359,7 +373,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(addr);
+        uint16_t breakpointID = brk.HandlePortOut(addr, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -403,7 +417,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandlePortOut(port);
+        uint16_t breakpointID = brk.HandlePortOut(port, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -420,9 +434,9 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     // 3. Phase 4 — IO write journal (TDD §9.3) + access probe (§9.2).
     // OnPortOutComplete is the single common path called by ALL subclass
     // DecodePortOut overrides after the hardware write completes.
-    if (_context->pTimeTravelManager != nullptr)
+    if (_context->ttdWriteSink != nullptr)
     {
-        _context->pTimeTravelManager->RecordIoWrite(port, value, pc);
+        _context->ttdWriteSink->RecordIoWrite(port, value, pc);
     }
     if (_context->ttdProbe.IsArmed())
     {
@@ -441,6 +455,29 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     // 4. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
     if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
+        RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
+    }
+}
+
+void PortDecoder::OnPortWriteWithoutBusCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    if (_context->pDebugManager != nullptr)
+    {
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandlePortOut(port, value);
+        if (breakpointID != BRK_INVALID)
+            _context->pEmulator->OnBreakpointHit(breakpointID, port, BreakpointHitKind::PortOut);
+    }
+
+    if (_memory && _memory->_memoryAccessTracker)
+        _memory->_memoryAccessTracker->TrackPortWrite(port, value, pc);
+
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        PortDecodeDisposition disp;
+        disp.decodedPort = port;
+        disp.decodeRuleIndex = PortTraceRule::kNoBusCycle;
+        disp.wasDecoded = true;
         RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
     }
 }
@@ -466,7 +503,7 @@ void PortDecoder::UpdateFeatureCache()
     }
     if (enabled && !_portTraceFeatureCache.load(std::memory_order_relaxed))
     {
-        _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
+        _activitySummaryResetPending.store(true, std::memory_order_relaxed);
     }
     else if (!enabled && _portTrace && _portTraceFeatureCache.load(std::memory_order_relaxed))
     {
@@ -477,6 +514,8 @@ void PortDecoder::UpdateFeatureCache()
 
     // Release: a thread that sees the flag set also sees the recorder
     _portTraceFeatureCache.store(enabled, std::memory_order_release);
+
+    UpdateModelFeatureCache();
 }
 
 /// Build and push exactly one PortTraceEvent per Z80 I/O operation.
@@ -487,6 +526,9 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     uint32_t frame = static_cast<uint32_t>(_state->frame_counter);
 
     // Frame-scoped counters update even without an active capture session
+    if (_activitySummaryResetPending.load(std::memory_order_relaxed) &&
+        _activitySummaryResetPending.exchange(false, std::memory_order_relaxed))
+        _activitySummary.reset(frame);
     _activitySummary.onEvent(frame, isOut, disp);
 
     if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())
@@ -521,7 +563,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     if (disp.wasFullDecodeClaimed)
         event.deviceId = PortDeviceId::FullDecodeClaim;
 
-    bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
+    bool hadHandler = (disp.decodedPort != 0x0000) && _peripheralClaims.IsClaimed(disp.decodedPort);
 
     uint8_t flags = 0;
     if (isOut)
@@ -569,6 +611,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
                 break;
             case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
             case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
+            case MM_NEXT:        info.modelName = "Next"; break;
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
             case MM_PLUS2:       info.modelName = "SpectrumPlus2"; break;
             case MM_PLUS2A:      info.modelName = "SpectrumPlus2A"; break;
@@ -664,6 +707,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                    Tags(PortTag::StorageFdc)});
             }
             break;
+        case MM_NEXT:
+            // PortDecoder_Next: the 128K decode widened, each write rewrites the MMU slot table
+            entries.push_back({0x7FFD, 0xC002, 0x4000, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x1FFD, 0xF002, 0x1000, "Special paging, ROM select bit 2", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
+            entries.push_back({0xDFFD, 0xF002, 0xD000, "Extended RAM bank (bits 0-3 above #7FFD's three)", nullptr,
+                               Tags(PortTag::Memory)});
+            entries.push_back({0x243B, 0xFFFF, 0x243B, "NEXTREG select", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x253B, 0xFFFF, 0x253B, "NEXTREG data", nullptr, Tags(PortTag::System)});
+            break;
         case MM_PROFI:
         case MM_PROFI3:
             // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,
@@ -722,17 +776,23 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             // attachToPorts): SD=1 registers the full mode-2 quad plus the
             // mode-1 primary quad, CovoxFB=1 alone registers #FB only; with
             // neither flag no device exists
+            // The SounDrive card's mode (ZX-bus slots option, sound.sdMode): 0 both sets, 1 / 2 one set
             if (_context->config.sound.sd)
             {
-                entries.push_back({0x00FB, 0x00F5, 0x00F1, "SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)", nullptr,
-                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                const uint8_t sdMode = _context->config.sound.sdMode;
+                if (sdMode != 1)
+                    entries.push_back({0x00FB, 0x00F5, 0x00F1, "SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)", nullptr,
+                                       Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                else if (_context->config.sound.covoxFB)
+                    entries.push_back({0x00FB, 0xFFFF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
                 // Mode 1 (#0F/#1F/#4F/#5F) aliases the Beta128 FDC's wide
                 // mirror decode (bits 0,1=1, bit7=0) - PortDecoder_Pentagon128
                 // only routes these to SoundDrive once TR-DOS has released
                 // them, so the advertised row states that precedence
-                entries.push_back({0x001F, 0x00AF, 0x000F, "SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)",
-                                   "!CF_TRDOS (Beta128 FDC not paged in claims these addresses first)",
-                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                if (sdMode != 2)
+                    entries.push_back({0x001F, 0x00AF, 0x000F, "SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)",
+                                       "!CF_TRDOS (Beta128 FDC not paged in claims these addresses first)",
+                                       Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
             }
             else if (_context->config.sound.covoxFB)
             {
@@ -881,13 +941,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     }
 
     // Explicitly registered peripheral devices (RegisterPortHandler) not already
-    // covered by a static row's address qualification above
-    for (const auto& handler : _portDevices)
+    // covered by a static row's address qualification above, in port order
+    std::vector<uint16_t> handlerPorts;
+    for (const slots::ClaimEntry& claim : _peripheralClaims.Entries())
+        handlerPorts.push_back(claim.match);
+    std::sort(handlerPorts.begin(), handlerPorts.end());
+    for (const uint16_t handlerPort : handlerPorts)
     {
         bool covered = false;
         for (const PortMapEntry& entry : entries)
         {
-            if ((handler.first & entry.mask) == entry.match)
+            if ((handlerPort & entry.mask) == entry.match)
             {
                 covered = true;
                 break;
@@ -896,10 +960,10 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         if (!covered)
         {
             PortTagSet handlerTags = 0;
-            auto stored = _portDeviceTags.find(handler.first);
+            auto stored = _portDeviceTags.find(handlerPort);
             if (stored != _portDeviceTags.end())
                 handlerTags = stored->second;
-            entries.push_back({handler.first, 0xFFFF, handler.first, "Registered peripheral device", nullptr,
+            entries.push_back({handlerPort, 0xFFFF, handlerPort, "Registered peripheral device", nullptr,
                               handlerTags});
         }
     }
@@ -968,15 +1032,15 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::P1FFD:  return state.p1FFD;
         case PagingLatch::PDFFD:  return state.pDFFD;
         case PagingLatch::PFDFD:  return state.pFDFD;
-        case PagingLatch::P7EFD:  return state.p7EFD;
+        case PagingLatch::P7EFD:  return state.scorpion.p7EFD;
         case PagingLatch::PEFF7:  return state.pEFF7;
         case PagingLatch::PFF77:  return state.pFF77;
-        case PagingLatch::AFE:    return state.aFE;
-        case PagingLatch::AFB:    return state.aFB;
-        case PagingLatch::PFFF7Window0: return state.pFFF7[0];
-        case PagingLatch::PFFF7Window1: return state.pFFF7[1];
-        case PagingLatch::PFFF7Window2: return state.pFFF7[2];
-        case PagingLatch::PFFF7Window3: return state.pFFF7[3];
+        case PagingLatch::AFE:    return state.atm.aFE;
+        case PagingLatch::AFB:    return state.atm.aFB;
+        case PagingLatch::PFFF7Window0: return state.atm.pFFF7[0];
+        case PagingLatch::PFFF7Window1: return state.atm.pFFF7[1];
+        case PagingLatch::PFFF7Window2: return state.atm.pFFF7[2];
+        case PagingLatch::PFFF7Window3: return state.atm.pFFF7[3];
         case PagingLatch::PFE:    return state.pFE;
         case PagingLatch::None:
         default:
@@ -1194,7 +1258,7 @@ void PortDecoder::GetMouseRoutingState(bool& decoded, std::string& note) const
     // Canonical buttons port; ownership by an explicitly registered peripheral
     // keeps the address away from the mouse (Default_IsPort_KempstonMouse)
     static const uint16_t probePort = 0xFADF;
-    if (key_exists(_portDevices, probePort))
+    if (_peripheralClaims.IsClaimed(probePort))
     {
         note = StringHelper::Format("port #%04X claimed by a registered peripheral", probePort);
         return;
@@ -1304,7 +1368,7 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
         return false;
     if (_state && (_state->flags & CF_DOSPORTS))
         return false;
-    if (key_exists(_portDevices, port))
+    if (_peripheralClaims.IsClaimed(port))
         return false;
     return Standard_IsPort_KempstonMouse(port, outRegister);
 }
@@ -1450,9 +1514,15 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device, PortTag
 
     if (device)
     {
-        if (!key_exists(_portDevices, port))
+        if (!_peripheralClaims.IsClaimed(port))
         {
-            _portDevices.insert({port, device});
+            // Control path: one exact claim on the decoded port
+            slots::ClaimEntry entry;
+            entry.mask = kPeripheralMask;
+            entry.match = port;
+            entry.owner = device;
+            _peripheralClaims.Add(entry);
+            _peripheralClaims.Build();
             _portDeviceTags.insert_or_assign(port, tags);
             result = true;  // Fix: return true on successful registration
         }
@@ -1467,90 +1537,114 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device, PortTag
 
 void PortDecoder::UnregisterPortHandler(uint16_t port)
 {
-    if (key_exists(_portDevices, port))
+    if (PortDevice* device = PeripheralDevice(port))
     {
-        _portDevices.erase(port);
+        _peripheralClaims.Remove(kPeripheralMask, port, device);
+        _peripheralClaims.Build();
         _portDeviceTags.erase(port);
     }
 }
 
 bool PortDecoder::RegisterFullDecodePort(uint16_t port, PortDevice* device)
 {
-    bool result = false;
+    if (!device)
+        return false;
 
-    if (device)
+    if (_fullDecodeClaims.Contains(kExactObserverMask, port))
     {
-        if (!key_exists(_fullDecodeDevices, port))
-        {
-            _fullDecodeDevices.insert({port, device});
-            result = true;
-        }
-        else
-        {
-            MLOGWARNING("PortDecoder::RegisterFullDecodePort - observer for port: #%04X already registered", port);
-        }
+        MLOGWARNING("PortDecoder::RegisterFullDecodePort - observer for port: #%04X already registered", port);
+        return false;
     }
 
-    return result;
+    slots::ClaimEntry entry;
+    entry.mask = kExactObserverMask;
+    entry.match = port;
+    entry.slot = kExactObserverSlot;
+    entry.owner = device;
+    _fullDecodeClaims.Add(entry);
+    RebuildFullDecodeClaims();
+    return true;
 }
 
 void PortDecoder::UnregisterFullDecodePort(uint16_t port, PortDevice* device)
 {
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second == device)
-    {
-        _fullDecodeDevices.erase(it);
-    }
+    if (_fullDecodeClaims.Remove(kExactObserverMask, port, device))
+        RebuildFullDecodeClaims();
 }
 
 bool PortDecoder::RegisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
 {
-    bool result = false;
+    if (!device)
+        return false;
 
-    if (device)
+    if (_fullDecodeClaims.Contains(kLowByteObserverMask, port))
     {
-        if (!_fullDecodeLowByteDevices[port])
-        {
-            _fullDecodeLowByteDevices[port] = device;
-            result = true;
-        }
-        else
-        {
-            MLOGWARNING("PortDecoder::RegisterFullDecodeLowBytePort - observer for port low byte: #%02X already registered", port);
-        }
+        MLOGWARNING("PortDecoder::RegisterFullDecodeLowBytePort - observer for port low byte: #%02X already registered", port);
+        return false;
     }
 
-    return result;
+    slots::ClaimEntry entry;
+    entry.mask = kLowByteObserverMask;
+    entry.match = port;
+    entry.slot = kLowByteObserverSlot;
+    entry.owner = device;
+    _fullDecodeClaims.Add(entry);
+    RebuildFullDecodeClaims();
+    return true;
 }
 
 void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
 {
-    if (_fullDecodeLowByteDevices[port] == device)
-    {
-        _fullDecodeLowByteDevices[port] = nullptr;
-    }
+    if (_fullDecodeClaims.Remove(kLowByteObserverMask, port, device))
+        RebuildFullDecodeClaims();
+}
+
+void PortDecoder::RebuildFullDecodeClaims()
+{
+    _fullDecodeClaims.Build();
+}
+
+void PortDecoder::SetFullDecodeScanTrapForTests(PortDevice* trap)
+{
+    _fullDecodeClaims.SetScanTrapForTests(trap);
+    RebuildFullDecodeClaims();
+}
+
+PortDevice* PortDecoder::LowByteObserver(uint16_t rawPort) const
+{
+    // Legacy low-byte observers only: a slot-built card's low-byte claim is resolved by the claim table
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FindByMask(rawPort, kLowByteObserverMask);
+    return entry && entry->slot < kSlotCardSlotBase ? entry->owner : nullptr;
+}
+
+/// Whether a low-byte card stands the board's decode down for this cycle.
+/// A read only stands the model decode down when the card actually drives
+/// this port's data (portDeviceClaimsRead) - a registered-but-silent low
+/// byte (e.g. a write-only address latch) never asserts its output buffer,
+/// so the real underlying device (ULA/AY/FDC) must answer exactly as if
+/// the card were not attached. Writes have no such ambiguity: every OUT to
+/// a registered low byte stands the model decode down unconditionally.
+bool PortDecoder::LowByteCardStandsDown(uint16_t rawPort, bool isRead) const
+{
+    PortDevice* card = LowByteObserver(rawPort);
+    return card && (!isRead || card->portDeviceClaimsRead(rawPort));
 }
 
 /// Model-decode claim override: see portdecoder.h. Called from each model's
 /// DecodePortIn/Out right after decodePortEx, before any inline handler runs -
-/// the claiming observer was already serviced by the Z80 I/O funnel tap.
-bool PortDecoder::OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
-                                                   PortDecodeDisposition& disp, bool isRead)
+/// the claiming card was already serviced by the cycle's resolution.
+/// The inline OverrideDecodeForFullDecodeClaim has already found the port claimed.
+bool PortDecoder::OverrideDecodeForClaimedPort(uint16_t rawPort, uint16_t& decodedPort,
+                                               PortDecodeDisposition& disp, bool isRead)
 {
     if (decodedPort == 0x0000)
         return false;
 
-    PortDevice* observer = _fullDecodeLowByteDevices[rawPort & 0xFF];
-    if (observer == nullptr)
-        return false;
-
-    // A read only stands the model decode down when the card actually drives
-    // this port's data (portDeviceClaimsRead) - a registered-but-silent low
-    // byte (e.g. a write-only address latch) never asserts its output buffer,
-    // so the real underlying device (ULA/AY/FDC) must answer exactly as if
-    // the card were not attached. Writes have no such ambiguity: every OUT to
-    // a registered low byte stands the model decode down unconditionally.
-    if (isRead && !observer->portDeviceClaimsRead(rawPort))
+    // The cycle's resolution decided it before the board decode ran (one lookup per claimed cycle); a direct
+    // DecodePortIn/Out call outside a bus cycle (tests, tools) decides it here
+    const bool standDown = (_claimCycle.active && rawPort == _claimCycle.port) ? _claimCycle.standDown
+                                                                              : LowByteCardStandsDown(rawPort, isRead);
+    if (!standDown)
         return false;
 
     // Beta-128 registers keep their TR-DOS session arbitration (R6): the FDC
@@ -1586,7 +1680,7 @@ std::vector<PortDecodeClash> PortDecoder::FindFullDecodeClashes() const
 
         for (uint16_t low = 0; low <= 0xFF; low++)
         {
-            const PortDevice* device = _fullDecodeLowByteDevices[low];
+            PortDevice* device = LowByteObserver(low);
             if (device == nullptr || (low & ruleMaskLow) != ruleMatchLow)
                 continue;
 
@@ -1596,7 +1690,7 @@ std::vector<PortDecodeClash> PortDecoder::FindFullDecodeClashes() const
             clash.ruleMatch = rule.match;
             clash.rulePort = rule.port;
             clash.claimLowByte = static_cast<uint8_t>(low);
-            clash.device = _fullDecodeLowByteDevices[low];
+            clash.device = device;
             // Required high bits come from the match value (don't-care bits stay 0)
             clash.sampleAddress = static_cast<uint16_t>((rule.match & 0xFF00) | low);
             clash.fdcProtected = IsBeta128Port(rule.port);
@@ -1722,105 +1816,174 @@ std::vector<PortDecodeRuleOverride> PortDecoder::FindFullDecodeRuleResolutions()
     return result;
 }
 
-/// Z80 OUT tap: forward the RAW port write to the full-decode observer (if any).
-/// Called from Z80::out() before the model decode - the observer sees the cycle
-/// no matter which device the model decode attributes it to.
-void PortDecoder::NotifyFullDecodeOut(uint16_t port, uint8_t value)
+/// Split-phase OUT tap, claimed port: forward the RAW port write to the
+/// full-decode observer before the model decode - the observer sees the cycle
+/// no matter which device the model decode attributes it to. The first claim
+/// in slot order is the exact 16-bit observer, then the low-byte one (every
+/// high-byte alias of a registered low byte reaches the card: guest
+/// `out (n),a` forms put A in the high byte).
+void PortDecoder::NotifyClaimedOut(uint16_t port, uint8_t value)
 {
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second)
-    {
-        it->second->portDeviceOutMethod(port, value);
-        return;
-    }
-
-    // Low-byte CPLD decode: every high-byte alias of a registered low byte
-    // reaches the card (guest `out (n),a` forms put A in the high byte).
-    if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
-    {
-        lowByteObserver->portDeviceOutMethod(port, value);
-    }
+    if (const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port))
+        entry->owner->portDeviceOutMethod(port, value);
 }
 
-/// Z80 IN tap: query the full-decode observer for the RAW port read.
+/// Z80 IN tap, claimed port: query the full-decode observer for the RAW port read.
 /// Returns the observer's bus value (0xFF when none) and sets handled=true
 /// when an observer drives the bus, claimsBus=true when it claims the read
 /// over a model-decoded device (armed card, portDeviceClaimsRead). Z80::in()
 /// applies the value with legacy-device priority unless the observer claims
 /// the bus, and suppresses the floating bus override for handled ports.
-uint8_t PortDecoder::NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus)
+uint8_t PortDecoder::NotifyClaimedIn(uint16_t port, bool& handled, bool& claimsBus)
 {
     uint8_t result = 0xFF;
     handled = false;
     claimsBus = false;
 
-    auto it = _fullDecodeDevices.find(port);
-    if (it != _fullDecodeDevices.end() && it->second)
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (PortDevice* observer = entry ? entry->owner : nullptr)
     {
-        result = it->second->portDeviceInMethod(port);
+        result = observer->portDeviceInMethod(port);
         handled = true;
-        claimsBus = it->second->portDeviceClaimsRead(port);
-    }
-    else if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
-    {
-        // Low-byte CPLD decode: every high-byte alias of a registered low
-        // byte reaches the card, with the same claim semantics as above.
-        result = lowByteObserver->portDeviceInMethod(port);
-        handled = true;
-        claimsBus = lowByteObserver->portDeviceClaimsRead(port);
+        claimsBus = observer->portDeviceClaimsRead(port);
     }
 
     // Cache the observer's bus value for the claim override inside
     // DecodePortIn (single read of a stateful card register - see
     // _lastFullDecodeInValue)
-    _lastFullDecodeInPort = port;
     _lastFullDecodeInValue = result;
 
     return result;
 }
 
-bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
+/// ReadCycle, claimed port: the card's tap, the board's decode and the shared-bus rule R6 in one pass (see
+/// ReadCycle in portdecoder.h)
+uint8_t PortDecoder::ReadClaimedCycle(uint16_t port, uint16_t pc, bool& cardDrove)
 {
-    bool result = false;
-
-    if (device && std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device) == _selfDecodingDevices.end())
+    // The one claim lookup of the cycle: the first card in slot order (the
+    // exact 16-bit observer before the low-byte one) drives the bus
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (entry && entry->slot >= kSlotCardSlotBase) [[unlikely]]
+        return ReadSlotCardCycle(port, pc, cardDrove);
+    PortDevice* card = entry ? entry->owner : nullptr;
+    uint8_t cardValue = 0xFF;
+    bool claimsBus = false;
+    cardDrove = card != nullptr;
+    if (card)
     {
-        _selfDecodingDevices.push_back(device);
-        result = true;
+        cardValue = card->portDeviceInMethod(port);
+        claimsBus = card->portDeviceClaimsRead(port);
     }
+
+    // The card's value for the board's claim override (the card is never
+    // read twice: a second read would corrupt stateful status registers)
+    _lastFullDecodeInPort = port;
+    _lastFullDecodeInValue = cardValue;
+
+    // Does a low-byte card stand the board decode down: decided here, applied
+    // by the decoder's OverrideDecodeForFullDecodeClaim
+    bool standDown = false;
+    if (entry && entry->mask == kLowByteObserverMask)
+        standDown = claimsBus;
+    else if (entry)
+        standDown = LowByteCardStandsDown(port, /*isRead*/ true);
+    _claimCycle = { port, true, standDown };
+
+    uint8_t result = DecodePortIn(port, pc);
+    _claimCycle.active = false;
+
+    // Shared read cycle, legacy-device priority (R6): when the board decode
+    // already handed the port to a device (ULA/AY/FDC...), that device's value
+    // IS the bus value - the card's data is discarded (its access side
+    // effects still happened above). Two exceptions drive the bus with the
+    // card's value: an otherwise-undecoded port (the floating bus is
+    // suppressed for it, so the card value replaces the 0xFF placeholder) and
+    // a CLAIMED port - an armed card overriding the legacy mirror
+    // (ZXM-MoonSound wave data at #7F once OPL4 NEW is set;
+    // MoonService-verified behaviour).
+    if (cardDrove && (claimsBus || !_lastPortDecoded))
+        result = cardValue;
 
     return result;
 }
 
+/// WriteCycle, claimed port: the card sees the write first, then the board decodes it
+void PortDecoder::WriteClaimedCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    // The one claim lookup of the cycle (exact observer before the low-byte one)
+    const slots::ClaimEntry* entry = _fullDecodeClaims.FirstMatch(port);
+    if (entry && entry->slot >= kSlotCardSlotBase) [[unlikely]]
+    {
+        WriteSlotCardCycle(port, value, pc);
+        return;
+    }
+    bool standDown = false;
+    if (entry)
+    {
+        entry->owner->portDeviceOutMethod(port, value);
+        // Every write to a low-byte card's port stands the board decode down
+        standDown = entry->mask == kLowByteObserverMask || LowByteObserver(port) != nullptr;
+    }
+    _claimCycle = { port, true, standDown };
+
+    DecodePortOut(port, value, pc);
+    _claimCycle.active = false;
+}
+
+bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
+{
+    if (!device)
+        return false;
+    for (const slots::ClaimEntry& entry : _selfDecodingClaims.Entries())
+    {
+        if (entry.owner == device)
+            return false;
+    }
+
+    // Control path: the device's claims, one slot, registration order kept by the table's sequence
+    for (const PortMaskMatch& claim : device->selfDecodingClaims())
+    {
+        slots::ClaimEntry entry;
+        entry.mask = claim.mask;
+        entry.match = claim.match;
+        entry.owner = device;
+        _selfDecodingClaims.Add(entry);
+    }
+    _selfDecodingClaims.Build();
+    return true;
+}
+
 void PortDecoder::UnregisterSelfDecodingDevice(PortDevice* device)
 {
-    auto it = std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device);
-    if (it != _selfDecodingDevices.end())
-    {
-        _selfDecodingDevices.erase(it);
-    }
+    if (device && _selfDecodingClaims.RemoveOwner(device))
+        _selfDecodingClaims.Build();
 }
 
-bool PortDecoder::DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+/// DispatchSelfDecodingOut, claimed port: every device whose claim covers the
+/// port, in registration order, until one takes it (tryClaimOut). A device is
+/// asked once however many of its claims cover the port
+bool PortDecoder::DispatchClaimedSelfDecodingOut(uint16_t rawPort, uint8_t value)
 {
-    for (PortDevice* device : _selfDecodingDevices)
+    const PortDevice* asked = nullptr;
+    return _selfDecodingClaims.ForEachMatch(rawPort, [&](const slots::ClaimEntry& entry)
     {
-        if (device->tryClaimOut(rawPort, value))
-            return true;
-    }
-
-    return false;
+        if (entry.owner == asked)
+            return false;
+        asked = entry.owner;
+        return entry.owner->tryClaimOut(rawPort, value);
+    });
 }
 
-bool PortDecoder::DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+bool PortDecoder::DispatchClaimedSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
 {
-    for (PortDevice* device : _selfDecodingDevices)
+    const PortDevice* asked = nullptr;
+    return _selfDecodingClaims.ForEachMatch(rawPort, [&](const slots::ClaimEntry& entry)
     {
-        if (device->tryClaimIn(rawPort, outValue))
-            return true;
-    }
-
-    return false;
+        if (entry.owner == asked)
+            return false;
+        asked = entry.owner;
+        return entry.owner->tryClaimIn(rawPort, outValue);
+    });
 }
 
 /// Pass port IN operation to the peripheral device registered to handle specified port
@@ -1830,15 +1993,11 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 {
     uint8_t result = 0xFF;
 
-    if (key_exists(_portDevices, port))
+    if (PortDevice* device = PeripheralDevice(port))
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = _portDevices.at(port);
-        if (device)
-        {
-            result = device->portDeviceInMethod(port);
-            _lastPortDecoded = true;
-        }
+        result = device->portDeviceInMethod(port);
+        _lastPortDecoded = true;
     }
     else
     {
@@ -1847,8 +2006,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         // Determine RAM/ROM page where code executed from
         // (pCore may be absent in unit-test contexts)
         uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use IN command PC, not the next one (z80->pc)
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(),
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, GetPCAddressLocator(pc).c_str(),
                     port);
     }
 
@@ -1860,14 +2018,10 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
 /// \param value Value to output into specified port
 void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 {
-    if (key_exists(_portDevices, port))
+    if (PortDevice* device = PeripheralDevice(port))
     {
         // Peripheral registered to handle port event found
-        PortDevice* device = _portDevices.at(port);
-        if (device)
-        {
-            device->portDeviceOutMethod(port, value);
-        }
+        device->portDeviceOutMethod(port, value);
     }
     else
     {
@@ -1876,9 +2030,8 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         // Determine RAM/ROM page where code executed from
         // (pCore may be absent in unit-test contexts)
         uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use OUT command PC, not the next one (z80->pc)
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc,
-                    currentMemoryPage.c_str(), port, value);
+                    GetPCAddressLocator(pc).c_str(), port, value);
     }
 }
 
@@ -1972,3 +2125,133 @@ std::string PortDecoder::Dump_FE_value(uint8_t value)
 }
 
 /// endregion </Debug information>
+
+/// region <Slot-built cards>
+
+void PortDecoder::ConfigureSlotBus(slots::Arbitration arbitration, slots::ReadRule readRule,
+                                   std::span<const slots::PortClaim> boardPorts,
+                                   std::span<const slots::BuiltInDef> builtIns)
+{
+    _fullDecodeClaims.Configure(arbitration, readRule, boardPorts);
+    _fullDecodeClaims.ClearBuiltIns();
+    for (const slots::BuiltInDef& builtIn : builtIns)
+        _fullDecodeClaims.AddBuiltIn(builtIn.id, builtIn.claims);
+    RebuildFullDecodeClaims();
+}
+
+void PortDecoder::AttachSlotCard(PortDevice* card, std::span<const slots::PortClaim> claims, uint8_t slotOrder,
+                                 slots::CycleDetection detection)
+{
+    if (!card)
+        return;
+    const uint8_t slot = std::max(slotOrder, kSlotCardSlotBase);
+    for (const slots::PortClaim& claim : claims)
+        _fullDecodeClaims.Add(slots::MakeClaimEntry(claim, slot, card, detection));
+    RebuildFullDecodeClaims();
+}
+
+void PortDecoder::DetachSlotCard(PortDevice* card)
+{
+    if (card && _fullDecodeClaims.RemoveOwner(card))
+        RebuildFullDecodeClaims();
+}
+
+void PortDecoder::SetBuiltInRemoved(const char* builtInId)
+{
+    _fullDecodeClaims.SetBuiltInRemoved(builtInId);
+}
+
+void PortDecoder::BindSlotSignals(const slots::IClaimSignals* claimSignals)
+{
+    _fullDecodeClaims.BindSignals(claimSignals);
+}
+
+bool PortDecoder::IsBuiltInShadowed(const char* builtInId) const
+{
+    const auto* builtIn = _fullDecodeClaims.FindBuiltIn(builtInId);   // auto: Qt units define `slots`
+    return builtIn != nullptr && builtIn->shadowed;
+}
+
+/// ReadCycle, a port whose first claim is a slot-built card's: the claim table resolves the cycle (which cards see
+/// it, IORQGE, the bus arbitration, the read rule); the board's decode is its board side
+uint8_t PortDecoder::ReadSlotCardCycle(uint16_t port, uint16_t pc, bool& cardDrove)
+{
+    const SlotCycleGate gate = SlotCardGate(port, true);
+    if (!gate.connected)
+    {
+        // The connector carries nothing: the board's alone, as on a port no card claims
+        cardDrove = false;
+        return DecodePortIn(port, pc);
+    }
+    bool boardRan = false;
+    bool boardDrove = false;
+    uint8_t boardValue = 0xFF;
+    const slots::ReadResult read = _fullDecodeClaims.Read(port, [&](slots::BoardCycle, uint8_t& value) {
+        // The board decodes as if no card were fitted (no machine with an UlaOnly bus fits slot-built cards yet:
+        // UlaSilenced runs the whole decode too). Its claim override must not stand down for the card's low-byte
+        // claims: they are not legacy observers
+        boardRan = true;
+        _claimCycle = { port, true, false };
+        value = DecodePortIn(port, pc);
+        _claimCycle.active = false;
+        boardDrove = _lastPortDecoded;
+        // A chip out of its socket drives nothing, whatever the board's decode says about the port
+        if (boardDrove && _fullDecodeClaims.IsRemovedBuiltInRead(port))
+        {
+            boardDrove = false;
+            _lastPortDecoded = false;
+        }
+        boardValue = value;
+        return boardDrove;
+    }, !gate.iorq);
+    cardDrove = read.drivers > (boardDrove ? 1 : 0);
+    uint8_t value = read.value;
+    if (!gate.byReadRule && boardRan)
+    {
+        // The machine's own read mux (the Next's: the board's response first, the connector's data ANDed in or alone)
+        const uint8_t cards = cardDrove ? read.cardsValue : 0xFF;
+        const bool cardsUsed = boardDrove ? gate.cardsWithBoard : gate.cardsAlone;
+        value = boardDrove ? static_cast<uint8_t>((gate.boardData ? boardValue : 0xFF) & (cardsUsed ? cards : 0xFF))
+                           : (cardsUsed ? cards : 0xFF);
+        cardDrove = cardDrove && cardsUsed;
+    }
+    if (!boardRan)
+    {
+        // A card's IORQGE hid the cycle from the board (CardWins): the board saw nothing, the CPU's access is still
+        // traced and still meets its breakpoints
+        _lastPortDecoded = false;
+        PortDecodeDisposition disp;
+        disp.wasFullDecodeClaimed = true;
+        OnPortInComplete(port, read.value, pc, disp);
+    }
+    _lastFullDecodeInPort = port;
+    _lastFullDecodeInValue = value;
+    return value;
+}
+
+/// WriteCycle, a port whose first claim is a slot-built card's: every card that sees the write gets it, the board
+/// unless a card's IORQGE hides the cycle
+void PortDecoder::WriteSlotCardCycle(uint16_t port, uint8_t value, uint16_t pc)
+{
+    const SlotCycleGate gate = SlotCardGate(port, false);
+    if (!gate.connected)
+    {
+        DecodePortOut(port, value, pc);
+        return;
+    }
+    bool boardRan = false;
+    _fullDecodeClaims.Write(port, value, [&](slots::BoardCycle) {
+        boardRan = true;
+        _claimCycle = { port, true, false };
+        DecodePortOut(port, value, pc);
+        _claimCycle.active = false;
+    }, !gate.iorq);
+    if (!boardRan)
+    {
+        PortDecodeDisposition disp;
+        disp.wasFullDecodeClaimed = true;
+        OnPortOutComplete(port, value, pc, disp);
+    }
+}
+
+/// endregion </Slot-built cards>

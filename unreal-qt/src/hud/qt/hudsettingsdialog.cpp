@@ -7,7 +7,10 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QStyle>
+
+#include <algorithm>
 
 namespace
 {
@@ -61,6 +64,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioCdda, QObject::tr("CD Audio Activity"),
      QObject::tr("Show when an ATAPI CD drive plays an audio track (Red Book CD-DA) - 'CD'"),
      QObject::tr("Audio"), true},  // Default on - a CD drive is opt-in hardware
+    {HudNotificationCategory::AudioMultiSound, QObject::tr("ZX-MultiSound Activity"),
+     QObject::tr("Show when the ZX-MultiSound card produces sound on any of its rows (FM, SSG, SAA, DAC, MIDI) - 'MultiSound'"),
+     QObject::tr("Audio"), true},  // Default on - the card is opt-in hardware
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),
@@ -111,8 +117,8 @@ void ensureInitialized()
 
 } // namespace
 
-HudSettingsDialog::HudSettingsDialog(EmulatorContext* context, QWidget* parent)
-    : QDialog(parent), _context(context)
+HudSettingsDialog::HudSettingsDialog(QWidget* parent)
+    : QDialog(parent)
 {
     ensureInitialized();
 
@@ -140,6 +146,36 @@ QSet<QString> HudSettingsDialog::enabledCategories()
 {
     ensureInitialized();
     return g_enabledCategories;
+}
+
+bool HudSettingsDialog::setCategoryEnabled(const QString& categoryId, bool enabled)
+{
+    ensureInitialized();
+    const bool known = std::any_of(g_categories.begin(), g_categories.end(),
+                                   [&](const HudCategoryDescriptor& cat) { return cat.id == categoryId; });
+    if (!known)
+        return false;
+    if (enabled)
+        g_enabledCategories.insert(categoryId);
+    else
+        g_enabledCategories.remove(categoryId);
+    saveSettings();
+    for (QWidget* widget : QApplication::topLevelWidgets())
+    {
+        for (auto* dialog : widget->findChildren<HudSettingsDialog*>())
+        {
+            for (QCheckBox* checkbox : dialog->_categoryCheckboxes)
+            {
+                if (checkbox->property("categoryId").toString() != categoryId)
+                    continue;
+                QSignalBlocker blocker(checkbox);
+                checkbox->setChecked(enabled);
+            }
+        }
+    }
+    if (g_changedCallback)
+        g_changedCallback();
+    return true;
 }
 
 void HudSettingsDialog::saveSettings()

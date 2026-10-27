@@ -1,0 +1,434 @@
+;(C)LYNX'99
+;SOME LITTLE HELP DR.SYSTEM
+
+               ORG     #7000
+; ---------
+
+duatr          EQU     #7000;ATTRIBUTES
+border         EQU     #7001
+winatr         EQU     #7002
+butatr         EQU     #7004
+nameatr        EQU     #7006
+chbxatr        EQU     #7008
+dwatr          EQU     #700a
+koncol         EQU     #700c;KONSOL ATTR
+track          EQU     #700e;EXTENDED DIRECTORY TRRRACK
+ext            EQU     #7010;DB      "SCRRLECMP123123123123"
+free           EQU     #7025;UNUSED
+fils           EQU     #7027;FILES ON DISK
+lstf           EQU     #7029;LAST FILE NUMBER
+delf           EQU     #702a;DELETED FILES
+flg            EQU     #702c
+cords          EQU     #702d
+xtxt           EQU     #702e
+ytxt           EQU     #702f
+xlen           EQU     #7030
+ylen           EQU     #7031
+fn             EQU     #7032
+pnosn          EQU     #7033
+flgs           EQU     #7034
+filwin         EQU     #7036
+cur            EQU     #7037
+step           EQU     #7039;MOUSE STEP
+restbl         EQU     #703a;RESIDENTS TABLE
+               ORG     #7058
+obois          DB      "FlyShit C",0
+music          DB      "MUS     C",0
+theme          DB      "THEME   C",0
+plugin         DB      "PLUG1   o",0
+csr            DB      "CURSOR  C",0
+resid          DB      "CLOCK   C",0
+ssaver         DB      "SAVER   C",0
+setnm          DB      "fsetup  s",0
+plugv          EQU     #70a8;PLUG VIEW (CALL WH. UNKN. EXT)
+data           EQU     #70aa;DATA FOR NUMBER PRINT
+mpl            EQU     #70b2;MUSIC PLAY ADDRES
+stime          EQU     #70b4;SCREEN SAVER TIME ELAPSED
+               ORG     #7100
+setwin         EQU     #7100;SET WINDOW
+checkw         EQU     #7103;CHECK WINDOW
+animal         EQU     #7106;MOUSE
+dopus          EQU     #7109
+read           EQU     #710c;REREAD DISK CATALOG TO #C000
+multy          EQU     #710f;HL=B*C
+page           EQU     #7112;SET PAGE
+cpblok         EQU     #7115;CP TWO BLOCK (HL&DE)
+gtadr          EQU     #7118;GET ADDR OF FILE DESC (IN PAGE 0)
+getext         EQU     #711b;GET ADDR OF EXTENDED FILE DESC
+clearbf        EQU     #711e;CLEAR FILENAME BUFFER
+viewf          EQU     #7121;VIEW FILE (FNM=NUMBER OF FILENAME)
+xyatr          EQU     #7124;XY->ADDR IN ATR
+xyscr          EQU     #7127;XY->ADDR IN SCR
+prstr          EQU     #712a;Print String HL-ADDR,BC -COOR.
+remw           EQU     #712d;REMOVE WINDOW FROM SCREEN
+shutay         EQU     #7130;SHUT UP MUSIC COPROC
+paused         EQU     #7133;PAUSE
+press          EQU     #7136;PRESS ZNK IN SCR(BC - COORDINATES)
+putspr         EQU     #7139;PUT SPRITE
+prsum          EQU     #713c;SET NUMBER (IN HL) TO DATA STRING)
+uph            EQU     #713f;UP H
+downh          EQU     #7142;DOWN H
+mnu            EQU     #7145;MAIN MENU
+dos            EQU     #7148;TR DOS
+getfil         EQU     #714b;FILE PANEL
+ankey          EQU     #714e;WAIT ANY KEY
+rpkey          EQU     #7151;WAIT UNTIL ANY KEY UNPRESSED
+getarc         EQU     #7154;GET ARC ATR BYTE&ADDRES(BC-COORD)
+mscrd          EQU     #7157;GET MOUSE COORDINATES (IN BC)
+kilarc         EQU     #715a;KILL 'move window' ARCADE LINE
+sssr           EQU     #715d;SAVE SCREEN IN PAGE 7
+ussr           EQU     #7160;REPRINT SCREEN FROM PAGE 7
+mst            EQU     #70b6;MOUSE MINIMAL STEP
+;----------------------------------------------------
+               ORG     #6000
+               LCODE   "DBG3_33"
+;----------------------------------------------------
+               ORG     #9c3c
+               ENT
+               JP      #7200
+;----------------------------------------------------
+               ORG     #9c40
+;----------------------------------------------------
+;Now following text of your programm
+;----------------------------------------------------
+;ДЛЯ ПPИMEPA ИCXOДHИK Setup.o
+;----------------------------------------------------
+;SETUP 2.0 4 FIRES
+;(c)Lynx ... Bug fix ideas by Employer/Alliance
+;----------------------------------------------------
+
+;OOPS SCREEN IZWRATER!!!!!
+;(C)LYNX 1999
+               ORG     #9c40
+junk           PUSH    IX
+               LD      IX,ju_win1
+               LD      A,#16
+               CALL    page
+               CALL    setwin
+               LD      A,#11
+               CALL    jun1
+               POP     IX
+               RET
+jun1           LD      A,#16
+               CALL    page
+               CALL    animal
+               CALL    checkw
+               JR      jun1
+savef          PUSH    IX
+               LD      IX,savewin
+               LD      A,#16
+               CALL    page
+               CALL    setwin
+               LD      A,#11
+               CALL    juba_1
+               POP     IX
+               LD      A,#16
+               CALL    page
+               CALL    remw
+               CALL    setwin
+               RET
+juba_1         LD      A,#16
+               CALL    page
+               CALL    animal
+               CALL    checkw
+               JR      juba_1
+sv1st          LD      HL,#c000
+               JR      savef_1
+sv2nd          LD      HL,#db00
+savef_1        PUSH    HL
+               LD      HL,named
+               LD      DE,#5cdd
+               LD      BC,8
+               LDIR
+               POP     HL
+               LD      A,#11
+               CALL    page
+               LD      DE,#1b00
+               LD      C,11
+               CALL    dos
+               LD      C,10
+               CALL    dos
+               LD      A,"s"
+               LD      (#5ce5),A
+               LD      A,"c"
+               LD      (#5ce6),A
+               LD      A,"r"
+               LD      (#5ce7),A
+               LD      A,C
+               LD      C,9
+               CALL    dos
+               LD      A,#16
+               CALL    page
+               RET
+jun2           PUSH    IX
+               LD      IX,oths
+               LD      A,#16
+               CALL    page
+               CALL    setwin
+               LD      A,#11
+               CALL    jun_3
+               POP     IX
+               CALL    remw
+               CALL    setwin
+               RET
+fuck           LD      A,#11
+               CALL    page
+               LD      DE,#c000
+               LD      HL,0
+               LD      BC,#1800
+fu_1
+               LD      A,(DE)
+               AND     (HL)
+               LD      (DE),A
+               INC     DE
+               DEC     BC
+               INC     HL
+               LD      A,B
+               OR      C
+               JR      NZ,fu_1
+               RET
+
+jun_3          LD      A,#16
+               CALL    page
+               CALL    animal
+               CALL    checkw
+               JR      jun_3
+stf            LD      DE,#c000
+               LD      HL,#db00
+               CALL    eff
+               CALL    v1
+               RET
+fts            LD      DE,#db00
+               LD      HL,#c000
+               CALL    eff
+               CALL    v2
+               RET
+eff            LD      A,#11
+               CALL    page
+               LD      BC,0
+               PUSH    BC
+               LD      BC,#1800
+loop
+               POP     AF
+               LD      A,(HL)
+ll1            CPL;EDGE
+ll2            RRA;SOFTEN
+               PUSH    AF
+ll3            OR      (HL);BACKSET
+ll4            AND     (HL);ANDSET
+ll5            CPL;OUT INVERT
+               LD      (DE),A
+               INC     HL
+               INC     DE
+               DEC     BC
+               LD      A,B
+               OR      C
+               JR      NZ,loop
+               POP     AF
+               LD      BC,#300
+               LDIR
+               LD      A,#16
+               CALL    page
+atb            RET
+maniac
+               LD      HL,#4000
+               LD      DE,#c000
+               LD      BC,#1b00
+               LDIR
+               RET
+savscr         LD      A,#17
+               CALL    page
+               LD      HL,#4000
+               LD      DE,#e4ff
+               LD      BC,#1b00
+               LDIR
+               RET
+unscr          LD      A,#17
+               CALL    page
+               LD      HL,#e4ff
+               LD      DE,#4000
+               LD      BC,#1b00
+               LDIR
+               RET
+unp_1          LD      HL,#c000
+               LD      (un_1+1),HL
+               LD      (un_2+1),HL
+               JR      unpk
+unp_2          LD      HL,#db00
+               LD      (un_1+1),HL
+               LD      (un_2+1),HL
+unpk           LD      A,#17
+               CALL    page
+               CALL    maniac
+               LD      A,#ff
+               LD      (lstf),A
+               LD      A,#11
+               OR      8
+               CALL    page
+un_1           CALL    #c000
+               LD      HL,#4000
+un_2           LD      DE,#c000
+               LD      BC,#1b00
+               LDIR
+               LD      A,#1f
+               CALL    page
+               LD      HL,#c000
+               LD      DE,#4000
+               LD      BC,#1b00
+               LDIR
+               LD      A,#11
+               CALL    page
+               RET
+v1             LD      HL,#c000
+               JR      views
+v2             LD      HL,#db00
+views          PUSH    HL
+               CALL    savscr
+               POP     HL
+               LD      A,#11
+               CALL    page
+               LD      DE,#4000
+               LD      BC,#1b00
+               LDIR
+               CALL    rpkey
+               CALL    ankey
+               CALL    unscr
+               CALL    rpkey
+               LD      A,#16
+               CALL    page
+               RET
+amd            LD      A,(sx1)
+               LD      (suxx),A
+               JR      andbf
+ormd           LD      A,(sx3)
+               LD      (suxx),A
+               JR      andbf
+xormd          LD      A,(sx2)
+               LD      (suxx),A
+andbf          LD      A,#11
+               CALL    page
+               LD      BC,#1800
+               LD      HL,#db00
+               LD      DE,#c000
+an_1           LD      A,(DE)
+suxx           AND     (HL)
+               LD      (DE),A
+               INC     HL
+               INC     DE
+               DEC     BC
+               LD      A,B
+               OR      C
+               JR      NZ,an_1
+               CALL    v1
+               LD      A,#16
+               CALL    page
+               RET
+sx1            AND     (HL)
+sx2            XOR     (HL)
+sx3            OR      (HL)
+ju_win1        DB      5,5,5,11
+               DW      nm1a,v1,v2
+               DB      16,1,1
+               DW      tx_1
+               DB      0,16,2,1
+               DW      tx_2
+               DB      0,16,3,1
+               DW      tx_3
+               DB      0,16,4,1
+               DW      tx_4
+               DB      0,16,5,1
+               DW      tx_5
+               DB      0,16,6,1
+               DW      tx_6
+               DB      0,16,7,1
+               DW      tx_7
+               DB      0,5,2,7
+               DW      ll1
+               DB      #2F,5,3,7
+               DW      ll2
+               DB      #1F,5,4,7
+               DW      ll3
+               DB      #B6,5,5,7
+               DW      ll4
+               DB      #A6,5,6,7
+               DW      ll5
+               DB      #2F,17,7,1
+               DW      op_1
+               DB      6,17,8,1
+               DW      op_2
+               DB      6,17,9,1
+               DW      op_3
+               DB      6,17,10,1
+               DW      op_4
+               DB      6,17,11,1
+               DW      op_5
+               DB      6,#FF
+oths           DB      7,7,8,8
+               DW      nm2a,v1,v2
+               DB      17,1,1
+               DW      op_6
+               DB      8,17,2,1
+               DW      op_7
+               DB      8,17,3,1
+               DW      op_8
+               DB      8,17,4,1
+               DW      op_9
+               DB      8,17,5,1
+               DW      op_10
+               DB      8,17,6,1
+               DW      op_11
+               DB      8,17,7,1
+               DW      op_12
+               DB      8,17,8,1
+               DW      op_13
+               DB      8,#FF
+savewin        DB      7,7,6,4
+               DW      nm4a,v1,v2
+               DB      19,2,2
+               DW      named
+               DB      10,17,3,1
+               DW      op_14
+               DB      7,17,4,1
+               DW      op_15
+               DB      7,#FF
+named          DB      "XXXXYYYY",0
+nm4a           DB      "SAVE...",0
+op_14          DW      sv1st
+               DB      "Save 1st buffer",0
+op_15          DW      sv2nd
+               DB      "Save 2nd buffer",0
+nm1a           DB      "..Oops..",0
+tx_1           DB      "EFFECTS SET:",0
+tx_2           DB      "EDGE INVERT:",0
+tx_3           DB      "SHIFT RIGHT:",0
+tx_4           DB      "BACK SET:",0
+tx_5           DB      "FILTER SET:",0
+tx_6           DB      "OUT INVERT:",0
+tx_7           DB      "+- OPTIONS: -+",0
+op_1           DW      fts
+               DB      "1 TO BUFFER 2",0
+op_2           DW      stf
+               DB      "2 TO BUFFER 1",0
+op_3           DW      getfil
+               DB      "FILE MENU",0
+op_4           DW      savef
+               DB      "SAVE MENU...",0
+op_5           DW      jun2
+               DB      "OTHERS...",0
+nm2a           DB      "OTHERS...",0
+op_6           DW      v1
+               DB      "View 1st Buffer",0
+op_7           DW      v2
+               DB      "View 2nd Buffer",0
+op_8           DW      unp_1
+               DB      "Unpack 1st Buffer",0
+op_9           DW      unp_2
+               DB      "Unpack 2nd Buffer",0
+op_10          DW      amd
+               DB      "Buff 1 AND Buff 2",0
+op_11          DW      ormd
+               DB      "Buff 1 OR Buff 2",0
+op_12          DW      xormd
+               DB      "Buff 1 XOR Buff 2",0
+op_13          DW      fuck
+               DB      "Damage buffer 1...",0

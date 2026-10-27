@@ -183,14 +183,18 @@ class TestJoystickErrors:
 class TestJoystickWarnings:
 
     def test_unwired_machine_warns(self, api_client):
-        response = api_client.create_and_start_emulator(model="PENTAGON")
+        response = api_client.create_and_start_emulator(model="48K")
         emu_id = response["id"]
         try:
             api_client.pause_emulator(emu_id)
             resp = post(api_client, emu_id, "press", {"buttons": "fire"})
             assert resp.status_code == 200, resp.text
-            assert "does not decode a Kempston joystick port" in resp.json()["warning"]
-            assert status(api_client, emu_id)["wired"] is False
+            warning = resp.json()["warning"]
+            assert "no Kempston joystick interface" in warning
+            assert "slots plug edge.1 kempston" in warning, warning
+            state = status(api_client, emu_id)
+            assert state["wired"] is False
+            assert "slots_plug slot=edge.1 card=kempston" in state["fit"]
         finally:
             api_client.stop_emulator(emu_id)
             time.sleep(0.5)

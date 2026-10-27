@@ -1,0 +1,17 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    6
+  ],
+  "pages": [
+    2,
+    6
+  ],
+  "expected": "SNAKE.A",
+  "state": {
+    "editor": false,
+    "typing": false
+  }
+}

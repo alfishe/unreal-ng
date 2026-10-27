@@ -1,0 +1,7 @@
+PG6 #C100
+PGM #C001
+PGL #C000
+ZZ #7006
+gamma #7002
+beta #03E8
+alpha #7000

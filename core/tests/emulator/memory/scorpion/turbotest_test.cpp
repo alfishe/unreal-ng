@@ -232,7 +232,7 @@ TEST_F(TurboTest_Test, CountsAgreeWithTheResearchFigures)
     const Counts& sc153 = t.sc153;
     ASSERT_EQ(sc151.size(), 2 * kBodies);
     ASSERT_EQ(sc153.size(), 2 * kBodies);
-    auto near = [](uint32_t got, double estimate) { return got > 0.97 * estimate && got < 1.03 * estimate; };
+    auto approx = [](uint32_t got, double estimate) { return got > 0.97 * estimate && got < 1.03 * estimate; };
     auto within = [](uint32_t got, double low, double high) { return got > 0.97 * low && got < 1.03 * high; };
 
     // 3.5 MHz: no waits at #A000 on a Scorpion; a NOP is 4 T, LD A,(HL) / LD (HL),A 7, OUT (n),A 11; Even M1
@@ -240,22 +240,22 @@ TEST_F(TurboTest_Test, CountsAgreeWithTheResearchFigures)
     for (const Counts* c : { &sc151, &sc153 })
     {
         const bool evenM1 = c == &sc151;
-        EXPECT_TRUE(near((*c)[0], EstimatedNormalCount(4, evenM1))) << Describe(*c);
-        EXPECT_TRUE(near((*c)[2], EstimatedNormalCount(7, evenM1))) << Describe(*c);
-        EXPECT_TRUE(near((*c)[4], EstimatedNormalCount(7, evenM1))) << Describe(*c);
-        EXPECT_TRUE(near((*c)[6], EstimatedNormalCount(7, evenM1))) << Describe(*c);
-        EXPECT_TRUE(near((*c)[8], EstimatedNormalCount(11, evenM1))) << Describe(*c);
+        EXPECT_TRUE(approx((*c)[0], EstimatedNormalCount(4, evenM1))) << Describe(*c);
+        EXPECT_TRUE(approx((*c)[2], EstimatedNormalCount(7, evenM1))) << Describe(*c);
+        EXPECT_TRUE(approx((*c)[4], EstimatedNormalCount(7, evenM1))) << Describe(*c);
+        EXPECT_TRUE(approx((*c)[6], EstimatedNormalCount(7, evenM1))) << Describe(*c);
+        EXPECT_TRUE(approx((*c)[8], EstimatedNormalCount(11, evenM1))) << Describe(*c);
     }
 
     // Turbo, SC15.1: NOP 8 / 6, LD A,(HL) and LD (HL),A 12 / 10, OUT (n),A 17-20 / 15-16. The tail: INC DE is a
     // NOP and 2 T, JP a NOP and two reads (a read adds 4: LD A,(HL) minus a NOP): 26 / 22
-    EXPECT_TRUE(near(sc151[1], EstimatedTurboCount(8, 6, 26, 22))) << Describe(sc151);
-    EXPECT_TRUE(near(sc151[3], EstimatedTurboCount(12, 10, 26, 22))) << Describe(sc151);
-    EXPECT_TRUE(near(sc151[7], EstimatedTurboCount(12, 10, 26, 22))) << Describe(sc151);
+    EXPECT_TRUE(approx(sc151[1], EstimatedTurboCount(8, 6, 26, 22))) << Describe(sc151);
+    EXPECT_TRUE(approx(sc151[3], EstimatedTurboCount(12, 10, 26, 22))) << Describe(sc151);
+    EXPECT_TRUE(approx(sc151[7], EstimatedTurboCount(12, 10, 26, 22))) << Describe(sc151);
     EXPECT_TRUE(within(sc151[9], EstimatedTurboCount(20, 16, 26, 22), EstimatedTurboCount(17, 15, 26, 22)))
         << Describe(sc151);
     // SC15.3: NOP 4 / 4, LD 8 / 7-8, OUT 12-15 / 12-13. The tail: 4 + 2, and 4 + 4 + 4 (3.5-4 in the border)
-    EXPECT_TRUE(near(sc153[1], EstimatedTurboCount(4, 4, 18, 17))) << Describe(sc153);
+    EXPECT_TRUE(approx(sc153[1], EstimatedTurboCount(4, 4, 18, 17))) << Describe(sc153);
     EXPECT_TRUE(within(sc153[3], EstimatedTurboCount(8, 8, 18, 18), EstimatedTurboCount(8, 7, 18, 17)))
         << Describe(sc153);
     EXPECT_TRUE(within(sc153[7], EstimatedTurboCount(8, 8, 18, 18), EstimatedTurboCount(8, 7, 18, 17)))
@@ -280,9 +280,9 @@ TEST_F(TurboTest_Test, CountsAgreeWithTheResearchFigures)
     const Counts& evo = t.evo;
     ASSERT_EQ(evo.size(), 2 * kBodies);
     ASSERT_GT(t.evoFrame, 0u);
-    EXPECT_TRUE(near(evo[0], EstimatedNormalCount(4, false, t.evoFrame))) << Describe(evo);
-    EXPECT_TRUE(near(evo[2], EstimatedNormalCount(7, false, t.evoFrame))) << Describe(evo);
-    EXPECT_TRUE(near(evo[8], EstimatedNormalCount(11, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(approx(evo[0], EstimatedNormalCount(4, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(approx(evo[2], EstimatedNormalCount(7, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(approx(evo[8], EstimatedNormalCount(11, false, t.evoFrame))) << Describe(evo);
     EXPECT_TRUE(within(evo[1], EstimatedEvoCount(5, 22, t.evoFrame), EstimatedEvoCount(5, 20, t.evoFrame)))
         << Describe(evo);
     EXPECT_TRUE(within(evo[3], EstimatedEvoCount(8.5, 22, t.evoFrame), EstimatedEvoCount(8, 20, t.evoFrame)))
@@ -350,13 +350,13 @@ TEST_F(TurboTest_Test, LeavesOtherMachinesAlone)
         BootEditor(m.editor);
         ASSERT_FALSE(HasFatalFailure()) << m.editor;
         const uint8_t value77 = _context->emulatorState.pFF77;
-        const unsigned port77 = _context->emulatorState.aFF77;
+        const unsigned port77 = _context->emulatorState.atm.aFF77;
         TearDown();
         SetUp();
         Run(m.editor, p, nullptr, false);
         ASSERT_FALSE(HasFatalFailure()) << m.editor;
         EXPECT_EQ(_context->emulatorState.pFF77, value77) << m.editor << ": #xx77 written";
-        EXPECT_EQ(_context->emulatorState.aFF77, port77) << m.editor << ": #xx77 written";
+        EXPECT_EQ(_context->emulatorState.atm.aFF77, port77) << m.editor << ": #xx77 written";
         EXPECT_EQ(Peek(p.Sym("MATCH")), m.match) << m.editor << Describe(Read(p.Sym("COUNTS"))) << "\n" << Screen();
         EXPECT_EQ(Peek(p.Sym("EVO")), 0) << m.editor;
         TearDown();

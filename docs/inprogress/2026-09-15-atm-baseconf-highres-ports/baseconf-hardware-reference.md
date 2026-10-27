@@ -206,6 +206,9 @@ No NMI is involved in trdemu; it is a transparent page swap. The legacy tree has
 
 - `#BFF7`/`#BEF7` access (with gluclock enabled) and any `#xxEF` access assert Z80 /WAIT and raise `spiint_n` to the AVR (`zwait.v:57-79`). The AVR reads SPI status (bit7 rnw, bit0 gluk, bit1 COM), reads `$41` (gluk address = last `#DFF7` value) or `$42` (COM reg A10..8), reads/writes `$40` (data), then un-waits on spics_n 0→1 (`spi_fmt.txt`).
 - `#DFF7` itself is not a wait port; it just latches the address (`zports.v:741-750`).
+- unreal-ng models both waits with one AVR main loop (`EvoAvrWait`, owned by `EvoAvr`): a CMOS access and a COM access
+  share its phase; the Gluk service per cell is counted on the released BaseConf image
+  ([reference-evo-com-port.md](../2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1; 2026-10-05).
 - Other SPI regs (AVR→FPGA): `$10/$11` 40-bit keyboard matrix, `$20/$21/$22` mouse X/Y/buttons, `$23` Kempston joystick (8 bit), `$30` Z80 reset, `$50` config0 {D0 VGA, D1 NMI (1→0), D2 tape-in → #FE.6, D3 beeper/tapeout mux, D5:4 raster}, `$60/$61` AVR access to the SD card (lock arbitration with the Z80). Legacy had `$51` config1 (drive mask), unused in top. Full SPI protocol → §B.
 - Gluk cell semantics (registers 0x00..0xFF, extensions 0xF0..0xFF, EEPROM, version) are implemented in the AVR → §B.
 

@@ -4,12 +4,12 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 | # | Issue | Area | Status |
 |---|---|---|---|
-| 1 | FM 7.4 dB too quiet against SSG | mix levels | fixed (config), code baseline open |
+| 1 | FM 7.4 dB too quiet against SSG | mix levels | fixed, baseline in the code |
 | 2 | Clicks: device and mixer disagree on the frame's sample count | mixer | fixed, uncommitted |
 | 3 | CSM does not retrigger on Timer A overflow | ymfm | fixed, `279bbe2c` |
 | 4 | HQ character chains ran with HQ off | mixer / CPU | fixed, `7840d135` |
 | 5 | Sub-audio FM content reaches the output (no coupling high-pass) | FM output stage | fixed, 1.33 Hz coupling |
-| 6 | int16 mix has no headroom for loud FM | mixer | open, tracked separately |
+| 6 | int16 mix has no headroom for loud FM | mixer | fixed, wide mix + master limiter |
 | 7 | LQ → HQ switch replays stale decimator history | devices | fixed |
 | 8 | SSG opposite-side leakage symmetric at −19 dB, hardware asymmetric | SSG pan | open, cosmetic |
 | 9 | Furnace's frequency-latch semantics differ from upstream ymfm | ymfm | reviewed, not adopted |
@@ -23,11 +23,12 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 17 | After a TTD seek the device and mixer sample counts disagreed | TTD / mixer | fixed |
 | 18 | AY DC remover: delayed step after bursts, bass cut below ~150 Hz | AY output | fixed, 5 Hz high-pass |
 | 19 | Mixer and devices disagreed on sample counts for 128K/+3/ATM frames | mixer | fixed |
-| 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open |
+| 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open (what it left for the 1x frames after it: fixed 2026-10-05) |
 | 21 | Decimator outputs up to one input sample (4.57 us) late | FilterDecimator | fixed |
 | 22 | AY register writes reached the generators on the output-sample grid | devices | fixed |
 | 23 | TTD restored the CPU at T 0 instead of the frame's overshoot | TTD | fixed |
 | 24 | Quality::HighFidelity decimator never selectable | config | fixed, [SOUND] DecimatorQuality |
+| 25 | LQ per-chip buffers split by the chips' current levels, up to ~460× full scale | devices | fixed, see the entry |
 
 ---
 
@@ -39,7 +40,11 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Fix.** `TSFM_FmTrimDb=7.4` in all nine shipped inis (`e7e63ec1`); the trim is read at start and applied at device construction. Re-measured in the app: FM − SSG A = +0.8 dB, the hardware average. `TsfmGain_Test` pins the new one-carrier level (5744) and asserts the ini carries 7.4.
 
-**Open part.** Moving the code baseline `kFmBaseGain` to 0.70 waits for issue 6.
+**Baseline moved into the code (2026-10-10).** `kFmBaseGain` is 0.703 (exactly 0.30 × 10^(7.4/20), so the shipped sound
+is bit-identical) in `SoundChip_TurboSoundFM` and `MultiSoundMixer`; the inis carry `TSFM_FmLevelDb=0`, 0 meaning the
+board. The old key `TSFM_FmTrimDb` is still read, minus 7.4, with a warning: a copied ini keeps its level. The audio
+settings' FM trim reads 0 at the board's level. Tests `Config_Test.OldFmTrimDbCountsFromTheOldBaseline`,
+`FmLevelDbWinsOverTheOldKey`, `TsfmGain_Test.Reference`.
 
 **Docs.** `materials/volume/README.md`, `verification/volume-balance-report.md`.
 
@@ -81,7 +86,30 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Observed.** After issue 1, one carrier reaches 0.18 per channel. A YM2203 channel can exceed one carrier (up to four in algorithm 7), each chip has three channels, and there are two chips plus two SSGs: full-level material exceeds ±1.0 before the int16 clamp and clips.
 
-**Status.** Open. Already listed in the implementation plan as "wide mix + soft limiter (TSFM makes int16 saturation likely)"; issue 1 makes it a prerequisite for moving the code baseline. Until then the trim is the safe knob and can be backed off from the Audio Settings dialog.
+Correction (2026-10-10): there was no int16 clamp in the devices. The out-of-range float conversion was undefined
+and on arm64 wrapped around (a full-scale click), not clipped; since d5e197532 (BUGS.md #13) both TurboSound devices
+clamp. The low-quality golden digest that moved with it was issue 25, not this one.
+
+**Measured (2026-10-10)** at the board's levels (`TSFM_FmTrimDb=7.4`), through the whole SoundManager path, sources
+summed without clipping:
+
+| Material | Sources sum | int16 saturating mix |
+|---|---|---|
+| one chip, full FM word (any number of channels: the DAC word clamps) | 0.70 FS | clean |
+| both chips, one algorithm-7 channel each | 1.40 FS | 49 % of samples at full scale |
+| both chips, three channels (algorithm 4 or 7) and all SSG tones at 15 | 2.2-2.4 FS | 54-70 % at full scale |
+| both SSGs only, all tones at 15 | 0.76 FS | clean |
+
+Each source buffer stays inside int16 (one chip's FM at most 0.70 FS); only the master sum overflowed.
+
+**Fix.** A TSFM machine mixes on the wide float bus with the master DC blocker and soft limiter that MoonSound and the
+MultiSound card already use (`SoundManager::wideMixNeeded`, `MasterLimiter`): linear up to 0.75 FS, compressive above,
+never reaching full scale. The same material now peaks at 31 587-31 995 with no sample at full scale; the volume test's
+levels pass linearly, so the measured FM-to-SSG balance is unchanged. A classic TurboSound (AY) keeps the integer path
+byte for byte. Tests `TsfmHeadroom_Test.*`.
+
+**Left.** The limiter tames, it does not make room: material this loud is compressed by 3 to 8 dB at its peaks. The code baseline
+moved with issue 1.
 
 ## 7. LQ → HQ switch replays stale decimator history
 
@@ -179,6 +207,11 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Status.** Open, pre-existing. No zero samples result (the device renders more than is consumed), but the output is not a clean time-scaled render. Needs a decision on what audio a multiplied frame should carry.
 
+**What a multiplied frame leaves behind (fixed 2026-10-05).** The open part above is what a multiplied frame sounds like. What it left for the frames AFTER it, back at 1x, was a bug on every device with its own sample position, found by `SoundChipTurboSoundEvents_Test` / `SoundManagerDeviceMarker_Test`:
+- `SoundChip_TurboSound` stored its frame position unscaled (`_lastTStates = currentTStates`) while counting scaled T-states, so every step of a multiplied frame counted the frame from about its own position again: 4 frames at x2 left a phase backlog of ~6.5e7 samples, rendered as 8192 time-compressed samples per frame (a jump at every frame boundary) for minutes at 1x. It stores the scaled position now, as the TSFM does (the same number at 1x).
+- The TurboSound-slot devices' sample phase moved by the multiplied time, the mixer's by the base frame; and with the sound feature off the mixer kept counting while the devices rendered nothing. Either way a never-rendered or dropped sample at some frame boundaries for good. Rule: the mixer's frame-start phase is the authority; `SoundManager::handleFrameStart` pushes it to the device (`ITurboSoundDevice::followSamplePhase`) every frame (equal at 1x).
+- The beeper's blip stream closed the multiplied frame: its fractional sample position left the mixer's grid (903 / 904 swapped on some frames for good). The Covox / SounDrive read the mixer's count from its blip stream, so a multiplied frame left the rest in it as a delay that never went away (up to the stream's size, ~190 ms); the MoonSound kept it in its delivery streams (unbounded). Rule: after a multiplied frame or a synthesis gap the blip streams drop what is left and take the mixer's phase (`blip_align_phase`, `Beeper` / `Covox::followSamplePhase`); the MoonSound discards its delivery streams after a multiplied frame (the excess the mixer drops knowingly).
+
 ## 21. Decimator outputs up to one input sample late
 
 **Observed.** Found in review, reproduced in a model: a 1 kHz tone through the 96-tap Reference decimator reached only ~35 dB SNR, a 10 kHz tone ~15 dB, for AY and FM alike.
@@ -206,3 +239,22 @@ Everything found while verifying the TurboSound FM implementation against real h
 ## 24. HighFidelity decimator selectable
 
 **Fix.** [SOUND] DecimatorQuality = Reference (default) | HighFidelity, read at sound-stack construction; both devices apply it to every decimator at setCoreRate and keep it across live rate switches. Reference stays the default: HighFidelity roughly doubles the TurboSound rendering cost (TSFM: ~1.0 -> ~1.9 ms per frame, 5% -> 9% of a core). Tests `Config_Test.DecimatorQuality*`, `TsfmGain_Test.DecimatorQualityAppliesToEveryDecimator`.
+
+## 25. LQ per-chip buffers out of scale
+
+**Observed.** In low quality the per-chip buffers (`AY1_All` / `AY2_All`, the sources the mixer plays) took bursts of
+full-scale clipping whenever both chips played. Measured over the golden scripts (seeds 1-8, 16 frames each): the
+combined output peaks at 0.94 of full scale and never crosses it, in HQ and LQ alike; the LQ per-chip values reached
+2.4 to 457 times full scale on 82-639 samples per session. HQ per-chip buffers stayed in range.
+
+**Cause.** LQ kept one summed boxcar and split it per chip by the chips' current levels,
+`r0 = chipA / (chipA + chipB + 1e-9)`. Past the AY DC filter the levels are signed: two chips cancelling each other
+drive the denominator to zero and the share to any size. Until BUGS.md #13 the out-of-range conversion wrapped
+around; since then it clamped. Both devices (legacy TurboSound and TSFM) had it.
+
+**Fix.** LQ accumulates each chip's left / right on its own and averages that, as HQ decimates each chip on its own.
+The combined buffer keeps its sum (bit-identical); TSFM stays bit-identical to the legacy device with FM silent.
+Test `SoundChipTurboSound_Test.ChipBufferCarriesThatChipAlone` (chip 0's buffer does not move with chip 1, HQ and
+LQ; it failed in LQ before). The TSFM low-quality golden digest moved; the HQ digests did not.
+
+Not the headroom of #6: that is loud FM material crossing full scale in the combined mix, in both modes.

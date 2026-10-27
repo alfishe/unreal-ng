@@ -83,7 +83,7 @@ void Ft812DebugWindow::setBinding(EmulatorBinding* binding)
         refresh();
     });
     connect(_binding, &EmulatorBinding::unbound, this, [this] {
-        _measuring = nullptr;  // the machine is gone with its card
+        _measuringId.clear();  // the machine is gone with its card
         refresh();
     });
     // Paused: the frame in flight becomes readable
@@ -99,7 +99,7 @@ EmulatorContext* Ft812DebugWindow::context() const
 void Ft812DebugWindow::claimMeasuring()
 {
     EmulatorContext* ctx = context();
-    if (!Offered(ctx) || _measuring == ctx)
+    if (!Offered(ctx) || _measuringId == boundId())
         return;
     releaseMeasuring();
     Vdac2Control::FrameMetrics m;
@@ -107,14 +107,20 @@ void Ft812DebugWindow::claimMeasuring()
         return;
     _measuringWasOn = m.measureAlways;
     Vdac2Control::SetMeasureAlways(ctx, true);
-    _measuring = ctx;
+    _measuringId = boundId();
 }
 
 void Ft812DebugWindow::releaseMeasuring()
 {
-    if (_measuring && _measuring == context() && !_measuringWasOn)
-        Vdac2Control::SetMeasureAlways(_measuring, false);
-    _measuring = nullptr;
+    if (!_measuringId.empty() && _measuringId == boundId() && !_measuringWasOn)
+        Vdac2Control::SetMeasureAlways(context(), false);
+    _measuringId.clear();
+}
+
+std::string Ft812DebugWindow::boundId() const
+{
+    Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
+    return emulator ? emulator->GetId() : std::string();
 }
 
 void Ft812DebugWindow::setPictureGeometry(Ft812LineChart::PictureGeometry geometry, QWidget* mainWindow)

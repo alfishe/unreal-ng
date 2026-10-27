@@ -1,0 +1,22 @@
+# Mod Player v2.5 (DJ Crack / AREAsoft) playing gameover.mod on the General Sound of the card
+describe Real-program trace (CL-2): Mod Player v2.5 (mplv2_5.trd), General Sound MOD player, module "gameover"
+describe Pentagon 128 with zxbus.1 = multisound; RUN "M_PLv2.5"; the player cold-starts the GS (#F4), asks its
+describe RAM size (#20), lists the disk's MODs, uploads the chosen one through #B3 and plays it
+machine pentagon128k
+cpu 3.5
+disk gs/mplv2_5.trd
+trdos RUN "M_PLv2.5"
+frames 260
+key a 15
+frames 100
+key a 5
+key a 5
+key a 5
+key a 5
+key a 5
+key a 5
+shot gs-modplayer-list
+key space 5
+frames 150
+shot gs-modplayer-playing
+save gs-modplayer

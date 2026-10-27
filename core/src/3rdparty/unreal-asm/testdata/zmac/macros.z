@@ -1,0 +1,19 @@
+; macros with parameters and repetition
+        org     4000h
+pushall macro
+        push    af
+        push    bc
+        push    de
+        push    hl
+        endm
+load    macro   reg,val
+        ld      reg,val
+        endm
+        pushall
+        load    a,5
+        load    hl,1234h
+        load    bc,load_end-$
+load_end:
+        rept    3
+        nop
+        endm

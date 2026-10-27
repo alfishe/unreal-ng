@@ -14,9 +14,10 @@
 #include <cstring>
 #include <vector>
 
+#include "_helpers/ttdrecordedstate.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -205,21 +206,18 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
     ASSERT_NE(context->pTape, nullptr)
         << "Test precondition: Tape must be created by Init()";
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    const auto tapeBlob = cp->peripheralBlobs.find(
-        static_cast<uint8_t>(ttd::PeripheralId::Tape));
-    ASSERT_NE(tapeBlob, cp->peripheralBlobs.end());
-    const auto tapeState = ttd::TTDPeripheralRegistry::DecodeBlob(
-        static_cast<uint8_t>(ttd::PeripheralId::Tape), tapeBlob->second);
+    const auto tapeState = ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::Tape);
+    ASSERT_FALSE(tapeState.empty());
     EXPECT_EQ(tapeState.size(), 71u)
         << "tapeState blob must contain the Tape position + signal + loader-follow payload (71 bytes)";
 

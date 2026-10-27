@@ -7,13 +7,19 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/machineop.h"
+#include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
+#include "debugger/ports/nextregwrite.h"
+#include "emulator/io/z80n/nextboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/video/screen.h"
@@ -167,6 +173,12 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     if (!payload->emulatorId.isNil() && !(payload->emulatorId == emulator->GetUUID()))
         return;
 
+    // A breakpoint stop parks the machine until someone resumes it; posted after the pause, the event can arrive when
+    // the stop is already over (a dropped session's cleanup resumed it) and must not reach the next session
+    // (a machine not started at all only steps directly: its stops are always current)
+    if (emulator->IsRunning() && !emulator->IsPaused())
+        return;
+
     uint16_t breakpointId = static_cast<uint16_t>(payload->_payloadNumber);
     uint16_t address = payload->address;
 
@@ -174,7 +186,7 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     dzrp::BreakReason reason = dzrp::BreakReason::BREAKPOINT;
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
     {
-        if (BreakpointDescriptor* desc = bpManager->GetBreakpointById(breakpointId))
+        if (BreakpointSnapshot desc = bpManager->GetBreakpointById(breakpointId))
         {
             const Z80State* z80 = emulator->GetZ80State();
             bool isExec = (desc->memoryType & BRK_MEM_EXECUTE) && z80 && z80->pc == address;
@@ -217,11 +229,11 @@ void DezogDebugAdapter::pause()
     if (!emulator)
         return;
 
+    // The break reports the PC: read it parked. A pause behind a command (a direct run) applies when it ends, and a
+    // pause somebody else asked for may not be confirmed yet
     if (!emulator->IsPaused())
-    {
-        // Pause() blocks until the Z80 thread has parked (WaitForPauseConfirmation)
-        emulator->Pause();
-    }
+        emulator->PauseAndWait(sessionRequester(), std::chrono::seconds(5), "dezog");
+    emulator->WaitForPauseConfirmation();
 
     leaveHistory(*emulator);
 
@@ -241,7 +253,7 @@ void DezogDebugAdapter::resume()
     leaveHistory(*emulator);
     ensureHistoryRecording(*emulator);
 
-    emulator->Resume();
+    emulator->Resume(sessionRequester());
 }
 
 bool DezogDebugAdapter::isPaused() const
@@ -296,58 +308,56 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
     Z80State* z80 = emulator->GetZ80State();
     if (!z80)
         return;
-    emulator->NoteDebugChange();   // the debugger snapshot's seq
-
     const uint8_t lo = static_cast<uint8_t>(value & 0xFF);
 
-    using R = dzrp::RegisterId;
-    switch (regId)
-    {
-        case R::PC: z80->pc = value; break;
-        case R::SP: z80->sp = value; break;
-        case R::AF: z80->af = value; break;
-        case R::BC: z80->bc = value; break;
-        case R::DE: z80->de = value; break;
-        case R::HL: z80->hl = value; break;
-        case R::IX: z80->ix = value; break;
-        case R::IY: z80->iy = value; break;
-        case R::AF2: z80->alt.af = value; break;
-        case R::BC2: z80->alt.bc = value; break;
-        case R::DE2: z80->alt.de = value; break;
-        case R::HL2: z80->alt.hl = value; break;
-        case R::IM: z80->im = static_cast<uint8_t>(lo > 2 ? 2 : lo); break;
+    editMachine(*emulator, "dezog set register", [&]() {
+        using R = dzrp::RegisterId;
+        switch (regId)
+        {
+            case R::PC: z80->pc = value; break;
+            case R::SP: z80->sp = value; break;
+            case R::AF: z80->af = value; break;
+            case R::BC: z80->bc = value; break;
+            case R::DE: z80->de = value; break;
+            case R::HL: z80->hl = value; break;
+            case R::IX: z80->ix = value; break;
+            case R::IY: z80->iy = value; break;
+            case R::AF2: z80->alt.af = value; break;
+            case R::BC2: z80->alt.bc = value; break;
+            case R::DE2: z80->alt.de = value; break;
+            case R::HL2: z80->alt.hl = value; break;
+            case R::IM: z80->im = static_cast<uint8_t>(lo > 2 ? 2 : lo); break;
 
-        case R::F: z80->f = lo; break;
-        case R::A: z80->a = lo; break;
-        case R::C: z80->c = lo; break;
-        case R::B: z80->b = lo; break;
-        case R::E: z80->e = lo; break;
-        case R::D: z80->d = lo; break;
-        case R::L: z80->l = lo; break;
-        case R::H: z80->h = lo; break;
-        case R::IXL: z80->xl = lo; break;
-        case R::IXH: z80->xh = lo; break;
-        case R::IYL: z80->yl = lo; break;
-        case R::IYH: z80->yh = lo; break;
+            case R::F: z80->f = lo; break;
+            case R::A: z80->a = lo; break;
+            case R::C: z80->c = lo; break;
+            case R::B: z80->b = lo; break;
+            case R::E: z80->e = lo; break;
+            case R::D: z80->d = lo; break;
+            case R::L: z80->l = lo; break;
+            case R::H: z80->h = lo; break;
+            case R::IXL: z80->xl = lo; break;
+            case R::IXH: z80->xh = lo; break;
+            case R::IYL: z80->yl = lo; break;
+            case R::IYH: z80->yh = lo; break;
 
-        case R::F2: z80->alt.f = lo; break;
-        case R::A2: z80->alt.a = lo; break;
-        case R::C2: z80->alt.c = lo; break;
-        case R::B2: z80->alt.b = lo; break;
-        case R::E2: z80->alt.e = lo; break;
-        case R::D2: z80->alt.d = lo; break;
-        case R::L2: z80->alt.l = lo; break;
-        case R::H2: z80->alt.h = lo; break;
+            case R::F2: z80->alt.f = lo; break;
+            case R::A2: z80->alt.a = lo; break;
+            case R::C2: z80->alt.c = lo; break;
+            case R::B2: z80->alt.b = lo; break;
+            case R::E2: z80->alt.e = lo; break;
+            case R::D2: z80->alt.d = lo; break;
+            case R::L2: z80->alt.l = lo; break;
+            case R::H2: z80->alt.h = lo; break;
 
-        case R::R: z80->r_low = lo; break;
-        case R::I: z80->i = lo; break;
+            case R::R: z80->r_low = lo; break;
+            case R::I: z80->i = lo; break;
 
-        default:
-            std::cerr << "[DZRP] setRegister: unsupported register id " << static_cast<int>(regId) << "\n";
-            break;
-    }
-
-    onDebuggerEdit(*emulator, "dezog set register");
+            default:
+                std::cerr << "[DZRP] setRegister: unsupported register id " << static_cast<int>(regId) << "\n";
+                break;
+        }
+    });
 }
 
 /// endregion </Registers>
@@ -386,13 +396,12 @@ void DezogDebugAdapter::writeMemory(uint16_t addr, const std::vector<uint8_t>& d
     if (!memory)
         return;
 
-    for (size_t i = 0; i < data.size(); ++i)
-    {
-        memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), data[i]);
-    }
-
-    if (!data.empty())
-        onDebuggerEdit(*emulator, "dezog write memory");
+    if (data.empty())
+        return;
+    editMachine(*emulator, "dezog write memory", [&]() {
+        for (size_t i = 0; i < data.size(); ++i)
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), data[i]);
+    });
 }
 
 /// endregion </Memory>
@@ -464,6 +473,18 @@ std::vector<uint8_t> DezogDebugAdapter::getSlots() const
     if (!memory)
         return {};
 
+    if (getMachineType() == dzrp::MachineType::ZXNEXT)
+    {
+        // DeZog MemoryModelZxNext: eight 8K slots, the bank of each is its MMU register (NR #50-#57; 0xFF the ROM)
+        NextMemory* next = dynamic_cast<NextMemory*>(memory);
+        if (!next)
+            return {};
+        std::vector<uint8_t> mmu(NextMemory::kSlots);
+        for (unsigned s = 0; s < NextMemory::kSlots; s++)
+            mmu[s] = next->GetMmu(s);
+        return mmu;
+    }
+
     if (getMachineType() == dzrp::MachineType::ZX48K)
     {
         // DeZog MemoryModelZx48k: slot 0 = ROM (bank 0), slot 1 = RAM 0x4000-0xFFFF (bank 1)
@@ -490,6 +511,14 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
     if (!memory)
         return;
 
+    if (getMachineType() == dzrp::MachineType::ZXNEXT)
+    {
+        // The slot is an MMU register of the board (NR #50 + slot), the bank its value
+        if (slot < NextMemory::kSlots)
+            writeNextReg(static_cast<uint8_t>(NextBoard::kRegMmu0 + slot), bank);
+        return;
+    }
+
     if (slot == 0)
     {
         uint16_t romPage;
@@ -503,24 +532,21 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
             romPage = bank;
 
         if (romPage < MAX_ROM_PAGES)
-        {
-            memory->SetROMPage(romPage, true);
-            onDebuggerEdit(*emulator, "dezog set rom slot");
-        }
+            editMachine(*emulator, "dezog set rom slot", [&]() { memory->SetROMPage(romPage, true); });
         return;
     }
 
     // bank is uint8_t, so every value is < MAX_RAM_PAGES (256); no check needed.
 
-    switch (slot)
-    {
-        case 1:
-        case 2: memory->SetDebuggerRAMPageToBank(slot, bank); break;
-        case 3: memory->SetRAMPageToBank3(bank, true); break;
-        default: return;
-    }
-
-    onDebuggerEdit(*emulator, "dezog set slot");
+    if (slot < 1 || slot > 3)
+        return;
+    editMachine(*emulator, "dezog set slot", [&]() {
+        // Windows 1/2 follow no port latch: a debugger-forced mapping (checkpoints carry it)
+        if (slot == 3)
+            memory->SetRAMPageToBank3(bank, true);
+        else
+            memory->SetDebuggerRAMPageToBank(slot, bank);
+    });
 }
 
 void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data)
@@ -541,12 +567,148 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
     if (!page)
         return;
 
-    size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
-    std::memcpy(page, data.data(), len);
-
+    const size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
     if (len > 0)
-        onDebuggerEdit(*emulator, "dezog write bank");
+        editMachine(*emulator, "dezog write bank", [&]() { std::memcpy(page, data.data(), len); });
 }
+
+/// region <ZX Next>
+
+namespace
+{
+/// The byte at `offset` (wrapped) of a Next 8K bank: RAM 0..kRamPages8K-1, or the ROM selected now (16K, wraps inside it). Null: no such bank
+uint8_t* NextBankByte(NextMemory& memory, uint8_t bank, uint16_t offset)
+{
+    if (bank == NextMemory::kMmuRom)
+    {
+        constexpr uint32_t kRomSize = 0x4000;
+        return memory.ROMPageHostAddress(memory.GetRomSelect()) + (offset & (kRomSize - 1));
+    }
+    if (bank >= NextMemory::kRamPages8K)
+        return nullptr;
+    uint8_t* page = memory.RAMPageAddress(bank >> 1);
+    return page ? page + (bank & 1) * NextMemory::kSlotSize + (offset & (NextMemory::kSlotSize - 1)) : nullptr;
+}
+}  // namespace
+
+std::vector<uint8_t> DezogDebugAdapter::readBankMemory(uint8_t bank, uint16_t offset, uint16_t size) const
+{
+    std::vector<uint8_t> result(size, 0);
+    auto emulator = resolveEmulator();
+    NextMemory* memory = emulator ? dynamic_cast<NextMemory*>(emulator->GetMemory()) : nullptr;
+    if (!memory)
+        return result;
+    for (uint32_t i = 0; i < size; ++i)
+        if (const uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+            result[i] = *byte;
+    return result;
+}
+
+void DezogDebugAdapter::writeBankMemory(uint8_t bank, uint16_t offset, const std::vector<uint8_t>& data)
+{
+    auto emulator = resolveEmulator();
+    NextMemory* memory = emulator ? dynamic_cast<NextMemory*>(emulator->GetMemory()) : nullptr;
+    if (!memory || data.empty())
+        return;
+    leaveHistory(*emulator);
+    editMachine(*emulator, "dezog write bank memory", [&]() {
+        for (size_t i = 0; i < data.size(); ++i)
+            if (uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+                *byte = data[i];
+    });
+}
+
+namespace
+{
+PortDecoder_Next* NextPorts(const std::shared_ptr<Emulator>& emulator)
+{
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+}
+}  // namespace
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritesPalette(uint8_t which) const
+{
+    // NR #43 bits 6:4 select the palette: 0 ULA, 1 Layer 2, 2 sprites, 3 tilemap; bit 6 the second one of each (sprites: 2 and 6)
+    constexpr unsigned kSpritePalette1 = 2, kSecondPaletteBit = 4;
+    constexpr unsigned kEntries = 256;
+    constexpr uint16_t kLowBlueBit = 0x001, kPriorityBit = 0x200;
+    constexpr uint8_t kPriorityFlag = 0x80;  // as NR #44 reads it back
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(kEntries * 2);
+    for (unsigned i = 0; i < kEntries; i++)
+    {
+        const uint16_t entry = ports->Board().Video().PaletteEntry(kSpritePalette1 + ((which & 1) ? kSecondPaletteBit : 0), i);
+        out.push_back(static_cast<uint8_t>(entry >> 1));
+        out.push_back(static_cast<uint8_t>((entry & kLowBlueBit) | ((entry & kPriorityBit) ? kPriorityFlag : 0)));
+    }
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSprites(uint8_t index, uint8_t count) const
+{
+    constexpr unsigned kAttributeBytes = 5;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(count) * kAttributeBytes);
+    for (unsigned i = 0; i < count; i++)
+        for (unsigned b = 0; b < kAttributeBytes; b++)
+            out.push_back(ports->Board().Sprites().Attribute(index + i, b));  // the sprite number wraps at 128
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritePatterns(uint8_t index, uint8_t count) const
+{
+    constexpr unsigned kPatternBytes = 256;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(count) * kPatternBytes);
+    for (unsigned i = 0; i < static_cast<unsigned>(count) * kPatternBytes; i++)
+        out.push_back(ports->Board().Sprites().PatternByte(index * kPatternBytes + i));  // the 16K pattern RAM wraps
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritesClipWindowAndControl() const
+{
+    constexpr unsigned kSpriteWindow = 1;  // Layer 2, sprites, ULA/LoRes, tilemap
+    constexpr unsigned kCoordinates = 4;   // x left, x right, y top, y bottom
+    constexpr uint8_t kRegSpriteControl = 0x15;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    for (unsigned c = 0; c < kCoordinates; c++)
+        out.push_back(ports->Board().Video().Clip(kSpriteWindow, c));
+    out.push_back(ports->Board().Stored(kRegSpriteControl));
+    return out;
+}
+
+uint8_t DezogDebugAdapter::readNextReg(uint8_t reg) const
+{
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    PortDecoder_Next* decoder = context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+    return decoder ? decoder->Board().Read(reg) : 0;  // the board's own read: no breakpoint, no journal
+}
+
+void DezogDebugAdapter::writeNextReg(uint8_t reg, uint8_t value)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return;
+    leaveHistory(*emulator);
+    // The NEXTREG instruction's door, as a tool edit: the journal sees it, no breakpoint fires
+    NextRegWriteControl::Write(emulator.get(), reg, value, NextRegWriteControl::Door::NextReg, "dezog");
+}
+
+/// endregion </ZX Next>
 
 /// endregion </Banking>
 
@@ -764,7 +926,7 @@ std::vector<uint8_t> DezogDebugAdapter::captureSnapshotBytes(Emulator& emulator)
     }
     else
     {
-        std::cerr << "[DZRP] captureSnapshotBytes: SaveSnapshot failed\n";
+        std::cerr << "[DZRP] captureSnapshotBytes: " << emulator.LastSaveResult().text << "\n";
     }
 
     std::error_code ec;
@@ -782,6 +944,7 @@ bool DezogDebugAdapter::restoreSnapshotBytes(Emulator& emulator, const std::vect
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
+    coordinator::SourceScope source(coordinator::OpSource::DeZog);   // the operation log names who loaded it
     bool ok = emulator.LoadSnapshot(path.string());
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -808,10 +971,9 @@ void DezogDebugAdapter::restoreState(const std::vector<uint8_t>& state)
     leaveHistory(*emulator);
 
     if (!restoreSnapshotBytes(*emulator, state))
-        std::cerr << "[DZRP] restoreState: LoadSnapshot failed "
-                  << emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot) << "\n";
+        std::cerr << "[DZRP] restoreState: LoadSnapshot failed\n";
 
-    // LoadSnapshot invalidates the TTD session - start a fresh history from here
+    // A snapshot load ends the TTD session (the one rule) - start a fresh history from here
     ensureHistoryRecording(*emulator);
 }
 
@@ -833,6 +995,8 @@ dzrp::MachineType DezogDebugAdapter::getMachineType() const
     {
         case MM_SPECTRUM48:
             return dzrp::MachineType::ZX48K;
+        case MM_NEXT:
+            return dzrp::MachineType::ZXNEXT;
         default:
             // Pentagon / 128K / +3 / Scorpion / ATM / ... all expose a 128K-style 4-slot map
             return dzrp::MachineType::ZX128K;
@@ -898,10 +1062,9 @@ bool DezogDebugAdapter::waitForTarget(uint32_t timeoutMs) const
 
 namespace
 {
-ttd::TimeTravelManager* ttdManagerOf(Emulator& emulator)
+ttd::TTDSessionRef ttdManagerOf(Emulator& emulator)
 {
-    EmulatorContext* context = emulator.GetContext();
-    return context ? context->pTimeTravelManager : nullptr;
+    return ttd::TTDSessionRef(emulator.GetContext());
 }
 }  // namespace
 
@@ -919,8 +1082,27 @@ void DezogDebugAdapter::onSessionOpened()
     // panels only populate if we hand it a stopped CPU. Pause with broadcast=true
     // so the host UI (e.g. unreal-qt) reflects the paused state and does not
     // immediately resume it.
+    // The session holds the emulator's run control while DeZog is connected: the user sees it at the GUI
+    if (EmulatorContext* context = emulator->GetContext())
+    {
+        const unreal::UUID owner = unreal::UUID::Generate();
+        std::string reason;
+        std::string peer;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            peer = _peer;
+        }
+        if (context->TakeRunControl(owner, "dezog", &reason, _sessionClientName, std::chrono::milliseconds(0), peer))
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _sessionOwner = owner;
+        }
+        else
+            std::cout << "[DZRP] Run control not taken: " << reason << "\n";
+    }
+
     if (!emulator->IsPaused())
-        emulator->Pause(true);
+        emulator->Pause(sessionRequester(), "dezog attach");
 
     ensureHistoryRecording(*emulator);
 }
@@ -939,10 +1121,10 @@ void DezogDebugAdapter::onSessionClosed()
 
     leaveHistory(*emulator);
 
-    // End the live-history mode: recording stops, the timeline is kept for
-    // the scrubber/.ttd flows (§6.3.1).
-    if (ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator))
-        mgr->EndDebuggerLiveHistory();
+    // The debugger's history ends: a background recording it started stops,
+    // the timeline is kept for the scrubber/.ttd flows (§6.3.1)
+    if (ttd::TTDSessionRef mgr = ttdManagerOf(*emulator))
+        mgr->ReleaseBackgroundRecording();
 
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
     {
@@ -960,8 +1142,56 @@ void DezogDebugAdapter::onSessionClosed()
             std::cout << "[DZRP] Session closed: removed " << owned.size() << " dezog breakpoint(s)\n";
     }
 
+    // Only a pause DeZog set itself (attach, its pause command) is lifted: a pause the user or another surface asked
+    // for stays (execution arbiter, owner-only run)
+    // The session's own pause (attach, its pause command) goes with its requester, a breakpoint's with DeZog alone
+    // (after the claim is released: a run asked without it would be refused)
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = std::exchange(_sessionOwner, unreal::UUID());
+    }
+    EmulatorContext* context = emulator->GetContext();
+    if (emulator->IsPaused() && !owner.isNil() && context && context->HasRunControl(owner))
+        emulator->Resume(execution::Requester{execution::Origin::DeZog, owner.toString()}, true);
+    if (context && !owner.isNil())
+        context->ReleaseRunControl(owner);
     if (emulator->IsPaused())
-        emulator->Resume();
+        emulator->Resume(execution::Requester{execution::Origin::DeZog, {}}, true);
+}
+
+void DezogDebugAdapter::onClientConnected(const std::string& peer)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _peer = peer;
+}
+
+bool DezogDebugAdapter::controlTakenBack() const
+{
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = _sessionOwner;
+    }
+    if (owner.isNil())
+        return false;
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context && context->IsRunControlRevoked(owner);
+}
+
+execution::Requester DezogDebugAdapter::sessionRequester() const
+{
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = _sessionOwner;
+    }
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!owner.isNil() && context && context->HasRunControl(owner))
+        return execution::Requester{execution::Origin::DeZog, owner.toString()};
+    return execution::Requester{execution::Origin::DeZog, {}};
 }
 
 /// endregion </Session lifecycle>
@@ -991,7 +1221,7 @@ bool DezogDebugAdapter::isHistoryAvailable() const
     if (!isHistoryEnabled())
         return false;
     auto emulator = resolveEmulator();
-    return emulator && ttdManagerOf(*emulator) != nullptr;
+    return emulator && static_cast<bool>(ttdManagerOf(*emulator));
 }
 
 bool DezogDebugAdapter::isHistoryRecording() const
@@ -999,7 +1229,7 @@ bool DezogDebugAdapter::isHistoryRecording() const
     auto emulator = resolveEmulator();
     if (!emulator)
         return false;
-    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(*emulator);
     return mgr && mgr->IsRecording();
 }
 
@@ -1008,25 +1238,39 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
     if (!isHistoryEnabled())
         return;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr)
         return;
 
-    // Debug sessions record via the TTD DebuggerLive mode: continuous
-    // capture that survives browse cycles. A plain StartRecording here
-    // would wipe the timeline on every browse exit (reverse-debugging.md
-    // §6.2). Idempotent - safe to call while browsing.
-    if (!mgr->BeginDebuggerLiveHistory())
-        std::cerr << "[DZRP] TTD BeginDebuggerLiveHistory failed - instruction history unavailable"
+    // A debug session uses the recording that runs, or a background one: it
+    // survives browse cycles and refuses nothing (an outside change ends its
+    // session and the next starts at once). Idempotent - safe while browsing
+    if (!mgr->HoldBackgroundRecording())
+        std::cerr << "[DZRP] TTD history unavailable"
                   << (mgr->GetUnavailableReason().empty() ? "" : ": " + mgr->GetUnavailableReason()) << "\n";
 }
 
-void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
+void DezogDebugAdapter::editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit)
 {
+    // The engine records the edit as an event carrying what it changed (memory,
+    // registers, paging latches): replay reproduces it and the history before
+    // it stays (D9). The marker, the bytes and the debugger snapshot's seq are
+    // Emulator::EditMemoryFromTool's
+    if (emulator.GetContext() && emulator.GetContext()->pTimeTravelController)
+    {
+        // The callers leave the history first (leaveHistory): a refusal (the recorded past) is not expected here
+        if (const std::string refused = emulator.EditMemoryFromTool(what, edit); !refused.empty())
+            std::cerr << "[DZRP] " << what << " refused: " << refused << "\n";
+        return;
+    }
+
+    // v1 - its replay cannot cross the edit: restart recording at the edited state
+    emulator.NoteDebugChange();   // the debugger snapshot's seq
+    edit();
     if (!isHistoryEnabled())
         return;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr || !mgr->IsRecording())
         return;
 
@@ -1068,7 +1312,7 @@ void DezogDebugAdapter::leaveHistory(Emulator& emulator)
         presentFrame = _present.first;
     }
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
 
     // Browsing is read-only under DebuggerLive: the machine never moved and
     // recording never stopped, so there is nothing to restore or restart -
@@ -1099,7 +1343,7 @@ void DezogDebugAdapter::leaveHistory(Emulator& emulator)
 bool DezogDebugAdapter::resolveHistoryIndex(Emulator& emulator, uint32_t index, uint64_t& frameOut,
                                             uint32_t& entryIdxOut)
 {
-    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
     if (!mgr)
         return false;
 
@@ -1182,7 +1426,7 @@ bool DezogDebugAdapter::resolveHistoryIndex(Emulator& emulator, uint32_t index, 
 std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistoryEntry(uint32_t index)
 {
     // STRATEGY: serve each entry from the TTD per-frame decode cache
-    // (TimeTravelManager::GetFrameCache) — O(1) after a one-time ~ms frame fill.
+    // (TimeTravelController::GetFrameCache) — O(1) after a one-time ~ms frame fill.
     // See docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md §5
     // ("Best strategy for DeZog"). To revert to seek-per-read, replace the
     // resolveHistoryIndex + GetFrameCache block with a SeekTo per index (doc §3).
@@ -1193,18 +1437,18 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (!emulator || !emulator->IsPaused())
         return std::nullopt;
 
-    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    ttd::TTDSessionRef mgr = ttdManagerOf(*emulator);
     if (!mgr || mgr->GetCheckpointCount() == 0)
         return std::nullopt;
 
     // Entering history: remember the present TimePoint (partial-frame
-    // counting in resolveHistoryIndex). Browse is read-only under the
-    // DebuggerLive mode - recording never stops; GetFrameCache builds under
-    // the paused exemption. No snapshot, no restore (§6.3.2).
+    // counting in resolveHistoryIndex). Browse is read-only - recording never
+    // stops; GetFrameCache builds under the paused exemption. No snapshot, no
+    // restore (§6.3.2).
     if (getHistoryCursor() < 0)
     {
-        if (!mgr->IsDebuggerLive())
-            return std::nullopt;  // history requires the live-history mode
+        if (!mgr->IsRecording())
+            return std::nullopt;  // history requires a recording
         ttd::TTDTimePoint present = mgr->CurrentPosition();
         std::lock_guard<std::mutex> lock(_mutex);
         _present = {present.frame, present.tInFrame};

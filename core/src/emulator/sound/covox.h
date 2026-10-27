@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <atomic>
+
 #include <cstdint>
 #include <cstddef>
 #include "emulator/sound/audio.h"
@@ -83,9 +86,12 @@ public:
 
     /// Fitment baked in at construction from config (mirrors Xpeccy's
     /// sdrvCreate(type) - the card itself knows what it is, not the
-    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1),
-    /// Mono answers only the exact #FB Covox port (CovoxFB=1, SD=0)
-    enum class Fitment { Mono, Quad };
+    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1, the
+    /// SounDrive card's mode=both), Mono answers only the exact #FB Covox port
+    /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
+    /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
+    /// #FB (two cards, one DAC module)
+    enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono };
 
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 
@@ -117,6 +123,7 @@ protected:
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
     bool _synthesisSuppressed = false;
+    bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
@@ -127,6 +134,12 @@ protected:
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
+    // Per-channel host gain, Q15 (the mixer's channel volume; 32768 = unity: bit-exact). Not machine state
+    int32_t _channelGain[4] = {32768, 32768, 32768, 32768};
+    // A mute or a gain changed: the output level is rebuilt at the next frame start (T-state 0)
+    bool _levelsDirty = false;
+    /// Emit the step to the current amplitudes at T-state 0 of the frame (frame start only)
+    void emitLevelsAtFrameStart();
 
     // Stale-channel decay state (see STALE_CHANNEL_FRAMES doc, public section)
     bool _writtenThisFrame[4] = {false, false, false, false};
@@ -144,7 +157,7 @@ protected:
     bool _hadSoundLastFrame = false;
 
     // DC offset removal (optional, applied post-blip)
-    bool _dcRemovalEnabled = false;
+    std::atomic<bool> _dcRemovalEnabled{false};  // any thread sets it (the audio settings, automation)
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
@@ -152,6 +165,13 @@ protected:
 
     // Core output rate (multirate plan phase 6)
     size_t _sampleRate;
+
+    // The haptic feed's channel taps (SetChannelTap): each channel's level per output sample, before its gain, filled
+    // up to the sample of each write and to the frame's end in handleFrameEnd. Off: no work
+    bool _channelTap = false;
+    std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, 4> _channelTapBuffer{};
+    std::array<size_t, 4> _channelTapFilled{};
+    void FillChannelTap(int channel, size_t upTo);
 
     // Input clock (T-states fed to blip): base CPU clock x frequency
     // multiplier - the T-state position is descaled by EmulatorState::AudioTstate
@@ -163,6 +183,14 @@ public:
     virtual ~Covox();
 
     // Buffer access for registry
+    /// The haptic feed's `soundrive:<n>` (SoundManager::setHapticTaps): each channel alone, mono int16 at the core
+    /// rate, the frame's samples after handleFrameEnd, (value - #80) x 128 before the channel's gain
+    void SetChannelTap(bool on);
+    const int16_t* ChannelTap(int channel) const
+    {
+        return _channelTap && channel >= 0 && channel < 4 ? _channelTapBuffer[static_cast<size_t>(channel)].data()
+                                                          : nullptr;
+    }
     int16_t* getBuffer() { return _buffer; }
     const int16_t* getBuffer() const { return _buffer; }
 
@@ -176,7 +204,15 @@ public:
 
     // Frame lifecycle
     void reset();
+    /// Drop the deltas no frame end has read and restart the buffers at the level the DACs hold (see Beeper)
+    void discardPending();
     void handleFrameStart();
+    /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart): the Covox reads
+    /// the mixer's count from its blip stream, so a frame that rendered more (a host speed multiplier) left a backlog
+    /// behind - the output ran late by it for good - and a synthesis gap restarted the stream off the mixer's grid.
+    /// After either, the stream drops the backlog and takes the mixer's sample position (Beeper::followSamplePhase,
+    /// the same rule); at 1x nothing is touched
+    void followSamplePhase(uint64_t phase);
 
     /// Turbo mode: keep DAC register / level tracking, skip blip deltas (see Beeper)
     void setSynthesisSuppressed(bool suppressed);
@@ -193,12 +229,26 @@ public:
     bool hadSoundLastFrame() const { return _hadSoundLastFrame; }
 
     // DC removal control (for UI section)
-    void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }
-    bool isDCRemovalEnabled() const { return _dcRemovalEnabled; }
+    void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled.store(enabled, std::memory_order_relaxed); }
+    bool isDCRemovalEnabled() const { return _dcRemovalEnabled.load(std::memory_order_relaxed); }
 
     // Per-channel mute control
-    void setChannelMute(Channel ch, bool mute) { _channelMute[static_cast<int>(ch)] = mute; }
+    /// Takes effect at the next DAC write or frame start
+    void setChannelMute(Channel ch, bool mute)
+    {
+        if (_channelMute[static_cast<int>(ch)] != mute)
+            _levelsDirty = true;
+        _channelMute[static_cast<int>(ch)] = mute;
+    }
     bool isChannelMuted(Channel ch) const { return _channelMute[static_cast<int>(ch)]; }
+    /// The mixer's channel volume as a Q15 gain (MixerChannelGainQ15); takes effect at the next DAC write or frame start
+    void setChannelGain(Channel ch, int32_t gainQ15)
+    {
+        if (_channelGain[static_cast<int>(ch)] != gainQ15)
+            _levelsDirty = true;
+        _channelGain[static_cast<int>(ch)] = gainQ15;
+    }
+    int32_t channelGain(Channel ch) const { return _channelGain[static_cast<int>(ch)]; }
 
     /// The four DAC latches (LeftA, LeftB, RightA, RightB order of Channel)
     void getDacLatches(uint8_t (&out)[4]) const
@@ -224,6 +274,8 @@ public:
     /// See PortDevice::tryClaimOut/In and the Fitment doc above.
     bool tryClaimOut(uint16_t rawPort, uint8_t value) override;
     bool tryClaimIn(uint16_t rawPort, uint8_t& outValue) override;
+    /// The fitment's raw-port claims (the same mask / match tryClaimOut/In test)
+    std::vector<PortMaskMatch> selfDecodingClaims() const override;
 
     // Determine which channel a port address maps to
     static Channel portToChannel(uint16_t port);

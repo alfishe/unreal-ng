@@ -16,9 +16,23 @@
 /// "illegal command". CRC is off by default in SPI mode and checked only for
 /// CMD0 and CMD8, and for every command after CMD59 turns it on.
 ///
-/// Timing is counted in exchanged bytes, not time: a read's data token comes
-/// after 8 poll bytes, a write stays busy for 64. Deterministic, and short
-/// enough for every driver's polling loop.
+/// Timing (`Timing`, docs/inprogress/2026-10-11-bus-analyzer/technical-design.md §6):
+/// - Ideal (default): counted in exchanged bytes, not time: one NCR byte, a
+///   read's data token after 8 poll bytes, a write busy for 64, ACMD41 idle 4
+///   times. Deterministic, and short enough for every driver's polling loop.
+/// - Realistic: NCR 1..8 bytes, the data token after 100 us..2 ms, write busy
+///   250 us..20 ms, ready 50..500 ms after the first ACMD41; random within the
+///   ranges, deterministic by seed.
+/// - Slow: the SD specification's worst case (NCR 8, 100 ms, 250 ms, 1 s).
+/// The time delays end on the host's emulated clock (`SetClock`), so a driver
+/// that deselects and waits sees them end as on a real card; without a clock
+/// one exchanged byte counts as 1 us.
+///
+/// Bus analyzer (`SetBusTap`): every command with its R1, every block read and
+/// written goes to the bus's trace, and the card checks the host: deselect
+/// inside a command, a command while busy, a command that drops a data block
+/// not read out, an R1 with the CRC error bit. The checks never change what
+/// the card does.
 ///
 /// Writes (`WriteMode`): Session keeps written sectors in a SessionWriteMap
 /// over the medium (discarded with the card, exportable; S3), Persist writes
@@ -26,23 +40,48 @@
 /// (#0D) and sets WP_VIOLATION in CMD13's status.
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "emulator/io/spi/spidevice.h"
 #include "emulator/io/storage/iblockdevice.h"
 
+class BusTap;
 class SessionWriteMap;
+
+/// What a card did, for a trace (docs/inprogress/2026-10-07-zx-next/automation-gaps-2026-10-11.md, P1)
+struct SdTraceEvent
+{
+    enum class Kind : uint8_t
+    {
+        Command,     ///< a complete 6-byte command: index, argument, `app` (ACMD), `r1` = the response byte the card queued (0xFF: none)
+        ReadBlock,   ///< a data block queued for the host: `block`
+        WriteBlock,  ///< a data block received: `block`, `ok` = stored (false: refused)
+    };
+    Kind kind = Kind::Command;
+    uint8_t index = 0;
+    uint32_t argument = 0;
+    bool app = false;
+    bool crcValid = true;
+    uint8_t r1 = 0xFF;
+    uint64_t block = 0;
+    bool ok = true;
+};
 
 class SdCardSpi : public SpiDevice
 {
 public:
     enum class WriteMode : uint8_t { Session, Persist, Off };
     enum class Type : uint8_t { Auto, SDSC, SDHC };
+    enum class Timing : uint8_t { Ideal, Realistic, Slow };
+    static const char* TimingName(Timing timing);
+    static bool TimingFromName(const std::string& name, Timing& timing);
 
     static constexpr size_t BLOCK = 512;
     static constexpr int READ_LATENCY_BYTES = 8;
@@ -123,6 +162,29 @@ public:
     /// is entered, i.e. from the first valid CMD0 on), with the command index
     void setCommandListener(std::function<void(uint8_t index)> listener) { _onCommand = std::move(listener); }
 
+    /// Called for every complete command (also the ignored ones: before SPI mode, while streaming), every block queued for the host and
+    /// every block received. Costs one empty-function test when not set
+    void setTraceListener(std::function<void(const SdTraceEvent&)> listener) { _onTrace = std::move(listener); }
+    /// The state name for a report: power_on, idle, ready
+    const char* stateName() const;
+
+    /// Bus analyzer: the tap of the bus the card sits on and its slot there (nullptr: none). The tap knows the
+    /// card back (automation sets its timing through it)
+    void SetBusTap(BusTap* tap, uint8_t slot);
+    /// The host's emulated clock in microseconds, for the Realistic / Slow delays (empty: 1 us per byte)
+    void SetClock(std::function<uint64_t()> nowUs) { _clockUs = std::move(nowUs); }
+    /// Timing profile and its seed (Realistic draws from it); kept across power cycles and media changes. On the
+    /// emulation thread
+    void SetTiming(Timing timing, uint64_t seed = 1);
+    /// The same from another thread: applied by the emulation thread at the card's next exchange or select
+    void RequestTiming(Timing timing, uint64_t seed = 1);
+    /// The profile in effect, or the one requested and not applied yet
+    Timing timing() const;
+    uint64_t timingSeed() const;
+    bool TimingRequestPending() const { return _timingRequested.load(std::memory_order_acquire); }
+    /// A Realistic / Slow delay (data token wait or busy) is in progress
+    bool DelayPending() const { return _delay.active; }
+
     /// Direct sector access (tests, automation); returns false beyond the card
     bool readBlock(uint64_t block, uint8_t* out);
     bool writeBlock(uint64_t block, const uint8_t* data);
@@ -143,9 +205,18 @@ private:
     };
 
     void onCommand();
+    void onCommandBody();
     void ApplyType(Type type);
     void respondR1(uint8_t r1);
-    void queueBlock(uint64_t block);
+    void queueBlock(uint64_t block, int latencyBytes);
+    void queueBusy(int idealBytes, uint32_t realisticMinUs, uint32_t realisticMaxUs, uint32_t slowUs);
+    void startDelay(uint8_t value, uint32_t us, bool thenBlock, uint64_t block);
+    void endDelayIfDue();
+    uint32_t drawUs(uint32_t minUs, uint32_t maxUs, uint32_t slowUs);
+    uint32_t nextRandom();
+    uint64_t nowUs() const { return _clockUs ? _clockUs() : 0; }
+    bool tapChecking() const;
+    void checkCommandStart(uint8_t index, bool answerPending, bool busyPending);
     void finishWrite();
     uint8_t r1Flags() const;
     uint64_t blockOfArgument(uint32_t arg) const { return _sdhc ? arg : arg / BLOCK; }
@@ -189,6 +260,38 @@ private:
     uint64_t _blocksRead = 0;
     uint64_t _blocksWritten = 0;
 
+    // Timing profile (state v2). A delay runs after `_out` drains: each exchange returns `value` until it
+    // ends (on the clock, else after `bytesLeft` bytes), then `block` is queued if `thenBlock`
+    struct Delay
+    {
+        uint64_t untilUs = 0;
+        uint64_t block = 0;
+        uint32_t bytesLeft = 0;
+        uint8_t value = 0xFF;
+        bool active = false;
+        bool thenBlock = false;
+    };
+    Timing _timing = Timing::Ideal;
+    uint64_t _seed = 1;
+    uint64_t _rng = 1;
+    Delay _delay;
+    uint64_t _readyAtUs = 0;        // Realistic / Slow: ACMD41 answers ready from then on
+    uint32_t _idlePollsLeft = 0;    // ... or after this many polls without a clock
+    bool _initStarted = false;      // the first ACMD41 since CMD0 started the initialization
+    bool _busyTail = false;         // Ideal: `_out` ends in write-busy bytes
+    bool _dataQueued = false;       // `_out` holds a data token and block for the host
+
     std::function<void(uint64_t)> _onWrite;
     std::function<void(uint8_t)> _onCommand;
+    std::function<void(const SdTraceEvent&)> _onTrace;
+    std::function<uint64_t()> _clockUs;
+    BusTap* _tap = nullptr;
+    uint8_t _tapSlot = 0;
+
+    // A timing change asked from another thread (RequestTiming)
+    void applyTimingRequest();
+    mutable std::mutex _requestMutex;
+    std::atomic<bool> _timingRequested{false};
+    Timing _requestedTiming = Timing::Ideal;
+    uint64_t _requestedSeed = 1;
 };

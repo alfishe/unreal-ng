@@ -1,0 +1,14 @@
+; ZX Spectrum Next FPGA boot ROM (the loader that reads TBBLUE.FW), shown at #0000-#1FFF while bootrom_en
+Reset: equ 0x0000
+L0008: equ 0x0008
+L0010: equ 0x0010
+L0018: equ 0x0018
+L0020: equ 0x0020
+L0028: equ 0x0028
+L0030: equ 0x0030
+L0038: equ 0x0038
+L0066: equ 0x0066
+Start: equ 0x0080
+LoaderMain: equ 0x0100
+InitVideo: equ 0x0145
+InitHardware: equ 0x1CC7

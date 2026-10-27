@@ -1,10 +1,13 @@
 #include "memory.h"
 
+#include <optional>
+
 #include <atomic>
 #include <cassert>
 #include <cstring>
 #include <new>
 #include <mutex>
+#include <random>
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -100,7 +103,8 @@ Memory::Memory(EmulatorContext* context)
         // It's probably better to have a master switch
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
         _feature_sharedmemory_enabled = fm->isEnabled(Features::kSharedMemory);
         // TTD requires debugMode (uses the debug write path) AND the runtime timetravel flag.
         // Per TDD §6.2 the gate is the same shape as _feature_memorytracking_enabled:
@@ -188,6 +192,7 @@ Memory::Memory(EmulatorContext* context)
 Memory::~Memory()
 {
     UnmapMemory();
+    ReleaseRetiredMemory();
 
     // Clean up memory access tracker
     if (_memoryAccessTracker != nullptr)
@@ -236,6 +241,8 @@ uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
     HostBusOverlay* overlay = _busOverlay;
     if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
         return normal;
+    if (overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM)
+        return normal;
     return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
 }
 
@@ -247,6 +254,8 @@ uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
     HostBusOverlay* overlay = _busOverlay;
     if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
         return normal;
+    if (overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM)
+        return normal;
     return overlay->onReadM1(addr, normal, _bank_mode[0] == BANK_ROM);
 }
 
@@ -255,18 +264,31 @@ uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
 template <MemoryWriteCallback Inner>
 void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
 {
-    (this->*Inner)(addr, value);
     HostBusOverlay* overlay = _busOverlay;
-    if (addr >= overlay->windowStart && addr < overlay->windowEnd)
+    const bool inWindow = addr >= overlay->windowStart && addr < overlay->windowEnd;
+    if (overlay->observesWriteStart && inWindow) [[unlikely]]
+        overlay->onBeforeWrite(addr);
+    (this->*Inner)(addr, value);
+    overlay = _busOverlay;  // the write may have changed the installed set (a port-like window)
+    if (addr >= overlay->windowStart && addr < overlay->windowEnd &&
+        !(overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM))
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
 // The contended overlay opcode fetches are the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
 template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
 template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
+template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>(uint16_t, bool);
 
-MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
+MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended, bool stockRead)
 {
+    if (stockRead && !debug && contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>>);
+    if (stockRead && !debug)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFastStock>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>,
+                                   &Memory::MemoryReadOverlayM1<&Memory::MemoryReadFastStock>);
     if (debug && contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
                                    &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>,
@@ -298,23 +320,11 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
     return result;
 }
 
-// Implementation memory read method
-/// Used from: Z80::DbgMemIf
-/// \param addr 16-bit address in Z80 memory space
-/// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+/// The debug read's bookkeeping after the byte is fetched: access tracking, TTD coverage and probe, read
+/// breakpoints. physPage is the RAM page behind addr (kPhysPageNone for ROM). Shared with the derivatives that
+/// map memory their own way (NextMemory)
+void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage)
 {
-    /// region <MemoryReadFast functionality>
-
-    // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0b0000'0011;
-    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-
-    // Read byte from  the correspondent memory bank mapped to global memory buffer
-    uint8_t result = *(_bank_read[bank] + addressInBank);
-
-    /// endregion </MemoryReadFast functionality>
-
     /// region <Memory access tracking>
     if (_memoryAccessTracker != nullptr)
     {
@@ -334,9 +344,11 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     // covered by the Execute path in the Z80 M1 cycle, so only data reads land
     // here. Reads have no journal, so this set is the only thing that lets a
     // reverse read-watchpoint skip frames rather than replay all of them.
-    if (!isExecution && _context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    if (!isExecution && _context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
-        _context->pTimeTravelManager->RecordReadCoverage(GetPhysPageForZ80Address(addr), addr);
+        // TtdPageOfBank: a window on the fast RAM is keyed by that space's page (ROM shares one bucket)
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read,
+                                      ttd::MakeCoverageKey(physPage, addr));
     }
 
     // Phase 4 — access probe hot-path check for Read access type (§9.2).
@@ -348,14 +360,16 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         // Resolve the bank behind `addr` so a read watchpoint can be scoped to
         // one physical page. Reads used to report page 0 unconditionally, which
         // made every hit on a banked address indistinguishable.
-        const ttd::PhysPage readPhysPage = GetPhysPageForZ80Address(addr);
-        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
+        // A window on the fast RAM: that space's page and the offset in it
+        const ttd::PhysPage readPhysPage = physPage;
+        const uint16_t readAddr = ttd::SpaceOfPage(readPhysPage) == ttd::TTDMemorySpace::Ram ? addr : (addr & 0x3FFF);
+        if (_context->ttdProbe.Matches(readAddr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
             // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, addr, pc, result, readPhysPage,
+            _context->ttdProbe.RecordHit(tp, readAddr, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
         }
     }
@@ -374,6 +388,26 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         }
     }
     /// endregion </Read breakpoint logic>
+}
+
+// Implementation memory read method
+/// Used from: Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \return Byte read from Z80 memory
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+{
+    /// region <MemoryReadFast functionality>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Read byte from  the correspondent memory bank mapped to global memory buffer
+    uint8_t result = *(_bank_read[bank] + addressInBank);
+
+    /// endregion </MemoryReadFast functionality>
+
+    ReadDebugEffects(addr, result, isExecution, TtdPageOfBank(static_cast<uint8_t>(addr >> 14)));
 
     return result;
 }
@@ -388,8 +422,122 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
+    // The hooks (breakpoint-taps §5): one byte, so the plain write pays one test
+    if (_writeHooks) [[unlikely]]
+    {
+        // A screen on the event rule draws what it has not drawn yet first: RAM page 5 or 7 (page | 2 == 7)
+        if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7)
+            _videoWatch->CatchUpToStepStart();
+        *(_bank_write[bank] + addressInBank) = value;
+        // A write tap: the write filter's bit, then the resolve (told after the store)
+        if ((_writeHooks & kWriteHookTap) && _tapFilter->MemoryBit(BRK_KIND_WRITE, addr))
+            MemoryWriteTapped(addr);
+        return;
+    }
+
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
+}
+
+/// A write the write filter marks, on the fast path: the taps there are told; a stopping breakpoint does not stop off
+/// the debug path (it is counted only)
+void Memory::MemoryWriteTapped(uint16_t addr)
+{
+    if (_context->pDebugManager != nullptr)
+        (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryWrite(addr);
+}
+
+void Memory::SetWriteTapDemand(bool on, const BreakpointHotState* filter)
+{
+    _writeTapDemand = on && filter != nullptr;
+    _tapFilter = filter;
+    RefreshWriteHooks();
+}
+
+void Memory::RefreshWriteHooks()
+{
+    _writeHooks = static_cast<uint8_t>((_videoWatch != nullptr ? kWriteHookVideo : 0) |
+                                       (_writeTapDemand ? kWriteHookTap : 0));
+}
+
+/// The debug write's bookkeeping after the byte is stored: memory tracking, TTD dirty page / journal / probe,
+/// video flag, write breakpoints. physPage is the 16K RAM page behind addr (kPhysPageNone for ROM)
+void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage)
+{
+    // the 16K bank of the address and the offset in it (for the fast-RAM TTD branch below)
+    const uint8_t bank = (addr >> 14) & 0b0000'0011;
+    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Cache pCore pointer once — used by multiple features below.
+    // Safe: pCore is set during Init() and never null during emulation.
+    Core* const core = _context->pCore;
+
+    // Track memory write if tracker is initialized
+    if (_feature_memorytracking_enabled && _memoryAccessTracker != nullptr)
+    {
+        const uint16_t pc = core->GetZ80()->m1_pc;
+        _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
+    }
+
+    // TTD hot path — single feature gate for all TTD logic.
+    // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
+    // physPage is kPhysPageNone for ROM/Cache banks (no TTD tracking needed).
+    if (_feature_ttd_enabled && physPage != ttd::kPhysPageNone)
+    {
+        // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
+        if (_ttdDirtyTracker != nullptr)
+        {
+            _ttdDirtyTracker->MarkDirty(physPage);
+        }
+
+        // Write journal (parent TDD §9.3): record for reverse-watchpoint queries
+        if (_context->ttdWriteSink != nullptr)
+        {
+            const uint16_t m1pc = core->GetZ80()->m1_pc;
+            _context->ttdWriteSink->RecordMemoryWrite(addr, /*oldVal=*/0, value, m1pc, physPage);
+        }
+
+        // Access probe (parent TDD §9.2): check armed watchpoint
+        if (_context->ttdProbe.IsArmed())
+        {
+            const uint16_t pc = core->GetZ80()->m1_pc;
+            if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
+            {
+                const auto& st = _context->emulatorState;
+                // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+                const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
+                const ttd::TTDTimePoint t{st.frame_counter, tin};
+                _context->ttdProbe.RecordHit(t, addr, pc, value, physPage, ttd::TTDAccessType::Write);
+            }
+        }
+    }
+    else if (_feature_ttd_enabled && _bank_mode[bank] == BANK_CACHE) [[unlikely]]
+    {
+        // The fast RAM (the Sprinter's): its space's page and the offset (no RAM page to mark dirty: the engine
+        // compares the fast RAM region at each capture)
+        TtdNoteAccess(TtdPageOfBank(bank), addressInBank, value, true);
+    }
+
+    // Raise a flag that video memory was changed
+    if (addr >= 0x4000 && addr <= 0x5B00)
+    {
+        _state->video_memory_changed = true;
+    }
+
+    /// region <Write breakpoint logic>
+    // Write taps are checked here too while the debug path runs (the fast write's hook does not see these writes)
+    if ((_feature_breakpoints_enabled || _writeTapDemand) && _context->pDebugManager != nullptr)
+    {
+        Emulator& emulator = *_context->pEmulator;
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandleMemoryWrite(addr);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::MemoryWrite);
+        }
+    }
+    /// endregion </Write breakpoint logic>
 }
 
 /// Implementation memory write method (debug path with TTD/breakpoint hooks).
@@ -408,75 +556,15 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     const uint8_t bank = (addr >> 14) & 0b0000'0011;
     const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
+    if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7) [[unlikely]]
+        _videoWatch->CatchUpToStepStart();
+
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
 
     /// endregion </MemoryWriteFast functionality>
 
-    // Cache pCore pointer once — used by multiple features below.
-    // Safe: pCore is set during Init() and never null during emulation.
-    Core* const core = _context->pCore;
-
-    // Track memory write if tracker is initialized
-    if (_feature_memorytracking_enabled && _memoryAccessTracker != nullptr)
-    {
-        const uint16_t pc = core->GetZ80()->m1_pc;
-        _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
-    }
-
-    // TTD hot path — single feature gate for all TTD logic.
-    // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
-    // physPage is kPhysPageNone for ROM/Cache banks (no TTD tracking needed).
-    const ttd::PhysPage physPage = _bank_ram_page_cache[bank];
-    if (_feature_ttd_enabled && physPage != ttd::kPhysPageNone)
-    {
-        // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
-        if (_ttdDirtyTracker != nullptr)
-        {
-            _ttdDirtyTracker->MarkDirty(physPage);
-        }
-
-        // Write journal (parent TDD §9.3): record for reverse-watchpoint queries
-        if (_context->pTimeTravelManager != nullptr)
-        {
-            const uint16_t m1pc = core->GetZ80()->m1_pc;
-            _context->pTimeTravelManager->RecordMemoryWrite(addr, /*oldVal=*/0, value, m1pc, physPage);
-        }
-
-        // Access probe (parent TDD §9.2): check armed watchpoint
-        if (_context->ttdProbe.IsArmed())
-        {
-            const uint16_t pc = core->GetZ80()->m1_pc;
-            if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
-            {
-                const auto& st = _context->emulatorState;
-                // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
-                const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
-                const ttd::TTDTimePoint t{st.frame_counter, tin};
-                _context->ttdProbe.RecordHit(t, addr, pc, value, physPage, ttd::TTDAccessType::Write);
-            }
-        }
-    }
-
-    // Raise a flag that video memory was changed
-    if (addr >= 0x4000 && addr <= 0x5B00)
-    {
-        _state->video_memory_changed = true;
-    }
-
-    /// region <Write breakpoint logic>
-    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
-    {
-        Emulator& emulator = *_context->pEmulator;
-        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        uint16_t breakpointID = brk.HandleMemoryWrite(addr);
-        if (breakpointID != BRK_INVALID)
-        {
-            // Pause and park, or during a direct run end it after this instruction
-            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::MemoryWrite);
-        }
-    }
-    /// endregion </Write breakpoint logic>
+    WriteDebugEffects(addr, value, _bank_ram_page_cache[bank]);
 }
 
 /// endregion /<Memory access implementation methods>
@@ -497,6 +585,14 @@ void Memory::Reset()
     {
         _memoryAccessTracker->ResetCounters();
     }
+}
+
+void Memory::ClearModelRAM()
+{
+    uint32_t pages = _context->config.ramsize >> 4;  // KB -> 16 KB pages
+    if (pages == 0 || pages > MAX_RAM_PAGES)
+        pages = MAX_RAM_PAGES;
+    std::memset(_ramBase, 0, static_cast<size_t>(pages) * PAGE_SIZE);
 }
 
 /// Fill RAM pages visible in 48K mode with random values
@@ -528,13 +624,17 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
         return;
     }
 
+    // 32 random bits per word on every platform: rand() gives 15 on Windows (RAND_MAX 32767),
+    // which left two of every four bytes zero
+    thread_local std::mt19937 generator{std::random_device{}()};
+
     // Use 32-bit blocks to fill faster
     uint32_t* buffer32bit = (uint32_t*)buffer;
     size_t size32bit = size / 4;
 
     for (uint32_t i = 0; i < size32bit; i++)
     {
-        *(buffer32bit + i) = rand();
+        *(buffer32bit + i) = static_cast<uint32_t>(generator());
     }
 }
 
@@ -675,53 +775,36 @@ void Memory::AllocateAndExportMemoryToMmap()
     LOGINFO("Memory mapped successfully. External tools can now access ZX-Spectrum memory in real-time.");
 }
 
+/// Unmap a shared memory view (the handle may be closed already: the view outlives it)
+static void UnmapView(uint8_t* view, [[maybe_unused]] size_t size)
+{
+#ifdef _WIN32
+    if (!UnmapViewOfFile(view))
+    {
+        DWORD error = GetLastError();
+        LOGWARNING("Failed to unmap view of file (Error %lu)", error);
+    }
+#else
+    if (munmap(view, size) == -1)
+    {
+        LOGWARNING("Failed to unmap shared memory: %s", strerror(errno));
+    }
+#endif  // _WIN32
+}
+
 void Memory::UnmapMemory()
 {
     // Check if we're using shared memory mapping (indicated by non-empty filepath)
     if (!_mappedMemoryFilepath.empty())
     {
         // Shared memory is in use - clean it up
-#ifdef _WIN32
-        // Windows shared memory cleanup
         if (_memory != nullptr)
         {
-            if (!UnmapViewOfFile(_memory))
-            {
-                DWORD error = GetLastError();
-                LOGWARNING("Failed to unmap view of file (Error %lu)", error);
-            }
+            UnmapView(_memory, _memorySize);
             _memory = nullptr;
         }
 
-        if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
-        {
-            if (!CloseHandle(_mappedMemoryHandle))
-            {
-                DWORD error = GetLastError();
-                LOGWARNING("Failed to close shared memory handle (Error %lu)", error);
-            }
-            _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        }
-#else
-        // Unix/Linux/macOS shared memory cleanup
-        if (_memory != nullptr)
-        {
-            if (munmap(_memory, _memorySize) == -1)
-            {
-                LOGWARNING("Failed to unmap shared memory: %s", strerror(errno));
-            }
-            _memory = nullptr;
-        }
-
-        if (_mappedMemoryFd != -1)
-        {
-            close(_mappedMemoryFd);
-            _mappedMemoryFd = -1;
-        }
-
-        shm_unlink(_mappedMemoryFilepath.c_str());
-#endif  // _WIN32
-        _mappedMemoryFilepath.clear();
+        CloseSharedMemory();
     }
     else
     {
@@ -732,6 +815,53 @@ void Memory::UnmapMemory()
             _memory = nullptr;
         }
     }
+}
+
+void Memory::CloseSharedMemory()
+{
+    if (_mappedMemoryFilepath.empty())
+        return;
+
+#ifdef _WIN32
+    if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
+    {
+        if (!CloseHandle(_mappedMemoryHandle))
+        {
+            DWORD error = GetLastError();
+            LOGWARNING("Failed to close shared memory handle (Error %lu)", error);
+        }
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (_mappedMemoryFd != -1)
+    {
+        close(_mappedMemoryFd);
+        _mappedMemoryFd = -1;
+    }
+
+    shm_unlink(_mappedMemoryFilepath.c_str());
+#endif  // _WIN32
+    _mappedMemoryFilepath.clear();
+}
+
+void Memory::RetireMemory(uint8_t* memory, bool mapped)
+{
+    ReleaseRetiredMemory();
+    _retiredMemory = memory;
+    _retiredMemoryMapped = mapped;
+}
+
+void Memory::ReleaseRetiredMemory()
+{
+    if (_retiredMemory == nullptr)
+        return;
+
+    if (_retiredMemoryMapped)
+        UnmapView(_retiredMemory, _memorySize);
+    else
+        FreeZeroedRegion(_retiredMemory, _memorySize);
+    _retiredMemory = nullptr;
+    _retiredMemoryMapped = false;
 }
 
 // Sync shared memory for external viewers
@@ -2045,7 +2175,8 @@ void Memory::UpdateFeatureCache()
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
+        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
         // A TTD replay observes accesses whatever the user's debug mode: it
         // engages the debug path for its own duration (EnterReplayMode)
         _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;
@@ -2067,26 +2198,18 @@ void Memory::UpdateFeatureCache()
                 return;
             }
             
-            // CRITICAL: Pause emulator before memory migration to prevent race conditions
-            // The Z80 thread would access stale bank pointers during reallocation
+            // CRITICAL: the CPU held for the migration (Emulator::CpuHold, execution arbiter): the Z80 thread would
+            // access stale bank pointers during the reallocation. A hold never broadcasts and leaves the pause as
+            // it was. It does not stop the tool readers (UI refresh, WebAPI): the old buffer is retired, not
+            // freed, so a read through an old bank pointer still lands in valid memory
             Emulator* emulator = _context->pEmulator;
-            bool wasRunning = emulator && emulator->IsRunning() && !emulator->IsPaused();
-            
-            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p, wasRunning=%s",
+            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p",
                     sharedMemoryRequested ? "ON" : "OFF",
                     _feature_sharedmemory_enabled ? "ON" : "OFF",
-                    (void*)emulator,
-                    wasRunning ? "YES" : "NO");
-            
-            if (wasRunning)
-            {
-                LOGDEBUG("Memory::UpdateFeatureCache - Pausing emulator before migration (silent)");
-                // Use silent pause (broadcast=false) to avoid triggering UI updates during migration
-                // UI refresh during migration would access memory being reallocated
-                emulator->Pause(false);
-                // MainLoop::Pause() now waits for Z80 thread to confirm it's paused via CV
-                LOGDEBUG("Memory::UpdateFeatureCache - Emulator paused, proceeding with migration");
-            }
+                    (void*)emulator);
+            std::optional<Emulator::CpuHold> hold;
+            if (emulator)
+                hold.emplace(*emulator, "shared memory migration");
 
             if (sharedMemoryRequested && !_feature_sharedmemory_enabled)
             {
@@ -2122,8 +2245,8 @@ void Memory::UpdateFeatureCache()
                         // See MigratePointersAfterReallocation() for full documentation
                         MigratePointersAfterReallocation(oldMemory, _memory);
 
-                        // Free the old private memory (safe now that all pointers updated)
-                        FreeZeroedRegion(oldMemory, _memorySize);
+                        // The old private memory outlives the readers still in it
+                        RetireMemory(oldMemory, false);
 
                         LOGDEBUG("Shared memory enabled - migrated %zu bytes to shared memory", _memorySize);
                     }
@@ -2155,9 +2278,6 @@ void Memory::UpdateFeatureCache()
                     // Copy content from shared memory to heap
                     memcpy(newMemory, _memory, _memorySize);
 
-                    // Unmap shared memory (this sets _memory to nullptr)
-                    UnmapMemory();
-
                     // Set new heap memory
                     _memory = newMemory;
 
@@ -2165,22 +2285,20 @@ void Memory::UpdateFeatureCache()
                     // See MigratePointersAfterReallocation() for full documentation
                     MigratePointersAfterReallocation(oldMemory, _memory);
 
+                    // The name and handle go now; the old view outlives the readers still in it
+                    CloseSharedMemory();
+                    RetireMemory(oldMemory, true);
+
                     LOGDEBUG("Shared memory disabled - migrated %zu bytes to heap memory", _memorySize);
                 }
 
                 _feature_sharedmemory_enabled = false;
             }
             
-            // Resume emulator after migration completes
-            if (wasRunning)
-            {
-                // Memory barrier ensures all pointer updates are visible to all CPU cores
-                // before Z80 thread resumes execution (critical for ARM's weak memory model)
-                std::atomic_thread_fence(std::memory_order_seq_cst);
-                
-                // Use silent resume (broadcast=false) to match silent pause
-                emulator->Resume(false);
-            }
+            // The CPU handed back after the migration. The barrier makes every pointer update visible to all CPU
+            // cores before the Z80 thread runs again (ARM's weak memory model); the hold's mutex orders it too
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            hold.reset();
         }
 
         // Update memory access tracker if it exists
@@ -2255,3 +2373,43 @@ void Memory::handleFrameEnd()
 }
 
 /// endregion </Frame lifecycle>
+
+ttd::PhysPage Memory::TtdSpacePageOfBank(uint8_t bank) const
+{
+    bank &= 3;
+    if (_bank_mode[bank] != BANK_CACHE || !_cacheBase)
+        return ttd::kPhysPageNone;
+    const ptrdiff_t offset = _bank_write[bank] - _cacheBase;
+    if (offset < 0 || offset >= static_cast<ptrdiff_t>(MAX_CACHE_PAGES) * static_cast<ptrdiff_t>(ttd::kSpacePageBytes))
+        return ttd::kPhysPageNone;
+    return ttd::SpacePage(ttd::TTDMemorySpace::Cache, static_cast<uint32_t>(offset));
+}
+
+void Memory::CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write)
+{
+    if (!_feature_breakpoints_enabled || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleSpaceAccess(page, offset, write);
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, addr, write ? BreakpointHitKind::MemoryWrite : BreakpointHitKind::MemoryRead);
+}
+
+void Memory::TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write)
+{
+    if (page == ttd::kPhysPageNone)
+        return;
+    Core* const core = _context->pCore;
+    const uint16_t pc = core ? core->GetZ80()->m1_pc : 0;
+    const ttd::TTDAccessType kind = write ? ttd::TTDAccessType::Write : ttd::TTDAccessType::Read;
+    if (write && _context->ttdWriteSink)
+        _context->ttdWriteSink->RecordMemoryWrite(addr, /*oldVal=*/0, value, pc, page);   // the journal and the coverage
+    else if (!write && _context->ttdCoverageActive && _context->ttdCoverage)
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read, ttd::MakeCoverageKey(page, addr));
+    if (_context->ttdProbe.IsArmed() && _context->ttdProbe.Matches(addr, kind, value, pc, page))
+    {
+        const auto& st = _context->emulatorState;
+        const uint32_t tin = core ? st.TtdTInFrame(core->GetZ80()->t) : 0;
+        _context->ttdProbe.RecordHit(ttd::TTDTimePoint{st.frame_counter, tin}, addr, pc, value, page, kind);
+    }
+}

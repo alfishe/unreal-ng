@@ -1,0 +1,22 @@
+        ORG     #7000
+START   LD      HL,TAB
+        LD      A,(HL)
+        LD      (TAB+1),A
+        JR      NZ,START
+        DB      1,2,"AB",#10
+        DW      START,TAB
+        LD      A,1+2*3
+        LD      B,7/2
+        LD      C,#1234
+        LD      D,#1234
+        LD      DE,#1234^
+        EX      AF,AF'
+        LD      (IX+5),A
+        BIT     7,C
+        OUT     (#FE),A
+TAB     DB      5
+VAL     EQU     3
+        LD      A,VAL
+        DS      3,"X"
+        PUSH    AF,BC
+

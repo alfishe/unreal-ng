@@ -10,6 +10,10 @@
 # A missing build directory is configured from scratch (with -DTESTS=ON, which test.sh needs).
 # UNREAL_NO_CONFIGURE=1 skips the step.
 #
+# The source checks CI runs in its lint job (tools/verification/gui-instance-reads.sh) run first, in a fraction of a
+# second: a failure is printed before the build and does not stop it, so it is seen before the commit, not an hour later
+# in CI. UNREAL_NO_LINT=1 skips them.
+#
 # Run it in the foreground and wait for it to end; if both slots are busy it queues
 # (and prints that it does). Details: tools/build/README.md
 set -u
@@ -27,5 +31,18 @@ if [ "${UNREAL_NO_CONFIGURE:-0}" != 1 ]; then
   [ -f "$BUILD_DIR/CMakeCache.txt" ] || ARGS="-G Ninja -DTESTS=ON"
   CONFIGURE='mkdir -p "$BUILD_DIR" && { cmake -S "$ROOT" -B "$BUILD_DIR" '$ARGS' > "$BUILD_DIR/configure.log" 2>&1 || { cat "$BUILD_DIR/configure.log"; false; }; }'
 fi
+# Same checks as the CI lint job; only a problem is printed
+if [ "${UNREAL_NO_LINT:-0}" != 1 ] && [ -x "$ROOT/tools/verification/gui-instance-reads.sh" ]; then
+  LINT=$("$ROOT/tools/verification/gui-instance-reads.sh" 2>&1)
+  LINT_STATUS=$?
+  if [ $LINT_STATUS -ne 0 ]; then
+    echo "== lint FAILED (the CI lint job will fail too), building anyway:"
+    echo "$LINT"
+  elif echo "$LINT" | grep -q 'lower the baseline'; then
+    echo "== lint:"
+    echo "$LINT" | grep 'lower the baseline'
+  fi
+fi
+
 export ROOT BUILD_DIR JOBS
 exec "$HERE/slot.sh" build -- bash -c "$CONFIGURE && exec ninja -C \"\$BUILD_DIR\" -j \"\$JOBS\" \"\$@\"" build.sh "$@"

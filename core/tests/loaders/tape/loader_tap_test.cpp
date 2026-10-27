@@ -5,6 +5,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 
 /// region <SetUp / TearDown>
@@ -29,17 +30,7 @@ void LoaderTAP_Test::SetUp()
 
 void LoaderTAP_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>

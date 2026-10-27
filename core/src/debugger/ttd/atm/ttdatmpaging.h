@@ -39,7 +39,7 @@ struct AtmPagingState
     uint32_t pFFF7[8];          ///< ATM 7.10 / ATM3 memory map (one entry per window)
     uint32_t aFF77;             ///< ATM mode latch
     uint32_t atmPalette[16];    ///< #FF palette RAM as rendered colors (ABGR)
-    uint16_t pBD;               ///< ATM3 #xxBD (pBDl / pBDh union)
+    uint16_t pBD;               ///< ATM3 #xxBD (pBDb.l / pBDb.h union)
     uint8_t  pBE;               ///< ATM3 #xxBE
     uint8_t  pBF;               ///< ATM3 #xxBF (bit 0 = shaden, gates the FDC)
     uint8_t  aFE;               ///< ATM 4.50 system port

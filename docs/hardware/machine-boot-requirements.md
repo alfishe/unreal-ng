@@ -51,7 +51,12 @@ These account for most "it won't boot" reports. Check them before suspecting the
    `save`, `export` or `discard` — this can look like "the new disk didn't take."
 5. **An empty optical/IDE drive on ZX-Evo's "D. CD boot" or "B. HDD boot" just keeps retrying**
    with nothing inserted; it is not a hang, it is waiting for media.
-6. **ROM choice is a config-file setting, not a runtime option.** Switching ROM trees (e.g. ATM3's
+6. **Each disk slot reads only certain FAT types, and the emulator refuses the others.** Sprinter and Profi IDE hard
+   disks take FAT12 / FAT16 only (Estex DSS and PQ-DOS read no FAT32), the TS-Conf SD card FAT32 only, the other
+   slots FAT16 and FAT32. A FAT32 image, folder or composite on a Sprinter or Profi disk is refused with the reason
+   instead of mounting a disk the DOS cannot see. The table:
+   [docs/features/media.md](../features/media.md#which-file-system-a-slot-takes).
+7. **ROM choice is a config-file setting, not a runtime option.** Switching ROM trees (e.g. ATM3's
    `[EVO] Fpga=legacy` for the older `rom/zxevo.rom`) requires editing `unreal.ini` and creating a
    new instance — there is no live switch.
 
@@ -144,10 +149,16 @@ Ground truth: [.recipe/machines/profi.md](../../.recipe/machines/profi.md),
 - **Boot sources**: tape; TR-DOS floppy `fdd.a`–`fdd.d`; IDE hard disk `ide0.master`/`ide0.slave`
   (`[HDD] Scheme=PROFI`) — the SYS ROM boots straight from the hard disk when one is present.
 - **Filesystem parameters**: TR-DOS TRD for floppy. The hard disk is a **raw image** (no MBR
-  requirement documented for this board); its geometry comes from the disk's own ProfiHiDD header
+  requirement documented for the SYS ROM's own boot); its geometry comes from the disk's own ProfiHiDD header
   if present (16 heads × 16 sectors from the SYS ROM, 16×63 from Karabas-built images), or 16×16
   by default with no header at all. This is a different rule from ATM/ZX-Evo's MBR+FAT
   requirement — do not carry that assumption over to Profi.
+- **PQ-DOS on `PROFI-PLUS`** (ROM BIOS Plus 0.41h1): the hard disk is **MBR + FAT16**, and the BIOS runs the
+  **Z80 boot code in the MBR**, so a disk built without it does not start PQ-DOS
+  (`testdata/machines/profi/pqdos/pqdos-hdd-small.img`: partition 1, type `#06`, active). PQ-DOS 2023-09 sees a
+  second FAT16 partition as `D:` and **ignores a FAT32 partition**, so the Profi IDE slots take FAT12 / FAT16 only
+  (FAT32 is refused). A composite with `partitions:` carries the MBR code of its first source disk, so PQ-DOS
+  plus a host folder as `D:` works (checked by `ProfiPlusComposed_Test`).
 - **Files that must be present**: TR-DOS autostart rules as above; hard disk content is whatever
   the SYS ROM's boot loader expects (not further documented in the sources read for this page).
 
@@ -193,6 +204,12 @@ per-machine recipe — read it before automating anything ATM-specific).
   - The CD `AUTORUN.ZX` requirement is above.
   - A CP/M-mode boot (`#FF77` bit 9) is exercised by booting a CP/M disk image through the normal
     TR-DOS autostart path, not by a separate file requirement.
+- **128K programs from a floppy (`ATM710`)**: the TR-DOS cold start (the BIOS menu's "TR-DOS 48") leaves
+  `#7FFD` pages at RAM 24-31 on 256 KB and up, so such programs need the "SPECTRUM 128" way in. The disk
+  autostart does that; a hand boot through "TR-DOS 48" does not
+  ([atm710.md](../../.recipe/machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)). The `ATM450`'s cold
+  start does the same through `#FDFD = 3`, and its autostart clears it
+  ([atm450.md](../../.recipe/machines/atm/atm450.md#software-for-the-atm-turbo-2-and-the-tr-dos-cold-start)).
 
 ## TS-Conf (`TSL`, alias `TSCONF`)
 

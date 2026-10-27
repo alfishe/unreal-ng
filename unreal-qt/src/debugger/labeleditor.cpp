@@ -1,4 +1,5 @@
 #include "labeleditor.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -11,6 +12,11 @@
 
 #include "debugger/labels/labelmanager.h"
 #include "labeldialog.h"
+#include "symbolfiledialogs.h"
+#include "symbolsetspanel.h"
+#include "debugger/labels/symbolcontrol.h"
+#include <QFileDialog>
+#include <QInputDialog>
 
 // File format filters
 static const QString LABEL_FILTERS =
@@ -118,6 +124,12 @@ void LabelEditor::setupUI()
     _saveAsAction->setShortcut(QKeySequence::SaveAs);
 
     fileMenu->addSeparator();
+    fileMenu->addAction(tr("&Import Symbols..."), this, &LabelEditor::importSymbols);
+    fileMenu->addAction(tr("E&xport Symbols..."), this, &LabelEditor::exportSymbols);
+    fileMenu->addAction(tr("Scan RAM for &Label Tables..."), this, &LabelEditor::scanLabelTables);
+    fileMenu->addAction(tr("Import Labels from &Source..."), this, &LabelEditor::importSourceLabels);
+
+    fileMenu->addSeparator();
 
     // Recent files submenu
     _recentFilesMenu = fileMenu->addMenu(tr("Recent Files"));
@@ -185,8 +197,21 @@ void LabelEditor::setupUI()
     // Assemble main layout
     mainLayout->setMenuBar(_menuBar);
     mainLayout->addWidget(_toolBar);
-    mainLayout->addWidget(_labelTable);
-    mainLayout->addLayout(buttonLayout);
+    _tabs = new QTabWidget(this);
+    auto* labelsPage = new QWidget(_tabs);
+    auto* labelsLayout = new QVBoxLayout(labelsPage);
+    labelsLayout->setContentsMargins(0, 0, 0, 0);
+    labelsLayout->addWidget(_labelTable);
+    labelsLayout->addLayout(buttonLayout);
+    _tabs->addTab(labelsPage, tr("Labels"));
+    _setsPanel = new SymbolSetsPanel(_labelManager, _tabs);
+    _tabs->addTab(_setsPanel, tr("Sets"));
+    mainLayout->addWidget(_tabs);
+    connect(_setsPanel, &SymbolSetsPanel::setsChanged, this, &LabelEditor::refreshLabelList);
+    connect(_tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (_tabs->widget(index) == _setsPanel)
+            _setsPanel->refresh();
+    });
     mainLayout->addWidget(_statusBar);
 
     // Connect signals and slots
@@ -281,8 +306,115 @@ void LabelEditor::saveAsLabels()
     }
 }
 
+void LabelEditor::importSymbols()
+{
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import Symbols"),
+                                                      QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("All Files (*)"));
+    if (path.isEmpty())
+        return;
+    SymbolImportOptionsDialog dialog(path, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    std::map<std::string, std::string> options = dialog.Options();
+    options["path"] = path.toStdString();
+    const SymbolReply reply = SymbolControl(_labelManager).Execute({"import", options});
+    refreshLabelList();
+    if (_setsPanel)
+        _setsPanel->refresh();
+    ShowSymbolReport(this, tr("Import Symbols"), reply);
+}
+
+void LabelEditor::exportSymbols()
+{
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export Symbols"),
+                                                      QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("All Files (*)"));
+    if (path.isEmpty())
+        return;
+    SymbolExportOptionsDialog dialog(_labelManager, path, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    std::map<std::string, std::string> options = dialog.Options();
+    options["path"] = path.toStdString();
+    ShowSymbolReport(this, tr("Export Symbols"), SymbolControl(_labelManager).Execute({"export", options}));
+}
+
+void LabelEditor::scanLabelTables()
+{
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
+    const SymbolReply scan = SymbolControl(_labelManager).Execute({"scan", {}});
+    if (!scan.Ok())
+    {
+        QMessageBox::warning(this, tr("Label Tables in RAM"), QString::fromStdString(scan.message));
+        return;
+    }
+    const auto& candidates = scan.body.find("candidates")->items;
+    if (candidates.empty())
+    {
+        QMessageBox::information(this, tr("Label Tables in RAM"),
+                                 tr("No ALASM or XAS label table in the %1 RAM pages.").arg(scan.body.find("pages")->i));
+        return;
+    }
+    QStringList choices;
+    for (const StateNode& c : candidates)
+        choices << tr("%1 %2, RAM page %3 at #%4: %5 entries (score %6)")
+                       .arg(QString::fromStdString(c.find("scanner")->s), QString::fromStdString(c.find("version")->s))
+                       .arg(c.find("page")->i)
+                       .arg(c.find("offset")->i, 4, 16, QChar('0'))
+                       .arg(c.find("count")->i)
+                       .arg(c.find("score")->i);
+    bool ok = false;
+    const QString choice = QInputDialog::getItem(this, tr("Label Tables in RAM"), tr("Import the labels of:"), choices, 0, false, &ok);
+    if (!ok)
+        return;
+    const StateNode& chosen = candidates[static_cast<size_t>(choices.indexOf(choice))];
+    const SymbolReply reply = SymbolControl(_labelManager)
+                                  .Execute({"import-live",
+                                            {{"scanner", chosen.find("scanner")->s},
+                                             {"page", std::to_string(chosen.find("page")->i)},
+                                             {"offset", std::to_string(chosen.find("offset")->i)}}});
+    refreshLabelList();
+    if (_setsPanel)
+        _setsPanel->refresh();
+    ShowSymbolReport(this, tr("Label Tables in RAM"), reply);
+}
+
+void LabelEditor::importSourceLabels()
+{
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import Labels from Source"),
+                                                      QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+                                                      tr("Sources and images (*.asm *.a80 *.s *.trd *.tap *.tzx *.$*);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+    std::map<std::string, std::string> options{{"path", path.toStdString()}};
+    SymbolReply reply = SymbolControl(_labelManager).Execute({"import-source", options});
+    // An image with several sources: pick the main one
+    if (!reply.Ok() && reply.body.find("sources") && !reply.body.find("sources")->items.empty())
+    {
+        QStringList sources;
+        for (const StateNode& n : reply.body.find("sources")->items)
+            sources << QString::fromStdString(n.s);
+        bool ok = false;
+        const QString main = QInputDialog::getItem(this, tr("Import Labels from Source"), tr("Main source:"), sources, 0, false, &ok);
+        if (!ok)
+            return;
+        options["main"] = main.toStdString();
+        reply = SymbolControl(_labelManager).Execute({"import-source", options});
+    }
+    refreshLabelList();
+    if (_setsPanel)
+        _setsPanel->refresh();
+    ShowSymbolReport(this, tr("Import Labels from Source"), reply);
+}
+
 void LabelEditor::loadFromFile(const QString& filePath)
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         QString errorMsg = tr("Error: Label manager is not initialized.");
@@ -512,6 +644,8 @@ void LabelEditor::populateLabelTable()
 
 void LabelEditor::deleteLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);
@@ -570,6 +704,8 @@ void LabelEditor::onLabelDoubleClicked(QTableWidgetItem* item)
 
 void LabelEditor::addLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);
@@ -625,6 +761,8 @@ void LabelEditor::addLabel()
 
 void LabelEditor::editLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);

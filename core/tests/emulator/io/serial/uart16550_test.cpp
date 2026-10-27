@@ -4,11 +4,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <deque>
 #include <vector>
 
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/io/serial/uart16550.h"
+#include "emulator/memory/atm/evoavrwait.h"
 
 namespace
 {
@@ -311,6 +313,51 @@ TEST_F(Uart16550_Test, StateRoundTripContinuesTheSameWay)
         EXPECT_EQ(a.Read(kRbr, now + 6 * charT), b.Read(kRbr, now + 6 * charT));
 }
 
+/// The clocks are state only while a character is on a line: an idle port a peer clocks every frame saves the same
+/// bytes at every time (TTD stores nothing for it per frame), and a port restored from that state continues as the
+/// live one - sending across a clock restart
+TEST_F(Uart16550_Test, AnIdlePortSavesTheSameStateAsTimePasses)
+{
+    Uart16550 a = Make(Uart16550::Flavor::EvoAvr);
+    a.Write(kLcr, 0x03, now);
+    a.Write(kMcr, 0x02, now);
+    const uint64_t charT = a.CharacterT();
+    a.Write(kRbr, 0x41, now);
+    peer.toZx = {9};
+    a.Advance(now + 2 * charT);   // the byte out, the peer's byte starts
+    a.Advance(now + 4 * charT);   // and is in: the lines are idle
+    ASSERT_EQ(a.GetView().rxCount, 1);
+
+    Uart16550::State early{}, late{};   // zero-initialized: the padding compares too
+    a.SaveState(early);
+    a.Advance(now + 70000);
+    a.SaveState(late);
+    EXPECT_EQ(std::memcmp(&early, &late, sizeof(early)), 0) << "an idle port's state does not follow the clock";
+    EXPECT_EQ(late.lastNow, 0u);
+
+    ScriptPeer peerB;
+    Uart16550 b(Uart16550::DefaultParams(Uart16550::Flavor::EvoAvr), 3500000);
+    b.SetPeer(&peerB);
+    b.LoadState(late);
+    for (Uart16550* u : {&a, &b})
+    {
+        u->Advance(500);   // a machine reset: the counter starts again
+        u->Write(kRbr, 0x43, 500);
+        u->Advance(500 + charT / 2);
+        Uart16550::State busy{};
+        u->SaveState(busy);
+        EXPECT_EQ(busy.lastNow, 500 + charT / 2) << "a character on the line: the clocks are saved";
+        EXPECT_EQ(busy.txDoneAt, 500 + charT);
+        u->Advance(500 + charT);
+    }
+    Uart16550::State liveState{}, restored{};
+    a.SaveState(liveState);
+    b.SaveState(restored);
+    EXPECT_EQ(std::memcmp(&liveState, &restored, sizeof(liveState)), 0);
+    EXPECT_EQ(peer.fromZx.back(), 0x43);
+    EXPECT_EQ(peerB.fromZx, (std::vector<uint8_t>{0x43})) << "one character time from the restart, as the live port";
+}
+
 TEST_F(Uart16550_Test, TheLineFormatReachesThePeer)
 {
     Uart16550 u = Make(Uart16550::Flavor::Chip16550);
@@ -361,6 +408,16 @@ Uart16550 MakeAvr(Uart16550::AvrFirmware firmware, ISerialPeer* peer)
     Uart16550 uart(Uart16550::EvoAvrParams(firmware), 3500000);
     uart.SetPeer(peer);
     return uart;
+}
+
+/// One access as ComPort::AddAccessWait makes it, without the CPU: the board AVR's wait (timed by the firmware the
+/// UART emulates) around the UART's service, in AVR cycles; 0 for a real 16550
+uint32_t AvrAccess(EvoAvrWait& wait, const Uart16550& u, uint8_t reg, bool read, uint64_t at)
+{
+    const Uart16550::Params& p = u.GetParams();
+    wait.SetTiming(EvoAvrWait::Timing{p.avrClockHz, p.isrCycles, p.loopCycles, p.waitChecksPerLoop});
+    const uint32_t service = u.ServiceCycles(reg, read);
+    return service ? wait.Access(service, 0, at, 3500000) : 0;
 }
 
 /// Let `chars` characters arrive one character time after another; returns the time after them
@@ -429,7 +486,9 @@ TEST_F(Uart16550_Test, DlmBit7IsTheAvrDivisorFromMay2011)
         u.Write(kIer, 0x80, now);
         u.Write(kLcr, 0x03, now);
         if (firmware == Uart16550::AvrFirmware::Base2011May)
+        {
             EXPECT_EQ(u.Baud(), 115200u) << "691200 / (5 + 1)";
+        }
         else
             EXPECT_NE(u.Baud(), 115200u) << "the divisor #8005 taken as 115200 / 32773";
     }
@@ -528,9 +587,10 @@ TEST_F(Uart16550_Test, Ts2016AprPicksTheWaitUpAtTheNextTask)
     const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::AvrFirmware::Ts2016Apr);
     EXPECT_EQ(p.waitChecksPerLoop, 8);
     Uart16550 u = MakeAvr(Uart16550::AvrFirmware::Ts2016Apr, &peer);
-    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    EvoAvrWait wait;
+    const uint32_t first = AvrAccess(wait, u, Uart16550::kLsr, true, 1000000);
     const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
-    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    const uint32_t polled = AvrAccess(wait, u, Uart16550::kLsr, true, release);
     const uint32_t task = p.loopCycles / 8;
     EXPECT_LE(polled, p.isrCycles + task + p.serviceRead);
     EXPECT_GE(polled, p.isrCycles + task + p.serviceRead - 4);
@@ -541,26 +601,30 @@ TEST_F(Uart16550_Test, AvrWaitIsInterruptPlusLoopPhasePlusService)
 {
     const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::kLatestAvr);
     Uart16550 u = MakeAvr(Uart16550::kLatestAvr, &peer);
+    EvoAvrWait wait;
     // Long after the last access: the loop is somewhere in its pass
     const uint32_t minimum = static_cast<uint32_t>(p.isrCycles) + p.serviceRead;
     const uint32_t wholePass = minimum + p.loopCycles;
-    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    const uint32_t first = AvrAccess(wait, u, Uart16550::kLsr, true, 1000000);
     EXPECT_GT(first, minimum);
     EXPECT_LE(first, wholePass);
     // Right behind the release: the loop starts its pass again, a whole pass to wait
     const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
-    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    const uint32_t polled = AvrAccess(wait, u, Uart16550::kLsr, true, release);
     EXPECT_GE(polled, wholePass - 4);
     EXPECT_LE(polled, wholePass);
     // The services differ by access
     Uart16550 v = MakeAvr(Uart16550::kLatestAvr, &peer);
-    const uint32_t write = v.AccessCycles(Uart16550::kScr, false, 2000000);
+    EvoAvrWait waitV;
+    const uint32_t write = AvrAccess(waitV, v, Uart16550::kScr, false, 2000000);
     Uart16550 w = MakeAvr(Uart16550::kLatestAvr, &peer);
-    const uint32_t rbr = w.AccessCycles(Uart16550::kRbrThr, true, 2000000);
+    EvoAvrWait waitW;
+    const uint32_t rbr = AvrAccess(waitW, w, Uart16550::kRbrThr, true, 2000000);
     EXPECT_EQ(rbr - write, static_cast<uint32_t>(p.serviceRbr - p.serviceWrite)) << "same phase, different service";
 
     Uart16550 chip = Make(Uart16550::Flavor::Chip16550);
-    EXPECT_EQ(chip.AccessCycles(Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
+    EvoAvrWait waitChip;
+    EXPECT_EQ(AvrAccess(waitChip, chip, Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
 }
 
 /// An RS-232 loopback test plug (ComPort=PLUG): bytes come back, the UART's own RTS drives CTS and DTR drives DSR

@@ -8,7 +8,8 @@
 ///
 /// OpenSSL (the vetted TLS library the build already uses for the WebAPI) through memory BIOs: no socket coupling,
 /// the bridge moves the ciphertext with its own non-blocking sockets. The peer is verified as the firmware does
-/// (WiFiClientSecure with its CA bundle): the host's trust store (OpenSSL's default paths, SSL_CERT_FILE /
+/// (WiFiClientSecure with its CA bundle): the host's trust store (the system roots - Windows certificate store,
+/// macOS keychains, the Linux distributions' CA bundles - plus OpenSSL's default paths, SSL_CERT_FILE /
 /// SSL_CERT_DIR honored) and the server name. Built without OpenSSL (UNREAL_HOST_TLS off): Available() is false
 /// and every session fails.
 

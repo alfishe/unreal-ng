@@ -53,14 +53,15 @@ Only **one process can bind port 8090** — a stale instance silently wins or
 loses the race and everything downstream gets confusing. Always start with:
 
 ```bash
-# 1. Kill stale instances
-pkill -9 unreal-qt 2>/dev/null || true
-sleep 1
+# 1. Check if port 8090 is already in use
+if lsof -i :8090 >/dev/null 2>&1; then
+  echo "WARNING: Port 8090 in use. Another session may own this emulator."
+  echo "Use that instance, or ask the user before killing it."
+  lsof -i :8090
+  exit 1
+fi
 
-# 2. Verify port 8090 is free
-lsof -i :8090 2>/dev/null && echo "WARNING: port 8090 still in use!" || echo "port free"
-
-# 3. Start the freshly built emulator (macOS path; Linux: bin/unreal-qt)
+# 2. Start the freshly built emulator (macOS path; Linux: bin/unreal-qt)
 ./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
 sleep 4   # WebAPI + MCP listeners come up with the app
 
@@ -159,6 +160,12 @@ Notes agents trip over:
 - `stop` freezes the instance; `destroy` deletes it. TTD history, traces and
   counters die with the instance — dump them to `scratch/` first.
 - Emulator ids are UUIDs; MCP `target` takes the full id (or `"auto"`); id prefixes are not matched.
+- **Instances have no owner and no expiry**: nothing removes them but `DELETE`. A script that creates one
+  deletes it on every exit path (bash `trap 'curl -s -X DELETE "$BASE/emulator/$EMU_ID"' EXIT`, Python
+  `try/finally`), and keeps the ids it created: other sessions may have instances on the same app, so never
+  clean up by deleting everything in `GET /api/v1/emulator`. Name them at create (`{"symbolic_id":"<task>-<n>"}`):
+  the list and `GET /api/v1/emulator/{id}` show `symbolic_id`, so a leftover is recognised as yours
+  (`jq '.emulators[] | select(.symbolic_id | startswith("<task>-")) | .id'`).
 
 ### 6. Run control (needed by later recipes)
 

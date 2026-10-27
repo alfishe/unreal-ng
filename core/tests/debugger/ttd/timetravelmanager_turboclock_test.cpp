@@ -12,9 +12,10 @@
 #include <sstream>
 #include <vector>
 
+#include "_helpers/ttdwriterecords.h"
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdwritejournal.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -43,7 +44,7 @@ TEST(TimeTravelManager_TurboClock_Test, ModelsWithoutTurboKeepTStates)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     EXPECT_EQ(context->emulatorState.ttd_clock_units, 1u);
-    EXPECT_EQ(context->pTimeTravelManager->FrameSpan(), context->config.frame);
+    EXPECT_EQ(context->pTimeTravelController->FrameSpan(), context->config.frame);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
@@ -52,7 +53,7 @@ class TimeTravelManager_TurboSwitch_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
 
     static constexpr uint16_t kTarget = 0x9000;
@@ -64,7 +65,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("SCORPION", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         ASSERT_EQ(_context->emulatorState.ttd_clock_units, 2u);
 
@@ -111,13 +112,9 @@ protected:
     std::vector<ttd::TTDWriteRecord> TargetWrites() const
     {
         std::vector<ttd::TTDWriteRecord> writes;
-        const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-        for (uint64_t seq = journal->SeqTail(); seq < journal->SeqHead(); ++seq)
-        {
-            const ttd::TTDWriteRecord& rec = journal->RecordAt(seq);
+        for (const ttd::TTDWriteRecord& rec : ttdtest::WriteRecords(*_ttd))
             if (!rec.isIo && rec.addr == kTarget)
                 writes.push_back(rec);
-        }
         return writes;
     }
 
@@ -139,12 +136,10 @@ protected:
 
 TEST_F(TimeTravelManager_TurboSwitch_Test, JournalTimeOnlyGrowsThroughASwitchDown)
 {
-    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-    ASSERT_NE(journal, nullptr);
-    ASSERT_GT(journal->Size(), 0u);
-    for (uint64_t seq = journal->SeqTail() + 1; seq < journal->SeqHead(); ++seq)
-        ASSERT_GE(uint64_t(journal->RecordAt(seq).globalT), uint64_t(journal->RecordAt(seq - 1).globalT))
-            << "record " << seq << " goes back in time";
+    const std::vector<ttd::TTDWriteRecord> records = ttdtest::WriteRecords(*_ttd);
+    ASSERT_GT(records.size(), 0u);
+    for (size_t k = 1; k < records.size(); ++k)
+        ASSERT_GE(uint64_t(records[k].globalT), uint64_t(records[k - 1].globalT)) << "record " << k << " goes back in time";
 
     const auto writes = TargetWrites();
     ASSERT_EQ(writes.size(), 2u);

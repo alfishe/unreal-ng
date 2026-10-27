@@ -1,6 +1,6 @@
 # ZX-Spectrum Screen Rendering Pipeline
 
-**Last Updated**: 2026-01-11  
+**Last Updated**: 2026-10-18  
 **Status**: Complete (ScreenHQ optimization integrated)
 
 ---
@@ -99,6 +99,59 @@ struct TstateCoordLUT {
 ```
 
 **Performance gain**: 2.5x faster than runtime calculation (343μs → 139μs)
+
+#### The event rule and the DrawRange contract
+
+The per-instruction flow above is the fallback. The classic ZX screen now draws **on its events**:
+`ScreenZX::CatchesUpOnEvents()` is true, and the beam is caught up only when something the picture is drawn from is
+about to change. Each catch-up is one `DrawPeriod` → `DrawRange(from, to)` call for the whole stretch since the last
+one.
+
+What catches the beam up (`CatchUpToStepStart()`, draws up to the T the current instruction began at), **before**
+the change lands:
+
+| Change | Hook |
+|:---|:---|
+| Write to RAM page 5 or 7 (the two screens) | `Memory::MemoryWriteFast` / `Memory::MemoryWriteDebug`, through `Memory::SetVideoWatch` |
+| Any `OUT` (border, `#7FFD` screen select, palette, mode ports) | `Z80::out`, through `Z80::videoCatchUp` |
+| A latch clocked by read cycles (the 128K's `#7FFD` on `IN`) | `Z80::in` |
+
+Then the frame's last step draws its tail, and a step marked by a change of the border (`_drawAtStepEnd`) is drawn at
+its own end, as the per-instruction draw would have drawn it. When the hooks cannot be used (another video family, a
+port interceptor), or a port switched the video mode in the middle of the frame, `_drawEveryStep` turns on the
+per-instruction flow for the rest of the frame.
+
+**The contract.** Nothing the picture is drawn from changes inside one `DrawRange` call. The call runs on the
+emulation thread while the CPU is stopped, and every change catches the beam up before it lands, so a change always
+falls *between* two calls. Two consequences:
+
+1. **The time resolution of the picture is decided by the callers (where they cut the frame), not by the renderer.**
+   It is the CPU instruction: a write in an instruction shows from the T that instruction began at, exactly as with
+   the per-instruction draw before the event rule. Neither the event rule nor any renderer change made it coarser.
+2. **A renderer may group the T of one call however it likes** (a whole 8-pixel cell at once, all the whole cells of
+   a run of one line, a border run as one fill) as long as every pixel shows what it would show drawn T by T. Since
+   memory and the border are frozen during the call, reading a cell's bytes once gives the same result as reading
+   them again on each of its four T.
+
+**Multicolor (Pentagon 128 and others).** A multicolor engine rewrites attributes while the beam runs. Each of its
+writes cuts the frame: the beam is drawn up to the writing instruction with the old bytes, the rest with the new ones.
+So the cells the beam passed before a write keep the old colour and the cells after it get the new one, T-exact at the
+instruction level, however `DrawRangeZX` groups its work inside a call.
+
+`ScreenZX::DrawRangeZXImpl` keeps the ULA latch exact:
+
+- a cell's pixel and attribute bytes are latched at its first T (HDL fetch-latch-shift);
+- the cell a range starts in keeps the latch it already holds (same `symbolX` and `zxY` = no re-read), as the T-by-T
+  path does;
+- a range that ends inside a cell draws its last T one by one and leaves the latch for the next call, which goes on
+  drawing that cell from the same latch;
+- the whole cells of a run (a `TstateCoordLUT::run` is the next pixels of one framebuffer row, so its cells follow
+  each other on one ZX line: `symbolX + 1`, framebuffer `+ 8`) are drawn without reading the LUT on every T;
+- ULA snow (a cell fetched from another address on a refresh cycle) takes the T-by-T path;
+- the border keeps its own latch rule (every T on Pentagon logic, at 4T phase 2 on Ferranti ULAs).
+
+Any change to a renderer is checked bit-exact against the previous build: per-frame hashes of the framebuffer and of
+plane B over multicolor and border demos on Pentagon, 48K, 128K and Scorpion.
 
 ---
 

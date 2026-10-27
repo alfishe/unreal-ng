@@ -1,0 +1,398 @@
+00010       ORG 40000
+00020       ENT
+00030       LD HL,MESS
+00040       CALL MAIN
+00050       RET
+00060 ;
+00070 ;*********************
+00080 ;   START OF ROUTINE
+00090 ;*********************
+00100 ;
+00110 MAIN  DI
+00120       PUSH HL
+00130       LD HL,15616  ;CSET
+00140       DEC H
+00150       LD (CHR),HL
+00160       CALL TABLE
+00170       POP IX
+00180 ;
+00190 ;*******************
+00200 ;  MAIN LOOP
+00210 ;*******************
+00220 ;
+00230 LP    LD A,(IX+0)
+00240       CP 255
+00250       JR Z,END
+00260       CP 32
+00270       CALL C,CONTR
+00280       LD H,0
+00290       LD L,A
+00300       ADD HL,HL
+00310       ADD HL,HL
+00320       ADD HL,HL
+00330       EX DE,HL
+00340       LD HL,(CHR)
+00350       ADD HL,DE
+00360       LD BC,BACK
+00370       PUSH BC
+00380 VECT  JP NORM
+00390 END   EI
+00400       RET
+00410 BACK  INC IX
+00420       XOR A
+00430       CALL ATTR
+00440       LD A,(FL)
+00450       AND A
+00460       JR Z,OK
+00470       XOR A
+00480       CALL SEC
+00490 OK    LD A,(AT)
+00500       CALL ATTR
+00510       LD A,(FL)
+00520       AND A
+00530       JR Z,OK2
+00540       LD A,(AT+1)
+00550       CALL SEC
+00560 OK2   CALL WAIT
+00570       CALL BEEP
+00580       JR LP
+00590 ;
+00600 ;*********************
+00610 ; NORMAL LETTERS
+00620 ;*********************
+00630 ;
+00640 NORM  LD B,8
+00650       LD DE,(ST)
+00660 L00   LD A,(HL)
+00670       CALL FAT
+00680       LD (DE),A
+00690       INC D
+00700       INC HL
+00710       DJNZ L00
+00720       CALL RIGHT
+00730       RET
+00740 ;
+00750 ;*********************
+00760 ; DOUBLE IMAGE
+00770 ;*********************
+00780 ;
+00790 ONE   LD B,8
+00800       LD DE,(ST)
+00810 L1    LD A,(HL)
+00820       CALL FAT
+00830       LD (DE),A
+00840       INC D
+00850       INC HL
+00860       DJNZ L1
+00870       DEC HL
+00880       DEC HL
+00890       DEC HL
+00900       DEC HL
+00910       CALL DOWN
+00920       CALL HALF
+00930       CALL RIGHT
+00940       RET
+00950 ;
+00960 ;*********************
+00970 ; MIDDLE-OF-THE-LINE
+00980 ;*********************
+00990 ;
+01000 TWO   LD DE,(ST)
+01010       INC D
+01020       INC D
+01030       INC D
+01040       INC D
+01050       CALL HALF
+01060       CALL DOWN
+01070       CALL HALF
+01080       CALL RIGHT
+01090       RET
+01100 ;
+01110 ;*********************
+01120 ;  DOUBLE HEIGHT
+01130 ;*********************
+01140 ;
+01150 THR   LD DE,(ST)
+01160       CALL DOUBL
+01170       CALL DOWN
+01180       CALL DOUBL
+01190       CALL RIGHT
+01200       RET
+01210 ;
+01220 ;*********************
+01230 ; D.HEIGHT STRIPED
+01240 ;*********************
+01250 ;
+01260 FOU   LD DE,(ST)
+01270       CALL STRIP
+01280       CALL DOWN
+01290       CALL STRIP
+01300       CALL RIGHT
+01310       RET
+01320 ;
+01330 ;*********************
+01340 ; SUBROUTINES
+01350 ;*********************
+01360 ;
+01370 DOWN  LD DE,(ST)
+01380       RR D
+01390       RR D
+01400       RR D
+01410       PUSH HL
+01420       LD HL,32
+01430       ADD HL,DE
+01440       EX DE,HL
+01450       POP HL
+01460       RL D
+01470       RL D
+01480       RL D
+01490       RET
+01500 ;
+01510 ;******************
+01520 ;
+01530 RIGHT LD DE,(ST)
+01540       RR D
+01550       RR D
+01560       RR D
+01570       INC DE
+01580       RL D
+01590       RL D
+01600       RL D
+01610       LD (ST),DE
+01620       RET
+01630 ;
+01640 ;******************
+01650 ;
+01660 HALF  LD B,4
+01670 L31   LD A,(HL)
+01680       CALL FAT
+01690       LD (DE),A
+01700       INC D
+01710       INC HL
+01720       DJNZ L31
+01730       RET
+01740 ;
+01750 ;*******************
+01760 ;
+01770 DOUBL LD B,4
+01780 L41   LD A,(HL)
+01790       CALL FAT
+01800       LD (DE),A
+01810       INC D
+01820       LD (DE),A
+01830       INC HL
+01840       INC D
+01850       DJNZ L41
+01860       RET
+01870 ;
+01880 ;*******************
+01890 ;
+01900 STRIP LD B,4
+01910 L51   LD A,(HL)
+01920       CALL FAT
+01930       LD (DE),A
+01940       INC D
+01950       XOR A
+01960       LD (DE),A
+01970       INC D
+01980       INC HL
+01990       DJNZ L51
+02000       RET
+02010 ;
+02020 ;*******************
+02030 ;
+02040 FAT   RET     ;NOP FOR
+02050       RRA
+02060       OR (HL)
+02070       RET
+02080 ;
+02090 ;******************
+02100 ;  ATTRIBUTES
+02110 ;******************
+02120 ;
+02130 ATTR  LD HL,(ST)
+02140       DEC HL
+02150       EX AF,AF'
+02160       LD A,H
+02170       AND 24
+02180       SRA A
+02190       SRA A
+02200       SRA A
+02210       ADD A,88
+02220       LD H,A
+02230       EX AF,AF'
+02240       LD (HL),A
+02250       RET
+02260 SEC   LD DE,32
+02270       ADD HL,DE
+02280       LD (HL),A
+02290       RET
+02300 ;
+02310 ;*********************
+02320 ; LINE ADDRESSES
+02330 ;*********************
+02340 ;
+02350 TABLE LD H,91  ;AT 23296
+02360       LD L,0
+02370       PUSH HL
+02380       POP IX
+02390       LD H,64
+02400       LD D,L
+02410       LD E,32
+02420       LD B,24
+02430 LOOP  LD (IX+0),L
+02440       LD (IX+1),H
+02450       RR H
+02460       RR H
+02470       RR H
+02480       ADD HL,DE
+02490       RL H
+02500       RL H
+02510       RL H
+02520       INC IX
+02530       INC IX
+02540       DJNZ LOOP
+02550       RET
+02560 ;
+02570 ;*******************
+02580 ;
+02590 CONTR LD A,(IX+0)
+02600       CP 24
+02610       JR C,LINOK
+02620 OOSCR EI    ;OFF SCREEN
+02630       RST 8 ;LIMITS
+02640       DEFB 4
+02650 LINOK LD A,(IX+1)
+02660       CP 32
+02670       JR NC,OOSCR
+02680       LD C,(IX+1)
+02690       LD L,(IX+2)
+02700       LD H,(IX+3)
+02710       LD (AT),HL
+02720       LD H,91    ;23296
+02730       LD L,(IX+0)
+02740       RLC L
+02750       LD A,(HL)
+02760       OR C
+02770       INC L
+02780       LD H,(HL)
+02790       LD L,A
+02800       LD (ST),HL
+02810       INC IX
+02820       INC IX
+02830       INC IX
+02840       INC IX
+02850       CALL WAIT ;PAUSE
+02860       CALL WAIT ;BETWEEN
+02870       CALL WAIT ;SEN/CES
+02880       LD A,(IX+0)
+02890       CP 32
+02900       CALL C,TYPE
+02910       RET
+02920 TYPE  CP 5
+02930       JR C,HERE
+02940       EI
+02950       RST 8  ;MODE NUMBER
+02960       DEFB 5 ;TOO BIG
+02970 HERE  CALL MODE
+02980       INC IX
+02990       LD A,(IX+0)
+03000       RET
+03010 MODE  LD HL,ROUT
+03020       LD (FL),A
+03030       ADD A,A
+03040       LD D,0
+03050       LD E,A
+03060       ADD HL,DE
+03070       LD DE,VECT+1
+03080       LD A,(HL)
+03090       LD (DE),A
+03100       INC DE
+03110       INC HL
+03120       LD A,(HL)
+03130       LD (DE),A
+03140       RET
+03150 ;
+03160 ;*********************
+03170 ;    PAUSE
+03180 ;*********************
+03190 ;
+03200 WAIT  NOP ;RET FOR NO
+03210       LD BC,4000  ;PAUSE
+03220 W2    DEC BC
+03230       LD A,B
+03240       OR C
+03250       JR NZ,W2
+03260       RET
+03270 ;
+03280 ;**********************
+03290 ;    SOUND
+03300 ;**********************
+03310 ;
+03320 BEEP  NOP  ;RET FOR NO
+03330       LD DE,2000 ;BEEP
+03340 BP    LD A,(DE)
+03350       AND 16
+03360       OR 0      ;BORDER 0
+03370       OUT (254),A
+03380       DEC DE
+03390       LD A,D
+03400       OR E
+03410       JR NZ,BP
+03420       RET
+03430 ;
+03440 ;**********************
+03450 ;   VARIABLES
+03460 ;**********************
+03470 ;
+03480 ST    DEFW 0
+03490 FL    DEFB 0
+03500 CHR   DEFW 15616
+03510 ROUT  DEFW NORM,ONE,TWO
+03520       DEFW THR,FOU
+03530 AT    DEFW 0
+03540 ;
+03550 ;************************
+03560 ;*       MESSAGE        *
+03570 ;************************
+03580 ;*                      *
+03590 ;* CONTROL CODES ARE    *
+03600 ;* ALWAYS THE FIRST     *
+03610 ;* FOUR OR FIVE BYTES   *
+03620 ;* OF A STRING IN THIS  *
+03630 ;* ORDER:               *
+03640 ;*----------------------*
+03650 ;* 1.LINE (0-23)        *
+03660 ;* 2.ROW  (0-31)        *
+03670 ;* 3.TOP COLOUR  (0-255)*
+03680 ;* 4.BTTM COLOUR (0-255)*
+03690 ;* 5.CHR MODE (0-4)>>>  *
+03700 ;*  >>WHICH IS OPTIONAL *
+03710 ;*----------------------*
+03720 ;* ALWAYS END MESSAGE   *
+03730 ;* WITH 255.            *
+03740 ;* IN MODES 1,3,4 MAKE  *
+03750 ;* SURE THAT MESSAGES   *
+03760 ;* DO NOT EXCEED A LINE *
+03770 ;* IN LEN,AND THAT LINE *
+03780 ;* NUMBERS INCREMENT    *
+03790 ;* BY 2.                *
+03800 ;************************
+03810 ;
+03820 MESS  DEFB 00,01,70,66,0
+03830       DEFM /> Computer P/
+03840       DEFM /rogrammed
+03850       DEFB 02,05,68,69,1
+03860       DEFM /> By Theo/
+03870       DEFM / Develegas/
+03880       DEFB 09,03,67,68,2
+03890       DEFB 127
+03900       DEFM / HELL*ENIC
+03910       DEFM / SOFTWARE
+03920       DEFM / 1988
+03930       DEFB 12,2,5,6,3
+03940       DEFM / Samantha F
+03950       DEFM /ox .../
+03960       DEFB 13,19,4,66,4
+03970       DEFM /(WAHAY !)
+03980       DEFB 255  ; E N D !

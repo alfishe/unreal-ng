@@ -13,6 +13,10 @@ it compares `combined` (video memory + border). Every verdict below was also che
 contact sheet). Screenshots, `results.json`, the contact sheet and the kept `.ttd` sessions: `scratch/demos-2026-10-03/`
 of the main checkout (`final/`, `keys/`, `ldconf/`, `scroller/`; not committed).
 
+Four of these demos (DNTBLINK, ROTOZOOM, PLASMA2 from BUYAN, BADAPPLE) are also the performance workload: the
+`BM_SprinterDemo_*` benchmarks and the `SprinterFastPathsDemo_Test` exactness test
+([core/benchmarks/emulator/machines/README.md](../../../core/benchmarks/emulator/machines/README.md)).
+
 ## Results
 
 | Folder / program | Verdict | Notes |

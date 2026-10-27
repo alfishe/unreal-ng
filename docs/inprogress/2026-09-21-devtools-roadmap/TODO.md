@@ -17,11 +17,12 @@ Work in progress — Architecture proposal and prioritized implementation roadma
   - [ ] R8: Version negotiation & API schema handshake
 
 - [ ] **Phase 1 — Normalized Debug-Info Engine (`libunreal-debuginfo`)**
-  - [ ] Standalone `libunreal-debuginfo` parser library (SLD v1, `.lst`, `.sym`, `.cdb`/`.adb`)
+  - [x] Reconciled with unreal-asm (2026-10-09, [debuginfo-reconciliation.md](debuginfo-reconciliation.md)): `.sym`, `.map`, `.lst` labels, SLD labels and the containers exist; build on the library, not beside it
+  - [ ] Standalone `libunreal-debuginfo` parser library (SLD v1, `.lst`, `.sym`, `.cdb`/`.adb`) → an unreal-asm `debuginfo/` module: SLD `T` / `K` / `Z` in full, `.lst` lines, SDCC `.cdb` / `.adb`
   - [ ] Core normalized debug-info model (R5)
   - [ ] (Physical page, offset) → line lookup engine & identity binding
   - [ ] Module load binding & byte-hash staleness detection
-  - [ ] Migrate Qt disassembler and GDB stub to the normalized model
+  - [ ] `ListingParser` (WebAPI `/listing/*`, source stepping) as a facade over the model; the Qt disassembler's source column (the GDB stub uses neither)
 
 - [ ] **Phase 2 — `unreal-devd` Daemon MVP, DAP Adapter & VS Code VSIX**
   - [ ] Standalone `unreal-devd` executable core & IPC client

@@ -1,0 +1,9 @@
+CheckReloadRequest|3B|12|59|ROM|code|||1
+Halt|9C|12|156|ROM|data|||1
+IntRestart|38|12|56|ROM|code|||1
+LoaderStart|0|12|0|ROM|code|||1
+NmiRestart|66|12|102|ROM|code|||1
+PickDestination|6C|12|108|ROM|code|||1
+ReloadString|9E|12|158|ROM|data|||1
+StreamFromRom|69|12|105|ROM|code|||1
+StreamLoop|88|12|136|ROM|code|||1

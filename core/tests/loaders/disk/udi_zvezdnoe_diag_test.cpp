@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -117,7 +118,7 @@ TEST_F(UdiZvezdnoeDiag_Test, ReadSector_TrackReg4_Side1_Single)
     DiskImage* image = loader.getImage();
     ASSERT_NE(image, nullptr);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, *image, 4, true);
     fdc._sectorRegister = 1;
 
@@ -146,7 +147,7 @@ TEST_F(UdiZvezdnoeDiag_Test, ReadSector_TrackReg9_Side1)
     DiskImage* image = loader.getImage();
     ASSERT_NE(image, nullptr);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, *image, 4, true);   // head physically on cylinder 4, side 1
     fdc._trackRegister = 9;          // ROM keeps the logical TR-DOS track here
     fdc._sectorRegister = 1;
@@ -177,7 +178,7 @@ TEST_F(UdiZvezdnoeDiag_Test, DISABLED_ReadSector_Multi_WholeTrack_Side1)
     DiskImage* image = loader.getImage();
     ASSERT_NE(image, nullptr);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, *image, 4, true);
     fdc._sectorRegister = 1;
 
@@ -220,7 +221,7 @@ TEST_F(UdiZvezdnoeDiag_Test, ReadSector_TrackReg4_Side0_Control)
     DiskImage* image = loader.getImage();
     ASSERT_NE(image, nullptr);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, *image, 4, false);
     fdc._sectorRegister = 1;
 

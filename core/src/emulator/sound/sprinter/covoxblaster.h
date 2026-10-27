@@ -124,6 +124,28 @@ public:
             Advance(t);
         return _s.intPending != 0;
     }
+    /// The base T-state from which IntRequested may return true while nothing is written to the CBL: the play
+    /// tick whose count crosses into the next half of the ring (CNT bit 6 falling); 0: requested now; UINT32_MAX:
+    /// no request comes by itself (the INT or the CBL off)
+    uint32_t NextIntT() const
+    {
+        if (!(_s.control & kControlInt))
+            return UINT32_MAX;
+        if (_s.intPending)
+            return 0;
+        if (!(_s.control & kControlCbl))
+            return UINT32_MAX;  // IntRequested does not advance: the request stays as it is
+        const uint8_t step = (_s.control & kControlStereo) ? 2 : 1;
+        uint8_t cnt = _s.cnt;
+        for (uint32_t tick = 0; tick < 256; tick++)
+        {
+            const uint8_t before = cnt;
+            cnt = static_cast<uint8_t>(cnt + step);
+            if ((before & 0x40) && !(cnt & 0x40))
+                return _s.nextTick + tick * TickTstates(_s.control);
+        }
+        return UINT32_MAX;
+    }
     /// The PLD's INT acknowledge (vector #FF): the request ends, CBL_WA starts the half to fill
     void Acknowledge(uint32_t t);
     /// endregion
@@ -136,7 +158,15 @@ public:
     /// Base T-states between play ticks for a control byte
     static uint32_t TickTstates(uint8_t control) { return kStepTstates * (kDivider[control & 0x0F] + 1u); }
 
-    CovoxBlasterState& State() { return _s; }
+    CovoxBlasterState& State()
+    {
+        ++*_changes;  // mutable access (a state restore)
+        return _s;
+    }
+    /// The counter bumped by every change that is not a function of time alone (the bus writes, the acknowledge,
+    /// a reset, mutable access to the state, a frame end): IntRequested's answer stays put while it does, up to
+    /// NextIntT. The INT source it feeds points it at its own (IInterruptSource::changeCount); null: its own
+    void SetChangeCounter(uint32_t* counter) { _changes = counter ? counter : &_ownChanges; }
     const CovoxBlasterState& State() const { return _s; }
     /// TTD restore: the state as a whole; the audio stream restarts from the restored levels
     void RestoreState(const CovoxBlasterState& state);
@@ -167,6 +197,8 @@ private:
 
     EmulatorContext* _context = nullptr;
     CovoxBlasterState _s{};
+    uint32_t _ownChanges = 0;
+    uint32_t* _changes = &_ownChanges;
 
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);

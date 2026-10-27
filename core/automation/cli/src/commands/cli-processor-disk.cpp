@@ -4,6 +4,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/fdc/trdoscatalog.h>
+#include <emulator/io/storage/fs/diskfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/platform.h>
@@ -665,59 +667,55 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(0, 0);
-    if (!track)
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT): unreal-disk's DiskFs, as `media files`
+    DiskFs fs(*diskImage);
+    std::vector<DiskFsEntry> entries;
+    std::string error;
+    if (!fs.List("", "", true, entries, error))
     {
-        session.SendResponse(std::string("Error: Cannot read directory track") + NEWLINE);
+        session.SendResponse("Error: " + error + NEWLINE);
         return;
     }
+    const DiskFsVolume& volume = fs.Volumes().front();
+    const bool trdos = volume.fs == "trdos";
 
     std::stringstream ss;
-    ss << "Disk Catalog (Drive " << static_cast<char>('A' + drive) << "):" << NEWLINE;
-    ss << "  Name      Ext  Size   Start" << NEWLINE;
-    ss << "  --------  ---  -----  -----" << NEWLINE;
-
-    int fileCount = 0;
-    // Read sectors 1-8 (0-indexed: 0-7) for directory entries
-    for (int secNum = 0; secNum < 8; secNum++)
+    ss << "Disk Catalog (Drive " << static_cast<char>('A' + drive) << ", " << volume.system
+       << (volume.label.empty() ? "" : " \"" + volume.label + "\"") << "):" << NEWLINE;
+    if (trdos)
     {
-        DiskImage::Sector* sector = track->getSector(static_cast<uint8_t>(secNum));  // Sector number secNum + 1
-        if (!sector || !sector->hasData || sector->dataSize != TRD_SECTORS_SIZE_BYTES)
-            continue;
-
-        const uint8_t* data = sector->data;
-        // 16 entries per sector, 16 bytes each
-        for (int entry = 0; entry < 16; entry++)
-        {
-            const uint8_t* e = data + (entry * 16);
-
-            // First byte: 0x00 = deleted, 0x01+ = valid
-            if (e[0] == 0x00)
-                continue;  // Deleted
-            if (e[0] > 0x7F)
-                continue;  // Invalid
-
-            // Filename: bytes 0-7, extension: byte 8
-            std::string name((const char*)e, 8);
-            char ext = (char)e[8];
-            uint16_t start = e[9] | (e[10] << 8);
-            uint16_t length = e[11] | (e[12] << 8);
-            uint8_t sectors = e[13];
-            uint8_t startSec = e[14];
-            uint8_t startTrack = e[15];
-
-            // Trim trailing spaces from name
-            while (!name.empty() && name.back() == ' ')
-                name.pop_back();
-
-            ss << "  " << std::left << std::setw(8) << name << "  " << ext << "   " << std::right << std::setw(5)
-               << length << "  T" << std::setw(2) << (int)startTrack << "/S" << (int)startSec << NEWLINE;
-
-            fileCount++;
-        }
+        ss << "  Name      Ext  Size   Start" << NEWLINE;
+        ss << "  --------  ---  -----  -----" << NEWLINE;
+    }
+    else
+    {
+        ss << "  Size      Start  Path" << NEWLINE;
+        ss << "  --------  -----  ----" << NEWLINE;
     }
 
-    if (fileCount == 0)
+    int fileCount = 0;
+    for (const DiskFsEntry& entry : entries)
+    {
+        if (trdos)
+        {
+            const std::string name = entry.name.substr(0, entry.name.rfind('.'));
+            ss << "  " << std::left << std::setw(8) << name << "  " << entry.name.substr(entry.name.rfind('.') + 1) << "   "
+               << std::right << std::setw(5) << entry.size << "  T" << std::setw(2) << entry.Field("track") << "/S"
+               << entry.Field("sector") << NEWLINE;
+        }
+        else
+        {
+            std::ostringstream start;
+            if (entry.start)
+                start << "#" << std::hex << std::uppercase << entry.start;
+            ss << "  " << std::left << std::setw(8) << (entry.directory ? std::string("<dir>") : std::to_string(entry.size)) << "  "
+               << std::setw(5) << start.str() << "  " << entry.path << (entry.directory ? "/" : "") << NEWLINE;
+        }
+        if (!entry.directory)
+            fileCount++;
+    }
+
+    if (entries.empty())
     {
         ss << "  (empty)" << NEWLINE;
     }
@@ -725,6 +723,8 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
     {
         ss << NEWLINE << "  " << fileCount << " file(s)" << NEWLINE;
     }
+    for (const std::string& note : fs.Notes())
+        ss << "  note: " << note << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -741,7 +741,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
     {
         session.SendResponse(std::string("Error: Missing drive parameter") + NEWLINE +
                              "Usage: disk create <drive> [cylinders] [sides] [format]" + NEWLINE +
-                             "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted, plus3" + NEWLINE +
+                             "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted (raw), plus3, trdos" + NEWLINE +
                              "  cylinders: 40 or 80, sides: 1 or 2 (default: the format's, 80/2 or 40/1)" + NEWLINE);
         return;
     }
@@ -775,7 +775,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
         }
         else if (!Emulator::ParseBlankDiskFormat(arg, format))
         {
-            session.SendResponse(std::string("Error: Unknown format '") + arg + "' (auto, unformatted, plus3)" + NEWLINE);
+            session.SendResponse(std::string("Error: Unknown format '") + arg + "' (auto, unformatted, plus3, trdos)" + NEWLINE);
             return;
         }
     }
@@ -801,7 +801,10 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
     ss << "  Format: " << Emulator::BlankDiskFormatName(created.format) << NEWLINE;
     ss << "  Cylinders: " << (int)created.cylinders << NEWLINE;
     ss << "  Sides: " << (int)created.sides << NEWLINE;
-    ss << (created.format == Emulator::BlankDiskFormat::Plus3 ? "  Ready for +3DOS" : "  Ready for FORMAT") << NEWLINE;
+    ss << (created.format == Emulator::BlankDiskFormat::Plus3   ? "  Ready for +3DOS"
+           : created.format == Emulator::BlankDiskFormat::Trdos ? "  Formatted for TR-DOS"
+                                                                : "  Ready for FORMAT")
+       << NEWLINE;
     session.SendResponse(ss.str());
 }
 

@@ -10,7 +10,7 @@
 #include "debugger/pchistory/pchistory.h"
 #include "emulator/emulator.h"
 
-PcHistoryDialog::PcHistoryDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+PcHistoryDialog::PcHistoryDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("PC history");
     resize(260, 520);
@@ -41,7 +41,7 @@ void PcHistoryDialog::refresh()
     _list->clear();
     if (!_emulator)
         return;
-    const PcHistory::Result result = PcHistory::Report(_emulator, 256);
+    const PcHistory::Result result = PcHistory::Report(_emulator.get(), 256);
     if (!result.error.empty())
     {
         _status->setText(QString::fromStdString(result.error));
@@ -68,7 +68,7 @@ void PcHistoryDialog::stop()
 {
     if (!_emulator)
         return;
-    const std::string error = PcHistory::SetArmed(_emulator, false);
+    const std::string error = PcHistory::SetArmed(_emulator.get(), false);
     _status->setText(error.empty() ? QString("Stopped (the entries above stay until the next start)")
                                    : QString::fromStdString(error));
 }

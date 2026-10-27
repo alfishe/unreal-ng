@@ -35,7 +35,8 @@ public:
 
     /// The state now, or the state a set of latches describes (a moment from the write log)
     VideoState State() const;
-    VideoState StateFrom(const VideoLatches& latches) const;
+    /// `frame`: the logged frame the latches come from (its flash phase), nullptr = the live machine
+    VideoState StateFrom(const VideoLatches& latches, const VideoFrameLog* frame = nullptr) const;
     VideoLayout Layout() const;
     BeamInfo BeamAt(uint32_t tInFrame) const;
     /// Sources of surface pixel (x, y) of a layer

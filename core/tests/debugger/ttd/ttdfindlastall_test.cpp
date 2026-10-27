@@ -6,9 +6,10 @@
 
 #include <gtest/gtest.h>
 #include <cstdint>
+#include "_helpers/ttdwriterecords.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -18,7 +19,7 @@
 
 /// region <From ttd_find_last_test.cpp>
 /// @file ttd_find_last_test.cpp
-/// @brief Integration tests for TimeTravelManager::FindLastAccess — journal fast path.
+/// @brief Integration tests for TimeTravelController::FindLastAccess — journal fast path.
 ///
 /// Per parent TDD §9.2 + §9.4. Tests the journal fast path (Write access type)
 /// by recording a session and populating the write journal with known records
@@ -31,7 +32,7 @@ class TTD_FindLast_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -41,7 +42,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -275,7 +276,7 @@ TEST_F(TTD_FindLast_Test, FindWrite_BeforeGlobalT_LimitsResults)
 // State guards
 // ===========================================================================
 
-TEST_F(TTD_FindLast_Test, FindWrite_WhileRecording_ReturnsNullopt)
+TEST_F(TTD_FindLast_Test, FindWrite_WhileRecording_PausesAndAnswers)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);   // journaled writes come after the journal segment starts (D40)
@@ -286,8 +287,11 @@ TEST_F(TTD_FindLast_Test, FindWrite_WhileRecording_ReturnsNullopt)
     q.addrTo   = 0x1000;
     q.access   = ttd::TTDAccessType::Write;
 
+    // The engine (D8): the query pauses the recording and answers
     auto result = _ttd->FindLastAccess(q);
-    EXPECT_FALSE(result.has_value());  // Rejected: still recording
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->value, 0x42);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused);
 
     _ttd->StopRecording();
 }
@@ -418,7 +422,7 @@ class TTD_FindLast_Marker_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -428,7 +432,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -463,11 +467,13 @@ protected:
 
 TEST_F(TTD_FindLast_Marker_Test, ReadQuery_MarkerBlocks_ReturnsNulloptWithMarker)
 {
+    // The engine replays tape and disk from its journals: a marker that stops a seek is one without its data
+    // (a debugger edit that carries no bytes, a reset, an unclassified marker)
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);
 
     // Record a marker mid-frame
-    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::TapeControl, "test tape control");
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, "test debugger poke");
 
     RunFrames(2);
     _ttd->StopRecording();
@@ -578,7 +584,7 @@ class TTD_FindLast_Fallback_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -588,7 +594,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -736,7 +742,7 @@ TEST_F(TTD_FindLast_Fallback_Test, WriteQuery_NoMatch_JournalHasRecords_ReturnsN
     _ttd->StopRecording();
 
     // Verify journal is not empty
-    EXPECT_GT(_ttd->GetWriteJournal()->Size(), 0u);
+    EXPECT_GT(ttdtest::WriteRecordCount(*_ttd), 0u);
 
     ttd::TTDSearchQuery q;
     q.addrFrom = 0x2000;

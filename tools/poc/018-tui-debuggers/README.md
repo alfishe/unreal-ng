@@ -85,3 +85,12 @@ Vendored: z80ex 1.1.21 (GPLv2), FTXUI 7.1.0 (MIT) in each project's `lib/`.
   50M-tick cap; prefer breakpoints / run-to in that mode.
 - `src/ui/*` subsystem files (modals, dialogs, bp/labels UI) are scaffolded
   stubs; the underlying capabilities already exist at the backend seam.
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — both TUIs run on the mock and the live WebAPI backends and the TSConf
+fork band is cell-exact against the oracle ("Results" above). `docs/inprogress/PLAN.md` #49 and the
+feature's `TODO.md` record "Spec + POC done"; the remaining work is a real TUI front-end as one skin of
+the debugger model, plus the WebAPI additions of `webapi-gap-analysis.md`.
+
+Serves: `docs/inprogress/2026-09-24-tui-debugger/`.

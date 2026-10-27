@@ -1,0 +1,252 @@
+{
+ "derived": {
+  "audio": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.turbo_audio",
+   "title": "Toggle a setting"
+  },
+  "disk": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.fast_disk",
+   "title": "Toggle a setting"
+  },
+  "next": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Next speed"
+  },
+  "speed": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Speed"
+  },
+  "tape": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.fast_tape",
+   "title": "Toggle a setting"
+  },
+  "turbo": {
+   "glyph": "mach.turbo",
+   "glyph_on": "mach.turbo.on",
+   "hold": false,
+   "state": "toggle.mach.turbo_toggle",
+   "title": "Turbo"
+  },
+  "x1": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  },
+  "x16": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  },
+  "x2": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  },
+  "x4": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  },
+  "x8": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  }
+ },
+ "doc": {
+  "kind": "shared",
+  "model": "plusxl",
+  "name": "speed"
+ },
+ "nodes": {
+  "audio": {
+   "action": "set.toggle",
+   "at": [
+    1,
+    2
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "TURBO SND",
+   "uc": [
+    "C2.3"
+   ],
+   "value": {
+    "name": "turbo_audio"
+   }
+  },
+  "disk": {
+   "action": "set.toggle",
+   "at": [
+    1,
+    4
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "FAST DISK",
+   "uc": [
+    "C2.4"
+   ],
+   "value": {
+    "name": "fast_disk"
+   }
+  },
+  "next": {
+   "action": "set.speed",
+   "at": [
+    0,
+    6
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "NEXT",
+   "title": "Next speed",
+   "uc": [
+    "C2.1"
+   ]
+  },
+  "speed": {
+   "glyph": "set.speed",
+   "kind": "menu",
+   "label": "SPEED",
+   "title": "Speed",
+   "uc": [
+    "C2"
+   ]
+  },
+  "tape": {
+   "action": "set.toggle",
+   "at": [
+    1,
+    3
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "FAST TAPE",
+   "uc": [
+    "C2.4"
+   ],
+   "value": {
+    "name": "fast_tape"
+   }
+  },
+  "turbo": {
+   "action": "mach.turbo_toggle",
+   "at": [
+    1,
+    1
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "TURBO",
+   "uc": [
+    "C2.2"
+   ]
+  },
+  "x1": {
+   "action": "set.speed",
+   "at": [
+    0,
+    1
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "X1",
+   "uc": [
+    "C2.5"
+   ],
+   "value": {
+    "value": 1
+   }
+  },
+  "x16": {
+   "action": "set.speed",
+   "at": [
+    0,
+    5
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "X16",
+   "uc": [
+    "C2.1"
+   ],
+   "value": {
+    "value": 16
+   }
+  },
+  "x2": {
+   "action": "set.speed",
+   "at": [
+    0,
+    2
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "X2",
+   "uc": [
+    "C2.1"
+   ],
+   "value": {
+    "value": 2
+   }
+  },
+  "x4": {
+   "action": "set.speed",
+   "at": [
+    0,
+    3
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "X4",
+   "uc": [
+    "C2.1"
+   ],
+   "value": {
+    "value": 4
+   }
+  },
+  "x8": {
+   "action": "set.speed",
+   "at": [
+    0,
+    4
+   ],
+   "in": "speed",
+   "kind": "key",
+   "label": "X8",
+   "uc": [
+    "C2.1"
+   ],
+   "value": {
+    "value": 8
+   }
+  }
+ }
+}

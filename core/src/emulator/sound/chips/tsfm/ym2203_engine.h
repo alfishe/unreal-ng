@@ -118,8 +118,29 @@ public:
     /// quantised left-channel DAC word
     int16_t clockFmOnce()
     {
-        clock_fm();
+        if (_gainUnity)
+        {
+            clock_fm();
+            return int16_t(m_last_fm.data[0]);
+        }
+        // The mixer's channel volumes (host-side): clock_fm() with each channel scaled before the sum (ymfm patch 7);
+        // unity gains take the branch above
+        clock_fm_gained(_gainQ15);
         return int16_t(m_last_fm.data[0]);
+    }
+
+    /// The mixer's volume of FM channel `channel` (0..2) as a Q15 gain (MixerChannelGainQ15: 0 = muted, 32768 = unity).
+    /// Host-side, not chip state (TTD never sees it); all unity renders exactly ymfm's clock_fm()
+    void setChannelGain(uint32_t channel, int32_t gainQ15)
+    {
+        if (channel >= 3)
+            return;
+        _gainQ15[channel] = gainQ15;
+        _gainUnity = _gainQ15[0] == 32768 && _gainQ15[1] == 32768 && _gainQ15[2] == 32768;
+    }
+    int32_t channelGain(uint32_t channel) const
+    {
+        return channel < 3 ? _gainQ15[channel] : 32768;
     }
 
     /// Count @p count FM sample clocks without synthesising them (muted core, see
@@ -127,6 +148,18 @@ public:
     void skipFmClocks(uint32_t count)
     {
         m_fm.skip_clocks(count);
+    }
+
+    /// Idle FM half (ymfm patch 6, PATCHES.md §6): nothing sounds and nothing starts without a write or a CSM
+    /// key-on, so clockFmOnce() would only turn counters and return 0
+    bool fmIdle() const
+    {
+        return fm_idle();
+    }
+    /// @p count clockFmOnce() calls of an idle FM half at once (each would have returned 0)
+    void clockFmIdle(uint32_t count)
+    {
+        clock_fm_idle(count);
     }
 
     uint32_t fmClockPrescale() const
@@ -154,6 +187,10 @@ public:
     {
         return m_fm;
     }
+
+private:
+    int32_t _gainQ15[3] = {32768, 32768, 32768};
+    bool _gainUnity = true;
 };
 
 /// Routes ymfm's internal SSG accesses into the SoundChip_AY8910 instance

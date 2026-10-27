@@ -1,0 +1,174 @@
+
+         ent  $
+
+START    ld   (SPSTOR+1),sp
+         di
+         call PREPIS
+         ld   sp,0
+         call MAKETAB
+
+         ld   bc,30*256+128
+
+FILL     ld   hl,-1
+         push hl
+         push bc
+
+FILL2    pop  bc
+         ld   a,b
+         and  c
+         inc  a
+         jr   z,FILLEND
+         call POINT
+         jr   nz,FILL2
+         push bc
+         call PLOT3
+         pop  bc
+         ld   a,b
+         or   a
+         jr   z,NOUP
+         dec  b
+         call POINT
+         jr   nz,NOUP2
+         push bc
+NOUP2    inc  b
+
+NOUP     ld   a,b
+         cp   64
+         jr   z,NODOWN
+         inc  b
+         call POINT
+         jr   nz,NODOWN2
+         push bc
+NODOWN2  dec  b
+
+NODOWN   ld   a,c
+         or   a
+         jr   z,NOLEFT
+         dec  c
+         call POINT
+         jr   nz,NOLEFT2
+         push bc
+NOLEFT2  inc  c
+
+NOLEFT   ld   a,c
+         cp   255
+         jr   z,FILL2
+         inc  c
+         call POINT
+         jr   nz,NORIGHT2
+         push bc
+NORIGHT2 dec  c
+         jr   FILL2
+
+FILLEND  ld   a,4
+         out  (254),a
+SPSTOR   ld   sp,0
+         ret
+
+POINT    push bc
+         ld   l,b
+         ld   h,SCRNADRS/256
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,(hl)
+         inc  h
+         ld   h,(hl)
+         ld   l,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         and  (hl)
+         pop  bc
+         ret
+
+PLOT3    ld   l,b
+         ld   h,SCRNADRS/256
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,(hl)
+         inc  h
+         ld   h,(hl)
+         ld   l,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         xor  (hl)
+         ld   (hl),a
+         ret
+
+MAKETAB  ld   b,192
+         ld   de,16384
+         ld   hl,SCRNADRS
+MAKETAB2 ld   (hl),e
+         inc  h
+         ld   (hl),d
+         dec  h
+         inc  hl
+         ex   de,hl
+         call DOWNHL
+         ex   de,hl
+         djnz MAKETAB2
+         ld   b,32
+         ld   hl,TABLE
+MAKETAB3 ld   (hl),128
+         inc  l
+         ld   (hl),64
+         inc  l
+         ld   (hl),32
+         inc  l
+         ld   (hl),16
+         inc  l
+         ld   (hl),8
+         inc  l
+         ld   (hl),4
+         inc  l
+         ld   (hl),2
+         inc  l
+         ld   (hl),1
+         inc  l
+         djnz MAKETAB3
+         ret
+
+PREPIS   ld   a,2
+         call #1601
+         ld   a,22
+         rst  16
+         xor  a
+         rst  16
+         xor  a
+         rst  16
+         ld   b,0
+PREPIS2  ld   a,r
+         and  63
+         add  a,32
+         rst  16
+         djnz PREPIS2
+         ret
+
+DOWNHL   inc  h
+         ld   a,h
+         and  7
+         ret  nz
+
+         ld   a,l
+         add  a,32
+         ld   l,a
+         ld   a,h
+         jr   c,DOWNHL2
+         sub  8
+         ld   h,a
+DOWNHL2  cp   88
+         ret  c
+         ld   h,64
+         ret
+
+LAST
+
+         org  LAST/256+1*256
+
+SCRNADRS defs 512
+TABLE    defs 256

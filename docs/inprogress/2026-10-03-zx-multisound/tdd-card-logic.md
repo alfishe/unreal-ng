@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-03 |
-| **Status** | CL-0 and CL-1 built (2026-10-04, branch `multisound`, not committed); CL-2 partly (one real-program trace); see §8 |
+| **Status** | CL-0 and CL-1 built (2026-10-04); CL-2 built (2026-10-08, branch `ms-cl2-traces`: five real-program traces with reads, [cl2-real-program-traces.md](cl2-real-program-traces.md)); see §8 |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §2-5 |
 | **Architecture** | [architecture.md](architecture.md) §3-4 |
 | **Oracle** | the card's own CPLD source `cpld/rtl/top.v` ([UzixLS/zx-multisound](https://github.com/UzixLS/zx-multisound)), run in Verilator (installed on the dev machine) |
@@ -140,7 +140,9 @@ end-of-cycle outcome is identical at 3.5 and 14 MHz host clocks.
 | `MultiSoundLogic_Test.DecodeWitnessPorts` (as built) | names the first differing port when a sweep hash fails |
 | `MultiSoundLogic_Test.GsMemoryMap` (as built) | the GS bus controller, both RAM builds |
 | `MultiSoundLogic_Test.ScenarioParserErrors` (as built) | the `.msc` parser |
-| `MultiSoundLogic_Test.DISABLED_CaptureTsfmPlayerTrace` | not a check: regenerates the CL-2 player trace (§8) |
+| `MultiSoundLogic_Test.DISABLED_CaptureTsfmPlayerTrace` | not a check: regenerates the write-only TFM player trace (§8) |
+| `MultiSoundTrace_Test.*` (CL-2, as built) | per real-program trace: logic = RTL hash chain and every read the program made; a fresh `MultiSoundCard` replays it read for read with the same GS cycles; audio digests and content checks (§8) |
+| `MultiSoundTraceCapture_Test.DISABLED_Script` | not a check: captures a trace from a program run by a script (§8) |
 
 ## 6. Phases
 
@@ -171,8 +173,15 @@ All corrected in [hardware-reference.md](hardware-reference.md).
 ## 8. Status and open items
 
 - CL-0, CL-1 done; all scenarios and the full sweep agree with the RTL.
-- CL-2 partly: one real-program trace, the TFM Music Compiler 1.12 player from `TSFM-EL.TAP` (100 frames, its
-  `#FFFD` / `#BFFD` writes only, captured with the existing TSFM player harness): `tfm-player-trace.msc`. Pending for
-  the integration phase (they need the card on the bus or the slots port trace): traces with reads and M1 context
-  from TSFM players with status polling, VGMPLAY.WMF, a GS MOD player, WC's MIDI player and Ball Quest.
+- CL-2 (as built, 2026-10-08): the write-only TFM Music Compiler 1.12 trace (`scenarios/tfm-player-trace.msc`) and
+  five traces with reads and M1 context captured on the bus, `testdata/sound/multisound/traces/`. Walkthrough, per
+  program analysis and results: [cl2-real-program-traces.md](cl2-real-program-traces.md). In short:
+  - capture: `MultiSoundCard::SetBusTrace` (`multisoundbustrace.h`; the GS side through `IGSBusObserver`) feeds
+    `MultiSoundTraceWriter`, which writes the `.msc` format extended with read values (`=XX` / `=--`), collapsed
+    polling reads (`*N`), times (`+D`) and frame marks; zero cost when no trace is set (one pointer test per port cycle
+    and GS DAC fetch). Driver: `MultiSoundTraceCapture_Test.DISABLED_Script` with the `<name>.script` files;
+  - RTL: `mscosim trace` freezes the RTL records as a hash chain (`<name>.rtl`) and checks every read against the RTL;
+  - programs: TFM Music Compiler player "uzhos" (busy polling), Mod Player v2.5 (GS mailbox), Ball Quest (`pro` and
+    `classic`), VGMPLAY.WMF (YM2203 + SAA), GSPLAYER.WMF MIDI; logic = RTL = the emulator on every cycle and read, the
+    replayed card reproduces each run, no model bug found.
 

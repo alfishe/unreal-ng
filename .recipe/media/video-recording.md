@@ -38,7 +38,9 @@ Verified 2026-10-02 on macOS GUI builds: WebAPI, MCP, CLI, Lua and Python (`tool
   start; when the window changes later (a TS-Conf program switching its `V_CONFIG` window, the
   Pentagon overscan toggle) the new window is scaled into that size with its aspect kept and
   black bars, never cut. A `full` recording of a TS-Conf machine is always 720x576 (720x288
-  with every line doubled to square pixels).
+  with every line doubled to square pixels). A video card's own picture (the TS-Conf VDAC2's FT812) keeps its
+  square pixels: a recording started on it has its size, a switch to or from it is scaled into the file's size. A
+  reset or a snapshot load while recording continues the same file and its clock.
 
 Timestamps are emulated time: a recording made in turbo mode plays at normal speed, and the
 sound track has exactly the frames' length.
@@ -149,6 +151,8 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 
 ## Pitfalls
 
+- **No CRT effects, no on-screen keyboard**: this records the emulated frame. The window as drawn (CRT shader, the
+  OSD keyboard next to it): [window-recording.md](window-recording.md).
 - **A GIF has 1/100 s frame delays**: 20.48 ms frames are written as 20 ms, so a GIF plays about
   2% fast. Use h264 when timing matters.
 - **The sound is what the machine plays**: a silent program records a silent track (RMS -inf).

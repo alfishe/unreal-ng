@@ -143,7 +143,10 @@ bool HudOverlay::eventFilter(QObject* watched, QEvent* event)
 
 void HudOverlay::onModelChanged()
 {
-    if (!_model || !_model->isEnabled())
+    // Turned off, the HUD still shows the always-shown elements (an automation session's): the snapshot holds only
+    // what is to be drawn
+    const auto published = _model ? _model->snapshot() : nullptr;
+    if (!_model || !published || published->elements.empty())
     {
         if (_animTimer && _animTimer->isActive())
         {
@@ -401,7 +404,7 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 
 void HudOverlay::renderHUD(QPainter& painter, int width, int height, float dpr)
 {
-    if (!_model || !_model->isEnabled())
+    if (!_model)
         return;
 
     auto snap = _model->snapshot();
@@ -1103,6 +1106,22 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         painter.setBrush(color);
         painter.drawPath(bolt);
     }
+    else if (iconName == "remote")
+    {
+        // An antenna: a dot with two arcs on each side (an automation session controls the machine)
+        const QRectF box = QRectF(r).adjusted(1, 1, -1, -1);
+        const QPointF c = box.center();
+        painter.setBrush(color);
+        painter.drawEllipse(c, box.width() / 10.0, box.width() / 10.0);
+        painter.setBrush(Qt::NoBrush);
+        for (const qreal k : {0.28, 0.46})
+        {
+            const qreal rad = box.width() * k;
+            const QRectF arc(c.x() - rad, c.y() - rad, 2 * rad, 2 * rad);
+            painter.drawArc(arc, -45 * 16, 90 * 16);
+            painter.drawArc(arc, 135 * 16, 90 * 16);
+        }
+    }
     else if (iconName == "rec")
     {
         QRectF circle = QRectF(r).adjusted(3, 3, -3, -3);
@@ -1290,6 +1309,32 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave2.lineTo(cx + w / 4, y2 - waveH / 2);
         wave2.lineTo(cx + w / 2, y2 - waveH / 2);
         painter.drawPath(wave2);
+    }
+    else if (iconName == "multisound")
+    {
+        // ZX-MultiSound icon: the card's sources stacked - a square wave (the YM2203 / SAA tone generators) over a
+        // sine (the General Sound's samples and the MIDI synthesizer), with a divider like a card edge between them
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 4;
+        int h = r.height() - 4;
+        int top = cy - h / 4;
+        QPainterPath square;
+        square.moveTo(cx - w / 2, top + h / 8);
+        square.lineTo(cx - w / 4, top + h / 8);
+        square.lineTo(cx - w / 4, top - h / 8);
+        square.lineTo(cx, top - h / 8);
+        square.lineTo(cx, top + h / 8);
+        square.lineTo(cx + w / 4, top + h / 8);
+        square.lineTo(cx + w / 4, top - h / 8);
+        square.lineTo(cx + w / 2, top - h / 8);
+        painter.drawPath(square);
+        int bottom = cy + h / 4;
+        QPainterPath sine;
+        sine.moveTo(cx - w / 2, bottom);
+        sine.cubicTo(cx - w / 4, bottom - h / 4, cx - w / 8, bottom - h / 4, cx, bottom);
+        sine.cubicTo(cx + w / 8, bottom + h / 4, cx + w / 4, bottom + h / 4, cx + w / 2, bottom);
+        painter.drawPath(sine);
     }
     else if (iconName == "generalsound")
     {

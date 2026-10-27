@@ -46,6 +46,11 @@ int blip_samples_avail(const blip_t* buf);
 /** Reads and removes at most 'count' samples and writes them to 'out'. */
 int blip_read_samples(blip_t* buf, short out[], int count, int stereo);
 
+/** Re-joins an outside sample grid (unreal-ng addition): drops the samples available now (the output level carries
+ * on, as if they had been read) and places the fractional sample position at 'phase' (0 <= phase < 1 of a sample)
+ * with the half-clock bias blip_clear() leaves. Call between frames, after the frame's samples were read. */
+void blip_align_phase(blip_t* buf, double phase);
+
 /** Frees buffer. No effect if NULL is passed. */
 void blip_delete(blip_t* buf);
 

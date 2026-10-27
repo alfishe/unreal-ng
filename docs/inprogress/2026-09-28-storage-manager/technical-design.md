@@ -478,7 +478,7 @@ LRU of 8 open host handles serves the read, and bytes past the snapshotted size 
 | Partitioning | MBR, one partition at LBA 2048; `Superfloppy` option (no MBR) | xpeccy-plus, SD cards as shipped; ChaN FatFs and the ERS handle MBRs best |
 | FAT type | **FAT16 by default for every slot**; FAT32 by parameter when the medium is created (`fs=fat32`: config `<slot>.fs`, `media insert --fs`). If the folder does not fit FAT16 (2 GiB with 32 KiB clusters) the insert fails with an error that names `fs=fat32`; it never switches silently | FAT16 is read by every target driver (ERS, NedoOS, NeoGS, Next, Sprinter DSS); FAT32 when asked |
 | Cluster size | FAT16: the count stays well inside 4 085 … 65 524. FAT32: 4 KiB, and **always ≥ 65 526 clusters**: the layout shrinks the cluster or grows the volume. ChaN FatFs decides the type by cluster count, and `tbblue.fw` (ZX Next) uses it: 65 525 or fewer is FAT16, 4 085 or fewer FAT12 (gitlab.com/thesmog358/tbblue `src/firmware/app/src/ff/ff.c:3144-3146`), so a FAT32-shaped volume below the minimum is rejected (`jnext/src/core/fat32_image.h:8-17`). Likewise a FAT16 volume has ≥ 4 086 clusters | formatter tables; the oracle test checks every generated size |
-| Per-slot default | FAT16 for every slot; a slot may declare another default if its firmware requires one. None does: the ZX Next firmware and NextZXOS read FAT16 and FAT32 ([integration-next.md](integration-next.md)), Sprinter's DSS reads FAT12 / FAT16 only | the parameter always overrides |
+| Per-slot default | FAT16 for every slot; a slot may declare another default (`defaultFs`) and the types it reads (`fsCompatibility`) when its firmware requires: TS-Conf `sd.zc` FAT32 only; Sprinter IDE (Estex DSS) and Profi IDE (PQ-DOS, checked by ACC-C4 of the multi-source work 2026-10-06) FAT12 / FAT16 only; the ZX Next firmware and NextZXOS read FAT16 and FAT32 ([integration-next.md](integration-next.md)). A volume of a type the slot does not read is refused, folder, composite or image alike (table: [media.md](../../features/media.md#which-file-system-a-slot-takes)) | the parameter overrides the default, never the slot's types |
 | Volume size | files + `FolderFree=` (default 256 MiB), rounded to 1 MiB, then raised to the FAT type's minimum; data is never stored, so size costs nothing | room for guest writes; card capacity reported through CSD / IDENTIFY |
 | Order | within a directory: subdirectories first, then files, each byte-wise UTF-8 sorted. Clusters: every directory (breadth-first), then every file (directories in the same order) | deterministic on every host (NFR-1); directories stay together at the start |
 | 8.3 names | uppercase; Cyrillic → CP866; illegal → `_`; a lossy name always gets `~1` (Windows), the tail is rebuilt from the base, never stacked | fixes both xpeccy-plus quirks (research §2) |
@@ -587,7 +587,9 @@ says save, discard or keep, and a kept one is a detached medium of the new machi
 | Topic | Payload |
 |---|---|
 | `NC_MEDIA_INSERTED` / `NC_MEDIA_EJECTED` | slot id, kind, source description, access |
-| `NC_MEDIA_DIRTY` | slot id, changed units (sectors / tracks), first dirty only (not per write) |
+| every `NC_MEDIA_*` | `emulatorId` (always: the context's id), slot id, `volumeId` (`Medium::VolumeId`: a block medium's content id under its session, else a hash of its source key; the same as `list` / `info` `volumeId`) |
+| `NC_MEDIA_DIRTY` | slot id, changed units (sectors / tracks), first dirty only (not per write); `onRelease`: what closing the emulator does with the changes (multi-source D-8) |
+| `NC_MEDIA_CLEAN` | slot id: the unsaved changes are gone (saved, discarded, written back); an eject posts `NC_MEDIA_EJECTED` instead |
 | `NC_MEDIA_SAVED` / `NC_MEDIA_EXPORTED` | slot id, path |
 | `NC_MEDIA_ACTIVITY` | per frame, the slots that read / wrote in it (activity LEDs, WinUAE `gui_flicker_led`) |
 
@@ -602,6 +604,9 @@ TTD and snapshot rules (details in [integration-ttd-snapshots.md](integration-tt
 - The peripherals' protocol state is in their TTD blobs.
 - **TTD v1 does not handle media**: it works with the media present and loads and stores none; its
   sessions record at port level.
+- **Status 2026-10-11:** the first two rules are v1's. The TTD v2 engine (the default) takes a media change while
+  the user's recording runs as an event at the next frame boundary, and sets every medium to its recorded version on
+  a seek (the media undo log, `MediaUndoLog`); see [integration-ttd-snapshots.md](integration-ttd-snapshots.md).
 - **TTD v2 and the universal snapshot** restore media through the change layer's versions: a
   checkpoint or a snapshot names a version, and restoring it restores the whole disk subsystem at
   that moment ([media-history-design.md](media-history-design.md) §7; roadmap ST-6, UNS-6).

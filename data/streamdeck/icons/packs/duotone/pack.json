@@ -1,0 +1,20 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "duotone",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings, rendered smooth), the licence of unreal-ng",
+ "source": "png-smooth",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/duotone.py",
+ "title": "Duotone",
+ "style": "A solid off-white glyph on a lightly tinted rounded plate, one calm accent per action group; on = a brighter plate",
+ "background": "#17181C"
+}

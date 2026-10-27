@@ -24,6 +24,9 @@ void Disassembler_Test::TearDown()
         delete _disasm;
         _disasm = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>
@@ -708,4 +711,24 @@ TEST_F(Disassembler_Test, displacementExtremesAndRuntimeHints)
 
     mnemonic = _disasm->disassembleSingleCommandWithRuntime({0xC3, 0x00, 0x60}, 0x0000, &len, &regs, nullptr, &decoded);
     EXPECT_EQ(_disasm->getRuntimeHints(decoded), "Jump to: $6000");
+}
+
+TEST_F(Disassembler_Test, opFlagsNamesCarryTheDecoderBits)
+{
+    // The named flags were numbered on their own and slipped one bit from Ret on (Ret read as OF_CALL, Djnz as
+    // OF_INTERRUPT): a test of a decoded opcode with them answered for another flag
+    uint8_t len = 0;
+    DecodedInstruction decoded;
+    _disasm->disassembleSingleCommand({0xC9}, 0x0000, &len, &decoded);
+    EXPECT_TRUE(decoded.opcode.flags & OpFlags::Flow::Ret);
+    EXPECT_FALSE(decoded.opcode.flags & OpFlags::Flow::Call);
+    _disasm->disassembleSingleCommand({0xCD, 0x00, 0x80}, 0x0000, &len, &decoded);
+    EXPECT_TRUE(decoded.opcode.flags & OpFlags::Flow::Call);
+    EXPECT_FALSE(decoded.opcode.flags & OpFlags::Flow::Ret);
+    _disasm->disassembleSingleCommand({0x10, 0xFE}, 0x0000, &len, &decoded);
+    EXPECT_TRUE(decoded.opcode.flags & OpFlags::Operation::Djnz);
+    EXPECT_FALSE(decoded.opcode.flags & OpFlags::Operation::Interrupt);
+    _disasm->disassembleSingleCommand({0xED, 0xB0}, 0x0000, &len, &decoded);
+    EXPECT_TRUE(decoded.opcode.flags & OpFlags::Operation::Block);
+    EXPECT_FALSE(decoded.opcode.flags & OpFlags::Operation::RegExchange);
 }

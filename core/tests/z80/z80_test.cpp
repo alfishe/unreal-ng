@@ -1,5 +1,6 @@
 #include "z80_test.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "common/dumphelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -35,17 +36,7 @@ void Z80_Test::TearDown()
         _opcode = nullptr;
     }
 
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>
@@ -977,3 +968,41 @@ TEST_F(Z80_Test, RegisterAPI_InternalAndInterruptState)
 }
 
 /// endregion </Register Access API Tests>
+/// A DDCB / FDCB shift / RES / SET writes its result to memory and, in the undocumented forms, to a register too - of
+/// the CPU running it. The destination came from one global table that every Z80 constructor refilled with its own
+/// registers: the last CPU created received every instance's results, and once that instance was freed every such
+/// instruction wrote into freed memory (a WebAPI create / delete stress under AddressSanitizer, 2026-10-10)
+TEST_F(Z80_Test, DdcbResultRegisterBelongsToTheCpuRunningIt)
+{
+    Z80& z80 = *_cpu->GetZ80();
+
+    // A second CPU created after this fixture's one
+    auto* otherContext = new EmulatorContext(LoggerLevel::LogError);
+    auto* otherCore = new Core(otherContext);
+    ASSERT_TRUE(otherCore->Init());
+    Z80& other = *otherCore->GetZ80();
+    other.b = 0x55;
+
+    ResetCPUAndMemory();
+    uint8_t* rom = _cpu->GetMemory()->base_sos_rom;
+    const uint8_t setBit0IyB[] = {0xFD, 0xCB, 0x00, 0xC0};   // SET 0,(IY+0),B
+    std::copy(std::begin(setBit0IyB), std::end(setBit0IyB), rom);
+    z80.iy = 0x8000;
+    z80.wd(0x8000, 0x00);
+    z80.b = 0x00;
+    z80.Z80Step();
+
+    EXPECT_EQ(z80.b, 0x01) << "the result reaches the running CPU's B";
+    EXPECT_EQ(other.b, 0x55) << "the other CPU's B is left alone";
+    EXPECT_EQ(z80.rd(0x8000), 0x01);
+
+    // The other CPU gone: the plain form (memory only) must not write anywhere else (ASan: no use-after-free)
+    EmulatorTestHelper::ReleaseBareCore(otherCore, otherContext);
+    ResetCPUAndMemory();
+    const uint8_t setBit1Iy[] = {0xFD, 0xCB, 0x00, 0xCE};    // SET 1,(IY+0)
+    std::copy(std::begin(setBit1Iy), std::end(setBit1Iy), rom);
+    z80.iy = 0x8000;
+    z80.wd(0x8000, 0x00);
+    z80.Z80Step();
+    EXPECT_EQ(z80.rd(0x8000), 0x02);
+}

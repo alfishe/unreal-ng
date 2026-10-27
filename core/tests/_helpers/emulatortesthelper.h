@@ -32,18 +32,24 @@ public:
     ///        depends on RAM contents - the default noise comes from the
     ///        process-wide rand(), so it depends on every test that ran before
     ///        (core/tests/README.md, "Power-on RAM is a hidden global input")
+    /// @param configOverride Applied to the loaded config before the machine is built (a create request's
+    ///        override, e.g. SlotControl::CreateOverride for a slot set); empty = none
     /// @return Initialized emulator instance (caller owns)
+    /// The NEXT starts the bare personality whatever the shipped ini says (it boots the real chain: [ROM] NEXTBOOT,
+    /// [NEXT] SdCard): the boot ROM and the card are cleared before configOverride, which sets them for the suites
+    /// that model the real boot
     static Emulator* CreateStandardEmulator(
         const std::string& modelName = "PENTAGON",
         LoggerLevel logLevel = LoggerLevel::LogError,
-        RamPowerOn ramPowerOn = RamPowerOn::Random);
+        RamPowerOn ramPowerOn = RamPowerOn::Random,
+        const std::function<void(CONFIG&)>& configOverride = {});
 
     /// Create an emulator whose TurboSound slot kind is pinned instead of
     /// inherited from the shipped default. The shipped inis now enable TSFM
     /// (TurboSound=FM) on the capable machines (pentagon128k, scorpion,
     /// spectrum128); suites that model a specific slot (legacy AY blobs,
     /// TTD session-kind guards, the player harness) must request it here.
-    /// Stages a scratch copy of the model's ini with the TurboSound= line
+    /// Stages a scratch copy of the model's ini with the [SLOTS] ay-socket line
     /// rewritten - either direction - and boots from it
     /// @param modelName Model short name (empty = the bare-Init default Pentagon)
     /// @param kind Slot kind to force
@@ -96,6 +102,16 @@ public:
     /// @param emulator Emulator to cleanup
     static void CleanupEmulator(Emulator* emulator);
 
+    /// Release a machine a fixture built without an Emulator (new Core + Init): the disk drives
+    /// WD1793 creates are the Emulator's to free (Emulator::Release), so do that part here, then
+    /// delete the core and the context. Both pointers come back null
+    static void ReleaseBareCore(Core*& core, EmulatorContext*& context);
+
+    /// The disk-drive part of ReleaseBareCore: eject and delete the FDDs Core::Init (its WD1793) left in
+    /// context->coreState.diskDrives. For a bare core the test does not hold by raw pointer (stack, unique_ptr);
+    /// call it before the core goes, as Emulator::Release does
+    static void ReleaseDiskDrives(EmulatorContext* context);
+
     /// Run N frames as fast as possible (synchronous, no throttling)
     static void RunFramesFast(Emulator* emulator, int frameCount);
 
@@ -125,4 +141,19 @@ private:
 
     /// Internal handler dispatched from AnalyzerManager
     static void OnBreakpointHit(uint32_t bpId, Z80* cpu, Memory* memory);
+};
+
+/// EmulatorTestHelper::ReleaseDiskDrives on scope exit, for a bare Core built on the stack. Declare it after
+/// the Core: it then runs first, while the core still exists
+class ScopedDiskDrivesRelease
+{
+public:
+    explicit ScopedDiskDrivesRelease(EmulatorContext* context) : _context(context) {}
+    ~ScopedDiskDrivesRelease() { EmulatorTestHelper::ReleaseDiskDrives(_context); }
+
+    ScopedDiskDrivesRelease(const ScopedDiskDrivesRelease&) = delete;
+    ScopedDiskDrivesRelease& operator=(const ScopedDiskDrivesRelease&) = delete;
+
+private:
+    EmulatorContext* _context = nullptr;
 };

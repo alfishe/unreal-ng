@@ -48,6 +48,9 @@ public:
     {
         return (_state->pEFF7 & 0x04) && (_state->p7FFD & PORT_7FFD_LOCK);
     }
+    /// A 48K / 128K snapshot: #EFF7 bit 2 = 1 (memory above 128K absent), so #7FFD bit 5 is the lock again and the
+    /// pages are 0-7. The reset leaves the 1 MB paging on, where a locked 128K file would map page 32 + n
+    void EnterSpectrum128Paging(uint16_t pc) override;
     /// endregion </Interface methods>
 
 protected:

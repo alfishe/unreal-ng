@@ -26,20 +26,32 @@ public:
     explicit MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* parent = nullptr);
     virtual ~MenuManager();
 
+    /// Machine > Controllers: empty until it opens (the owner fills it on aboutToShow)
+    QMenu* machineControllersMenu() const
+    {
+        return _machineControllersMenu;
+    }
+
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
     /// The TURBO Switch item follows the machine (CLI / WebAPI / TTD replay flip it too)
     void updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator);
+    /// File > Save Snapshot: each format's item enabled when the machine can be saved in it now, the reason as its tip
+    void updateSaveSnapshotMenu(const std::shared_ptr<Emulator>& activeEmulator);
 
     // Update machine model selection based on active emulator's model
     void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
+    /// The "MODEL:RAM" entry now checked (a pick made while no machine runs)
+    void setCurrentModelKey(const QString& key) { _currentModelShortName = key; }
 
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
 
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
+    // Check the viewport preset shown (0 full, 1 symmetric, 2 standard, 3 screen only) without emitting viewportChanged
+    void setViewportSelection(int presetIndex);
 
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)
@@ -51,6 +63,10 @@ public:
     /// Machine > Host Keyboard > Pass Command as Win Key (macOS only; a no-op elsewhere)
     void setCommandKeyToGuestChecked(bool checked);
     void setNetworkWindowChecked(bool checked);
+    void setSlotsWindowChecked(bool checked);
+    void setNextLayersChecked(bool checked);
+    void setOsdKeyboardChecked(bool checked);
+    void setMidiActivityChecked(bool checked);
     void setTrafficWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 
@@ -69,6 +85,10 @@ public:
     void setCrtEffectsChecked(bool checked);
     void setCrtEffectsEnabled(bool enabled);
     void setCrtProfile(int profileIndex);
+    /// Check the custom shader's entry
+    void setCrtShader(const QString& name);
+    /// Custom shaders need the GPU: their entries are greyed out without it
+    void setCustomShadersEnabled(bool enabled);
     void populateCrtProfileMenu();
     void setTemporalBlendingChecked(bool checked);
     void setTemporalBlendingEnabled(bool enabled);
@@ -76,9 +96,13 @@ public:
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
     // enabled / checked state is maintained by updateMenuStates()
     QAction* fullScreenAction() const { return _fullScreenAction; }
+    QAction* companionsAction() const { return _companionsAction; }
+    QAction* streamDeckAction() const { return _streamDeckAction; }
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
     QAction* mediaPanelAction() const { return _mediaPanelAction; }
     QMenu* viewMenu() const { return _viewMenu; }
+    QMenu* runMenu() const { return _runMenu; }
+    QAction* exitAction() const { return _exitAction; }
 #ifdef ENABLE_RECORDING
     QAction* videoRecordingAction() const { return _videoRecordingAction; }
     QAction* videoRecordingDialogAction() const { return _videoRecordingDialogAction; }
@@ -95,8 +119,14 @@ public:
 #endif
 
 signals:
+    /// Debug > Time Travel: the black box switched on or off, its window changed (saved in the settings already)
+    void blackBoxToggled(bool on);
+    void blackBoxMinutesChanged(int minutes);
+
     // Signal emitted when user requests to open a file
     void openFileRequested();
+    /// File > Recent Files: one of the files opened lately (RecentFiles)
+    void openRecentFileRequested(const QString& path);
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
@@ -104,8 +134,9 @@ signals:
     void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void stopRzxRequested();          // stop RZX playback, the machine runs live
-    void saveSnapshotRequested();
-    void saveSnapshotZ80Requested();
+    /// Save a snapshot; `extension` = "szx" / "z80" / "sna" for that format's dialog, empty for the dialog of every format
+    /// the machine can be saved in now
+    void saveSnapshotRequested(const QString& extension);
     
     // Disk save signals
     void saveDiskRequested();       // Save to original path
@@ -142,6 +173,13 @@ signals:
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
+    void stepOutRequested();
+    void runToCursorRequested();
+    void toggleBreakpointRequested();     ///< at the disassembly cursor with the debugger shown, else at PC
+    void clearAllBreakpointsRequested();  ///< the user's breakpoints (owned ones stay)
+    void showBreakpointsRequested();
+    void showRegistersRequested();
+    void showMemoryRequested();
 
     // View signals
     void toolBarToggled(bool visible);
@@ -150,12 +188,17 @@ signals:
     void gpuAccelerationToggled(bool enabled);
     void crtEffectsToggled(bool enabled);
     void crtProfileChanged(int profileIndex);
+    void crtShaderChanged(const QString& name);  ///< a custom shader (GPU only)
     void temporalBlendingToggled(bool enabled);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
+    void slotsWindowToggled(bool visible);      // Machine -> Slots (ZX-bus slots)
+    void osdKeyboardToggled(bool visible);      // View -> On-screen Keyboard (the machine's own keyboard)
+    void nextLayersToggled(bool visible);       // View -> Next Layers (per-layer capture view)
+    void midiActivityToggled(bool visible);     // Tools -> MIDI Activity
     void trafficWindowToggled(bool visible);
     void ft812DebugToggled(bool visible);
     void fullScreenToggled();
@@ -175,6 +218,9 @@ signals:
     void audioSettingsRequested();
     void temporalEffectsRequested();
     void hudSettingsRequested();
+    void controllersRequested();  ///< Tools > Controllers...: host game controllers, connectors, bindings
+    void companionsRequested();  ///< Tools > Companions...: paired companion clients, revoke
+    void streamDeckRequested();  ///< Tools > Stream Deck...: the daemon's supervision, pairing, decks
     void screenshotRequested();
     void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
@@ -222,14 +268,16 @@ private:
     QAction* _importAudioTapeAction;
     QAction* _stopRzxAction = nullptr;  ///< enabled while an RZX recording plays
     QMenu* _saveSnapshotMenu;
-    QAction* _saveSnapshotSNAAction;
-    QAction* _saveSnapshotZ80Action;
+    QAction* _saveSnapshotAction = nullptr;      ///< any available format (Ctrl+S)
+    QAction* _saveSnapshotSZXAction = nullptr;
+    QAction* _saveSnapshotSNAAction = nullptr;
+    QAction* _saveSnapshotZ80Action = nullptr;
     QMenu* _saveDiskMenu;
     QAction* _saveDiskAction;       // Save (to original path)
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
     QAction* _saveDiskUDIAction;    // Save as UDI
-    QAction* _recentFilesAction;
+    QMenu* _recentFilesMenu = nullptr;  ///< File > Recent Files: the core's RecentFiles, built when it opens
     QAction* _exitAction;
 
     // Edit Menu Actions
@@ -248,7 +296,13 @@ private:
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
+    QAction* _controllersAction = nullptr;
     QAction* _networkWindowAction = nullptr;
+    QAction* _slotsWindowAction = nullptr;
+    QMenu* _machineControllersMenu = nullptr;
+    QAction* _nextLayersAction = nullptr;
+    QAction* _osdKeyboardAction = nullptr;
+    QAction* _midiActivityAction = nullptr;
     QAction* _trafficWindowAction = nullptr;
     QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card
     QAction* _fullScreenAction;
@@ -307,6 +361,8 @@ private:
     QAction* _showBreakpointsAction;
     QAction* _showRegistersAction;
     QAction* _showMemoryAction;
+    QAction* _blackBoxAction = nullptr;    // Debug > Time Travel > Always Record (Black Box)
+    QMenu* _blackBoxMinutesMenu = nullptr; // Debug > Time Travel > Keep Last
 
     // Tools Menu Actions
     QAction* _settingsAction;
@@ -314,6 +370,8 @@ private:
     QAction* _audioSettingsAction;
     QAction* _temporalEffectsAction = nullptr;
     QAction* _hudSettingsAction;
+    QAction* _companionsAction = nullptr;
+    QAction* _streamDeckAction = nullptr;
     QAction* _screenshotAction;
     QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING

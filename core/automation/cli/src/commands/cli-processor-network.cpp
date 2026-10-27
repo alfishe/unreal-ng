@@ -8,6 +8,8 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/slots/slotcontrol.h"
+#include "cli-slots.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/io/network/traffic/trafficaccess.h"
@@ -26,33 +28,31 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     }
     if (!args.empty() && args[0] == "set")
     {
-        // network set key=value ... (NetworkManager::ParseChange: the keys every interface takes)
-        std::vector<std::pair<std::string, std::string>> settings;
-        for (size_t i = 1; i < args.size(); ++i)
-        {
-            const size_t eq = args[i].find('=');
-            if (eq == std::string::npos)
-            {
-                session.SendResponse("network set: expected key=value, got '" + args[i] + "'" + std::string(NEWLINE));
-                return;
-            }
-            settings.emplace_back(args[i].substr(0, eq), args[i].substr(eq + 1));
-        }
-        NetworkManager* manager = emulator->GetContext()->pCore ? emulator->GetContext()->pCore->GetNetworkManager() : nullptr;
-        NetworkManager::Change change;
+        // network set key=value ... [--replace] [--dry-run] [--media save|discard] [--json] (NetworkManager::ParseChange
+        // keys, SlotControl verb network): a ZX-bus card change is a slot change applied by a restart (owner decision
+        // Q11), the other keys go to the restarted machine; without one the settings apply in place
+        SlotControlRequest request;
+        bool json = false;
         std::string error;
-        if (!manager)
-            error = "no network support in this machine";
-        else if (NetworkManager::ParseChange(settings, change, error) && manager->RequestChange(change, error))
+        if (!CliSlots::ParseNetworkSet(std::vector<std::string>(args.begin() + 1, args.end()), request, json, error))
         {
-            session.SendResponse(std::string(change.OnlyRemoteAccess()
-                                                 ? "Network settings changed: the host listeners move at the next frame boundary "
-                                                   "(connections stay)"
-                                                 : "Network settings changed: applied at the next frame boundary (every connection closes)") +
-                                 std::string(NEWLINE));
+            session.SendResponse("network set: " + error + std::string(NEWLINE));
             return;
         }
-        session.SendResponse("network set: " + error + std::string(NEWLINE));
+        request.emulatorId = emulator->GetId();
+        emulator.reset();
+        _emulator.reset();   // nothing here may keep the old machine alive across a restart
+        const SlotControlReply reply = SlotControl::Execute(request);
+        std::string text = CliSlots::Render(request, reply, json);
+        std::string out;
+        for (char c : text)
+        {
+            if (c == '\n')
+                out += NEWLINE;
+            else
+                out += c;
+        }
+        session.SendResponse((reply.Ok() || json ? std::string() : std::string("network set: ")) + out);
         return;
     }
     if (!args.empty() && args[0] == "frames")

@@ -1,0 +1,8531 @@
+{
+ "derived": {
+  "aay": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Capture audio"
+  },
+  "amusic": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "audio": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "audio"
+  },
+  "awav": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "ay": {
+   "glyph": "audio.sound",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "AY channels"
+  },
+  "aypunch": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.ay_punch",
+   "title": "Toggle a setting"
+  },
+  "b128": {
+   "glyph": "basic.mode.128",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "BASIC mode from the 128K menu"
+  },
+  "b48": {
+   "glyph": "basic.mode.48",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "BASIC mode from the 128K menu"
+  },
+  "back5": {
+   "glyph": "ttd.unit_back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one unit"
+  },
+  "basbrk": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "basic": {
+   "glyph": "basic.menu",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "BASIC"
+  },
+  "bay": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bay"
+  },
+  "bcalls": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bcalls"
+  },
+  "bcover": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bcover"
+  },
+  "bframe": {
+   "glyph": "ttd.step_back_frame",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one frame"
+  },
+  "bgs": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bgs"
+  },
+  "bhot": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bhot"
+  },
+  "blank": {
+   "glyph": "media.create",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "New blank disk"
+  },
+  "blend": {
+   "glyph": "video.blending",
+   "glyph_on": "video.blending.on",
+   "hold": false,
+   "state": "toggle.video.blending",
+   "title": "Frame blending"
+  },
+  "bline": {
+   "glyph": "ttd.step_back_scanline",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one scanline"
+  },
+  "bmadd": {
+   "glyph": "ttd.bookmark_add",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Add a bookmark"
+  },
+  "bmlist": {
+   "glyph": "ttd.bookmark",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Bookmarks"
+  },
+  "bmnext": {
+   "glyph": "ttd.bookmark_next",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Next bookmark"
+  },
+  "bmprev": {
+   "glyph": "ttd.bookmark_prev",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous bookmark"
+  },
+  "bop": {
+   "glyph": "ttd.step_back_instruction",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one instruction"
+  },
+  "bopcode": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bopcode"
+  },
+  "bp7ffd": {
+   "glyph": "dbg.bp_add",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Add a breakpoint"
+  },
+  "bpall": {
+   "glyph": "dbg.bp_toggle",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Toggle breakpoints"
+  },
+  "bpchist": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bpchist"
+  },
+  "bpclr": {
+   "glyph": "dbg.breakpoints_clear",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clear breakpoints"
+  },
+  "bpcur": {
+   "glyph": "dbg.breakpoint_toggle_cursor",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Toggle a breakpoint at the cursor"
+  },
+  "bpfe": {
+   "glyph": "dbg.bp_add",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Add a breakpoint"
+  },
+  "bports": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bports"
+  },
+  "bppc": {
+   "glyph": "dbg.breakpoint_toggle_pc",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Toggle a breakpoint at PC"
+  },
+  "bps": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bps"
+  },
+  "brk": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "bttdc": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdc"
+  },
+  "bttdh": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdh"
+  },
+  "bttdj": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdj"
+  },
+  "bttdm": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "bttdm"
+  },
+  "budget": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "budget"
+  },
+  "buffers": {
+   "glyph": "prof.toggle.on",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Trace buffers"
+  },
+  "calls": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "calls"
+  },
+  "cat": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "cdown": {
+   "glyph": "dbg.cursor_down",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Cursor down in the pane"
+  },
+  "cleft": {
+   "glyph": "dbg.cursor_left",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Cursor left in the pane"
+  },
+  "clients": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "clients"
+  },
+  "clip": {
+   "glyph": "cap.clip_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clip the last seconds"
+  },
+  "clipgif": {
+   "glyph": "cap.clip_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clip the last seconds"
+  },
+  "cold": {
+   "glyph": "mach.cold_reset",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Restart (cold)"
+  },
+  "cover": {
+   "glyph": "prof.toggle",
+   "glyph_on": "prof.toggle.on",
+   "hold": false,
+   "state": "toggle.profiler.coverage",
+   "title": "Profiler / trace on / off"
+  },
+  "covins": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "covins"
+  },
+  "cpu": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "cpu"
+  },
+  "cright": {
+   "glyph": "dbg.cursor_right",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Cursor right in the pane"
+  },
+  "crt": {
+   "glyph": "video.crt",
+   "glyph_on": "video.crt.on",
+   "hold": false,
+   "state": "toggle.video.crt_toggle",
+   "title": "CRT effects"
+  },
+  "crtnext": {
+   "glyph": "video.crt_profile",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "CRT profile"
+  },
+  "crtprev": {
+   "glyph": "video.crt_profile",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "CRT profile"
+  },
+  "crtrst": {
+   "glyph": "video.crt_reset",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Reset CRT parameters"
+  },
+  "cup": {
+   "glyph": "dbg.cursor_up",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Cursor up in the pane"
+  },
+  "cursor": {
+   "glyph": "input.joystick_type",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Joystick type"
+  },
+  "dbgopen": {
+   "glyph": "debug.menu",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open the debugger"
+  },
+  "dc": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.covox_dc_removal",
+   "title": "Toggle a setting"
+  },
+  "debbpclear": {
+   "glyph": "dbg.breakpoints_clear",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clear breakpoints"
+  },
+  "debbphits": {
+   "glyph": "dbg.breakpoint_hits_reset",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Reset hit counts"
+  },
+  "debbppc": {
+   "glyph": "dbg.breakpoint_toggle_pc",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Toggle a breakpoint at PC"
+  },
+  "debcursor": {
+   "glyph": "run.to_cursor",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Run to the cursor"
+  },
+  "debdbgmode": {
+   "glyph": "dbg.mode",
+   "glyph_on": "dbg.mode.on",
+   "hold": false,
+   "state": "debug.mode.enabled",
+   "title": "Debug mode"
+  },
+  "debframe": {
+   "glyph": "run.frame_step",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Frame step"
+  },
+  "debstepin": {
+   "glyph": "run.step_in",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step in"
+  },
+  "debstepout": {
+   "glyph": "run.step_out",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step out"
+  },
+  "debstepovr": {
+   "glyph": "run.step_over",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step over"
+  },
+  "debug": {
+   "glyph": "dbg.mode",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Debugger"
+  },
+  "discard": {
+   "glyph": "media.discard",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Discard changes"
+  },
+  "diska": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "diskb": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "diskc": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "diskd": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "dlss": {
+   "glyph": "video.temporal",
+   "glyph_on": "video.temporal.on",
+   "hold": false,
+   "state": "toggle.video.temporal",
+   "title": "De-flicker (ZX DLSS)"
+  },
+  "down": {
+   "glyph": "input.joy.down",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Joystick"
+  },
+  "eja": {
+   "glyph": "media.eject",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Eject"
+  },
+  "ejb": {
+   "glyph": "media.eject",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Eject"
+  },
+  "ejc": {
+   "glyph": "media.eject",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Eject"
+  },
+  "ejd": {
+   "glyph": "media.eject",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Eject"
+  },
+  "emode": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "end": {
+   "glyph": "ttd.go_end",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "The history's end"
+  },
+  "enter": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "erase": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "fdisk": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.fast_disk",
+   "title": "Toggle a setting"
+  },
+  "fframe": {
+   "glyph": "ttd.step_forward_frame",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Forward one frame"
+  },
+  "file": {
+   "glyph": "snapshot.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save a snapshot"
+  },
+  "fir": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.fir_filter",
+   "title": "Toggle a setting"
+  },
+  "fire": {
+   "glyph": "input.joy.fire",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Joystick"
+  },
+  "fline": {
+   "glyph": "ttd.step_forward_scanline",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Forward one scanline"
+  },
+  "follow": {
+   "glyph": "dbg.follow_pc",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Disassembly follows PC"
+  },
+  "fop": {
+   "glyph": "ttd.step_forward_instruction",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Forward one instruction"
+  },
+  "format": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "fps": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "fps"
+  },
+  "frame": {
+   "glyph": "run.frame_step",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Frame step"
+  },
+  "ftape": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.fast_tape",
+   "title": "Toggle a setting"
+  },
+  "ftime": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ftime"
+  },
+  "full": {
+   "glyph": "view.fullscreen",
+   "glyph_on": "view.fullscreen.on",
+   "hold": false,
+   "state": "toggle.view.fullscreen",
+   "title": "Full screen"
+  },
+  "gamback5": {
+   "glyph": "ttd.unit_back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one unit"
+  },
+  "game": {
+   "glyph": "input.joystick",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Game"
+  },
+  "gamqload": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "gmode": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "gpu": {
+   "glyph": "video.gpu",
+   "glyph_on": "video.gpu.on",
+   "hold": false,
+   "state": "toggle.video.gpu_toggle",
+   "title": "GPU acceleration"
+  },
+  "hold": {
+   "glyph": "run.turbo_hold",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Turbo while held"
+  },
+  "home": {
+   "glyph": "nav.folder",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Home"
+  },
+  "hud": {
+   "glyph": "hud",
+   "glyph_on": "hud.on",
+   "hold": false,
+   "state": "toggle.hud.toggle",
+   "title": "HUD"
+  },
+  "hudth": {
+   "glyph": "hud.theme",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "HUD theme"
+  },
+  "inst": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "inst"
+  },
+  "int": {
+   "glyph": "run.wait_int",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Run to interrupt"
+  },
+  "ints": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ints"
+  },
+  "joynow": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "joynow"
+  },
+  "k1": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "k2": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "k3": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "k4": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "kemp": {
+   "glyph": "input.joystick_type",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Joystick type"
+  },
+  "keyn": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "keyy": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "l1": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l2": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l3": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l4": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l5": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l6": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l7": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l8": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "l9": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "labels": {
+   "glyph": "dbg.labels_toggle",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Labels in the disassembly"
+  },
+  "laste": {
+   "glyph": "ttd.find_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Last access here"
+  },
+  "lasthit": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "lasthit"
+  },
+  "lastr": {
+   "glyph": "ttd.find_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Last access here"
+  },
+  "lastw": {
+   "glyph": "ttd.find_last_write",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Last write here"
+  },
+  "lblcnt": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "lblcnt"
+  },
+  "left": {
+   "glyph": "input.joy.left",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Joystick"
+  },
+  "line": {
+   "glyph": "run.step_line",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step a source line"
+  },
+  "live": {
+   "glyph": "ttd.resume_live",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Resume live"
+  },
+  "load": {
+   "glyph": "media.tape.load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Run a BASIC command"
+  },
+  "m128": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "m1a": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m1b": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m1c": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m2a": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m2b": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m2c": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m3a": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m3b": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m3c": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "m48": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "machine": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Machine"
+  },
+  "mark": {
+   "glyph": "ttd.bookmark_add",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Add a bookmark"
+  },
+  "marks": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "marks"
+  },
+  "matm4": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "matm7": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "may1": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "may2": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "may3": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mbeep": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mcd": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mcov": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "media": {
+   "glyph": "media.open",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Media"
+  },
+  "mem": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "mem"
+  },
+  "memf": {
+   "glyph": "dbg.memory_follow",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Memory follows the value under the cursor"
+  },
+  "mevo": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mfm1": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mfm2": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mgs": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mgsmp3": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mhz": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "mhz"
+  },
+  "mmidi": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mmsfm": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mmspcm": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mnay1": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mnay2": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mnay3": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mndac": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mnext": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "model": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "model"
+  },
+  "monitor": {
+   "glyph": "analyzer.toggle.on",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Monitoring"
+  },
+  "mouse": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.feature.kempstonmouse",
+   "title": "Toggle a feature"
+  },
+  "move": {
+   "glyph": "input.macro",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Key macro"
+  },
+  "mpent": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mpent1": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mpent5": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mplus2": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mplus2a": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mplus3": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mpoly": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mpoly48": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mpolyp": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mprofi": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mprofi3": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mprofi5": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mprofip": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mprofsc": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "msaa": {
+   "glyph": "audio.source",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Mute a source"
+  },
+  "mscorp": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mscorp1": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "msprint": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mtsl": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "mute": {
+   "glyph": "audio.sound",
+   "glyph_on": "audio.muted",
+   "hold": false,
+   "state": "audio.mute.muted",
+   "title": "Mute"
+  },
+  "mvdac": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
+  "new": {
+   "glyph": "basic.clear",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "NEW (clear the program)"
+  },
+  "nmi": {
+   "glyph": "mach.nmi",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "NMI"
+  },
+  "now": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "now"
+  },
+  "opcodes": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "opcodes"
+  },
+  "open": {
+   "glyph": "debug.menu",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open the debugger"
+  },
+  "osdkb": {
+   "glyph": "osd.keyboard",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "On-screen keyboard"
+  },
+  "osdpic": {
+   "glyph": "osd.keyboard_picture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Keyboard picture"
+  },
+  "over": {
+   "glyph": "video.overscan",
+   "glyph_on": "video.overscan.on",
+   "hold": false,
+   "state": "toggle.video.overscan_toggle",
+   "title": "Overscan"
+  },
+  "p1": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "p25": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "p5": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "pads": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "pads"
+  },
+  "paired": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "paired"
+  },
+  "pause": {
+   "glyph": "run.pause",
+   "glyph_on": "run.play",
+   "hold": false,
+   "state": "run.state.paused",
+   "title": "Pause / continue"
+  },
+  "pcpm": {
+   "glyph": "mach.switch",
+   "glyph_on": "mach.switch.on",
+   "hold": false,
+   "state": "toggle.mach.switch.cpm",
+   "title": "Front-panel switch"
+  },
+  "pfull": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "pgdn": {
+   "glyph": "dbg.page_down",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Page down in the pane"
+  },
+  "pgup": {
+   "glyph": "dbg.page_up",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Page up in the pane"
+  },
+  "picfull": {
+   "glyph": "view.fullscreen",
+   "glyph_on": "view.fullscreen.on",
+   "hold": false,
+   "state": "toggle.view.fullscreen",
+   "title": "Full screen"
+  },
+  "picture": {
+   "glyph": "video.menu",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Picture"
+  },
+  "pixel": {
+   "glyph": "run.to_pixel",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Run to the first paper pixel"
+  },
+  "pline": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "pnext": {
+   "glyph": "dbg.focus_next_pane",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Next debugger pane"
+  },
+  "pop": {
+   "glyph": "run.pace",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pace"
+  },
+  "pprev": {
+   "glyph": "dbg.focus_prev_pane",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous debugger pane"
+  },
+  "prev": {
+   "glyph": "mach.previous",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous model"
+  },
+  "prof": {
+   "glyph": "prof.toggle",
+   "glyph_on": "prof.toggle.on",
+   "hold": false,
+   "state": "toggle.profiler.opcode",
+   "title": "Profiler / trace on / off"
+  },
+  "pstep": {
+   "glyph": "run.pace_step",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "One step at the pace"
+  },
+  "pstop": {
+   "glyph": "run.pace_stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop the pace"
+  },
+  "pturbo": {
+   "glyph": "mach.switch",
+   "glyph_on": "mach.switch.on",
+   "hold": false,
+   "state": "toggle.mach.switch.turbo",
+   "title": "Front-panel switch"
+  },
+  "qload": {
+   "glyph": "snapshot.quick_load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "qsave": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "r1": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "r2": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "r3": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "r4": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "r5": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "rcont": {
+   "glyph": "ttd.reverse_continue",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Reverse continue"
+  },
+  "rec": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "rec"
+  },
+  "recent": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "record": {
+   "glyph": "cap.record",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Record"
+  },
+  "recshot": {
+   "glyph": "cap.screenshot",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Screenshot"
+  },
+  "recsize": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "recsize"
+  },
+  "rectdump": {
+   "glyph": "ttd.dump",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the session"
+  },
+  "rectime": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "rectime"
+  },
+  "rectload": {
+   "glyph": "ttd.load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a session"
+  },
+  "rectstop": {
+   "glyph": "ttd.stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop recording"
+  },
+  "release": {
+   "glyph": "input.release_all",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Release all keys and buttons"
+  },
+  "reset": {
+   "glyph": "mach.reset",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Reset (hold 1 s)"
+  },
+  "right": {
+   "glyph": "input.joy.right",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Joystick"
+  },
+  "rstep": {
+   "glyph": "ttd.reverse_step",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Reverse step"
+  },
+  "run": {
+   "glyph": "basic.run",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Run a BASIC command"
+  },
+  "runst": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "runst"
+  },
+  "rzxlast": {
+   "glyph": "media.open_recent",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a recent file"
+  },
+  "rzxstop": {
+   "glyph": "rzx.stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop the RZX"
+  },
+  "s1": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s1a": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s1b": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s1c": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s2": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s2a": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s2b": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s2c": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s3": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s3a": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s3b": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s3c": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "s4": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s5": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s6": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s7": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s8": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "s9": {
+   "glyph": "snapshot.quick_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Quick snapshot"
+  },
+  "savea": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "saveb": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "savec": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "saved": {
+   "glyph": "media.save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the medium"
+  },
+  "say1": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "say2": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "say3": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "sbeep": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "scale": {
+   "glyph": "view.scale",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Window scale"
+  },
+  "scl": {
+   "glyph": "media.export",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save as another format"
+  },
+  "scov": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "sfm1": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "sgs": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "shot": {
+   "glyph": "cap.screenshot",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Screenshot"
+  },
+  "shotpng": {
+   "glyph": "cap.screenshot_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save a screenshot"
+  },
+  "sinc1": {
+   "glyph": "input.joystick_type",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Joystick type"
+  },
+  "sinc2": {
+   "glyph": "input.joystick_type",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Joystick type"
+  },
+  "slots": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "slots"
+  },
+  "smsfm": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "smspcm": {
+   "glyph": "audio.solo",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Solo a source"
+  },
+  "soumute": {
+   "glyph": "audio.sound",
+   "glyph_on": "audio.muted",
+   "hold": false,
+   "state": "audio.mute.muted",
+   "title": "Mute"
+  },
+  "sound": {
+   "glyph": "audio.sound",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Sound"
+  },
+  "space": {
+   "glyph": "input.key",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "spdpct": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "spdpct"
+  },
+  "speed": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": null
+  },
+  "start": {
+   "glyph": "ttd.go_start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "The history's start"
+  },
+  "state": {
+   "glyph": "snapshot.save",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Save state"
+  },
+  "status": {
+   "glyph": "view.status_bar",
+   "glyph_on": "view.status_bar.on",
+   "hold": false,
+   "state": "toggle.view.status_bar",
+   "title": "Status bar"
+  },
+  "stepin": {
+   "glyph": "run.step_in",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step in"
+  },
+  "stepout": {
+   "glyph": "run.step_out",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step out"
+  },
+  "stepovr": {
+   "glyph": "run.step_over",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Step over"
+  },
+  "stereo": {
+   "glyph": "settings.value",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Set a setting"
+  },
+  "swapab": {
+   "glyph": "media.swap",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Swap disks"
+  },
+  "symlive": {
+   "glyph": "sym.import_live",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Import an assembler's labels from RAM"
+  },
+  "symload": {
+   "glyph": "sym.import",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Load symbols"
+  },
+  "symsave": {
+   "glyph": "sym.export",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save symbols"
+  },
+  "tape": {
+   "glyph": "media.tape.play",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "tclip": {
+   "glyph": "ttd.export_clip",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Export a range as a clip"
+  },
+  "tdrop": {
+   "glyph": "ttd.invalidate",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Drop the history"
+  },
+  "tdump": {
+   "glyph": "ttd.dump",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the session"
+  },
+  "teject": {
+   "glyph": "media.tape.eject",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "tframe": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "tframe"
+  },
+  "threads": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "threads"
+  },
+  "time": {
+   "glyph": "ttd.menu",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Time"
+  },
+  "timlive": {
+   "glyph": "ttd.resume_live",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Resume live"
+  },
+  "timttdrec": {
+   "glyph": "ttd.record",
+   "glyph_on": "ttd.record.on",
+   "hold": false,
+   "state": "toggle.ttd.record_toggle",
+   "title": "Start / stop recording"
+  },
+  "tload": {
+   "glyph": "ttd.load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a session"
+  },
+  "toolbar": {
+   "glyph": "view.toolbar",
+   "glyph_on": "view.toolbar.on",
+   "hold": false,
+   "state": "toggle.view.toolbar",
+   "title": "Toolbar"
+  },
+  "tpause": {
+   "glyph": "media.tape.pause",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "tplay": {
+   "glyph": "media.tape.play",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "trace": {
+   "glyph": "prof.toggle",
+   "glyph_on": "prof.toggle.on",
+   "hold": false,
+   "state": "toggle.profiler.calltrace",
+   "title": "Profiler / trace on / off"
+  },
+  "traps": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.trdos_traps",
+   "title": "Toggle a setting"
+  },
+  "trdos": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.trdos_traps",
+   "title": "Toggle a setting"
+  },
+  "trew": {
+   "glyph": "media.tape.rewind",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "tstart": {
+   "glyph": "ttd.record.on",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start recording"
+  },
+  "tstop": {
+   "glyph": "media.tape.stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Tape"
+  },
+  "ttape": {
+   "glyph": "settings.toggle",
+   "glyph_on": "settings.toggle.on",
+   "hold": false,
+   "state": "toggle.set.toggle.turbo_tape",
+   "title": "Toggle a setting"
+  },
+  "ttdlen": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdlen"
+  },
+  "ttdmem": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdmem"
+  },
+  "ttdrec": {
+   "glyph": "ttd.record",
+   "glyph_on": "ttd.record.on",
+   "hold": false,
+   "state": "toggle.ttd.record_toggle",
+   "title": "Start / stop recording"
+  },
+  "ttdst": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdst"
+  },
+  "turbo": {
+   "glyph": "mach.turbo",
+   "glyph_on": "mach.turbo.on",
+   "hold": false,
+   "state": "toggle.mach.turbo_toggle",
+   "title": "Turbo"
+  },
+  "uback": {
+   "glyph": "ttd.unit_back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one unit"
+  },
+  "ufwd": {
+   "glyph": "ttd.unit_forward",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Forward one unit"
+  },
+  "up": {
+   "glyph": "input.joy.up",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Joystick"
+  },
+  "vgame": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "vgif": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "vhq": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "video": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "video"
+  },
+  "vlen": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vlen"
+  },
+  "vmulti": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
+  },
+  "vpause": {
+   "glyph": "cap.record_pause",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pause recording"
+  },
+  "vport": {
+   "glyph": "video.viewport",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Overscan viewport"
+  },
+  "vsize": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vsize"
+  },
+  "wpa": {
+   "glyph": "media.protect",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Write protect"
+  },
+  "wpb": {
+   "glyph": "media.protect",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Write protect"
+  },
+  "wpc": {
+   "glyph": "media.protect",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Write protect"
+  },
+  "wpd": {
+   "glyph": "media.protect",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Write protect"
+  },
+  "x1": {
+   "glyph": "set.speed",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Speed"
+  }
+ },
+ "doc": {
+  "kind": "scenario",
+  "model": "plusxl",
+  "name": "unreal",
+  "settings": {
+   "activity": {
+    "ignore": [
+     "ttd.seek_by",
+     "audio.volume_by",
+     "run.pace_by",
+     "run.step_by",
+     "ttd.jog_frames",
+     "ttd.jog_instructions"
+    ]
+   },
+   "brightness": 60
+  }
+ },
+ "nodes": {
+  "aay": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    2
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "AY 10S",
+   "uc": [
+    "C7.4"
+   ],
+   "value": {
+    "seconds": 10,
+    "source": "ay1"
+   }
+  },
+  "amusic": {
+   "action": "cap.record_toggle",
+   "at": [
+    1,
+    0
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "FLAC",
+   "uc": [
+    "C7.2a"
+   ],
+   "value": {
+    "preset": "music"
+   }
+  },
+  "audio": {
+   "at": [
+    1,
+    8
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "AUDIO",
+   "show": {
+    "format": "{master.muted?MUTED|ON}",
+    "readout": "audio.mixer"
+   },
+   "uc": [
+    "C10.4"
+   ]
+  },
+  "awav": {
+   "action": "cap.record_toggle",
+   "at": [
+    1,
+    1
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "WAV",
+   "uc": [
+    "C7.2a"
+   ],
+   "value": {
+    "preset": "audio"
+   }
+  },
+  "ay": {
+   "at": [
+    0,
+    2
+   ],
+   "dials": {
+    "0": {
+     "label": "AY1 A",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay1.a"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay1.a"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    },
+    "1": {
+     "label": "AY1 B",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay1.b"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay1.b"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    },
+    "2": {
+     "label": "AY1 C",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay1.c"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay1.c"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    },
+    "3": {
+     "label": "AY2 A",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay2.a"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay2.a"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    },
+    "4": {
+     "label": "AY2 B",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay2.b"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay2.b"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    },
+    "5": {
+     "label": "AY2 C",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay2.c"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay2.c"
+      }
+     },
+     "uc": [
+      "C8.3"
+     ]
+    }
+   },
+   "glyph": "audio.sound",
+   "in": "sound",
+   "kind": "menu",
+   "label": "AY CHANS",
+   "title": "AY channels",
+   "uc": [
+    "C8.3"
+   ]
+  },
+  "aypunch": {
+   "action": "set.toggle",
+   "at": [
+    0,
+    6
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "PUNCH",
+   "uc": [
+    "C8.4"
+   ],
+   "value": {
+    "name": "ay_punch"
+   }
+  },
+  "b128": {
+   "action": "basic.mode",
+   "at": [
+    0,
+    2
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "128K",
+   "uc": [
+    "U4.1"
+   ],
+   "value": {
+    "mode": "128k"
+   }
+  },
+  "b48": {
+   "action": "basic.mode",
+   "at": [
+    0,
+    1
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "48K",
+   "uc": [
+    "U4.1"
+   ],
+   "value": {
+    "mode": "48k"
+   }
+  },
+  "back5": {
+   "action": "ttd.unit_back",
+   "at": [
+    2,
+    0
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "-5S",
+   "uc": [
+    "U2.2"
+   ],
+   "value": {
+    "count": 5,
+    "unit": "seconds"
+   }
+  },
+  "basbrk": {
+   "action": "input.macro",
+   "at": [
+    2,
+    8
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "BREAK",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "break"
+   }
+  },
+  "basic": {
+   "at": [
+    2,
+    5
+   ],
+   "glyph": "basic.menu",
+   "in": "home",
+   "kind": "menu",
+   "label": "BASIC",
+   "title": "BASIC",
+   "uc": [
+    "U4"
+   ]
+  },
+  "bay": {
+   "at": [
+    1,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "AY LOG",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.aylog"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bcalls": {
+   "at": [
+    0,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CALLS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.calltrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bcover": {
+   "at": [
+    0,
+    5
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "COVERAGE",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{percent:.0f}%",
+    "readout": "debug.buffers.coverage"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bframe": {
+   "action": "ttd.step_back_frame",
+   "at": [
+    1,
+    1
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "-FRAME",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "bgs": {
+   "at": [
+    1,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "GS PORTS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.gsporttrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bhot": {
+   "at": [
+    0,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CALLS HOT",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.calltrace_hot"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "blank": {
+   "action": "media.create",
+   "at": [
+    1,
+    7
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "NEW A",
+   "uc": [
+    "C5.3"
+   ],
+   "value": {
+    "drive": "A",
+    "format": "trdos"
+   }
+  },
+  "blend": {
+   "action": "video.blending",
+   "at": [
+    2,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "BLEND",
+   "uc": [
+    "C9.5"
+   ]
+  },
+  "bline": {
+   "action": "ttd.step_back_scanline",
+   "at": [
+    1,
+    2
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "-LINE",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "bmadd": {
+   "action": "ttd.bookmark_add",
+   "at": [
+    3,
+    1
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "MARK",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "bmlist": {
+   "action": "ttd.bookmarks",
+   "at": [
+    3,
+    3
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "MARKS",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "bmnext": {
+   "action": "ttd.bookmark_next",
+   "at": [
+    3,
+    2
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "MARK >",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "bmprev": {
+   "action": "ttd.bookmark_prev",
+   "at": [
+    3,
+    0
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "MARK <",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "bop": {
+   "action": "ttd.step_back_instruction",
+   "at": [
+    1,
+    3
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "-OP",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "bopcode": {
+   "at": [
+    0,
+    1
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "OPCODES",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.opcode"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bp7ffd": {
+   "action": "dbg.bp_add",
+   "at": [
+    1,
+    3
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "7FFD",
+   "uc": [
+    "D4.2"
+   ],
+   "value": {
+    "kind": "out",
+    "preset": "7ffd"
+   }
+  },
+  "bpall": {
+   "action": "dbg.bp_toggle",
+   "at": [
+    1,
+    4
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "BPS ON",
+   "uc": [
+    "D4.3"
+   ]
+  },
+  "bpchist": {
+   "at": [
+    0,
+    4
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "PC HIST",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.pchist"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bpclr": {
+   "action": "dbg.breakpoints_clear",
+   "at": [
+    3,
+    5
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "CLEAR BP",
+   "uc": [
+    "D4.3"
+   ]
+  },
+  "bpcur": {
+   "action": "dbg.breakpoint_toggle_cursor",
+   "at": [
+    1,
+    1
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "BP CUR",
+   "uc": [
+    "D4.1"
+   ]
+  },
+  "bpfe": {
+   "action": "dbg.bp_add",
+   "at": [
+    1,
+    2
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "OUT FE",
+   "uc": [
+    "D4.2"
+   ],
+   "value": {
+    "kind": "out",
+    "preset": "fe"
+   }
+  },
+  "bports": {
+   "at": [
+    1,
+    1
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "PORTS",
+   "show": {
+    "format": "{used:k}/{capacity:k}\n{used_bytes:b}",
+    "readout": "debug.buffers.porttrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "bppc": {
+   "action": "dbg.breakpoint_toggle_pc",
+   "at": [
+    3,
+    4
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "BP PC",
+   "uc": [
+    "D4.1"
+   ]
+  },
+  "bps": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "BPS",
+   "show": {
+    "format": "{active}/{total}",
+    "readout": "debug.breakpoints"
+   },
+   "uc": [
+    "C10.5"
+   ]
+  },
+  "brk": {
+   "action": "input.key",
+   "at": [
+    1,
+    2
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "BREAK",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "caps+space"
+   }
+  },
+  "bttdc": {
+   "at": [
+    2,
+    4
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "CHECKPTS",
+   "show": {
+    "format": "{}",
+    "readout": "debug.buffers.ttd.checkpoints"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdh": {
+   "at": [
+    2,
+    1
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "TTD HIST",
+   "show": {
+    "format": "{:b}",
+    "readout": "debug.buffers.ttd.history_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdj": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "JOURNAL",
+   "show": {
+    "format": "{write_journal_records:k}\n{write_journal_bytes:b}",
+    "readout": "debug.buffers.ttd"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "bttdm": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "buffers",
+   "kind": "key",
+   "label": "TTD MEM",
+   "show": {
+    "format": "{:b}",
+    "readout": "debug.buffers.ttd.memory_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "budget": {
+   "at": [
+    1,
+    2
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "BUDGET",
+   "show": {
+    "alert": 100,
+    "format": "{:.0f}%",
+    "readout": "emulator.stats.frame_budget_percent",
+    "warn": 80
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "buffers": {
+   "at": [
+    3,
+    0
+   ],
+   "glyph": "prof.toggle.on",
+   "in": "monitor",
+   "kind": "menu",
+   "label": "BUFFERS",
+   "title": "Trace buffers",
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "calls": {
+   "at": [
+    3,
+    3
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "CALLS",
+   "show": {
+    "readout": "debug.analyzers.calltrace"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "cat": {
+   "action": "input.macro",
+   "at": [
+    2,
+    0
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "CAT",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "cat"
+   }
+  },
+  "cdown": {
+   "action": "dbg.cursor_down",
+   "at": [
+    3,
+    4
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "cleft": {
+   "action": "dbg.cursor_left",
+   "at": [
+    3,
+    3
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "clients": {
+   "at": [
+    0,
+    7
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "CLIENTS",
+   "show": {
+    "format": "{ws.connections} WS\n{mcp.connections} MCP",
+    "readout": "host.clients"
+   },
+   "uc": [
+    "C10.10"
+   ]
+  },
+  "clip": {
+   "action": "cap.clip_last",
+   "at": [
+    1,
+    4
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "10S",
+   "uc": [
+    "C7.3"
+   ],
+   "value": {
+    "format": "mp4",
+    "seconds": 10
+   }
+  },
+  "clipgif": {
+   "action": "cap.clip_last",
+   "at": [
+    1,
+    5
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "GIF 10S",
+   "uc": [
+    "C7.3"
+   ],
+   "value": {
+    "format": "gif",
+    "seconds": 10
+   }
+  },
+  "cold": {
+   "action": "mach.cold_reset",
+   "at": [
+    0,
+    2
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "COLD RST",
+   "uc": [
+    "C1.2"
+   ]
+  },
+  "cover": {
+   "action": "prof.toggle",
+   "at": [
+    3,
+    7
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "COVERAGE",
+   "uc": [
+    "D10.1"
+   ],
+   "value": {
+    "name": "coverage"
+   }
+  },
+  "covins": {
+   "at": [
+    3,
+    4
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "COVER",
+   "show": {
+    "format": "{:k}",
+    "readout": "debug.analyzers.coverage.instructions"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "cpu": {
+   "at": [
+    0,
+    4
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "CPU",
+   "show": {
+    "alert": 200,
+    "format": "{:.0f}%",
+    "readout": "host.stats.cpu_percent",
+    "warn": 100
+   },
+   "uc": [
+    "C10.2"
+   ]
+  },
+  "cright": {
+   "action": "dbg.cursor_right",
+   "at": [
+    3,
+    5
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "crt": {
+   "action": "video.crt_toggle",
+   "at": [
+    1,
+    0
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "CRT",
+   "uc": [
+    "C9.4"
+   ]
+  },
+  "crtnext": {
+   "action": "video.crt_profile",
+   "at": [
+    1,
+    2
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "CRT",
+   "show": {
+    "format": "{}",
+    "readout": "video.window.crt_profile"
+   },
+   "uc": [
+    "C9.4"
+   ],
+   "value": {
+    "profile": "next"
+   }
+  },
+  "crtprev": {
+   "action": "video.crt_profile",
+   "at": [
+    1,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "CRT PREV",
+   "uc": [
+    "C9.4"
+   ],
+   "value": {
+    "profile": "prev"
+   }
+  },
+  "crtrst": {
+   "action": "video.crt_params_reset",
+   "at": [
+    1,
+    3
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "CRT RST",
+   "uc": [
+    "C9.4"
+   ]
+  },
+  "cup": {
+   "action": "dbg.cursor_up",
+   "at": [
+    2,
+    4
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "cursor": {
+   "action": "input.joystick_type",
+   "at": [
+    0,
+    4
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "CURSOR",
+   "uc": [
+    "U1.3"
+   ],
+   "value": {
+    "kind": "cursor"
+   }
+  },
+  "dbgopen": {
+   "action": "dbg.open",
+   "at": [
+    3,
+    6
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "DEBUGGER",
+   "uc": [
+    "D6.1"
+   ]
+  },
+  "dc": {
+   "action": "set.toggle",
+   "at": [
+    0,
+    7
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "DC",
+   "uc": [
+    "C8.4"
+   ],
+   "value": {
+    "name": "covox_dc_removal"
+   }
+  },
+  "debbpclear": {
+   "action": "dbg.breakpoints_clear",
+   "at": [
+    1,
+    5
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "CLEAR BP",
+   "uc": [
+    "D4.3"
+   ]
+  },
+  "debbphits": {
+   "action": "dbg.breakpoint_hits_reset",
+   "at": [
+    1,
+    6
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "HITS 0",
+   "uc": [
+    "D4.3"
+   ]
+  },
+  "debbppc": {
+   "action": "dbg.breakpoint_toggle_pc",
+   "at": [
+    1,
+    0
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "BP PC",
+   "uc": [
+    "D4.1"
+   ]
+  },
+  "debcursor": {
+   "action": "run.to_cursor",
+   "at": [
+    0,
+    4
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "TO CURSOR",
+   "uc": [
+    "D2.6"
+   ]
+  },
+  "debdbgmode": {
+   "action": "dbg.mode_toggle",
+   "at": [
+    1,
+    8
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "DEBUG MODE",
+   "uc": [
+    "D4.4"
+   ]
+  },
+  "debframe": {
+   "action": "run.frame_step",
+   "at": [
+    0,
+    6
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "FRAME",
+   "uc": [
+    "D2.3"
+   ]
+  },
+  "debstepin": {
+   "action": "run.step_in",
+   "at": [
+    0,
+    1
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "STEP IN",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "debstepout": {
+   "action": "run.step_out",
+   "at": [
+    0,
+    3
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "STEP OUT",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "debstepovr": {
+   "action": "run.step_over",
+   "at": [
+    0,
+    2
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "STEP OVER",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "debug": {
+   "at": [
+    3,
+    8
+   ],
+   "context": "debug",
+   "dials": {
+    "0": {
+     "label": "STEP",
+     "press": {
+      "action": "run.step_in"
+     },
+     "turn": {
+      "action": "run.step_by",
+      "value": {
+       "d": "$ticks",
+       "unit": "instructions"
+      }
+     },
+     "uc": [
+      "D2.2"
+     ]
+    },
+    "1": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.frame_step"
+     },
+     "turn": {
+      "action": "run.step_by",
+      "value": {
+       "d": "$ticks",
+       "unit": "frames"
+      }
+     },
+     "uc": [
+      "D2.3"
+     ]
+    }
+   },
+   "glyph": "dbg.mode",
+   "in": "home",
+   "kind": "menu",
+   "label": "DEBUG",
+   "title": "Debugger",
+   "uc": [
+    "D2",
+    "D4",
+    "D6",
+    "D8",
+    "D10"
+   ]
+  },
+  "discard": {
+   "action": "media.discard",
+   "at": [
+    1,
+    8
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "DISCARD A",
+   "uc": [
+    "C5.5"
+   ],
+   "value": {
+    "drive": "A"
+   }
+  },
+  "diska": {
+   "action": "media.save",
+   "at": [
+    0,
+    2
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE A",
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "A"
+   }
+  },
+  "diskb": {
+   "action": "media.save",
+   "at": [
+    0,
+    3
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE B",
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "B"
+   }
+  },
+  "diskc": {
+   "action": "media.save",
+   "at": [
+    0,
+    4
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE C",
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "C"
+   }
+  },
+  "diskd": {
+   "action": "media.save",
+   "at": [
+    0,
+    5
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE D",
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "D"
+   }
+  },
+  "dlss": {
+   "action": "video.temporal",
+   "at": [
+    2,
+    0
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "TEMPORAL",
+   "uc": [
+    "C9.5"
+   ]
+  },
+  "down": {
+   "action": "input.joystick",
+   "at": [
+    2,
+    6
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "DOWN",
+   "uc": [
+    "U1.2"
+   ],
+   "value": {
+    "buttons": "down",
+    "hold": true
+   }
+  },
+  "eja": {
+   "action": "media.eject",
+   "at": [
+    3,
+    0
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "A",
+   "show": {
+    "format": "{}",
+    "readout": "media.disk.drives.0.name"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "A"
+   }
+  },
+  "ejb": {
+   "action": "media.eject",
+   "at": [
+    3,
+    1
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "B",
+   "show": {
+    "format": "{}",
+    "readout": "media.disk.drives.1.name"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "B"
+   }
+  },
+  "ejc": {
+   "action": "media.eject",
+   "at": [
+    3,
+    2
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "C",
+   "show": {
+    "format": "{}",
+    "readout": "media.disk.drives.2.name"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "C"
+   }
+  },
+  "ejd": {
+   "action": "media.eject",
+   "at": [
+    3,
+    3
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "D",
+   "show": {
+    "format": "{}",
+    "readout": "media.disk.drives.3.name"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "D"
+   }
+  },
+  "emode": {
+   "action": "input.macro",
+   "at": [
+    2,
+    5
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "E",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "e_mode"
+   }
+  },
+  "end": {
+   "action": "ttd.seek_end",
+   "at": [
+    1,
+    8
+   ],
+   "in": "time",
+   "kind": "key",
+   "uc": [
+    "D3.4"
+   ]
+  },
+  "enter": {
+   "action": "input.key",
+   "at": [
+    1,
+    1
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "ENTER",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "enter"
+   }
+  },
+  "erase": {
+   "action": "input.macro",
+   "at": [
+    2,
+    2
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "ERASE",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "erase"
+   }
+  },
+  "fdisk": {
+   "action": "set.toggle",
+   "at": [
+    3,
+    8
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "FAST DISK",
+   "uc": [
+    "C2.4"
+   ],
+   "value": {
+    "name": "fast_disk"
+   }
+  },
+  "fframe": {
+   "action": "ttd.step_forward_frame",
+   "at": [
+    1,
+    7
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "+FRAME",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "file": {
+   "action": "snapshot.save",
+   "at": [
+    0,
+    1
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE SZX",
+   "uc": [
+    "C6.2"
+   ],
+   "value": {
+    "path": "$user/snapshots/deck.szx"
+   }
+  },
+  "fir": {
+   "action": "set.toggle",
+   "at": [
+    0,
+    5
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "FIR",
+   "uc": [
+    "C8.4"
+   ],
+   "value": {
+    "name": "fir_filter"
+   }
+  },
+  "fire": {
+   "action": "input.joystick",
+   "at": [
+    1,
+    8
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "FIRE",
+   "uc": [
+    "U1.2"
+   ],
+   "value": {
+    "buttons": "fire",
+    "hold": true
+   }
+  },
+  "fline": {
+   "action": "ttd.step_forward_scanline",
+   "at": [
+    1,
+    6
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "+LINE",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "follow": {
+   "action": "dbg.follow_pc",
+   "at": [
+    2,
+    6
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "FOLLOW",
+   "uc": [
+    "D6.4"
+   ]
+  },
+  "fop": {
+   "action": "ttd.step_forward_instruction",
+   "at": [
+    1,
+    5
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "+OP",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "format": {
+   "action": "input.macro",
+   "at": [
+    2,
+    1
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "FORMAT",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "format"
+   }
+  },
+  "fps": {
+   "at": [
+    1,
+    0
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "FPS",
+   "show": {
+    "format": "{:.1f}",
+    "readout": "emulator.stats.fps"
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "frame": {
+   "action": "run.frame_step",
+   "at": [
+    3,
+    3
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "FRAME",
+   "uc": [
+    "D2.3"
+   ]
+  },
+  "ftape": {
+   "action": "set.toggle",
+   "at": [
+    3,
+    6
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "FAST TAPE",
+   "uc": [
+    "C2.4"
+   ],
+   "value": {
+    "name": "fast_tape"
+   }
+  },
+  "ftime": {
+   "at": [
+    1,
+    3
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "WORK US",
+   "show": {
+    "format": "{:.0f}",
+    "readout": "emulator.stats.frame_time_us.avg"
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "full": {
+   "action": "view.fullscreen",
+   "at": [
+    2,
+    8
+   ],
+   "in": "home",
+   "kind": "key",
+   "uc": [
+    "C9.1"
+   ]
+  },
+  "gamback5": {
+   "action": "ttd.unit_back",
+   "at": [
+    3,
+    7
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "-5S",
+   "uc": [
+    "U2.2"
+   ],
+   "value": {
+    "count": 5,
+    "unit": "seconds"
+   }
+  },
+  "game": {
+   "at": [
+    2,
+    4
+   ],
+   "context": "play",
+   "glyph": "input.joystick",
+   "in": "home",
+   "kind": "menu",
+   "label": "GAME",
+   "title": "Game",
+   "uc": [
+    "U1"
+   ]
+  },
+  "gamqload": {
+   "action": "snapshot.quick",
+   "at": [
+    3,
+    8
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "L1",
+   "uc": [
+    "U2.4"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 1
+   }
+  },
+  "gmode": {
+   "action": "input.macro",
+   "at": [
+    2,
+    6
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "G",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "g_mode"
+   }
+  },
+  "gpu": {
+   "action": "video.gpu_toggle",
+   "at": [
+    0,
+    3
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "GPU",
+   "uc": [
+    "C9.2"
+   ]
+  },
+  "hold": {
+   "action": "run.turbo_hold",
+   "at": [
+    0,
+    4
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "HOLD",
+   "uc": [
+    "C2.2"
+   ]
+  },
+  "home": {
+   "context": "play",
+   "dials": {
+    "0": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.jog_frames",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "1": {
+     "label": "TIME",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.seek_by",
+      "value": {
+       "d": "$ticks",
+       "max": 50,
+       "min": 1,
+       "rate": "$rate",
+       "unit": "seconds"
+      }
+     },
+     "uc": [
+      "U2.1",
+      "D3.2"
+     ]
+    },
+    "2": {
+     "label": "OPS",
+     "press": {
+      "action": "ttd.resume_live"
+     },
+     "turn": {
+      "action": "ttd.jog_instructions",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "3": {
+     "label": "PACE",
+     "press": {
+      "action": "run.pace_toggle"
+     },
+     "turn": {
+      "action": "run.pace_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D1.1"
+     ]
+    },
+    "4": {
+     "label": "STEP",
+     "press": {
+      "action": "run.step_in"
+     },
+     "turn": {
+      "action": "run.step_by",
+      "value": {
+       "d": "$ticks",
+       "unit": "instructions"
+      }
+     },
+     "uc": [
+      "D2.2"
+     ]
+    },
+    "5": {
+     "label": "VOLUME",
+     "press": {
+      "action": "audio.mute_toggle"
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    }
+   },
+   "kind": "menu",
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "Home"
+  },
+  "hud": {
+   "action": "hud.toggle",
+   "at": [
+    3,
+    0
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "HUD",
+   "uc": [
+    "C9.6"
+   ]
+  },
+  "hudth": {
+   "action": "hud.theme",
+   "at": [
+    3,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "HUD LOOK",
+   "uc": [
+    "C9.6"
+   ],
+   "value": {
+    "theme": "next"
+   }
+  },
+  "inst": {
+   "at": [
+    0,
+    1
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "COUNT",
+   "show": {
+    "readout": "host.clients.instances"
+   },
+   "uc": [
+    "C10.1"
+   ]
+  },
+  "int": {
+   "action": "run.wait_int",
+   "at": [
+    0,
+    5
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "TO INT",
+   "uc": [
+    "D2.3"
+   ]
+  },
+  "ints": {
+   "at": [
+    1,
+    5
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "INT/FR",
+   "show": {
+    "format": "{:.0f}",
+    "readout": "emulator.stats.interrupts_per_frame"
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "joynow": {
+   "at": [
+    0,
+    6
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "JOYSTICK",
+   "show": {
+    "format": "{}",
+    "readout": "input.connectors.connectors.0.kind"
+   },
+   "uc": [
+    "U1.3"
+   ]
+  },
+  "k1": {
+   "action": "input.key",
+   "at": [
+    3,
+    0
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "1",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "1"
+   }
+  },
+  "k2": {
+   "action": "input.key",
+   "at": [
+    3,
+    1
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "2",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "2"
+   }
+  },
+  "k3": {
+   "action": "input.key",
+   "at": [
+    3,
+    2
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "3",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "3"
+   }
+  },
+  "k4": {
+   "action": "input.key",
+   "at": [
+    3,
+    3
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "4",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "4"
+   }
+  },
+  "kemp": {
+   "action": "input.joystick_type",
+   "at": [
+    0,
+    1
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "KEMP",
+   "uc": [
+    "U1.3"
+   ],
+   "value": {
+    "kind": "kempston"
+   }
+  },
+  "keyn": {
+   "action": "input.key",
+   "at": [
+    2,
+    1
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "N",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "n"
+   }
+  },
+  "keyy": {
+   "action": "input.key",
+   "at": [
+    2,
+    0
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "Y",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "y"
+   }
+  },
+  "l1": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    0
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L1",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 1
+   }
+  },
+  "l2": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    1
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L2",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 2
+   }
+  },
+  "l3": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    2
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L3",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 3
+   }
+  },
+  "l4": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    3
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L4",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 4
+   }
+  },
+  "l5": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    4
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L5",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 5
+   }
+  },
+  "l6": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    5
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L6",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 6
+   }
+  },
+  "l7": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    6
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L7",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 7
+   }
+  },
+  "l8": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    7
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L8",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 8
+   }
+  },
+  "l9": {
+   "action": "snapshot.quick",
+   "at": [
+    2,
+    8
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "L9",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 9
+   }
+  },
+  "labels": {
+   "action": "dbg.labels_toggle",
+   "at": [
+    2,
+    8
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "LABELS",
+   "uc": [
+    "D6.4"
+   ]
+  },
+  "laste": {
+   "action": "ttd.find_last",
+   "at": [
+    3,
+    7
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "EXEC",
+   "uc": [
+    "D5.1"
+   ],
+   "value": {
+    "access": "execute"
+   }
+  },
+  "lasthit": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "HIT AT",
+   "show": {
+    "format": "{:04X}",
+    "readout": "debug.breakpoints.last_hit.address"
+   },
+   "uc": [
+    "C10.5"
+   ]
+  },
+  "lastr": {
+   "action": "ttd.find_last",
+   "at": [
+    3,
+    6
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "READ",
+   "uc": [
+    "D5.1"
+   ],
+   "value": {
+    "access": "read"
+   }
+  },
+  "lastw": {
+   "action": "ttd.find_last_write",
+   "at": [
+    3,
+    5
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "WRITE",
+   "uc": [
+    "D5.1"
+   ]
+  },
+  "lblcnt": {
+   "at": [
+    2,
+    4
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "LABELS",
+   "show": {
+    "format": "{:k}",
+    "readout": "debug.labels.total"
+   },
+   "uc": [
+    "C10.6"
+   ]
+  },
+  "left": {
+   "action": "input.joystick",
+   "at": [
+    2,
+    5
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "LEFT",
+   "uc": [
+    "U1.2"
+   ],
+   "value": {
+    "buttons": "left",
+    "hold": true
+   }
+  },
+  "line": {
+   "action": "run.step_line",
+   "at": [
+    0,
+    7
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "LINE",
+   "uc": [
+    "D2.7"
+   ]
+  },
+  "live": {
+   "action": "ttd.resume_live",
+   "at": [
+    2,
+    1
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "LIVE",
+   "uc": [
+    "U2.3",
+    "D3.6"
+   ]
+  },
+  "load": {
+   "action": "basic.run",
+   "at": [
+    1,
+    1
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "LOAD",
+   "uc": [
+    "U4.2"
+   ],
+   "value": {
+    "command": "LOAD \"\""
+   }
+  },
+  "m128": {
+   "action": "mach.start",
+   "at": [
+    1,
+    1
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "128K",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "128K",
+    "replace": true
+   }
+  },
+  "m1a": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    0
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.a"
+   }
+  },
+  "m1b": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    1
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.b"
+   }
+  },
+  "m1c": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    2
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.c"
+   }
+  },
+  "m2a": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    3
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.a"
+   }
+  },
+  "m2b": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    4
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.b"
+   }
+  },
+  "m2c": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    5
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.c"
+   }
+  },
+  "m3a": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    6
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.a"
+   }
+  },
+  "m3b": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    7
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.b"
+   }
+  },
+  "m3c": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    8
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.c"
+   }
+  },
+  "m48": {
+   "action": "mach.start",
+   "at": [
+    1,
+    0
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "48K",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "48K",
+    "replace": true
+   }
+  },
+  "machine": {
+   "at": [
+    1,
+    4
+   ],
+   "glyph": "mach.start",
+   "in": "home",
+   "kind": "menu",
+   "label": "MODEL",
+   "title": "Machine",
+   "uc": [
+    "C3"
+   ]
+  },
+  "mark": {
+   "action": "ttd.bookmark_add",
+   "at": [
+    2,
+    3
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "MARK",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "marks": {
+   "at": [
+    2,
+    8
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "MARKS",
+   "show": {
+    "readout": "ttd.status.bookmarks"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "matm4": {
+   "action": "mach.start",
+   "at": [
+    3,
+    0
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "ATM450",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ATM450",
+    "replace": true
+   }
+  },
+  "matm7": {
+   "action": "mach.start",
+   "at": [
+    3,
+    1
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "ATM710",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ATM710",
+    "replace": true
+   }
+  },
+  "may1": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    1
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY1",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay1"
+   }
+  },
+  "may2": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    2
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY2",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay2"
+   }
+  },
+  "may3": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    3
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY3",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay3"
+   }
+  },
+  "mbeep": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    0
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "BEEP",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "beeper"
+   }
+  },
+  "mcd": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    7
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "CD",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "cd0"
+   }
+  },
+  "mcov": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    5
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "COVOX",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "covox"
+   }
+  },
+  "media": {
+   "at": [
+    1,
+    3
+   ],
+   "glyph": "media.open",
+   "in": "home",
+   "kind": "menu",
+   "label": "MEDIA",
+   "title": "Media",
+   "uc": [
+    "C4",
+    "C5"
+   ]
+  },
+  "mem": {
+   "at": [
+    0,
+    5
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "MEMORY",
+   "show": {
+    "format": "{:b}",
+    "readout": "host.stats.rss_bytes"
+   },
+   "uc": [
+    "C10.2"
+   ]
+  },
+  "memf": {
+   "action": "dbg.memory_follow",
+   "at": [
+    2,
+    7
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "MEM PC",
+   "uc": [
+    "D6.3"
+   ]
+  },
+  "mevo": {
+   "action": "mach.start",
+   "at": [
+    3,
+    2
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "EVO",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ATM3",
+    "replace": true
+   }
+  },
+  "mfm1": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    4
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "FM1",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "fm1"
+   }
+  },
+  "mfm2": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    4
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "FM2",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "fm2"
+   }
+  },
+  "mgs": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    6
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "GS",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "gs"
+   }
+  },
+  "mgsmp3": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    5
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "GS MP3",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "gs_mp3"
+   }
+  },
+  "mhz": {
+   "at": [
+    1,
+    4
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "MHZ",
+   "show": {
+    "format": "{:.2f}",
+    "readout": "emulator.stats.cpu.mhz"
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "mmidi": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    6
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "MIDI",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ms_midi"
+   }
+  },
+  "mmsfm": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    7
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "MS FM",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "moonsound_fm"
+   }
+  },
+  "mmspcm": {
+   "action": "audio.source_mute",
+   "at": [
+    1,
+    8
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "MS PCM",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "moonsound_pcm"
+   }
+  },
+  "mnay1": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    0
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "N AY1",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "next_ay1"
+   }
+  },
+  "mnay2": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    1
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "N AY2",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "next_ay2"
+   }
+  },
+  "mnay3": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    2
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "N AY3",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "next_ay3"
+   }
+  },
+  "mndac": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    3
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "N DAC",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "next_dac"
+   }
+  },
+  "mnext": {
+   "action": "mach.start",
+   "at": [
+    1,
+    6
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "NEXT",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "NEXT",
+    "replace": true
+   }
+  },
+  "model": {
+   "at": [
+    0,
+    2
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "MODEL",
+   "show": {
+    "readout": "machine.model"
+   },
+   "uc": [
+    "C10.1"
+   ]
+  },
+  "monitor": {
+   "at": [
+    1,
+    8
+   ],
+   "glyph": "analyzer.toggle.on",
+   "in": "home",
+   "kind": "menu",
+   "label": "MONITOR",
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "Monitoring",
+   "uc": [
+    "C10"
+   ]
+  },
+  "mouse": {
+   "action": "feature.toggle",
+   "at": [
+    0,
+    5
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "MOUSE",
+   "uc": [
+    "U1.5"
+   ],
+   "value": {
+    "name": "kempstonmouse"
+   }
+  },
+  "move": {
+   "action": "input.macro",
+   "at": [
+    2,
+    3
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "MOVE",
+   "uc": [
+    "U4.3"
+   ],
+   "value": {
+    "name": "move"
+   }
+  },
+  "mpent": {
+   "action": "mach.start",
+   "at": [
+    2,
+    0
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "P128",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PENTAGON",
+    "ram_kb": 128,
+    "replace": true
+   }
+  },
+  "mpent1": {
+   "action": "mach.start",
+   "at": [
+    2,
+    2
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "P1024",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PENTAGON",
+    "ram_kb": 1024,
+    "replace": true
+   }
+  },
+  "mpent5": {
+   "action": "mach.start",
+   "at": [
+    2,
+    1
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "P512",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PENTAGON",
+    "ram_kb": 512,
+    "replace": true
+   }
+  },
+  "mplus2": {
+   "action": "mach.start",
+   "at": [
+    1,
+    2
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "+2",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PLUS2",
+    "replace": true
+   }
+  },
+  "mplus2a": {
+   "action": "mach.start",
+   "at": [
+    1,
+    3
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "+2A",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PLUS2A",
+    "replace": true
+   }
+  },
+  "mplus3": {
+   "action": "mach.start",
+   "at": [
+    1,
+    4
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "+3",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PLUS3",
+    "replace": true
+   }
+  },
+  "mpoly": {
+   "action": "mach.start",
+   "at": [
+    2,
+    7
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "POLY128",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ZXPOLY-128K",
+    "replace": true
+   }
+  },
+  "mpoly48": {
+   "action": "mach.start",
+   "at": [
+    2,
+    6
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "POLY48",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ZXPOLY-48K",
+    "replace": true
+   }
+  },
+  "mpolyp": {
+   "action": "mach.start",
+   "at": [
+    2,
+    8
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "POLY P",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "ZXPOLY-PENTAGON",
+    "replace": true
+   }
+  },
+  "mprofi": {
+   "action": "mach.start",
+   "at": [
+    3,
+    5
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PROFI",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PROFI",
+    "ram_kb": 1024,
+    "replace": true
+   }
+  },
+  "mprofi3": {
+   "action": "mach.start",
+   "at": [
+    3,
+    7
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PROFI3",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PROFI3",
+    "replace": true
+   }
+  },
+  "mprofi5": {
+   "action": "mach.start",
+   "at": [
+    3,
+    6
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PROFI512",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PROFI",
+    "ram_kb": 512,
+    "replace": true
+   }
+  },
+  "mprofip": {
+   "action": "mach.start",
+   "at": [
+    3,
+    8
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PROFI+",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PROFI-PLUS",
+    "replace": true
+   }
+  },
+  "mprofsc": {
+   "action": "mach.start",
+   "at": [
+    2,
+    5
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PROF",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "PROFSCORP",
+    "replace": true
+   }
+  },
+  "msaa": {
+   "action": "audio.source_mute",
+   "at": [
+    3,
+    8
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "SAA",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ms_saa"
+   }
+  },
+  "mscorp": {
+   "action": "mach.start",
+   "at": [
+    2,
+    3
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "SCORP",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "SCORPION",
+    "ram_kb": 256,
+    "replace": true
+   }
+  },
+  "mscorp1": {
+   "action": "mach.start",
+   "at": [
+    2,
+    4
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "SC1024",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "SCORPION",
+    "ram_kb": 1024,
+    "replace": true
+   }
+  },
+  "msprint": {
+   "action": "mach.start",
+   "at": [
+    1,
+    7
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "SPRINTER",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "SPRINTER",
+    "replace": true
+   }
+  },
+  "mtsl": {
+   "action": "mach.start",
+   "at": [
+    3,
+    3
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "TSCONF",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "TSL",
+    "replace": true
+   }
+  },
+  "mute": {
+   "action": "audio.mute_toggle",
+   "at": [
+    0,
+    7
+   ],
+   "in": "home",
+   "kind": "key",
+   "uc": [
+    "C8.1"
+   ]
+  },
+  "mvdac": {
+   "action": "mach.start",
+   "at": [
+    3,
+    4
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "VDAC2",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "TSL-VDAC2",
+    "replace": true
+   }
+  },
+  "new": {
+   "action": "basic.clear",
+   "at": [
+    1,
+    2
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "NEW",
+   "uc": [
+    "U4.2"
+   ]
+  },
+  "nmi": {
+   "action": "mach.nmi",
+   "at": [
+    0,
+    2
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "NMI",
+   "uc": [
+    "C1.3"
+   ]
+  },
+  "now": {
+   "at": [
+    0,
+    3
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "NOW",
+   "show": {
+    "format": "{}",
+    "readout": "machine.model"
+   },
+   "uc": [
+    "C3.1"
+   ]
+  },
+  "opcodes": {
+   "at": [
+    3,
+    2
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "OPCODES",
+   "show": {
+    "readout": "debug.analyzers.opcode"
+   },
+   "uc": [
+    "C10.8"
+   ]
+  },
+  "open": {
+   "action": "dbg.open",
+   "at": [
+    2,
+    0
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "SHOW DEBUG",
+   "uc": [
+    "D6.1"
+   ]
+  },
+  "osdkb": {
+   "action": "osd.keyboard",
+   "at": [
+    3,
+    3
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "KEYBOARD",
+   "uc": [
+    "C9.7"
+   ]
+  },
+  "osdpic": {
+   "action": "osd.keyboard_picture",
+   "at": [
+    3,
+    4
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "KB LOOK",
+   "uc": [
+    "C9.7"
+   ],
+   "value": {
+    "picture": "next"
+   }
+  },
+  "over": {
+   "action": "video.overscan_toggle",
+   "at": [
+    0,
+    4
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "BORDER",
+   "uc": [
+    "C9.3"
+   ]
+  },
+  "p1": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    3
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "1FPS",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "1fps"
+   }
+  },
+  "p25": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    1
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "25FPS",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "25fps"
+   }
+  },
+  "p5": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    2
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "5FPS",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "5fps"
+   }
+  },
+  "pads": {
+   "at": [
+    1,
+    7
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "PLUGGED",
+   "show": {
+    "readout": "controllers.state.plugged"
+   },
+   "uc": [
+    "C10.4"
+   ]
+  },
+  "paired": {
+   "at": [
+    0,
+    8
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "PAIRED",
+   "show": {
+    "readout": "host.clients.companions"
+   },
+   "uc": [
+    "C10.10"
+   ]
+  },
+  "pause": {
+   "action": "run.pause_toggle",
+   "at": [
+    0,
+    0
+   ],
+   "in": "home",
+   "kind": "key",
+   "uc": [
+    "C1.1"
+   ]
+  },
+  "pcpm": {
+   "action": "mach.switch",
+   "at": [
+    0,
+    8
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "CP/M",
+   "uc": [
+    "C1.5"
+   ],
+   "value": {
+    "name": "cpm"
+   }
+  },
+  "pfull": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    8
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "FULL",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "full"
+   }
+  },
+  "pgdn": {
+   "action": "dbg.page_down",
+   "at": [
+    2,
+    5
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "pgup": {
+   "action": "dbg.page_up",
+   "at": [
+    2,
+    3
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "D6.2"
+   ]
+  },
+  "picfull": {
+   "action": "view.fullscreen",
+   "at": [
+    0,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "uc": [
+    "C9.1"
+   ]
+  },
+  "picture": {
+   "at": [
+    1,
+    7
+   ],
+   "dials": {
+    "0": {
+     "label": "DECAY",
+     "press": {
+      "action": "video.blending"
+     },
+     "turn": {
+      "action": "video.blending_decay_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "C9.5"
+     ]
+    }
+   },
+   "glyph": "video.menu",
+   "in": "home",
+   "kind": "menu",
+   "label": "VIDEO",
+   "title": "Picture",
+   "uc": [
+    "C9"
+   ]
+  },
+  "pixel": {
+   "action": "run.to_pixel",
+   "at": [
+    0,
+    8
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "TO PIXEL",
+   "uc": [
+    "D2.4"
+   ]
+  },
+  "pline": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    4
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "LINE",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "1line"
+   }
+  },
+  "pnext": {
+   "action": "dbg.focus_next_pane",
+   "at": [
+    2,
+    2
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "PANE >",
+   "uc": [
+    "D6.1"
+   ]
+  },
+  "pop": {
+   "action": "run.pace_set",
+   "at": [
+    0,
+    5
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "OP",
+   "uc": [
+    "D1.1"
+   ],
+   "value": {
+    "preset": "1op"
+   }
+  },
+  "pprev": {
+   "action": "dbg.focus_prev_pane",
+   "at": [
+    2,
+    1
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "PANE <",
+   "uc": [
+    "D6.1"
+   ]
+  },
+  "prev": {
+   "action": "mach.previous",
+   "at": [
+    0,
+    1
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "PREVIOUS",
+   "show": {
+    "format": "{}",
+    "readout": "machine.previous.model"
+   },
+   "uc": [
+    "C3.3"
+   ]
+  },
+  "prof": {
+   "action": "prof.toggle",
+   "at": [
+    3,
+    6
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "PROF OPS",
+   "uc": [
+    "D10.1"
+   ],
+   "value": {
+    "name": "opcode"
+   }
+  },
+  "pstep": {
+   "action": "run.pace_step",
+   "at": [
+    0,
+    6
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "PACE",
+   "show": {
+    "format": "{}",
+    "readout": "run.state.pace.label"
+   },
+   "uc": [
+    "D1.2"
+   ]
+  },
+  "pstop": {
+   "action": "run.pace_stop",
+   "at": [
+    0,
+    7
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "STOP",
+   "uc": [
+    "D1.2"
+   ]
+  },
+  "pturbo": {
+   "action": "mach.switch",
+   "at": [
+    0,
+    7
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "TURBO",
+   "uc": [
+    "C1.5"
+   ],
+   "value": {
+    "name": "turbo"
+   }
+  },
+  "qload": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    1
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "L1",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "load",
+    "slot": 1
+   }
+  },
+  "qsave": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    0
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "S1",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 1
+   }
+  },
+  "r1": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    1
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "1",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 0
+   }
+  },
+  "r2": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    2
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "2",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 1
+   }
+  },
+  "r3": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    3
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "3",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 2
+   }
+  },
+  "r4": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    4
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "4",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 3
+   }
+  },
+  "r5": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    5
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "5",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 4
+   }
+  },
+  "rcont": {
+   "action": "ttd.reverse_continue",
+   "at": [
+    2,
+    0
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "REV RUN",
+   "uc": [
+    "D3.5"
+   ]
+  },
+  "rec": {
+   "at": [
+    3,
+    5
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "RECORD",
+   "show": {
+    "format": "{recording?REC|IDLE}",
+    "readout": "recording.state",
+    "warn": 1
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "recent": {
+   "action": "media.open_recent",
+   "at": [
+    2,
+    7
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "LAST FILE",
+   "uc": [
+    "C4.3"
+   ],
+   "value": {
+    "index": 0
+   }
+  },
+  "record": {
+   "at": [
+    1,
+    5
+   ],
+   "glyph": "cap.record",
+   "in": "home",
+   "kind": "menu",
+   "label": "REC",
+   "title": "Record",
+   "uc": [
+    "C7"
+   ]
+  },
+  "recshot": {
+   "action": "cap.screenshot",
+   "at": [
+    1,
+    7
+   ],
+   "in": "record",
+   "kind": "key",
+   "uc": [
+    "C7.5"
+   ]
+  },
+  "recsize": {
+   "at": [
+    3,
+    7
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "SIZE",
+   "show": {
+    "format": "{:b}",
+    "readout": "recording.state.file_bytes"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "rectdump": {
+   "action": "ttd.dump",
+   "at": [
+    2,
+    6
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "SAVE TTD",
+   "uc": [
+    "C7.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
+  },
+  "rectime": {
+   "at": [
+    3,
+    6
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "LENGTH",
+   "show": {
+    "format": "{:.0f}S",
+    "readout": "recording.state.duration_s"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "rectload": {
+   "action": "ttd.load",
+   "at": [
+    2,
+    7
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "LOAD TTD",
+   "uc": [
+    "C7.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
+  },
+  "rectstop": {
+   "action": "ttd.stop",
+   "at": [
+    2,
+    1
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "STOP",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "release": {
+   "action": "input.release_all",
+   "at": [
+    0,
+    8
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "RELEASE",
+   "uc": [
+    "U1.4"
+   ]
+  },
+  "reset": {
+   "action": "mach.reset",
+   "at": [
+    0,
+    1
+   ],
+   "in": "home",
+   "kind": "key",
+   "uc": [
+    "C1.2"
+   ]
+  },
+  "right": {
+   "action": "input.joystick",
+   "at": [
+    2,
+    7
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "RIGHT",
+   "uc": [
+    "U1.2"
+   ],
+   "value": {
+    "buttons": "right",
+    "hold": true
+   }
+  },
+  "rstep": {
+   "action": "ttd.reverse_step",
+   "at": [
+    2,
+    1
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "REV STEP",
+   "uc": [
+    "D3.5"
+   ]
+  },
+  "run": {
+   "action": "basic.run",
+   "at": [
+    1,
+    0
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "RUN",
+   "uc": [
+    "U4.2"
+   ]
+  },
+  "runst": {
+   "at": [
+    0,
+    3
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "STATE",
+   "show": {
+    "readout": "run.state.state"
+   },
+   "uc": [
+    "C10.1"
+   ]
+  },
+  "rzxlast": {
+   "action": "media.open_recent",
+   "at": [
+    0,
+    7
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "RZX",
+   "uc": [
+    "C4.4"
+   ],
+   "value": {
+    "index": 0,
+    "kind": "rzx"
+   }
+  },
+  "rzxstop": {
+   "action": "rzx.stop",
+   "at": [
+    0,
+    8
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "STOP RZX",
+   "uc": [
+    "C4.4"
+   ]
+  },
+  "s1": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    0
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S1",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 1
+   }
+  },
+  "s1a": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    0
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.a"
+   }
+  },
+  "s1b": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    1
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.b"
+   }
+  },
+  "s1c": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    2
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "1C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay1.c"
+   }
+  },
+  "s2": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    1
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S2",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 2
+   }
+  },
+  "s2a": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    3
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.a"
+   }
+  },
+  "s2b": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    4
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.b"
+   }
+  },
+  "s2c": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    5
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "2C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay2.c"
+   }
+  },
+  "s3": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    2
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S3",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 3
+   }
+  },
+  "s3a": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    6
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3A",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.a"
+   }
+  },
+  "s3b": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    7
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3B",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.b"
+   }
+  },
+  "s3c": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    8
+   ],
+   "in": "ay",
+   "kind": "key",
+   "label": "3C",
+   "uc": [
+    "C8.3"
+   ],
+   "value": {
+    "source": "ay3.c"
+   }
+  },
+  "s4": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    3
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S4",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 4
+   }
+  },
+  "s5": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    4
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S5",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 5
+   }
+  },
+  "s6": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    5
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S6",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 6
+   }
+  },
+  "s7": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    6
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S7",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 7
+   }
+  },
+  "s8": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    7
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S8",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 8
+   }
+  },
+  "s9": {
+   "action": "snapshot.quick",
+   "at": [
+    1,
+    8
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "S9",
+   "uc": [
+    "C6.1"
+   ],
+   "value": {
+    "op": "save",
+    "slot": 9
+   }
+  },
+  "savea": {
+   "action": "media.save",
+   "at": [
+    2,
+    5
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "SAVE A",
+   "show": {
+    "format": "{?CHANGED|-}",
+    "readout": "media.disk.drives.0.dirty"
+   },
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "A"
+   }
+  },
+  "saveb": {
+   "action": "media.save",
+   "at": [
+    2,
+    6
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "SAVE B",
+   "show": {
+    "format": "{?CHANGED|-}",
+    "readout": "media.disk.drives.1.dirty"
+   },
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "B"
+   }
+  },
+  "savec": {
+   "action": "media.save",
+   "at": [
+    2,
+    7
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "SAVE C",
+   "show": {
+    "format": "{?CHANGED|-}",
+    "readout": "media.disk.drives.2.dirty"
+   },
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "C"
+   }
+  },
+  "saved": {
+   "action": "media.save",
+   "at": [
+    2,
+    8
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "SAVE D",
+   "show": {
+    "format": "{?CHANGED|-}",
+    "readout": "media.disk.drives.3.dirty"
+   },
+   "uc": [
+    "C6.3"
+   ],
+   "value": {
+    "drive": "D"
+   }
+  },
+  "say1": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    1
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY1",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay1"
+   }
+  },
+  "say2": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    2
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY2",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay2"
+   }
+  },
+  "say3": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    3
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "AY3",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "ay3"
+   }
+  },
+  "sbeep": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    0
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "BEEP",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "beeper"
+   }
+  },
+  "scale": {
+   "action": "view.scale",
+   "at": [
+    0,
+    2
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "SCALE",
+   "uc": [
+    "C9.1"
+   ],
+   "value": {
+    "scale": "next"
+   }
+  },
+  "scl": {
+   "action": "media.export",
+   "at": [
+    0,
+    6
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "A > SCL",
+   "uc": [
+    "C6.4"
+   ],
+   "value": {
+    "drive": "A",
+    "format": "scl"
+   }
+  },
+  "scov": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    5
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "COVOX",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "covox"
+   }
+  },
+  "sfm1": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    4
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "FM1",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "fm1"
+   }
+  },
+  "sgs": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    6
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "GS",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "gs"
+   }
+  },
+  "shot": {
+   "action": "cap.screenshot",
+   "at": [
+    0,
+    8
+   ],
+   "in": "home",
+   "kind": "key",
+   "uc": [
+    "C7.5"
+   ]
+  },
+  "shotpng": {
+   "action": "cap.screenshot_save",
+   "at": [
+    1,
+    8
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "PNG",
+   "uc": [
+    "C7.5"
+   ],
+   "value": {
+    "path": "$user/screenshots/deck.png"
+   }
+  },
+  "sinc1": {
+   "action": "input.joystick_type",
+   "at": [
+    0,
+    2
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "SINC1",
+   "uc": [
+    "U1.3"
+   ],
+   "value": {
+    "kind": "sinclair1"
+   }
+  },
+  "sinc2": {
+   "action": "input.joystick_type",
+   "at": [
+    0,
+    3
+   ],
+   "in": "game",
+   "kind": "key",
+   "label": "SINC2",
+   "uc": [
+    "U1.3"
+   ],
+   "value": {
+    "kind": "sinclair2"
+   }
+  },
+  "slots": {
+   "at": [
+    1,
+    6
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "MEDIA",
+   "show": {
+    "format": "{loaded}/{slots:#}",
+    "readout": "media.slots"
+   },
+   "uc": [
+    "C10.4"
+   ]
+  },
+  "smsfm": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    7
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "MS FM",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "moonsound_fm"
+   }
+  },
+  "smspcm": {
+   "action": "audio.source_solo",
+   "at": [
+    2,
+    8
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "MS PCM",
+   "uc": [
+    "C8.2"
+   ],
+   "value": {
+    "source": "moonsound_pcm"
+   }
+  },
+  "soumute": {
+   "action": "audio.mute_toggle",
+   "at": [
+    0,
+    1
+   ],
+   "in": "sound",
+   "kind": "key",
+   "uc": [
+    "C8.1"
+   ]
+  },
+  "sound": {
+   "at": [
+    1,
+    6
+   ],
+   "dials": {
+    "0": {
+     "label": "BEEPER",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "beeper"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "beeper"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    },
+    "1": {
+     "label": "AY1",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay1"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay1"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    },
+    "2": {
+     "label": "AY2",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "ay2"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "ay2"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    },
+    "3": {
+     "label": "COVOX",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "covox"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "covox"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    },
+    "4": {
+     "label": "GS",
+     "press": {
+      "action": "audio.source_mute",
+      "value": {
+       "source": "gs"
+      }
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks",
+       "source": "gs"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    },
+    "5": {
+     "label": "MASTER",
+     "press": {
+      "action": "audio.mute_toggle"
+     },
+     "turn": {
+      "action": "audio.volume_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "C8.2"
+     ]
+    }
+   },
+   "glyph": "audio.sound",
+   "in": "home",
+   "kind": "menu",
+   "label": "SOUND",
+   "title": "Sound",
+   "uc": [
+    "C8"
+   ]
+  },
+  "space": {
+   "action": "input.key",
+   "at": [
+    1,
+    0
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "SPACE",
+   "uc": [
+    "U1.4"
+   ],
+   "value": {
+    "hold": true,
+    "key": "space"
+   }
+  },
+  "spdpct": {
+   "at": [
+    1,
+    1
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "SPEED",
+   "show": {
+    "alert": 80,
+    "format": "{:.0f}%",
+    "readout": "emulator.stats.speed_percent",
+    "warn": 95
+   },
+   "uc": [
+    "C10.3"
+   ]
+  },
+  "speed": {
+   "at": [
+    0,
+    6
+   ],
+   "in": "home",
+   "kind": "include",
+   "open": "speed"
+  },
+  "start": {
+   "action": "ttd.seek_start",
+   "at": [
+    1,
+    0
+   ],
+   "in": "time",
+   "kind": "key",
+   "uc": [
+    "D3.4"
+   ]
+  },
+  "state": {
+   "at": [
+    1,
+    2
+   ],
+   "glyph": "snapshot.save",
+   "in": "home",
+   "kind": "menu",
+   "label": "STATE",
+   "title": "Save state",
+   "uc": [
+    "C6"
+   ]
+  },
+  "status": {
+   "action": "view.status_bar",
+   "at": [
+    0,
+    8
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "STATUS",
+   "uc": [
+    "C9.8"
+   ]
+  },
+  "stepin": {
+   "action": "run.step_in",
+   "at": [
+    3,
+    0
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "STEP IN",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "stepout": {
+   "action": "run.step_out",
+   "at": [
+    3,
+    2
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "STEP OUT",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "stepovr": {
+   "action": "run.step_over",
+   "at": [
+    3,
+    1
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "STEP OVER",
+   "uc": [
+    "D2.1"
+   ]
+  },
+  "stereo": {
+   "action": "set.value",
+   "at": [
+    0,
+    4
+   ],
+   "in": "sound",
+   "kind": "key",
+   "label": "STEREO",
+   "uc": [
+    "C8.4"
+   ],
+   "value": {
+    "name": "ay_stereo",
+    "value": "next"
+   }
+  },
+  "swapab": {
+   "action": "media.swap",
+   "at": [
+    1,
+    6
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "A-B",
+   "uc": [
+    "C5.2"
+   ],
+   "value": {
+    "drive": "A",
+    "with": "B"
+   }
+  },
+  "symlive": {
+   "action": "sym.import_live",
+   "at": [
+    3,
+    1
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "LIVE SYM",
+   "uc": [
+    "D8.2"
+   ]
+  },
+  "symload": {
+   "action": "sym.import",
+   "at": [
+    3,
+    0
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "LOAD SYM",
+   "uc": [
+    "D8.2"
+   ],
+   "value": {
+    "path": "$user/build/main.sym"
+   }
+  },
+  "symsave": {
+   "action": "sym.export",
+   "at": [
+    3,
+    2
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "SAVE SYM",
+   "uc": [
+    "D8.2"
+   ],
+   "value": {
+    "path": "$user/build/deck.sym"
+   }
+  },
+  "tape": {
+   "action": "media.tape",
+   "at": [
+    2,
+    6
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "TAPE",
+   "show": {
+    "format": "{block}/{blocks}",
+    "readout": "media.tape"
+   },
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "toggle"
+   }
+  },
+  "tclip": {
+   "action": "ttd.export_clip",
+   "at": [
+    2,
+    4
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "EXPORT",
+   "uc": [
+    "C7.3"
+   ],
+   "value": {
+    "path": "$user/clips/history.mp4"
+   }
+  },
+  "tdrop": {
+   "action": "ttd.invalidate",
+   "at": [
+    2,
+    2
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "DROP",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "tdump": {
+   "action": "ttd.dump",
+   "at": [
+    0,
+    7
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "SAVE TTD",
+   "uc": [
+    "C7.1",
+    "D12.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
+  },
+  "teject": {
+   "action": "media.tape",
+   "at": [
+    1,
+    4
+   ],
+   "in": "media",
+   "kind": "key",
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "eject"
+   }
+  },
+  "tframe": {
+   "at": [
+    2,
+    4
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "FRAME",
+   "show": {
+    "format": "{}",
+    "readout": "ttd.position.current.frame"
+   },
+   "uc": [
+    "D3.2"
+   ]
+  },
+  "threads": {
+   "at": [
+    0,
+    6
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "THREADS",
+   "show": {
+    "readout": "host.stats.threads"
+   },
+   "uc": [
+    "C10.2"
+   ]
+  },
+  "time": {
+   "at": [
+    3,
+    7
+   ],
+   "dials": {
+    "0": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.jog_frames",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "1": {
+     "label": "SCRUB",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.seek_by",
+      "value": {
+       "d": "$ticks",
+       "rate": "$rate"
+      }
+     },
+     "uc": [
+      "D3.2"
+     ]
+    },
+    "2": {
+     "label": "LINES",
+     "press": {
+      "action": "run.to_pixel"
+     },
+     "turn": {
+      "action": "run.step_by",
+      "value": {
+       "d": "$ticks",
+       "unit": "scanlines"
+      }
+     },
+     "uc": [
+      "D2.4"
+     ]
+    },
+    "3": {
+     "label": "T-STATES",
+     "press": {
+      "action": "run.wait_int"
+     },
+     "turn": {
+      "action": "run.step_by",
+      "value": {
+       "d": "$ticks",
+       "unit": "tstates"
+      }
+     },
+     "uc": [
+      "D2.5"
+     ]
+    },
+    "4": {
+     "label": "PACE",
+     "press": {
+      "action": "run.pace_toggle"
+     },
+     "turn": {
+      "action": "run.pace_by",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D1.1"
+     ]
+    }
+   },
+   "glyph": "ttd.menu",
+   "in": "home",
+   "kind": "menu",
+   "label": "TIME",
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "Time",
+   "uc": [
+    "D1",
+    "D3"
+   ]
+  },
+  "timlive": {
+   "action": "ttd.resume_live",
+   "at": [
+    2,
+    8
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "LIVE",
+   "uc": [
+    "D3.6"
+   ]
+  },
+  "timttdrec": {
+   "action": "ttd.record_toggle",
+   "at": [
+    3,
+    8
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "TTD REC",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "tload": {
+   "action": "ttd.load",
+   "at": [
+    0,
+    8
+   ],
+   "in": "state",
+   "kind": "key",
+   "label": "LOAD TTD",
+   "uc": [
+    "C7.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
+  },
+  "toolbar": {
+   "action": "view.toolbar",
+   "at": [
+    0,
+    7
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "TOOLBAR",
+   "uc": [
+    "C9.8"
+   ]
+  },
+  "tpause": {
+   "action": "media.tape",
+   "at": [
+    1,
+    1
+   ],
+   "in": "media",
+   "kind": "key",
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "pause"
+   }
+  },
+  "tplay": {
+   "action": "media.tape",
+   "at": [
+    1,
+    0
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "PLAY",
+   "show": {
+    "format": "{block}/{blocks}",
+    "readout": "media.tape"
+   },
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "play"
+   }
+  },
+  "trace": {
+   "action": "prof.toggle",
+   "at": [
+    3,
+    8
+   ],
+   "in": "debug",
+   "kind": "key",
+   "label": "CALLS",
+   "uc": [
+    "D10.1"
+   ],
+   "value": {
+    "name": "calltrace"
+   }
+  },
+  "traps": {
+   "action": "set.toggle",
+   "at": [
+    3,
+    0
+   ],
+   "in": "basic",
+   "kind": "key",
+   "label": "TRAPS",
+   "uc": [
+    "U4.4"
+   ],
+   "value": {
+    "name": "trdos_traps"
+   }
+  },
+  "trdos": {
+   "action": "set.toggle",
+   "at": [
+    3,
+    5
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "TR-DOS",
+   "uc": [
+    "U4.4"
+   ],
+   "value": {
+    "name": "trdos_traps"
+   }
+  },
+  "trew": {
+   "action": "media.tape",
+   "at": [
+    1,
+    3
+   ],
+   "in": "media",
+   "kind": "key",
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "rewind"
+   }
+  },
+  "tstart": {
+   "action": "ttd.start",
+   "at": [
+    2,
+    0
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "START",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "tstop": {
+   "action": "media.tape",
+   "at": [
+    1,
+    2
+   ],
+   "in": "media",
+   "kind": "key",
+   "uc": [
+    "C4.2"
+   ],
+   "value": {
+    "op": "stop"
+   }
+  },
+  "ttape": {
+   "action": "set.toggle",
+   "at": [
+    3,
+    7
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "TURBO TAPE",
+   "uc": [
+    "C2.4"
+   ],
+   "value": {
+    "name": "turbo_tape"
+   }
+  },
+  "ttdlen": {
+   "at": [
+    2,
+    6
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "FRAMES",
+   "show": {
+    "format": "{:k}",
+    "readout": "ttd.status.frames"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdmem": {
+   "at": [
+    2,
+    7
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "TTD MEM",
+   "show": {
+    "format": "{:b}",
+    "readout": "ttd.status.memory_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdrec": {
+   "action": "ttd.record_toggle",
+   "at": [
+    2,
+    2
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "TTD REC",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "ttdst": {
+   "at": [
+    2,
+    5
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "TTD",
+   "show": {
+    "format": "{recording?REC|IDLE}",
+    "readout": "ttd.status",
+    "warn": 1
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "turbo": {
+   "action": "mach.turbo_toggle",
+   "at": [
+    0,
+    3
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "TURBO",
+   "uc": [
+    "C2.2"
+   ]
+  },
+  "uback": {
+   "action": "ttd.unit_back",
+   "at": [
+    2,
+    3
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "BACK",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "ufwd": {
+   "action": "ttd.unit_forward",
+   "at": [
+    2,
+    5
+   ],
+   "in": "time",
+   "kind": "key",
+   "label": "FORWARD",
+   "uc": [
+    "D3.3"
+   ]
+  },
+  "up": {
+   "action": "input.joystick",
+   "at": [
+    1,
+    6
+   ],
+   "hold": true,
+   "in": "game",
+   "kind": "key",
+   "label": "UP",
+   "uc": [
+    "U1.2"
+   ],
+   "value": {
+    "buttons": "up",
+    "hold": true
+   }
+  },
+  "vgame": {
+   "action": "cap.record_toggle",
+   "at": [
+    0,
+    1
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "GAME",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gameplay"
+   }
+  },
+  "vgif": {
+   "action": "cap.record_toggle",
+   "at": [
+    0,
+    3
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "GIF",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gif"
+   }
+  },
+  "vhq": {
+   "action": "cap.record_toggle",
+   "at": [
+    0,
+    2
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "HQ",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "hq"
+   }
+  },
+  "video": {
+   "at": [
+    3,
+    8
+   ],
+   "in": "monitor",
+   "kind": "key",
+   "label": "VIDEO",
+   "show": {
+    "format": "{recording?REC|IDLE}",
+    "readout": "cap.record",
+    "warn": 1
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vlen": {
+   "at": [
+    0,
+    7
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "LENGTH",
+   "show": {
+    "format": "{:.0f}S",
+    "readout": "cap.record.seconds"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vmulti": {
+   "action": "cap.record_toggle",
+   "at": [
+    0,
+    4
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "MULTI",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "multitrack"
+   }
+  },
+  "vpause": {
+   "action": "cap.record_pause",
+   "at": [
+    0,
+    5
+   ],
+   "in": "record",
+   "kind": "key",
+   "uc": [
+    "C7.2"
+   ]
+  },
+  "vport": {
+   "action": "video.viewport",
+   "at": [
+    0,
+    5
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "CROP",
+   "show": {
+    "format": "{}",
+    "readout": "video.viewport.viewport"
+   },
+   "uc": [
+    "C9.3"
+   ],
+   "value": {
+    "viewport": "next"
+   }
+  },
+  "vsize": {
+   "at": [
+    0,
+    8
+   ],
+   "in": "record",
+   "kind": "key",
+   "label": "SIZE",
+   "show": {
+    "format": "{:b}",
+    "readout": "cap.record.bytes"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "wpa": {
+   "action": "media.protect",
+   "at": [
+    2,
+    0
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "A",
+   "show": {
+    "format": "{?WP|RW}",
+    "readout": "media.disk.drives.0.protect"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "A"
+   }
+  },
+  "wpb": {
+   "action": "media.protect",
+   "at": [
+    2,
+    1
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "B",
+   "show": {
+    "format": "{?WP|RW}",
+    "readout": "media.disk.drives.1.protect"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "B"
+   }
+  },
+  "wpc": {
+   "action": "media.protect",
+   "at": [
+    2,
+    2
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "C",
+   "show": {
+    "format": "{?WP|RW}",
+    "readout": "media.disk.drives.2.protect"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "C"
+   }
+  },
+  "wpd": {
+   "action": "media.protect",
+   "at": [
+    2,
+    3
+   ],
+   "in": "media",
+   "kind": "key",
+   "label": "D",
+   "show": {
+    "format": "{?WP|RW}",
+    "readout": "media.disk.drives.3.protect"
+   },
+   "uc": [
+    "C5.1"
+   ],
+   "value": {
+    "drive": "D"
+   }
+  },
+  "x1": {
+   "action": "set.speed",
+   "at": [
+    0,
+    5
+   ],
+   "in": "home",
+   "kind": "key",
+   "label": "X1",
+   "show": {
+    "format": "X{}",
+    "readout": "run.state.speed"
+   },
+   "uc": [
+    "C2.5"
+   ],
+   "value": {
+    "value": 1
+   }
+  }
+ }
+}

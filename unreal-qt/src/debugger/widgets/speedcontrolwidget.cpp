@@ -1,38 +1,22 @@
 #include "speedcontrolwidget.h"
 
+#include <QCoreApplication>
+#include <QDebug>
 #include <QHBoxLayout>
+#include <QMetaObject>
 #include <QPainter>
+#include <QPointer>
 #include <QStyle>
+#include <algorithm>
 #include <vector>
 
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
-
-// ============================================================================
-// Preset collection — fully dynamic, no fixed indices needed.
-// Each entry defines: label, step type, timer behavior, spinner config,
-// and t-state calculation parameters (frameNum, lineNum, divisor).
-//
-// T-state formula: result = (F * frameNum + L * lineNum) / divisor
-//   where F = config.frame, L = config.t_line
-// ============================================================================
-static const std::vector<PresetConfig>& getPresets()
-{
-    static const std::vector<PresetConfig> presets =
-    {
-        //  label          stepType           fixedMs  min   max   step  fN  lN  div
-        { "1x (50fps)",   StepType::FullSpeed,   -1,    0,    0,    0,   0,  0,  1 },
-        { "25 fps",       StepType::Frame,       40,    0,    0,    0,   1,  0,  1 },
-        { "5 fps",        StepType::Frame,      200,    0,    0,    0,   1,  0,  1 },
-        { "1 fps",        StepType::Frame,     1000,    0,    0,    0,   1,  0,  1 },
-        { "1 frame",      StepType::Frame,        0,   10, 5000,   10,   1,  0,  1 },
-        { "100 lines",    StepType::Scanlines,    0,   10, 5000,   10,   0,100,  1 },
-        { "10 lines",     StepType::Scanlines,    0,    1, 5000,    1,   0, 10,  1 },
-        { "1 line",       StepType::Scanlines,    0,    1, 5000,    1,   0,  1,  1 },
-        { "1 Op",         StepType::Opcodes,      0,    1, 5000,    1,   0,  1,  1 },  // 1 Opcode (lineNum=cycles)
-    };
-
-    return presets;
-}
+#include "emulator/emulatorcontext.h"
+#include "emulator/execution/runpacer.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 
 // ============================================================================
 // Palette-aware stylesheet — adapts to both light and dark system themes.
@@ -143,7 +127,7 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
 {
     setStyleSheet(widgetStyleSheet);
 
-    const auto& presets = getPresets();
+    const auto& presets = execution::RunPacer::Presets();
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(6, 2, 6, 4);
@@ -187,7 +171,7 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
     intervalLayout->addWidget(intervalLabel);
 
     _intervalSpinBox = new QSpinBox(this);
-    _intervalSpinBox->setRange(1, 5000);
+    _intervalSpinBox->setRange(execution::RunPacer::kIntervalMin, execution::RunPacer::kIntervalMax);
     _intervalSpinBox->setValue(1000);
     _intervalSpinBox->setSingleStep(100);
     _intervalSpinBox->setSuffix(" ms");
@@ -238,365 +222,231 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
     _label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     layout->addWidget(_label);
 
-    // Timer for auto-run orchestration
-    _timer = new QTimer(this);
-    _timer->setSingleShot(false);
-
     // Connections
     connect(_slider, &QSlider::valueChanged, this, &SpeedControlWidget::onSliderChanged);
     connect(_playPauseButton, &QToolButton::clicked, this, &SpeedControlWidget::onPlayPauseClicked);
     connect(_stepForwardButton, &QToolButton::clicked, this, &SpeedControlWidget::onStepForwardClicked);
     connect(_stepBackButton, &QToolButton::clicked, this, &SpeedControlWidget::onStepBackwardClicked);
-    connect(_timer, &QTimer::timeout, this, &SpeedControlWidget::onTimerTick);
 
-    // When interval changes during auto-run, update the timer
+    // The interval: the pacer's (a running pace takes it at once)
     connect(_intervalSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        if (_timer->isActive())
-        {
-            _timer->setInterval(value);
-        }
+        if (_syncing)
+            return;
+        StateNode params = StateNode::Object();
+        params["interval_ms"] = static_cast<int64_t>(value);
+        submit("run.pace_set", params);
     });
 
-    updateLabel();
+    syncFromPacer();
 }
 
-void SpeedControlWidget::setEmulator(Emulator* emulator)
+SpeedControlWidget::~SpeedControlWidget()
 {
-    _emulator = emulator;
+    unsubscribe();
+}
+
+void SpeedControlWidget::setEmulator(std::shared_ptr<Emulator> emulator)
+{
+    unsubscribe();
+    _emulator = std::move(emulator);
+    if (_emulator)
+        subscribe();
+    syncFromPacer();
+}
+
+void SpeedControlWidget::subscribe()
+{
+    // The observers run on the message centre's thread: they post to the GUI thread, where the widget may be gone
+    QPointer<SpeedControlWidget> self(this);
+    const std::string id = _emulator->GetId();
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    _paceObserver = messageCenter.AddObserver(NC_RUN_PACE, [self, id](int, Message* message) {
+        auto* payload = message != nullptr ? dynamic_cast<RunPacePayload*>(message->obj) : nullptr;
+        if (payload == nullptr || payload->emulatorId.toString() != id)
+            return;
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [self] {
+                if (self)
+                    self->syncFromPacer();
+            },
+            Qt::QueuedConnection);
+    });
+    // Each paced step ends with a CPU step post: the panes and the screen follow (one refresh queued at a time)
+    std::shared_ptr<std::atomic<bool>> pending = _stepPending;
+    _stepObserver = messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, [self, id, pending](int, Message*) {
+        const std::shared_ptr<execution::RunPacer> pacer = execution::RunPacer::Find(id);
+        if (!pacer || !pacer->State().running || pending->exchange(true))
+            return;
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [self, pending] {
+                pending->store(false);
+                if (self)
+                    emit self->stepped();
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void SpeedControlWidget::unsubscribe()
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    if (_paceObserver != 0)
+        messageCenter.RemoveObserverById(NC_RUN_PACE, _paceObserver);
+    if (_stepObserver != 0)
+        messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, _stepObserver);
+    _paceObserver = 0;
+    _stepObserver = 0;
+}
+
+void SpeedControlWidget::submit(const char* action, const StateNode& params)
+{
+    if (!_emulator)
+        return;
+    actions::ActionValue value;
+    value.params = params;
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:speed-control";
+    origin.client = "speed control";
+    QPointer<SpeedControlWidget> self(this);
+    actions::ActionRegistry::Instance().Submit(
+        action, std::move(value), _emulator->GetId(), std::move(origin), [self](actions::ActionResult result) {
+            const QString why = result.ok ? QString() : QString::fromStdString(result.message);
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, why] {
+                    if (!self)
+                        return;
+                    self->_label->setToolTip(why);
+                    if (!why.isEmpty())
+                        qWarning() << "SpeedControlWidget:" << why;
+                    self->syncFromPacer();
+                },
+                Qt::QueuedConnection);
+        });
+}
+
+void SpeedControlWidget::syncFromPacer()
+{
+    const auto& presets = execution::RunPacer::Presets();
+    const std::shared_ptr<execution::RunPacer> pacer =
+        _emulator ? execution::RunPacer::Find(_emulator->GetId()) : nullptr;
+    execution::PaceState state;
+    if (pacer)
+        state = pacer->State();
+    else
+    {
+        state.preset = 0;
+        state.intervalMs = 1000;
+    }
+    const execution::PacePreset& preset = presets[std::min(state.preset, presets.size() - 1)];
+
+    _syncing = true;
+    _slider->setValue(static_cast<int>(state.preset));
+    const bool adjustable = preset.fixedIntervalMs == 0;
+    _intervalSpinBox->setEnabled(adjustable);
+    _intervalSpinBox->setReadOnly(!adjustable);
+    if (adjustable)
+        _intervalSpinBox->setSingleStep(preset.intervalStep);
+    _intervalSpinBox->setValue(preset.fixedIntervalMs > 0 ? preset.fixedIntervalMs : state.intervalMs);
+    _syncing = false;
+
+    const bool fullSpeed = preset.unit == execution::PaceUnit::Full;
+    _stepForwardButton->setEnabled(!fullSpeed);
+    _stepBackButton->setEnabled(state.preset > 0);
+    _playPauseButton->setChecked(state.running);
+    _playPauseButton->setText(state.running ? "\u23F8" : "\u25B6");  // ⏸ / ▶
     updateLabel();
+
+    if (state.running != _running)
+    {
+        _running = state.running;
+        emit runningChanged(_running);
+    }
 }
 
 void SpeedControlWidget::executeStep()
 {
-    if (!_emulator)
-        return;
-
-    int pos = _slider->value();
-    const auto& presets = getPresets();
-    if (pos < 0 || pos >= static_cast<int>(presets.size()))
-        return;
-
-    const PresetConfig& cfg = presets[pos];
-
-
-
-    switch (cfg.stepType)
-    {
-        case StepType::FullSpeed:
-            // Just resume normal execution
-            if (_emulator->IsPaused())
-                _emulator->Resume();
-            break;
-
-        case StepType::Frame:
-            _emulator->RunFrame(true);  // skipBreakpoints = true
-            break;
-
-        case StepType::Opcodes:
-            {
-                uint cycles = cfg.lineNum;
-                if (cycles > 0)
-                    _emulator->RunNCPUCycles(cycles, true);
-            }
-            break;
-
-        case StepType::TStates:
-            {
-                unsigned tstates = getTStatesForPreset(pos);
-                if (tstates > 0)
-                    _emulator->RunTStates(tstates, true);  // skipBreakpoints = true
-            }
-            break;
-
-        case StepType::Scanlines:
-            {
-                // Drift-free line stepping: use RunNScanlines which maintains
-                // a persistent anchor offset preventing horizontal drift.
-                const PresetConfig& lineCfg = presets[pos];
-                unsigned lineCount = static_cast<unsigned>(lineCfg.lineNum);
-                if (lineCount > 0)
-                    _emulator->RunNScanlines(lineCount, true);  // skipBreakpoints = true
-            }
-            break;
-    }
+    submit("run.pace_step");
 }
 
 bool SpeedControlWidget::isFullSpeed() const
 {
-    const auto& presets = getPresets();
-    int pos = _slider->value();
-    return (pos >= 0 && pos < static_cast<int>(presets.size()) &&
-            presets[pos].stepType == StepType::FullSpeed);
+    return _slider->value() == 0;
 }
 
 bool SpeedControlWidget::isRunning() const
 {
-    return _timer->isActive();
+    return _running;
 }
 
 void SpeedControlWidget::stop()
 {
-    bool wasRunning = _timer->isActive();
-
-    if (wasRunning)
-    {
-        qDebug() << "SpeedControlWidget: Playback stopped";
-        _timer->stop();
-    }
-
-    // Always reset play/pause button to "play" state (▶)
-    // This handles both timer-driven and FullSpeed modes
-    _playPauseButton->setChecked(false);
-    _playPauseButton->setText("\u25B6");  // ▶
-
-    if (wasRunning)
-        emit runningChanged(false);
-}
-
-const std::vector<PresetConfig>& SpeedControlWidget::presets()
-{
-    return getPresets();
+    // At once on this thread (it only flags the pacer): a step the caller runs next does not race a tick
+    if (_emulator)
+        if (const std::shared_ptr<execution::RunPacer> pacer = execution::RunPacer::Find(_emulator->GetId()))
+            pacer->Stop();
+    syncFromPacer();
 }
 
 void SpeedControlWidget::onSliderChanged(int position)
 {
-    Q_UNUSED(position);
     updateLabel();
-
-    int pos = _slider->value();
-    const auto& presets = getPresets();
-    if (pos < 0 || pos >= static_cast<int>(presets.size()))
+    if (_syncing)
         return;
-
-    const PresetConfig& cfg = presets[pos];
-
-    qDebug() << "SpeedControlWidget: Preset changed to" << cfg.label;
-
-    // Configure spinner from per-preset config
-    bool enableInterval = (cfg.fixedIntervalMs == 0);  // 0 = use spinner
-    _intervalSpinBox->setReadOnly(!enableInterval);
-    _intervalSpinBox->setEnabled(enableInterval);
-
-    // No extra dynamic styling needed — QSpinBox:disabled in stylesheet handles contrast
-
-    if (enableInterval)
-    {
-        _intervalSpinBox->setMinimum(cfg.spinnerMin);
-        _intervalSpinBox->setMaximum(cfg.spinnerMax);
-        _intervalSpinBox->setSingleStep(cfg.spinnerStep);
-    }
-
-    // Handle FullSpeed transitions
-    bool isFullSpd = (cfg.stepType == StepType::FullSpeed);
-    bool emulatorRunning = _emulator && !_emulator->IsPaused();
-
-    if (_timer->isActive())
-    {
-        if (isFullSpd)
-        {
-            // Switching TO FullSpeed while auto-running → stop timer, resume emulator
-            stop();
-            if (_emulator && _emulator->IsPaused())
-                _emulator->Resume();
-        }
-        else
-        {
-            // Switching between non-FullSpeed presets → just update interval
-            int interval = getTimerIntervalMs(pos);
-            if (interval > 0)
-                _timer->setInterval(interval);
-        }
-    }
-    else if (emulatorRunning && !isFullSpd)
-    {
-        // Emulator is running at full speed (no timer) and user selected a timer-driven preset.
-        // Pause emulator and start timer-driven stepping.
-        _emulator->Pause();
-
-        int interval = getTimerIntervalMs(pos);
-        if (interval > 0)
-        {
-            // Pause() is flag-based — the emulator thread must finish its current frame
-            // before entering the paused state. Use a deferred start to avoid racing with
-            // the emulator thread's RunFrame() on Thread 18.
-            _playPauseButton->setChecked(true);
-            _playPauseButton->setText("\u23F8");  // ⏸
-            emit runningChanged(true);
-
-            QTimer::singleShot(50, this, [this, interval]() {
-                if (!_emulator || !_emulator->IsPaused())
-                    return;  // Emulator was stopped or already resumed
-
-                _timer->setInterval(interval);
-                _timer->start();
-                qDebug() << "SpeedControlWidget: Playback resumed - interval:" << interval << "ms";
-
-                executeStep();
-                emit stepped();
-            });
-        }
-    }
-
-    // Disable step buttons at full speed
-    _stepForwardButton->setEnabled(!isFullSpd);
-    _stepBackButton->setEnabled(pos > 0);
+    const auto& presets = execution::RunPacer::Presets();
+    if (position < 0 || position >= static_cast<int>(presets.size()))
+        return;
+    // The pacer acts as the slider always did: off full speed it pauses and paces, onto full speed it resumes
+    StateNode params = StateNode::Object();
+    params["preset"] = presets[static_cast<size_t>(position)].id;
+    submit("run.pace_set", params);
 }
 
 void SpeedControlWidget::onPlayPauseClicked()
 {
-    int pos = _slider->value();
-    const auto& presets = getPresets();
-    if (pos < 0 || pos >= static_cast<int>(presets.size()))
-        return;
-
-    const PresetConfig& cfg = presets[pos];
-
-    if (_timer->isActive())
-    {
-        // Stop auto-run
-        stop();
-    }
+    // The click toggled the button: the pacer's state puts it back when it answers
+    if (_running)
+        submit("run.pace_stop");
+    else if (!isFullSpeed() || (_emulator && _emulator->IsPaused()))
+        submit("run.pace_toggle");  // paced: start; full speed and paused: continue
     else
-    {
-        if (cfg.stepType == StepType::FullSpeed)
-        {
-            // Full speed — just resume
-            if (_emulator && _emulator->IsPaused())
-            {
-                _emulator->Resume();
-                emit runningChanged(true);
-            }
-            return;
-        }
-
-        // Start auto-run at configured interval
-        int interval = getTimerIntervalMs(pos);
-        if (interval > 0)
-        {
-            _timer->setInterval(interval);
-            _timer->start();
-            qDebug() << "SpeedControlWidget: Playback started - interval:" << interval << "ms";
-            _playPauseButton->setChecked(true);
-            _playPauseButton->setText("\u23F8");  // ⏸
-            emit runningChanged(true);
-
-            // Execute first step immediately
-            executeStep();
-            emit stepped();
-        }
-    }
+        syncFromPacer();
 }
 
 void SpeedControlWidget::onStepForwardClicked()
 {
-    qDebug() << "SpeedControlWidget::onStepForwardClicked()";
-
-    // If auto-running, stop first
-    if (_timer->isActive())
-    {
-        stop();
-    }
-
-    executeStep();
-    emit stepped();
+    submit("run.pace_step");  // a running pace stops first
 }
 
 void SpeedControlWidget::onStepBackwardClicked()
 {
-    // Move slider to coarser granularity
-    int pos = _slider->value();
-    if (pos > 0)
-    {
-        _slider->setValue(pos - 1);
-    }
-}
-
-void SpeedControlWidget::onTimerTick()
-{
-    if (!_emulator)
-        return;
-
-
-    executeStep();
-    emit stepped();
+    if (_slider->value() > 0)
+        _slider->setValue(_slider->value() - 1);
 }
 
 void SpeedControlWidget::updateLabel()
 {
-    int pos = _slider->value();
-    const auto& presets = getPresets();
+    const auto& presets = execution::RunPacer::Presets();
+    const int pos = _slider->value();
     if (pos < 0 || pos >= static_cast<int>(presets.size()))
         return;
-
-    const PresetConfig& cfg = presets[pos];
-    QString text = cfg.label;
-
+    const execution::PacePreset& preset = presets[static_cast<size_t>(pos)];
+    QString text = preset.label;
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
     if (context)
     {
-        switch (cfg.stepType)
+        switch (preset.unit)
         {
-            case StepType::FullSpeed:
+            case execution::PaceUnit::Full: break;
+            case execution::PaceUnit::Instructions: text += QString(" (4..23T)"); break;
+            case execution::PaceUnit::Scanlines:
+                text += QString(" (%1T)").arg(context->config.t_line * preset.count);
                 break;
-            case StepType::Opcodes:
-                text += QString(" (4..23T)");
-                break;
-            case StepType::TStates:
-                {
-                    unsigned tstates = getTStatesForPreset(pos);
-                    text += QString(" (%1T)").arg(tstates);
-                }
-                break;
-            case StepType::Scanlines:
-                {
-                    unsigned L = context->config.t_line;
-                    text += QString(" (%1T)").arg(L * cfg.lineNum);
-                }
-                break;
-            case StepType::Frame:
-                {
-                    unsigned F = context->config.frame;
-                    text += QString(" (%1T)").arg(F);
-                }
-                break;
+            case execution::PaceUnit::Frames: text += QString(" (%1T)").arg(context->config.frame); break;
         }
     }
-
     _label->setText(text);
-}
-
-unsigned SpeedControlWidget::getTStatesForPreset(int position) const
-{
-    EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
-    if (!ctx)
-        return 0;
-
-    const auto& presets = getPresets();
-    if (position < 0 || position >= static_cast<int>(presets.size()))
-        return 0;
-
-    const PresetConfig& cfg = presets[position];
-
-    // Special case: 1 T-state (when both frameNum and lineNum are 0)
-    if (cfg.frameNum == 0 && cfg.lineNum == 0)
-        return 1;
-
-    unsigned F = ctx->config.frame;    // t-states per frame
-    unsigned L = ctx->config.t_line;   // t-states per scanline
-
-    return (F * cfg.frameNum + L * cfg.lineNum) / cfg.divisor;
-}
-
-int SpeedControlWidget::getTimerIntervalMs(int position) const
-{
-    const auto& presets = getPresets();
-    if (position < 0 || position >= static_cast<int>(presets.size()))
-        return 0;
-
-    const PresetConfig& cfg = presets[position];
-    if (cfg.fixedIntervalMs < 0)
-        return 0;  // No timer (full speed)
-    if (cfg.fixedIntervalMs > 0)
-        return cfg.fixedIntervalMs;  // Fixed interval
-    return _intervalSpinBox->value();  // User-adjustable
 }

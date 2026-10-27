@@ -1,0 +1,23 @@
+        org 30000
+start   ld a,7      ; BORDER
+        out (254),a
+        ld hl,msg
+loop    ld a,(hl)
+        and a
+        ret z
+        rst 16
+        inc hl
+        jr loop
+msg     defm "hI, LD A"
+        defb 13,0
+        disp 40000
+        ent
+
+LOWER   LD A,B
+1234567 x
+a       b       c
+        defm "A       B"
+        nop ; X       Y
+a                       b
+x  y
+

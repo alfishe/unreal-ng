@@ -21,6 +21,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,14 +36,21 @@ struct FatMappedName
     FatShortName shortName{};
     bool hasLongName = false;
     std::u16string longName;     ///< UTF-16, only when hasLongName
+    std::string renamed;         ///< replaceBadNames: the name it got instead (UTF-8); empty: its own
 };
 
 class FatNameMapper
 {
 public:
     /// Map the names of one folder, in order. Short names are unique within
-    /// the folder (the volume label and "." / ".." are not in this list)
-    static std::vector<FatMappedName> MapFolder(const std::vector<std::string>& utf8Names, CodePage page = CodePage::Cp866);
+    /// the folder (the volume label and "." / ".." are not in this list) and
+    /// differ from every name in `taken` (entries already in the directory:
+    /// a graft adds to a base directory)
+    /// A name FAT cannot hold (a character a long name may not have: control characters and \ / : * ? " < > |,
+    /// over 255 UTF-16 units, empty) is refused (ok == false) unless `replaceBadNames`: the characters become '_',
+    /// a long name is cut before its extension, and `renamed` says what it became (FR-21 onBadName)
+    static std::vector<FatMappedName> MapFolder(const std::vector<std::string>& utf8Names, CodePage page = CodePage::Cp866,
+                                                const std::set<FatShortName>& taken = {}, bool replaceBadNames = false);
 
     /// The LFN checksum of a short name (the "sum" byte of every LFN entry)
     static uint8_t Checksum(const FatShortName& shortName);

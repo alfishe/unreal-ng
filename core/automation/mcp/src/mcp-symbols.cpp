@@ -8,6 +8,16 @@
 //   source_at    → GET  /listing/source_at?address=&context=
 //   step_line    → POST /listing/step_line {max_tstates?}
 //   run_to_line  → POST /listing/run_to_line {line, max_tstates?}
+//   formats      → GET  /symbols/formats
+//   detect       → GET  /symbols/detect?path=
+//   sets         → GET  /symbols/sets
+//   set_enable   → PUT  /symbols/sets {id, enabled?, priority?}
+//   drop         → DELETE /symbols/sets?id=
+//   import       → POST /symbols/import {path | data + name, format?, set?, space?, base?, policy?}
+//   export       → POST /symbols/export {path, format?, sets?, pages?}
+//   scan         → GET  /symbols/scan
+//   import_live  → POST /symbols/import/live {scanner?, page?, offset?, set?, policy?}
+//   import_source → POST /symbols/import/source {path, main?, set?, policy?, generated?}
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -29,18 +39,70 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line"})
+    for (const char* action : {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line", "formats",
+                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live",
+                               "import_source"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Symbol/source operation. Labels come from .sld/.lbl symbol files; listings from sjasmplus .lst files.";
+        "Symbol/source operation. Labels come from symbol files in any format (formats lists them), or from an assembler "
+        "source assembled on the host (import_source); listings from "
+        "sjasmplus .lst files. import / export / sets / set_enable / drop work on the symbol sets: user (labels set by "
+        "hand, wins), one per loaded file (a later load wins), named sets.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["path"]["type"] = "string";
-    schema["properties"]["path"]["description"] = "File path for load_labels / load_listing";
+    schema["properties"]["path"]["description"] = "File path for load_labels / load_listing / detect / import / export";
+    schema["properties"]["data"]["type"] = "string";
+    schema["properties"]["data"]["description"] = "import: the symbol file itself as base64 instead of a path (a client on another host)";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["description"] = "import / export: a symbol format id (formats); default: by the extension, else detected";
+    schema["properties"]["set"]["type"] = "string";
+    schema["properties"]["set"]["description"] = "import: merge into this set (made when missing) instead of the file's own set";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["description"] = "import: records without a page go here; export: only symbols of this space (cpu:main, rom0, ram3, cache0, const, port)";
+    schema["properties"]["base"]["type"] = "string";
+    schema["properties"]["base"]["description"] = "import: added to every offset (decimal, 0x, #, $)";
+    schema["properties"]["policy"]["type"] = "string";
+    schema["properties"]["policy"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* policy : {"both", "keep", "replace", "fail"})
+        schema["properties"]["policy"]["enum"].append(policy);
+    schema["properties"]["policy"]["description"] = "import into a set: both (second name = alias, default), keep, replace, fail";
+    schema["properties"]["sets"]["type"] = "array";
+    schema["properties"]["sets"]["items"]["type"] = "string";
+    schema["properties"]["sets"]["description"] = "export: only these set ids (default: every enabled set)";
+    schema["properties"]["from"]["type"] = "string";
+    schema["properties"]["from"]["description"] = "list / export: only CPU addresses from this one (decimal, 0x, #, $)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["description"] = "list / export: only CPU addresses up to this one";
+    schema["properties"]["limit"]["type"] = "integer";
+    schema["properties"]["limit"]["default"] = 100;
+    schema["properties"]["limit"]["description"] = "list: labels written in the text (1..2000; structuredContent has every match)";
+    schema["properties"]["kinds"]["type"] = "string";
+    schema["properties"]["kinds"]["description"] = "export: only these kinds, a comma list (code, data, const, entry ... or a file's own type word)";
+    schema["properties"]["pages"]["type"] = "string";
+    schema["properties"]["pages"]["description"] = "export: page symbols in a format without pages: fold (default), comment, drop";
+    schema["properties"]["scanner"]["type"] = "string";
+    schema["properties"]["scanner"]["description"] = "import_live: alasm-table or xas-table (default: the best candidate of scan)";
+    schema["properties"]["page"]["type"] = "integer";
+    schema["properties"]["page"]["description"] = "import_live: the RAM page of the table (scan lists them)";
+    schema["properties"]["offset"]["type"] = "integer";
+    schema["properties"]["offset"]["description"] = "import_live: the table's first byte in the page";
+    schema["properties"]["main"]["type"] = "string";
+    schema["properties"]["main"]["description"] = "import_source: the main source of an image (default: the only one, or NAME of disk:A/NAME.T)";
+    schema["properties"]["generated"]["type"] = "boolean";
+    schema["properties"]["generated"]["description"] = "import_source: also the labels the conversion adds";
+    schema["properties"]["id"]["type"] = "string";
+    schema["properties"]["id"]["description"] = "set_enable / drop: the set id (sets lists them)";
+    schema["properties"]["enabled"]["type"] = "boolean";
+    schema["properties"]["enabled"]["description"] = "set_enable: show the set's labels";
+    schema["properties"]["priority"]["type"] = "integer";
+    schema["properties"]["priority"]["description"] = "set_enable: higher wins (user 1000000, files 100 and up)";
     schema["properties"]["name"]["type"] = "string";
-    schema["properties"]["name"]["description"] = "Label name for resolve (exactly one of name/address)";
+    schema["properties"]["name"]["description"] =
+        "resolve: the label name (exactly one of name/address); export: a name pattern (* any run, ? one character); import with "
+        "data: the file's name";
     schema["properties"]["address"]["type"] = "string";
     schema["properties"]["address"]["description"] = "Address for resolve / source_at — integer or \"0x…\" hex string";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -77,7 +139,65 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             if (action == "list")
             {
-                ResolveAndForward(args, "GET", "/labels", nullptr, caller, "Labels", done);
+                // Filters: from / to by the WebAPI, name (a case-insensitive substring) here. The text lists the first
+                // `limit` labels one per line; the full ROM set is ~2400 labels, 330 KB of JSON
+                std::string query;
+                for (const char* bound : {"from", "to"})
+                {
+                    if (!args.isMember(bound))
+                        continue;
+                    const Json::Value number = NumericOrHex(args[bound]);
+                    if (!number.isIntegral() || number.asLargestInt() < 0 || number.asLargestInt() > 0xFFFF)
+                    {
+                        done(ToolResult::Error(std::string("list: '") + bound + "' is a CPU address 0..0xFFFF (decimal, 0x, $)"));
+                        return;
+                    }
+                    query += std::string(query.empty() ? "?" : "&") + bound + "=" + std::to_string(number.asUInt());
+                }
+                std::string name = args.isMember("name") && args["name"].isString() ? args["name"].asString() : "";
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+                const unsigned limit = args.isMember("limit") && args["limit"].isIntegral()
+                                           ? std::clamp(args["limit"].asUInt(), 1u, 2000u) : 100u;
+                ResolveAndForward(args, "GET", "/labels" + query, nullptr, caller, "Labels", [name, limit, done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    Json::Value& labels = result.structured["labels"];
+                    if (!name.empty() && labels.isArray())
+                    {
+                        Json::Value kept(Json::arrayValue);
+                        for (const Json::Value& label : labels)
+                        {
+                            std::string lower = label["name"].asString();
+                            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+                            if (lower.find(name) != std::string::npos)
+                                kept.append(label);
+                        }
+                        labels = std::move(kept);
+                        result.structured["count"] = labels.size();
+                    }
+                    std::ostringstream out;
+                    out << result.text << ": " << labels.size() << " of " << result.structured["total"].asUInt();
+                    Json::ArrayIndex shown = 0;
+                    for (const Json::Value& label : labels)
+                    {
+                        if (shown++ == limit)
+                            break;
+                        out << "\n" << Hex16(label["address"].asUInt()) << " " << label["name"].asString();
+                        if (label.isMember("bank"))
+                            out << " " << label["bankType"].asString() << label["bank"].asUInt();
+                        if (label["type"].isString())
+                            out << " " << label["type"].asString();
+                        if (label["comment"].isString())
+                            out << " ; " << label["comment"].asString();
+                    }
+                    if (labels.size() > limit)
+                        out << "\n... " << labels.size() - limit << " more: narrow with name / from / to, or raise limit";
+                    result.text = out.str();
+                    done(std::move(result));
+                });
                 return;
             }
 
@@ -91,7 +211,25 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                     return;
                 }
                 std::string query = hasName ? "?name=" + args["name"].asString() : "?address=" + AddressArg(args["address"]);
-                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", done);
+                // The answer in the text: "CLS = 0x0D6B rom3 code ; CLS command: Clear screen"
+                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", [done](ToolResult result) {
+                    const Json::Value& label = result.structured["label"];
+                    if (!result.isError && label.isObject())
+                    {
+                        std::ostringstream out;
+                        out << result.text << ": " << label["name"].asString() << " = " << Hex16(label["address"].asUInt());
+                        if (label.isMember("bank"))
+                            out << " " << label["bankType"].asString() << label["bank"].asUInt();
+                        if (label["type"].isString())
+                            out << " " << label["type"].asString();
+                        if (label["comment"].isString())
+                            out << " ; " << label["comment"].asString();
+                        result.text = out.str();
+                    }
+                    else if (!result.isError)
+                        result.text += "\n" + FlatFields(result.structured);
+                    done(std::move(result));
+                });
                 return;
             }
 
@@ -157,8 +295,108 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "scan")
+            {
+                ResolveAndForward(args, "GET", "/symbols/scan", nullptr, caller, "Label tables in RAM", done);
+                return;
+            }
+
+            if (action == "import_live")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"scanner", "set", "policy"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                for (const char* name : {"page", "offset"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                ResolveAndForward(args, "POST", "/symbols/import/live", &body, caller, "Label table imported", done);
+                return;
+            }
+
+            if (action == "import_source")
+            {
+                if (!args.isMember("path") || args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("import_source requires 'path' (a source, an image, or disk:A/NAME.T)"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"path", "main", "set", "policy", "generated"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                ResolveAndForward(args, "POST", "/symbols/import/source", &body, caller, "Labels of the source imported", done);
+                return;
+            }
+
+            if (action == "formats" || action == "sets")
+            {
+                ResolveAndForward(args, "GET", "/symbols/" + action, nullptr, caller, action == "formats" ? "Symbol formats" : "Symbol sets",
+                                  done);
+                return;
+            }
+
+            if (action == "detect")
+            {
+                if (!args.isMember("path") || args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("detect requires 'path'"));
+                    return;
+                }
+                ResolveAndForward(args, "GET", "/symbols/detect?path=" + UrlEncodeSegment(args["path"].asString()), nullptr, caller,
+                                  "Symbol format", done);
+                return;
+            }
+
+            if (action == "set_enable" || action == "drop")
+            {
+                if (!args.isMember("id") || args["id"].asString().empty())
+                {
+                    done(ToolResult::Error(action + " requires 'id' (the set id from sets)"));
+                    return;
+                }
+                if (action == "drop")
+                {
+                    ResolveAndForward(args, "DELETE", "/symbols/sets?id=" + UrlEncodeSegment(args["id"].asString()), nullptr, caller,
+                                      "Symbol set dropped", done);
+                    return;
+                }
+                Json::Value body;
+                body["id"] = args["id"].asString();
+                if (args.isMember("enabled"))
+                    body["enabled"] = args["enabled"].asBool();
+                if (args.isMember("priority"))
+                    body["priority"] = args["priority"].asInt();
+                ResolveAndForward(args, "PUT", "/symbols/sets", &body, caller, "Symbol set changed", done);
+                return;
+            }
+
+            if (action == "import" || action == "export")
+            {
+                const bool upload = action == "import" && args.isMember("data") && !args["data"].asString().empty();
+                if (!upload && (!args.isMember("path") || args["path"].asString().empty()))
+                {
+                    done(ToolResult::Error(action + (action == "import" ? " requires 'path' or 'data'" : " requires 'path'")));
+                    return;
+                }
+                Json::Value body;
+                if (!upload)
+                    body["path"] = args["path"].asString();
+                const std::vector<const char*> names = action == "import" ? std::vector<const char*>{"data", "name", "format", "set", "space", "base", "policy"}
+                                                                         : std::vector<const char*>{"format", "pages", "space", "from", "to", "kinds", "name"};
+                for (const char* name : names)
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                if (action == "export" && args.isMember("sets"))
+                    body["sets"] = args["sets"];
+                ResolveAndForward(args, "POST", "/symbols/" + action, &body, caller,
+                                  action == "import" ? "Symbols imported" : "Symbols exported", done);
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
-                                            "'. Valid: load_labels, list, resolve, load_listing, source_at, step_line, run_to_line"));
+                                   "'. Valid: load_labels, list, resolve, load_listing, source_at, step_line, run_to_line, formats, "
+                                   "detect, sets, set_enable, drop, import, export, scan, import_live, import_source"));
         });
 }
 

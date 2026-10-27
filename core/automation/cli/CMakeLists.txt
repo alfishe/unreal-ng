@@ -15,7 +15,14 @@ set(SOURCES
     src/automation-cli.cpp
     src/cli-processor.cpp
     src/commands/cli-processor-instance.cpp
+    src/commands/cli-processor-action.cpp
+    src/commands/cli-processor-recent.cpp
+    src/commands/cli-processor-surface.cpp
+    src/commands/cli-processor-streamdeck.cpp
+    src/commands/cli-processor-monitor.cpp
     src/commands/cli-processor-debug.cpp
+    src/commands/cli-processor-asm.cpp
+    src/commands/cli-processor-signature.cpp
     src/commands/cli-processor-breakpoint.cpp
     src/commands/cli-processor-memory.cpp
     src/commands/cli-processor-analyzer.cpp
@@ -24,21 +31,28 @@ set(SOURCES
     src/commands/cli-processor-tape.cpp
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-media.cpp
+    src/commands/cli-processor-slots.cpp
+    src/commands/cli-processor-controllers.cpp
+    src/commands/cli-processor-multisound.cpp
     src/commands/cli-processor-cdaudio.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-rzx.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-gs.cpp
     src/commands/cli-processor-rtc.cpp
+    src/commands/cli-processor-romflash.cpp
     src/commands/cli-processor-isa.cpp
     src/commands/cli-processor-network.cpp
     src/commands/cli-processor-ttd.cpp
+    src/commands/cli-processor-pace.cpp
+    src/commands/cli-processor-companion.cpp
     src/handlers/python-handler.cpp
     src/handlers/lua-handler.cpp
     src/commands/cli-processor-capture.cpp
     src/commands/cli-processor-profiler.cpp
     src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-vdac2.cpp
+    src/commands/cli-processor-bus.cpp
     src/commands/cli-processor-keyboard.cpp
     src/commands/cli-processor-mouse.cpp
     src/commands/cli-processor-joystick.cpp
@@ -58,6 +72,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${ROOT_DIR}/core/src  # For core headers
+    ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include  # core headers include the disk model
     ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (CLI status build fingerprint)
     ${ROOT_DIR}/core/automation  # For automation/automation.h
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
@@ -88,6 +103,16 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
+
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+endif()
+
+# The media signatures (SignatureControl in core/swsignature): the define, the headers and the link order
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
 endif()
 
 # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)

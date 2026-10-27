@@ -171,8 +171,10 @@ void TapeFastLoad::ApplyLoadEffects(Z80& cpu, const TapeBlock& block)
 
     // RET semantics: pc <- stacked return address. Both stack reads go through
     // the hooked CPU read path (self-accounting 3T each, like the real POPs).
-    const uint16_t returnAddress =
-        cpu.rd(cpu.sp) | (static_cast<uint16_t>(cpu.rd(static_cast<uint16_t>(cpu.sp + 1))) << 8);
+    // (one read per statement: in one expression their order is the compiler's, MSVC reads SP+1 first)
+    const uint8_t returnLow = cpu.rd(cpu.sp);
+    const uint8_t returnHigh = cpu.rd(static_cast<uint16_t>(cpu.sp + 1));
+    const uint16_t returnAddress = static_cast<uint16_t>(returnLow | (returnHigh << 8));
     cpu.sp = static_cast<uint16_t>(cpu.sp + 2);
 
     // Payload stores: bytes [1 .. payloadLength] (skip the flag, exclude the

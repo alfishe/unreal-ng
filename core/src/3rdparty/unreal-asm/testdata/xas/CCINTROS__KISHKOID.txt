@@ -1,0 +1,321 @@
+;KISHKOID 512
+
+ampl    EQU   56
+spc_tbl EQU   #7000
+x_tbl   EQU   #7400
+st1     EQU   #1f
+st2     EQU   #1
+st3     EQU   3
+mn1     EQU   #fe;ANG
+mn2     EQU   #21;X
+mn3     EQU   #fe;LEN
+
+        ORG   #7ffe
+        JR    lets_go
+sin_ld
+start   LOADCODE "SIN_CUT"
+
+lets_go
+        EXX
+        PUSH  HL
+
+;PREPARE SCREEN
+        LD    HL,#5b00
+        LD    A,#44
+cls     DEC   HL
+        LD    (HL),A
+        CP    (HL)
+        JR    Z,cls
+
+;CREATING SIN TBL
+        LD    DE,sin_ld
+        LD    H,sin&h
+        LD    B,#40
+crsin   LD    L,E
+        LD    A,(DE)
+        LD    C,A
+        LD    (HL),C
+        LD    A,#80
+        SUB   E
+        LD    L,A
+        LD    (HL),C
+        INC   E
+        DJNZ  crsin
+        DEC   L
+        LD    (HL),#fe
+        LD    D,H
+        LD    E,B
+        LD    L,#80
+crs1    LD    A,(DE)
+        CPL
+        LD    (HL),A
+        INC   E
+        INC   L
+        JR    NZ,crs1
+
+;CREATING SPRITES
+        LD    HX,15
+kd0     LD    DE,ncos
+        LD    HL,sin+#40
+mdf_sin
+        LD    A,(HL)
+        RRCA
+        AND   #7f
+;MLT
+        EXX
+        SBC   HL,HL
+        LD    D,H
+        LD    E,A
+        LD    A,ampl
+        SUB   HX
+        SUB   HX
+        LD    B,A
+mul1    ADD   HL,DE
+        DJNZ  mul1
+        ADD   HL,HL
+        LD    A,H
+        EXX
+;END MUL
+        INC   A
+        LD    (DE),A
+        INC   L
+        INC   E
+        JR    NZ,mdf_sin
+
+        LD    LX,16
+kd1     LD    B,#80
+        LD    HL,#9000
+        LD    DE,ncos
+c1      LD    (HL),E
+        INC   L
+        JR    NZ,c1
+kd2     LD    A,(DE)
+        INC   E
+        ADD   A,HX
+        LD    L,A
+        LD    A,B
+        ADD   A,LX
+        ADD   A,LX
+        AND   #12
+        JR    Z,kdec1
+        DEC   (HL)
+        JR    $+3
+kdec1   INC   (HL)
+        DJNZ  kd2
+
+        LD    L,1
+        LD    DE,#a010
+        XOR   A
+kd4     LD    (DE),A
+        DEC   E
+        JR    NZ,kd4
+        LD    (DE),A
+        LD    BC,#4080
+kdout   BIT   7,(HL)
+        JR    Z,kno1
+        LD    A,(DE)
+        OR    C
+        LD    (DE),A
+kno1    RRC   C
+        JR    NC,$+3
+        INC   E
+        INC   L
+        DJNZ  kdout
+;PUT 2 MEMORY
+        LD    A,8
+kmem    LD    DE,#c000;PAGE
+k2mem   LD    HL,#a000
+        PUSH  HL
+amplc   LD    C,8
+        LDIR
+;ROLL ONE LINE RIGHT
+        LD    B,9
+        POP   HL
+rol0    OR    A
+rol1    RR    (HL)
+        INC   L
+        DJNZ  rol1
+        DEC   A
+        JR    NZ,k2mem
+        OUT   (#fe),A
+        LD    (kmem+1),DE
+        DEC   LX
+        JR    NZ,kd1
+        DEC   HX
+        JP    P,kd0
+;MAKE X TABLE
+;MAKE ANGLE (SPR) TBL
+        LD    B,#c0
+        LD    DE,sin
+        LD    L,E
+mkxt1   LD    H,x_tbl&h
+        LD    A,(DE)
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        LD    C,A
+        AND   #0f
+        ADD   A,4
+        LD    (HL),A
+        INC   H
+        LD    A,(DE)
+        RLCA
+        RLCA
+        AND   #38
+        LD    (HL),A
+        INC   H
+        LD    A,C
+        AND   3
+        OR    B
+        LD    (HL),A
+        INC   H
+        LD    A,C
+        AND   B
+        LD    (HL),A
+        INC   H
+        LD    A,(DE)
+        RRCA
+        RRCA
+        AND   #3c
+        LD    (HL),A
+        INC   L
+        INC   E
+        JR    NZ,mkxt1
+        IM    1
+        EI
+hlt     HALT
+        LD    (sp_prep+1),SP
+        LD    SP,4*192+spc_tbl
+i1      LD    A,0
+ik1     ADD   A,mn1
+        LD    (i1+1),A
+        LD    LX,A
+        EX    AF,AF
+i3      LD    A,0
+ik3     ADD   A,mn3
+        LD    (i3+1),A
+        LD    HX,A
+i2      LD    A,0
+ik2     ADD   A,mn2
+        LD    (i2+1),A
+        LD    L,A
+        LD    BC,#08e0
+        LD    D,#57
+prep1   LD    H,x_tbl&h
+        LD    A,(HL)
+        INC   H
+        OR    C
+        LD    E,A
+        PUSH  DE
+        LD    A,(HL)
+        INC   H
+        EXX
+        LD    C,A
+        EXX
+        LD    A,L
+ik4     ADD   A,st1
+        EX    AF,AF
+        LD    A,LX
+ik5     ADD   A,st2
+        LD    LX,A
+        LD    L,A
+        LD    A,(HL)
+        INC   H
+        EXX
+        LD    H,A
+        EXX
+        LD    A,(HL)
+        INC   H
+        EXX
+        ADD   A,C
+        LD    L,A
+        EXX
+        LD    A,HX
+ik6     ADD   A,st3
+        LD    HX,A
+        LD    L,A
+        LD    A,(HL)
+        EXX
+        ADD   A,H
+        LD    H,A
+        PUSH  HL
+        EXX
+        EX    AF,AF
+        LD    L,A
+        DEC   D
+        DJNZ  prep1
+        LD    B,8
+        LD    A,C
+        SUB   #20
+        LD    C,A
+        JR    C,prep0
+        LD    A,D
+        ADD   A,B
+        LD    D,A
+        JP    prep1
+prep0   LD    A,D
+        CP    #3f
+        JR    NZ,prep1
+sp_prep LD    SP,0
+        HALT
+kishka  LD    (sp_kshk+1),SP
+        LD    SP,spc_tbl
+        LD    B,192
+        XOR   A
+kishka1 POP   HL
+        POP   DE
+        LD    (DE),A
+        INC   E
+        LD    C,D
+        !ASSM 8
+        LDI
+        !CONT
+        LD    (DE),A
+        DJNZ  kishka1
+sp_kshk LD    SP,0
+tmr     LD    A,0
+        INC   A
+        AND   #7f
+        LD    (tmr+1),A
+jrj     JP    NZ,hlt
+
+hls     LD    HL,data
+        LD    E,(HL)
+        INC   HL
+        LD    D,(HL)
+        INC   HL
+        LD    A,(HL)
+        INC   HL
+        LD    (hls+1),HL
+        LD    (DE),A
+        LD    A,E
+        CP    #dd
+        JR    NZ,jrj
+rrr     POP   HL
+        EXX
+        RET
+
+data    DEFW  ik2+1;KISHKA_START
+        DEFB  #FD
+        DEFW  ik4+1
+        DEFB  #1
+        DEFW  ik6+1;2K
+        DEFB  #87
+        DEFW  ik6+1
+        DEFB  #FD
+        DEFW  ik4+1
+        DEFB  #56
+        DEFW  ik2+1
+        DEFB  #57
+        DEFW  ik4+1
+        DEFB  #57
+        DEFW  ik6+1
+        DEFB  #FC
+
+        DEFB  #DD
+
+______l EQU   $-start
+
+sin     EQU   $&h+1*256
+ncos    EQU   sin+#100

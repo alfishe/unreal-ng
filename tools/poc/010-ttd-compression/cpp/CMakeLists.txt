@@ -24,7 +24,7 @@ endif()
 # Output goes to the same bin/ as the rest of the project.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Locate the project root (we live at <root>/tools/poc/01-ttd-compression/cpp/).
+# Locate the project root (we live at <root>/tools/poc/010-ttd-compression/cpp/).
 get_filename_component(ROOT_DIR "../../../.." ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 message(STATUS "poc_cpp: ROOT_DIR=${ROOT_DIR}")
 

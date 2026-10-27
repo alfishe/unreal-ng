@@ -138,3 +138,28 @@ TEST(FatNameMapper_Test, TooLongOrEmptyNamesAreRefused)
     EXPECT_NE(names[0].reason.find("255"), std::string::npos);
     EXPECT_FALSE(names[1].ok);
 }
+
+// FR-21: a character no FAT long name may hold refuses the name; replaceBadNames makes it '_', cuts a name too long
+// before its extension, and keeps the result apart from its siblings
+TEST(FatNameMapper_Test, BadNamesAreSkippedOrReplaced)
+{
+    const std::string tooLong = std::string(300, 'n') + ".txt";
+    const std::vector<std::string> names = {"a:b.txt", "a_b.txt", "ok?.dat", tooLong};
+
+    const std::vector<FatMappedName> skip = FatNameMapper::MapFolder(names);
+    EXPECT_FALSE(skip[0].ok);
+    EXPECT_NE(skip[0].reason.find("a character FAT cannot store"), std::string::npos) << skip[0].reason;
+    EXPECT_TRUE(skip[1].ok);
+    EXPECT_FALSE(skip[2].ok);
+    EXPECT_FALSE(skip[3].ok);
+
+    const std::vector<FatMappedName> replace = FatNameMapper::MapFolder(names, CodePage::Cp866, {}, true);
+    ASSERT_TRUE(replace[0].ok);
+    EXPECT_EQ(replace[0].renamed, "a_b~2.txt") << "a_b.txt is a sibling's";
+    EXPECT_TRUE(replace[1].ok);
+    EXPECT_TRUE(replace[1].renamed.empty()) << "a good name stays as it is";
+    EXPECT_EQ(replace[2].renamed, "ok_.dat");
+    ASSERT_TRUE(replace[3].ok);
+    EXPECT_EQ(replace[3].longName.size(), 255u);
+    EXPECT_EQ(replace[3].renamed.substr(replace[3].renamed.size() - 4), ".txt") << "cut before the extension";
+}

@@ -34,12 +34,18 @@ struct JoystickStateSnapshot
 {
     bool available = false;  // a Joystick device exists
     bool present = false;    // fitted (config + feature); absent = the port reads 0x00
-    bool wired = false;      // this machine's port decoder answers a Kempston joystick
+    bool wired = false;      // this machine answers a Kempston joystick (its board, or a fitted `kempston` card)
+    std::string fit;         // not wired: how to fit the interface (SlotControl::PlugHint), "" when it cannot be fitted
     uint8_t state = 0;       // the device byte, active high
     uint8_t portValue = 0;   // what IN #1F returns from the device right now
     std::vector<std::string> buttons;  // names of the pressed bits (right, left, down, up, fire, b5, b6, b7)
     std::string keys;                  // host key bindings, "up:kp_8,..." (empty = no host keys)
-    uint8_t pendingTapMask = 0;        // buttons a timed tap will release
+    uint32_t pendingTapMask = 0;       // buttons a timed tap will release (see PadBit: bits 0..11 left, 16..27 right)
+    // A machine with 12-button pads (the ZX Next): the connectors' full state and the names of the pressed buttons beyond the Kempston byte
+    bool hasPads = false;
+    uint16_t leftPad = 0, rightPad = 0;
+    std::vector<std::string> leftExtraButtons;   // y, z, x, mode of the left connector
+    std::vector<std::string> rightButtons;      // every pressed button of the right connector
     uint16_t pendingTapFramesLeft = 0;
 };
 
@@ -68,8 +74,8 @@ public:
     /// `name` is one button name, or several joined by ',' or '+' ("up+fire")
     JoystickInjectResult Press(const std::string& name);
     JoystickInjectResult Release(const std::string& name);
-    JoystickInjectResult PressMask(uint8_t mask);
-    JoystickInjectResult ReleaseMask(uint8_t mask);
+    JoystickInjectResult PressMask(uint32_t mask);
+    JoystickInjectResult ReleaseMask(uint32_t mask);
     JoystickInjectResult SetState(uint8_t state);  // the whole byte, D5..D7 included
     /// Surface entry: a raw integer from a JSON / Lua / Python / CLI value, range-checked here (0..255)
     JoystickInjectResult SetStateChecked(long long state);
@@ -87,9 +93,21 @@ public:
 
     JoystickStateSnapshot GetState() const;
 
+    /// The warning of an input call (and of the status) on a machine whose guest cannot see the stick: no Kempston
+    /// interface, and how to fit one (the slot card `kempston`)
+    static std::string UnwiredWarning(const std::string& fit);
+
     /// region <Names>
     /// One name or a ',' / '+' list -> mask; 0 when empty or any name is unknown
+    /// A name is a button of the left connector ("up", "fire", "x", "mode") or "right." + a button ("right.up"); the 12 buttons are up, down, left,
+    /// right, fire (= b), c (= b5), a (= b6), start (= b7), y, z, x, mode. The mask: bits 0..11 left, bits 16..27 right (PadBit)
+    static constexpr unsigned kRightShift = 16;
+    static constexpr uint32_t kLeftKempston = 0x000000FF, kLeftExtras = 0x00000F00, kRightAll = 0x0FFF0000;
+    static uint32_t ResolveButtons(const std::string& names);
+    /// The Kempston byte's names only (up, down, left, right, fire, b5, b6, b7), as before; 0 for any other
     static uint8_t ResolveButtonNames(const std::string& names);
+    /// Press / release the buttons of `names` exactly: every other button of both connectors is released (the "set" verb with names)
+    JoystickInjectResult SetNames(const std::string& names);
     static std::vector<std::string> GetAllButtonNames();
     /// endregion </Names>
 
@@ -102,18 +120,21 @@ private:
     JoystickInjectResult Success(const std::string& message) const;
     JoystickInjectResult Invalid(const std::string& message) const;
     /// Mask of a name list, or an InvalidArgument result in `error`
-    bool ParseNames(const std::string& names, uint8_t& mask, JoystickInjectResult& error) const;
+    bool ParseNames(const std::string& names, uint32_t& mask, JoystickInjectResult& error) const;
+    /// The press / release of a parsed mask (the Kempston byte through the Joystick event, the rest as NextPad events); caller holds _mutex
+    bool ApplyMaskLocked(uint32_t mask, bool press);
+    bool SubmitPad(unsigned connector, uint16_t state);
 
     // Submit through the TTD live-input gateway (ownership + journal + apply on the machine's thread)
     bool Submit(uint8_t state, Joystick& joystick);
     bool IsReplaying() const;
-    static std::string DescribeMask(uint8_t mask);
+    static std::string DescribeMask(uint32_t mask);
 
     void CancelPendingLocked();
 
     EmulatorContext* _context = nullptr;
 
     mutable std::mutex _mutex;  // pending tap state: automation thread vs emulator thread
-    uint8_t _pendingMask = 0;
+    uint32_t _pendingMask = 0;
     uint16_t _pendingFrames = 0;
 };

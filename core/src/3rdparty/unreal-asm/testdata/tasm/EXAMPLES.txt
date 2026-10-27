@@ -1,0 +1,53 @@
+;
+        ORG     #8000
+;
+        DEFMAC  MOVE
+        LD      HL,/0
+        LD      DE,/1
+        LD      BC,/2
+        LDIR
+        ENDMAC
+;
+        DEFMAC  HL*8
+;
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        JP      ...1
+...1
+;
+        ENDMAC
+;
+        DEFMAC  HL*16
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        JR      ...1
+...1
+        ENDMAC
+;
+        .LOCAL
+        LD      B,0
+...1
+        DEC     B
+        JP      NZ,...1
+;
+        LD      HL,10
+        HL*8
+        DISPLAY ...1
+        .LOCAL
+        LD      C,0
+...1
+        DEC     C
+        JP      NZ,...1
+;
+        LD      HL,4
+        HL*16
+        DISPLAY ...1
+        LD      HL,0
+        HL*8
+        DISPLAY ...1
+        MOVE    0,16384,6144
+        RET
+

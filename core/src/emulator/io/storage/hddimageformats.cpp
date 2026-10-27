@@ -11,6 +11,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/vhdimage.h"
 
 namespace
 {
@@ -100,8 +101,8 @@ namespace
             const uint8_t* f = h.tail;
             const uint32_t type = (static_cast<uint32_t>(f[0x3C]) << 24) | (static_cast<uint32_t>(f[0x3D]) << 16) |
                                   (static_cast<uint32_t>(f[0x3E]) << 8) | f[0x3F];
-            if (type != 2)
-                return Fail(error, path + ": only fixed VHD images are supported (this one is type " + std::to_string(type) + ")");
+            if (type != vhd::kFixed)
+                return Fail(error, path + ": a VHD of type " + std::to_string(type) + " is not a fixed one");
             layout.dataBytes = Be64(f + 0x30);  // current size
             if (!layout.dataBytes || layout.dataBytes > h.size - 512)
                 layout.dataBytes = h.size - 512;
@@ -165,6 +166,27 @@ std::unique_ptr<IBlockDevice> HddImageFormats::OpenBlock(const std::string& path
 {
     if (format == "chd")
         return ChdImage::Open(path, error);
+    if (format == "vhd")
+    {
+        Header h;
+        if (!ReadHeader(path, h, error))
+            return nullptr;
+        const uint32_t type = h.tailRead ? vhd::FooterType(h.tail) : 0;
+        if (type == vhd::kDynamic)
+            return VhdDynamicImage::Open(path, access == RawImage::Access::ReadWrite ? VhdDynamicImage::Access::ReadWrite
+                                                                                      : VhdDynamicImage::Access::ReadOnly,
+                                         error);
+        if (type == vhd::kDifferencing)
+        {
+            Fail(error, path + ": differencing VHD images are not supported (merge it into its parent first)");
+            return nullptr;
+        }
+        if (type != vhd::kFixed)
+        {
+            Fail(error, path + ": unsupported VHD type " + std::to_string(type));
+            return nullptr;
+        }
+    }
     return Open(path, format, access, error);
 }
 

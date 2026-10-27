@@ -13,6 +13,9 @@
 #include <common/filehelper.h>
 #include <common/threadhelper.h>
 #include <emulator/startupcleanup.h>
+#include "debugger/ttd/ttdrecordingfolders.h"
+#include "emulator/emulator.h"
+#include "emulator/coordinator/machineop.h"
 
 int fontID = -1;
 
@@ -96,6 +99,9 @@ void unregisterFonts()
 int main(int argc, char *argv[])
 {
     ThreadHelper::setThreadName("qt-main");
+    coordinator::SetThreadSource(coordinator::OpSource::Qt);   // the operation log names the UI's operations
+    // Windows: no EcoQoS when another window has the foreground (the sound stuttered)
+    ThreadHelper::disableProcessPowerThrottling();
 
     auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
     crashHandler->install();
@@ -104,9 +110,16 @@ int main(int argc, char *argv[])
     MacOSPlatform::disableAutomaticFullScreenMenuItem();  // Before any menu bar exists
 #endif
     QApplication app(argc, argv);
+#ifdef Q_OS_MACOS
+    // No windows to show (agents' automation instances): not a Dock app that looks hung
+    if (QGuiApplication::platformName() == QLatin1String("offscreen") || QGuiApplication::platformName() == QLatin1String("minimal"))
+        MacOSPlatform::runAsBackgroundProcess();
+#endif
 
     // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
     StartStartupCleanup();
+    // The engine writes every recording as it records, a folder per session in ~/.unreal-ng/ttd (Phase 5, 3c)
+    Emulator::SetDefaultTtdRecordingRoot(ttd::RecordingsRoot());
 
     // Load non-system fonts before any GUI rendered
     registerFonts(app);

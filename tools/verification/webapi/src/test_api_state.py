@@ -56,12 +56,15 @@ class TestStateInspection:
         assert "display_mode" in screen
         assert "border_color" in screen
         assert "active_screen" in screen
-        assert screen["display_mode"] == "standard"  # ZX standard after boot
+        # The real video mode since f0ff08e50 (it was the literal "standard"): the fixture's Pentagon boots into the
+        # standard ZX screen with Pentagon timing; display_mode is the legacy alias of video_mode
+        assert screen["video_mode"] == "Pentagon128K"
+        assert screen["display_mode"] == screen["video_mode"]
 
         # Mode details
         mode = api_client.get_screen_mode(emu_id)
-        assert mode["video_mode"] == "standard"
-        assert mode["resolution"] == "256\u00d7192"
+        assert mode["video_mode"] == screen["video_mode"]
+        assert mode["resolution"] == "256x192"
         assert "memory_layout" in mode
         assert mode["memory_layout"]["total_bytes"] == 6912
 
@@ -105,3 +108,40 @@ class TestStateInspection:
         channels = api_client.get_audio_channels(emu_id)
         for group in ("ay_channels", "beeper", "covox", "general_sound", "master"):
             assert group in channels
+
+
+class TestRomProtect:
+    """GET/PUT /memory/rom/protect: one flag per instance (it was one for the whole server), 404 for an unknown id"""
+
+    def _protect(self, api_client, emulator_id, value=None):
+        url = api_client._url(f"/api/v1/emulator/{emulator_id}/memory/rom/protect")
+        if value is None:
+            return api_client.session.get(url)
+        return api_client.session.put(url, json={"protected": value})
+
+    def _write_rom(self, api_client, emulator_id):
+        url = api_client._url(f"/api/v1/emulator/{emulator_id}/memory/page/rom/0")
+        return api_client.session.post(url, json={"offset": "0x0000", "data": [0xF3]})
+
+    def test_the_flag_belongs_to_one_instance(self, api_client, active_emulator):
+        other = api_client.create_and_start_emulator(model="PENTAGON")["id"]
+        try:
+            assert self._protect(api_client, active_emulator).json()["protected"] is True
+            assert self._protect(api_client, other).json()["protected"] is True
+
+            resp = self._protect(api_client, active_emulator, False)
+            assert resp.status_code == 200 and resp.json()["protected"] is False
+            assert self._protect(api_client, other).json()["protected"] is True, "the other instance stays protected"
+
+            assert self._write_rom(api_client, other).status_code == 403
+            assert self._write_rom(api_client, active_emulator).status_code == 200
+
+            self._protect(api_client, active_emulator, True)
+            assert self._write_rom(api_client, active_emulator).status_code == 403
+        finally:
+            api_client.stop_emulator(other)
+            api_client.delete_emulator(other)
+
+    def test_an_unknown_instance_is_not_found(self, api_client):
+        assert self._protect(api_client, "no-such-emulator").status_code == 404
+        assert self._protect(api_client, "no-such-emulator", False).status_code == 404

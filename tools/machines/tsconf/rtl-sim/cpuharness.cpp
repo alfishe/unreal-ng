@@ -20,6 +20,8 @@
 //                                            (prog: tokens as in cpu-waits.txt, e.g. M1.8000,RD.C000;
 //                                            CPU_SIM_PIN_DELAY=<n> overrides the pin delay
 //                                            for any command)
+//   tsconf-cpu-sim cache [results-dir]       cache fill / retention scenarios: print them, write
+//                                            cache-retention.txt (README "CPU cache fill and retention")
 //
 // Exit code 0 = all self-checks passed.
 
@@ -76,7 +78,11 @@ static void FillMemory()
 // ---------------------------------------------------------------------------
 // Z80 bus-cycle model
 
-enum class Kind : uint8_t { M1, Rd, Wr, Id, Sy };
+// Cf: a zero-time step between machine cycles that changes the world around the Z80 (cache
+// scenarios): CACHE_CONFIG, a DRAM byte changed behind the CPU's back (as a DMA write would),
+// the Z80 / zmem reset line
+enum class Kind : uint8_t { M1, Rd, Wr, Id, Sy, Cf };
+enum class CfOp : uint8_t { CacheEn, Poke, ResetOn, ResetOff };
 
 struct MCycle
 {
@@ -86,11 +92,12 @@ struct MCycle
     int t = 4;          // T-states
     long target = 0;    // Sy: first fclk of the frame the next cycle may start at
     int phase = -1;     // Sy: required DRAM phase of that T1 (14 MHz; -1 = any)
+    CfOp op = CfOp::CacheEn;  // Cf: what changes (addr / data: the poked byte, data: CACHE_CONFIG)
 };
 
 static const char* KindName(Kind k)
 {
-    return k == Kind::M1 ? "M1" : k == Kind::Rd ? "RD" : k == Kind::Wr ? "WR" : k == Kind::Id ? "ID" : "SY";
+    return k == Kind::M1 ? "M1" : k == Kind::Rd ? "RD" : k == Kind::Wr ? "WR" : k == Kind::Id ? "ID" : k == Kind::Sy ? "SY" : "CF";
 }
 
 static MCycle Fetch(uint16_t a, int t = 4) { return {Kind::M1, a, 0, t}; }
@@ -98,12 +105,21 @@ static MCycle Read(uint16_t a) { return {Kind::Rd, a, 0, 3}; }
 static MCycle Write(uint16_t a, uint8_t d, int t = 3) { return {Kind::Wr, a, d, t}; }
 static MCycle Idle(int t = 1) { return {Kind::Id, 0, 0, t}; }
 static MCycle Sync(long target, int phase) { MCycle c{Kind::Sy, 0, 0, 0}; c.target = target; c.phase = phase; return c; }
+static MCycle Config(CfOp op, uint16_t a = 0, uint8_t d = 0) { MCycle c{Kind::Cf, a, d, 0}; c.op = op; return c; }
 
 // Token format (cpu-waits.txt "prog" lines): M1.aaaa or M1.aaaa.t (t T-states if not 4),
-// RD.aaaa, WR.aaaa.dd or WR.aaaa.dd.t, IDt
+// RD.aaaa, WR.aaaa.dd or WR.aaaa.dd.t, IDt; cache scenarios also CE.x (CACHE_CONFIG = x),
+// PK.aaaa.dd (DRAM byte at CPU address aaaa := dd, no CPU cycle), RST1 / RST0 (reset on / off)
 static std::string Token(const MCycle& c)
 {
     char buf[32];
+    if (c.kind == Kind::Cf)
+    {
+        if (c.op == CfOp::CacheEn) snprintf(buf, sizeof buf, "CE.%X", c.data);
+        else if (c.op == CfOp::Poke) snprintf(buf, sizeof buf, "PK.%04X.%02X", c.addr, c.data);
+        else snprintf(buf, sizeof buf, c.op == CfOp::ResetOn ? "RST1" : "RST0");
+        return buf;
+    }
     if (c.kind == Kind::Id) snprintf(buf, sizeof buf, "ID%d", c.t);
     else if (c.kind == Kind::Wr) snprintf(buf, sizeof buf, c.t == 3 ? "WR.%04X.%02X" : "WR.%04X.%02X.%d", c.addr, c.data, c.t);
     else if (c.kind == Kind::M1) snprintf(buf, sizeof buf, c.t == 4 ? "M1.%04X" : "M1.%04X.%d", c.addr, c.t);
@@ -124,7 +140,11 @@ static std::vector<MCycle> ParseProg(const std::string& s)
         size_t a = 0;
         while (true) { size_t b = t.find('.', a); f.push_back(t.substr(a, b - a)); if (b == std::string::npos) break; a = b + 1; }
         auto hex = [](const std::string& x) { return static_cast<int>(strtol(x.c_str(), nullptr, 16)); };
-        if (f[0].rfind("ID", 0) == 0) p.push_back(Idle(atoi(f[0].c_str() + 2)));
+        if (f[0] == "CE") p.push_back(Config(CfOp::CacheEn, 0, static_cast<uint8_t>(hex(f[1]))));
+        else if (f[0] == "PK") p.push_back(Config(CfOp::Poke, static_cast<uint16_t>(hex(f[1])), static_cast<uint8_t>(hex(f[2]))));
+        else if (f[0] == "RST1") p.push_back(Config(CfOp::ResetOn));
+        else if (f[0] == "RST0") p.push_back(Config(CfOp::ResetOff));
+        else if (f[0].rfind("ID", 0) == 0) p.push_back(Idle(atoi(f[0].c_str() + 2)));
         else if (f[0] == "M1") p.push_back(Fetch(static_cast<uint16_t>(hex(f[1])), f.size() > 2 ? atoi(f[2].c_str()) : 4));
         else if (f[0] == "RD") p.push_back(Read(static_cast<uint16_t>(hex(f[1]))));
         else if (f[0] == "WR") p.push_back(Write(static_cast<uint16_t>(hex(f[1])), static_cast<uint8_t>(hex(f[2])), f.size() > 3 ? atoi(f[3].c_str()) : 3));
@@ -165,6 +185,8 @@ struct CycleRec
     long req = -1;       // f of the dram_beg period (14 MHz) / first cpu_req period (3.5 / 7 MHz)
     int sampleSrc = 0;   // 'L' DRAM bus (cpu_latch), 'C' cache register, 'R' ROM
     int samplePhase = -1;
+    uint8_t got = 0;     // the byte the Z80 took
+    uint8_t mem = 0;     // the DRAM byte at that moment
     bool dataOk = true;
     bool writeOk = true;
     int stalls = 0;      // fclk with cpu_stall = 1 inside the cycle
@@ -301,9 +323,19 @@ static RunResult RunProg(const RunCfg& cfg, const std::vector<MCycle>& prog, FIL
             if (T == 0)
             {
                 bool wait = false;
-                while (cur < n && prog[cur].kind == Kind::Sy)
+                while (cur < n && (prog[cur].kind == Kind::Sy || prog[cur].kind == Kind::Cf))
                 {
                     const MCycle& s = prog[cur];
+                    if (s.kind == Kind::Cf)
+                    {
+                        if (s.op == CfOp::CacheEn) top->cache_en = s.data;
+                        else if (s.op == CfOp::Poke) g_mem[PhysOf(s.addr)] = s.data;
+                        else if (s.op == CfOp::ResetOn) { top->rst_n = 0; top->cache_en = 0; }  // zports.v: cacheconf <= 0 at reset
+                        else top->rst_n = 1;
+                        rr.cyc[cur].t1 = rr.cyc[cur].end = f;
+                        cur++;
+                        continue;
+                    }
                     if (f >= s.target && (s.phase < 0 || cfg.turbo < 2 || phase == s.phase))
                     {
                         rr.cyc[cur].t1 = rr.cyc[cur].end = f;
@@ -343,6 +375,8 @@ static RunResult RunProg(const RunCfg& cfg, const std::vector<MCycle>& prog, FIL
             if (IsRom(mc.addr)) { r.sampleSrc = 'R'; return; }
             r.sampleSrc = top->cpu_latch_o ? 'L' : 'C';
             r.samplePhase = phase;
+            r.got = top->zd_out_o;
+            r.mem = g_mem[PhysOf(mc.addr)];
             r.dataOk = top->zd_out_o == g_mem[PhysOf(mc.addr)] && top->zd_ena_o;
         };
         switch (mc.kind)
@@ -369,6 +403,7 @@ static RunResult RunProg(const RunCfg& cfg, const std::vector<MCycle>& prog, FIL
             if (rising && T == 1) z.rfsh_n = 1;
             break;
         case Kind::Sy:
+        case Kind::Cf:
             break;
         }
         pending.push_back({k + 1 + kPinDelay, z});
@@ -812,11 +847,86 @@ static bool RunAll(const std::string& dir)
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// CPU cache fill and retention (cache): when the cache fills, what clears it, what a CPU
+// write does to it. Each scenario is one simulation from FPGA configuration (cache RAM
+// zeroed = every entry invalid), at 14 and 3.5 MHz, on border lines (no video load).
+// A read's verdict: "stale" = the Z80 got a byte that is not in DRAM at that moment.
+
+struct CacheScenario { const char* name; const char* what; const char* prog; };
+static const CacheScenario kCacheScenarios[] = {
+    {"fill-while-off", "reads with CACHE_CONFIG = 0 fill entries; enabled later they answer with the old word",
+     "CE.0,RD.C010,RD.C011,RD.C021,PK.C010.A1,PK.C011.A2,PK.C021.A3,PK.C030.A4,CE.F,RD.C010,RD.C011,RD.C021,RD.C030"},
+    {"off-keeps", "switching the cache off does not clear it",
+     "CE.F,RD.C040,CE.0,PK.C040.B1,CE.F,RD.C040"},
+    {"uncached-refills", "a read in a window without the cache refills the entry from DRAM",
+     "CE.F,RD.C050,PK.C050.B2,CE.0,RD.C050,PK.C050.B3,CE.F,RD.C050"},
+    {"other-window-fills", "a window without the enable bit fills entries an enabled window hits",
+     "CE.8,RD.8060,PK.8060.B4,CE.4,RD.8060"},
+    {"hit-no-refill", "a hit does not refill: the stale word stays until a DRAM read",
+     "CE.F,RD.C0C0,PK.C0C0.BB,RD.C0C0,RD.C0C0,CE.0,RD.C0C0"},
+    {"write-off-invalidates", "a CPU write with the cache off invalidates the entry it hits",
+     "CE.0,RD.C070,PK.C071.B5,WR.C070.55,CE.F,RD.C071,RD.C070"},
+    {"write-on-invalidates", "a CPU write with the cache on invalidates the whole word",
+     "CE.F,RD.C080,PK.C081.B6,WR.C080.66,RD.C081,RD.C080"},
+    {"write-other-tag", "a CPU write to the same index under another tag leaves the entry",
+     "CE.F,RD.C090,PK.C090.B7,WR.8090.77,RD.C090,RD.8090"},
+    {"reset-keeps-off", "a reset does not clear the cache (filled with the cache off)",
+     "CE.0,RD.C0A0,PK.C0A0.B9,RST1,ID8,RST0,CE.F,RD.C0A0"},
+    {"reset-keeps-on", "a reset does not clear the cache (filled with the cache on); reset sets CACHE_CONFIG = 0",
+     "CE.F,RD.C0B0,PK.C0B0.BA,RST1,ID8,RST0,CE.F,RD.C0B0"},
+};
+
+static bool RunCache(const std::string& dir)
+{
+    FILE* f = nullptr;
+    if (!dir.empty())
+    {
+        std::string path = dir + "/cache-retention.txt";
+        f = fopen(path.c_str(), "w");
+        if (!f) { perror(path.c_str()); return false; }
+        fprintf(f, "# Generated by tools/machines/tsconf/rtl-sim (tsconf-cpu-sim cache). Format: README.md,\n");
+        fprintf(f, "# section \"CPU cache fill and retention\". pin_delay=%d mem_config=%02X pages=%02X,%02X,%02X,%02X\n", kPinDelay, kMemConf, kPage[0], kPage[1], kPage[2], kPage[3]);
+        fprintf(f, "# DRAM at start: page %02X (8000-BFFF) 00, page %02X (C000-FFFF) byte(a) = (a * 7 + 3) & 7F; cache RAM zeroed (all invalid)\n", kPage[2], kPage[3]);
+    }
+    bool ok = true;
+    for (const CacheScenario& sc : kCacheScenarios)
+    {
+        const std::vector<MCycle> body = ParseProg(sc.prog);
+        std::string results[2];
+        for (int turbo : {2, 0})
+        {
+            RunCfg c; c.turbo = turbo; c.vconf = 0x83; c.vpage = 0x10;
+            RunResult r = RunOne(c, FAt(8, 20), turbo >= 2 ? 0 : -1, body);
+            ok &= r.done && r.edgesOk;
+            std::string line;
+            char buf[48];
+            for (const CycleRec& x : r.cyc)
+            {
+                if (x.mc.kind != Kind::Rd) continue;
+                // H = hit (no DRAM request), M = miss (a DRAM read); "!" = stale (got != DRAM)
+                snprintf(buf, sizeof buf, " %04X=%02X/%02X%c%s", x.mc.addr, x.got, x.mem, x.req >= 0 ? 'M' : 'H',
+                         x.got == x.mem ? "" : "!");
+                line += buf;
+            }
+            results[turbo >= 2 ? 0 : 1] = line;
+        }
+        // the cache does not depend on the clock: the same bytes, hits and misses at 14 and 3.5 MHz
+        const bool same = results[0] == results[1];
+        ok &= same;
+        printf("%-22s %s\n  prog %s\n  14   %s\n  3.5  %s\n", sc.name, sc.what, sc.prog, results[0].c_str(), results[1].c_str());
+        if (f) fprintf(f, "case %s\n  prog %s\n  reads%s\n", sc.name, sc.prog, results[0].c_str());
+    }
+    if (f) fclose(f);
+    Check("cache scenarios finished, 14 and 3.5 MHz give the same bytes, hits and misses", ok);
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
     {
-        fprintf(stderr, "usage: %s sanity | all <results-dir> | trace <mhz> <vconf-hex> <line> <dot> <phase> <prog> [cache-hex]\n", argv[0]);
+        fprintf(stderr, "usage: %s sanity | all <results-dir> | trace <mhz> <vconf-hex> <line> <dot> <phase> <prog> [cache-hex] | cache [results-dir]\n", argv[0]);
         return 1;
     }
     std::string cmd = argv[1];
@@ -850,6 +960,8 @@ int main(int argc, char** argv)
                    r.cyc[i].sampleSrc ? r.cyc[i].sampleSrc : '-', r.cyc[i].samplePhase, r.cyc[i].dataOk, r.cyc[i].writeOk, r.cyc[i].stalls);
         return 0;
     }
+    if (cmd == "cache")
+        return RunCache(argc >= 3 ? argv[2] : "") ? 0 : 4;
     bool ok = RunSanity();
     if (cmd == "all" && argc >= 3)
     {

@@ -10,7 +10,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
-#include "emulator/ports/models/portdecoder_tsconf.h"
+#include "emulator/ports/portdecoder.h"
 #include "loaders/snapshot/zxdepackers.h"
 
 namespace
@@ -124,42 +124,23 @@ bool LoaderSPG::Parse(const std::vector<uint8_t>& data, Image& image, std::strin
 
 bool LoaderSPG::Commit(EmulatorContext* context, const Image& image, std::string& error)
 {
-    auto* decoder = context ? dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder) : nullptr;
-    if (!decoder || !context->pCore || !context->pMemory)
+    // The commit reads the neutral image, as the machine's policy does for a planned load
+    if (!context)
     {
         error = "an SPG program runs on the TS-Conf machine (model TSL) only";
         return false;
     }
-
-    context->pCore->Reset();
-    // A program is started by the shell (Wild Commander), which leaves the SD card
-    // initialized and idle. The reset above keeps the card's state (its power is
-    // not cut), so a load that lands while the TS-BIOS is initializing or streaming
-    // from the card (it boots from SD by default) would hand the program a card
-    // mid-transfer or not initialized, which its driver does not expect
-    decoder->GetSdCard().LeaveForProgram();
-
-    // The memory map a TS-Conf SPG expects: BASIC-48 at #0000, RAM 5 / 2 / page 3
-    decoder->WriteRegister(TsConfReg::MemConfig, 0x01);
-    decoder->WriteRegister(TsConfReg::Page1, 0x05);
-    decoder->WriteRegister(TsConfReg::Page2, 0x02);
-    decoder->WriteRegister(TsConfReg::Page3, image.page3);
-    decoder->WriteRegister(TsConfReg::SysConfig, image.clock);
-    context->emulatorState.p7FFD = 0x10;
-
-    uint8_t* ram = context->pMemory->RAMBase();
-    for (const Block& block : image.blocks)
-        std::memcpy(ram + block.address, block.data.data(), block.data.size());
-
-    Z80& z80 = *context->pCore->GetZ80();
-    z80.iy = 0x5C3A;
-    z80.alt.hl = 0x2758;
-    z80.i = 0x3F;
-    z80.im = 1;
-    z80.sp = image.sp;
-    z80.pc = image.pc;
-    z80.iff1 = z80.iff2 = image.interrupts ? 1 : 0;
-    return true;
+    snapshot::ISnapshotCommitPolicy* policy = context->pPortDecoder ? context->pPortDecoder->GetSnapshotPolicy() : nullptr;
+    if (!policy || policy->Name() != "tsconf-program")
+    {
+        error = "an SPG program runs on the TS-Conf machine (model TSL) only";
+        return false;
+    }
+    snapshot::Report report;
+    const bool committed = policy->Commit(BuildSnapshotImage(image, std::string()), *context, report);
+    if (!committed)
+        error = report.reason;
+    return committed;
 }
 
 bool LoaderSPG::load()
@@ -191,6 +172,8 @@ bool LoaderSPG::load()
         _error = _snapshotReport.reason;
         return false;
     }
+    // Take: the machine's policy (the TS-Conf machine has one); Legacy: the same commit from the image, which refuses a
+    // machine that is not a TS-Conf with the reason
     const bool committed = _decision.action == snapshot::Decision::Action::Take
                                ? _decision.Commit(_snapshotImage, *_context, _snapshotReport)
                                : Commit(_context, _image, _error);
@@ -248,9 +231,10 @@ snapshot::Image LoaderSPG::BuildSnapshotImage(const Image& spg, const std::strin
     cpu.im = 1;
     cpu.iff1 = cpu.iff2 = spg.interrupts;
     image.paging.p7FFD = 0x10;
-    image.extensions.push_back({"spg:header", "tsconf-registers", 0,
+    // The two TS-Conf registers the file names travel as the extension's payload: [0] the RAM page at #C000, [1] SYS_CONFIG[1:0]
+    image.extensions.push_back({kHeaderOrigin, "tsconf-registers", 2,
                                 "page at #C000 = " + std::to_string(spg.page3) + ", SYS_CONFIG[1:0] = " +
                                     std::to_string(spg.clock) + ", RAM 5 / 2 at #4000 / #8000, BASIC-48 ROM at #0000",
-                                {}});
+                                {spg.page3, spg.clock}});
     return image;
 }

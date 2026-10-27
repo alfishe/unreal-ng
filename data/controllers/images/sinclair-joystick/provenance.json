@@ -1,0 +1,41 @@
+{
+  "family": "sinclair-joystick",
+  "images": [
+    {
+      "view": "front",
+      "title": "DB9 joystick, Competition Pro type",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "the layout: square base, two red fire buttons about one inch across, the stick on a raised platform, a metal shaft with a ball top",
+          "source": "Sinclair User review of the Competition Pro 5000, via spectrumcomputing.co.uk ZXSR 1000551",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "proportions and colours (the later red shaft and ball)",
+          "source": "https://commons.wikimedia.org/wiki/File:Joystick_Competition_PRO.JPG",
+          "author": "MOS6502",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the base seen from the front, the buttons at the back corners",
+          "source": "https://commons.wikimedia.org/wiki/File:Competition_Pro.jpg",
+          "licence": "public domain",
+          "use": "reference only",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "base 124 x 136 x 44 mm, the ball 116 mm above the platform",
+          "source": "estimate, no maker's drawing found",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

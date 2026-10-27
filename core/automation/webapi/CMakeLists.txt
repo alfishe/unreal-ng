@@ -22,71 +22,14 @@ cmake_policy(SET CMP0079 NEW)
 # existing root-level cache entry.
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
+# The WebAPI serves plain HTTP on localhost: no TLS, so Drogon/Trantor never touch OpenSSL
+# (Drogon's built-in MD5/SHA1 covers the WebSocket handshake). FORCE also overrides the ""
+# (auto-detect) value Trantor caches in older build trees. Host TLS for emulated network
+# devices is separate: core/src (UNREAL_HOST_TLS, common/network/hosttls.cpp).
+set(TRANTOR_USE_TLS none CACHE STRING "Trantor TLS provider (the WebAPI is plain HTTP)" FORCE)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    message(STATUS "[automation_webapi] Building for iOS: disabling OpenSSL/TLS and c-ares")
-    set(TRANTOR_USE_TLS none CACHE STRING "" FORCE)
+    message(STATUS "[automation_webapi] Building for iOS: disabling c-ares")
     set(BUILD_C-ARES OFF CACHE BOOL "" FORCE)
-elseif (TRANTOR_USE_TLS STREQUAL "none")
-    # Release packages: the WebAPI serves plain HTTP on localhost, so TLS (and
-    # with it a system or bundled OpenSSL) is not needed.
-    message(STATUS "[automation_webapi] TLS disabled (TRANTOR_USE_TLS=none): no OpenSSL dependency")
-else()
-    # Find OpenSSL (required by Drogon/Trantor)
-    # Try to find OpenSSL, and if it fails, set the root directory explicitly
-    find_package(OpenSSL QUIET)
-    if (NOT OpenSSL_FOUND)
-        # Fallback: set OpenSSL root directory for Homebrew on ARM64 macOS
-        if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
-            set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
-            set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
-            set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
-            message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
-        # Fallback: Windows OpenSSL installations
-        elseif (WIN32)
-            # Check common Windows OpenSSL installation paths
-            set(OPENSSL_SEARCH_PATHS
-                "C:/Program Files/OpenSSL-Win64"
-                "C:/OpenSSL-Win64"
-                "$ENV{OPENSSL_ROOT_DIR}"
-            )
-
-            # For MSVC, also check vcpkg paths
-            if(MSVC AND DEFINED ENV{VCPKG_ROOT})
-                list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
-            endif()
-
-            foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
-                if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
-                    set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
-                    message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
-                    break()
-                endif()
-            endforeach()
-        endif ()
-        find_package(OpenSSL QUIET)
-    endif ()
-
-    if (NOT OpenSSL_FOUND)
-        if(WIN32 AND MSVC)
-            message(WARNING
-                "[automation_webapi] OpenSSL not found for MSVC — WebAPI automation disabled.\n"
-                "  To enable, install vcpkg and OpenSSL:\n"
-                "    git clone https://github.com/microsoft/vcpkg C:/vcpkg\n"
-                "    C:\\vcpkg\\bootstrap-vcpkg.bat\n"
-                "    vcpkg install openssl:x64-windows-static\n"
-                "    vcpkg integrate install\n"
-                "  Then reconfigure with:\n"
-                "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake\n"
-                "    -DVCPKG_TARGET_TRIPLET=x64-windows-static"
-            )
-        else()
-            message(WARNING "[automation_webapi] OpenSSL not found — WebAPI automation disabled.")
-        endif()
-        # Propagate the disabled state so the parent doesn't try to link against
-        # a target that was never created.
-        set(ENABLE_WEBAPI_AUTOMATION OFF PARENT_SCOPE)
-        return()
-    endif ()
 endif ()
 
 # Find or build zlib for Drogon
@@ -231,18 +174,29 @@ set(COMMON_SOURCES
     src/emulator_api.h
     src/openapi_spec.cpp
     src/api/lifecycle_api.cpp
+    src/api/operations_api.cpp
+    src/api/session_api.cpp
+    src/api/companion_api.cpp
     src/api/settings_api.cpp
     src/api/features_api.cpp
     src/api/state_memory_api.cpp
     src/api/state_screen_api.cpp
     src/api/video_map_api.cpp
     src/api/video_temporal_api.cpp
+    src/api/video_window_api.cpp
     src/api/state_audio_api.cpp
     src/api/state_device_api.cpp
     src/api/memory_region_api.cpp
     src/api/tape_disk_api.cpp
     src/api/rzx_api.cpp
     src/api/media_api.cpp
+    src/api/slots_api.cpp
+    src/api/controllers_api.cpp
+    src/api/signature_api.cpp
+    src/api/actions_api.cpp
+    src/api/surfaces_api.cpp
+    src/api/streamdeck_api.cpp
+    src/api/monitoring_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
@@ -254,16 +208,30 @@ set(COMMON_SOURCES
     src/api/debug_api.cpp
     src/api/capture_api.cpp
     src/api/recording_api.cpp
+    src/api/recent_api.cpp
     src/api/profiler_api.cpp
     src/api/porttrace_api.cpp
     src/api/vdac2_api.cpp
+    src/api/bus_api.cpp
     src/api/keyboard_api.cpp
     src/api/mouse_api.cpp
     src/api/joystick_api.cpp
     src/api/ports_api.cpp
     src/api/ttd_api.cpp
+    src/api/runpace_api.cpp
+    src/api/symbols_api.cpp
+    src/api/asm_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
+    src/api-websocket.cpp
+    src/api-websocket.h
+    src/common/request_gates.h
+    src/companion-event-hub.cpp
+    src/companion-event-hub.h
+    src/ws-hub.cpp
+    src/ws-hub.h
+    src/surface-hub.cpp
+    src/surface-hub.h
     src/debug-event-hub.cpp
     src/debug-event-hub.h
     src/automation-webapi.cpp
@@ -283,6 +251,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         ${JSONCPP_INCLUDE_DIRS}
         ${ZLIB_INCLUDE_DIR}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # core headers include the disk model
         ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
     )
 
@@ -334,6 +303,7 @@ else () # Called from upper level CMake => build static library
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # core headers include the disk model
         ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
         ${ROOT_DIR}/core/automation  # For automation/automation.h
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
@@ -429,6 +399,16 @@ endif ()
 if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
+
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+endif()
+
+# The media signatures (SignatureControl in core/swsignature): the define, the headers and the link order
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
 endif()
 
 

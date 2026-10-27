@@ -1,0 +1,34 @@
+Port 0x006B write: DMA (zxnDMA)
+  decoded by: A7:A0 = #6B
+  enabled: off (NR 0x82 bit 5, gated by the emulator: on)
+  side effect: the next byte of the DMA's WR0-WR6 sequence; the zxn mode latch is set
+
+Internal port enable word 0xFFFFFFDF (NR #82-#85; restored by soft reset)
+  bit 0  NR0x82  on  #FF
+  bit 1  NR0x82  on  #7FFD
+  bit 2  NR0x82  on  #DFFD
+  bit 3  NR0x82  on  #1FFD
+  bit 4  NR0x82  on  +3 floating bus  (not gated)
+  bit 5  NR0x82  off  #6B zxnDMA
+  bit 6  NR0x82  on  #1F Kempston / MD 1
+  bit 7  NR0x82  on  #37 Kempston / MD 2
+  bit 8  NR0x83  on  #E3 DivMMC control
+  bit 9  NR0x83  on  Multiface (two variable ports)
+  bit 10 NR0x83  on  #103B, #113B I2C
+  bit 11 NR0x83  on  #E7, #EB SPI
+  bit 12 NR0x83  on  #133B, #143B, #153B, #163B UART
+  bit 13 NR0x83  on  #FADF, #FBDF, #FFDF mouse
+  bit 14 NR0x83  on  #57, #5B, #303B sprites
+  bit 15 NR0x83  on  #123B Layer 2
+  bit 16 NR0x84  on  #FFFD, #BFFD AY
+  bit 17 NR0x84  on  #0F, #1F, #4F, #5F DAC (Soundrive mode 1)
+  bit 18 NR0x84  on  #F1, #F3, #F9, #FB DAC (Soundrive mode 2)
+  bit 19 NR0x84  on  #3F, #5F DAC (Profi Covox stereo)
+  bit 20 NR0x84  on  #0F, #4F DAC (Covox stereo)
+  bit 21 NR0x84  on  #FB DAC mono (Pentagon / ATM)
+  bit 22 NR0x84  on  #B3 DAC mono (GS Covox)
+  bit 23 NR0x84  on  #DF DAC mono (SpecDrum), Kempston alias
+  bit 24 NR0x85  on  #BF3B, #FF3B ULA+
+  bit 25 NR0x85  on  #0B Z80 DMA
+  bit 26 NR0x85  on  #EFF7 Pentagon 1024 memory  (not gated)
+  bit 27 NR0x85  on  #183B-#1F3B Z80 CTC

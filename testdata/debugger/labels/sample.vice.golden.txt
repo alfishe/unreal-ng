@@ -1,0 +1,4 @@
+noprefix|1234|65535|65535|ROM|code|||1
+player|C000|65535|65535|RAM|data|||1
+start|810|65535|65535|ROM|code|||1
+top|FFFF|65535|65535|RAM|code|||1

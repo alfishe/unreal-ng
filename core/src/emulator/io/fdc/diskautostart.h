@@ -5,7 +5,8 @@
 
 #include "emulator/emulatorcontext.h"
 
-class DiskImage;
+namespace unrealdisk { class DiskImage; }
+using unrealdisk::DiskImage;
 class Z80;
 
 /// TR-DOS disk autostart: decides what to run from a mounted disk and starts it without key injection.
@@ -67,12 +68,22 @@ public:
     void Disarm();
     bool IsArmed() const { return _armed; }
 
-    /// Z80Step hook at PC == $02EF. Rewrites the cold-start RUN "boot" line into RUN "<name>"
+    /// Every autostart (after the reset, before the CPU runs): the cold start's first arrival at the command loop
+    /// hands the paging to the model (PortDecoder::FinishAutostartColdStart). Disarm() drops it too
+    void ArmColdStartFinish() { _coldStartFinishPending = true; }
+    bool IsColdStartFinishPending() const { return _coldStartFinishPending; }
+
+    /// Whether HandleCommandLoopHook has anything left to do
+    bool IsHookPending() const { return _armed || _coldStartFinishPending; }
+
+    /// Z80Step hook at PC == $02EF. Finishes the cold start for the model, then rewrites the cold-start RUN "boot" line
+    /// into RUN "<name>". True when it changed the machine
     bool HandleCommandLoopHook(Z80& cpu);
 
 private:
     EmulatorContext* _context = nullptr;
     bool _armed = false;
+    bool _coldStartFinishPending = false;
     std::string _name;                // Log label (file name for BootNamed)
     std::vector<uint8_t> _commandLine;  // Tokenized line the hook writes over the cold-start RUN "boot"
 };

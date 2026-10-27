@@ -7,6 +7,7 @@
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/framebufferexport.h>
+#include <emulator/video/next/nextlayerimage.h>
 #include <drogon/utils/Utilities.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/video/screen.h>
@@ -14,6 +15,8 @@
 #include <json/json.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <sstream>
 
 #include "../emulator_api.h"
@@ -225,6 +228,152 @@ HttpResponsePtr ScreenshotErrorResponse(HttpStatusCode status, const char* reaso
 }
 }  // namespace
 
+namespace
+{
+HttpStatusCode LayerStatusCode(NextLayer::Status status)
+{
+    return status == NextLayer::Status::BadParameter ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict;
+}
+
+Json::Value LayerFrameJson(const NextLayer::Frame& frame)
+{
+    Json::Value v;
+    v["sequence"] = static_cast<Json::UInt64>(frame.sequence);
+    v["frame_number"] = static_cast<Json::UInt64>(frame.frameCounter);
+    return v;
+}
+
+Json::Value LayerLegend()
+{
+    Json::Value legend(Json::arrayValue);
+    for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+    {
+        Json::Value entry;
+        entry["id"] = id;
+        entry["name"] = NextLayer::IdName(id);
+        const uint32_t c = NextLayer::IdColour(id);
+        char text[8];
+        std::snprintf(text, sizeof text, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+        entry["colour"] = text;
+        legend.append(entry);
+    }
+    return legend;
+}
+
+/// The encoded bytes of one layer image: PNG (with alpha unless flattened) or the raw RGBA bytes
+std::vector<uint8_t> LayerBytes(const NextLayer::Image& image, bool rgba)
+{
+    return rgba ? image.rgba : NextLayer::EncodePng(image.rgba, image.width, image.height);
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/:id/capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=png|rgba][&alpha=false][&size=screen|grid|pixel][&path=]
+/// One layer of the last completed Next frame (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw
+/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's (640 x 512) unless size=grid (640 x 256) or size=pixel (320 x 256).
+/// 409: not a Next, the capture is off (POST next/layer-capture), or no frame completed yet
+static void ReplyLayerScreen(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>& callback, const std::shared_ptr<Emulator>& emulator,
+                             NextLayer::Kind kind)
+{
+    bool rgba = false, alpha = true;
+    NextLayer::Scale scale = NextLayer::Scale::Screen;
+    std::string message;
+    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message) ||
+        !NextLayer::ParseScale(req->getParameter("size"), scale, message))
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", message, "bad-parameter"));
+    const std::string area = req->getParameter("area").empty() ? req->getParameter("mode") : req->getParameter("area");
+    if (!area.empty() && area != "full")
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request",
+                                                "A layer image is always the whole frame: area '" + area + "' is not allowed with layer", "bad-parameter"));
+    const NextLayer::Image image = NextLayer::Capture(emulator->GetContext(), kind, alpha, scale);
+    if (image.status != NextLayer::Status::Ok)
+        return callback(ScreenshotErrorResponse(LayerStatusCode(image.status), image.status == NextLayer::Status::BadParameter ? "Bad Request" : "Conflict",
+                                                image.message, NextLayer::StatusName(image.status)));
+    const std::vector<uint8_t> bytes = LayerBytes(image, rgba);
+    if (bytes.empty())
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k500InternalServerError, "Internal Server Error", "The PNG encoder produced nothing", "encode-failed"));
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["layer"] = NextLayer::KindName(kind);
+    ret["format"] = rgba ? "rgba" : "png";
+    ret["alpha"] = alpha;
+    ret["scale"] = NextLayer::ScaleName(scale);
+    ret["width"] = image.width;
+    ret["height"] = image.height;
+    ret["size"] = static_cast<Json::UInt64>(bytes.size());
+    ret["frame"] = LayerFrameJson(*image.frame);
+    if (kind == NextLayer::Kind::Ids)
+        ret["legend"] = LayerLegend();
+    std::string path = req->getParameter("path");
+    if (path.empty())
+        path = req->getParameter("filename");
+    if (!path.empty())
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (!file)
+            return callback(ScreenshotErrorResponse(HttpStatusCode::k500InternalServerError, "Internal Server Error", "The file could not be written: " + path, "io-failed"));
+        ret["saved"] = true;
+        ret["file"] = path;
+    }
+    else
+        ret["data"] = NextLayer::Base64(bytes);
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/capture/next-layers[?format=png|rgba][&alpha=false]
+/// Every layer (ula, layer2, tilemap, sprites) and the winner map (ids) of the SAME last completed Next frame in one answer
+void EmulatorAPI::captureNextLayers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k404NotFound, "Not Found", "Emulator not found", "not-found"));
+    if (emulator->IsDestroying())
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k503ServiceUnavailable, "Service Unavailable", "Emulator is shutting down", "shutting-down"));
+    bool rgba = false, alpha = true;
+    NextLayer::Scale scale = NextLayer::Scale::Screen;
+    std::string message;
+    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message) ||
+        !NextLayer::ParseScale(req->getParameter("size"), scale, message))
+        return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", message, "bad-parameter"));
+    unsigned width = 0, height = 0;
+    NextLayer::ScaleSize(scale, width, height);
+    std::shared_ptr<const NextLayer::Frame> frame;
+    const NextLayer::Status status = NextLayer::LastFrame(emulator->GetContext(), frame, message);
+    if (status != NextLayer::Status::Ok)
+        return callback(ScreenshotErrorResponse(LayerStatusCode(status), "Conflict", message, NextLayer::StatusName(status)));
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["format"] = rgba ? "rgba" : "png";
+    ret["alpha"] = alpha;
+    ret["scale"] = NextLayer::ScaleName(scale);
+    ret["width"] = width;
+    ret["height"] = height;
+    ret["frame"] = LayerFrameJson(*frame);
+    Json::Value layers;
+    static const NextLayer::Kind kinds[] = {NextLayer::Kind::Ula, NextLayer::Kind::Layer2, NextLayer::Kind::Tilemap, NextLayer::Kind::Sprites, NextLayer::Kind::Ids};
+    for (NextLayer::Kind kind : kinds)
+    {
+        NextLayer::Image image;
+        image.width = width;
+        image.height = height;
+        std::vector<uint8_t> full;
+        NextLayer::Render(*frame, kind, alpha, full);
+        NextLayer::Reduce(full, scale, image.rgba);
+        const std::vector<uint8_t> bytes = LayerBytes(image, rgba);
+        Json::Value entry;
+        entry["size"] = static_cast<Json::UInt64>(bytes.size());
+        entry["data"] = NextLayer::Base64(bytes);
+        layers[NextLayer::KindName(kind)] = entry;
+    }
+    ret["layers"] = layers;
+    ret["legend"] = LayerLegend();
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief GET /api/v1/emulator/:id/capture/screen
 /// @brief Screenshot of the emulator's presented frame, as PNG (default) or GIF
 /// @param area Query param: "full" (default: the whole frame, border included) or "screen" (the working
@@ -253,6 +402,24 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
         callback(ScreenshotErrorResponse(HttpStatusCode::k503ServiceUnavailable, "Service Unavailable",
                                          "Emulator is shutting down", "shutting-down"));
         return;
+    }
+
+    // layer=: one layer of the last Next frame instead of the presented picture (composed = the ordinary screenshot)
+    const std::string layerText = req->getParameter("layer");
+    if (!layerText.empty())
+    {
+        NextLayer::Kind kind = NextLayer::Kind::Composed;
+        if (!NextLayer::ParseKind(layerText, kind))
+        {
+            callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request",
+                                             "Unknown layer '" + layerText + "': use " + NextLayer::KindWords(), "bad-parameter"));
+            return;
+        }
+        if (kind != NextLayer::Kind::Composed)
+        {
+            ReplyLayerScreen(req, callback, emulator, kind);
+            return;
+        }
     }
 
     // Parameters: a word that is not one of the documented values is an error, never a silent default
@@ -286,6 +453,7 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
                 reason = "Not Found";
                 break;
             case ScreenshotError::NoFrame:
+            case ScreenshotError::NoWindow:  // headless, or the window shows another instance
                 status = HttpStatusCode::k409Conflict;  // the emulator has not presented a frame yet: try again
                 reason = "Conflict";
                 break;
@@ -326,6 +494,15 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
         frame["beam"]["tstate"] = shot.frame.beamTstate;
     }
     ret["frame"] = frame;
+    if (shot.fromWindow)
+    {
+        Json::Value window;
+        window["viewport"] = RectJson(shot.window.viewport);
+        window["picture"] = RectJson(shot.window.picture);
+        window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+        window["backend"] = shot.window.backend;
+        ret["window"] = window;
+    }
     if (!shot.savedFile.empty())
     {
         ret["saved"] = true;

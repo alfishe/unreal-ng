@@ -22,7 +22,7 @@
 template <MemoryReadCallback Plain, bool Stats>
 uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 {
-    if (!_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
+    if (!_contentionUla->IsContendedAt(addr))
         return (this->*Plain)(addr, isExecution);
 
     const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
@@ -38,7 +38,7 @@ uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 template <MemoryWriteCallback Plain, bool Stats>
 void Memory::MemoryWriteContended(uint16_t addr, uint8_t value)
 {
-    if (_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
+    if (_contentionUla->IsContendedAt(addr))
     {
         const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
         _contentionCpu->InsertWaitStates(wait);
@@ -59,13 +59,17 @@ uint8_t Memory::MemoryReadM1Snow(uint16_t addr, bool isExecution)
 {
     const uint8_t value = (this->*Read)(addr, isExecution);
     const Z80* cpu = _contentionCpu;
-    if (!_contentionUla->IsGateArray() && _contentionUla->IsSlotContended(static_cast<uint8_t>(cpu->i >> 6)))
+    if (!_contentionUla->IsGateArray() && _contentionUla->IsContendedAt(static_cast<uint16_t>(cpu->i << 8)))
         [[unlikely]] _contentionUla->NoteRefresh(cpu->t - 1, static_cast<uint8_t>(cpu->r_low - 1));
     return value;
 }
 
-MemoryInterface* Memory::GetFastContendedMemoryInterface()
+MemoryInterface* Memory::GetFastContendedMemoryInterface(bool stockRead)
 {
+    if (stockRead)
+        return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>,
+                                   &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>);
     return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>,
                                &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
                                &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>);
@@ -81,6 +85,8 @@ MemoryInterface* Memory::GetDebugContendedMemoryInterface()
 // Explicit instantiations: the host bus overlay interfaces (memory.cpp) wrap
 // these same four as their inner access
 template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadFast, false>(uint16_t, bool);
+template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>(uint16_t, bool);
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>(uint16_t, bool);
 template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>(uint16_t, bool);
 template void Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>(uint16_t, uint8_t);
 template void Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>(uint16_t, uint8_t);
@@ -89,4 +95,6 @@ template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>(
     uint16_t, bool);
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>(
+    uint16_t, bool);
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>>(
     uint16_t, bool);

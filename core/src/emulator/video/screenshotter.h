@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 
 /// @file screenshotter.h
 /// @brief One screenshot for every surface (WebAPI, MCP, CLI, Lua, Python, Qt).
@@ -12,7 +13,8 @@
 /// A screenshot is a pure function of one frame snapshot: the pixels and the geometry of the same
 /// presented frame (Screen::SnapshotPresented). The area (whole frame, or the working picture the
 /// frame's own geometry names) is cut from it and encoded. Nothing here knows a machine: the
-/// raster table, FT812 and TS-Conf windows are all behind PictureGeometry.
+/// raster table, FT812 and TS-Conf windows are all behind PictureGeometry. The image has the shape the CRT
+/// shows (DisplayGeometry::Picture, as a recording): a hi-res frame of 720 / 736 x 288 doubles its lines.
 /// Design: docs/inprogress/2026-10-03-screenshotter/design.md
 
 /// What part of the frame to return
@@ -27,6 +29,8 @@ enum class ScreenshotSource
 {
     Presented,  ///< The finished, tear-free frame the window shows, a couple of frames behind (the default)
     Live,       ///< The frame as drawn right now: no present delay, no post-processing. Taken by the emulation thread
+    Window,     ///< The picture as the GUI window draws it (its shape, letterbox excluded, CRT shader and HUD included),
+                ///< in the display's pixels. Only with a front end that offers it (WindowView); the whole picture only
 };
 
 enum class ScreenshotFormat
@@ -45,6 +49,7 @@ enum class ScreenshotError
     BadGeometry,    ///< the screen window does not fit inside the frame
     EncodeFailed,   ///< the encoder produced nothing
     IoFailed,       ///< the file could not be written
+    NoWindow,       ///< source window: no GUI window shows this emulator (headless, or another instance is shown)
 };
 
 struct ScreenshotOptions
@@ -67,10 +72,13 @@ struct ScreenshotResult
     std::string savedFile;       ///< where it was written, when saveTo was given
     size_t encodedSize = 0;      ///< bytes of the encoded image, saved or not
 
-    uint16_t width = 0;   ///< size of the returned image
+    uint16_t width = 0;   ///< size of the returned image: the crop as the CRT shows it (DisplayGeometry::Picture)
     uint16_t height = 0;
-    PictureRect crop;       ///< the returned image's rectangle inside the frame
+    PictureRect crop;       ///< the returned image's rectangle inside the frame, in stored pixels
     PictureGeometry frame;  ///< the frame the image was taken from
+
+    bool fromWindow = false;  ///< source window: `window` describes the window the image was grabbed from
+    WindowViewGrab window;    ///< its geometry (the pixels are in `bytes`; window.rgba is left empty)
 };
 
 class Screenshotter

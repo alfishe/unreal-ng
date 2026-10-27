@@ -42,6 +42,7 @@ void SynthCore::Configure(const SynthConfig& cfg)
 {
     _cfg = cfg;
     _fx.Allocate();
+    _fx.skipIdle = cfg.skipIdleEffects;
 }
 
 void SynthCore::PowerOn()
@@ -875,6 +876,12 @@ void SynthCore::NoteOff(uint8_t chIndex, uint8_t key, uint32_t offset)
         }
 }
 
+void SynthCore::Panic()
+{
+    for (Voice& v : _voices)
+        v.Kill();
+}
+
 void SynthCore::Describe(SynthReport& out) const
 {
     out.polyphonyLimit = PolyphonyLimit();
@@ -914,12 +921,19 @@ void SynthCore::Describe(SynthReport& out) const
     out.softClip = p.clipMode < 0x40;
     out.codecGainDb = Effects::CodecGainDb(p.codec0);
     out.codecMuted = Effects::CodecMuted(p.codec0);
+    out.reverbIdle = _fx.ReverbIdle();
+    out.chorusIdle = _fx.ChorusIdle();
+    out.spatialIdle = _fx.SpatialIdle();
+    out.equalizerIdle = _fx.EqualizerIdle((_effectsWord & 0x03) == 0x03);
+    out.idleEffectBlocks = _fx.skippedBlocks;
+    out.effectTailsOut = _fx.TailsOut();
     for (const Voice& v : _voices)
     {
         if (v.Counts())
         {
             out.activeVoices++;
             out.channels[v.channel].activeVoices++;
+            out.channels[v.channel].keys[v.midiKey >> 6] |= uint64_t{1} << (v.midiKey & 63);
         }
         else if (v.state == VoiceState::Dying)
             out.fadingVoices++;

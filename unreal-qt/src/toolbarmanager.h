@@ -52,6 +52,19 @@ public:
     void setTtdRecordingActive(bool active);
     void updateRecordingStates();
 
+    /// Automation sessions (execution arbiter design §6a): a bar of its own under the toolbar (the accent colour; a
+    /// row of its own never overflows) says who holds the machine, from where, since when, with Take Back Control.
+    /// After a take-back it says so, with Allow Automation Again while the client is in its re-take cooldown, until
+    /// dismissed. The actions are also in the Run menu
+    void setRemoteControl(bool active, const QString& brief, const QString& details, bool cooldowns,
+                          qint64 sinceMs);
+    /// The user took control back from `who`: the bar says so until dismissed or the cooldown ends
+    void noteControlTakenBack(const QString& who);
+    /// The bar stays usable while every other control is locked
+    QList<QObject*> remoteControlWidgets() const;
+    QAction* takeBackAction() const { return _takeBackAction; }
+    QAction* allowAgainAction() const { return _allowAgainAction; }
+
     bool isVideoRecordingActive() const { return _videoRecordingActive; }
     bool isTtdRecordingActive() const { return _ttdRecordingActive; }
 
@@ -59,6 +72,8 @@ signals:
     void startOrResumeRequested();
     void pauseRequested();
     void restartRequested();
+    void takeBackControlRequested();
+    void allowRetakeRequested();
     void ttdToggled(bool visible);
 #ifdef ENABLE_RECORDING
     void recordingToggled(bool visible);
@@ -78,6 +93,21 @@ private:
     bool isVideoRecording() const;
     bool isTtdRecording() const;
     std::shared_ptr<Emulator> getActiveEmulator() const;
+
+    QToolBar* _remoteBar = nullptr;
+    class QLabel* _remoteIcon = nullptr;
+    class QLabel* _remoteLabel = nullptr;
+    QString _remoteBrief;                    // the line before the ticking time
+    QList<QPair<class QToolButton*, QAction*>> _remoteButtons;  // the bar's buttons and their actions
+    QTimer* _remoteTick = nullptr;           // once a second while the bar shows a session, stopped when hidden
+    qint64 _remoteSinceMs = 0;
+    void updateRemoteElapsed();
+    void updateRemoteTick();
+    QAction* _takeBackAction = nullptr;
+    QAction* _allowAgainAction = nullptr;
+    QAction* _dismissAction = nullptr;
+    QString _takenBackFrom;                // who the user took control back from, while its cooldown runs
+    bool _remoteDismissed = false;
     void updateActiveTooltips();
 
     MainWindow* _mainWindow;

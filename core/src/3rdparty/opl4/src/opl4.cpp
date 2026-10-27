@@ -93,11 +93,17 @@ struct Opl4::Impl
     std::vector<int32_t> pcmStream;  // HiFi: PCM-only 44100 stereo / split PCM
     bool splitStreams = false;       // host mixer sources (integration D5)
 
+    // The silent-chip fast path (SyncTo): switch and the FM ticks it stood for (diagnostics, not state)
+    bool idleFastPath = true;
+    uint64_t idleFmTicks = 0;
+
     // Tap scratch + render-side meters (never serialised; FM mutes live in
     // fmBus, PCM mutes in pcmMuteMask)
     std::array<int32_t, FmBus::kChannelCount> fmTaps{};
     std::array<int32_t, Opl4Pcm::kSlotCount> pcmTaps{};
     uint32_t pcmMuteMask = 0; // bit i: PCM slot i
+    std::array<int32_t, Opl4Pcm::kSlotCount> pcmGain{}; // Q15 host gain per slot (valid while anyPcmGain)
+    bool anyPcmGain = false;
     int32_t fmPeak[FmBus::kChannelCount] = {};
     int32_t pcmPeak[Opl4Pcm::kSlotCount] = {};
 
@@ -371,6 +377,15 @@ void Opl4::AdvanceOutputStep()
             pcmL -= VolFactor(tap, pp.left);
             pcmR -= VolFactor(tap, pp.right);
         }
+        else if (im.anyPcmGain && im.pcmGain[i] != 32768)
+        {
+            // A host gain: subtract the part of the slot it takes away, re-panned the same way
+            const int32_t removed =
+                tap - static_cast<int32_t>((static_cast<int64_t>(tap) * im.pcmGain[i]) / 32768);
+            const PanPair pp = kPanTable[slots[i].pan & 0x0F];
+            pcmL -= VolFactor(removed, pp.left);
+            pcmR -= VolFactor(removed, pp.right);
+        }
     }
 
     pcmL = ApplyMixScale(pcmL, (im.mixF9 >> 3) & 7);
@@ -402,6 +417,75 @@ void Opl4::AdvanceOutputStep()
     }
 }
 
+void Opl4::SetIdleFastPath(bool on)
+{
+    _impl->idleFastPath = on;
+}
+
+uint64_t Opl4::IdleFmTicks() const
+{
+    return _impl->idleFmTicks;
+}
+
+// The idle fast path of SyncTo: `fmTicks` FM ticks and `outSteps` output steps of a chip whose every FM
+// operator is off at full attenuation with no key edge pending and every PCM slot off, so every output is 0. The
+// state, the streams and the meters end exactly as the interleaved loop leaves them. Declined (false, nothing
+// changed) while the reducer still carries a nonzero tick from before the silence: its output step must emit it
+bool Opl4::AdvanceIdle(uint64_t fmTicks, uint64_t outSteps)
+{
+    Impl& im = *_impl;
+    if (!_pcm->Idle() || !_fm->Idle())
+        return false;
+    if (outSteps > 0 && (im.windowSumL != 0 || im.windowSumR != 0 || im.heldL != 0 || im.heldR != 0))
+        return false;
+
+    _fm->AdvanceIdle(fmTicks);
+    im.idleFmTicks += fmTicks;
+    im.fmBus.AdvanceTimersIdle(fmTicks);
+    _pcm->AdvanceIdle(outSteps, im.pcmTaps);
+    im.fmTaps.fill(0);
+
+    // Meters decay toward 0 with zero taps (render-side): p -= p >> 8 stands still below 256
+    auto decay = [](int32_t& p, uint64_t steps) {
+        for (; steps > 0 && p >= 256; steps--)
+            p -= p >> 8;
+    };
+    for (int32_t& p : im.fmPeak)
+        decay(p, fmTicks);
+    for (int32_t& p : im.pcmPeak)
+        decay(p, outSteps);
+
+    // The reducer window: FM ticks after the last output step (a tick on the step's clock comes first), all 0
+    const uint64_t fmEnd = im.fmTicks + fmTicks;
+    const uint64_t outEnd = im.outSteps + outSteps;
+    if (outSteps > 0)
+    {
+        im.windowTicks = static_cast<uint32_t>(fmEnd - (outEnd * kOutDivider) / kFmDivider);
+        im.windowSumL = im.windowSumR = 0;
+    }
+    else
+        im.windowTicks += static_cast<uint32_t>(fmTicks);
+    im.heldL = im.heldR = 0;
+    im.fmTicks = fmEnd;
+    im.outSteps = outEnd;
+
+    if (im.cfg.mode == RenderMode::HiFi)
+    {
+        im.fmStream.resize(im.fmStream.size() + 2 * fmTicks, 0);
+        im.pcmStream.resize(im.pcmStream.size() + 2 * outSteps, 0);
+    }
+    else
+    {
+        im.chipStream.resize(im.chipStream.size() + 2 * outSteps, 0);
+        if (im.splitStreams)
+        {
+            im.fmStream.resize(im.fmStream.size() + 2 * outSteps, 0);
+            im.pcmStream.resize(im.pcmStream.size() + 2 * outSteps, 0);
+        }
+    }
+    return true;
+}
+
 void Opl4::SyncTo(uint64_t time)
 {
     Impl& im = *_impl;
@@ -413,6 +497,12 @@ void Opl4::SyncTo(uint64_t time)
     im.hostRemainder = num % im.cfg.hostTickRate;
     im.masterPos += num / im.cfg.hostTickRate;
     im.hostTicks = time;
+
+    // A silent chip (every FM operator and PCM slot off) moves only counters: both grids at once
+    const uint64_t fmTarget = im.masterPos / kFmDivider;
+    const uint64_t outTarget = im.masterPos / kOutDivider;
+    if (im.idleFastPath && fmTarget > im.fmTicks && AdvanceIdle(fmTarget - im.fmTicks, outTarget - im.outSteps))
+        return;
 
     for (;;)
     {
@@ -565,6 +655,23 @@ void Opl4::SetChannelMute(ChannelId id, bool mute)
         else
             _impl->pcmMuteMask &= ~(1u << id.index);
     }
+}
+
+void Opl4::SetChannelGain(ChannelId id, int32_t gainQ15)
+{
+    if (id.group == ChannelGroup::Fm)
+    {
+        _impl->fmBus.SetChannelGain(static_cast<int>(id.index), gainQ15);
+        return;
+    }
+    if (id.index >= Opl4Pcm::kSlotCount)
+        return;
+    if (!_impl->anyPcmGain)
+        _impl->pcmGain.fill(32768);
+    _impl->pcmGain[id.index] = gainQ15;
+    _impl->anyPcmGain = false;
+    for (int32_t g : _impl->pcmGain)
+        _impl->anyPcmGain = _impl->anyPcmGain || g != 32768;
 }
 
 void Opl4::EnableSplitStreams(bool on)

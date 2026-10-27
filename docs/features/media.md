@@ -40,12 +40,15 @@ common way to get a disk image rejected.
 | Profi | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (Profi IDE) |
 | ATM Turbo 2+ | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (ATM IDE) |
 | ZX-Evo | `fdd.a` … `fdd.d`, `tape`, `sd.zc` (`sd`), `ide0.master`, `ide0.slave` (NemoIDE) |
+| ZX Spectrum Next | `fdd.a` … `fdd.d`, `tape`, `sd.next0` (`sd`), `sd.next1`: the two SD sockets; `[NEXT] SdCard` is only the card put into an empty `sd.next0` at the power-on and at every reset |
 
 Every slot reports: id, kind, label, index, aliases, tags, whether it is removable and takes
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the
 medium (source, format, access, dirty, dirty units, and `changes`: the unsaved changes in words —
 `1 track: 3 sectors`, `1 track: whole` for a track rewritten by FORMAT / WRITE TRACK,
-`5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written).
+`5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written). `info` of a medium in
+`session` access adds `sessionWrites`: where the guest's writes are kept and whether they survive a crash
+([below](#where-session-writes-are-kept)).
 
 ## Naming a slot: selectors
 
@@ -72,12 +75,20 @@ on a +3) is `unknown-slot`, never drive A.
 | `insert` | slot or `auto`, path | a file or a folder into the slot |
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
-| `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again |
-| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image, or to a CHD for a `.chd` path |
+| `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again; a [composite](#composite-media-several-sources-in-one-disk) without a path: its session delta file |
+| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. The path's extension picks the format ([below](#saving-in-another-format)): a floppy as `.trd`, `.scl`, `.udi`, `.fdi`, `.dsk`, `.td0`, `.mgt`, `.img`, `.hfe` or `.scp`, the tape as `.tap` or `.tzx`. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a VHD for a `.vhd` path (fixed by default, `vhd: dynamic` for a sparse one), or a CHD for a `.chd` path. Free space a composite or a sparse image knows to be zeros is skipped without being read |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
-| `rescan` | slot | build a folder medium again after the host folder changed (refused while dirty) |
-| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`) |
+| `rescan` | slot | build a folder or composite medium again after its sources changed; sources that give the same volume leave it as it is ("unchanged", unsaved writes kept). Unsaved writes over changed sources need `save`, `export <path>` or `discard`: they cannot follow a rebuild |
+| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`); a blank card or hard disk holds memory only for what the guest writes (64 KiB chunks). A `trdos` floppy comes formatted as TR-DOS FORMAT leaves it (16 x 256-byte sectors, an empty catalogue, the system sector naming the geometry) |
 | `protect` | slot, `on` | the slot's write-protect switch |
+| `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
+| `layers` | slot | a composite's layers (and partitions) |
+| `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image), `write-back` (the guest's file changes into the writable folder layers); `plan` reports and writes nothing |
+| `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
+| `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size and free bytes ([disk file systems](../emulator/design/disk-file-systems.md)) |
+| `files` | slot, path? | the entries of a directory (`path` empty: the root) of one volume: path, name, size, start, attributes, time and the fields only that file system has; `recursive` the whole tree. Read only, under the time-travel read tap (nothing journalled) |
+| `read` | slot, path | one file's bytes: base64 `data` up to 16 MiB, or written to `out` (the answer then names `savedPath`) |
+| `write` | slot, path | a file onto the TR-DOS (`NAME.T`) or +3DOS (`NAME.TYP`) floppy in the slot, an older file of that name replaced: the bytes as base64 `data` or a host file `in`; `start` the TR-DOS start / +3DOS CODE address (`#8000`, `0x8000`, `32768`), `header` false a +3DOS file without its header. Refused on a write-protected or read-only disk and on the read-only file systems (iS-DOS, FAT, hard disks). The disk is dirty until saved; a TTD session keeps it as a tool's edit |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -90,17 +101,29 @@ on a +3) is `unknown-slot`, never drive A.
 | `codepage` | `cp866`, `cp1251` | the folder's manifest, else `cp866` | insert, swap (folders) |
 | `free` | bytes | 256 MiB | insert, swap (folder volumes: room for guest writes) |
 | `kind` | `floppy`, `tape`, `block` | floppy when the machine has drives | insert `auto` of a folder; `formats` filter |
-| `format` | `auto`, `unformatted`, `plus3` | `auto` | create (floppies) |
+| `format` | `auto` (`plus3` on a +3, else `unformatted`), `trdos` (`tr-dos`, `trd`), `plus3` (`+3`), `unformatted` (`raw`) | `auto` | create (floppies) |
 | `format` | `audio-cd` | a folder in a CD slot is one anyway | insert, swap: a folder of MP3 / FLAC / WAV files into a CD-ROM drive as an audio CD |
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
-| `size` | bytes, a multiple of 512 | — | create (cards) |
+| `size` | bytes, a multiple of 512, up to 128 GiB | — | create (cards, hard disks) |
 | `wp` | bool | false | insert, swap |
-| `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create |
+| `journal` | `replay`, `discard`, `off` | `[MEDIA] SessionJournal` (`replay` when on) | insert, swap: a session journal left next to the medium by a crash ([below](#where-session-writes-are-kept)) |
+| `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create, rescan. `save` of a composite follows its `writes.save` (below) |
+| `strategy`, `onConflict`, `strict` | as for `save`; `strategy` also `discard`, `ask` | the descriptor's `writes.save` | insert, swap, eject, create, rescan with `save`: how a composite's writes are saved as it leaves. A `commit` / `write-back` that fails keeps the writes as a session delta and says so; `strict: true` refuses instead (the medium stays) |
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
+| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`), a file system (`fat16`) or an index | the first | files, read |
+| `recursive` | bool | false | files |
+| `out` | a host file | — | read: write the bytes there instead of answering them |
+| `vhd` | `fixed`, `dynamic` | `fixed` | save to a path, export, flatten `flat` of a hard disk or card to a `.vhd`: `dynamic` stores only the 2 MiB blocks that hold data (a dynamic VHD in a slot is written in place: a new block goes at the end) |
+| `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
+| `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
+| `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save and flatten of a composite: `commit` into the graft base (S3), `write-back` into the writable folders (S4). A `writes.save: ask` saves a delta; `discard` refuses (a save keeps nothing) |
+| `force` | bool | false | save of a composite as `delta` over a delta written over other sources; `commit` although the guest's file system has lost clusters or cross-links |
+| `plan` | bool | false | save, flatten with `strategy: commit` or `write-back`: what would be written, nothing written |
+| `onConflict` | `refuse`, `keep-both` | `refuse` | write-back: a host file changed since the build is a conflict; `keep-both` writes the guest's as `name (guest).ext` |
 | `on` | bool | true | protect |
-| `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
+| `end_recording` | bool | false | insert, swap, eject, discard, create: stop a TTD recording and change the medium at once (without it the change is an event of the recording: it lands at the next frame boundary) |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
 | `immediate` | bool | false | insert, swap: no swap delay |
 | `device` | `disk`, `cdrom` | the unit's | insert, swap on an IDE unit: swap its drive first (the unit must be empty) |
@@ -121,6 +144,67 @@ returns at once with `pending: true`. While the emulator is paused or stopped bo
 tape slot it becomes a tape ([Tapes](#tapes)); into a card slot it becomes a FAT16 (or FAT32) volume. The folder is never written: guest writes stay in
 the session; export them to keep them. Host service files (`.DS_Store`, `Thumbs.db`, ...) are left
 out and reported.
+
+### Where session writes are kept
+
+A medium in `session` access (folders, CHDs, composites, blank media, any image inserted with
+`access: session`) keeps the guest's writes beside its source until they are saved or discarded:
+
+- **In memory**, up to `[MEDIA] SessionMemoryLimit` (16 MiB), in arenas of `SessionArenaKiB` (1 MiB) whose pages go
+  back to the system when they are freed.
+- **Past the limit**, by default (`SessionJournal = off`, the lean setting unreal-qt ships with): the oldest arena
+  moves to a temp file in `SpillFolder`, gone with the medium. Nothing is written while the writes fit in memory.
+- **In a journal** next to the source, with `SessionJournal = on` or an insert's `journal: replay`:
+  `<image>.usession`, `<folder>.usession`, `<descriptor>.usession`. When the arenas pass the limit, the oldest one
+  moves there; every write reaches it at most `SessionFlushSeconds` (30 s)
+  after it was made, and it is synced to the disk every `SessionSyncSeconds` (30 s).
+- **Off the emulation thread**: the journal is written and synced by I/O threads shared by every emulator
+  instance of the process (`SessionIoThreads`, one by default); the emulation only waits for the disk when it falls behind the guest by half the limit.
+- **After a crash** of the emulator (or an exit with unsaved writes), with a journal, the next insert of the same medium replays the
+  journal: the medium comes back dirty with the guest's writes, and the report says
+  `session journal disk.img.usession replayed: N sector(s) ...`. At most the last `SessionFlushSeconds` of writes are
+  lost. A composite's journal replaces its `.delta` (the journal holds everything since that insert).
+- **Ends**: a save, a discard, an eject with a disposition, a commit or a write-back delete the journal: there is
+  nothing left to recover.
+
+The insert option `journal` decides what happens to a journal found next to the medium:
+
+| `journal` | |
+|---|---|
+| `replay` (default with `SessionJournal = on`) | replay it |
+| `discard` | delete it unread, start a new one |
+| `off` (default with `SessionJournal = off`) | leave it as it is; this insert keeps its writes in a temp file in `SpillFolder`, gone with the medium |
+
+A journal written over another disk (the source changed meanwhile) or damaged is never replayed and never deleted:
+it is renamed to `<name>.usession.<n>.stale` and the report says why. A medium without a place of its own for a
+journal (a blank medium, an upload, an inline descriptor, a read-only folder) keeps it in `SpillFolder`, not
+recoverable; so does a second slot holding the same source. A write never fails because of the journal: when it
+cannot be written, the writes stay in memory over the limit and `info` says `journalFailed`.
+
+```ini
+[MEDIA]
+SessionMemoryLimit  = 16       ; MiB in memory per session; 0: no limit
+SessionArenaKiB     = 1024     ; the unit of a flush (64 ... 16384, a power of two)
+SessionFlushSeconds = 30       ; 0: only when the limit is passed
+SessionSyncSeconds  = 30       ; 0: never fsync
+SessionJournal      = off      ; on: a journal next to each medium, replayed after a crash
+SessionIoThreads    = 1        ; journal writer threads; 0: a quarter of the cores, 1 to 4
+SpillFolder         = /var/tmp
+ExtentBudget        = 4194304  ; composites: extents (16 bytes each) a build may hold; 0: no limit
+```
+
+`info` reports it per medium:
+
+| Field | Meaning |
+|---|---|
+| `sessionWrites.sectors` | sectors the guest changed |
+| `sessionWrites.memoryBytes`, `memoryLimit` | the arenas held in memory, and the limit |
+| `sessionWrites.journalBytes`, `journalFile` | what the journal holds, and its path (`(deleted) ...` for a temp one already unlinked) |
+| `sessionWrites.journalRecoverable` | the journal is next to the medium and replayed after a crash |
+| `sessionWrites.journalFailed` | a journal write failed (disk full, no folder): the writes stay in memory |
+
+Memory per mode: an image file in `readonly` or `writethrough` holds nothing per sector; a composite holds its
+metadata; a blank card holds a pointer per GiB and 128 KiB per GiB the guest wrote, plus its session.
 
 ## Tapes
 
@@ -180,7 +264,7 @@ an empty drive changes what some firmware does at boot.
 
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
-| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
+| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed and dynamic `.vhd` (written in place too; a differencing VHD is refused), MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
 | CD-ROM drive | `optical` | `.iso` (ISO 9660), `.cue` (a CUE sheet with its BINARY / MOTOROLA / WAVE files: data and audio tracks, INDEX 00 pregaps, PREGAP / POSTGAP, several files, several sessions with `REM SESSION`), a lone raw `.bin` of 2352-byte frames, MAME's CD-ROM `.chd` (cdlz / cdzl / cdzs / cdfl, v5, multisession too), or a folder of MP3 / FLAC / WAV files (an audio CD, below); read-only | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
 
 The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard
@@ -260,6 +344,67 @@ about 5 s to insert. Recipe: [cd-audio.md](../../.recipe/media/cd-audio.md#audio
 Time travel records through disk activity: a write is a replay barrier, and the board's state is in
 every checkpoint.
 
+## Composite media: several sources in one disk
+
+A **composite** is a disk, card or CD built from several sources at once: host folders, FAT disk images (or one of
+their partitions) and ISO images, stacked as **layers** (an upper layer's file shadows a lower one's of the same name;
+directories merge). It is described by a descriptor, `<name>.ucompose.yaml` (YAML or JSON), and goes into a slot like
+any file. The sources are only read: the guest's writes stay in the session until you save them.
+
+```yaml
+version: 1
+target: {fs: auto, free: 64MiB}          # kind block|optical, fs auto|fat16|fat32|iso9660, build auto|rebuild|graft,
+                                         # size, label, codepage, partition mbr|none, fixedTime (Unix seconds or
+                                         # ISO 8601: 2026-01-01T12:00:00Z), onBadName skip|replace,
+                                         # iso: {level, joliet}
+layers:
+  - {name: dss,   source: {image: dss.img}}                # a FAT image (or {image: x.img, partition: 1})
+  - {name: util,  source: {folder: ~/zx/util}, mount: /UTIL}
+  - {name: games, source: {iso: games.iso}, from: /GAMES, mount: /GAMES, exclude: ["*.txt"]}
+writes: {save: delta}                     # what `save` does without a path, on eject / swap with save, and when
+                                         # the emulator closes: delta (<descriptor>.delta), commit, write-back,
+                                         # flat, discard (drop them), ask (the GUI asks; a delta elsewhere)
+                                         # writes: {commit: none}: may commit / write-back write the sources?
+                                         # none (the default: never), all (everything or nothing), partial
+```
+
+| Topic | Rule |
+|---|---|
+| **Build** | `rebuild` lays a new FAT volume out from the merged tree. `graft` keeps a FAT image layer at the bottom as it is (MBR, loaders, system files at their places) and writes the upper layers' files into its free clusters; it needs a FAT image at the bottom. `auto` (the default) grafts when the bottom layer is a FAT image that the slot reads and that has room, else rebuilds and says why. A graft reads only the base directories the upper layers reach (a base of 20 000 files grafts in about 1 ms); the rest is read when asked for (the file counts of `layers`, the layer of a guest change in `media changes`). A base layer with `include` / `exclude` filters is read in full |
+| **CD** | in a CD-ROM drive (or `target.kind: optical`) the layers become one ISO 9660 disc (Joliet names by default), read-only |
+| **Boot code** | the bottom image's MBR code, boot sector code and reserved sectors (the sectors between the MBR and the partition too: the DSS loader) are carried into a rebuilt volume; a bootable ISO keeps its El Torito entries. A `boot:` section names other files (`mbrCode`, `volumeCode`, `reserved`, `eltorito`) |
+| **Partitions** | `partitions:` instead of `layers:` makes a partitioned disk: each entry a passthrough `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft, layers: [...]}}`, 1 MiB aligned, more than four as logical partitions. The first source disk's MBR code is carried (the Profi BIOS runs it) and each boot sector gets its partition's start |
+| **Unsaved writes** | `media changes` lists them as file operations with their layers. `save` without a path writes them to `<descriptor>.delta` (S2) and the medium is clean; the next insert of the same descriptor restores them ("session restored"). A delta written over other sources (a host file changed since) is not applied: the report names the layer, and saving over it needs `force`. A damaged delta is renamed `*.delta.bad`. `save` with a path (or `strategy: flat`) writes one image and the slot then holds it; `export` writes one and leaves the composite as it is |
+| **Sources** | Nothing is written into a composite's sources unless its descriptor says `writes.commit: all` or `partial`; `none` (the default) refuses commit and write-back with the reason (the GUI greys them out). A request's `commit: all \| partial` picks between the two where the descriptor allows a commit. For tests and one-off runs add `writes.save: discard`: the next insert starts clean |
+| **Commit (S3)** | `flatten <slot> --strategy commit` writes a graft's re-encoded sectors, its grafted files and the guest's writes into the base image (raw, HDF, HDI or fixed VHD; not a CHD, and not while another slot uses it). The old sectors go to `<image>.ujournal` first; if the commit is cut short, the next open of the image puts them back. The sectors are streamed in order (a commit holds no list of them in memory, whatever the session's size). Afterwards the slot holds the base image; the descriptor is not changed. A partitioned disk commits each passthrough partition into its image and each graft partition into its base (one journal per file, all written before any sector); a rebuilt partition or the partition table has nowhere to go: `writes.commit: all` refuses the whole commit, `partial` commits the rest and keeps those changes in the session. The slot is then built again over the committed sources |
+| **Write-back (S4)** | `flatten <slot> --strategy write-back` carries the guest's file changes into the folder layers marked `writable: true`: a file of such a layer is rewritten in place, a file of a read-only layer (an image, an ISO, a read-only folder) is copied up into the upper layer (`writes.upper`, else the topmost writable one), new files go where their directory is. A delete follows the owner layer's `onDelete`: `keep` (the default: the host file stays, the path is hidden from the next build through `<descriptor>.whiteout`), `move` (into `deletedFolder`), `trash` (the host's trash: the Recycle Bin on Windows, `~/.Trash` on macOS, the freedesktop.org trash on Linux), `delete`, or `ignore`. Attribute changes (read-only, hidden, system) go to `<descriptor>.attributes` (`RH<TAB>/PATH`; `-` for none), never to the host files, and apply at every build. On a partitioned disk each composed partition is written back into its own layers (the sidecars name the partition: `work:/PATH`); a change on a passthrough partition is a plan error (commit or flatten it instead). A host file changed since the build is a conflict (`onConflict`). The steps are journaled in `<descriptor>.writeback`, and the slot is rebuilt from the layers |
+| **Folder manifests** | A folder layer's `.unreal-media.yaml` applies: `exclude`, `files: {host name: {name: ...}}` (the file's name on the disk; a write-back still writes its host file) and `order` (for the folder's own root). The bottom folder layer's `label` and `codepage` serve the volume when the descriptor sets none. The descriptor wins: a layer's `order: {/: [boot.$c], /GAMES: [elite.trd]}` puts its names first, after the manifest's |
+| **Fragmented sources** | Every contiguous run of a file in an image layer is one extent (16 bytes of memory). A build holding more than `target.extentBudget` extents (else `[MEDIA] ExtentBudget`, 4 M = 64 MiB; 0: no limit) fails with `does-not-fit` and names the most fragmented files: compact the source image, or leave them out |
+| **Names** | A host name FAT cannot hold (a control character or `\ / : * ? " < > \|` in it, over 255 characters) is left out and reported by default (`onBadName: skip`); `onBadName: replace` keeps the file: the characters become `_`, a long name is cut before its extension, a name a sibling has gets `~2`, and the report says what it became. Short 8.3 names are always made (`~1` tails) |
+| **Leaving the slot** | An eject or swap with `save`, and the emulator closing (the application exits, the machine is recreated), save the writes as `writes.save` says (`delta` by default; `discard` drops them; `ask` saves a delta, the GUI's eject asks first). A `commit` or `write-back` that fails keeps them as a session delta instead, with the reason in the report; `strict: true` on the eject refuses instead. The eject's own `strategy` wins over the descriptor |
+| **Closing with unsaved changes** | `list` / `info` give each dirty medium's `onRelease`: what closing the emulator does with its changes (`delta`, `commit`, `write-back`, `discard`, `ask`; other media `journal` or `lost`). The desktop app marks its title (`*`) while any medium has unsaved changes, and on close (or a ZX-Poly switch) asks only about `ask` composites (the strategy dialog) and media whose changes would be lost (Save... / Close Without Saving / Cancel); the rest go by their policy. Other front ends: the `NC_MEDIA_DIRTY` / `NC_MEDIA_CLEAN` notifications (each names its `emulatorId` and the `volumeId`, the same id `list` / `info` show as 16 hex digits), and `MediaManager::Unsaved()` before they close |
+| **Rescan** | `rescan` builds the composite again from its sources. When they give the same volume (the same content id) nothing happens and the unsaved writes stay. Otherwise unsaved writes need `save` (by the policy; a commit or write-back changes the sources first, then the rebuild sees them), `export <path>` or `discard`; a delta saved there is not applied to the rebuilt volume, it was written over other sources |
+
+### Which file system a slot takes
+
+A slot's file-system rule applies to folders, composites and images alike: a volume of another type is refused with
+the reason, never built or mounted silently. `fs: auto` picks the slot's default. An image with several FAT partitions
+is refused only when the slot reads none of them; a partition it cannot read is named in the insert report (the guest
+will not see it).
+
+| Slot | File systems | Why |
+|---|---|---|
+| Sprinter IDE hard disks (`ide0.*`, `ide1.*`) | FAT12 / FAT16 only | Estex DSS reads no FAT32 |
+| Profi IDE hard disks (`ide0.*`) | FAT12 / FAT16 only | PQ-DOS 2023-09 boots from FAT16 and ignores a FAT32 partition (checked 2026-10-06) |
+| TS-Conf SD card (`sd.zc`) | FAT32 only | TS-BIOS and Wild Commander mount FAT32 |
+| ZX-Evo SD card, the other IDE boards, NeoGS SD, ZX Next | FAT16 (default) and FAT32 | their drivers read both |
+| CD-ROM drives | ISO 9660 | a composite there is always an ISO |
+
+Where an MBR is needed and where it must not be (an IDE disk on ZX-Evo vs. an SD card on TS-Conf) is in
+[machine-boot-requirements.md](../hardware/machine-boot-requirements.md#common-pitfalls). Design and as-built notes:
+`docs/inprogress/2026-10-05-media-multisource/` (the phase documents in `phases/`); recipes:
+[.recipe/media/use-media-slots.md](../../.recipe/media/use-media-slots.md).
+
 ## Model switch
 
 A model switch (Qt **Machine** menu, WebAPI `POST /emulator/{id}/model`, CLI `model <name>`, MCP
@@ -305,7 +450,7 @@ Every surface returns the same fields:
 | `unknown-format` | 400 | not a format this slot takes |
 | `does-not-fit` | 400 | the folder does not fit the medium |
 | `dirty` | 409 | unsaved writes: add `save`, `export` or `discard` |
-| `recording` | 409 | a TTD recording runs: stop it, or `end_recording` |
+| `recording` | 409 | TTD v1 only: a TTD recording runs: stop it, or `end_recording` |
 | `in-use` | 409 | the same file is in another slot (only read-only media can share) |
 | `io-error` | 500 | host I/O failed |
 | `not-supported` | 501 | a valid request this build cannot do yet |
@@ -339,6 +484,57 @@ NeoGS card:
   several targets: name the slot (media insert <slot> <path>)
 ```
 
+### Saving in another format
+
+`export` writes a copy in the format the path's extension names, the medium keeping its own file and its unsaved
+writes (the deck's catalogue action `media.export` picks the path itself: next to the medium's file with the new
+extension, or `<user data>/exports/<slot>-<time>.<ext>` for a blank disk or a folder).
+
+| Medium | Extensions | Refused when |
+|---|---|---|
+| floppy | `trd`, `scl` (TR-DOS: 16 x 256-byte sectors), `udi` (any track layout, lossless), `fdi`, `dsk` (+3 / CPC), `td0`, `mgt` / `img` (+D: 10 x 512), `img` / `ima` (a PC floppy: 9 / 18 x 512 on 80 x 2), `hfe`, `scp` (flux) | the layout does not fit the format: the answer says why (`udi` takes everything) |
+| tape | `tzx` (every block), `tap` (ROM-standard byte blocks only) | a `.tap` of a tape with turbo, pure-tone or direct-recording blocks: save it as `.tzx` |
+
+### Recent files
+
+The emulator keeps the files opened lately, ten per kind, newest first: `snapshot`, `tape`, `disk`, `rzx`, `image`
+(hard disk and card images), `cd` (`RecentFiles`, `core/src/emulator/media/recentfiles.h`). A file is noted when it
+opened: a snapshot or RZX load, a tape or disk load (File > Open, drag and drop, `media.open`, `tape load`, `disk
+insert`), a media `insert` / `swap` of a file or a folder on any surface. Opening one again moves it to the front.
+unreal-qt keeps the list in `<user data>/recent-files.json` (File > Recent Files); headless tools keep it in memory.
+
+| Surface | List | Clear | Open |
+|---|---|---|---|
+| CLI | `recent [kind] [--json]` | `recent clear [kind]` | `action run media.open_recent index=N [kind=K]` |
+| WebAPI | `GET /api/v1/recent[?kind=]` | `DELETE /api/v1/recent[?kind=]` | `POST /api/v1/controllers/actions/media.open_recent {"params": {"index": 0, "kind": "tape"}}` |
+| WebSocket | the `call` of the GET; topic `media.recent` | the `call` of the DELETE | the action `call`, or `{"op":"action","id":"media.open_recent",...}` on the `surface` topic |
+| MCP | `media` action `recent` (`kind`) | `media` action `recent_clear` | `actions` action `run`, id `media.open_recent` |
+| Lua | `recent_files([kind])` | `recent_clear([kind])` | `action("media.open_recent", nil, {index = 0, kind = "tape"})` |
+| Python | `unreal_emulator.recent_files(kind="all")` | `recent_clear(kind="all")` | `emu.action("media.open_recent", index=0, kind="tape")` |
+| Qt | File > Recent Files | File > Recent Files > Clear Recent Files | the menu entry |
+
+The list: `{revision, kinds: {snapshot: [{index, kind, name, path, time}], tape: [...], ...}, all: [...]}` (with a
+kind: `{revision, kind, files: [...]}`); `index` is the entry's place in that list, the one `media.open_recent` takes
+(with the same `kind`, or `all`). The readout `media.recent` (a deck key's label) is the same value.
+
+### The deck's actions
+
+The catalogue actions over these verbs (a Stream Deck key, a pad, any plane's `action run`; control surfaces
+[actions.md §1.1](../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)):
+
+| Action | Params | Over |
+|---|---|---|
+| `media.open` | `path`, `kind?`, `drive?`, `autostart?`, `switch_model?` | a snapshot, tape or disk load |
+| `media.insert` | `drive` (a slot selector, or `auto`), `path`, `wp?`, `access?`, `save?` / `discard?` / `export?` | `insert` |
+| `media.swap` | `drive`, `with` (another drive: the two exchange their disks, write protect included; a disk with unsaved writes needs `save` or `discard`, a blank one a file first) or `path` (`swap`) | `eject` + `insert`, or `swap` |
+| `media.eject`, `media.protect`, `media.save` | `drive`, ... | `eject`, `protect` (flips), `save` |
+| `media.create` | `drive`, `format?` (`auto`, `trdos`, `plus3`, `unformatted`), `cylinders?`, `sides?`, `size?` (IDE / SD: bytes or `64M`, `2G`) | `create` |
+| `media.export` | `drive`, `format` (an extension of the table above) or `path`, `force?` | `export` |
+| `media.discard`, `media.rescan` | `drive` (`rescan`: `save?` / `discard?`) | `discard`, `rescan` |
+| `media.open_recent` | `index?` (0), `kind?` (`all`), `autostart?`, `drive?` | the recent list, then the load the kind takes (an RZX plays, an image goes where `insert auto` puts it) |
+
+The readout `media.disk` shows each drive's `dirty` flag (unsaved writes) beside its name, protect and motor.
+
 ## On each surface
 
 ### WebAPI
@@ -356,10 +552,18 @@ curl -s -X POST $BASE/emulator/$ID/media/A/swap -H 'Content-Type: application/js
 curl -s -X POST $BASE/emulator/$ID/media/C/insert -F "file=@game.trd"   # upload (up to 1 MB)
 curl -s -X POST $BASE/emulator/$ID/media/cd/insert -H 'Content-Type: application/json' \
      -d '{"path":"/home/me/music/album","format":"audio-cd"}'          # report: the tracks; info: medium.disc
+curl -s $BASE/emulator/$ID/media/hd/volumes                          # the file systems on the disk
+curl -s "$BASE/emulator/$ID/media/A/files?path=SHELL&recursive=true"  # a directory's entries
+curl -s "$BASE/emulator/$ID/media/hd/read?volume=p1&path=AUTOEXEC.BAT&raw=true" -o autoexec.bat
+curl -s -X POST "$BASE/emulator/$ID/media/A/write?path=PROG.C&start=0x8000" \
+     -H 'Content-Type: application/octet-stream' --data-binary @prog.bin  # a file onto the TR-DOS disk
 ```
 
 `POST /media/{slot}/{verb}` takes the options in the JSON body or the query string; the HTTP
-status follows the error table. OpenAPI: tag **Media**.
+status follows the error table. The read-only verbs `volumes`, `files` and `read` also answer
+`GET /media/{slot}/{verb}` (`path`, `volume`, `recursive`, `out` in the query); `read` with
+`raw=true` answers the file itself as `application/octet-stream`. `write` also takes the file as the body
+itself (`application/octet-stream`, `?path=NAME.T`). OpenAPI: tag **Media**.
 
 ### CLI
 
@@ -372,6 +576,10 @@ media swap A /games/elite-2.trd --save
 media eject B --export /tmp/b-saved.trd
 media info sd --json
 media targets /discs/dna_nemo.iso
+media volumes hd
+media files A SHELL --recursive
+media read hd AUTOEXEC.BAT --volume p1 --out /tmp/autoexec.bat
+media write A PROG.C --in prog.bin --start #8000
 media help
 ```
 
@@ -383,6 +591,8 @@ One tool, `media`, with `action` and the same argument names:
 {"action": "insert", "slot": "auto", "path": "/games/dizzy.trd"}
 {"action": "swap", "slot": "A", "path": "/games/elite-2.trd", "save": true}
 {"action": "list"}
+{"action": "files", "slot": "A", "path": "SHELL", "recursive": true}
+{"action": "read", "slot": "hd", "path": "AUTOEXEC.BAT", "volume": "p1"}
 {"action": "targets", "path": "/cards/nedoos.img"}
 {"action": "insert", "slot": "cd", "path": "/home/me/music/album", "format": "audio-cd"}
 ```
@@ -414,9 +624,9 @@ Each method returns the result as a dict.
 
 ### Qt
 
-**Tools → Media** (Ctrl+4) shows the slots in a table. Insert a file or a folder into the
+**Tools → Media** shows the slots in a table. Insert a file or a folder into the
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
-medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
+medium. When a dirty medium would leave, the panel asks Save / Export / Discard. On a composite, Save opens the strategy dialog (one image, keep the session, commit into the base image, write back into the folders; the ones that do not apply are greyed out with the reason, the descriptor's `writes.save` preselected, Preview shows a commit or write-back plan), and so does Save in the unsaved-changes question; Layers... lists its layers, partitions and the guest's changes. A row whose slot
 cannot take the dropped file says why and inserts nothing. **Insert Folder** into a CD-ROM drive
 builds an audio CD of the folder's MP3 / FLAC / WAV files (off the UI thread, with progress - a folder
 dropped on the main window or opened with File > Open goes through the same worker); into an

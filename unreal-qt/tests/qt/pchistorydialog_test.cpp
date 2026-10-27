@@ -28,7 +28,7 @@ TEST(PcHistoryDialog_Test, OpenStartsRefreshListsStopEnds)
         context->pMemory->DirectWriteToZ80Memory(a, 0x00);  // NOPs
     context->pCore->GetZ80()->pc = 0x8000;
 
-    PcHistoryDialog dialog(emulator.get());
+    PcHistoryDialog dialog(emulator);
     PcHistory* history = context->pDebugManager->GetPcHistory();
     EXPECT_TRUE(history->IsArmed()) << "opening the dialog starts the recording";
     emulator->RunSingleCPUCycle(true);

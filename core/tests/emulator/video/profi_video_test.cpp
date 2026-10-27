@@ -116,7 +116,7 @@ protected:
 
     uint32_t PaletteColor(uint8_t index) const
     {
-        return PaletteABGR(_context->emulatorState.profiPalette[index & 0x0F]);
+        return PaletteABGR(_context->emulatorState.profi.palette[index & 0x0F]);
     }
 
     uint8_t* HiresPixelPage()
@@ -551,7 +551,7 @@ TEST_F(ProfiVideo_Test, Hires_BorderInvertedPaletteIndex_AllFourEdges)
     // same cycle and re-latches the DATA byte - pass 0x0A to keep border 2
     WritePort(0x00FE, 0x0A);
     WritePort(0x1F7E, 0x0A);  // colour = ~0x1F = 0xE0 -> entry 0x1C0: pure green
-    ASSERT_EQ(State().profiPalette[5], 0x1C0);
+    ASSERT_EQ(State().profi.palette[5], 0x1C0);
     const uint32_t green = PaletteABGR(0x1C0);  // 0xFF00FF00 (ABGR: G = 255)
 
     auto& fb = Screen()->GetFramebufferDescriptor();
@@ -610,7 +610,7 @@ TEST_F(ProfiVideo_Test, Hires_Palette9BitEncoding_ThroughRealPortWrites)
     // colour = ~0xE2 = 0x1D -> entry = 0x1D << 1 | 0 = 0x3A: G=0, R=7 (255), B=2 (72)
     WritePort(0x00FE, 0x05);
     WritePort(0xE27E, 0x00);
-    ASSERT_EQ(State().profiPalette[0x0A], 0x3A);
+    ASSERT_EQ(State().profi.palette[0x0A], 0x3A);
 
     for (uint32_t t = 0; t < 8; ++t)
         Screen()->Draw(HiresPaperT(0, t));
@@ -623,7 +623,7 @@ TEST_F(ProfiVideo_Test, Hires_Palette9BitEncoding_ThroughRealPortWrites)
     // Same index rewritten with #FE bit 7 set: entry 0x3B adds the blue LSB -> B=3 (109)
     WritePort(0x00FE, 0x85);
     WritePort(0xE27E, 0x00);
-    ASSERT_EQ(State().profiPalette[0x0A], 0x3B);
+    ASSERT_EQ(State().profi.palette[0x0A], 0x3B);
 
     for (uint32_t t = 0; t < 8; ++t)
         Screen()->Draw(HiresPaperT(0, t));

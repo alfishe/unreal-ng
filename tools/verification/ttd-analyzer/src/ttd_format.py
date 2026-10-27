@@ -74,8 +74,15 @@ MAGIC = b"TTDD"
 # The format has not shipped, so it is amended in place rather than versioned.
 # model_ram_pages is u16 (it was u8 until a 4 MB machine's 256 pages were found
 # to truncate to 0). Sessions recorded before that amendment do not parse.
-SCHEMA_VERSION = 1
+#
+# Schema 3: the header's peripheral mask (and the not-recorded mask, flag
+# 0x0800) are word lists - u8 count, u64 words - instead of one u64 each, so
+# any u8 peripheral id fits. Schema 1 files are still read.
+SCHEMA_VERSION = 3
+MIN_SUPPORTED_SCHEMA_VERSION = 1
 MAX_SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION
+SUPPORTED_SCHEMA_VERSIONS = (1, 3)
+FLAGS_HAS_NOT_RECORDED_MASK = 0x0800
 FLAGS_LITTLE_ENDIAN = 0x0001
 FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
 FLAGS_HAS_BOOKMARKS = 0x0008  # advisory bookmarks section follows the coverage index
@@ -840,7 +847,7 @@ def parse_header(r: _Reader) -> Header:
         )
 
     schema_version = r.u16()
-    if schema_version != SCHEMA_VERSION:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         raise TtdFormatError(
             f"file is schema v{schema_version}, this parser supports up to "
             f"v{MAX_SUPPORTED_SCHEMA_VERSION}. Regenerate the analyzer from "
@@ -871,7 +878,20 @@ def parse_header(r: _Reader) -> Header:
     session_end_frame = r.u64()
     page_store_count = r.u32()
     checkpoint_count = r.u32()
-    r.take(8)  # reserved
+    # Peripheral mask: one u64 in schema 1, a word list (u8 count, u64 words)
+    # from schema 3; the not-recorded mask follows when flag 0x0800 is set
+    def _mask() -> int:
+        if schema_version < 3:
+            return r.u64()
+        words = r.u8()
+        value = 0
+        for w in range(words):
+            value |= r.u64() << (64 * w)
+        return value
+
+    _mask()  # peripheral mask: not kept on the header record
+    if flags & FLAGS_HAS_NOT_RECORDED_MASK:
+        _mask()
 
     return Header(
         magic=magic,
@@ -1496,6 +1516,11 @@ def decode_journal_block(block: JournalBlock, payload: bytes) -> List[WriteRecor
     page_start = value_start + count
     io_start = page_start + count
     end = io_start + (count + 7) // 8
+    # An optional page-high column (bit 8 of the page: a page of another memory space, the Sprinter's video or fast
+    # RAM) follows the I/O bits in a block that has such a record
+    high_start = end if end + (count + 7) // 8 == len(raw) else None
+    if high_start is not None:
+        end += (count + 7) // 8
     if end != len(raw):
         raise TtdFormatError(
             f"journal block: columns for {count} records need {end} bytes, "
@@ -1514,7 +1539,8 @@ def decode_journal_block(block: JournalBlock, payload: bytes) -> List[WriteRecor
             is_io=bool((raw[io_start + i // 8] >> (i & 7)) & 1),
             m1pc=raw[m1pc_start + 2 * i] | (raw[m1pc_start + 2 * i + 1] << 8),
             value=raw[value_start + i],
-            phys_page=raw[page_start + i],
+            phys_page=raw[page_start + i] | (
+                ((raw[high_start + i // 8] >> (i & 7)) & 1) << 8 if high_start is not None else 0),
         ))
     if gt_pos != addr_start:
         raise TtdFormatError(

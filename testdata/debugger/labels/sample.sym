@@ -1,0 +1,6 @@
+; simple symbols
+1000 START
+1003 LOOP (data) ; loop
+ABCD MIX (bss)
+FFFF TOP
+GGGG BAD

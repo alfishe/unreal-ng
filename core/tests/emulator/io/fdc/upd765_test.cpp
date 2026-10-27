@@ -14,7 +14,7 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/media/mediamanager.h"
 
@@ -717,7 +717,7 @@ TEST_F(UPD765Media_Test, WritesAreBarriersOncePerFrame)
 {
     ASSERT_FALSE(HasFatalFailure());
     MediaManager& manager = *_context->pMediaManager;
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     const size_t before = ttd->GetExternalEvents().Size();
 

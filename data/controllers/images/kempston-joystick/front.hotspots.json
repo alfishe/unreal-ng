@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "family": "kempston-joystick",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "fire",
+      "label": "Fire",
+      "shape": {
+        "rect": [
+          632,
+          484,
+          194,
+          108
+        ]
+      },
+      "anchor": [
+        729,
+        538
+      ],
+      "callout": "left",
+      "order": 0
+    },
+    {
+      "control": "fire2",
+      "label": "Fire 2",
+      "shape": {
+        "rect": [
+          1222,
+          484,
+          194,
+          108
+        ]
+      },
+      "anchor": [
+        1319,
+        538
+      ],
+      "callout": "right",
+      "order": 1
+    },
+    {
+      "control": "up",
+      "label": "Up",
+      "shape": {
+        "circle": [
+          1024,
+          188,
+          47
+        ]
+      },
+      "anchor": [
+        1024,
+        188
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 2
+    },
+    {
+      "control": "down",
+      "label": "Down",
+      "shape": {
+        "circle": [
+          1024,
+          577,
+          47
+        ]
+      },
+      "anchor": [
+        1024,
+        577
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 3
+    },
+    {
+      "control": "left",
+      "label": "Left",
+      "shape": {
+        "circle": [
+          815,
+          383,
+          47
+        ]
+      },
+      "anchor": [
+        815,
+        383
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 4
+    },
+    {
+      "control": "right",
+      "label": "Right",
+      "shape": {
+        "circle": [
+          1233,
+          383,
+          47
+        ]
+      },
+      "anchor": [
+        1233,
+        383
+      ],
+      "callout": "right",
+      "group": "directions",
+      "order": 5
+    }
+  ]
+}

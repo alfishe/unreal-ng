@@ -14,6 +14,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
@@ -63,7 +64,7 @@ MainLoop::~MainLoop()
 //
 // Main emulator loop. Processes all events and executes CPU and video cycles
 //
-void MainLoop::Run(volatile bool& stopRequested)
+void MainLoop::Run(const std::atomic<bool>& stopRequested)
 {
     if (_cpu == nullptr || _context == nullptr)
     {
@@ -75,12 +76,23 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = true;
     _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
+    // The execution arbiter decides when this loop executes. It counted the loop as parked until now: the first
+    // park check lets it run, or holds it (a pause that landed during startup, a command being served)
+    Emulator* const emulator = _context->pEmulator;
+    execution::ExecutionArbiter* const arbiter = emulator ? &emulator->GetArbiter() : nullptr;
+    if (arbiter)
+    {
+        arbiter->AttachMainLoop();
+        Park(emulator, arbiter);
+    }
+
     // Real-time scheduling for the audio producer: only the ACTIVE instance's
     // thread is elevated (EmulatorManager maintains _realtimeRequested), so a
     // bank of headless instances never competes with the audible one. Windows
     // previously did this unconditionally with ABOVE_NORMAL - the same policy
     // now lives in ThreadHelper, applied to every platform and gated here
     UpdateRealtimeScheduling();
+    _emulationStats.Restart();
 
     /// region <Info logging>
     uint64_t lastRun = 0;
@@ -110,7 +122,17 @@ void MainLoop::Run(volatile bool& stopRequested)
                              .count();
         }
 
+        if (emulator)
+            emulator->DriverEnter();
+        const uint64_t frameStartUs = EmulationStatsMeter::NowUs();
         [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+        if (emulator)
+            emulator->DriverLeave();
+        // The monitoring planes' pace (emulator.stats): a few integer operations, no lock
+        _emulationStats.OnFrame(frameStartUs, duration1, _context->config.frame_duration_us,
+                                _state->next_z80_frequency_multiplier,
+                                {_cpu->GetZ80()->interruptsAccepted, _state->tstates_halted_total,
+                                 _state->tstates_frame_total, _state->frame_counter, _state->t_states});
 
         if (audioDiag)
         {
@@ -142,62 +164,17 @@ void MainLoop::Run(volatile bool& stopRequested)
             RunFrameTasks();
 
         /// region <Handle Pause>
-        // Check if Emulator has requested pause (Emulator is single source of truth)
-        Emulator* emulator = _context->pEmulator;
-        if (emulator && emulator->IsPaused())
+        // The arbiter asks the loop to park: a pause, or a command (media, TTD work, a silent pause) that needs the
+        // CPU still. The park serves posted commands and returns when the machine may run again (false: stop - the
+        // loop head sees the stop request, which Stop() sets before it wakes the park).
+        // The next frame keeps its deadline below: skipping the wait after a park ran one frame early per park - a
+        // client holding the CPU a few times a second (a TTD read while recording) sped the machine up by as many
+        // frames a second and upset the audio ring's balance. A long park (a pause) re-anchors there
+        if (arbiter && arbiter->ShouldYield())
         {
-            MLOGINFO("Pause requested");
-
-            // Status reads while paused take the published TTD summary: make
-            // it exact before anyone can see this thread parked
-            if (_context->pTimeTravelManager)
-                _context->pTimeTravelManager->OnMachineParking();
-
-            emulator->NoteDebugChange();   // a stop the debugger snapshot's seq counts
-
-            // Signal that we've entered paused state
-            {
-                std::lock_guard<std::mutex> lock(_pauseMutex);
-                _isPausedConfirmed.store(true, std::memory_order_release);
-            }
-            _pauseCV.notify_all();  // Wake up any thread waiting for pause confirmation
-
-            while (emulator->IsPaused())
-            {
-                // React on stop request while paused
-                if (stopRequested)
-                {
-                    MLOGINFO("Stop requested while paused");
-                    break;  // Exit pause loop
-                }
-
-                // Re-confirm on EVERY park iteration (same rule as
-                // Emulator::WaitWhilePaused): a Resume() -> Pause() flip-flop
-                // inside one wait window invalidates the confirmation
-                // (InvalidatePauseConfirmation) while this loop never leaves
-                // the park - without re-confirming, every
-                // WaitForPauseConfirmation() caller burned its full timeout
-                // against a thread that was in fact parked
-                if (!_isPausedConfirmed.load(std::memory_order_acquire))
-                {
-                    {
-                        std::lock_guard<std::mutex> confirmLock(_pauseMutex);
-                        _isPausedConfirmed.store(true, std::memory_order_release);
-                    }
-                    _pauseCV.notify_all();
-                }
-
-                // Use condition variable to wait for resume (more responsive than polling)
-                std::unique_lock<std::mutex> lock(_pauseMutex);
-                _pauseCV.wait_for(lock, std::chrono::milliseconds(20), [emulator, &stopRequested]() {
-                    return !emulator->IsPaused() || stopRequested;
-                });
-            }
-
-            // Clear paused confirmation when resuming
-            _isPausedConfirmed.store(false, std::memory_order_release);
-
-            continue;  // Either we'll render next frame or exit main loop via stopRequested check
+            Park(emulator, arbiter);
+            if (stopRequested)
+                continue;
         }
         /// endregion </Handle Pause>
 
@@ -272,7 +249,16 @@ void MainLoop::Run(volatile bool& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
-            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            // A park asked for meanwhile (a snapshot load, a command) is served at once, not after the wait and the
+            // next frame; the wait then goes on to the same deadline
+            const auto parkOrStop = [&stopRequested, arbiter] {
+                return stopRequested.load() || (arbiter && arbiter->ShouldYield());
+            };
+            while (!TimeHelper::WaitUntilPrecise(_nextFrameTime, parkOrStop, arbiter ? &arbiter->LoopWake() : nullptr))
+            {
+                if (stopRequested || !arbiter || !Park(emulator, arbiter) || stopRequested)
+                    break;
+            }
         }
         else
         {
@@ -293,7 +279,28 @@ void MainLoop::Run(volatile bool& stopRequested)
         _realtimeApplied = false;
     }
 
+    if (arbiter)
+        arbiter->DetachMainLoop();
     _isRunning = false;
+}
+
+bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
+{
+    // Status reads while parked take the published TTD summary: make it exact before anyone can see this thread
+    // parked
+    if (_context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnMachineParking();
+    // Observers of a parked machine read the device cores in step with the CPU
+    if (_soundManager)
+        _soundManager->catchUpDeferredCores();
+    if (emulator->IsPaused())
+    {
+        emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts
+        // Nothing plays while paused: cleared here, on the thread that renders the sound (Emulator::OnIntentEdge)
+        if (_soundManager)
+            _soundManager->onEmulatorPaused();
+    }
+    return arbiter->LoopWait();
 }
 
 void MainLoop::UpdateRealtimeScheduling()
@@ -370,50 +377,22 @@ void MainLoop::RunFrameTasks()
 
 bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
 {
-    // Fast path: not running at all means no frame can be mid-flight
+    // Not running at all: no frame can be mid-flight
     if (!_isRunning)
         return true;
-
-    // Called from the emulation thread itself (e.g. breakpoint handler pausing
-    // mid-frame): no frame can be executing concurrently with the caller, and
-    // waiting here would only stall until the timeout. Return immediately.
-    if (_runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id())
-        return true;
-
-    std::unique_lock<std::mutex> lock(_pauseMutex);
-    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeoutMs),
-                             [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
+    Emulator* emulator = _context->pEmulator;
+    return !emulator || emulator->WaitForPauseConfirmation(timeoutMs);
 }
 
-void MainLoop::ConfirmPauseFromCpu()
+bool MainLoop::IsPauseConfirmed() const
 {
-    // Mirror of the park-entry confirm in Run()'s pause loop (same mutex/CV
-    // pair), issued by the CPU thread when it parks INSIDE a frame via
-    // Emulator::WaitWhilePaused() - Run()'s own confirm is unreachable above
-    // that park, so without this every WaitForPauseConfirmation() caller
-    // would burn its full timeout while the CPU is in fact safely parked.
-    {
-        std::lock_guard<std::mutex> lock(_pauseMutex);
-        _isPausedConfirmed.store(true, std::memory_order_release);
-    }
-    _pauseCV.notify_all();  // Wake threads waiting for the pause confirmation
-}
-
-void MainLoop::InvalidatePauseConfirmation()
-{
-    // Eager drop of a confirmation from a park we are exiting (Resume/Stop).
-    // The Run() loop clears its own flag only after its parked wait wakes
-    // (up to its 20 ms poll quantum); until then a new Pause() could consume
-    // the stale "parked" confirmation and return with the emulation thread
-    // already running the next frame - two Z80 drivers at once.
-    std::lock_guard<std::mutex> lock(_pauseMutex);
-    _isPausedConfirmed.store(false, std::memory_order_release);
+    Emulator* emulator = _context->pEmulator;
+    return !emulator || emulator->GetArbiter().IsParked();
 }
 
 void MainLoop::Stop()
 {
     _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)
-    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()
@@ -447,8 +426,9 @@ void MainLoop::RunFrame()
     // of a skipped frame. The screen-side flag covers ALL DrawPeriod entries
     // in one place - including Screen::SetBorderColor's own UpdateScreen call,
     // which border-striping loaders reach thousands of times per frame. It is
-    // cleared again before frame end, so batch render, framebuffer latch and
-    // any manual debug stepping while paused are never affected.
+    // cleared again before frame end, so batch render and framebuffer latch
+    // are never affected; OnFrameStart sets it for every frame, so a direct
+    // run after a pause inside this cycle skips at most the rest of the frame.
     _screen->SetTurboRenderSkip(!_renderThisFrame);
 
     ExecuteCPUFrameCycle();
@@ -512,17 +492,20 @@ void MainLoop::CompleteFrame()
     // before the frame's checkpoint (technical design §3)
     if (_context->pMediaManager)
         _context->pMediaManager->ApplyPending();
+    // Connector plugs made while TTD records land here too: the checkpoint holds them
+    if (_context->pControllerManager)
+        _context->pControllerManager->ApplyPending();
 
     // The network devices' own boundary work (timers, a serial peer's flush, a dialed link's connect) belongs to the
     // state the checkpoint holds; the host's answers to them are journaled input and come after it (below)
     if (_context->pCore)
         _context->pCore->OnNetworkFrameDevices();
 
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
         try
         {
-            _context->pTimeTravelManager->OnFrameBoundary();
+            _context->pTimeTravelHooks->OnFrameBoundary();
         }
         catch (const std::exception& e)
         {
@@ -554,6 +537,10 @@ void MainLoop::CompleteFrame()
     {
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
+
+    // Host controllers: the frame's sample of every connector the host drives (journaled input, after the checkpoint)
+    if (_context->pControllerManager)
+        _context->pControllerManager->OnFrame(_state->frame_counter);
 
     // Network adapters: the virtual network's own answers, then the host's
     // (journaled like the input above: after the checkpoint)
@@ -612,12 +599,23 @@ void MainLoop::OnFrameStart()
         _renderThisFrame = !config.turbo_mode || recording ||
                            (_state->frame_counter % _turboRenderDecimation == 0);
 
+        // The screen-side skip follows this frame's decision on every frame start, not only around RunFrame's CPU
+        // cycle: a pause parks the loop inside that cycle, so a skipped turbo frame left the flag set, and the direct
+        // runs that follow (run_frames, steps) drew nothing at all - every later frame was latched with the old
+        // pixels until the machine ran free again
+        _screen->SetTurboRenderSkip(!_renderThisFrame);
+
         // A rendered frame after skipped ones starts with a stale _prevTstate
         // (InitFrame does not reset it). DrawPeriod would self-heal through
         // the wrap-adjust + bounds check but lose the frame's first t-states;
         // resetting the tracker makes the rendered frame complete from t=0.
         if (_renderThisFrame && !_lastFrameRendered)
             _screen->ResetPrevTstate();
+
+        // A screen that catches up on its own events is not drawn after every step, only on the frame's last
+        const bool onEvents = _screen->CatchesUpOnEvents();
+        _stepScreen = _renderThisFrame && !onEvents;
+        _tailScreen = _renderThisFrame && onEvents;
     }
     /// endregion </Turbo render decimation>
 
@@ -643,9 +641,15 @@ void MainLoop::OnCPUStep()
 
     // Turbo render decimation: skipped frames bypass contingent rendering.
     // Everything below still runs on every CPU step in every mode.
-    if (_renderThisFrame)
-    {
+    if (_stepScreen) [[likely]]
         _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+    else if (_tailScreen)
+    {
+        const Z80* cpu = _context->pCore->GetZ80();
+        if (cpu->IsFrameComplete())
+            _context->pScreen->UpdateScreen();  // the frame's tail (Screen::CatchesUpOnEvents)
+        else
+            _context->pScreen->NoteStepEnd(cpu->t);
     }
 
     _context->pBetaDisk->handleStep();

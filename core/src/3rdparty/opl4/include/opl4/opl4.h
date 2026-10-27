@@ -86,6 +86,9 @@ public:
 
     // Taps (R7). Mute affects the tap sum path only, never chip state.
     void SetChannelMute(ChannelId id, bool mute);
+    // Host gain of one channel / slot in the tap sum, Q15 (32768 = unity: the output is untouched). Render path only,
+    // never chip state; meters (ChannelPeak) see the channel before it
+    void SetChannelGain(ChannelId id, int32_t gainQ15);
     float ChannelPeak(ChannelId id) const;
     size_t ChannelCount(ChannelGroup g) const;
 
@@ -218,11 +221,16 @@ public:
     // output boundaries processed so far.
     uint64_t DebugFmTicks() const;
     uint64_t DebugOutSteps() const;
+    // The silent-chip fast path (on by default; off steps every tick: the
+    // comparison tests), and the FM ticks it stood for so far
+    void SetIdleFastPath(bool on);
+    uint64_t IdleFmTicks() const;
 
 private:
     void SyncTo(uint64_t time); // lazy advance of both grids (§3.2)
     void AdvanceOutputStep();   // one 44100 Hz chip output sample
     void AdvanceFmToOutput();   // reducer consumption (§4.3)
+    bool AdvanceIdle(uint64_t fmTicks, uint64_t outSteps); // both grids at once while silent
 
     struct Impl;
     Impl* _impl;

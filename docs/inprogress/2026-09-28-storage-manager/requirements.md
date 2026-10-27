@@ -94,7 +94,7 @@ without repacking an image.
 
 | ID | Requirement |
 |---|---|
-| FR-40 | TTD never produces a silently wrong replay. TTD v1 is media-agnostic (port-level sessions); the media set is fixed while a recording runs (changes refused, or the recording ended on request); every guest write is a replay barrier; controller state is in the TTD blobs ([integration-ttd-snapshots.md](integration-ttd-snapshots.md)) |
+| FR-40 | TTD never produces a silently wrong replay. TTD v1 is media-agnostic (port-level sessions); the media set is fixed while a recording runs (changes refused, or the recording ended on request); every guest write is a replay barrier; controller state is in the TTD blobs ([integration-ttd-snapshots.md](integration-ttd-snapshots.md)). *2026-10-11, the TTD v2 engine:* a media change while recording is an event of the recording; a seek sets every medium to its recorded version (the media undo log) |
 | FR-41 | The universal snapshot records the media set (source reference, `ContentId`, format, access, change layer at its version); on load mismatches are reported, media are never swapped automatically (roadmap UNS-6) |
 | FR-42 | TTD v2 checkpoints reference media versions, so seeks cross writes (roadmap ST-6) |
 

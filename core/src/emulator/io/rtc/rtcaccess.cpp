@@ -70,10 +70,10 @@ bool Write(EmulatorContext* context, unsigned start, const std::vector<uint8_t>&
             chip->WriteRegister(static_cast<uint8_t>(start + i), bytes[i]);
     };
     if (context->pEmulator)
-        context->pEmulator->EditMemoryFromTool(source, edit);
+        error = context->pEmulator->EditMemoryFromTool(source, edit);   // refused in the recorded past
     else
         edit();
-    return true;
+    return error.empty();
 }
 
 }  // namespace RtcAccess

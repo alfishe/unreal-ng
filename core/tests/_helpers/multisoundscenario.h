@@ -10,8 +10,10 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "emulator/slots/cards/multisound/multisoundbustrace.h"
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
 
 struct MultiSoundCycle
@@ -44,6 +46,16 @@ struct MultiSoundCycle
     uint8_t gsValue = 0;
     uint32_t gsOffset = 0;
 
+    // Annotations of a real-program trace (MultiSoundTraceWriter): what the emulator saw and when. Players ignore them;
+    // the trace tests compare against them
+    bool observed = false;          // in / gin '=XX' (the byte the CPU got from the card) or '=--' (the card did not drive)
+    bool observedDriven = false;
+    uint8_t observedValue = 0xFF;
+    uint32_t repeat = 1;            // '*N': the line stands for N identical consecutive reads (played once)
+    bool timed = false;             // '+D': host ticks (the card axis) since the previous timed line
+    uint64_t time = 0;              // timed lines: the absolute card time (the sum of the deltas from 0)
+    std::string framesBefore;       // 'frame-start' / 'frame-end' lines just before this cycle, in order: 'S' / 'E'
+
     int sourceLine = 0;
 };
 
@@ -51,6 +63,11 @@ struct MultiSoundScenario
 {
     MultiSoundOptions options;      // header directives: dip (initial), mask, ram
     double cpuMHz = 3.5;            // header directive cpu
+    uint64_t frameTicks = 0;        // header directive frame: card-axis ticks per host frame (traces), 0 = not given
+    uint32_t tickRate = 0;          // header directive rate: card-axis ticks per second (traces), 0 = not given
+    std::string trailingFrames;     // 'frame-start' / 'frame-end' lines after the last cycle ('S' / 'E')
+    uint64_t lengthTicks = 0;       // header directive length: the card time the trace covers (traces: the end of the
+                                    // last frame the capture ran), 0 = not given
     std::vector<MultiSoundCycle> cycles;
 };
 
@@ -112,6 +129,86 @@ std::string FormatMultiSoundRecord(const MultiSoundCycleRecord& record);
 std::string FormatMultiSoundDip(const MultiSoundOptions& options);
 uint8_t MultiSoundDipBits(const MultiSoundOptions& options);
 void ApplyMultiSoundDipBits(MultiSoundOptions& options, uint8_t bits);
+
+/// Real-program trace writer (CL-2): receives the card's bus trace (MultiSoundCard::SetBusTrace) and writes it as a
+/// scenario. Host cycles carry their time ('+D', host ticks since the previous timed line) and are preceded by an
+/// 'm1' line whenever the IN / OUT instruction's fetch address changes (the ROM-fetch lock's context); reads carry
+/// what the CPU got ('=XX' / '=--'); 'frame-start' / 'frame-end' lines mark the card's host frame calls (the card replay
+/// makes them there; the cycle players ignore them). To stay small:
+///   - consecutive identical reads without side effects (a polling loop: same port, same instruction, same answer)
+///     collapse into one line with a count ('*N'); #B3 and the GS ports 2, 3, 5, #0A, #0B are never collapsed;
+///   - a GS DAC fetch that does not change its channel's byte is dropped (the CPLD's DAC register keeps its value),
+///     and after `dacFetchBudget` recorded fetches the rest are dropped (a comment line marks the point).
+/// Both the logic player and the RTL testbench play the same filtered sequence, so the comparisons stay exact.
+class MultiSoundTraceWriter : public IMultiSoundBusTrace
+{
+public:
+    struct Stats
+    {
+        uint64_t hostWrites = 0, hostReads = 0, hostReadLines = 0, resets = 0;
+        uint64_t gsPortCycles = 0, gsPortLines = 0;
+        uint64_t dacFetches = 0, dacLines = 0, dacUnchanged = 0, dacOverBudget = 0;
+        uint64_t lines = 0;
+        uint64_t frames = 0;
+        uint32_t longestRun = 0;    // the longest collapsed read run
+    };
+
+    explicit MultiSoundTraceWriter(size_t dacFetchBudget = 4096) : _dacFetchBudget(dacFetchBudget) {}
+
+    void OnMultiSoundBus(const MultiSoundBusEvent& event) override;
+
+    /// A writer attached to a card of a machine that has already started: the start-up the card went through
+    /// untraced - its own power-on reset, the machine's reset at `resetTime`, the first frame start (at 0) - as the
+    /// trace's first lines, so a fresh card replays it the same way. Call right after attaching
+    void StartUp(uint64_t resetTime);
+
+    /// The trace so far: `header` (comment and directive lines, each ending with a newline) and the cycle lines
+    std::string Text(const std::string& header);
+    const Stats& GetStats() const { return _stats; }
+
+private:
+    struct Pending
+    {
+        bool active = false;
+        MultiSoundBusEvent event;
+        uint32_t count = 0;
+        bool collapsible = false;
+    };
+
+    void Flush();
+    void Emit(const MultiSoundBusEvent& event, uint32_t count);
+
+    size_t _dacFetchBudget;
+    std::string _body;
+    Pending _pending;
+    bool _haveM1 = false;
+    uint16_t _m1 = 0;
+    uint64_t _lastTime = 0;
+    int _dacByte[4] = { -1, -1, -1, -1 };
+    bool _budgetNoted = false;
+    Stats _stats;
+};
+
+/// Real-program traces: the RTL records are frozen as an FNV-1a hash chain over every line's record, with the chain's
+/// value after every MultiSoundTraceCheckpoint lines (`<trace>.rtl`, written by the testbench's `mscosim trace`)
+constexpr size_t MultiSoundTraceCheckpoint = 8192;
+
+struct MultiSoundTraceRtl
+{
+    size_t cycles = 0;
+    uint64_t hash = 0;
+    uint64_t reads = 0;         // lines with an observed read
+    uint64_t values = 0;        // of them, the values compared (the card drove, the YM2203 did not answer)
+    std::vector<std::pair<size_t, uint64_t>> checkpoints;   // (lines played, chain value)
+};
+bool ParseMultiSoundTraceRtl(const std::string& text, MultiSoundTraceRtl& rtl);
+
+/// A host read the YM2203 answers (status or register): the testbench's stand-in drives a marker there, so only
+/// "driven" is compared. Ask before the line is played (the logic's state decides)
+bool MultiSoundTraceReadIsYm(const MultiSoundLogic& logic, uint16_t port);
+/// A trace read ('=XX' / '=--') against a record of the same line: driven or not, and the value unless `ymRead`
+bool MultiSoundTraceReadMatches(const MultiSoundCycle& cycle, const MultiSoundCycleRecord& record, bool ymRead,
+                                std::string& why);
 
 /// FNV-1a 64 over the record bytes, chained.
 uint64_t HashMultiSoundRecord(uint64_t hash, const MultiSoundCycleRecord& record);

@@ -496,6 +496,40 @@ void Opl4Pcm::Advance(int32_t& sumLeft, int32_t& sumRight,
     }
 }
 
+bool Opl4Pcm::Idle() const
+{
+    for (const auto& s : _slots)
+    {
+        if (s.state != EgPhase::Off)
+            return false;
+    }
+    return true;
+}
+
+void Opl4Pcm::AdvanceIdle(uint64_t steps, std::array<int32_t, kSlotCount>& monoTaps)
+{
+    if (steps == 0)
+        return;
+    monoTaps.fill(0);
+    // Advance: TL one step toward its destination at egCnt % 27 == 0 (attenuate) and at egCnt % 27 == 9, 18
+    // (brighten), never past it; the LFO counters of the active LFOs turn
+    const uint64_t e0 = _egCnt;
+    const uint64_t e1 = e0 + steps;
+    const uint64_t up = e1 / 27 - e0 / 27;
+    const uint64_t down = (e1 / 9 - e0 / 9) - up;
+    for (auto& s : _slots)
+    {
+        if (s.tl < s.tlDest)
+            s.tl = static_cast<uint8_t>(std::min<uint64_t>(s.tlDest, s.tl + up));
+        else if (s.tl > s.tlDest)
+            s.tl = static_cast<uint8_t>(s.tl - std::min<uint64_t>(s.tl - s.tlDest, down));
+        if (s.lfoActive)
+            s.lfoCnt = static_cast<uint32_t>((s.lfoCnt + static_cast<uint64_t>(kLfoSteps[s.lfo]) * (steps % kLfoPeriod)) &
+                                             (kLfoPeriod - 1));
+    }
+    _egCnt = e1;
+}
+
 void Opl4Pcm::SaveState(uint8_t* dst) const
 {
     // Packed POD layout with explicit sizes — no pointers, no padding

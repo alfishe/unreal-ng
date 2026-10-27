@@ -49,8 +49,14 @@ void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, uint8_t drive, con
         return;
     }
     // A controller without a machine around it (unit tests): the marker alone
-    if (context->pTimeTravelManager)
-        context->pTimeTravelManager->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
+    if (context->pTimeTravelHooks)
+        context->pTimeTravelHooks->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
+}
+
+void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track)
+{
+    if (context && context->pMediaManager && track)
+        context->pMediaManager->BeforeTrackWrite(IdFor(drive), *track);
 }
 
 void FloppyDriveSlot::Attach(Medium& medium)

@@ -4,11 +4,14 @@
 
 #include <gtest/gtest.h>
 
+#include <deque>
 #include <memory>
+#include <vector>
 
 #include "_helpers/fakehostnet.h"
 #include "common/network/dnsmessage.h"
 #include "emulator/io/network/virtualnetwork.h"
+#include "emulator/io/serial/comport.h"
 #include "emulator/io/serial/serialpeer.h"
 
 namespace
@@ -218,6 +221,49 @@ TEST_F(SerialPeer_Test, ModemLinesGoBothWaysWhenEnabled)
     EXPECT_TRUE(p.Dcd());
     EXPECT_FALSE(p.Dsr());
     EXPECT_FALSE(p.Ri());
+}
+
+/// A stream's TTD state past the blob's arrays: more received runs than netstate::kMaxComRuns (every byte its own
+/// record, every other one received before the recording, so not in the journal) and more unsent bytes than
+/// netstate::kMaxComBytes. All of it comes back: references through the journal, the rest from the tail
+TEST_F(SerialPeer_Test, AStreamStateBeyondTheFixedArraysRestoresWhole)
+{
+    StreamPeer p(_net.get(), Spec("TCP:127.0.0.1:2323"));
+    auto journalByte = [](uint32_t source, uint32_t offset) { return static_cast<uint8_t>(source * 31 + offset); };
+    std::deque<StreamPeer::RxByte> rx;
+    for (uint32_t i = 0; i < 3u * netstate::kMaxComRuns; ++i)
+    {
+        const uint32_t source = (i % 2) ? i + 1 : 0;   // odd: journal record i + 1; even: not journaled
+        rx.push_back({source ? journalByte(source, 5) : static_cast<uint8_t>(i ^ 0x5A), source, source ? 5u : 0u});
+    }
+    p.SetReceived(rx);
+    std::vector<uint8_t> unsent(netstate::kMaxComBytes + 1000);
+    for (size_t i = 0; i < unsent.size(); ++i)
+        unsent[i] = static_cast<uint8_t>(i * 13);
+    p.SetUnsent(unsent.data(), unsent.size());
+
+    auto saved = std::make_unique<netstate::Com>();
+    netstate::Tail tail;
+    ComPort::SavePeer(&p, *saved, tail);
+    EXPECT_FALSE(tail.Empty());
+
+    StreamPeer other(_net.get(), Spec("TCP:127.0.0.1:2323"));
+    const ComPort::ByteSource journal = [&](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
+        out.clear();
+        for (uint32_t i = 0; i < length; ++i)
+            out.push_back(journalByte(source, offset + i));
+        return true;
+    };
+    EXPECT_TRUE(ComPort::LoadPeer(&other, *saved, tail, journal));
+    const std::deque<StreamPeer::RxByte>& back = other.Received();
+    ASSERT_EQ(back.size(), rx.size());
+    for (size_t i = 0; i < rx.size(); ++i)
+    {
+        EXPECT_EQ(back[i].value, rx[i].value) << "byte " << i;
+        EXPECT_EQ(back[i].source, rx[i].source) << "byte " << i;
+        EXPECT_EQ(back[i].offset, rx[i].offset) << "byte " << i;
+    }
+    EXPECT_TRUE(other.Unsent() == unsent);
 }
 
 TEST(SerialPeerNoHost_Test, WithoutHostAccessTheLinkNeverComesUp)

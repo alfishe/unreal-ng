@@ -465,6 +465,30 @@ TEST(Chart, SustainPedal)
     CHECK_EQ_I(Report(ts).activeVoices, 0);
 }
 
+// A host panic stops every voice of every part (the pedal holds none), while the controllers, the programs and the
+// parser's running status stay: a running-status note the guest sends after it still plays. The report's key mask
+// names the keys sounding per part
+TEST(Synth, PanicStopsEveryVoiceKeepsTheStream)
+{
+    TestSynth ts(BasicBank());
+    ts.Send(0, {0xB1, 64, 127, 0xC0, 1, 0x90, 60, 100, 64, 100, 0x91, 67, 100});
+    ts.RunTo(320);
+    SynthReport r = Report(ts);
+    CHECK_EQ_I(r.activeVoices, 3);
+    CHECK(r.channels[0].keys[0] == (uint64_t{1} << 60)); // key 60
+    CHECK(r.channels[0].keys[1] == (uint64_t{1} << 0));  // key 64
+    CHECK(r.channels[1].keys[1] == (uint64_t{1} << 3));  // key 67
+    ts.synth.Panic(320);
+    ts.RunTo(320 + 64 + 32);
+    r = Report(ts);
+    CHECK_EQ_I(r.activeVoices, 0);
+    CHECK(r.channels[0].keys[0] == 0 && r.channels[0].keys[1] == 0 && r.channels[1].keys[1] == 0);
+    CHECK_EQ_I(r.channels[0].preset, 1); // the program stays
+    ts.Send(500, {72, 100});              // running status (the last 9n, channel 2) still in force
+    ts.RunTo(800);
+    CHECK_EQ_I(Report(ts).channels[1].activeVoices, 1);
+}
+
 TEST(Chart, AllSoundAndNotesOff)
 {
     TestSynth ts(BasicBank());

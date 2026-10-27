@@ -130,26 +130,6 @@ void SoundChip_AY8910::NoiseGenerator::updateState()
     }
 }
 
-/// Returns LSFR-generated random numbers for noise generator
-/// @return Output from LSFR bit 0
-///
-/// <b>Information:</b>
-/// The Random Number Generator of the 8910 is a 17-bit shift register.
-/// The input to the shift register is bit0 XOR bit3
-/// Bit0 is the output
-/// 17 stage LSFR with 1 tap (3)
-///
-/// See: https://en.wikipedia.org/wiki/Linear-feedback_shift_register
-/// See: https://github.com/floooh/chips/blob/master/chips/ay38910.h
-/// See: https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
-bool SoundChip_AY8910::NoiseGenerator::shiftLSFR()
-{
-    uint32_t tapBit = (_registerLSFR & 1) ^ ((_registerLSFR >> 3) & 1); // Calculate tap (XOR of bits 0 and 3)
-    _registerLSFR = (_registerLSFR >> 1) | (tapBit << 16); // Right-shift the LFSR and insert tap value at the most significant bit
-
-    // Return output bit [0]
-    return _registerLSFR & 1;
-}
 /// endregion </NoiseGenerator>
 
 /// region <EnvelopeGenerator>
@@ -232,6 +212,66 @@ uint8_t SoundChip_AY8910::EnvelopeGenerator::updateState()
     _counter++;
 
     return _out;
+}
+
+void SoundChip_AY8910::EnvelopeGenerator::advance(uint32_t ticks)
+{
+    if (ticks == 0)
+        return;
+    if (_period == 0) [[unlikely]]
+    {
+        // setPeriod never leaves 0; a restored state might: tick by tick as updateState
+        for (uint32_t i = 0; i < ticks; i++)
+            updateState();
+        return;
+    }
+
+    // updateState tests the counter first (a step when it has reached the period: the counter restarts at 0), then
+    // counts: the first step at tick `first`, the next ones `_period` ticks apart
+    const uint32_t first = (_counter >= _period) ? 0 : _period - _counter;
+    if (first >= ticks)
+    {
+        _counter += ticks;
+        return;
+    }
+    uint32_t steps = 1 + (ticks - 1 - first) / _period;
+    const uint32_t last = first + (steps - 1) * _period;
+    _counter = 1 + (ticks - 1 - last);
+
+    // The steps, a segment at a time: a slide runs 32 steps from its start (31 down to -1, or 0 up to 32), the step that
+    // leaves the range turns to the other segment (resetSegment); a hold does not move
+    while (steps > 0)
+    {
+        const EnvelopeHandler handler = _handlers[_shape][_segment];
+        if (handler == &slideDown)
+        {
+            const uint32_t toWrap = static_cast<uint32_t>(_out) + 1;  // the step that takes _out below 0
+            if (steps < toWrap)
+            {
+                _out = static_cast<int8_t>(_out - steps);
+                return;
+            }
+            steps -= toWrap;
+            _segment ^= 1;
+            resetSegment();
+        }
+        else if (handler == &slideUp)
+        {
+            const uint32_t toWrap = 32u - static_cast<uint32_t>(_out);  // the step that takes _out above 31
+            if (steps < toWrap)
+            {
+                _out = static_cast<int8_t>(_out + steps);
+                return;
+            }
+            steps -= toWrap;
+            _segment ^= 1;
+            resetSegment();
+        }
+        else
+        {
+            return;  // holdTop / holdBottom
+        }
+    }
 }
 
 void SoundChip_AY8910::EnvelopeGenerator::resetSegment()
@@ -539,6 +579,8 @@ void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 
     // Track that this chip has been written to (for TurboSound detection)
     _hasBeenWritten = true;
+    if (regAddr == AY_ENVELOPE_SHAPE && _envelopeRestarts < UINT8_MAX)
+        _envelopeRestarts++;
 
     _registers[regAddr] = value;
 

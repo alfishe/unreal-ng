@@ -13,7 +13,9 @@ class SprinterVramRegion final : public IDeviceMemoryRegion
 public:
     explicit SprinterVramRegion(SprinterVideoRam& vram) : _vram(vram) {}
 
-    const char* Name() const override { return "vram"; }
+    const char* Name() const override { return "sprinter.vram"; }
+    const char* Aliases() const override { return "vram"; }
+    const char* TtdRegion() const override { return "sprinter.vram"; }
     const char* Description() const override
     {
         return "Sprinter video RAM, 256 rows of 1024 bytes (offset = row x 1024 + column): columns #000-#2FF "

@@ -77,8 +77,9 @@ packages; pushing a `v*` tag creates a milestone release.
 
 Every package carries its own private Qt (from the cached Qt SDK); all other dependencies
 are vendored and linked statically, so nothing has to be installed on the user's system.
-Release builds disable TLS (`-DTRANTOR_USE_TLS=none -DBUILD_C-ARES=OFF`): the WebAPI
-serves plain HTTP on localhost, so neither OpenSSL nor c-ares is needed.
+The WebAPI serves plain HTTP on localhost and never uses TLS. Release builds also drop
+c-ares (`-DBUILD_C-ARES=OFF`), and `-DUNREAL_HOST_TLS=OFF` builds without OpenSSL at all
+(emulated network devices then cannot open TLS connections).
 
 The DEB package version is the build time, `YYYYMMDD.HHMMSS` UTC; file names stay stable.
 macOS builds use ad-hoc signing without notarization; Windows builds are unsigned.

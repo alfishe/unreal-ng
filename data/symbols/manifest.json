@@ -1,0 +1,126 @@
+{
+  "format": "unreal-symbols-manifest",
+  "version": 1,
+  "note": "Label files for known ROMs: the emulator imports a bundle as a set of origin \"bundle\" (priority 50, below every loaded file) when one of the machine's 16 KB ROM pages has a listed SHA-256. space \"rom\": the matched page; page: only that ROM page is compared; except: names left out.",
+  "bundles": [
+    {
+      "id": "rom:48k",
+      "title": "ZX Spectrum 48K ROM",
+      "file": "48k_rom.map",
+      "match": {
+        "page_sha256": [
+          "d55daa439b673b0e3f5897f99ac37ecb45f974d1862b4dadb85dec34af99cb42"
+        ]
+      },
+      "space": "rom",
+      "note": "48.rom"
+    },
+    {
+      "id": "rom:48k-in-128",
+      "title": "ZX Spectrum 128 ROM 1 (48 BASIC)",
+      "file": "48k_rom.map",
+      "match": {
+        "page_sha256": [
+          "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3",
+          "110020ff7a4e350999777261000442426838cc391be93ba3146abc9477dcc05f"
+        ]
+      },
+      "space": "rom",
+      "except": [
+        "spare"
+      ],
+      "note": "128.rom page 1: the 48K ROM with four patched calls and its spare space #386E-#3CFF filled with 128K code; 48for128.rom (Pentagon, ZX-Evo) differs from it in one byte (#006D)"
+    },
+    {
+      "id": "rom:128k-rom0",
+      "title": "ZX Spectrum 128 ROM 0 (editor)",
+      "file": "128k_rom_relabeled.map",
+      "match": {
+        "page_sha256": [
+          "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425"
+        ]
+      },
+      "space": "rom",
+      "note": "128.rom page 0"
+    },
+    {
+      "id": "rom:128k-rom0-trdos-menu",
+      "title": "ZX Spectrum 128 ROM 0 with TR-DOS in the menu (Pentagon)",
+      "file": "128k_rom_relabeled.map",
+      "match": {
+        "page_sha256": [
+          "633343620691a592c706d18c927fd539b7069a5d0fb7011bcd3bfc94be418681"
+        ]
+      },
+      "space": "rom",
+      "except": [
+        "PRINT_BLACK_SQUARES_LOOP",
+        "TAPE_INPUT_MAIN_LOOP",
+        "CHECK_KEY_PRESSES_TAPE",
+        "SAMPLE_TAPE_PORT"
+      ],
+      "note": "pentagon128k.rom page 0 (also in zxevo.rom): 128.rom page 0 with 65 bytes changed at #2785-#278E, #2817-#281A and #3BEC-#3C1F (the tape test's place holds the TR-DOS entry); the labels in #3BEC-#3C1F left out"
+    },
+    {
+      "id": "sysvars:48k",
+      "title": "ZX Spectrum system variables",
+      "file": "48k_variables.map",
+      "match": {
+        "page_sha256": [
+          "d55daa439b673b0e3f5897f99ac37ecb45f974d1862b4dadb85dec34af99cb42",
+          "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3",
+          "110020ff7a4e350999777261000442426838cc391be93ba3146abc9477dcc05f"
+        ]
+      },
+      "space": "cpu:main"
+    },
+    {
+      "id": "sysvars:128k",
+      "title": "ZX Spectrum 128 system variables",
+      "file": "128k_variables.map",
+      "match": {
+        "page_sha256": [
+          "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425",
+          "633343620691a592c706d18c927fd539b7069a5d0fb7011bcd3bfc94be418681"
+        ]
+      },
+      "space": "cpu:main"
+    },
+    {
+      "id": "rom:sprinter-3.04-p0",
+      "title": "Sprinter BIOS 3.04, ROM page 0 (disk drivers, SETUP stub)",
+      "file": "sprinter/bios304-p0-drivers.map",
+      "match": {
+        "page": 0,
+        "page_sha256": [
+          "2dfc60fee11069e86b96457c133d17acfe626c07b5dd303ffe87711bf488ef07"
+        ]
+      },
+      "note": "sp2k-3.04.rom"
+    },
+    {
+      "id": "rom:sprinter-3.04-p8",
+      "title": "Sprinter BIOS 3.04, ROM page 8 (the BIOS proper, \"EXP\")",
+      "file": "sprinter/bios304-p8-exp.map",
+      "match": {
+        "page": 8,
+        "page_sha256": [
+          "d079c4d77ba25753a185134e5d265df3fd649377925564575206b0dc720781df"
+        ]
+      },
+      "note": "sp2k-3.04.rom"
+    },
+    {
+      "id": "rom:sprinter-3.04-p12",
+      "title": "Sprinter BIOS 3.04, ROM page #C (PLD configuration loader)",
+      "file": "sprinter/bios304-pc-loader.map",
+      "match": {
+        "page": 12,
+        "page_sha256": [
+          "bad3cfd31990ad8d55cda29d6b2ff0a32185832ec5042043fcf15d83127796c4"
+        ]
+      },
+      "note": "sp2k-3.04.rom"
+    }
+  ]
+}

@@ -10,7 +10,7 @@
 
 #include "base/featuremanager.h"
 #include "debugger/media/sectorwrite.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -115,7 +115,7 @@ TEST_F(SectorWrite_Test, Parsers)
 TEST_F(SectorWrite_Test, RecordingMarksTheEdit)
 {
     _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(1, true);

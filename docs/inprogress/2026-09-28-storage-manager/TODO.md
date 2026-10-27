@@ -5,7 +5,9 @@
 FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
 TR-DOS ROM), **M3** (the tape deck in the manager, folders as tapes; ACC-8 on the real ROM), **M4** (the
 media verbs on every surface and the Qt media panel), **M5** (media follow a model switch; ACC-5) and **M6** (IDE and
-CD slots, on master (`f5fc5f05`): [../2026-09-28-ide-atapi/](../2026-09-28-ide-atapi/TODO.md)). H1-H5 not started. PLAN.md row **#58**.
+CD slots, on master (`f5fc5f05`): [../2026-09-28-ide-atapi/](../2026-09-28-ide-atapi/TODO.md)). H1-H5 not started; what TTD needed of them (media heads that go back) is built without them, as the media manager's
+undo log (owner decision 2026-10-10; TTD gaps 11-12). H1-H5 stay for export at a version, file views and the
+tracking API. PLAN.md row **#58**.
 
 ## Documents
 

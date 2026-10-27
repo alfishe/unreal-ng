@@ -82,6 +82,12 @@ public:
 
     bool AnyActive() const;
 
+    // Idle fast path: with every slot off the outputs are 0 and only the
+    // envelope counter, the TL interpolation and the LFO counters move. Then
+    // `steps` Advance calls at once, the state exactly as theirs, taps 0
+    bool Idle() const;
+    void AdvanceIdle(uint64_t steps, std::array<int32_t, kSlotCount>& monoTaps);
+
     // Whole-engine POD save/load (side-effect free save, §9.2).
     void SaveState(uint8_t* dst) const;
     void LoadState(const uint8_t* src);

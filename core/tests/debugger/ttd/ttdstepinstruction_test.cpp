@@ -20,9 +20,10 @@
 #endif
 
 #include "base/featuremanager.h"
+#include "_helpers/ttdwriterecords.h"
 #include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -33,7 +34,7 @@ class TTD_StepInstruction_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -43,7 +44,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -76,13 +77,15 @@ protected:
 // State guards
 // ===========================================================================
 
-TEST_F(TTD_StepInstruction_Test, StepBack_WhileRecording_ReturnsFalse)
+TEST_F(TTD_StepInstruction_Test, StepBack_WhileRecording_PausesTheRecording)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
 
-    // Should be rejected: still recording
-    EXPECT_FALSE(_ttd->StepBackInstruction());
+    // The engine (D8): the step pauses the recording and browses
+    EXPECT_TRUE(_ttd->StepBackInstruction());
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused);
 
     _ttd->StopRecording();
 }
@@ -156,7 +159,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     RunFrames(1);
     _ttd->StopRecording();
 
-    const size_t journalSizeBefore = _ttd->GetWriteJournal()->Size();
+    const size_t journalSizeBefore = ttdtest::WriteRecordCount(*_ttd);
     ASSERT_GT(journalSizeBefore, 0u);
 
     // Serialize
@@ -172,7 +175,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     Emulator* emu2 = new Emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emu2->Init());
     EmulatorContext* ctx2 = emu2->GetContext();
-    ttd::TimeTravelManager* ttd2 = ctx2->pTimeTravelManager;
+    ttd::TimeTravelController* ttd2 = ctx2->pTimeTravelController;
 
     {
         std::ifstream in(tmpfile, std::ios::binary);
@@ -181,7 +184,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     }
 
     // Verify journal was preserved
-    EXPECT_EQ(ttd2->GetWriteJournal()->Size(), journalSizeBefore);
+    EXPECT_EQ(ttdtest::WriteRecordCount(*ttd2), journalSizeBefore);
 
     // Verify checkpoint count
     EXPECT_GT(ttd2->GetCheckpointCount(), 0u);

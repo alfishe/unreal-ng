@@ -23,6 +23,10 @@ constexpr uint8_t CODE_ENTER = 0x0D;
 constexpr uint8_t CODE_EXTEND = 0x0E;
 constexpr int MAX_NO_EFFECT_RETRIES = 2;
 constexpr int MAX_CLEAR_KEYS = 600;
+// Frames to wait for the editor's mode to settle before a byte counts as untypable: after
+// "RANDOMIZE USR 1:REM:" FLAGS still reads L at the idle point and turns K about two frames
+// later, when the ROM has redrawn the line (the key it then decodes would be a keyword)
+constexpr int MAX_SETTLE_FRAMES = 10;
 constexpr uint8_t CODE_RIGHT = 0x09;
 constexpr uint8_t CODE_DELETE = 0x0C;
 constexpr uint16_t SYS_E_LINE = 0x5C59;
@@ -272,6 +276,8 @@ bool CommandTyper::PlanNext()
     state.flags2 = SysVar(SYS_FLAGS2);
 
     const std::optional<ZXKeyDecoder::Press> press = ZXKeyDecoder::Find(Basic48Page(), wanted, state);
+    if (!press && ++_settleFrames <= MAX_SETTLE_FRAMES)
+        return false;  // planned again next frame: the editor may not have settled its mode yet
     if (!press)
     {
         const char* mode = state.mode == 1 ? "E" : (state.mode == 2 ? "G" : ((state.flags & 0x08) ? "L" : "K"));
@@ -279,6 +285,8 @@ bool CommandTyper::PlanNext()
                                       " in " + mode + " mode");
         return false;
     }
+
+    _settleFrames = 0;
 
     if (press->extendedFirst)
     {
@@ -450,8 +458,13 @@ bool CommandTyper::ConsumeEvents()
                         // command, or TR-DOS failed first (it activates the
                         // drive before the search: no disk gives ERR_NR 26)
                         _result.errNr = e.errNr;
-                        Fail(Failure::TrDosRejected, "TR-DOS error before the command was recognised, ERR_NR " +
-                                                         std::to_string(e.errNr));
+                        if (e.errNr == 0xFF)
+                            Fail(Failure::TrDosRejected,
+                                 "not a TR-DOS command: the A> prompt runs TR-DOS's own commands, not BASIC statements "
+                                 "(RANDOMIZE, PRINT, ...); RETURN to BASIC first and run the statement there");
+                        else
+                            Fail(Failure::TrDosRejected, "TR-DOS error before the command was recognised, ERR_NR " +
+                                                             std::to_string(e.errNr));
                         return false;
                     case Point::TrDosDispatch:
                         _result.trdos = true;
@@ -530,7 +543,7 @@ void CommandTyper::Step_()
             Fail(Failure::UnknownTarget, "no debugger");
             return;
         }
-        if (_context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput())
+        if (_context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput())
         {
             Fail(Failure::InputLocked, "time travel replay owns the keyboard");
             return;
@@ -555,6 +568,7 @@ void CommandTyper::Step_()
         _retries = 0;
         _clearing = true;
         _clearKeys = 0;
+        _settleFrames = 0;
         _sawIdle = false;
         _reportShown = false;
         _startFrame = _context->emulatorState.frame_counter;

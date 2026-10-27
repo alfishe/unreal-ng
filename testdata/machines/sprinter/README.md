@@ -15,6 +15,7 @@ standard PC-format FAT12 floppy.
 | `golden/acctest.png` | the accelerator test `ACCTEST.EXE` (below) after it drew its picture, run from the DSS floppy with BIOS 3.04 (phase S5): the golden image of `SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator`; its picture area equals MAME's (`reference/mame-acctest-306.png`) |
 | `golden/fn-panels.png` | Flex Navigator 1.10 (the floppy's `fn`) with both panels on `B:\FN`, phase S5: the golden image of `SprinterBoot_Test.Dss162_FlexNavigatorDrawsWithTheAccelerator` |
 | `software/acctest.exe` | the accelerator test program (below) |
+| `pld/tmk/` | tmk79's TMK accelerator configuration (2026-02-25): `TMK-K30.ACX`, the 59 215 bytes of the author's `SP2_ACEX.ttf`, and the test program `TmKonf.exe` (below) |
 | `dss/1.71.66/` | Estex DSS 1.71.66 built from source (community `master` `ae08ad9`): kernel, shell, installer, boot loader and symbols; see its README |
 
 ## `dss_1_62_92.img` - the DSS 1.62.92 boot floppy
@@ -137,6 +138,17 @@ once the Sprinter machine runs.
 - **Used by:** `SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator` (copied with a new
   `SYSTEM.BAT` onto a scratch copy of `dss_1_62_92.img`), and
   [.recipe/machines/sprinter-accelerator.md](../../../.recipe/machines/sprinter-accelerator.md).
+
+## `pld/tmk/` - the TMK accelerator configuration
+
+- **Source:** tmk79's K30 project (git "current version", 2026-02-25), received by the owner 2026-10-18:
+  AHDL sources `ACCELER.TDF` / `SP2_ACEX.TDF`, the built bitstream `SP2_ACEX.ttf`, and the test program's
+  sjasmplus sources.
+- `TMK-K30.ACX`: the `.ttf` values written as bytes. That gives the 59 215-byte `.ACX` layout, CRC32 `b5418b41`,
+  and loader hashes full `#84BA5A9A` / head `#E1BA76FB`. It selects the TMK module (`SprinterPldTmk_Test`).
+- `TmKonf.exe`: the author's test of the rectangle and the clip (DSS executable, 3 520 bytes). It needs the TMK
+  configuration loaded, and it maps the codes `#80` / `#81` itself.
+- Design: [tmk-accelerator.md](../../../docs/inprogress/2026-09-28-sprinter/tmk-accelerator.md).
 
 ## License
 

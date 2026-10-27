@@ -26,22 +26,53 @@ media {"action":"insert","slot":"hd","path":"/mame/sp_hdd_sys.chd"}       # a MA
 media {"action":"save","slot":"hd"}                                  # write the guest's changes into the CHD
 media {"action":"export","slot":"hd","path":"scratch/disk.chd","compression":"zstd"}
 media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/sp_hdd_sys.chd"}  # only the changes
+media {"action":"export","slot":"hd","path":"scratch/disk.vhd"}                     # raw data + a fixed VHD footer
+media {"action":"export","slot":"hd","path":"scratch/flat.img","compact":true}      # FAT re-synthesized: files contiguous
+media {"action":"flatten","slot":"hd","strategy":"commit","plan":true}  # what a commit into the graft base writes
+media {"action":"flatten","slot":"sd","strategy":"write-back","plan":true}  # guest files back into writable folder layers
+media {"action":"changes","slot":"hd"}   # the guest's unsaved writes as file operations, with their layers
 media {"action":"eject","slot":"B","discard":true}
+media {"action":"eject","slot":"sd","save":true,"strategy":"write-back","onConflict":"keep-both"}  # a composite by a named strategy as it leaves
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
 media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
-media {"action":"rescan","slot":"sd"}                                # re-read a host folder after it changed (refused while dirty)
-media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 2 GiB)
+media {"action":"rescan","slot":"sd"}                                # re-read a host folder / composite: "unchanged" keeps the writes; changed sources + writes need save / export / discard
+media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 128 GiB; memory holds at most [MEDIA] SessionMemoryLimit of what the guest writes, the rest goes to a spill file)
 media {"action":"protect","slot":"A","on":true}                      # the write-protect switch
 media {"action":"insert","slot":"ide0.master","path":"/discs/game.iso","device":"cdrom"}  # an empty IDE unit becomes a CD-ROM drive (device: disk | cdrom | cf)
 media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cdrom","format":"audio-cd"}  # a folder of MP3 / FLAC / WAV as an audio CD
 ```
 
-- Verbs: `list info formats targets insert eject swap save export discard rescan create protect`.
+- Verbs: `list info formats targets insert eject swap save export discard rescan create protect compose layers changes`.
 - `insert` / `swap` options: `access` (`readonly` | `session` | `writethrough`), `format` (a hint, e.g. `audio-cd`),
   `fs` (`fat16` | `fat32`), `codepage` (`cp866` | `cp1251`), `free` (bytes of room for guest writes), `wp` (insert write-protected),
   `kind`, `device`, `immediate` (skip the swap delay), plus `save` / `export` / `discard` / `end_recording` / `async`.
   `swap` takes every `insert` option.
-- `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`.
+- `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`; save to a path and export take `vhd` (`fixed`, the default, or `dynamic`: a sparse VHD) for a `.vhd` target.
+- A medium in `session` access keeps the guest's writes in memory (`SessionMemoryLimit`, 16 MiB), the rest in a temp file. With a journal (`[MEDIA] SessionJournal = on`, or `insert` with `journal: replay`; off by default) it also keeps `<source>.usession` next to its source, and after a crash the next `insert` with a journal replays it (the medium comes back dirty, the reply's report says so). `insert` takes `journal`: `replay`, `discard` (start clean), `off` (the default: no journal next to the medium). `info` shows `sessionWrites` (memory, journal, `journalRecoverable`). Settings: `[MEDIA] SessionMemoryLimit` / `SessionArenaKiB` / `SessionFlushSeconds` / `SessionSyncSeconds` / `SessionJournal` / `SessionIoThreads` / `SpillFolder`.
+  Both take `compact` (a FAT disk or card written as a new volume: every file contiguous, deleted data and lost
+  clusters gone, label / MBR / boot code carried), with `fs` (`fat16` / `fat32`: converts; a FAT12 floppy needs it)
+  and `size` (bytes or `64MiB`; default: the medium's size). `save` with `compact` needs a `path`; the medium then
+  reads the new file. Raw exports are sparse (zero sectors not written); a `.vhd` target gets a fixed VHD footer.
+- `changes` (block media with session writes): the guest's unsaved writes as file operations - `create`, `modify`,
+  `delete`, `rename` (also a move; `oldPath`), `mkdir`, `rmdir`, `attributes` - each with the layer of a composite it
+  touched (empty: new). `warnings` names lost clusters and changed boot sectors. Nothing is written. On a composite
+  only the directories the writes touched are read; on other media every directory is (`fullScan: true`).
+- Composites (`*.ucompose.yaml`) and `save`: without a path the session goes into `<descriptor>.delta` (S2; the
+  descriptor's `writes.save` / `writes.delta` can say otherwise) and the medium is clean; the next insert of the same
+  descriptor restores it ("session restored"). A delta written over other sources (a host file changed since) is not
+  applied: the report names the layer, and a new `save` over it needs `force`. A damaged delta is renamed
+  `*.delta.bad`. `strategy: flat` with a path writes one image instead (as `export`, then the slot holds that image).
+- A composite that leaves (eject / swap / insert / rescan with `save`, the emulator closing) is saved by
+  `writes.save`: `delta` (default), `commit`, `write-back`, `discard` (dropped), `ask` (a delta outside the GUI). The
+  request's `strategy` / `onConflict` win. A commit or write-back that fails keeps the writes as a delta (the report
+  says why); `strict: true` refuses instead and the medium stays.
+- A composite's sources (images, folders) are written only when its descriptor says `writes: {commit: all}` (every
+  change or nothing) or `{commit: partial}`; the default `none` refuses commit and write-back. A partitioned disk
+  commits each image / graft partition into its file; a rebuilt partition's changes have nowhere to go.
+- A partitioned disk (`*.ucompose.yaml` with `partitions:` instead of `layers:`): each entry is a passthrough
+  `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft,
+  layers: [...]}}`; partitions are 1 MiB aligned, more than four go logical. The first source MBR's boot code is
+  carried (the Profi BIOS runs it). `media layers` lists the partitions; `media changes` paths read `name:/PATH`.
 
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).
@@ -105,6 +136,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: applicatio
   `compression`: `none`, `default`, `lzma,zlib,huff,flac,zstd`), `export <x>.chd` writes a new one,
   `export <x>.img` a raw image. A child CHD needs its parent `.chd` in the same folder. A CD-ROM CHD
   goes into a CD drive ([cd-audio.md](cd-audio.md)). Format: [chd.md](../../docs/file-formats/disk-images/chd.md).
-- **TTD recording fixes the media set**: `recording` (409) unless
-  `"end_recording": true`.
+- **A change while TTD records is an event of the recording**: it lands at the next frame
+  boundary (`pending` meanwhile) and the recording goes on; `"end_recording": true` ends it
+  and changes at once. TTD v1: `recording` (409) unless `"end_recording": true`.
 - **Drive letters follow the machine**: `C` on a +3 is `unknown-slot`.

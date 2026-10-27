@@ -14,6 +14,7 @@
 #include "emulator/sound/chips/gs/gsmodulereplay.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
 #include "emulator/sound/chips/gs/gsprofile.h"
+#include "emulator/sound/chips/gs/gsbusobserver.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
@@ -193,6 +194,37 @@ public:
     void sendData(uint8_t data) override;    // OUT #B3: sets the host->GS pending bit
     void triggerNMI() override;              // OUT #33 bit6
 
+    /// Shared DACs (GSProfile::dacSink): another source on the board wrote
+    /// this channel's volume register, which the GS shares (MultiSound: a
+    /// SounDrive write sets it to 63, and GS port #0B reads volume 3 bit 5).
+    /// The card runs to the host's now first, so its earlier accesses see the
+    /// old value; the sink is not told (the board already has the write)
+    void sharedVolumeWrite(int channel, uint8_t volume);
+
+    /// What the runner may do with this card (GSCardRunner reads these, not the private hooks themselves: a
+    /// requires-expression on a befriended private member is false under MSVC 2019, which compiled the sleep out)
+    static constexpr bool kRunnerIdleSleep = true;          ///< sleepAllowed() and the rest: the idle loop is slept through
+    static constexpr bool kRunnerBatchQuietEvents = true;   ///< sleepQuietEventsBefore()
+
+    /// The firmware's idle poll loop is slept through (default on; off steps every instruction: comparison tests)
+    void setIdleSleep(bool on) { _runner.setSleepOn(on); }
+    /// Card CPU steps the sleeps stood for (tests, diagnosis)
+    uint64_t stepsSlept() const { return _runner.stepsSlept(); }
+    /// Card time in profile units, and a run of the card by itself (tests)
+    int64_t cardUnits() const { return totalGsCycles(); }
+    void runFor(int64_t units) { runTo(totalGsCycles() + units); }
+
+    /// The board's bus trace (MultiSound profile only): every GS port cycle and DAC fetch, nullptr = off
+    void setBusObserver(IGSBusObserver* observer) { _busObserver = observer; }
+
+    /// Bus /RESET of a board with its own host clock (GSProfile::hostClock):
+    /// the power-on reset (reset()) at the host's now. The card's time 0 is
+    /// anchored to the host's current tact and the rest of the host frame is
+    /// what the frame end still runs, so the firmware starts at the reset's
+    /// time (reset() alone keeps the frame base: the card would replay the
+    /// frame's elapsed time from the reset state, the #33 semantics)
+    void resetAtHostNow();
+
     /// region <Runtime personality switch (SoundManager::switchGeneralSoundCard)>
     GSForwardMailbox snapshotMailbox() const override;
     void restoreMailbox(const GSForwardMailbox& snapshot) override;
@@ -239,7 +271,8 @@ public:
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
-    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::GeneralSound; }
+    /// GeneralSound (5) for the card, the profile's own id for a board GS (the ZX-MultiSound's: MultiSoundGs)
+    ttd::PeripheralId TTDPeripheralId() const override { return static_cast<ttd::PeripheralId>(_profile.ttdPeripheralId); }
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
@@ -255,7 +288,7 @@ public:
         offset = totalGsCycles() - _frameStartGsCycles;
         return offset >= 0 && (_frameGsCycles <= 0 || offset < _frameGsCycles);
     }
-    std::string TTDDeviceName() const override { return "GeneralSound"; }
+    std::string TTDDeviceName() const override { return _profile.ttdDeviceName; }
     uint64_t TTDHashState() const override;
     /// endregion </TTDSerializable interface>
 
@@ -266,7 +299,7 @@ public:
     /// the engine's blob is the fixed state only
     void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool on) override { _ramTrackerArmed = on ? &_ramTracker : nullptr; }
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
@@ -295,6 +328,18 @@ private:
     int64_t unitsPerCycle() const { return _unitsPerCycle; }
     static constexpr bool kCanStall = false; // no DMA on the classic card
     void onStep() { _activityCounters.cpuSteps++; }
+    // Sleeping through the firmware's idle poll loop (GSCardRunner): after boot the firmware polls FLAGS with
+    // interrupts off (COMINT_ at #026E: IN A,(4) / RRCA / JR C / LD A,(PROCESS) / OR A / JR Z). Every bus access
+    // except a plain memory read outside the DAC window and the FLAGS / COMRG reads counts as a side effect; the
+    // period boundary is the only event and is quiet while the CPU cannot take the INT
+    uint32_t busEffects() const { return _busEffects; }
+    bool sleepAllowed() const
+    {
+        return !_nmiPending && !_portTrace.isCapturing() && !_busObserver && !Z80CpuIntPossible(_cpu);
+    }
+    static int64_t sleepHardStop() { return std::numeric_limits<int64_t>::max(); }
+    void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    bool sleepQuietEventsBefore(int64_t end);
 
     // GSModuleReplay hooks
     void replayRunFor(int64_t cycles) { runTo(totalGsCycles() + cycles); }
@@ -319,6 +364,7 @@ private:
     uint8_t gsIn(uint16_t port);
     void gsOut(uint16_t port, uint8_t value);
     uint8_t gsInMultiSound(uint16_t port);
+    uint8_t gsInMultiSoundDecode(uint16_t port);
     void gsOutMultiSound(uint16_t port, uint8_t value);
     void volumeWrite(uint16_t port, uint8_t value);  // ports 6-9 (own mix or DAC sink)
 
@@ -338,6 +384,8 @@ private:
     void sinkSample(int channel, uint8_t value);  // DAC sink path (profile.dacSink)
     void sinkVolume(int channel, uint8_t volume);
     uint64_t hostTimeNow() const;      // card time now -> host time (AudioTstate domain)
+    double hostUnitsPerTact() const;   // card units per host tact (profile.hostClock or the machine's clock)
+    uint64_t hostTactsNow(uint64_t fallback) const;  // host time now (profile.hostClock or the machine's Z80)
 
     // TTD serialization internals
     void serializeFixedState(uint8_t* dst) const;
@@ -430,6 +478,7 @@ private:
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;
+    uint32_t _busEffects = 0;  // GSCardRunner::busEffects
 
     // Level-held 37.5 kHz INT request (design §2.4): asserted at each quantum
     // boundary, cleared only by acceptance - the request survives firmware
@@ -442,6 +491,7 @@ private:
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;
     GSPortTraceRecorder _portTrace;
+    IGSBusObserver* _busObserver = nullptr;
     uint32_t currentFrameNumber() const;
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
 };

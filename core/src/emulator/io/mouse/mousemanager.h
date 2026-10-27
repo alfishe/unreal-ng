@@ -14,8 +14,9 @@
 /// emulator thread, and the manager fans the input out to its sinks. Replayed
 /// input takes the same Apply* path.
 ///
-/// Buttons have two sources that must not overwrite each other: the host's
-/// physical buttons (an absolute set) and automation's press / release / click.
+/// Buttons have sources that must not overwrite each other: the host's
+/// physical buttons (an absolute set), automation's press / release / click,
+/// and host game controllers' mouse buttons (ControllerManager).
 /// Each source keeps its own set of held buttons here; what the machine gets is
 /// their union (ComposeButtons), so an automation press survives a host button
 /// change and the other way round.
@@ -43,6 +44,7 @@ public:
     {
         Host,
         Automation,
+        Controllers,  ///< host game controllers' mouse targets (ControllerManager)
     };
 
     explicit MouseManager(EmulatorContext* context);
@@ -82,17 +84,21 @@ public:
 
     /// region <Buttons from two sources>
     /// Store `pressedBits` (bit set = held: D0 left, D1 right, D2 middle) as the
-    /// buttons `source` holds; returns the active-low mask of both sources together
+    /// buttons `source` holds; returns the active-low mask of all the sources together
     uint8_t ComposeButtons(ButtonSource source, uint8_t pressedBits);
     /// The buttons `source` holds (bit set = held)
     uint8_t PressedBits(ButtonSource source) const;
-    /// Forget both sources (the machine's buttons were set from elsewhere: TTD seek, replay)
+    /// Forget every source (the machine's buttons were set from elsewhere: TTD seek, replay)
     void ClearButtonSources();
     /// endregion </Buttons>
 
     /// Ignore the front end's MC_MOUSE_* events: a ZX-Poly member gets its
     /// mouse input from its group, at frame boundaries
     void SetHostInputGated(bool gated);
+
+    /// Stop taking the front end's MC_MOUSE_* events for good: the handlers reach the debug manager and the TTD
+    /// controller, so the emulator detaches them before those go. Waits for a handler in progress (RemoveObserver)
+    void DetachHostInput();
 
     // Message center callbacks (the desktop front end)
     void OnMouseMove(int id, Message* message);
@@ -109,5 +115,7 @@ private:
     std::vector<IMouseSink*> _sinks;
     uint8_t _hostPressed = 0;
     uint8_t _automationPressed = 0;
+    uint8_t _controllersPressed = 0;
     bool _hostInputGated = false;
+    bool _hostInputDetached = false;  // DetachHostInput: the owner's thread only
 };

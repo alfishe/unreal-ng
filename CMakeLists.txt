@@ -44,6 +44,10 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/MacOSDeploymentTarget.cmake)
 
 project(unreal VERSION 1.0.0)
 
+# -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitize.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Lto.cmake)
+
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()
 
@@ -158,9 +162,10 @@ if (RELEASE_WITH_DEBUG_SYMBOLS AND CMAKE_BUILD_TYPE STREQUAL "Release")
         set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
         message(STATUS "MSVC Release with PDB symbols: ENABLED")
     elseif (MINGW)
-        # MinGW: Generate DWARF debug info, will be separated later
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        # MinGW: DWARF line tables (-g1: functions and lines for backtraces, no variables). Full -g made core-tests.exe
+        # 2.6 GB, past what Windows loads ("not a valid application for this OS platform"), 2026-10-13
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g1")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g1")
         message(STATUS "MinGW Release with DWARF symbols: ENABLED")
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # GCC/Clang on Linux/macOS: Generate debug info
@@ -279,32 +284,6 @@ endif()
 #     level, so a known-pinned version is required.
 
 # ========================================
-# eve-emu (FT812 for the TS-Conf VDAC2 card)
-# ========================================
-# The chip is a separate static library (docs/inprogress/2026-10-01-tsconf-vdac2/
-# eve-emu-architecture.md), developed in its own repository and vendored at
-# core/src/3rdparty/eve-emu (VENDORED.md there). EVE_EMU_DIR points at another
-# checkout (a developer working on both). With ENABLE_VDAC2=OFF a configuration
-# asking for the card ([MISC] TS_VDAC2=1, the TSL-VDAC2 machine) fails to load.
-option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
-set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/core/src/3rdparty/eve-emu" CACHE PATH "eve-emu checkout")
-if (ENABLE_VDAC2)
-    if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
-                "Set EVE_EMU_DIR to an eve-emu checkout, or set ENABLE_VDAC2=OFF")
-    endif()
-    # Built-in decoders for CMD_INFLATE / CMD_LOADIMAGE (architecture decision A3)
-    set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)
-    set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
-    set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
-    set(EVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(EVE_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-    set(EVE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-    message(STATUS ">>> VDAC2: eve-emu from ${EVE_EMU_DIR}")
-    add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
-endif()
-
-# ========================================
 # Core Library
 # ========================================
 message(STATUS ">>> Building core library")
@@ -341,6 +320,15 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
+# Companions (paired processes; no link to the core)
+# ========================================
+option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" OFF)
+if (UNREAL_STREAMDECK)
+    message(STATUS ">>> Building the Stream Deck companion")
+    add_subdirectory(companions/streamdeck)
+endif ()
+
+# ========================================
 # Unit Tests (Opt-in)
 # To build and run: cmake -DTESTS=ON ... && ninja core-tests
 # ========================================
@@ -371,6 +359,20 @@ if (BUILD_POC)
 	message(STATUS ">>> Building PoC research tools")
 	add_subdirectory(tools/poc)
 endif (BUILD_POC)
+
+# POC 034 (media signatures, Steam Deck P-12): the core/swsignature library over a collection; needs only the core
+option(BUILD_SIGNATURE_POC "Build POC 034 signature-poc (tools/poc/034-media-signatures)" OFF)
+if (BUILD_SIGNATURE_POC AND TARGET unrealng::swsignature)
+	add_subdirectory(tools/poc/034-media-signatures/cpp)
+endif ()
+
+# Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
+# (apps/steamdeck-client/build.sh configures a steamrt4 container with this ON)
+option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (apps/steamdeck-client, needs SDL3)" OFF)
+if (BUILD_STEAMDECK_POC)
+	message(STATUS ">>> Building Steam Deck client PoCs")
+	add_subdirectory(apps/steamdeck-client)
+endif (BUILD_STEAMDECK_POC)
 
 # ========================================
 # ZX DLSS verification tools (opt-in; the algorithms are in the core)
@@ -417,6 +419,14 @@ if (BUILD_QT_APPS)
     if (TARGET unreal-mcp-bridge)
         list(APPEND SUITE_DEPS unreal-mcp-bridge)
     endif()
+    # The Stream Deck companion (-DUNREAL_STREAMDECK=ON; docs/inprogress/2026-10-19-streamdeck-integration/packaging.md):
+    # the daemon always, Stream Deck Studio when Qt built it
+    if (TARGET unreal-streamdeck)
+        list(APPEND SUITE_DEPS unreal-streamdeck)
+    endif()
+    if (TARGET unreal-streamdeck-studio)
+        list(APPEND SUITE_DEPS unreal-streamdeck-studio)
+    endif()
     
     # macOS: Combined DMG with all apps
     if(APPLE)
@@ -444,36 +454,90 @@ if (BUILD_QT_APPS)
             )
         endif()
 
+        # Stream Deck companion: the daemon is a helper of UnrealNG.app (Contents/MacOS, found by unreal-qt and the
+        # studio in their own bundle); the studio is a nested app, Contents/Applications/Stream Deck Studio.app, that
+        # shares UnrealNG.app's Qt: macdeployqt -executable= points it at ../../../../Frameworks, and the studio adds
+        # UnrealNG.app/Contents/PlugIns itself (its main.cpp, through the real path). A relative link at the DMG root
+        # opens it; the link keeps working when copied to /Applications beside UnrealNG.app.
+        set(SUITE_MACOS_DEPLOY_EXTRA)
+        set(SUITE_STUDIO_APP "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Applications/Stream Deck Studio.app")
+        if(TARGET unreal-streamdeck)
+            # data/streamdeck (the idle screen's theme, icons): Contents/Resources/streamdeck, found by the daemon in
+            # Contents/MacOS and by the nested studio (companions/streamdeck/lib/src/datadir.cpp)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/streamdeck"
+            )
+        endif()
+        if(TARGET unreal-streamdeck-studio)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Applications"
+                COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck-studio.app" "${SUITE_STUDIO_APP}"
+                COMMAND ${CMAKE_COMMAND} -E create_symlink "UnrealNG.app/Contents/Applications/Stream Deck Studio.app" "${SUITE_STAGING_DIR}/Stream Deck Studio.app"
+            )
+            set(SUITE_MACOS_DEPLOY_EXTRA "-executable=${SUITE_STUDIO_APP}/Contents/MacOS/unreal-streamdeck-studio")
+        endif()
+
         list(APPEND MACOS_PACKAGE_COMMANDS
             # Copy shared resources into ALL app bundles
             # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/symbols"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/symbols"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/boot"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs"
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/symbols"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/boot"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/configs"
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             
             # Copy shared icon to bundles that reference it
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.icns"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-videowall/install/macos/videowall.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/videowall.icns"
+
+            # Scripts and AI-agent prompts for the WebAPI / MCP, next to the apps (the apps do not read them)
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
             
             # Run macdeployqt to deploy Qt frameworks into each bundle
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite
+            # (UnrealNG.app with the nested studio's binary: one Qt for both)
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite ${SUITE_MACOS_DEPLOY_EXTRA}
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite
-            
+        )
+
+        if(TARGET unreal-streamdeck-studio)
+            # Guard: no absolute (build tree / SDK) rpath left in the nested studio, the container's frameworks on its
+            # rpath (macdeployqt does both today), so nothing outside the bundle can satisfy a Qt reference. Then
+            # signed inside-out: the nested app before its container.
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} "-DBINARY=${SUITE_STUDIO_APP}/Contents/MacOS/unreal-streamdeck-studio" -DRPATH=@executable_path/../../../../Frameworks -P "${CMAKE_SOURCE_DIR}/cmake/MacOSNestedRPath.cmake"
+                COMMAND codesign --force --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STUDIO_APP}"
+            )
+        endif()
+        if(TARGET unreal-streamdeck)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND codesign --force --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-streamdeck"
+            )
+        endif()
+
+        list(APPEND MACOS_PACKAGE_COMMANDS
             # Sign each app with hardened runtime and entitlements
             # macdeployqt doesn't support entitlements, so we sign manually after deployment
             # -f forces re-signing of already-signed frameworks
@@ -536,6 +600,27 @@ if (BUILD_QT_APPS)
             )
         endif()
 
+        # Stream Deck companion beside unreal-qt.exe, its data (streamdeck/) beside it; the studio shares the suite's Qt
+        # DLLs (windeployqt below)
+        if(TARGET unreal-streamdeck)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck.exe"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+            )
+        endif()
+        set(_win_deploy_studio)
+        if(TARGET unreal-streamdeck-studio)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck-studio.exe"
+                    "${SUITE_STAGING_DIR}/"
+            )
+            set(_win_deploy_studio "${SUITE_STAGING_DIR}/unreal-streamdeck-studio.exe")
+        endif()
+
         set(_win_deploy_runtime_options)
         if(MSVC)
             # A portable ZIP must carry the compiler runtime, including on ARM64.
@@ -555,20 +640,33 @@ if (BUILD_QT_APPS)
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations ${_win_deploy_runtime_options}
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations ${_win_deploy_runtime_options}
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations ${_win_deploy_runtime_options}
-            
+        )
+        if(_win_deploy_studio)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${_win_deploy_studio}" --no-translations ${_win_deploy_runtime_options}
+            )
+        endif()
+        list(APPEND WIN_PACKAGE_COMMANDS
             # Copy shared resources (only once)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/boot"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
+            # Scripts and AI-agent prompts for the WebAPI / MCP
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
 
             # Create ZIP archive (change to parent dir to avoid nested paths)
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
@@ -670,6 +768,29 @@ if (BUILD_QT_APPS)
             )
         endif()
 
+        # Stream Deck companion beside unreal-qt, its data (streamdeck/) beside it; the udev rule where the DEB installs
+        # it (lib/udev/rules.d: copy it to /etc/udev/rules.d for access to the deck without root).
+        # tools/package-appimage.sh takes all three into the AppImage.
+        if(TARGET unreal-streamdeck)
+            list(APPEND LINUX_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
+                    "${SUITE_STAGING_DIR}/lib/udev/rules.d/70-unreal-streamdeck.rules"
+            )
+        endif()
+        if(TARGET unreal-streamdeck-studio)
+            list(APPEND LINUX_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck-studio"
+                    "${SUITE_STAGING_DIR}/"
+            )
+        endif()
+
         list(APPEND LINUX_PACKAGE_COMMANDS
             # Copy shared resources (only once)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -677,13 +798,20 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/boot"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
+            # Scripts and AI-agent prompts for the WebAPI / MCP
+            COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
 
             # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
             COMMAND ${CMAKE_COMMAND} -E copy
@@ -720,6 +848,17 @@ if (BUILD_QT_APPS)
     option(PACKAGE_SYMBOLS "Extract and package debug symbols separately" OFF)
 
     set(SYMBOLS_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/symbols")
+    # Executables beside the apps (bin/<name>[.exe]), symbols like the apps': the MCP bridge, the Stream Deck daemon,
+    # and Stream Deck Studio where it is a plain executable (macOS: an app bundle, below)
+    set(SYMBOL_TOOLS)
+    foreach(_tool unreal-mcp-bridge unreal-streamdeck)
+        if(TARGET ${_tool})
+            list(APPEND SYMBOL_TOOLS ${_tool})
+        endif()
+    endforeach()
+    if(TARGET unreal-streamdeck-studio AND NOT APPLE)
+        list(APPEND SYMBOL_TOOLS unreal-streamdeck-studio)
+    endif()
 
     if(PACKAGE_SYMBOLS AND WIN32 AND MSVC)
         set(WIN_MSVC_SYMBOL_COMMANDS
@@ -739,13 +878,13 @@ if (BUILD_QT_APPS)
                 "${SYMBOLS_STAGING_DIR}/"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND WIN_MSVC_SYMBOL_COMMANDS
                 COMMAND ${CMAKE_COMMAND} -E copy
-                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.pdb"
+                    "${CMAKE_BINARY_DIR}/bin/${_tool}.pdb"
                     "${SYMBOLS_STAGING_DIR}/"
             )
-        endif()
+        endforeach()
 
         list(APPEND WIN_MSVC_SYMBOL_COMMANDS
             # Create symbols ZIP
@@ -781,13 +920,13 @@ if (BUILD_QT_APPS)
                 "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND WIN_MINGW_SYMBOL_COMMANDS
                 COMMAND objcopy --only-keep-debug
-                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
-                    "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+                    "${CMAKE_BINARY_DIR}/bin/${_tool}.exe"
+                    "${SYMBOLS_STAGING_DIR}/${_tool}.debug"
             )
-        endif()
+        endforeach()
 
         list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Strip debug info from executables (in-place)
@@ -796,11 +935,11 @@ if (BUILD_QT_APPS)
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND WIN_MINGW_SYMBOL_COMMANDS
-                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/${_tool}.exe"
             )
-        endif()
+        endforeach()
 
         list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Add debug link back to executable (for addr2line to find symbols)
@@ -812,12 +951,12 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND WIN_MINGW_SYMBOL_COMMANDS
-                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
-                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/${_tool}.debug"
+                    "${CMAKE_BINARY_DIR}/bin/${_tool}.exe"
             )
-        endif()
+        endforeach()
 
         list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Create symbols ZIP
@@ -854,13 +993,13 @@ if (BUILD_QT_APPS)
                 "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND LINUX_SYMBOL_COMMANDS
                 COMMAND objcopy --only-keep-debug
-                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
-                    "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+                    "${CMAKE_BINARY_DIR}/bin/${_tool}"
+                    "${SYMBOLS_STAGING_DIR}/${_tool}.debug"
             )
-        endif()
+        endforeach()
 
         list(APPEND LINUX_SYMBOL_COMMANDS
             # Strip executables
@@ -869,11 +1008,11 @@ if (BUILD_QT_APPS)
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND LINUX_SYMBOL_COMMANDS
-                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/${_tool}"
             )
-        endif()
+        endforeach()
 
         list(APPEND LINUX_SYMBOL_COMMANDS
             # Add debug link
@@ -885,12 +1024,12 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND LINUX_SYMBOL_COMMANDS
-                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
-                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/${_tool}.debug"
+                    "${CMAKE_BINARY_DIR}/bin/${_tool}"
             )
-        endif()
+        endforeach()
 
         list(APPEND LINUX_SYMBOL_COMMANDS
             # Create symbols tarball
@@ -922,10 +1061,16 @@ if (BUILD_QT_APPS)
                 -o "${SYMBOLS_STAGING_DIR}/unreal-videowall.dSYM"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND MACOS_SYMBOL_COMMANDS
-                COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
-                    -o "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.dSYM"
+                COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/${_tool}"
+                    -o "${SYMBOLS_STAGING_DIR}/${_tool}.dSYM"
+            )
+        endforeach()
+        set(_studio_binary "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck-studio.app/Contents/MacOS/unreal-streamdeck-studio")
+        if(TARGET unreal-streamdeck-studio)
+            list(APPEND MACOS_SYMBOL_COMMANDS
+                COMMAND dsymutil "${_studio_binary}" -o "${SYMBOLS_STAGING_DIR}/unreal-streamdeck-studio.dSYM"
             )
         endif()
 
@@ -936,9 +1081,14 @@ if (BUILD_QT_APPS)
             COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
         )
 
-        if(TARGET unreal-mcp-bridge)
+        foreach(_tool IN LISTS SYMBOL_TOOLS)
             list(APPEND MACOS_SYMBOL_COMMANDS
-                COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/${_tool}"
+            )
+        endforeach()
+        if(TARGET unreal-streamdeck-studio)
+            list(APPEND MACOS_SYMBOL_COMMANDS
+                COMMAND strip -S "${_studio_binary}"
             )
         endif()
 

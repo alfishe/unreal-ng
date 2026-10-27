@@ -1,8 +1,8 @@
 // NeoGS media requests from automation (neogsmedia.h): SD card insert /
 // eject go to the media manager's slot `sd.ngs` (applied at a frame
 // boundary), a flash save is carried out on the machine's thread; insert and
-// eject are refused while a TTD recording runs, because the machine's
-// configuration is fixed for the recording.
+// eject follow the machine state coordinator's media rules: refused while a
+// recording the user started runs, the black box's session ends at the change.
 //
 // Runtime justification: the hand-off tests run the emulator loop on its own
 // thread for a few frames; the stress test for about a second.
@@ -21,9 +21,12 @@
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/coordinator/operationlog.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/media/mediamanager.h"
@@ -102,28 +105,52 @@ TEST_F(NeoGSMedia_Test, CarriedOutAtOnceWhileTheLoopIsNotRunning)
 
 /// The machine's configuration is fixed while a TTD recording runs: the SD
 /// card's contents are fixed data for the recording's whole length
-TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
+/// M3 (Q4): while a TTD recording runs, an SD card change is an event of the recording: queued to the next frame
+/// boundary, the recording goes on
+TEST_F(NeoGSMedia_Test, InsertAndEjectWhileTtdRecordsLandAtTheNextFrameBoundary)
 {
     fitNeoGS();
-    ASSERT_TRUE(_ctx->pTimeTravelManager->StartRecording());
-    const std::string path = card()->sdCardImage();
+    ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
 
-    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::TtdRecording);
-    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::TtdRecording);
-    // The card enforces it too, whoever calls it
-    EXPECT_FALSE(card()->ejectSdCard());
-    EXPECT_FALSE(card()->insertSdCard(_other->path()));
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Queued);
+    EXPECT_TRUE(card()->sdCardPresent()) << "never inside a frame";
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_FALSE(card()->sdCardPresent());
+    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::Queued);
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     EXPECT_TRUE(card()->sdCardPresent());
-    EXPECT_EQ(card()->sdCardImage(), path);
+    EXPECT_EQ(card()->sdCardImage(), _other->path());
+    EXPECT_TRUE(_ctx->pTimeTravelController->IsRecording());
 
     // A flash save changes nothing in the machine: it reaches the card (which
     // saves only in persist mode - off here - so it reports Failed)
     const NeoGSMediaResult save = NeoGSRequestFlashSave(_ctx);
     EXPECT_TRUE(save == NeoGSMediaResult::Done || save == NeoGSMediaResult::Failed) << NeoGSMediaResultText(save);
 
-    _ctx->pTimeTravelManager->StopRecording();
+    _ctx->pTimeTravelController->StopRecording();
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done) << "live and paused: at once";
+    EXPECT_FALSE(card()->sdCardPresent());
+}
+
+/// The SD card is a medium to the machine state coordinator (D43): the black box does not refuse it, its session
+/// ends at the change, as for any medium
+TEST_F(NeoGSMedia_Test, TheBlackBoxEndsAtAnSdCardChangeInsteadOfRefusingIt)
+{
+    fitNeoGS();
+    _ctx->pTimeTravelController->SetBlackBox(true, 1);
+    ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_emulator->MachineOps().Mode(), coordinator::MachineMode::BlackBox);
+    const uint64_t since = _emulator->GetOperationLog().LastSeq();
+
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
     EXPECT_FALSE(card()->sdCardPresent());
+    const auto log = _emulator->GetOperationLog().Entries(since);
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, coordinator::OpKind::MediaEject);
+    EXPECT_EQ(log[0].status, coordinator::OpStatus::Done);
+    EXPECT_EQ(log[0].mode, coordinator::MachineMode::BlackBox);
+    EXPECT_EQ(log[0].effect, coordinator::SessionEffect::MediaChanged);
 }
 
 /// The SD slot is the media manager's `sd.ngs`, there only while NeoGS is
@@ -206,30 +233,34 @@ TEST_F(NeoGSMedia_Test, FromAnotherThreadCarriedOutByTheLoop)
 /// The race this path exists for: the card boots from its SD card (the
 /// loader reads the FAT and 32 KB of NEOGS.ROM) while another thread ejects
 /// and inserts the card as fast as it can. Every change lands at a frame
-/// boundary (the media manager): no crash, no torn state (run under ASan in CI)
+/// boundary (the media manager): no crash, no torn state (run under ASan in CI). One change a frame, unpaced (turbo):
+/// 40 frames, 200 in the long tier
 TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
 {
     fitNeoGS();
+    _emulator->EnableTurboMode();
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }));
+    const int requests = TestTier::Pick(40, 200);
     int accepted = 0;
     int queued = 0;
-    for (int i = 0; i < 200; i++)
+    for (int i = 0; i < requests; i++)
     {
         const NeoGSMediaResult r = (i & 1) ? NeoGSRequestSdInsert(_ctx, (i & 2) ? _image->path() : _other->path())
                                            : NeoGSRequestSdEject(_ctx);
         accepted += NeoGSMediaAccepted(r) ? 1 : 0;
         queued += r == NeoGSMediaResult::Queued ? 1 : 0;
         // Restart the loader so it reads the card again (also on the machine thread)
-        _ctx->pTimeTravelManager->SubmitMachineTask([this] { card()->resetCard(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        _ctx->pTimeTravelController->SubmitMachineTask([this] { card()->resetCard(); });
+        const uint64_t frame = _ctx->emulatorState.frame_counter;
+        ASSERT_TRUE(TestWait::For([&] { return _ctx->emulatorState.frame_counter > frame; })) << "request " << i;
     }
     ASSERT_TRUE(TestWait::For([this] { return !_ctx->HasStepWork(EmulatorContext::kStepWorkTtdInput); }));
     ASSERT_TRUE(_ctx->pMediaManager->WaitApplied(SoundChip_NeoGS::SD_SLOT_ID, 2000));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
-    EXPECT_EQ(accepted, 200);
-    EXPECT_EQ(queued, 200) << "the loop was running: every request goes through the queue";
+    EXPECT_EQ(accepted, requests);
+    EXPECT_EQ(queued, requests) << "the loop was running: every request goes through the queue";
     EXPECT_TRUE(card()->sdCardPresent()) << "the last request was an insert";
     _emulator->Stop();
 }

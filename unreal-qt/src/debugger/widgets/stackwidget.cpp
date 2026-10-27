@@ -168,6 +168,11 @@ void StackWidget::refresh()
     }
 }
 
+std::vector<QWidget*> StackWidget::cursorCells() const
+{
+    return {sp0Value, sp1Value, sp2Value, sp3Value};
+}
+
 void StackWidget::sp0Value_doubleClicked()
 {
     qDebug("StackWidget::sp0Value_doubleClicked()");

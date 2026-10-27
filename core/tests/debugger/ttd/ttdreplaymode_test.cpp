@@ -29,7 +29,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -74,7 +74,7 @@ class TTD_ReplayMode_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     FeatureManager* _fm = nullptr;
     CountingAnalyzer* _analyzer = nullptr;  // Raw ptr; owned by AnalyzerManager after RegisterAnalyzer
@@ -87,7 +87,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -219,7 +219,7 @@ TEST_F(TTD_ReplayMode_Test, ReplayModeScopeExitsOnException)
     ASSERT_NE(_context->pSoundManager, nullptr);
     try
     {
-        ttd::TimeTravelManager::ReplayModeScope replay(*_ttd);
+        ttd::TimeTravelController::ReplayModeScope replay(*_ttd);
         EXPECT_TRUE(_context->ttdReplayActive);
         throw std::runtime_error("replay failed");
     }

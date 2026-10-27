@@ -8,6 +8,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
@@ -239,7 +240,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_512Bytes)
     for (size_t i = 0; i < 512; i++) pattern[i] = static_cast<uint8_t>(i * 7);
     track->writeSectorData(4, pattern.data(), pattern.size());  // sector 5
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 1);
     fdc._sectorRegister = 5;
     issue(fdc, 0x80);
@@ -268,7 +269,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_MixedSizes_128_1024)
     track->writeSectorData(2, small.data(), small.size());
     track->writeSectorData(3, big.data(), big.size());
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
 
     fdc._sectorRegister = 3;
@@ -289,7 +290,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_IdOnly_ReturnsRNF)
     DiskImage image(1, 1, spec);
     ASSERT_FALSE(image.getTrack(0)->getSector(1)->hasData);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 2;
     issue(fdc, 0x80);
@@ -320,7 +321,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_StopsAtFirstMissingNumber)
         track->writeSectorData(s, data.data(), data.size());
     }
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 7;
     issue(fdc, 0x80 | WD1793::CMD_MULTIPLE);
@@ -358,7 +359,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_MissingNumberInsideTrack_Ret
         }
     }
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 1;
     issue(fdc, 0x80 | WD1793::CMD_MULTIPLE);
@@ -375,7 +376,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_MissingNumberInsideTrack_Ret
 TEST_F(WD1793_UniversalTrack_Test, ReadSector_CylinderMismatch_ReturnsRNF)
 {
     DiskImage image(2, 1);
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 1);
     fdc._trackRegister = 0;  // head is on cylinder 1, register says 0
     fdc._sectorRegister = 1;
@@ -399,7 +400,7 @@ TEST_F(WD1793_UniversalTrack_Test, WriteSector_RecomputesDataCrc)
     std::vector<uint8_t> data(256);
     for (size_t i = 0; i < 256; i++) data[i] = static_cast<uint8_t>(0x5A ^ i);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 5;
     issue(fdc, 0xA0);
@@ -430,7 +431,7 @@ TEST_F(WD1793_UniversalTrack_Test, WriteSector_DeletedFlag_WritesF8)
     DiskImage::Track* track = image.getTrack(0);
     std::vector<uint8_t> data(256, 0x11);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 3;
     issue(fdc, 0xA1);  // deleted data mark
@@ -462,7 +463,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadTrack_VariableLength)
     ASSERT_EQ(track->rawSize(), 6300u);
     track->rawData()[6299] = 0x77;
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc.getDrive()->setMotor(true);
     issue(fdc, 0xE0);
@@ -485,7 +486,7 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_9x512_Then_ReadSector)
     std::vector<uint8_t> stream = formatStream(spec, 0, 0, 0xE5);
     ASSERT_EQ(stream.size(), 6250u);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc.getDrive()->setMotor(true);
     issue(fdc, 0xF0);
@@ -533,7 +534,7 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_StopsAtTrackLength)
     DiskImage::Track* track = image.getTrack(0);
     track->resizeRaw(6208);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc.getDrive()->setMotor(true);
     issue(fdc, 0xF0);
@@ -566,7 +567,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadAddress_ReturnsNextIdUnderHead_AndCopiesC
     const size_t period = WD1793::DISK_ROTATION_PERIOD_TSTATES;
     const size_t startClk = period * 10 + (period * 500) / 6250;
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 7);
     fdc._time = startClk;
     fdc.prolongFDDMotorRotation();
@@ -600,7 +601,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadAddress_BadIdCrc_SetsCrcError)
     track->getRawSector(0)->id->id_crc ^= 0xFFFF;
     track->reindex();
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     const size_t startClk = WD1793::DISK_ROTATION_PERIOD_TSTATES * 3;  // head at the index -> first ID field
     fdc._time = startClk;
@@ -619,7 +620,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadAddress_UnformattedTrack_ReturnsRNF)
     DiskImage image(1, 1);
     image.getTrack(0)->resizeRaw(6250);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     issue(fdc, 0xC0);
 
@@ -645,7 +646,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_ChargesRotationalLatency)
 
     auto timeRead = [&](uint8_t sectorNo) -> size_t
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         prepare(fdc, image, 0);
         fdc._time = startClk;
         fdc.prolongFDDMotorRotation();
@@ -675,7 +676,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_ChargesRotationalLatency)
 TEST_F(WD1793_UniversalTrack_Test, ReadSector_NotFound_TakesSearchRevolutions)
 {
     DiskImage image(1, 1);
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
     fdc._sectorRegister = 20;
     issue(fdc, 0x80);
@@ -703,7 +704,7 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Fm)
     for (size_t i = 0; i < 128; i++) pattern[i] = static_cast<uint8_t>(0x80 + i);
     track->writeSectorData(6, pattern.data(), pattern.size());  // sector 7
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0, false, true);
     EXPECT_EQ(fdc.controllerEncoding(), DiskImage::Encoding::FM);
     EXPECT_EQ(fdc.byteCellTStates(*track), 2u * WD1793::WD93_TSTATES_PER_FDC_BYTE);
@@ -726,7 +727,7 @@ TEST_F(WD1793_UniversalTrack_Test, DensityMismatch_ReturnsRNF)
 
     // MFM controller on the FM track
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         prepare(fdc, image, 1, false, false);
         fdc._sectorRegister = 1;
         issue(fdc, 0x80);
@@ -744,7 +745,7 @@ TEST_F(WD1793_UniversalTrack_Test, DensityMismatch_ReturnsRNF)
 
     // FM controller on the MFM track
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         prepare(fdc, image, 0, false, true);
         fdc._sectorRegister = 1;
         issue(fdc, 0x80);
@@ -765,7 +766,7 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_Fm_MatchesFormatter)
     std::vector<uint8_t> stream = formatStreamFM(spec, 0, 0, 0xE5);
     ASSERT_EQ(stream.size(), 3125u);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0, false, true);
     fdc.getDrive()->setMotor(true);
     issue(fdc, 0xF0);
@@ -891,7 +892,7 @@ TEST_F(WD1793_UniversalTrack_Test, FlakySector_ReadThroughController_BytesDiffer
     EXPECT_FALSE(damaged->dataCrcValid);
     for (size_t i = 0; i < damaged->dataSize; i++) track->setWeakByte(damaged->dataOffset + i, true);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     prepare(fdc, image, 0);
 
     fdc._sectorRegister = 3;

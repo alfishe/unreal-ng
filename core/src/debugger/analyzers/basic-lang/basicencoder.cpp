@@ -303,7 +303,32 @@ std::vector<uint8_t> BasicEncoder::tokenizeImmediate(const std::string& command)
         }
     }
 
-    return result;
+    // A blank next to a keyword or a ':' (outside quotes) is not typed on the 48K editor: keywords are
+    // keys and the ROM prints their blanks. Stored, such a blank breaks TR-DOS's "RANDOMIZE USR 15619:
+    // REM : CAT", which reads the byte after "REM :" as the command token and does nothing on #20
+    const auto isTokenOrColon = [](uint8_t b) { return b >= TOKEN_FIRST_48K || b == ':'; };
+    std::vector<uint8_t> compact;
+    compact.reserve(result.size());
+    bool quoted = false;
+    for (size_t i = 0; i < result.size(); i++)
+    {
+        const uint8_t b = result[i];
+        if (b == '"')
+            quoted = !quoted;
+        if (!quoted && b == ' ')
+        {
+            size_t next = i + 1;
+            while (next < result.size() && result[next] == ' ')
+                next++;
+            const bool atStart = compact.empty();
+            const bool afterToken = !atStart && isTokenOrColon(compact.back());
+            const bool beforeToken = next < result.size() && isTokenOrColon(result[next]);
+            if (atStart || afterToken || beforeToken)
+                continue;
+        }
+        compact.push_back(b);
+    }
+    return compact;
 }
 
 bool BasicEncoder::injectIntoMemory(Memory* memory, const std::vector<uint8_t>& tokenizedProgram, uint16_t progStart)
@@ -969,11 +994,9 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Emulator* emulator, con
     // We run 2 frames per character to allow ROM to process the keypress.
     // Pause once for entire injection, then resume. Avoids repeated pause/resume overhead.
 
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning)
-    {
-        emulator->Pause(false);  // Pause without broadcasting
-    }
+    // The CPU held for the whole injection (Emulator::CpuHold): the steps below run inside it, the pause is left as it
+    // was, nothing is broadcast
+    Emulator::CpuHold hold(*emulator, "basic injection");
 
     for (char c : command)
     {
@@ -994,10 +1017,6 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Emulator* emulator, con
         }
     }
 
-    if (wasRunning)
-    {
-        emulator->Resume(false);  // Resume without broadcasting
-    }
 
     result.success = true;
     result.message = "[128K BASIC] Injected: " + command;
@@ -1186,10 +1205,11 @@ static bool LeaveMenuIntoBasicEditor(Emulator* emulator, Memory* memory, BasicEn
         }
     }
 
-    // Restore running state if emulator was running before injection
+    // Restore running state if emulator was running before injection. RunNFrames() paused it with a broadcast,
+    // so the resume broadcasts too (a silent resume only ends a silent pause: execution arbiter)
     if (wasRunning)
     {
-        emulator->Resume(false);  // Resume without broadcasting
+        emulator->Resume();
     }
 
     return state == BasicEncoder::BasicState::Basic128K || state == BasicEncoder::BasicState::Basic48K;
@@ -1307,10 +1327,11 @@ BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const
             // correctly picks up the command.
             injectEnterPhysical(emulator);
 
-            // Restore running state if emulator was running before injection
+            // Restore running state if emulator was running before injection (RunNFrames() paused it with a
+            // broadcast; a silent resume only ends a silent pause)
             if (wasRunning)
             {
-                emulator->Resume(false);  // Resume without broadcasting
+                emulator->Resume();
             }
         }
         else

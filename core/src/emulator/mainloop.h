@@ -11,8 +11,15 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/logger.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulationstats.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
+
+class Emulator;
+namespace execution
+{
+class ExecutionArbiter;
+}
 
 class MainLoop : public Observer
 {
@@ -32,11 +39,8 @@ protected:
     Screen* _screen = nullptr;
     SoundManager* _soundManager = nullptr;
 
-    volatile bool _isRunning = false;
-    volatile bool _stopRequested = false;
-    std::atomic<bool> _isPausedConfirmed{false};  // Set by Z80 thread when actually paused
-    std::condition_variable _pauseCV;              // Signaled when pause is confirmed
-    std::mutex _pauseMutex;                        // Protects pause state
+    std::atomic<bool> _isRunning{false};
+    std::atomic<bool> _stopRequested{false};
     std::atomic<std::thread::id> _runThreadId{};   // Thread currently executing Run() (emulation thread)
 
 
@@ -119,12 +123,23 @@ public:
     /// Set before the loop starts or while it is stopped
     void SetFrameEndHook(std::function<void(bool rendered)> hook) { _frameEndHook = std::move(hook); }
 
-    /// Adaptive decimation (default on). Tests that assert the fixed cadence turn it off.
+    /// Adaptive decimation reads the wall clock, so it is on only for a real front end. The default of every loop
+    /// created afterwards: on in the product, switched off once at the start of the test binary - a test must not
+    /// depend on the host's speed or load
+    static bool& AdaptiveDefault()
+    {
+        static bool value = true;
+        return value;
+    }
+
+    /// Adaptive decimation (the default above). Tests that assert the fixed cadence get it off through the default.
     void SetTurboRenderAdaptive(bool adaptive) { _turboRenderAdaptive = adaptive; }
     bool IsTurboRenderAdaptive() const { return _turboRenderAdaptive; }
     uint64_t GetTurboRenderDecimation() const { return _turboRenderDecimation; }
     /// Emulated frames per second measured while in turbo mode (0 until the first sample)
     double GetTurboMeasuredFps() const { return _turboMeasuredFps; }
+    /// The measured pace in every mode (fps, speed, frame work, interrupts per frame): any thread, never waits
+    const EmulationStatsMeter& GetEmulationStats() const { return _emulationStats; }
 
 protected:
     /// Computed once per frame in OnFrameStart; gates per-frame rendering work
@@ -132,18 +147,25 @@ protected:
     /// frame-refresh notification). Machine-time work (CPU, tape, FDC, TTD,
     /// analyzers, keyboard) always runs, keeping turbo timing invariant.
     bool _renderThisFrame = true;
+    /// From _renderThisFrame and Screen::CatchesUpOnEvents at the frame start: the screen is drawn after every step
+    /// (the classic screens by default), or only on the frame's last step (a screen that catches up on its own
+    /// events; the other steps tell it where they ended, Screen::NoteStepEnd)
+    bool _stepScreen = true;
+    bool _tailScreen = false;
     /// True while the previous frame rendered. A rendered frame that follows
     /// one or more skipped frames needs Screen::ResetPrevTstate() so DrawPeriod
     /// starts the beam at t=0 instead of a stale end-of-frame position.
     bool _lastFrameRendered = true;
 
-    bool _turboRenderAdaptive = true;
+    bool _turboRenderAdaptive = AdaptiveDefault();
     double _turboRenderMaxFps = 0.0;
     uint64_t _turboRenderDecimation = TURBO_RENDER_DECIMATION;
     double _turboMeasuredFps = 0.0;
     bool _turboRateSampling = false;
     std::chrono::steady_clock::time_point _turboRateSampleTime{};
     uint32_t _turboRateSampleFrame = 0;
+    /// Fed once per frame by Run (emulation thread), read by the monitoring planes
+    EmulationStatsMeter _emulationStats;
 
     /// Sample the turbo frame rate (wall clock vs. frame counter) and refresh
     /// _turboRenderDecimation every TURBO_RATE_SAMPLE_SECONDS; resets when turbo ends
@@ -159,7 +181,9 @@ public:
     /// endregion </Constructors / destructors>
 
 public:
-    void Run(volatile bool& exit);
+    void Run(const std::atomic<bool>& exit);
+    /// Park at a boundary until the execution arbiter lets the machine run (false: stop)
+    bool Park(Emulator* emulator, execution::ExecutionArbiter* arbiter);
     void Stop();
 
     /// @brief CPU core access for debugger/automation port I/O.
@@ -168,27 +192,12 @@ public:
     ///       memory access via Emulator::GetMemory().
     Core* GetCPU() const { return _cpu; }
 
-    /// @brief Returns true when the emulation thread has actually parked in the pause loop
-    /// (Emulator::Pause() only sets a flag; the current frame still finishes executing)
-    bool IsPauseConfirmed() const { return _isPausedConfirmed.load(std::memory_order_acquire); }
+    /// @brief Nothing executes the machine: the loop parked (a pause, or a command holding the CPU), or no loop
+    bool IsPauseConfirmed() const;
 
-    /// @brief Block until the emulation thread confirms it parked in the pause loop
-    /// @param timeoutMs Maximum time to wait, in milliseconds
-    /// @return true if pause was confirmed within the timeout
-    /// @note Safe to call from any thread. When called from the emulation thread itself
-    ///       (e.g. a breakpoint handler pausing mid-frame) it returns immediately -
-    ///       no frame can be in flight concurrently with the caller in that case.
-    ///       May time out legitimately when execution is paused inside a frame
-    ///       (e.g. breakpoint hit), since the pause loop is only reached at frame end.
+    /// @brief Block until nothing executes the machine (Emulator::WaitForPauseConfirmation)
+    /// @return true if parked within the timeout; true at once from the emulation thread itself
     bool WaitForPauseConfirmation(uint32_t timeoutMs);
-
-    /// @brief Confirm the pause from the CPU thread itself when it parks mid-frame
-    /// @note Used by Emulator::WaitWhilePaused(): when the CPU parks inside a frame
-    ///       (breakpoint/watchpoint handler or the per-instruction pause check in
-    ///       Z80FrameCycle), Run()'s frame-end park/confirm path is unreachable
-    ///       above it. Confirming on MainLoop's behalf lets WaitForPauseConfirmation()
-    ///       callers observe the park immediately instead of burning their timeout.
-    void ConfirmPauseFromCpu();
 
     /// @brief The caller is the emulator loop's own thread
     /// Run `work` on the emulation thread between two frames (from that thread itself: at once). True when it ran
@@ -201,13 +210,6 @@ public:
         return _runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id();
     }
 
-    /// @brief Eagerly drop a (possibly) stale pause confirmation
-    /// @note Called from Emulator::Resume()/Stop() right after un-parking the CPU
-    ///       thread. Without this, a Pause() issued immediately after Resume()
-    ///       could consume a stale "parked" confirmation from the previous park
-    ///       and return while the emulation thread is already executing the next
-    ///       frame - two Z80 drivers at once.
-    void InvalidatePauseConfirmation();
 
 protected:
     void RunFrame();

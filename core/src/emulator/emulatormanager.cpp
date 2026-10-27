@@ -1,5 +1,13 @@
 #include "emulatormanager.h"
 
+#include <algorithm>
+
+#include "emulator/actions/actionregistry.h"
+#include "emulator/actions/contextstate.h"
+#include "emulator/actions/steppingactions.h"
+#include "emulator/actions/targetstate.h"
+#include "emulator/execution/runpacer.h"
+#include "emulator/machinenames.h"
 #include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
@@ -14,6 +22,29 @@
 
 #include <algorithm>
 #include <iomanip>
+
+namespace
+{
+/// The nesting of the create calls on this thread: a variant, a ZX-Poly group and its modules create through the
+/// same methods, and only the outermost call names the machine the caller asked for (machines::MachineHistory)
+thread_local int t_createDepth = 0;
+
+struct CreateDepth
+{
+    CreateDepth() { ++t_createDepth; }
+    ~CreateDepth() { --t_createDepth; }
+    CreateDepth(const CreateDepth&) = delete;
+    CreateDepth& operator=(const CreateDepth&) = delete;
+    bool Outermost() const { return t_createDepth == 1; }
+};
+
+void NoteCreated(const CreateDepth& depth, const std::shared_ptr<Emulator>& created, const std::string& name,
+                 uint32_t ramKb)
+{
+    if (created && depth.Outermost())
+        machines::MachineHistory::Instance().Note(name, ramKb);
+}
+}  // namespace
 
 // Implementation of EmulatorManager methods
 
@@ -138,6 +169,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        // The machine the configuration gave (no name was asked for)
+        if (EmulatorContext* context = emulator->GetContext(); context != nullptr && t_createDepth == 0)
+            machines::MachineHistory::Instance().Note(machines::NameOf(context->config), context->config.ramsize);
         return emulator;
     }
 
@@ -223,10 +257,17 @@ std::function<void(CONFIG&)> VariantOverride(const MachineVariant& variant, std:
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
+
     // A ZX-Poly configuration name creates the whole group; checked before the
     // lock, since the group creates its members through this method
-    if (ZXPolyGroup::FindConfiguration(modelName))
-        return CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
+    if (const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(modelName))
+    {
+        std::shared_ptr<Emulator> master =
+            CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
+        NoteCreated(depth, master, configuration->name, 0);
+        return master;
+    }
 
     // A machine variant: its base model with the variant's board configuration
     // (the caller's override, if any, applies after it)
@@ -238,8 +279,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
             SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
             return nullptr;
         }
-        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, variant->ramKb, level, outError,
-                                             VariantOverride(*variant, std::move(configOverride)));
+        std::shared_ptr<Emulator> created =
+            CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, variant->ramKb, level, outError,
+                                          VariantOverride(*variant, std::move(configOverride)));
+        NoteCreated(depth, created, variant->name, 0);
+        return created;
     }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -319,10 +363,16 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        NoteCreated(depth, emulator, modelInfo->ShortName, 0);
         return emulator;
     }
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModel - Failed to initialize emulator with model: '%s'", modelName.c_str());
+    if (!emulator->GetInitError().empty())
+    {
+        SetCreateError(outError, "model '" + modelName + "': " + emulator->GetInitError());
+        return nullptr;
+    }
     SetCreateError(outError,
                    "initialization failed for model '" + modelName + "' (config folder '" +
                        Config::GetConfigFolderForModel(modelInfo->Model, modelInfo->defaultRAM) +
@@ -332,6 +382,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
+
     // A ZX-Poly configuration fixes its modules' memory (the base model's default)
     if (ZXPolyGroup::FindConfiguration(modelName))
     {
@@ -354,8 +406,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
             SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
             return nullptr;
         }
-        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, ramSize, level, outError,
-                                             VariantOverride(*variant, std::move(configOverride)));
+        std::shared_ptr<Emulator> created =
+            CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, ramSize, level, outError,
+                                          VariantOverride(*variant, std::move(configOverride)));
+        NoteCreated(depth, created, variant->name, 0);
+        return created;
     }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -370,6 +425,14 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Unknown model: '%s'", modelName.c_str());
         SetCreateError(outError, "unknown model '" + modelName + "' (see GET /api/v1/emulator/models)");
         return nullptr;
+    }
+
+    // A size the model's core cannot address (the Next's 4 MB) is created with the one it can, and logged
+    {
+        std::string note;
+        ramSize = Config::EffectiveRamSize(modelInfo->Model, ramSize, note);
+        if (!note.empty())
+            LOGWARNING("EmulatorManager::CreateEmulatorWithModelAndRAM - %s", note.c_str());
     }
 
     // Validate RAM size for this model
@@ -447,11 +510,17 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        NoteCreated(depth, emulator, modelInfo->ShortName, ramSize);
         return emulator;
     }
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Failed to initialize emulator with model: '%s', RAM: %dKB",
             modelName.c_str(), ramSize);
+    if (!emulator->GetInitError().empty())
+    {
+        SetCreateError(outError, "model '" + modelName + "': " + emulator->GetInitError());
+        return nullptr;
+    }
     SetCreateError(outError,
                    "initialization failed for model '" + modelName + "' with " + std::to_string(ramSize) +
                        "KB RAM (config folder '" +
@@ -543,6 +612,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string
                                                                const std::string& mediaPath, std::string* outError,
                                                                std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
     auto group = std::make_shared<ZXPolyGroup>(symbolicId.empty() ? std::string("zxpoly") : symbolicId);
     std::string error;
     if (!group->Create(modelName, &error, configOverride) || !group->LoadMedia(mediaPath, &error))
@@ -558,6 +628,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string
         std::lock_guard<std::recursive_mutex> lock(_zxpolyMutex);
         _zxpolyGroups[master->GetId()] = group;
     }
+    if (const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(modelName))
+        NoteCreated(depth, master, configuration->name, 0);
     return master;
 }
 
@@ -701,51 +773,59 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
             LOGWARNING("EmulatorManager::RemoveEmulator - Message queue drain timed out for '%s'; observers may race the instance free", emulatorId.c_str());
         }
     }
-    if (retiring)
-        retiring->WaitForContextLeases();
+    if (retiring && !retiring->WaitForContextLeases(std::chrono::milliseconds(_leaseWaitTimeoutMs.load())))
+        LOGWARNING("EmulatorManager::RemoveEmulator - a context lease on '%s' is still held after %lld ms; retiring "
+                   "anyway (nothing is freed while it is held)", emulatorId.c_str(),
+                   static_cast<long long>(_leaseWaitTimeoutMs.load()));
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+    // Out of the map under the lock; stopped and retired after it. Release() removes message observers, and
+    // removing one waits for a dispatch in flight - a handler that looks an instance up (the GUI's selection change,
+    // posted by another thread after the drain above) waits for this lock: holding it there was a deadlock
+    // (2026-10-10, WebAPI deletes while the GUI followed the selection)
+    std::shared_ptr<Emulator> removed;
     {
-        // Always go through Stop(), even when IsRunning() already reads false:
-        // Stop() is a blocking barrier (it returns only once the emulation
-        // thread has actually joined), while IsRunning() alone can go false
-        // before that join completes if another caller is concurrently
-        // stopping the same instance. Gating this on IsRunning() let Release()
-        // free Core's Screen / SoundManager / TimeTravelManager while that
-        // thread was still mid-frame (2026-10-02 crash).
-        LOGINFO("EmulatorManager::RemoveEmulator - Stopping emulator with ID '%s'", emulatorId.c_str());
-        it->second->Stop();
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
-        // Release resources
-        it->second->Release();
-
-        // Remove from map
-        _emulators.erase(it);
-        LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
-
-        // Clear selection if this was the selected emulator
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
         {
-            std::lock_guard<std::mutex> selLock(_selectionMutex);
-            if (_selectedEmulatorId == emulatorId)
+            removed = std::move(it->second);
+            _emulators.erase(it);
+
+            // Clear selection if this was the selected emulator
             {
-                std::string previousId = _selectedEmulatorId;
-                _selectedEmulatorId = "";
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                if (_selectedEmulatorId == emulatorId)
+                {
+                    std::string previousId = _selectedEmulatorId;
+                    _selectedEmulatorId = "";
 
-                // Send notification about selection being cleared
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
-                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+                    // Send notification about selection being cleared
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
 
-                LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
+                    LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
+                }
             }
+
+            // The surviving sole instance (if any) may become the active one
+            UpdateRealtimeSchedulingLocked();
         }
+    }
 
-        // The surviving sole instance (if any) may become the active one
-        UpdateRealtimeSchedulingLocked();
-
+    if (removed)
+    {
+        RetireRemoved(removed, "RemoveEmulator");
+        // Its actions worker ends: queued actions answer "Not Found" (the machine is stopped, a running one ends)
+        actions::ActionRegistry::Instance().DropInstance(emulatorId);
+        execution::RunPacer::Drop(emulatorId);  // a paced run ends, its thread is joined
+        actions::DropSteppingState(emulatorId);  // its debugger cursors and scrub unit
+        actions::ContextState::Instance().Drop(emulatorId);
+        // Views showing it lose it, `instance:` pins on it fall back to following (targeting.md §5)
+        actions::TargetState::Instance().InstanceGone(emulatorId);
+        LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
+        // The last reference frees it: here when nobody else holds it, else when the GUI or a request lets go
         return true;
     }
 
@@ -927,52 +1007,86 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
     return false;
 }
 
-bool EmulatorManager::PauseEmulator(const std::string& emulatorId)
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Origin origin)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
-    {
-        if (it->second->IsRunning() && !it->second->IsPaused())
-        {
-            it->second->Pause();
-            LOGINFO("EmulatorManager::PauseEmulator - Paused emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
-            return false;
-        }
-    }
-
-    LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+    return PauseEmulator(emulatorId, execution::Requester{origin, {}});
 }
 
-bool EmulatorManager::ResumeEmulator(const std::string& emulatorId)
+execution::Result EmulatorManager::PauseEmulatorWithResult(const std::string& emulatorId,
+                                                           const execution::Requester& requester,
+                                                           std::chrono::milliseconds wait)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+    std::shared_ptr<Emulator> emulator;
     {
-        if (it->second->IsPaused())
-        {
-            it->second->Resume();
-            LOGINFO("EmulatorManager::ResumeEmulator - Resumed emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
-            return false;
-        }
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
     }
+    if (!emulator)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "no such emulator"};
+    if (!emulator->IsRunning())
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+    // Not "already paused" from the flag: a direct run (run_frames) drives a paused machine - Pause() says queued
+    // behind it then
+    return wait.count() > 0 ? emulator->PauseAndWait(requester, wait) : emulator->Pause(requester);
+}
 
-    LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, const execution::Requester& requester)
+{
+    // The instance is taken under the lock; the pause (which waits for the park, up to 500 ms) runs outside it
+    std::shared_ptr<Emulator> emulator;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
+    }
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsRunning() || emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
+        return false;
+    }
+    const execution::Result result = emulator->Pause(requester);
+    LOGINFO("EmulatorManager::PauseEmulator - Pause of emulator '%s': %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome));
+    return result.outcome != execution::Outcome::Refused;
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, execution::Origin origin)
+{
+    return ResumeEmulator(emulatorId, execution::Requester{origin, {}});
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, const execution::Requester& requester)
+{
+    std::shared_ptr<Emulator> emulator;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
+    }
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
+        return false;
+    }
+    // Refused while another surface holds the run-control claim (the arbiter checks it)
+    const execution::Result result = emulator->Resume(requester);
+    LOGINFO("EmulatorManager::ResumeEmulator - Resume of emulator '%s': %s %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome), result.detail.c_str());
+    return result.outcome != execution::Outcome::Refused;
 }
 
 bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
@@ -1183,24 +1297,160 @@ void EmulatorManager::ShutdownAllEmulators()
         }
     }
     for (const auto& emulator : retiring)
-        emulator->WaitForContextLeases();
+    {
+        if (!emulator->WaitForContextLeases(std::chrono::milliseconds(_leaseWaitTimeoutMs.load())))
+            LOGWARNING("EmulatorManager::ShutdownAllEmulators - a context lease on '%s' is still held after %lld ms",
+                       emulator->GetId().c_str(), static_cast<long long>(_leaseWaitTimeoutMs.load()));
+    }
     retiring.clear();
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    for (auto& [uuid, emulator] : _emulators)
+    // Out of the map under the lock, stopped and retired after it (see RemoveEmulatorInstance)
+    decltype(_emulators) all;
     {
-        // Always go through Stop() - see RemoveEmulatorInstance() for why
-        // gating this on IsRunning() is unsafe
-        LOGINFO("EmulatorManager::ShutdownAllEmulators - Stopping emulator with UUID: %s", uuid.c_str());
-        emulator->Stop();
-
-        // Release resources
-        emulator->Release();
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        all.swap(_emulators);
     }
 
-    _emulators.clear();
+    for (auto& [uuid, emulator] : all)
+    {
+        RetireRemoved(emulator, "ShutdownAllEmulators");
+        actions::ActionRegistry::Instance().DropInstance(uuid);
+        execution::RunPacer::Drop(uuid);
+        actions::DropSteppingState(uuid);
+        actions::ContextState::Instance().Drop(uuid);
+        actions::TargetState::Instance().InstanceGone(uuid);
+    }
+    all.clear();   // the manager's references: an instance nobody else holds is freed here
+
+    // The last holders (the GUI's queued unbind, a request in flight) get a bounded time; survivors are logged and
+    // left to their holders - freeing under a live reader is the bug this avoids
+    const std::chrono::milliseconds shutdownFreeTimeout(_shutdownFreeTimeoutMs.load());
+    const auto deadline = std::chrono::steady_clock::now() + shutdownFreeTimeout;
+    size_t alive = RetiredAliveCount();
+    while (alive > 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::unique_lock<std::mutex> lock(_retiredMutex);
+        _retiredCv.wait_for(lock, std::chrono::milliseconds(10));
+        lock.unlock();
+        alive = RetiredAliveCount();
+    }
+    if (alive > 0)
+    {
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        for (const RetiredInstance& entry : _retired)
+        {
+            if (const long holders = entry.emulator.use_count(); holders > 0)
+                LOGWARNING("EmulatorManager::ShutdownAllEmulators - '%s' is still held (%ld references) after %lld ms; "
+                           "not freed here", entry.id.c_str(), holders,
+                           static_cast<long long>(shutdownFreeTimeout.count()));
+        }
+    }
+    StopRetiredWatchdog();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
+}
+
+void EmulatorManager::RetireRemoved(const std::shared_ptr<Emulator>& emulator, const char* caller)
+{
+    // Always go through Stop, even when IsRunning() already reads false: it is the barrier that returns only once
+    // the emulation thread has left (IsRunning() can go false before that when another caller is stopping the same
+    // instance; 2026-10-02 crash). Bounded: a thread that does not leave makes the instance stuck - retired and
+    // never freed, because that thread may still use it
+    LOGINFO("EmulatorManager::%s - Stopping emulator with ID '%s'", caller, emulator->GetId().c_str());
+    const std::chrono::milliseconds stopJoinTimeout(_stopJoinTimeoutMs.load());
+    if (!emulator->StopFor(stopJoinTimeout))
+    {
+        LOGERROR("EmulatorManager::%s - the emulation thread of '%s' did not stop within %lld ms; the instance is "
+                 "kept (never freed)", caller, emulator->GetId().c_str(),
+                 static_cast<long long>(stopJoinTimeout.count()));
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        _stuck.push_back(emulator);
+    }
+    emulator->Retire();
+    TrackRetired(emulator);
+}
+
+void EmulatorManager::TrackRetired(const std::shared_ptr<Emulator>& emulator)
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    // Freed ones out (their holders let go)
+    _retired.erase(std::remove_if(_retired.begin(), _retired.end(),
+                                  [](const RetiredInstance& entry) { return entry.emulator.expired(); }),
+                   _retired.end());
+    const auto now = std::chrono::steady_clock::now();
+    _retired.push_back(RetiredInstance{emulator, emulator->GetId(), now, now, false});
+    if (!_retiredWatchdog.joinable() && !_retiredWatchdogStop)
+        _retiredWatchdog = std::thread([this]() { WatchRetired(); });
+    _retiredCv.notify_all();
+}
+
+void EmulatorManager::WatchRetired()
+{
+    std::unique_lock<std::mutex> lock(_retiredMutex);
+    while (!_retiredWatchdogStop)
+    {
+        // No predicate: a new retiree or new warning times (SetRetiredWarningTimes) wake it to look again
+        const auto period = std::min(_retiredWarnAfter, std::chrono::milliseconds(1000));
+        _retiredCv.wait_for(lock, period);
+        if (_retiredWatchdogStop)
+            break;
+        const auto now = std::chrono::steady_clock::now();
+        _retired.erase(std::remove_if(_retired.begin(), _retired.end(),
+                                      [](const RetiredInstance& entry) { return entry.emulator.expired(); }),
+                       _retired.end());
+        for (RetiredInstance& entry : _retired)
+        {
+            const bool due = entry.warned ? now - entry.lastWarning >= _retiredWarnEvery
+                                          : now - entry.retiredAt >= _retiredWarnAfter;
+            if (!due)
+                continue;
+            entry.warned = true;
+            entry.lastWarning = now;
+            _retiredWarnings.fetch_add(1);
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - entry.retiredAt);
+            LOGWARNING("EmulatorManager - removed instance '%s' is still held %lld ms after its removal (%ld "
+                       "references): a holder does not let go", entry.id.c_str(), static_cast<long long>(age.count()),
+                       entry.emulator.use_count());
+        }
+    }
+}
+
+void EmulatorManager::StopRetiredWatchdog()
+{
+    {
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        _retiredWatchdogStop = true;
+    }
+    _retiredCv.notify_all();
+    if (_retiredWatchdog.joinable() && _retiredWatchdog.get_id() != std::this_thread::get_id())
+        _retiredWatchdog.join();
+    // A later removal (a test after a shutdown) starts it again
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    _retiredWatchdogStop = false;
+}
+
+size_t EmulatorManager::RetiredAliveCount()
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    size_t alive = 0;
+    for (const RetiredInstance& entry : _retired)
+        alive += entry.emulator.expired() ? 0 : 1;
+    return alive;
+}
+
+void EmulatorManager::SetRemovalTimeouts(std::chrono::milliseconds leaseWait, std::chrono::milliseconds stopJoin,
+                                         std::chrono::milliseconds shutdownFree)
+{
+    _leaseWaitTimeoutMs = leaseWait.count();
+    _stopJoinTimeoutMs = stopJoin.count();
+    _shutdownFreeTimeoutMs = shutdownFree.count();
+}
+
+void EmulatorManager::SetRetiredWarningTimes(std::chrono::milliseconds after, std::chrono::milliseconds every)
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    _retiredWarnAfter = after;
+    _retiredWarnEvery = every;
+    _retiredCv.notify_all();
 }
 
 void EmulatorManager::PrepareForShutdown()
@@ -1213,6 +1463,7 @@ EmulatorManager::~EmulatorManager()
 {
     // Ensure all emulators are properly shut down before destruction
     ShutdownAllEmulators();
+    StopRetiredWatchdog();   // ShutdownAllEmulators returns early when there is nothing to shut down
     
     // Clear the emulators map
     std::lock_guard<std::mutex> lock(_emulatorsMutex);

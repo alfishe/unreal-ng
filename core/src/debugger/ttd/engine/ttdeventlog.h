@@ -124,6 +124,8 @@ public:
     size_t CursorAt(TTDMachineTime t) const;
     /// The first barrier in (from, to], or null
     const TTDEvent* FirstBarrierIn(TTDMachineTime from, TTDMachineTime to) const;
+    /// Whether a cut (a snapshot load, D10) sits at exactly @p t
+    bool HasCutAt(TTDMachineTime t) const;
 
     static TTDApplyPoint PointOf(TTDEventKind kind);
     /// The role of @p ev. Tape control is input (the deck is part of the
@@ -137,6 +139,8 @@ public:
     void Clear();
     /// Drop the events before @p t (a ring releasing history), releasing their payloads
     void DropBefore(TTDMachineTime t);
+    /// Drop the events after @p t (a recording resumed from the past), releasing their payloads
+    void DropAfter(TTDMachineTime t);
 
     /// Pack / unpack v1's records (kind numbers equal, fields in args)
     static TTDEvent FromInput(TTDMachineTime t, const TTDInputEvent& in);

@@ -13,7 +13,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -21,6 +21,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/ulacontention.h"
@@ -30,14 +31,14 @@ class TimeTravelManager_ServiceState_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void Start(const char* model)
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr) << model;
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
         _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
@@ -94,17 +95,17 @@ TEST_F(TimeTravelManager_ServiceState_Test, ScorpionTurboLatchAndItsHookComeBack
     const size_t slow = Frame();
     scorpion->DecodePortIn(0x7FFD, 0x0000);   // the #7FFD read family sets the latch
     const size_t fast = Frame();
-    ASSERT_EQ(_context->emulatorState.scorpion_turbo, 1);
+    ASSERT_EQ(_context->emulatorState.scorpion.turbo, 1);
     scorpion->DecodePortIn(0x1FFD, 0x0000);   // the #1FFD read family clears it
     Frame();
-    ASSERT_EQ(_context->emulatorState.scorpion_turbo, 0);
+    ASSERT_EQ(_context->emulatorState.scorpion.turbo, 0);
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(fast));
-    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 1);
+    EXPECT_EQ(_context->emulatorState.scorpion.turbo, 1);
     EXPECT_EQ(z80->GetMachineStepHook(), scorpion) << "the /INT-pulse hook follows the latch";
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(slow));
-    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.turbo, 0);
     EXPECT_EQ(z80->GetMachineStepHook(), nullptr);
 }
 
@@ -116,8 +117,8 @@ TEST_F(TimeTravelManager_ServiceState_Test, SmucLatchesAndLinkComeBack)
     ASSERT_NE(scorpion, nullptr);
     EmulatorState& state = _context->emulatorState;
 
-    state.pFFBA = 0x80;
-    state.p7FBA = 0x40;
+    state.scorpion.pFFBA = 0x80;
+    state.scorpion.p7FBA = 0x40;
     scorpion->GetSmucIdeRegs()[3] = 0x5A;
     SMUCNvram::LinkState link = scorpion->GetSMUCNvram().GetLinkState();
     link.mode = 2;          // NV_ADR: an address byte is coming in
@@ -126,15 +127,15 @@ TEST_F(TimeTravelManager_ServiceState_Test, SmucLatchesAndLinkComeBack)
     scorpion->GetSMUCNvram().SetLinkState(link);
     const size_t mid = Frame();
 
-    state.pFFBA = 0;
-    state.p7FBA = 0;
+    state.scorpion.pFFBA = 0;
+    state.scorpion.p7FBA = 0;
     scorpion->GetSmucIdeRegs()[3] = 0;
     scorpion->GetSMUCNvram().ResetSerialLinkState();
     Frame();
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(mid));
-    EXPECT_EQ(state.pFFBA, 0x80) << "routes #DFBA to the clock's data register";
-    EXPECT_EQ(state.p7FBA, 0x40);
+    EXPECT_EQ(state.scorpion.pFFBA, 0x80) << "routes #DFBA to the clock's data register";
+    EXPECT_EQ(state.scorpion.p7FBA, 0x40);
     EXPECT_EQ(scorpion->GetSmucIdeRegs()[3], 0x5A);
     const SMUCNvram::LinkState back = scorpion->GetSMUCNvram().GetLinkState();
     EXPECT_EQ(back.mode, 2);
@@ -161,6 +162,48 @@ TEST_F(TimeTravelManager_ServiceState_Test, TsConfEvoAvrVolatileBytesComeBack)
     EXPECT_EQ(extType, 0x0C);
     EXPECT_EQ(page, 0x07);
     EXPECT_EQ(flags, 0x03);
+}
+
+/// The AVR's /WAIT timing (EvoAvrWait: main-loop phase, EEPROM write end) is shared by #xxEF and #BFF7 and rides
+/// in EvoAvrVolatile on TS-Conf and on the ATM3: a restore puts the AVR's loop back where it was
+TEST_F(TimeTravelManager_ServiceState_Test, EvoAvrWaitStateComesBackOnTsConf)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL"));
+    auto* tsconf = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
+    ASSERT_NE(tsconf, nullptr);
+    EvoAvr& avr = tsconf->GetEvoAvr();
+
+    const uint64_t avrNow = EvoAvrWait::BaseNow(_context) * 11059200 / _context->emulatorState.base_z80_frequency;
+    avr.SetWaitState(EvoAvrWait::State{avrNow + 1000, avrNow + 50000});   // inside an EEPROM write
+    const size_t set = Frame();   // the checkpoint closes the frame: the ROM's own CMOS / COM accesses move it on
+    const EvoAvrWait::State atCheckpoint = avr.GetWaitState();
+    EXPECT_NE(atCheckpoint.loopResume, 0u);
+    avr.SetWaitState(EvoAvrWait::State{1, 2});
+    Frame();
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(set));
+    EXPECT_EQ(avr.GetWaitState().loopResume, atCheckpoint.loopResume);
+    EXPECT_EQ(avr.GetWaitState().eepromReadyAt, atCheckpoint.eepromReadyAt);
+}
+
+TEST_F(TimeTravelManager_ServiceState_Test, EvoAvrWaitStateComesBackOnAtm3)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("ATM3"));
+    auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+    ASSERT_NE(atm3, nullptr);
+    EvoAvr& avr = atm3->GetEvoAvr();
+
+    const uint64_t avrNow = EvoAvrWait::BaseNow(_context) * 11059200 / _context->emulatorState.base_z80_frequency;
+    avr.SetWaitState(EvoAvrWait::State{avrNow + 1000, avrNow + 50000});   // inside an EEPROM write
+    const size_t set = Frame();   // the checkpoint closes the frame: the ROM's own CMOS / COM accesses move it on
+    const EvoAvrWait::State atCheckpoint = avr.GetWaitState();
+    EXPECT_NE(atCheckpoint.loopResume, 0u);
+    avr.SetWaitState(EvoAvrWait::State{3, 4});
+    Frame();
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(set));
+    EXPECT_EQ(avr.GetWaitState().loopResume, atCheckpoint.loopResume);
+    EXPECT_EQ(avr.GetWaitState().eepromReadyAt, atCheckpoint.eepromReadyAt);
 }
 
 /// Gap 16: an NMI asked for and not taken yet is CPU state; a restore never

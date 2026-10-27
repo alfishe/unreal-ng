@@ -1,122 +1,29 @@
 #pragma once
 
-#include <stdafx.h>
+// Forwards to unreal-disk (unrealdisk/loaders/loader_scl.h, core/src/3rdparty/unreal-disk): the emulator keeps its old names.
 
-#include <string>
-#include <vector>
-
+#include "unrealdisk/loaders/loader_scl.h"
 #include "loaders/disk/loader_trd.h"
+#include "loaders/disk/diskloaderoptions.h"
 
-#if defined(_MSC_VER)
-    #pragma pack(push, 1)
-    #define PACKED  // Empty - packing handled by pragma. Needed for cross-compiler compatibility
-#else
-    #define PACKED __attribute__((packed))
-#endif
+using unrealdisk::TRDOSDirectoryEntryBase;
+using unrealdisk::TRDOSDirectoryEntry;
+using unrealdisk::SCLHeader;
 
-/// SCL files use minimal 14-bytes catalog records (without start sector and track)
-struct PACKED TRDOSDirectoryEntryBase
+/// unrealdisk::LoaderSCL with the emulator's context: the options come from its configuration
+class LoaderSCL : public unrealdisk::LoaderSCL
 {
-    char Name[8];
-    uint8_t Type;
-    uint16_t Start;
-    uint16_t Length;
-    uint8_t SizeInSectors;
-};
-
-/// Full 16 bytes TR-DOS catalog record with sector/track positioning on disk
-struct PACKED TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
-{
-    uint8_t StartSector;
-    uint8_t StartTrack;
-};
-
-struct PACKED SCLHeader
-{
-    uint8_t Signature[8];  // Should be 'SINCLAIR'
-    uint8_t FileCount;
-    TRDOSDirectoryEntryBase Files[];
-};
-
-#if defined(_MSC_VER)
-#pragma pack(pop)
-#else
-#undef PACKED
-#endif
-
-class LoaderSCL
-{
-    /// region <Fields>
-protected:
-    EmulatorContext* _context;
-    std::string _filepath;
-
-    DiskImage* _diskImage = nullptr;
-    std::vector<std::string> _warnings;
-    /// endregion </Fields>
-
-    /// region <Constructors / destructors>
 public:
-    LoaderSCL(EmulatorContext* context, const std::string& filepath)
-    {
-        _context = context;
-        _filepath = filepath;
-    };
-
-    virtual ~LoaderSCL() = default;
-    /// endregion </Constructors / destructors>
-
-    /// region <Basic methods>
-public:
-    bool loadImage();
-    bool writeImage();
-    bool writeImage(const std::string& path);  // Save As - write to specified path
-    DiskImage* getImage();
-    void setImage(DiskImage* diskImage);
-
-    /// Diagnostics collected by the last writeImage call (refusal reason, skipped files)
-    const std::vector<std::string>& lastWarnings() const { return _warnings; }
-    /// endregion </Basic methods>
-
-    /// region <Helper methods>
-protected:
-    bool loadSCL();
-    bool addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileData);
-    bool checkSCLFileCRC(uint8_t* data, size_t length);
-
-    static inline bool areUint8ArraysEqual(const uint8_t* arr1, const uint8_t* arr2, size_t size)
-    {
-        bool result = true;
-
-        for (size_t i = 0; i < size; ++i)
-        {
-            if (arr1[i] != arr2[i])
-            {
-                result = false;
-                break;
-            }
-        }
-
-        return result;
-    }
-    /// endregion </Helper methods>
+    using unrealdisk::LoaderSCL::LoaderSCL;
+    LoaderSCL(EmulatorContext* context, const std::string& filepath) : unrealdisk::LoaderSCL(DiskLoaderOptions(context), filepath) {}
 };
 
-//
-// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing /
-// benchmark purposes
-//
 #ifdef _CODE_UNDER_TEST
-
-class LoaderSCLCUT : public LoaderSCL
+/// unrealdisk::LoaderSCLCUT with the emulator's context: the options come from its configuration
+class LoaderSCLCUT : public unrealdisk::LoaderSCLCUT
 {
 public:
-    LoaderSCLCUT(EmulatorContext* context, const std::string& filepath) : LoaderSCL(context, filepath) {};
-    using LoaderSCL::addFile;
-    using LoaderSCL::checkSCLFileCRC;
-    using LoaderSCL::loadSCL;
-
-public:
-    using LoaderSCL::_diskImage;
+    using unrealdisk::LoaderSCLCUT::LoaderSCLCUT;
+    LoaderSCLCUT(EmulatorContext* context, const std::string& filepath) : unrealdisk::LoaderSCLCUT(DiskLoaderOptions(context), filepath) {}
 };
 #endif  // _CODE_UNDER_TEST

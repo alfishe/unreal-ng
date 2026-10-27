@@ -121,6 +121,10 @@
         "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["ram_size"]["description"] =
+        "Optional RAM size in KB (a size of available_ram_sizes_kb of the model). ZX Next also takes 4096 (MAME's KS3 size): this core "
+        "addresses 2048, the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                        ["schema"]["properties"]["ram_power_on"];
@@ -143,6 +147,8 @@
         sprinter["description"] =
             "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
     }
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["slots"]["$ref"] = "#/components/schemas/CreateEmulatorRequest/properties/slots";
     {
         Json::Value& profi = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                   ["schema"]["properties"]["profi"];
@@ -204,7 +210,23 @@
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["200"]["description"] = "Emulator paused";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["description"] =
+        "Behind a command another client runs (run_frames, a step) the pause is queued: 202 status 'queued', "
+        "waiting_for names the command, the pause applies when it ends (a pause never aborts a command). wait=true "
+        "(30 s) or wait=<ms> (up to 60 s) waits for it: 200 when it applied, 202 status 'busy' when the wait ran out "
+        "(still queued)";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["name"] = "wait";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["description"] =
+        "true (30 s) or milliseconds (up to 60000): wait for a pause queued behind a running command";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["200"]["description"] =
+        "Emulator paused (status 'success'): in force, the machine parked";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["202"]["description"] =
+        "status 'queued' or 'busy': behind a running command (waiting_for), applies when it ends";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["409"]["description"] =
+        "Refused: another surface holds run control";
 
     paths["/api/v1/emulator/{id}/resume"]["post"]["summary"] = "Resume emulator";
     paths["/api/v1/emulator/{id}/resume"]["post"]["tags"].append("Emulator Control");
@@ -332,7 +354,9 @@
         "slot with the same id on the new machine, unsaved writes included (media.attached). A medium the new "
         "model has no slot for is closed when it has nothing unsaved (media.closed); with unsaved writes the "
         "switch answers 409 and lists them in 'stranded', unless 'stranded' says save, discard or keep "
-        "(keep: detached media on the new machine, media.detached).";
+        "(keep: detached media on the new machine, media.detached). The cards go along (ZX-bus slots R-OP-9): "
+        "'slots' (SlotCarry) lists the cards kept in their slot or moved behind an adapter and the ones the new "
+        "machine cannot take, with the reason; 'report' has the same lines for people.";
     paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
@@ -349,7 +373,9 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["ram_size"]["description"] = "Optional RAM size in KB";
+         ["ram_size"]["description"] =
+        "Optional RAM size in KB (a size of available_ram_sizes_kb). ZX Next also takes 4096 (MAME's KS3 size): this core addresses 2048, "
+        "the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]
                                        ["application/json"]["schema"]["properties"]["ram_power_on"];
@@ -373,6 +399,8 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["status"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["slots"]["$ref"] = "#/components/schemas/SlotCarry";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["old_emulator_id"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]

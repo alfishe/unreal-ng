@@ -13,6 +13,17 @@ set(_suite_targets unreal-qt unreal-screen-viewer unreal-videowall)
 if(TARGET unreal-mcp-bridge)
     list(APPEND _suite_targets unreal-mcp-bridge)
 endif()
+# The Stream Deck companion (-DUNREAL_STREAMDECK=ON): the daemon and the studio beside the suite, its data
+# (lib/unreal-ng/streamdeck, found beside the real binaries), its udev rule
+if(TARGET unreal-streamdeck)
+    list(APPEND _suite_targets unreal-streamdeck)
+    if(TARGET unreal-streamdeck-studio)
+        list(APPEND _suite_targets unreal-streamdeck-studio)
+    endif()
+    install(DIRECTORY "${DATA_PATH}/streamdeck" DESTINATION lib/unreal-ng COMPONENT Suite)
+    install(FILES "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
+        DESTINATION lib/udev/rules.d COMPONENT Suite)
+endif()
 install(TARGETS ${_suite_targets} RUNTIME DESTINATION lib/unreal-ng COMPONENT Suite)
 set_target_properties(${_suite_targets} PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
 foreach(_app IN LISTS _suite_targets)
@@ -23,7 +34,7 @@ foreach(_app IN LISTS _suite_targets)
             \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/${_app}\" SYMBOLIC)
     " COMPONENT Suite)
 endforeach()
-install(DIRECTORY "${DATA_PATH}/fonts" "${DATA_PATH}/rom"
+install(DIRECTORY "${DATA_PATH}/fonts" "${DATA_PATH}/rom" "${DATA_PATH}/midi"
     "${DATA_PATH}/boot" "${DATA_PATH}/configs"
     DESTINATION lib/unreal-ng COMPONENT Suite)
 install(DIRECTORY "${DATA_PATH}/testrom/" DESTINATION lib/unreal-ng/rom COMPONENT Suite)
@@ -38,6 +49,10 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/unreal-qt/install/linux/icons/"
     DESTINATION share/icons COMPONENT Suite)
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     DESTINATION share/doc/unreal-ng COMPONENT Suite)
+# Not under share/doc: minimal installs and Docker images exclude /usr/share/doc from every package
+install(DIRECTORY "${DATA_PATH}/examples/" DESTINATION share/unreal-ng/examples COMPONENT Suite
+    USE_SOURCE_PERMISSIONS
+    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE PATTERN "section-report*" EXCLUDE PATTERN ".gitignore" EXCLUDE)
 
 set(CPACK_PACKAGE_NAME "unreal-ng")
 set(CPACK_PACKAGE_VENDOR "UnrealNG contributors")

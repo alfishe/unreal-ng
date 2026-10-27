@@ -1,0 +1,406 @@
+;Plasma animation           Dark/X-trade
+;***************************************
+;*       This is demo source for       *
+;*        STORM turbo assembler        *
+;***************************************
+;THIS SOURCE WAS USED IN OUR DEMO-"RAGE"
+
+;PRESS ENTER TO RENDER NEW PLASMA
+;      SPACE TO EXIT
+
+;SPEED... 0.8 SEC TO RENDER PLASMA 64*48
+;AND 3 FRAMES TO DITHER 1 PHASE
+
+PMX     EQU 65
+PMY     EQU 48
+HGT     EQU 48
+CHUNKY  EQU #8000;ФИКС.
+DTAB    EQU #B000;1K -DITHER TAB
+PALTB   EQU #B400;PAL TRANSLATE
+SATB    EQU #B500;SCR ADDRESS
+DITBASE EQU #B600;DITHER DCR
+INT     EQU #BE00;INT TABLE
+INT2    EQU INT+#0100+(INT[)+1
+
+        ORG #6000
+        LD HL,INT
+        LD A,H:LD I,A
+        IM 2
+        INC A
+        LD (HL),A:INC L
+        JR NZ,$-2
+        INC H:LD (HL),A
+        LD A,#C9
+        LD (INT2),A
+        CALL INIT
+LOOP    CALL GENPLSM
+LOOP1   EI:HALT
+        LD BC,#7FFD
+        LD HL,BANK
+        LD A,(HL)
+        XOR 2
+        OUT (C),A
+        XOR 8
+        LD (HL),A
+        CALL DISPLAY
+        LD A,#BF:IN A,(#FE)
+        RRA:JR NC,LOOP
+        LD A,#7F:IN A,(#FE)
+        RRA:JR C,LOOP1
+        RET
+
+DISPLAY LD HL,SATB
+        LD B,DTAB[
+        EXX
+        LD HL,CHUNKY
+        LD DE,PALTB
+        LD B,HGT
+DISP1   EXX
+        LD E,(HL):INC L
+        LD D,(HL):INC L
+        CALL DITBASE
+        EXX
+        INC H:LD L,0
+        DJNZ DISP1
+        RET
+
+GENPLSM CALL PLASMA
+CONVERT LD HL,CHUNKY
+        LD LX,48
+CNV1    LD B,32
+        LD DE,HL
+CNV2    LD A,(HL):INC L
+        AND #F0>>2
+.2      RLCA
+        LD C,A
+        LD A,(HL):INC L
+        AND #F0>>2
+.2      RRCA
+        OR C
+        LD (DE),A:INC E
+        DJNZ CNV2
+        INC H:LD L,0
+        DEC LX
+        JR NZ,CNV1
+        RET
+
+INIT    ;INIT PROG
+
+;CREATE DITHER TABLE
+        LD HL,DTAB
+CRDT0   LD A,L:AND #F0
+.2      RRCA
+        LD DE,DTDAT
+        ADD A,E:LD E,A
+        ADC A,D:SUB E:LD D,A
+        LD B,4
+CRDT1   LD A,(DE):INC DE
+        AND #F0
+        LD (HL),A:INC H
+        DJNZ CRDT1
+        LD A,L:AND #0F
+.2      RLCA
+        LD DE,DTDAT+4
+        ADD A,E:LD E,A
+        ADC A,D:SUB E:LD D,A
+        LD B,4
+CRDT2   DEC DE:LD A,(DE)
+        AND #0F
+        DEC H:OR (HL)
+        LD (HL),A
+        DJNZ CRDT2
+        INC L:JR NZ,CRDT0
+
+;CREATE PALETTE TAB
+CRPTB   LD HL,PALTB
+        LD DE,#F00F
+CPT0    LD A,L:AND E
+        INC A
+        CP E:JR C,CPT1
+        JR Z,CPT1
+        XOR A
+CPT1    LD C,A
+        LD A,L:AND D
+        ADD A,#10
+        CP D:JR C,CPT2
+        JR Z,CPT2
+        XOR A
+CPT2    OR C
+        LD (HL),A
+        INC L
+        JR NZ,CPT0
+
+;DCR DITHER+INC PROG
+DCRDIT  LD DE,DITBASE
+        PUSH DE
+        LD HL,DTCD
+        LD BC,EDTCD-DTCD
+        LDIR
+        POP HL
+        LD BC,(EDTCD-DTCD)*15
+        LDIR
+        DEC DE
+        LD A,#C9
+        LD (DE),A
+
+;SCREEN ADR TAB
+CRSATB  LD IX,SATB
+        LD HL,#C000
+        LD B,48
+CSAT0   LD (IX+0),L
+        LD (IX+1),H
+.2      INC IX
+        LD A,H:ADD A,4:LD H,A
+        AND 7:JR NZ,CSAT1
+        LD A,L:ADD A,#20:LD L,A
+        JR C,CSAT1
+        LD A,H:SUB 8:LD H,A
+CSAT1   DJNZ CSAT0
+
+        XOR A:OUT (#FE),A
+        LD A,#1F:CALL BANKA
+        LD HL,#4000
+        CALL CLATR
+        LD HL,#C000
+CLATR   LD DE,HL:INC DE
+        LD BC,#1800
+        LD (HL),L
+        LDIR
+        LD BC,#02FF
+        LD (HL),#47
+        LDIR
+        RET
+
+BANKA   LD BC,#7FFD
+        LD (BANK),A
+        OUT (C),A
+        RET
+
+
+;PLASMA MAIN ROUTINES
+
+PLASMA  LD (PLSP+1),SP
+        LD HL,CHUNKY+PMY'+PMX-255
+        LD DE,0
+        LD B,PMY
+PLS1    LD SP,HL
+.33     PUSH DE
+        DEC H
+        DJNZ PLS1
+PLSP    LD SP,0
+
+        LD IX,X1
+        LD HL,0
+        LD (X1),HL
+        LD HL,(PMY-1)'!PMX-1
+        LD (X2),HL
+
+        LD HL,(X1)
+        CALL SETRND
+        LD L,(IX+0)
+        LD H,(IX+3)
+        CALL SETRND
+        LD HL,(X2)
+        CALL SETRND
+        LD L,(IX+2)
+        LD H,(IX+1)
+        CALL SETRND
+        LD HL,(X1)
+        LD DE,(X2)
+        CALL SUBDIV
+        RET
+
+SETRND  SET 7,H
+        LD A,R:AND #3F
+        JR NZ,$+3:INC A
+        LD (HL),A
+        RET
+
+;SUBDIVIDE
+SUBDIV  LD A,E:SUB L
+        CP 2
+        RET C
+        EXX
+        LD HL,(X1):PUSH HL
+        LD HL,(X2):PUSH HL
+        LD HL,(X):PUSH HL
+        EXX
+
+        LD (X1),HL
+        LD (X2),DE
+
+        LD (DX),A
+        LD A,D:SUB H
+        LD (DY),A
+
+        LD A,L
+        ADD A,E
+        RRA:LD (X),A
+        LD L,A
+        LD A,H
+        ADD A,D
+        RRA:LD (Y),A
+;L=X
+        LD DE,(X1)
+        LD H,D,B,D
+        LD A,(X2),C,A
+        LD A,(DX)
+;L=X H=B=D=Y1 E=X1 C=X2 A=DX
+        CALL NEWDOT
+
+        LD BC,(X2)
+        LD L,C,E,C
+        LD A,(Y),H,A
+        LD A,(Y1),D,A
+        LD A,(DY)
+;L=E=C=X2 H=Y D=Y1 B=Y2 A=DY
+        CALL NEWDOT
+
+        LD DE,(X2)
+        LD H,D,B,D
+        LD A,(X),L,A
+        LD A,(X1),C,A
+        LD A,(DX)
+
+;L=X E=X2 H=B=D=Y2 C=X1 A=DX
+        CALL NEWDOT
+
+        LD DE,(X1)
+        LD L,E,C,E
+        LD A,(Y),H,A
+        LD A,(Y2),B,A
+        LD A,(DY)
+;H=Y D=Y1 L=C=E=X1 B=Y2 A=DY
+        CALL NEWDOT
+
+        LD HL,(X)
+        SET 7,H:LD A,(HL)
+        OR A:JR NZ,SD1
+        EX DE,HL
+        LD HL,(X1)
+        SET 7,H:LD A,(HL)
+        LD H,(IX+3);X1,Y2
+        SET 7,H:ADD A,(HL)
+        LD HL,(X2)
+        SET 7,H:ADD A,(HL)
+        LD H,(IX+1);X2,Y1
+        SET 7,H:ADD A,(HL)
+        RRA:SRL A
+        EX DE,HL
+        JR NZ,$+3:INC A
+        LD (HL),A
+
+SD1     LD HL,(X1)
+        LD DE,(X)
+        CALL SUBDIV
+
+        LD HL,(X),D,H
+        LD A,(Y1),H,A
+        LD A,(X2),E,A
+;L=X H=Y1 E=X2 D=Y
+        CALL SUBDIV
+
+        LD HL,(X)
+        LD DE,(X2)
+        CALL SUBDIV
+
+        LD HL,(X),E,L
+        LD A,(X1),L,A
+        LD A,(Y2),D,A
+;H=Y L=X1 E=X D=Y2
+        CALL SUBDIV
+
+        POP HL:LD (X),HL
+        POP HL:LD (X2),HL
+        POP HL:LD (X1),HL
+
+        RET
+
+;HL=1/2
+;DE=3/4 BC=5/6
+;A=7
+NEWDOT  EXA
+        SET 7,H:LD A,(HL)
+        OR A:RET NZ
+        PUSH HL
+        SET 7,B:LD A,(BC)
+        EX HL,DE
+        SET 7,H:ADD A,(HL)
+        RRA:LD B,A
+        EXA
+.1      ADD A,A;SCALE
+        LD E,A
+
+;A-RANDOM. DON'T USE E,B
+RND     LD A,#90
+        ADD A,A
+        JR NC,$+4
+        XOR 12
+        LD (RND+1),A
+
+;MULS A,E   A(7)-SIGN
+.2      RL E
+        LD C,0:LD D,C:LD L,C
+        BIT 7,A:JR Z,$+5
+        NEG:INC C
+        LD H,A
+.6      ADD HL,HL:JR NC,$+3:ADD HL,DE
+        LD A,H
+        DEC C:JR NZ,$+4
+        NEG
+        ADD A,B
+        JR NZ,$+3:INC A
+        CP #40
+        JR C,$+4:LD A,#3F
+        POP HL
+        LD (HL),A
+        RET
+
+
+X1      DB 0
+Y1      DB 0
+X2      DB 0
+Y2      DB 0
+X       DB 0
+Y       DB 0
+
+DX      DB 0
+DY      DB 0
+BANK    DB 0
+
+DTCD    EXX
+        LD E,(HL):LD A,(DE)
+        LD (HL),A:INC L
+        EXX
+        LD C,A
+.3      LD A,(BC),(DE),A:INC B,D
+        LD A,(BC):LD (DE),A:INC E
+        EXX
+        LD E,(HL):LD A,(DE)
+        LD (HL),A:INC L
+        EXX
+        LD C,A
+.3      LD A,(BC),(DE),A:DEC B,D
+        LD A,(BC):LD (DE),A:INC E
+EDTCD
+
+DTDAT   ;16 COLORS DITHER DATA
+        DB #00,#00,#00,#00
+        DB #00,#00,#00,#00
+        DB #88,#00,#00,#00
+        DB #88,#00,#22,#00
+        DB #AA,#00,#22,#00
+        DB #AA,#00,#AA,#00
+        DB #AA,#44,#AA,#00
+        DB #AA,#44,#AA,#11
+        DB #AA,#55,#AA,#55
+        DB #AA,#DD,#AA,#77
+        DB #AA,#77,#AA,#FF
+        DB #AA,#FF,#AA,#FF
+        DB #AA,#FF,#BB,#FF
+        DB #EE,#FF,#BB,#FF
+        DB #EE,#FF,#FF,#FF
+        DB #FF,#FF,#FF,#FF
+
+ECODE
+

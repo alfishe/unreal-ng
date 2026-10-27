@@ -22,11 +22,11 @@ emulator's disk tools) work on documents or on the IR.
 flowchart TB
     subgraph L1["1 · bytes"]
         BS["ByteSource / ByteSink<br/>file · buffer · (emulator) disk file · memory"]
-        CH["CatalogHints<br/>TR-DOS type · start · name"]
+        CH["CatalogHints<br/>TR-DOS type · start · name · sector slack"]
         EN["encoding detectors (D-13)<br/>code page · line ends · text / binary<br/>reusable outside the library"]
     end
     subgraph L2["2 · codecs (one per format + sub-version)"]
-        C1["tasm3"] --- C2["tasm4"] --- C3["alasm-4.x / 5.x"] --- C4["storm"] --- C5["zxasm"] --- C6["text (code page, line ends)"]
+        C1["tasm (2.0 … 5.5)"] --- C3["alasm (3.8 … 5.09)"] --- C4["storm"] --- C5["zxasm"] --- C7["masm · gens · zeus · xas"] --- C6["text (code page, line ends)"]
     end
     subgraph L3["3 · document"]
         SD["SourceDocument<br/>lines · dialect · format · code page · attributes"]
@@ -70,6 +70,7 @@ classDiagram
     class SourceLine {
         +text : string (UTF-8, exact)
         +attrs : AttrBag (codec-private)
+        +number : int (GENS, ZEUS; -1 none)
         +origin : ByteRange
     }
     class AttrBag {
@@ -145,12 +146,12 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    A["bytes · tasm3"] -->|"decode"| D["SourceDocument<br/>dialect tasm"]
-    D --> V{"every line valid<br/>in tasm4?"}
-    V -->|"yes"| E["encode with tasm4<br/>(canonical attributes)"]
+    A["bytes · tasm 3"] -->|"decode"| D["SourceDocument<br/>dialect tasm"]
+    D --> V{"every line valid<br/>in tasm 4?"}
+    V -->|"yes"| E["encode as tasm 4<br/>(canonical attributes)"]
     V -->|"no"| R["report lines<br/>(stop, or --force: keep as text / comment)"]
     R --> E
-    E --> B["bytes · tasm4"]
+    E --> B["bytes · tasm 4"]
 ```
 
 The text decides. A sub-version conversion is "decode with one codec, check the lines against the other, encode
@@ -251,3 +252,13 @@ flowchart LR
 
 `core/src/3rdparty/unreal-asm/` (owner decision D-3); full tree in [tdd.md](tdd.md) §2. The emulator adapters live in
 `core/src/debugger/asm/` (and the symbol adapters in `core/src/debugger/symbols/`, [symbols/architecture.md](symbols/architecture.md) §9).
+
+**As built (review round A0, 2026-10-09).** The adapters are fewer than drawn in §8:
+
+| Designed | Built |
+|---|---|
+| `DiskFileSource` / `DiskFileSink`, `CatalogHints` | `core/src/debugger/asm/diskfiles.h`: `ParseDiskFileRef`, `ReadDiskFiles` / `ReadDiskFile` (the library's `ReadTrd` over the image's sectors, catalog hints included), `WriteDiskFile` (a catalog entry as TR-DOS writes it, at a coherent moment) |
+| the surfaces calling the library | `AsmControl` (`core/src/debugger/asm/asmcontrol.h`) for the source verbs and `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`) for the symbol verbs; WebAPI, CLI, MCP, Lua, Python and Qt only translate |
+| `MemoryView` over the emulator's pages | `SymbolControl` copies the RAM pages at a coherent moment and views them (`scan`, `import-live`) |
+| the symbol adapters in `core/src/debugger/symbols/` | none: that folder does not exist; see [symbols/architecture.md](symbols/architecture.md) §9 |
+| `zxasm`, `symconv` | `core/src/3rdparty/unreal-asm/tools/zxasm/`, `tools/symconv/` |

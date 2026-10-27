@@ -266,7 +266,12 @@ void FFmpegPipeEncoder::Stop()
     _drainRequested = true;
     _queueCond.notify_all();
 
-    auto joinWithTimeout = [&](std::thread& t, const char* name) {
+    // A thread that misses the deadline is cancelled and then joined for good: never detached. The member std::thread
+    // stays joinable while a detached waiter is still inside join(), so the destructor of the encoder (or of a
+    // restarted one) hit std::terminate, and the waiter kept references to this frame. killFfmpeg: the writers can sit
+    // in a blocking pipe write the cancel flag does not reach; ffmpeg's death ends it with EPIPE. Only valid before
+    // ffmpeg is reaped (a reaped pid may be reused).
+    auto joinWithTimeout = [&](std::thread& t, bool killFfmpeg) {
         if (!t.joinable())
             return true;
         std::atomic<bool> done{false};
@@ -289,16 +294,17 @@ void FFmpegPipeEncoder::Stop()
             waiter.join();
             return true;
         }
-        // Timed out — escalate
+        // Timed out — escalate: cancel, unblock a pending pipe write, wait for the thread to leave
         _cancelRequested = true;
         _queueCond.notify_all();
-        waiter.detach();
-        (void)name;
+        if (killFfmpeg)
+            _ffmpegProcess.kill();
+        waiter.join();
         return false;
     };
 
-    joinWithTimeout(_videoThread, "video");
-    joinWithTimeout(_audioThread, "audio");
+    joinWithTimeout(_videoThread, true);
+    joinWithTimeout(_audioThread, true);
 
     _isRecording = false;
 
@@ -319,7 +325,7 @@ void FFmpegPipeEncoder::Stop()
 
     // 4. Close stderr to unblock the drain thread, then join briefly
     _ffmpegProcess.closeStderr();
-    joinWithTimeout(_stderrThread, "stderr");
+    joinWithTimeout(_stderrThread, false);
 
     if (exitCode != 0 && exitCode != -1)
         _lastError = "FFmpeg exited with code " + std::to_string(exitCode);

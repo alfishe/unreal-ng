@@ -2,6 +2,7 @@
 
 #include <base/featuremanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <emulator/coordinator/machineop.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <pybind11/functional.h>
@@ -22,6 +23,12 @@ PYBIND11_EMBEDDED_MODULE(unreal_emulator, m)
 {
     m.doc() = "Unreal Speccy NG Emulator Python bindings";
     PythonBindings::registerEmulatorBindings(m);
+    // The automation gate opened a session for a script that drove the machine without taking control: a
+    // UserWarning tells it (a script that turns warnings into errors gets the error)
+    execution::script::SetAdviceSink(execution::Origin::Python, [](const std::string& advice) {
+        if (PyErr_WarnEx(PyExc_UserWarning, advice.c_str(), 1) < 0)
+            throw pybind11::error_already_set();
+    });
 }
 
 /// region <Methods>
@@ -402,6 +409,7 @@ static void registerEmulatorBindings()
 void AutomationPython::threadFunc(AutomationPython* python)
 {
     ThreadHelper::setThreadName("automation-python");
+    coordinator::SetThreadSource(coordinator::OpSource::Python);   // every script runs here: the operation log names it
 
     using namespace std::chrono_literals;
 

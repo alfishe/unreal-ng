@@ -207,7 +207,10 @@ public:
 
 public:
     bool load();
+    /// Save the machine's snapshot view (snapshot::SaveSnapshotFile): false = refused or not writable (logged)
     bool save();
+    /// Write an image captured by snapshot::CaptureImage as a .z80 (always v3); `error` says why not
+    bool WriteImage(const snapshot::Image& image, std::string& error, std::vector<std::string>& warnings);
 
     /// What the caller asked for (call before load(); the default lets the plan decide)
     void SetOptions(const snapshot::Options& options) { _options = options; }
@@ -226,12 +229,6 @@ protected:
     bool planSnapshot();
     void commitFromStage();
 
-    // Save helpers
-    Z80MemoryMode determineOutputFormat();
-    bool captureStateToStaging();
-    bool saveV3FromStaging();
-    uint8_t getModelCodeV3();
-
     /// region <Helper methods>
 protected:
     Z80SnapshotVersion getSnapshotFileVersion();
@@ -243,7 +240,7 @@ protected:
     Z80MemoryMode getMemoryModeV2(uint8_t model);
     Z80MemoryMode getMemoryModeV3(uint8_t model);
     void stagePeripheralState(const Z80Header_v2& header);
-    void commitPeripheralState();
+    void commitPeripheralState(const snapshot::Image& image);
     bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
@@ -314,6 +311,7 @@ public:
     using LoaderZ80::_logger;
     using LoaderZ80::_path;
     using LoaderZ80::_stagingLoaded;
+    using LoaderZ80::_image;
 
     // Staging fields
     using LoaderZ80::_stagingRAMPages;

@@ -35,6 +35,9 @@ struct OpenRequest
     /// FAT16 volume switches to FAT32 when FAT32 is among them or the list is
     /// empty (BUGS.md #2)
     std::vector<FatType> allowedFs;
+    /// `fs` was asked for explicitly (an insert option), not the slot's default:
+    /// a composite then builds exactly that flavour instead of choosing (DT-6)
+    bool explicitFs = false;
     bool mbr = true;  ///< folder volumes: MBR + one partition, or the volume at sector 0 (SlotDescriptor::folderMbr)
     std::optional<CodePage> codePage;  ///< folder volumes: explicit > the folder's manifest > CP866
     std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)

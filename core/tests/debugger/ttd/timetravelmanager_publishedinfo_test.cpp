@@ -1,5 +1,5 @@
 /// @file timetravelmanager_publishedinfo_test.cpp
-/// @brief TimeTravelManager::GetPublishedSessionInfo - the snapshot observers on
+/// @brief TimeTravelController::GetPublishedSessionInfo - the snapshot observers on
 /// other threads read instead of the live session (TDD section 7.2).
 ///
 /// 2026-10-03 crash: the Qt toolbar's tooltip timer called GetSessionInfo() on
@@ -16,9 +16,10 @@
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -31,7 +32,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -48,7 +49,7 @@ protected:
 
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 };
 
 // Every session operation publishes before it returns; frame boundaries
@@ -106,10 +107,15 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, HistoryLimitAppliesAtOnceWithoutLoo
     ASSERT_TRUE(_ttd->StartRecording());
     _emulator->RunNFrames(6);
     _ttd->SetHistoryLimit(3, 0);  // synchronous mode: the caller drives the machine
+    // Published at once, the same as the session: the engine trims whole segments, so the six frames recorded
+    // before the limit (one segment) stay until the segments recorded after it cover the window (decision 41)
     const ttd::TTDSessionInfo published = _ttd->GetPublishedSessionInfo();
-    EXPECT_EQ(published.checkpointCount, 3u);
     EXPECT_EQ(published.historyLimitFrames, 3u);
-    EXPECT_GT(published.evictedCheckpoints, 0u);
+    EXPECT_EQ(published.checkpointCount, _ttd->GetSessionInfo().checkpointCount);
+    _emulator->RunNFrames(12);
+    const ttd::TTDSessionInfo later = _ttd->GetSessionInfo();
+    EXPECT_GT(later.evictedCheckpoints, 0u) << "the segments recorded under the limit drop the older ones";
+    EXPECT_LE(later.checkpointCount, 3u + 1u);
     _ttd->StopRecording();
 }
 
@@ -178,7 +184,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
     std::atomic<uint64_t> statusReads{0};
     std::atomic<uint64_t> queries{0};
     std::atomic<uint64_t> torn{0};
-    std::thread automation([&] {
+    TestThread automation([&] {
         uint64_t lastQueryFrame = ~uint64_t(0);
         while (!done.load(std::memory_order_acquire))
         {
@@ -203,7 +209,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
                 queries++;
             }
         }
-    });
+    }, [&] { done = true; });  // an ASSERT below returning early stops and joins it
 
     const auto waitFrames = [this](uint64_t frames) {
         const uint64_t target = _context->emulatorState.frame_counter + frames;
@@ -223,8 +229,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
     _ttd->SetHistoryLimit(0, 0);
 
     EXPECT_TRUE(TestWait::For([&] { return queries.load() > 0; }));
-    done = true;
-    automation.join();
+    automation.Join();
     _emulator->Stop();
 
     EXPECT_EQ(torn.load(), 0u);

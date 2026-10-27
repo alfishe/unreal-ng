@@ -34,8 +34,17 @@ One set of names on every surface (WebAPI, CLI `mixer`/`audiocapture`, Lua
 `beeper`, `ay1`, `ay2`, `fm1`, `fm2`, `covox` (the Covox / SoundDrive, or the
 machine's own DAC: the Sprinter's Covox-Blaster), `gs`, `gs_mp3`,
 `moonsound_fm`, `moonsound_pcm`, `cd0`..`cd3` (the CD drive on IDE unit
-0..3). Only the devices the machine has are listed; naming one that is not
-fitted is a `400` whose text lists the fitted keys.
+0..3), and a ZX-MultiSound's `ms_ssg1`, `ms_ssg2`, `ms_fm1`, `ms_fm2` (its
+YM2203 pair per chip, like the TurboSound FM's `ay1` / `ay2` / `fm1` / `fm2`),
+`ms_saa`, `ms_pcm` (the GS + SounDrive DACs), `ms_midi`, a Fuller Box's `ay3`, and the ZX Spectrum Next's
+`next_ay1`..`next_ay3` and `next_dac` (its three AYs and its DAC, one row each). Only the devices the machine has are
+listed; naming one that is not fitted is a `400` whose text lists the fitted keys.
+
+Channels: `<source>.<channel>` names one channel of a row - `ay1.a` / `.b` / `.c`, `covox.la` / `lb` / `ra` / `rb`,
+`gs.1`..`gs.4` (NeoGS `.8`), `fm1.1`..`fm1.3`, `moonsound_fm.1`..`.18`, `moonsound_pcm.1`..`.24` (metered),
+`ms_ssg1.a`, `ms_fm1.2`, `ms_midi.1`..`.16` (mute and solo only), `next_dac.a`..`.d`. A channel takes muted, solo
+(within its row: the row's other channels go silent) and volume / gain_db, applied at the next frame start
+([mixer-channels-and-settings.md](../../docs/emulator/design/audio/mixer-channels-and-settings.md)).
 
 ## MCP (preferred)
 
@@ -45,11 +54,15 @@ inspect_state {"aspects":["audio_mixer"]}
 #   → master {muted, sample_rate_hz} and devices[] {source, name, muted, solo, audible,
 #     volume, gain_db, peak, active, capturable}
 
-# 2. Change one device (same path as the WebAPI; MCP has no dedicated mixer action)
-invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/ay1","body":{"muted":true}}
-invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/covox","body":{"gain_db":-6}}
-invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/beeper","body":{"solo":true}}
-invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/master","body":{"muted":false}}
+# 2. Change one device or channel (the audio_mixer tool; the same PUT /audio/mixer/{source} underneath)
+audio_mixer {"action":"set","source":"ay1","muted":true}
+audio_mixer {"action":"set","source":"covox","gain_db":-6}
+audio_mixer {"action":"set","source":"ay1.b","solo":true}          # only channel B of AY 1
+audio_mixer {"action":"set","source":"master","muted":false}
+audio_mixer {"action":"mute"}                                      # the master (or "source"); "unmute" undoes it
+audio_mixer {"action":"get","source":"moonsound_fm"}               # a row and its channels (peaks)
+audio_mixer {"action":"levels"}                                     # every row's and channel's level and mute / solo
+audio_mixer {"action":"set_setting","name":"ay_stereo","value":"acb"}
 
 # 3. Capture and analyze in one call (arms, runs the frames, fetches the result)
 capture_media {"action":"audio_capture","seconds":2}                       # the master mix

@@ -34,7 +34,11 @@
             "An unknown `area`, `mode`, `format` or `source` is 400 with the allowed words; a screen window that does not fit "
             "the frame is 500 with the sizes. The frame lags the machine by the present delay (2 frames by default, "
             "more with ZX DLSS); GIF has 256 colors and loses colors on true-colour pictures. "
-            "Raw pixels without encoding: /capture/framebuffer.";
+            "Raw pixels without encoding: /capture/framebuffer. On a ZX Spectrum Next `layer` returns ONE LAYER of the last completed frame "
+            "instead (ula, layer2, tilemap, sprites - a PNG with alpha 0 where the layer does not paint, same 640x512 geometry; or ids - every pixel "
+            "coloured by the layer that won it, legend in the answer), exactly as it was drawn, copper effects included; `format=rgba` gives the raw "
+            "bytes, `alpha=false` flattens what the layer does not paint onto the fallback colour. All layers of one frame: /capture/next-layers; "
+            "the record is switched with POST /next/layer-capture.";
 
         struct Param
         {
@@ -49,13 +53,26 @@
             {"area", "query", false,
              "full (default): the whole frame with its border. screen: the working picture of the frame's geometry",
              {"full", "screen"}},
-            {"format", "query", false, "png (default, lossless) or gif (256 colors)", {"png", "gif"}},
+            {"format", "query", false, "png (default, lossless) or gif (256 colors); with layer: png or rgba (raw R G B A bytes)", {"png", "gif", "rgba"}},
+            {"layer", "query", false,
+             "ZX Spectrum Next: one layer of the last completed frame instead of the presented picture. composed (default) = the ordinary screenshot; "
+             "ula (with the border and LoRes), layer2, tilemap, sprites = the layer's own pixels (alpha 0 where it does not paint); ids = the winning "
+             "layer of each pixel in the colours of `legend`. 409 when the machine is not a Next, the layer capture is off or no frame was completed yet",
+             {"composed", "ula", "layer2", "tilemap", "sprites", "ids"}},
+            {"alpha", "query", false, "with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)",
+             {"true", "false"}},
+            {"size", "query", false,
+             "with layer: screen (default) 640x512, the screenshot's geometry; grid 640x256, every line once; pixel 320x256, one sample per Next pixel "
+             "(loses the second sub-pixel of Layer 2 640 and Timex hi-res)",
+             {"screen", "grid", "pixel"}},
             {"source", "query", false,
              "presented (default): the finished, tear-free frame the window shows, a couple of frames behind. live: "
              "the frame as drawn right now, no delay and no ZX DLSS: a running machine's emulation thread copies it at "
              "the end of its next frame (409 no-frame if none arrives within 1 s); a paused one is read directly and "
-             "answers where the beam stopped",
-             {"presented", "live"}},
+             "answers where the beam stopped. window: the picture as the GUI window draws it - its shape, letterbox "
+             "excluded, CRT shader and HUD included - in the display's pixels, with `window` describing the window; only "
+             "for the instance unreal-qt shows (409 no-window headless or for another instance), area=full only",
+             {"presented", "live", "window"}},
             {"mode", "query", false, "Deprecated alias of area (full / screen); a conflicting pair is 400",
              {"full", "screen"}},
             {"path", "query", false, "Save the image to this server-side path instead of returning it (folders are created)",
@@ -84,7 +101,7 @@
         props["area"]["type"] = "string";
         props["area"]["description"] = "The area that was asked for: full or screen";
         props["source"]["type"] = "string";
-        props["source"]["description"] = "The frame that was asked for: presented or live";
+        props["source"]["description"] = "The frame that was asked for: presented, live or window";
         props["width"]["type"] = "integer";
         props["width"]["description"] = "Width of the returned image";
         props["height"]["type"] = "integer";
@@ -124,6 +141,25 @@
             "Only for a live frame of a paused machine: where the beam stopped";
         props["frame"]["properties"]["beam"]["properties"]["line"]["type"] = "integer";
         props["frame"]["properties"]["beam"]["properties"]["tstate"]["type"] = "integer";
+        props["layer"]["type"] = "string";
+        props["layer"]["description"] = "Only with layer=: which layer the image shows (ula layer2 tilemap sprites ids)";
+        props["alpha"]["type"] = "boolean";
+        props["alpha"]["description"] = "Only with layer=: whether the pixels the layer does not paint are transparent";
+        props["legend"]["type"] = "array";
+        props["legend"]["description"] = "Only with layer=ids: the id of every winner, its name and the colour it has in the image";
+        props["legend"]["items"]["$ref"] = "#/components/schemas/NextLayerLegendEntry";
+        props["frame"]["properties"]["sequence"]["type"] = "integer";
+        props["frame"]["properties"]["sequence"]["description"] = "Only with layer=: the n-th frame recorded since the layer capture was switched on";
+        props["window"]["type"] = "object";
+        props["window"]["description"] =
+            "Only with source=window: the window the image was grabbed from. viewport: its screen area (the picture "
+            "and its letterbox) and picture: where the picture is drawn in it, in logical pixels; the image is "
+            "picture x device_pixel_ratio; backend: gpu or software";
+        for (const char* rect : {"viewport", "picture"})
+            for (const char* field : {"x", "y", "width", "height"})
+                props["window"]["properties"][rect]["properties"][field]["type"] = "integer";
+        props["window"]["properties"]["device_pixel_ratio"]["type"] = "number";
+        props["window"]["properties"]["backend"]["type"] = "string";
         props["data"]["type"] = "string";
         props["data"]["description"] = "Base64 image (absent when saved to a path)";
         props["saved"]["type"] = "boolean";
@@ -134,7 +170,10 @@
             "Unknown area, mode or format (the message lists the allowed words), or area and mode disagree; "
             "kind: bad-parameter";
         op["responses"]["404"]["description"] = "No such emulator; kind: not-found";
-        op["responses"]["409"]["description"] = "The emulator has not presented a frame yet (try again); kind: no-frame";
+        op["responses"]["409"]["description"] =
+            "The emulator has not presented a frame yet (try again); kind: no-frame. source=window: no GUI window shows "
+            "this instance; kind: no-window. With layer=: kind not-next, layer-capture-off (POST "
+            "/next/layer-capture {\"enabled\":true}) or no-frame (no frame completed since it was switched on)";
         op["responses"]["500"]["description"] =
             "The screen window does not fit the frame (kind: bad-geometry), the encoder failed (encode-failed) or the "
             "file could not be written (io-failed); the message has the details";
@@ -202,8 +241,9 @@
         "Arm/stop/clear a stereo sample capture from the sound core. start arms a target of "
         "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples. `source` records "
         "one mixer device instead of the master mix (its own buffer, before mute / solo / volume): beeper, ay1, "
-        "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm "
-        "(GET /audio/mixer lists the fitted ones); 400 for a device the machine does not have.";
+        "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm, "
+        "a ZX-MultiSound's ms_ssg1, ms_ssg2, ms_fm1, ms_fm2 (its YM2203 pair per chip), ms_saa, ms_pcm (GS + SounDrive "
+        "DACs), ms_midi (GET /audio/mixer lists the fitted ones); 400 for a device the machine does not have.";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["required"] = true;
@@ -244,8 +284,9 @@
         op["tags"].append("Capture");
         op["description"] =
             "Body {\"muted\": true, \"solo\": false, \"volume\": 0.5} or {\"gain_db\": -6}; every field optional. "
-            "source = a key from GET /audio/mixer, or master (muted only). Answers the mixer. A monitor setting of "
-            "this instance (not saved).";
+            "source = a key from GET /audio/mixer, master (muted only), or a channel <row>.<channel> (ay1.a, gs.3, "
+            "moonsound_fm.7, ms_midi.10 - mute and solo only -, next_dac.c; solo within its row; applied at the next "
+            "frame start). Answers the mixer. A monitor setting of this instance (not saved).";
         op["parameters"][0]["name"] = "id";
         op["parameters"][0]["in"] = "path";
         op["parameters"][0]["required"] = true;
@@ -257,6 +298,41 @@
         op["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         op["responses"]["200"]["description"] = "The mixer after the change";
         op["responses"]["400"]["description"] = "Unknown or absent source, bad value";
+    }
+    // The mixer's channels and levels (docs/emulator/design/audio/mixer-channels-and-settings.md)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/audio/mixer/{source}"]["get"];
+        op["summary"] = "One mixer row or channel";
+        op["tags"].append("Capture");
+        op["description"] =
+            "source = a row key (ay1) or a channel <row>.<channel> (ay1.a, covox.lb, gs.3, fm1.2, moonsound_fm.18, "
+            "moonsound_pcm.24, ms_midi.10, next_dac.c). A row: source, name, muted, solo, audible, volume, gain_db, "
+            "peak, active, channels[] {key, channel, name, muted, solo, audible, volume, gain_db, peak (metered "
+            "channels)}; a channel: its entry. The same as the readout audio.source.<key>.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "source";
+        op["parameters"][1]["in"] = "path";
+        op["parameters"][1]["required"] = true;
+        op["parameters"][1]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The row or channel";
+        op["responses"]["404"]["description"] = "Unknown or absent source or channel";
+    }
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/audio/levels"]["get"];
+        op["summary"] = "Mixer levels of every row and channel";
+        op["tags"].append("Capture");
+        op["description"] =
+            "Compact: master {muted}, solo (any row soloed), devices[] {source, muted, solo, audible, volume, peak, "
+            "active, channels[] {key, muted, solo, audible, volume, peak}}. The WebSocket topic audio.mixer pushes "
+            "the same value when it changes (the readout audio.mixer).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The levels";
     }
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["responses"]["200"]["description"] =
         "Capture session updated (armed/target_samples/sample_rate/channels)";
@@ -385,3 +461,44 @@
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["responses"]["200"]["description"] =
         "Recording status (recording/paused/stats/output)";
 
+    // Per-layer capture of a ZX Spectrum Next frame, all layers at once (docs/inprogress/2026-10-07-zx-next/design-layer-capture.md)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/capture/next-layers"]["get"];
+        op["summary"] = "All layers of the last Next frame";
+        op["tags"].append("Capture");
+        op["description"] =
+            "Every layer (ula, layer2, tilemap, sprites) and the winner map (ids) of the SAME last completed frame of a ZX Spectrum Next in one "
+            "answer, each a base64 PNG with alpha 0 where the layer does not paint (format=rgba: raw R G B A bytes; alpha=false flattens onto the "
+            "fallback colour), 640x512 like /capture/screen. Recorded while the frame was drawn, so copper bars, split screens and palette tricks "
+            "are exact; one frame of buffers, a paused machine answers from its last frame. 409 when the machine is not a Next, the record is off "
+            "(POST /next/layer-capture) or no frame was completed yet. CLI `capture screen --layer=...`, Lua capture_screen_layer(), Python "
+            "capture_screen_layer(), MCP capture_media layer=.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "format";
+        op["parameters"][1]["in"] = "query";
+        op["parameters"][1]["description"] = "png (default) or rgba (raw bytes)";
+        op["parameters"][1]["schema"]["type"] = "string";
+        op["parameters"][1]["schema"]["enum"].append("png");
+        op["parameters"][1]["schema"]["enum"].append("rgba");
+        op["parameters"][2]["name"] = "alpha";
+        op["parameters"][2]["in"] = "query";
+        op["parameters"][2]["description"] = "false: flatten the pixels a layer does not paint onto the fallback colour (default true: alpha 0)";
+        op["parameters"][2]["schema"]["type"] = "string";
+        op["parameters"][2]["schema"]["enum"].append("true");
+        op["parameters"][2]["schema"]["enum"].append("false");
+        op["parameters"][3]["name"] = "size";
+        op["parameters"][3]["in"] = "query";
+        op["parameters"][3]["description"] = "screen (default) 640x512, grid 640x256, pixel 320x256";
+        op["parameters"][3]["schema"]["type"] = "string";
+        op["parameters"][3]["schema"]["enum"].append("screen");
+        op["parameters"][3]["schema"]["enum"].append("grid");
+        op["parameters"][3]["schema"]["enum"].append("pixel");
+        op["responses"]["200"]["description"] = "The layers of one frame";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/NextLayers";
+        op["responses"]["400"]["description"] = "Bad format or alpha";
+        op["responses"]["404"]["description"] = "No such emulator";
+        op["responses"]["409"]["description"] = "Not a ZX Spectrum Next (kind not-next), the record is off (layer-capture-off) or no frame yet (no-frame)";
+    }

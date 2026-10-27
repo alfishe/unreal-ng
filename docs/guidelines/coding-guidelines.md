@@ -29,4 +29,13 @@
 
 ## General Architecture
 - **GUI Decoupling**: Keep `core/` completely decoupled from `unreal-qt/`. The core must remain headless and platform-agnostic.
+- **Instance lifetime in the GUI**: an instance can be removed from any thread (WebAPI, CLI, MCP) at any moment. A
+  removal retires it (stopped, refuses execution and changes) and the last `shared_ptr<Emulator>` holder frees it.
+  So GUI code gets the instance from `EmulatorBinding` (`emulator()`, `context()` for the current handler) or holds a
+  `std::shared_ptr<Emulator>` of its own, and **never stores `Emulator*` or `EmulatorContext*` in a member** - keep an
+  instance id instead when only identity matters. `tools/verification/gui-instance-reads.sh` enforces this in CI; a
+  reviewed exception carries `// lifetime-ok: <why>` on its line. A holder must let go when the GUI unbinds (a
+  removed instance still held after 10 s is logged). `ContextLease` means "the machine is live, not being removed":
+  take one before changing the machine, not for memory safety. Design:
+  `docs/inprogress/2026-10-10-gui-instance-lifetime`.
 - **Cross-Platform Compatibility**: Use `<filesystem>` for path manipulation to handle `/` and `\` transparently across macOS, Linux, and Windows.

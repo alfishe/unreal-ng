@@ -12,6 +12,19 @@
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["responses"]["200"]["description"] =
         "Beam position + frame timing";
 
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["summary"] = "Pentagon overscan on / off";
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["tags"].append("Screen State");
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["description"] =
+        "Switches the Pentagon's 384x304 overscan frame on or off (the GUI's View > Overscan) and sets the viewport "
+        "that crops it: symmetric (default when on), standard, screen_only or full. Other machines answer 409. "
+        "The answer names the video mode, the framebuffer and the displayed (cropped) size.";
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["responses"]["200"]["description"] =
+        "overscan, changed, video_mode, framebuffer, display, viewport";
+
     paths["/api/v1/emulator/{id}/state/screen/digest"]["get"]["summary"] = "Screen content digest";
     paths["/api/v1/emulator/{id}/state/screen/digest"]["get"]["tags"].append("Screen State");
     paths["/api/v1/emulator/{id}/state/screen/digest"]["get"]["description"] =

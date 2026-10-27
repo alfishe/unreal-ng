@@ -10,6 +10,7 @@
 #include <common/filehelper.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 
+#include <optional>
 #include <sstream>
 
 /// region <Snapshot Control Commands>
@@ -53,6 +54,10 @@ void CLIProcessor::HandleSnapshot(const ClientSession& session, const std::vecto
     {
         HandleSnapshotInspect(session, emulator, args);
     }
+    else if (subcommand == "formats")
+    {
+        HandleSnapshotFormats(session, emulator);
+    }
     else
     {
         session.SendResponse(std::string("Error: Unknown subcommand '") + args[0] + "'" + NEWLINE +
@@ -68,17 +73,19 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     if (args.size() < 2)
     {
         session.SendResponse(std::string("Error: Missing file path") + NEWLINE +
-                            "Usage: snapshot load <file> [--no-switch] [--commit <name>]" + NEWLINE);
+                            "Usage: snapshot load <file> [--switch | --no-switch] [--commit <name>]" + NEWLINE);
         return;
     }
 
     std::string filepath = args[1];
-    bool switchModel = true;
+    std::optional<bool> switchModel;   // not given: an SPG switches, an SZX of another model is refused (snapshotlauncher.h)
     std::string commit;
     for (size_t i = 2; i < args.size(); i++)
     {
         if (args[i] == "--no-switch")
             switchModel = false;
+        else if (args[i] == "--switch")
+            switchModel = true;
         else if (args[i] == "--commit" && i + 1 < args.size())
             commit = args[++i];
         else
@@ -86,13 +93,6 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
             session.SendResponse("Error: Unknown option '" + args[i] + "'" + NEWLINE);
             return;
         }
-    }
-
-    // TTD refuses a snapshot load while recording (it would drop the history)
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-    {
-        session.SendResponse("Error: " + refusal + NEWLINE);
-        return;
     }
 
     // A file that needs another model (an SPG: TS-Conf) switches it first,
@@ -110,7 +110,7 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     {
         ss << "Error: " << result.message << NEWLINE;
         if (result.modelMismatch)
-            ss << "Switch with 'model " << result.requiredModel << "', or load without --no-switch" << NEWLINE;
+            ss << "Switch with 'model " << result.requiredModel << "', or load with --switch" << NEWLINE;
         if (result.report.refused && !result.report.needs.empty())
             ss << "Needs: " << result.report.needs << NEWLINE;
         session.SendResponse(ss.str());
@@ -219,20 +219,21 @@ void CLIProcessor::HandleSnapshotInspect(const ClientSession& session, std::shar
 }
 
 void CLIProcessor::HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator,
-                                      EmulatorContext* context)
+                                      [[maybe_unused]] EmulatorContext* context)
 {
     std::stringstream ss;
     ss << "Snapshot Status" << NEWLINE;
     ss << "===============" << NEWLINE;
     ss << NEWLINE;
 
-    if (context->coreState.snapshotFilePath.empty())
+    const std::string snapshotPath = emulator->SnapshotFilePath();
+    if (snapshotPath.empty())
     {
         ss << "No snapshot loaded" << NEWLINE;
     }
     else
     {
-        ss << "File: " << context->coreState.snapshotFilePath << NEWLINE;
+        ss << "File: " << snapshotPath << NEWLINE;
     }
     if (!emulator->LastSnapshotReport().format.empty())
         ss << NEWLINE << emulator->LastSnapshotReport().ToText();
@@ -246,15 +247,16 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "Snapshot Commands" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  snapshot load <file> [--no-switch] [--commit <name>]" << NEWLINE;
-    ss << "                                 Load snapshot from file (.z80, .sna, .szx; .rzx plays on this machine;" << NEWLINE;
-    ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch)" << NEWLINE;
-    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx: by extension)" << NEWLINE;
+    ss << "  snapshot load <file> [--switch | --no-switch] [--commit <name>]" << NEWLINE;
+    ss << "                                 Load snapshot from file (.z80, .sna, .snx, .szx; .rzx plays on this machine;" << NEWLINE;
+    ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch;" << NEWLINE << "                                 an .szx saved on another model is refused unless --switch or [SNAPSHOT] SwitchModel=1)" << NEWLINE;
+    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx, .nex on the Next: by extension)" << NEWLINE;
     ss << "                                 --commit: who writes the machine - omitted: the machine's own policy," << NEWLINE;
     ss << "                                 else the legacy commit; 'legacy': the legacy commit always; or a policy name" << NEWLINE;
     ss << "  snapshot inspect <file> [--commit <name>]" << NEWLINE;
     ss << "                                 What loading the file would do here (its contents, who would commit, or" << NEWLINE;
     ss << "                                 why it is refused); nothing is written" << NEWLINE;
+    ss << "  snapshot formats               Which formats this machine can be saved in right now, and why not" << NEWLINE;
     ss << "  snapshot info                  Get current snapshot status and the last load's pipeline report" << NEWLINE;
     ss << NEWLINE;
 
@@ -292,17 +294,44 @@ void CLIProcessor::HandleSnapshotSave(const ClientSession& session,
         return;
     }
 
-    // Use SaveSnapshot method
-    bool success = emulator->SaveSnapshot(filepath);
+    // Use SaveSnapshot method; a refusal carries the reason and what would work
+    const bool success = emulator->SaveSnapshot(filepath);
+    const snapshot::SaveResult& saved = emulator->LastSaveResult();
 
     if (success)
     {
-        session.SendResponse(std::string("Snapshot saved: ") + filepath + NEWLINE);
+        std::string text = std::string("Snapshot saved: ") + filepath + " (" + saved.format + ", " + saved.machine + ")" + NEWLINE;
+        for (const std::string& warning : saved.warnings)
+            text += "  note: " + warning + NEWLINE;
+        session.SendResponse(text);
     }
     else
     {
-        session.SendResponse(std::string("Error: Failed to save snapshot: ") + filepath + NEWLINE);
+        std::string text = std::string("Error: ") + saved.text + NEWLINE;
+        if (!saved.needs.empty())
+            text += "  needs: " + saved.needs + NEWLINE;
+        text += std::string("Use 'snapshot formats' to see what this machine can be saved as.") + NEWLINE;
+        session.SendResponse(text);
     }
+}
+
+void CLIProcessor::HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator)
+{
+    const snapshot::SaveFormats formats = emulator->SnapshotSaveFormats();
+    std::stringstream ss;
+    ss << "Snapshot formats for this machine" << NEWLINE;
+    ss << "  machine: " << (formats.machine.empty() ? "-" : formats.machine) << NEWLINE;
+    ss << "  view:    " << formats.view << NEWLINE;
+    for (const snapshot::FormatStatus& status : formats.formats)
+    {
+        ss << "  ." << snapshot::ToText(status.format) << ": " << (status.available ? "yes" : "no");
+        if (!status.available)
+            ss << " - " << status.reason << (status.needs.empty() ? "" : " [needs: " + status.needs + "]");
+        else if (!status.note.empty())
+            ss << " (" << status.note << ")";
+        ss << NEWLINE;
+    }
+    session.SendResponse(ss.str());
 }
 
 /// endregion </Snapshot Control Commands>

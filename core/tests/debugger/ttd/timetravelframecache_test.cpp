@@ -1,6 +1,6 @@
 // timetravelframecache_test.cpp — per-frame decode cache (reverse-browsing accelerator)
 //
-// Verifies that the cache TimeTravelManager builds during a replay pass matches
+// Verifies that the cache TimeTravelController builds during a replay pass matches
 // what a live replay/step-back produces, that it is lifecycle-scoped to replay
 // (never built while Recording, freed on returning to the present), and that it
 // captures per-instruction memory/port writes.
@@ -12,7 +12,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelframecache.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -25,7 +25,7 @@ class TTD_FrameCache_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -35,7 +35,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);

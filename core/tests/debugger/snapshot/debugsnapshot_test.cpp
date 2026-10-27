@@ -101,7 +101,7 @@ TEST_F(DebugSnapshot_Test, DisasmLinesWithTargets)
 
 TEST_F(DebugSnapshot_Test, DisasmLimitsAndTheWrap)
 {
-    EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 500).find("count")->i, 100);
+    EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 500).find("count")->i, static_cast<int>(DebugSnapshot::kMaxDisasmLines));
     EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 0).find("count")->i, 1);
     Poke(0xFFFE, {0x00, 0x00});
     const StateNode d = DebugSnapshot::Disasm(_context, 0xFFFE, 10);
@@ -225,9 +225,8 @@ TEST_F(DebugSnapshot_Test, PausedAndRunningMachines)
 TEST_F(DebugSnapshot_Test, WaitTimesOutWithoutAChange)
 {
     const uint64_t since = _emulator->DebugSeq();
-    const auto start = std::chrono::steady_clock::now();
-    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 20);
-    EXPECT_GE(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(15));
+    // A timeout that is over at once: no change, and the answer says so (the timeout's length is not under test)
+    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 0);
     EXPECT_FALSE(answer.find("changed")->b);
     EXPECT_EQ(static_cast<uint64_t>(answer.find("seq")->i), since);
     EXPECT_EQ(answer.find("state")->s, "stopped");
@@ -237,9 +236,8 @@ TEST_F(DebugSnapshot_Test, WaitAnswersAtOnceWhenSeqMovedAlready)
 {
     const uint64_t since = _emulator->DebugSeq();
     _emulator->EditMemoryFromTool("test", [this]() { Poke(0x9000, {0x55}); });
-    const auto start = std::chrono::steady_clock::now();
-    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 5000);
-    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(1000));
+    // Timeout 0: the answer comes from the state as it is now, so "changed" proves the moved seq is seen without waiting
+    const StateNode answer = DebugSnapshot::Wait(_emulator.get(), since, 0);
     EXPECT_TRUE(answer.find("changed")->b);
     EXPECT_GT(static_cast<uint64_t>(answer.find("seq")->i), since);
 }

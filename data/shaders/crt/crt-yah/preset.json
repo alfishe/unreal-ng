@@ -1,0 +1,924 @@
+{
+ "key": "crt-yah",
+ "preset": "crt/crt-yah.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-yah/lut.slang",
+   "alias": "LutPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "GLOBAL_MASTER": "float",
+    "COLOR_PROFILE": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/ntsc-pass1-horizontal.slang",
+   "alias": "NtscHPass1",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 4.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "InputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "FrameTimeDelta": "uint",
+    "OriginalFPS": "float",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "SCREEN_FREQUENCY": "float",
+    "NTSC_PROFILE": "float",
+    "NTSC_SAMPLES": "float",
+    "NTSC_PHASE": "float",
+    "NTSC_SCALE": "float",
+    "NTSC_SHIFT": "float",
+    "NTSC_JITTER": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/ntsc-pass2-horizontal.slang",
+   "alias": "NtscHPass2",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 0.25
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "NTSC_PROFILE": "float",
+    "NTSC_SAMPLES": "float",
+    "NTSC_PHASE": "float",
+    "NTSC_SCALE": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/ntsc-pass1-vertical.slang",
+   "alias": "NtscVPass1",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 4.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "InputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "FrameTimeDelta": "uint",
+    "OriginalFPS": "float",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "SCREEN_FREQUENCY": "float",
+    "NTSC_PROFILE": "float",
+    "NTSC_SAMPLES": "float",
+    "NTSC_PHASE": "float",
+    "NTSC_SCALE": "float",
+    "NTSC_SHIFT": "float",
+    "NTSC_JITTER": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/ntsc-pass2-vertical.slang",
+   "alias": "NtscVPass2",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 0.25
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "NTSC_PROFILE": "float",
+    "NTSC_SAMPLES": "float",
+    "NTSC_PHASE": "float",
+    "NTSC_SCALE": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/offset.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "FrameTimeDelta": "uint",
+    "OriginalFPS": "float",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "SCREEN_FREQUENCY": "float",
+    "COLOR_TEMPERATUE": "float",
+    "COLOR_CONTRAST": "float",
+    "COLOR_SATURATION": "float",
+    "COLOR_OVERFLOW": "float",
+    "COLOR_BRIGHTNESS": "float",
+    "COLOR_BRIGHTNESS_FLICKER": "float",
+    "SCANLINES_STRENGTH": "float",
+    "SCANLINES_OFFSET": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/deconverge.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "DECONVERGE_LINEAR": "float",
+    "DECONVERGE_RADIAL": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/phosphor.slang",
+   "alias": "PhosphorPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "FrameTimeDelta": "uint",
+    "OriginalFPS": "float",
+    "GLOBAL_MASTER": "float",
+    "PHOSPHOR_AMOUNT": "float",
+    "PHOSPHOR_DECAY": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/sharp-blur-horizontal.slang",
+   "alias": "SharpBlurHPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "SHARP_AMOUNT": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/sharp-blur-vertical.slang",
+   "alias": "SharpBlurVPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "SHARP_AMOUNT": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/halation-blur-horizontal.slang",
+   "alias": "HalationBlurHPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "HALATION_INTENSITY": "float",
+    "HALATION_DIFFUSION": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/halation-blur-vertical.slang",
+   "alias": "HalationBlurVPass",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "GLOBAL_MASTER": "float",
+    "HALATION_INTENSITY": "float",
+    "HALATION_DIFFUSION": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yah/crt-yah.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FinalViewportSize": "vec4",
+    "FrameCount": "uint",
+    "FrameTimeDelta": "uint",
+    "OriginalFPS": "float",
+    "GLOBAL_MASTER": "float",
+    "SCREEN_RESOLUTION_SCALE": "float",
+    "SCREEN_ORIENTATION": "float",
+    "SCREEN_SCALE": "float",
+    "SCREEN_FREQUENCY": "float",
+    "SCREEN_INTERLACED": "float",
+    "SHARP_AMOUNT": "float",
+    "HALATION_INTENSITY": "float",
+    "HALATION_DIFFUSION": "float",
+    "HALATION_WEIGHT": "float",
+    "HALATION_INFLUENCE": "float",
+    "COLOR_BRIGHTNESS": "float",
+    "COLOR_BRIGHTNESS_FLICKER": "float",
+    "COLOR_COMPENSATION": "float",
+    "COLOR_SATURATION": "float",
+    "COLOR_OVERFLOW": "float",
+    "COLOR_CONTRAST": "float",
+    "COLOR_PROFILE": "float",
+    "COLOR_TEMPERATUE": "float",
+    "COLOR_BLACK_LIGHT": "float",
+    "SCANLINES_STRENGTH": "float",
+    "SCANLINES_OFFSET": "float",
+    "BEAM_WIDTH_MIN": "float",
+    "BEAM_WIDTH_MAX": "float",
+    "BEAM_SHAPE": "float",
+    "BEAM_FILTER": "float",
+    "ANTI_RINGING": "float",
+    "SCANLINES_COLOR_BURN": "float",
+    "MASK_INTENSITY": "float",
+    "MASK_BLEND": "float",
+    "MASK_SCALE": "float",
+    "MASK_TYPE": "float",
+    "MASK_SUBPIXEL": "float",
+    "MASK_SUBPIXEL_ORDER": "float",
+    "MASK_SUBPIXEL_SHAPE": "float",
+    "MASK_COLOR_BLEED": "float",
+    "CRT_CURVATURE_AMOUNT": "float",
+    "CRT_VIGNETTE_AMOUNT": "float",
+    "CRT_NOISE_AMOUNT": "float",
+    "CRT_CORNER_RAIDUS": "float",
+    "CRT_CORNER_SMOOTHNESS": "float"
+   }
+  }
+ ],
+ "textures": [
+  {
+   "name": "SamplerLutNtsc",
+   "file": "SamplerLutNtsc.png",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  },
+  {
+   "name": "SamplerLutTrinitron",
+   "file": "SamplerLutTrinitron.png",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  }
+ ],
+ "parameters": {
+  "NTSC_PROFILE": {
+   "description": "\u00b7  NTSC > Profile  (0-Off, 1-Separate Y/C, 2-Composite, 3-RF)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 3.0,
+   "step": 0.1
+  },
+  "CRT_CORNER_SMOOTHNESS": {
+   "description": "   CRT > Edge Smoothness  (0-None .. 1-Full)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "INFO1": {
+   "description": " \u00b9\u2009Reduces marked effects",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "COLOR_CONTRAST": {
+   "description": "   Color > Contrast\u00b9  (-Lower .. +Higher)",
+   "initial": 0.1,
+   "minimum": -1.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "COLOR_BRIGHTNESS": {
+   "description": "   Color > Brightness\u00b9  (-Darken .. +Lighten)",
+   "initial": 0.15,
+   "minimum": -1.0,
+   "maximum": 4.0,
+   "step": 0.05
+  },
+  "NTSC_SCALE": {
+   "description": "   NTSC > Scale\u2075  (-Down / 0-Auto / +Up)",
+   "initial": 0.0,
+   "minimum": -0.5,
+   "maximum": 0.5,
+   "step": 0.05
+  },
+  "INFO5": {
+   "description": " \u2075\u2009Affects scaling of marked effects",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "CRT_NOISE_AMOUNT": {
+   "description": "   Brightness > Noise\u00b9\u00b3  (0-None .. 1-Full)",
+   "initial": 0.25,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "BEAM_FILTER": {
+   "description": "   Beam > Filter  (-Blocky .. +Blurry)",
+   "initial": -0.25,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "HALATION_WEIGHT": {
+   "description": "   Halation > Weight  (0-None .. 1-Luma)",
+   "initial": 0.75,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "INFO4": {
+   "description": " \u2074\u2009Affects frequency of marked effects",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "NTSC_SAMPLES": {
+   "description": "   NTSC > Chroma Samples  (\u00bc-Min .. 1-Max)",
+   "initial": 1.0,
+   "minimum": 0.25,
+   "maximum": 1.0,
+   "step": 0.25
+  },
+  "NTSC_SHIFT": {
+   "description": "   NTSC > Chroma Shift  (-left .. +right)",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "MASK_TYPE": {
+   "description": "   Mask > Type\u00b2  (1-Aperture, 2-Slot, 3-Shadow)",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 3.0,
+   "step": 1.0
+  },
+  "COLOR_COMPENSATION": {
+   "description": " \u200a\u00b2Brightness > Compensation  (0-Off, 1-On)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "NTSC_JITTER": {
+   "description": "   NTSC > Offset\u2074  (-Merge / 0-Static / +Jitter)",
+   "initial": 1.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "COLOR_SATURATION": {
+   "description": "   Color > Saturation\u00b9  (0-Low .. 2-High)",
+   "initial": 1.1,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "SCANLINES_COLOR_BURN": {
+   "description": "   Scanlines > Burn\u00b9  (0-None .. 1-Full)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.25
+  },
+  "DECONVERGE_LINEAR": {
+   "description": "\u00b7  Deconverge > Linear Amount\u00b9  (0-None .. -/+ 1-Full)",
+   "initial": 0.25,
+   "minimum": -2.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "MASK_SUBPIXEL": {
+   "description": "\u00b7  Sub-Pixel > Pattern\u00b2  (1-Mono, 2-MG/x, 4-RGB/x)",
+   "initial": 4.0,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 1.0
+  },
+  "HALATION_INFLUENCE": {
+   "description": "   Halation > Influence  (-Mask / 0-Both / +Scanlines)",
+   "initial": 0.5,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SCANLINES_OFFSET": {
+   "description": "   Scanlines > Offset\u2074  (-Static / 0-None / +Jitter)",
+   "initial": 0.25,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "MASK_INTENSITY": {
+   "description": "\u00b7  Mask > Intensity\u00b9\u00b2\u00b3  (0-None .. 1-Full)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "HALATION_INTENSITY": {
+   "description": "\u00b7  Halation > Intensity\u00b9  (0-None .. 1-Full / 2-More)",
+   "initial": 0.25,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "COLOR_TEMPERATUE": {
+   "description": "   Color > Temperature\u00b9  (-Colder .. +Warmer)",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "COLOR_BRIGHTNESS_FLICKER": {
+   "description": "   Brightness > Flicker\u2074  (0-None .. 1-Full)",
+   "initial": 0.25,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "BEAM_WIDTH_MIN": {
+   "description": "\u00b7  Beam > Min. Width  (less-Shrink .. 1-Full)",
+   "initial": 0.25,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "MASK_SUBPIXEL_SHAPE": {
+   "description": "   Sub-Pixel > Shape\u00b2  (0-Sharp .. 1-Smooth)  [4K]",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.25
+  },
+  "NTSC_PHASE": {
+   "description": "   NTSC > Chroma Phase  (0-Auto, 1-Two, 2-Three)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "CRT_CURVATURE_AMOUNT": {
+   "description": "\u00b7  CRT > Curvature\u00b9  (0-None .. 1-Full)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "HALATION_DIFFUSION": {
+   "description": "   Halation > Diffusion  (0-Low .. 1-Medium .. 2-High)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "MASK_BLEND": {
+   "description": "   Mask > Blend\u00b2  (0-Multiplicative .. 1-Additive)",
+   "initial": 0.25,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "GLOBAL_MASTER": {
+   "description": "\u00b7\u2009\u00b9Global > Master  (0-None .. 1-Full / 2-More)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "CRT_VIGNETTE_AMOUNT": {
+   "description": "   CRT > Vignette\u00b9  (0-None .. 1-Full)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "MASK_SCALE": {
+   "description": "   Mask > Scale\u2075  (-1 Down / 0-Auto / +\u00bd Up)",
+   "initial": 0.0,
+   "minimum": -2.0,
+   "maximum": 4.0,
+   "step": 0.5
+  },
+  "SHARP_AMOUNT": {
+   "description": "\u00b7  Sharpen > Amount\u00b9  (0-None .. 1-Full)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.25
+  },
+  "INFO2": {
+   "description": " \u00b2\u2009Compensates brightness changes of marked effects",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "DECONVERGE_RADIAL": {
+   "description": "   Deconverge > Radial Amount\u00b9  (0-None .. -/+ 1-Full)",
+   "initial": 0.0,
+   "minimum": -2.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "INFO3": {
+   "description": " \u00b3\u2009Increases black level of marked effects",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "BEAM_SHAPE": {
+   "description": "   Beam > Shape\u00b2  (0-Sharp .. 1-Smooth)",
+   "initial": 0.75,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.25
+  },
+  "SCREEN_ORIENTATION": {
+   "description": "\u00b7  Screen > Orientation  (0-Auto, 1-Horizontal, 2-Vertical)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "CRT_CORNER_RAIDUS": {
+   "description": "   CRT > Corner Roundness\u00b9  (0-None .. 25%)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.25,
+   "step": 0.01
+  },
+  "SCREEN_INTERLACED": {
+   "description": "   Screen > Interlaced\u00b2\u2074  (0-None .. 1-Full)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "COLOR_PROFILE": {
+   "description": "\u00b7  Color > Profile\u00b9  (-NTSC .. +Trinitron)",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "ANTI_RINGING": {
+   "description": "   Beam > Anti-Ringing  (0-None .. 1-Full)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "SCANLINES_STRENGTH": {
+   "description": "\u00b7  Scanlines > Strength\u00b9\u00b2\u00b3  (0-None .. 1-Full)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SCREEN_SCALE": {
+   "description": "   Scanlines > Scale\u2075  (-Down / 0-Auto / +Up)",
+   "initial": 0.0,
+   "minimum": -4.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "SCREEN_RESOLUTION_SCALE": {
+   "description": " \u200a\u2075Screen > Resolution  (1-Native, 2~240p/\u2191, 4~480p/\u2191)",
+   "initial": 2.0,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 1.0
+  },
+  "BEAM_WIDTH_MAX": {
+   "description": "   Beam > Max. Width  (1-Full .. more-Grow)",
+   "initial": 1.25,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "COLOR_OVERFLOW": {
+   "description": "\u00b7  Brightness > Glow\u00b9  (0-None .. 1-Full / 2-More)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.25
+  },
+  "SCREEN_FREQUENCY": {
+   "description": " \u200a\u2074Screen > Frequency  (30Hz .. 60Hz)",
+   "initial": 60.0,
+   "minimum": 30.0,
+   "maximum": 60.0,
+   "step": 10.0
+  },
+  "COLOR_BLACK_LIGHT": {
+   "description": " \u200a\u00b3Brightness > Black Lighten  (0-None .. 1-Full / 2-More)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "MASK_SUBPIXEL_ORDER": {
+   "description": "   Sub-Pixel > Colors  (1-RGB/\u2190, 3-RBG/\u2190, 5-BRG/\u2190)",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 6.0,
+   "step": 1.0
+  },
+  "MASK_COLOR_BLEED": {
+   "description": "   Sub-Pixel > Bleed\u00b9\u00b2  (0-None .. 1-Full)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.25
+  },
+  "PHOSPHOR_AMOUNT": {
+   "description": "\u00b7  Phosphor > Amount\u00b9  (0-None .. 1-Full)",
+   "initial": 0.25,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "PHOSPHOR_DECAY": {
+   "description": "   Phosphor > Decay  (0-Slow .. 1-Fast)",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  }
+ }
+}

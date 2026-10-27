@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef FLOPPYDISKWIDGET_H
 #define FLOPPYDISKWIDGET_H
 
@@ -15,7 +17,7 @@ public:
     explicit FloppyDiskWidget(QWidget* parent = nullptr);
     virtual ~FloppyDiskWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void reset();
     void refresh();
 
@@ -27,7 +29,7 @@ private:
     void createUI();
     void updateDiskInfo();
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QLabel* _titleLabel = nullptr;
     QLabel* _driveLabel = nullptr;
     QLabel* _trackLabel = nullptr;

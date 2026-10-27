@@ -1,0 +1,52 @@
+{
+  "family": "logitech-f310",
+  "images": [
+    {
+      "view": "front",
+      "title": "Logitech Gamepad F310 (F510 / F710 share the shell)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 142 mm, depth 98 mm, height 75 mm",
+          "source": "Logitech support, \"Logitech Gamepad F310 Technical Specifications\" (support.logi.com)",
+          "author": "Logitech",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view: the outline (trace.py, 87.1 mm deep at 142 mm: the view does not see the grips' ends under the pad), the shoulder tabs, the grips' rubber, every control's position, size and colour",
+          "source": "https://resource.logitechg.com/content/dam/gaming/en/products/f310/f310-gallery-1.png",
+          "author": "Logitech",
+          "terms": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the shoulders stacked (LB over LT), the X / D switch underneath (not a control)",
+          "source": "https://resource.logitechg.com/content/dam/gaming/en/products/f310/f310-gallery-5.png",
+          "author": "Logitech",
+          "terms": "product photo",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the stick collars, the D-pad in its well, the printed BACK / START / MODE",
+          "source": "https://commons.wikimedia.org/wiki/File:Logitech_F310,_forward.jpg",
+          "author": "FreeMediaKid!",
+          "licence": "CC BY 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "Mode (swaps the D-pad and the left stick in the pad, reports nothing): a quiet misc.1; the trigger tabs' and the bumpers' lower ends, under the shell",
+          "source": "this POC",
+          "note": "an estimate",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

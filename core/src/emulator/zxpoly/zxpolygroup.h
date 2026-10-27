@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -150,8 +151,9 @@ public:
     /// Live display frame at double resolution: the master's framebuffer
     /// (border included) scaled 2x with the composed 512 x 384 paper on top,
     /// so mode 5 shows its full resolution. Updated at every rendered master
-    /// frame; the master's own framebuffer keeps a 1:1 picture for
-    /// screenshots and recording
+    /// frame. Screenshots and recording take this composed frame too
+    /// (SnapshotDisplay / CopyDisplay); the master's own framebuffer stays
+    /// the 1:1 picture of the master's screen (Viewport regions crop it)
     unsigned GetDisplayWidth() const { return _displayWidth; }
     unsigned GetDisplayHeight() const { return _displayHeight; }
     const uint32_t* GetDisplayBuffer() const { return _displayFront.data(); }
@@ -200,6 +202,19 @@ public:
     /// reads or changes the slaves calls it first; call it before inspecting
     /// a slave directly while the master runs at unlimited speed
     void WaitForSlaves() const;
+    /// An operation on the group from outside the master's frame (a load, the group TTD, a mode switch): the
+    /// master's CPU held - no boundary hands the slaves new work meanwhile - and their pipelined work finished.
+    /// Without it a pipelined boundary could run a slave on a worker while the operation drove it too
+    class GroupHold
+    {
+    public:
+        GroupHold(ZXPolyGroup& group, const char* tag);
+        GroupHold(const GroupHold&) = delete;
+        GroupHold& operator=(const GroupHold&) = delete;
+
+    private:
+        std::shared_ptr<void> _hold;  // an Emulator::CpuHold on the master (Emulator is only declared here)
+    };
 
     /// Compares every slave with the master (locked phase only): port reads
     /// of the last frame (when the check is enabled), then the control state -

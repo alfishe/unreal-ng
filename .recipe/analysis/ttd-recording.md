@@ -21,12 +21,13 @@ Reverse *queries* (`find-last`, `reverse-step/continue`) live in
 # record
 time_travel   {"action":"start"}                               # record (write journal off)
 time_travel   {"action":"start","journal":true}                # or: also record the write journal
+time_travel   {"action":"start","black_box":true,"minutes":2}  # or: the black box (last 2 min, turbo free)
 time_travel   {"action":"status"}                              # state, journal size, coverage frames
 inspect_state {"aspects":["ttd"]}                              # status + position alongside other aspects
 time_travel   {"action":"stop"}                                # history retained → idle
 time_travel   {"action":"invalidate","reason":"next scenario"} # drop history
 
-# navigate (refused while recording — stop first)
+# navigate (while recording on the engine this pauses the recording; v1 refuses it - stop first)
 time_travel {"action":"position"}
 time_travel {"action":"seek","frame":12000}                    # optional "tinframe"
 time_travel {"action":"step_back_frame"}
@@ -69,7 +70,24 @@ Optional body:
 ```json
 {}                     // record; the write journal is off
 {"journal": true}      // also record the write journal (12 bytes per memory write)
+{"black_box": true, "minutes": 2}   // the black box: keep the last 2 minutes (default 5)
 ```
+
+The black box (the engine) is for "always on" recording: it keeps only the
+last minutes and never holds the machine at real speed - turbo or a host
+speed above 1x stops it first (history kept, `last_stop_reason:
+"acceleration"`), and it starts a new session once nothing accelerates. No
+acceleration lock below applies to it, and it refuses no load: inserting a
+tape, a disk or another medium ends its session (the recording up to there
+stays in its folder) and the next one starts at the next frame. The same
+holds for the history DeZog starts for reverse debugging. Same on the other surfaces: CLI
+`ttd start --black-box --minutes 2`, Lua `ttd_start(false, true, 2)`, Python
+`emu.ttd_start(black_box=True, minutes=2)`; unreal-qt: Debug > Time Travel >
+Always Record. `GET /ttd/status` shows `black_box: true` and the folder its
+segment files go to (`recording_folder`, in unreal-qt and the automation app).
+When the black box restarts (after turbo, a host speed, a machine change)
+its previous recording stays in its folder: `POST /ttd/load {"path": "<folder>"}`
+(or any `segment-NNNN.ttd` in it) loads it.
 
 The write journal only speeds up "who wrote address X last": with it the
 answer is instant, without it the search replays one frame (a few ms, same
@@ -79,7 +97,9 @@ answer). Switch it during the recording or build it afterwards:
 StartRecording **auto-enables** the `timetravel` and `debugmode` runtime
 features. On stop it turns `debugmode` back off if it was the one that
 enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
-(`already_active: true`).
+(`already_active: true`). A start the recorder refuses answers `409` with the reason
+(`"the recording did not start: device table: device uart (type 24) is registered twice"`,
+`"... the machine reports no RAM pages to record"`), every surface alike.
 
 While recording (and while the machine sits in `detached`) the
 **acceleration lock** holds: host speed forced to 1x (2x-16x refused),
@@ -112,6 +132,24 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 
 MCP: `time_travel` `{"action":"status"}`.
 
+### What ended the session, why a load was refused
+
+The operation log names every reset, disk autostart, snapshot load, media change, ROM load, GS card switch, speed
+change, state transfer, tool edit (memory, registers, ports, sectors) and TTD verb (start, stop, discard, seek, load,
+resume), the mode the rules saw (`recording` = a recording you started, `black-box` = the background one) and what it
+did to the session (`end-keep-history`, `media-changed`, `stop-then-media-changed`, `machine-changed`,
+`timing-changed`) - refusals included, with the same sentence the refused call answered:
+
+```bash
+curl -s "$BASE/emulator/$ID/operations?limit=5" | jq '.entries[] | {seq, frame, kind, summary, source, status, mode, effect, detail}'
+# poll for what is new: ?since=<last_seq of the previous answer>
+```
+
+`source` says who asked (`qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`): a session ended by a reset
+from the UI while your script recorded shows up as `qt`.
+
+MCP: `emulator_manage` `{"action":"operations","limit":5}`; CLI `ops 5`; Lua / Python `operations()`.
+
 ### Stop / resume / invalidate
 
 ```bash
@@ -135,9 +173,13 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 ```
 
-The invariant to respect: **scrub only while stopped/detached**. Seek,
-step, find-last and reverse-* during `recording` return `409 Conflict` with
-an explanation — the API guards the timeline for you.
+Seek, step, find-last and reverse-* during `recording` pause the recording
+(`backend: engine`): everything up to that instant is kept, the state is
+`detached` and `/ttd/status` says `recording_paused: true`. Resume at the
+paused point (`POST /ttd/resume` while there, or seek back to it first)
+continues the same recording; running the machine forward through it
+continues it too; `POST /ttd/stop` ends it. On `backend: v1` these return
+`409 Conflict` - stop first.
 
 ### Traveling
 
@@ -147,7 +189,9 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/position" | jq '.'
 # → {"current": {"frame": 12345, "tinframe": 0},
 #    "session_end": {"frame": 12402, "tinframe": 0}, "state": "detached"}
 
-# Seek to an absolute point (frame + optional intra-frame t-state)
+# Seek to an absolute point (frame + optional intra-frame t-state). A frame
+# alone is the frame's end on the engine: arrived_at {frame, <its length>},
+# the state and picture of {frame+1, 0}; "tinframe": 0 is the frame's start
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
      -d '{"frame": 12000}' | jq '{reached, arrived_at, halt_reason}'
@@ -167,7 +211,11 @@ replay barrier — tape transport command, WD1793 sector/track write, or a
 memory edit made by a tool (WebAPI, CLI, Lua, Python, DeZog) while
 recording; the response carries `blocking_marker`, and
 `GET /ttd/markers` lists them all), `out_of_range`. Keyboard and mouse input
-are journaled and replayed, so they are not barriers.
+are journaled and replayed, so they are not barriers. On the engine
+(`GET /ttd/status` -> `backend: "engine"`, the default) tape commands, disk
+writes and tool memory / register edits are replayed too and never block a
+seek; only v1 stops at them. A seek before the earliest kept position
+answers `out_of_range` with `earliest` (also in `GET /ttd/status`).
 
 Every scrub pauses the emulator first and leaves it paused at the new
 position; the screen/UI repaint automatically. To continue live execution
@@ -216,9 +264,10 @@ instance and retry. After `load` the session is idle/browsable (use
 `loaded_from_file: true`, `source_path`, `captured_at_unix_ms`, plus the
 recording machine's `model_id`/`model_ram_pages`. The `.ttd` header pins a ROM signature:
 replaying against a different ROM set is refused, not silently wrong.
-The binary format is portable (Kaitai schema `core/src/debugger/ttd/ttd.ksy`;
-Python analyzer in `tools/verification/ttd-analyzer`), so captures outlive
-the process.
+The binary format is portable (the engine's session file, schema 2: Kaitai
+schema `core/src/debugger/ttd/engine/ttdsession.ksy`; Python analyzer in
+`tools/verification/ttd-analyzer`), so captures outlive the process. v1 files (`ttd.ksy`) are not loaded by the engine; the
+verification tools read and convert them.
 
 ### Inspect a file, search port journals, export a clip
 
@@ -232,7 +281,8 @@ curl -s "$BASE/ttd/file-info?path=scratch/session-001.ttd" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/port-events" -H 'Content-Type: application/json' \
      -d '{"event":"key","arg":"enter","newest":true,"limit":3}' | jq -c '.hits[] | {frame, tinframe, port, value, pc}'
 
-# Lossless frame clip, written inside the core (one call instead of seek + capture per frame)
+# Lossless frame clip, written inside the core (one call instead of seek + capture per frame;
+# MCP time_travel "export_clip")
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: application/json' \
      -d '{"from":100,"to":200,"path":"scratch/clip1"}' | jq '{ok, frames, bytes, planeb, width, height, seconds}'
 ```
@@ -248,7 +298,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `pc`, plus `ay_register` for AY events).
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
-  There is no dedicated MCP action: use `invoke_api`.
+  The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,
+  `path`, `chunk`), CLI `ttd export-clip <from> <to> <dir> [--chunk N]`, Lua `ttd_export_clip(from, to, dir)`,
+  Python `emu.ttd_export_clip(from_frame, to_frame, path)`.
 
 ### Coverage heatmap (when did my code run?)
 
@@ -270,22 +322,62 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   there until you delete it. Startup cleanup only removes crashed leftovers
   after 7 days; a script that forgets to clean fills the disk (about 2 GB
   per hour of heavy content).
-- **409 on scrub** → you're still recording; `POST /ttd/stop` first.
+- **409 on scrub** → `backend: v1` and still recording; `POST /ttd/stop` first
+  (the engine pauses the recording instead, `recording_paused: true`).
 - **`seek` beyond `current_end_frame`** → `halt_reason: "out_of_range"`,
   machine stays where it was.
 - **Memory budget**: development mode costs ~64 MB journal + page store;
   long captures grow — check `page_store_used_bytes` and dump+invalidate
   between scenarios.
-- **Markers stop backward replay** by design (external inputs can't be
-  un-happened); list them with `GET /ttd/markers` before wondering why a
-  seek halted early.
-- **Loads wipe the session.** Snapshot load, tape load, disk load/create,
-  ROM reload and a host speed change on a stopped session drop the whole
-  history — treat snapshot+TTD as sequential experiments, not interleaved
-  ones ([load-snapshot.md](../media/load-snapshot.md)). Dump first if you
+- **Markers**: on the engine tape commands, disk writes and tool edits are
+  replayed and do not stop a seek or a reverse search; on v1 they stop
+  backward replay (list them with `GET /ttd/markers` before wondering why a
+  seek halted early).
+- **One rule: a reset, a snapshot load and a change of the machine END the
+  session.** Nothing is refused: the recording stops cleanly and the operation
+  runs. A reset and a snapshot load keep the ended session's history (browsable,
+  `last_stop_reason` `reset` / `snapshot-load`); a ROM reload, model switch,
+  GS card switch or slot change is another machine and drops it
+  (`machine-change`). A snapshot load that is refused (wrong model, no such
+  banks, not a snapshot) ends nothing: the session ends only when the load
+  goes ahead. **No new session starts by itself**: turn the `ttdrestart`
+  feature on (`feature ttdrestart on`, off by default) and one starts at the next
+  frame boundary; the black box always starts one. Do not look for the old
+  "snapshot is part of the recording": it was removed on purpose.
+- **Other loads wipe the session.** Tape load, disk load/create and a host
+  speed change on a stopped session drop the whole history. Dump first if you
   need the recording.
-- **Reset keeps history.** A reset (or a disk autostart's quick reset)
-  stops the recording and keeps what was captured; a machine sitting in
-  history goes back to `idle`.
-- **ZX-Evo / ATM3 SD card** activity ends the recording (history dropped)
-  at the next frame boundary: TTD cannot follow the SD card yet.
+- **A media change while recording is an event of the recording.** Tape or
+  disk load / eject, disk create, `media` insert / eject / discard (SD cards,
+  CD too) land at the next frame boundary (`pending` meanwhile, also on a
+  paused machine) and the recording goes on; a seek to before that frame
+  shows the slot empty, from it on (and back live) the medium is there.
+  `end_recording` ends the recording instead. v1 still refuses them (409).
+- **A seek sets every medium to what it held there** (engine). Sectors and
+  floppy tracks the guest wrote later are set back, and set forward again
+  on a later seek; a replay writes them again itself. A write-protect toggle
+  while recording lands at the next frame boundary as an event, and a seek
+  sets the switch too. The seek's `check.issues` names a medium
+  (`media_version_differs`) only for another medium in the slot or a version
+  past the slot's undo log (64 MB per slot). A write after a seek back drops
+  the old future of that medium, as the recording's own.
+- **Rec From Here / `POST /ttd/resume`** sets every medium back too. One
+  that cannot go back (another disk in the drive, past the undo log) is
+  decided by `media`: `empty` (default) ejects it (an event of the
+  recording), `keep` leaves it, `ask` resumes nothing and answers
+  `needs_decision` with the slots (Qt shows a dialog). The decision is in
+  the operation log as `timeline-cut`. A write-through disk set back turns
+  into a session disk: its file keeps its content until you save.
+- **Editing the past is refused.** While the machine replays or stands at a
+  point of a stopped history, a memory, register, port or sector write from
+  any surface is refused (WebAPI 409, a Lua / Python error, CLI `Error:`,
+  GDB `E0D`): the next seek would set the point back and the edit would be
+  lost. Resume the recording there first (`ttd resume`), then edit.
+- **A machine change** (ROM load, model switch, GS card switch, slot
+  change) is the same rule with another machine behind it: the history is
+  dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
+  recording.
+- **A reset (or a disk autostart's quick reset)** ends the session and keeps
+  what was captured; a machine sitting in history goes back to `idle`.
+- **ZX-Evo / ATM3 SD card** activity is recorded (the card's state, the
+  guest's writes): it no longer ends the recording.

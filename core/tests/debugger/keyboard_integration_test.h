@@ -15,14 +15,14 @@ protected:
     void SetUp() override;
     void TearDown() override;
 
-    /// Boot emulator in turbo mode and wait for bootFrames to elapse.
-    /// Turbo mode removes frame rate limiting - emulator runs at host CPU speed.
+    /// Boot the emulator and run bootFrames frames on the calling thread (no emulation thread, no clock).
     /// Use small bootFrames and follow with WaitForOCRText() for ready detection.
     std::string BootEmulator(const std::string& symbolicId, int bootFrames = 10);
 
-    /// Run N frames on the emulator using frame_counter polling (turbo mode).
-    /// The emulator thread drives its own frame processing including keyboard sequences.
+    /// Run N frames on the emulator on the calling thread; the frame cycle drives the keyboard sequences.
     void RunFrames(const std::string& emulatorId, int frameCount);
+    /// Runs frames (at most maxFrames) until the keyboard manager has finished its sequence
+    void RunUntilSequenceDone(const std::string& emulatorId, int maxFrames);
 
     /// Get screen text via OCR
     std::string GetScreenText(const std::string& emulatorId);

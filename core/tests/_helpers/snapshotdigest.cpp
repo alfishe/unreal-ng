@@ -67,10 +67,12 @@ Digest Capture(Emulator* emulator)
 
     {   // The latches the loaders write or leave alone, and what Memory made of them
         Hash h;
-        for (uint8_t v : {st.p7FFD, st.pFE, st.pEFF7, st.pXXXX, st.pBFFD, st.pFFFD, st.pDFFD, st.pFDFD, st.p1FFD,
-                          st.pFF77, st.aFE, st.aFB, st.atmBorderBright})
+        // The 0 is the removed EmulatorState::pXXXX (never written, always 0): the byte stays so the
+        // golden table (testdata/loaders/golden/commit-digests.txt) keeps its values
+        for (uint8_t v : {st.p7FFD, st.pFE, st.pEFF7, uint8_t{0}, st.pBFFD, st.pFFFD, st.pDFFD, st.pFDFD, st.p1FFD,
+                          st.pFF77, st.atm.aFE, st.atm.aFB, st.atm.borderBright})
             h.Byte(v);
-        for (unsigned v : st.pFFF7)
+        for (unsigned v : st.atm.pFFF7)
             h.U32(v);
         for (uint8_t bank = 0; bank < 4; ++bank)
         {

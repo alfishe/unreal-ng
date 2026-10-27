@@ -1,0 +1,37 @@
+{
+  "family": "generic-playstation-like",
+  "images": [
+    {
+      "view": "front",
+      "title": "Generic pad (PlayStation-like layout)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "the silhouette and layout the DualShock 3 and 4 share: the DS4's measured outline and positions drawn at the DS3's width (157 of 162 mm; DS3 about 157 x 95 x 55 mm)",
+          "source": "the dualshock-4 set of this POC, measured on https://commons.wikimedia.org/wiki/File:Dualshock_4_Layout.svg (Tokyoship, CC BY 3.0)",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the DS3 front (three-quarter) layout: Select / Start between the dishes, the PS button between the sticks",
+          "source": "https://commons.wikimedia.org/wiki/File:Dualshock3_Layout.svg",
+          "author": "Tokyoship",
+          "licence": "CC BY 3.0",
+          "use": "reference only",
+          "retrieved": "2026-10-23"
+        },
+        {
+          "what": "the DualShock 3 layout (Select / Start between the dishes, no touchpad)",
+          "source": "https://commons.wikimedia.org/wiki/File:DualShock_3.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-23"
+        }
+      ]
+    }
+  ]
+}

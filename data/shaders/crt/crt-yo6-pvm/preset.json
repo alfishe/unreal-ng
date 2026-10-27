@@ -1,0 +1,128 @@
+{
+ "key": "crt-yo6-pvm",
+ "preset": "crt/crt-yo6-KV-M1420B.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-yo6/crt-yo6-native-resolution.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToEdge",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Absolute",
+     "factor": 439
+    },
+    "y": {
+     "type": "Absolute",
+     "factor": 233
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-yo6/crt-yo6-warp.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToEdge",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Absolute",
+     "factor": 1684
+    },
+    "y": {
+     "type": "Absolute",
+     "factor": 1329
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint"
+   }
+  },
+  {
+   "source": "interpolation/shaders/jinc2.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "JINC2_WINDOW_SINC": "float",
+    "JINC2_SINC": "float",
+    "JINC2_AR_STRENGTH": "float"
+   }
+  }
+ ],
+ "textures": [
+  {
+   "name": "TEX_CRT",
+   "file": "TEX_CRT.png",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  }
+ ],
+ "parameters": {
+  "JINC2_WINDOW_SINC": {
+   "description": "Window Sinc Param",
+   "initial": 0.44,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "JINC2_SINC": {
+   "description": "Sinc Param",
+   "initial": 0.4,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "JINC2_AR_STRENGTH": {
+   "description": "Anti-ringing Strength",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.1
+  }
+ }
+}

@@ -1,0 +1,74 @@
+available: true
+enabled: true
+over_border: false
+clip_over_border: false
+zero_on_top: false
+clip:
+  x1: 0
+  x2: 255
+  y1: 0
+  y2: 191
+flags:
+  collision: false
+  too_many: false
+upload_slot: 0
+mirror_index: 0
+visible_count: 3
+sprites:
+  [0]
+    index: 3
+    kind: basic
+    x: 308
+    y: 86
+    pattern: 5
+    four_bit: false
+    palette_offset: 3
+    x_mirror: true
+    y_mirror: false
+    rotate: false
+    scale_x: 1
+    scale_y: 1
+    visible: true
+    bytes: 34 56 39 85 00
+  [1]
+    index: 10
+    kind: anchor
+    unified: true
+    x: 16
+    y: 288
+    pattern: 15
+    four_bit: true
+    palette_offset: 0
+    x_mirror: false
+    y_mirror: false
+    rotate: false
+    scale_x: 4
+    scale_y: 2
+    visible: true
+    bytes: 10 20 00 C7 F3
+  [2]
+    index: 11
+    kind: relative
+    anchor: 10
+    offset_x: 5
+    offset_y: -5
+    relative_pattern: false
+    relative_palette: false
+    x: 36
+    y: 278
+    pattern: 4
+    four_bit: true
+    palette_offset: 0
+    x_mirror: false
+    y_mirror: false
+    rotate: false
+    scale_x: 4
+    scale_y: 2
+    visible: true
+    bytes: 05 FB 00 C2 40
+pattern_memory:
+  size: 16384
+  non_zero_bytes: 16
+  used_patterns_8bit: 1
+  used:
+    [0] 0

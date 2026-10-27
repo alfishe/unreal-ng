@@ -27,7 +27,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -39,7 +39,7 @@ class TTD_FeatureGating_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -49,7 +49,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -231,17 +231,13 @@ TEST_F(TTD_FeatureGating_Test, WriteJournalEmpty_WhenFeaturesOff)
     // the cached _feature_ttd_enabled flag gates the journal append.
     DisableTTD();
 
-    // Even if we force StartRecording (which auto-enables features),
-    // then disable features, writes through MemoryWriteDebug should not
-    // append to the journal because _feature_ttd_enabled is false.
+    // Even if we force StartRecording (which auto-enables features), then
+    // disable features: the recording stops cleanly first (FR-17), and with
+    // time travel off the journal's memory is released (nothing journaled)
     ASSERT_TRUE(_ttd->StartRecording());
     DisableTTD();
-
-    // The journal remains empty because the feature flag gates the hook.
-    // RecordMemoryWrite still works (called from the manager), but the
-    // MemoryWriteDebug hook path is blocked.
-    const size_t journalBefore = _ttd->GetWriteJournal()->Size();
-    EXPECT_EQ(journalBefore, 0u);
+    EXPECT_FALSE(_ttd->IsRecording());
+    EXPECT_TRUE(_ttd->GetWriteJournal() == nullptr || _ttd->GetWriteJournal()->Size() == 0u);
 
     _ttd->StopRecording();
 }

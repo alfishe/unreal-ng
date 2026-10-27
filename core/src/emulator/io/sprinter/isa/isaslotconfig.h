@@ -33,6 +33,9 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
+
+struct CONFIG;
 
 namespace sprinterisa
 {
@@ -147,6 +150,18 @@ void EffectiveMac(const SlotConfig& slot, int slotIndex, uint8_t instance, uint8
 
 /// Whether this build has the card (the phases that are not built yet refuse the kind with a reason)
 bool KindAvailable(CardKind kind, std::string* why = nullptr);
+
+/// One slot of a machine configuration as the slot report shows it (ZX-bus slots SL-8: the ISA slots are the
+/// machine's own slots, reported with the slot set)
+struct SlotSummary
+{
+    std::string key;           ///< KindKey: "zxbus", "ne2000", "none"
+    std::string name;          ///< "ISA to ZX-bus adapter", "NE2000 Ethernet", "empty"
+    std::string details;       ///< "RTL8019AS, #300, IRQ 3"; "" when the card has no resources to name
+    bool hostsZxBus = false;   ///< the ZX-bus adapter: a ZX-bus card sits on it ([SLOTS] isa.N)
+};
+/// The two slots of `config` ([ISA] Slot1, Slot2), slot 1 first
+std::vector<SlotSummary> SlotSummaries(const CONFIG& config);
 
 /// A slot population that works but is wrong on the board (empty: none). SprinterSerial with both IRQ jumpers
 /// (J5 and J6) fitted: on the Sprinter every IRQ pin of a slot is one line, and the PC16552D's push-pull INTA / INTB

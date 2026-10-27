@@ -4,11 +4,13 @@
 #include <memory>
 #include <string>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/atm/evoflash.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
@@ -19,6 +21,8 @@
 #include "emulator/ports/portdecoder.h"
 
 class TsConfMemory;
+class Screen;
+class ScreenTSConf;
 class Vdac2Card;
 
 /// TS-Conf (ZX-Evo with the TS-Labs FPGA configuration) port decoder.
@@ -86,12 +90,16 @@ public:
 
     /// The 7FFD lock is TSConf's own latch (§2.3)
     bool IsPagingLocked() const override { return _ts.lock48 != 0; }
+    /// A 48K / 128K snapshot: MEM_CONFIG in mapped mode (window 0 = the {service, TR-DOS, 128, 48} ROM group by ~DOS and
+    /// ROM128, so #7FFD bit 4 picks the BASIC) with #7FFD decoded as on a 128K (LCK128 = 128K). The reset leaves the normal
+    /// mode: window 0 is ROM page 0, whatever #7FFD says, and bits 7:6 of #7FFD add page bits
+    void EnterSpectrum128Paging(uint16_t pc) override;
 
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }
 
     /// #1F outside DOS answers Joystick::Read()
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     /// #xxEF belongs to the AVR (its 16550 and ZiFi): a ZX-WiFi card does not fit
     bool ReservesLowByte(uint8_t lowByte) const override { return lowByte == 0xEF; }
@@ -100,7 +108,7 @@ public:
     /// (docs/inprogress/2026-10-02-tsconf-zifi/tdd.md)
     NetworkCapabilities DescribeNetwork() override;
 
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// The mouse ports read the AVR's PS/2 mouse registers
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {
@@ -109,13 +117,18 @@ public:
     }
     bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
-    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_evoAvr); }
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override
+    {
+        out.push_back(&_evoAvr);
+        out.push_back(&_flash);
+    }
 
     /// region <SD card (hardware-spec §8.1)>
     /// The card is the media manager's slot "sd.zc", as on the ZX-Evo
     /// BaseConf; it outlives Core::Reset() like the board's
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
+    BusTap& SpiTap() { return _spiTap; }
     /// The VDAC2 card (FT812) on the IDE connector: present in the VDAC2
     /// build ([MISC] TS_VDAC2=1) of a binary with ENABLE_VDAC2, else nullptr
     /// (vdac2-integration-design.md §5)
@@ -129,6 +142,15 @@ public:
 
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
+    /// The board's ROM chip as a flash: MEM_CONFIG.W0_WE with ROM in window 0 writes it ([V] zmem.v:297)
+    EvoFlash& GetFlash() { return _flash; }
+    EvoFlash* GetEvoFlash() override { return &_flash; }
+    /// The machine goes away: a flashed board stays flashed (the saved flash file)
+    void BeforeRelease() override { _flash.SaveIfUnsaved(); }
+    /// The frame ended: a flash operation that finished since takes the overlay away; a quiet change is saved
+    void OnFrameEnd() override;
+    /// The saved flash (zxevo-flash-tsconf-<hash>.rom) replaces the image's bytes
+    void OnRomLoaded(uint16_t imageBanks) override { _flash.OnRomImageLoaded(static_cast<size_t>(imageBanks) * 0x4000); }
     /// Changes when CRAM may have changed (port / FM-window writes, DMA, a state
     /// load): the screen rebuilds its palette only then. Direct writes into
     /// GetState().cram are seen by the whole-frame renders only
@@ -137,6 +159,7 @@ public:
 
     void BeforeMachineM1(uint16_t address) override;
     void OnMachineM1(uint16_t address) override;
+    bool RepeatM1IsInert(uint16_t address) const override;
     /// endregion </Interface methods>
 
     /// region <TS-Conf state>
@@ -151,12 +174,18 @@ public:
     TsConfDma& GetDma() { return _dma; }
     /// Bring the engine (line starts, DRAM budget, DMA) up to the current CPU T-state
     void CatchUpEngine();
+    /// The CPU on #57 / #77 while an SPI DMA still runs after the catch-up: the two interleave on the board's one
+    /// SPI master (the bus analyzer's dma_collision finding)
+    void CheckSpiDmaCollision(bool write, uint8_t value);
 
     /// Registers the picture depends on (hardware-spec §3.2): a write first
     /// brings the engine and the screen up to the write
     static bool IsVideoRegister(uint8_t reg);
     /// Engine line starts, then the screen, up to the current CPU T-state
     void FlushVideo();
+    /// The screen draws what it has not drawn yet up to the end of the instruction before this one: before a write
+    /// to memory and before a DMA transfer, whose moment inside the instruction the picture does not model
+    void VideoCatchUpToStepEnd();
 
     /// Classify one I/O cycle
     PortArm ClassifyPort(uint16_t port) const;
@@ -202,27 +231,21 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
-    /// Cache invalidation (§2.5): a write-only overlay over the whole space,
-    /// installed while any window has the cache enabled
-    class CacheWriteSnoop : public HostBusOverlay
-    {
-    public:
-        explicit CacheWriteSnoop(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
-        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
-        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
-
-    private:
-        PortDecoder_TSConf& _owner;
-    };
-
-    /// CPU writes to DRAM: counted in the DRAM budget, and the 14 MHz write
-    /// waits (TsConfArbiter); a write-only overlay, always installed
+    /// CPU writes to DRAM: counted in the DRAM budget, the cache entry they hit
+    /// invalidated (§2.5), and the 14 MHz write waits (TsConfArbiter); a
+    /// write-only overlay, always installed
     class DramWriteWait : public HostBusOverlay
     {
     public:
-        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner)
+        {
+            observesReads = false;
+            observesWriteStart = true;
+        }
         uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
         void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+        /// The picture not drawn yet shows the byte the write replaces (ScreenTSConf::CatchUpToStepEnd)
+        void onBeforeWrite(uint16_t addr) override;
 
     private:
         PortDecoder_TSConf& _owner;
@@ -241,7 +264,6 @@ private:
     void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
     void RefreshFmWindow();
-    void RefreshCache();
     void ApplyClock();
     void ApplyVideoPage();
     void UpdateBanks();
@@ -254,6 +276,8 @@ private:
     uint8_t DecodeF7In(uint16_t port);
     void DecodeF7Out(uint16_t port, uint8_t value);
     bool CmosReachable() const;
+    /// The AVR firmware's wait handler and main-loop timing from [EVO] Avr= (TS-Labs: 2016-02 or the current line)
+    Uart16550::AvrFirmware ConfigureAvrWait();
 
     static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port);
 
@@ -269,14 +293,19 @@ private:
     FmWindow _fmWindow{*this};
     std::unique_ptr<IDeviceMemoryRegion> _cramRegion;
     std::unique_ptr<IDeviceMemoryRegion> _sfileRegion;
-    CacheWriteSnoop _cacheSnoop{*this};
     DramWriteWait _dramWriteWait{*this};
+    Screen* _catchUpScreenBase = nullptr;
+    ScreenTSConf* _catchUpScreen = nullptr;
 
     // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
     // registers F0-FF), shared with ATM3: lives with the decoder so the
     // contents survive Core::Reset() like the battery
     EvoAvr _evoAvr;
     bool _nvramLoaded = false;
+
+    // The ROM chip (a 29F040 flash) working on the machine's ROM pages; window 0 writes reach it while W0_WE is set
+    // (TsConfMemory tells it the write window when it maps the banks)
+    EvoFlash _flash{_context, _memory, "tsconf"};
 
     /// The "sd.zc" media slot
     class SdSlot : public IMediaSlot
@@ -294,6 +323,9 @@ private:
         SlotDescriptor _descriptor;
     };
 
+    // The bus analyzer's view of the Z-Controller bus (docs/inprogress/2026-10-11-bus-analyzer): declared
+    // before the card and the controller, which point at it
+    BusTap _spiTap{"zc.spi", BusProtocol::Spi, "Z-Controller SPI (#57 data, #77 chip selects): SD card, VDAC2 FT812"};
     SdCardSpi _sdCard;
     ZControllerSpi _zc;
     SdSlot _sdSlot{*this};

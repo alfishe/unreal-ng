@@ -1,0 +1,8 @@
+        LD      A,(HL)
+LABEL   ld A,B ;LD A,B
+X  Y   Z
+        BEGIN 2:END
+        DEFB "LD A",1
+
+
+

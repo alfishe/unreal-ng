@@ -48,7 +48,8 @@ buttons, always the standard decode. `SwapMouse=` and `MouseScale=` are applied 
 `MouseManager` when capture starts; `joymouse` is deferred.
 
 A "Kempston Mouse Turbo" does exist (Velesoft K-Mouse Turbo: A15 = master / slave, `#FEDF` detect; correction
-2026-10-04, [hardware-reference](hardware-reference.md) §8); it is not implemented yet - see [TODO.md](TODO.md).
+2026-10-04, [hardware-reference](hardware-reference.md) §8); it is a hardware adapter that converts USB mice to the Kempston mouse protocol, so nothing beyond the
+classic Kempston mouse is emulated (owner, 2026-10-06).
 AMX Mouse is out of scope.
 
 The USSR variant is a fitting, not a machine property, hence configuration rather than a

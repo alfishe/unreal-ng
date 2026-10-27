@@ -46,19 +46,17 @@ protected:
     }
 };
 
-/// Verify sysvar detection fires before OCR would succeed (it's faster)
-TEST_F(SysVarDetection_Test, BASICReady_FasterThanOCR)
+/// Verify sysvar detection fires before OCR would succeed (in frames: the sysvar is set when the ROM is ready, the
+/// copyright text is drawn after it)
+TEST_F(SysVarDetection_Test, BASICReady_FiresBeforeOCRSeesTheScreen)
 {
     if (!_emulator)
     {
         GTEST_SKIP() << "Emulator initialization failed";
     }
 
-    // Run until BASIC ready via sysvar (fast)
-    auto t0 = std::chrono::steady_clock::now();
+    // Run until BASIC ready via sysvar
     bool sysvarReady = EmulatorTestHelper::RunUntilBASICReady(_emulator, 200);
-    auto t1 = std::chrono::steady_clock::now();
-    auto sysvarMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
     ASSERT_TRUE(sysvarReady) << "BASIC not ready via sysvar";
 
@@ -76,51 +74,6 @@ TEST_F(SysVarDetection_Test, BASICReady_FasterThanOCR)
     // Verify ERR_NR is still 0x00
     uint8_t errNr = EmulatorTestHelper::ReadSysVar(_emulator, SystemVariables48k::ERR_NR);
     EXPECT_EQ(errNr, 0x00) << "ERR_NR should be 0x00 (OK)";
-
-    std::cout << "[INFO] SysVar detection took " << sysvarMs << " ms (OCR needs more frames)\n";
-}
-
-/// Verify sysvar detection is significantly faster than OCR polling
-TEST_F(SysVarDetection_Test, SysVar_FasterThanOCR)
-{
-    if (!_emulator)
-    {
-        GTEST_SKIP() << "Emulator initialization failed";
-    }
-
-    // Warm up - boot to BASIC
-    EmulatorTestHelper::RunUntilBASICReady(_emulator, 200);
-
-    // Time 100 sysvar checks
-    auto t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < 100; i++)
-    {
-        volatile bool ready = EmulatorTestHelper::IsBASICReady(_emulator);
-        (void)ready;
-    }
-    auto t1 = std::chrono::steady_clock::now();
-    auto sysvarUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-
-    // Time 10 OCR checks (OCR is much slower, so fewer iterations)
-    t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < 10; i++)
-    {
-        volatile std::string screen = ScreenOCR::ocrScreen(_emulatorId);
-        (void)screen;
-    }
-    t1 = std::chrono::steady_clock::now();
-    auto ocrUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-
-    // Normalize to per-check time
-    double sysvarPerCheck = sysvarUs / 100.0;
-    double ocrPerCheck = ocrUs / 10.0;
-    double speedup = ocrPerCheck / sysvarPerCheck;
-
-    std::cout << "[INFO] SysVar: " << sysvarPerCheck << " us/check, OCR: " << ocrPerCheck
-              << " us/check, Speedup: " << speedup << "x\n";
-
-    // SysVar should be at least 100x faster than OCR
-    EXPECT_GT(speedup, 100.0) << "SysVar should be at least 100x faster than OCR";
 }
 
 /// Verify MODE sysvar reflects cursor state

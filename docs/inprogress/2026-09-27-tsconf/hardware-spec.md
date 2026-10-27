@@ -100,7 +100,7 @@ and ignored.
 | Bit | Name | Meaning |
 |:--|:--|:--|
 | 0 | `ROM128` | copy of 7FFD bit 4: **0 = BASIC-128, 1 = BASIC-48** |
-| 1 | `W0_WE` | window 0 writable |
+| 1 | `W0_WE` | window 0 writable: RAM takes the write; with ROM in window 0 the write goes to the flash chip (below) |
 | 2 | `!W0_MAP` | **0 = mapped mode**, 1 = normal mode (page = `PAGE0` directly) |
 | 3 | `W0_RAM` | window 0 shows RAM instead of ROM |
 | 7-6 | `LCK128` | 7FFD decode mode (§2.3) |
@@ -132,6 +132,18 @@ Mapped-mode group layout — **all sources agree**, also verified in
 sys/dos/128/48.) The same 512 KB `zxevo.rom` also carries BaseConf's set in
 pages 28-31 — one image serves both TSCONF (group 0) and ATM3 (last group).
 The 64 KB `ts-bios*.rom` files contain group 0 only.
+
+**Flash writes** ([V] `zmem.v:294-298`): the ROM is a 29F040 flash (512 KB, 8 x 64 KB
+sectors). `/CSROM` = window 0 shows ROM (not `W0_RAM`, not vdos), `/OE` = the read
+strobe, `/WE` = `memwr && W0_WE`, A18..A14 = the window-0 page `[4:0]`, A13..A0 from the
+Z80. With `MEM_CONFIG = #06` (normal mode, ROM, `W0_WE`) the JEDEC commands reach the
+chip: `555/AA 2AA/55 555/A0 PA/PD` programs a byte, `.../80 .../AA .../55 SA/30` erases
+a sector, `.../90` reads the ID (AMD Am29F040B `#01 / #A4`); unlock cycles compare
+A10..A0 only. While it works every window-0 ROM read returns status (DQ7 Data#, DQ6
+toggle, DQ5 failure, DQ3 erase timer). Typical times: byte 7-10 us, sector 1 s. Flashers
+write with `#06` and leave with `#0E` (RAM in window 0). unreal-ng: `EvoFlash`
+([tdd-evo-flash.md](tdd-evo-flash.md)); the flashed ROM is saved to a file of its own per
+machine and laid over the ROM image at the next start (the shipped image is never written).
 
 **DOS switching** ([V] `zmem.v:80,87-88`):
 
@@ -195,7 +207,15 @@ each with its own 13-bit tag `{page[7:0], A[13:9]}` + valid bit ([V] `zmem.v:210
 - **Fill**: every CPU DRAM read fills its entry, whatever `CACHE_CONFIG` says.
 - **Hit**: used (no DRAM request, data from cache) when `CACHE_CONFIG[window]`
   is set, **at every CPU speed**; only the timing benefit is 14 MHz-specific.
-- **Invalidate**: a CPU RAM write that hits the entry. ROM is never cached.
+- **Invalidate**: a CPU RAM write that hits the entry, **with the cache on or
+  off** (`cache_inv` compares the tag without `cache_en`, [V] `zmem.v:215`); a
+  write never fills. ROM is never cached.
+- **Never cleared**: the cache RAM has no clear ([V] `zmem.v:231,267`); a reset
+  only sets `CACHE_CONFIG` to 0, switching the cache off keeps the entries.
+  Only the FPGA configuration (power-on) starts it all-invalid. So a word read
+  with the cache off, then changed by DMA, is answered stale once the cache
+  is switched on, even across a reset (checked on the running RTL:
+  `tools/machines/tsconf/rtl-sim`, `tsconf-cpu-sim cache`).
   **DMA and video writes do not invalidate** → stale reads after DMA are
   hardware-correct (software invalidates by writing 512 bytes, `tsconf_en.md:247-256`).
 - Any write to `SYS_CONFIG` copies its bit 2 into all four `CACHE_CONFIG` bits.
@@ -419,10 +439,26 @@ sprites need mid-frame SFILE rewrites.
 while line L is displayed (buffer cleared as it is read); rendering starts at
 `ts_start` of the previous line (dot `hpix_beg_ts - 1`: the window start of the
 latched geometry, or dot 88 with `T_CONFIG[0]`; [V] `video_sync.v:130`,
-`video_mode.v:196`) with the tile pages, tile X offsets and `PAL_SEL` latched
-for that previous line (`video_ports.v:153-164`), and is **reset at the next `ts_start`** —
+`video_mode.v:196`) and is **reset at the next `ts_start`** —
 objects not rendered in time (DRAM starvation) are dropped for that line
-([V] `video_top.v:198-206,508`, `video_ts.v:98-121`).
+([V] `video_top.v:198-206,508`, `video_ts.v:98-121`). Each object takes the tile
+pages, tile X offsets and `PAL_SEL` from the line latch in force when the TSU hands
+it to the renderer (`video_ts.v:162-171`, `video_ports.v:153-165`): the pass for L
+starts with L-1's latch, and on a busy line it runs past `line_start` of L (dot
+447), so the objects after it take L's latch. Measured on the Verilog
+(`tools/machines/tsconf/rtl-sim`, `tsulatch`), in DRAM cycles of the pass:
+
+- the TSU starts at cycle `hpix_beg_ts + 1` (`+ 2` on the bottom 8 lines, which have
+  no tilemap prefetch); video keeps its blocks, the CPU outranks the TSU;
+- the prefetch (8 words per tile layer) holds one more cycle after its last word
+  unless video takes that cycle;
+- a tile layer fetches `x_tiles - 1` = 33 / 41 / 46 tiles (256 / 320 / 360 wide)
+  whatever the X offset; tile number 0 without T0Z/T1Z costs nothing;
+- an object is late when more than `split` TSU cycles came before it, `split` = the
+  cycles from the start to dot 447 that video leaves: 16C 270 / 260 / 244 (360 / 320 /
+  256 wide), 256C 360 179, ZX 277, TXT 181 with the CPU idle; the whole pass gets
+  `split` + the cycles of line L before its `hpix_beg_ts` that video leaves (16C 360:
+  356 of 448).
 
 **Tilemap prefetch**: on TS line L the TSU fetches 8 map words per enabled
 layer for the tile row containing line L+16 into a 4-row ring; the prefetch
@@ -667,12 +703,12 @@ for an empty unit (#FFFF), and the transfer completes.
 
 | Device | Decode | Notes |
 |:--|:--|:--|
-| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM; inside vdos the AVR takes writes and sees reads, but a read gives `#FF`: `porthit` takes `#xxF7` only while `!dos` (`zports.v:330`) and vdos is always in DOS ([V] `zports.v:719-732`; [U] answers in any DOS state — divergence; unreal-ng answered inside vdos until the 2026-10-05 audit) |
+| Gluk CMOS | low byte `F7`, A8 = 1; `#DFF7` address (A13 = 0), `#BFF7` data (A14 = 0), `#EFF7` (A12 = 0) | `#EFF7` writable only outside DOS, only bit 7 used (CMOS enable). CMOS reachable when `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` — i.e. **not** from the TR-DOS ROM; inside vdos the AVR takes writes and sees reads, but a read gives `#FF`: `porthit` takes `#xxF7` only while `!dos` (`zports.v:330`) and vdos is always in DOS ([V] `zports.v:719-732`; [U] answers in any DOS state — divergence; unreal-ng answered inside vdos until the 2026-10-05 audit). **A data access (`#BFF7` read or write) waits on /WAIT for the AVR**: `wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd \|\| portf7_wr)` ([V] `zports.v:763`, `zwait.v:31-49`), inside vdos too; the same AVR main loop serves the COM port, so both share its time (`EvoAvrWait`): ISR + phase (at most an eighth of a 260-cycle pass, TS firmware) + 151 + the cell (`#F0-#FF`: 90 + the cell) AVR cycles at 11.0592 MHz, e.g. a BCD time register 342 cycles at the start of a task = 109 T at 3.5 MHz, 433 T at 14 MHz; an NVRAM cell (I2C) over 400 us ([reference-evo-com-port.md](../2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1). `#DFF7` is an FPGA latch: no wait. [U] does not wait |
 | Gluk extension | CMOS regs **0xF0-0xFF**; mode selected by writing F0 | 0 config version, 1 bootloader version, 2 PS/2 keyboard scancode log, 3 config/modes; reg 0x0C = 0 disables EEPROM mode first (`zx-evo-docs/GluExt`) |
 | Kempston mouse | `xxDF`: A8 = 0 → `{wheel[3:0], 1, btn[2:0]}`; A8 = 1 → A10 ? Y : X | `#FADF/#FBDF/#FFDF` ([V] `zkbdmus.v:107`) |
 | Kempston joystick | `0x1F`, 8-bit | only when `!DOS && !FDD_VIRT[7]` ([V] `zports.v:334,450-455`) |
 | Keyboard | `#FE` matrix (from AVR) + PS/2 log via Gluk ext 2 | dual feed |
-| COM port / ZiFi | low byte `0xEF`, any high byte | relayed to the AVR as a wait-port; [M] map: 00EF-BFEF ZiFi data, C0EF-FFEF ZiFi cmd/status, F8EF-FFEF 16550 — **v1: reads 0xFF** |
+| COM port / ZiFi | low byte `0xEF`, any high byte | relayed to the AVR as a wait-port (the same AVR wait as the Gluk data port: one main loop, `EvoAvrWait`); [M] map: 00EF-BFEF ZiFi data, C0EF-FFEF ZiFi cmd/status, F8EF-FFEF 16550 — **v1: reads 0xFF** |
 | Floating bus | unclaimed ports | **0xFF** ([V] `top.v:435`, `zbus.v:32`) |
 | NMI | — | not generated (`top.v:422,1111-1124`) |
 

@@ -1,11 +1,13 @@
 #include <benchmark/benchmark.h>
 
+#include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
+#include "emulator/sound/soundmanager.h"
 
 /// TurboSound per-frame baseline (TSFM implementation plan, P0).
 ///
@@ -77,7 +79,11 @@ void PokeDriver(Z80* z80)
     z80->halted = 0;
 }
 
-void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
+/// effectsOff: AY punch and room off (the AY character chains bypassed; FM and beeper chains are off by default).
+/// lowQuality: the sound HQ feature off - native-clock boxcar instead of the FIR decimators
+/// integerMix: the saturating int16 master mix instead of the wide float bus and limiter a TSFM machine mixes on
+void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo, bool effectsOff = false,
+                           bool lowQuality = false, bool integerMix = false)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-turbosound", "PENTAGON", LoggerLevel::LogNone);
@@ -100,6 +106,18 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
         return;
     }
 
+    if (effectsOff && context->pSoundManager)
+    {
+        context->pSoundManager->setAYPunch(false);
+        context->pSoundManager->setAYRoomMode(AudioCharacterChain::RoomMode::Off);
+    }
+
+    if (lowQuality && context->pFeatureManager)
+        context->pFeatureManager->setFeature(Features::kSoundHQ, false);
+
+    if (integerMix && context->pSoundManager)
+        context->pSoundManager->enableWideMix(false);
+
     if (playerLoad)
         PokeDriver(core->GetZ80());
     else
@@ -118,6 +136,12 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
     std::string label = playerLoad ? "player-load" : "idle";
     if (turbo)
         label += ", turbo";
+    if (effectsOff)
+        label += ", effects off";
+    if (lowQuality)
+        label += ", LQ";
+    if (integerMix)
+        label += ", integer mix";
     state.SetLabel(label);
     state.SetItemsProcessed(state.iterations());
 
@@ -143,6 +167,24 @@ static void BM_TurboSoundFrame_PlayerLoad_Turbo(benchmark::State& state)
     RunFrameCostBenchmark(state, true, true);
 }
 
+static void BM_TurboSoundFrame_PlayerLoad_EffectsOff(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, true, false, true);
+}
+
+static void BM_TurboSoundFrame_PlayerLoad_LQ(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, true, false, false, true);
+}
+
+static void BM_TurboSoundFrame_PlayerLoad_IntegerMix(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, true, false, false, false, true);
+}
+
 BENCHMARK(BM_TurboSoundFrame_Idle)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad_Turbo)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TurboSoundFrame_PlayerLoad_EffectsOff)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TurboSoundFrame_PlayerLoad_LQ)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TurboSoundFrame_PlayerLoad_IntegerMix)->Iterations(1000)->Unit(benchmark::kMicrosecond);

@@ -1,0 +1,23 @@
+# Vradark's Revenge (ZX Next, Sanchez Crew). Its Settings screen: W A S D move, Enter fires, Space casts, F / C drink
+# life / mana, 1 / 2 the next bullets / spell, R autofire, M map, P pause; the Kempston mouse aims and its left
+# button fires. The NEX needs the SD card's bin/: started from NextZXOS, it is chosen in Controllers > Game
+schema: 1
+kind: play
+id: builtin/game/vradarks-revenge
+label: Vradark's Revenge
+extends: [scheme/wasd, scheme/kempston-mouse]
+match:
+  machines: [NEXT]
+  file_sha256: ["32ad0b5fa7cbb749841ecf26bdd6fce7563d8ffbcc736c15689b1fa4abcbcd9e"]
+layers:
+  play:
+    south:        { key: ENTER, label: Fire }
+    north:        { key: SPACE, label: Spell }
+    west:         { key: F, label: Life }
+    east:         { key: C, label: Mana }
+    lb:           { key: "1", label: Next bullets }
+    rb:           { key: "2", label: Next spell }
+    rt.click:     { mouse: left, label: Fire (mouse) }
+    rstick.click: { key: R, label: Autofire }
+    view:         { key: M, label: Map }
+    menu:         { key: P, label: Pause }

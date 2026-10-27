@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/emulator.h"
 
 #include "emulator/state/devicestate.h"
 
@@ -118,15 +119,15 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
     mixer["channel_a_noise"] = (mixerValue & 0x08) == 0;
     mixer["channel_b_noise"] = (mixerValue & 0x10) == 0;
     mixer["channel_c_noise"] = (mixerValue & 0x20) == 0;
-    mixer["porta_input"] = (mixerValue & 0x40) != 0;
-    mixer["portb_input"] = (mixerValue & 0x80) != 0;
+    mixer["porta_input"] = (mixerValue & 0x40) == 0;
+    mixer["portb_input"] = (mixerValue & 0x80) == 0;
     ret["mixer"] = mixer;
 
     StateNode ports = StateNode::Object();
     ports["porta_value"] = int(regs[14]);
-    ports["porta_direction"] = (mixerValue & 0x40) ? "input" : "output";
+    ports["porta_direction"] = (mixerValue & 0x40) ? "output" : "input";
     ports["portb_value"] = int(regs[15]);
-    ports["portb_direction"] = (mixerValue & 0x80) ? "input" : "output";
+    ports["portb_direction"] = (mixerValue & 0x80) ? "output" : "input";
     ret["io_ports"] = ports;
 
     ret["sound_played_since_reset"] = false;  // not tracked
@@ -170,9 +171,8 @@ double OpnHz(uint32_t blockFreq, double sampleRateHz)
     return double(fnum) * std::ldexp(1.0, block - 1) * sampleRateHz / 1048576.0;
 }
 
-StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
+StateNode FmChipNode(TsfmChip* c, int index, double masterClockHz, double fmTrimDb)
 {
-    TsfmChip* c = device->chip(index);
     Ym2203Engine& fm = c->fm;
     auto& engine = fm.fmEngine();
     auto& regs = engine.regs();
@@ -183,7 +183,7 @@ StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
     ret["chip_type"] = "YM2203";
 
     const uint32_t prescale = fm.fmClockPrescale();
-    const double fs = double(CPU_CLOCK_RATE) / (12.0 * prescale);
+    const double fs = masterClockHz / (12.0 * prescale);
     ret["prescaler"] = int(prescale);
     ret["fm_sample_rate_hz"] = fs;
 
@@ -314,7 +314,7 @@ StateNode FmChipNode(SoundChip_TurboSoundFM* device, int index)
     StateNode out = StateNode::Object();
     out["dac_last_word"] = int(std::lround(c->out.hold * 32768.0));
     out["dac_last_value"] = c->out.hold;
-    out["fm_trim_db"] = device->fmTrimDb();
+    out["fm_trim_db"] = fmTrimDb;
     ret["output"] = out;
     return ret;
 }
@@ -643,6 +643,16 @@ StateNode AyChip(EmulatorContext* context, int chip)
     return node;
 }
 
+StateNode AyChipReport(SoundChip_AY8910& chip, int index, double clockHz)
+{
+    return AyChipNode(&chip, index, clockHz);
+}
+
+StateNode Ym2203ChipReport(Ym2203Chip& chip, int index, double masterClockHz, double fmTrimDb)
+{
+    return FmChipNode(&chip, index, masterClockHz, fmTrimDb);
+}
+
 StateNode Fm(EmulatorContext* context)
 {
     SoundManager* sm = context ? context->pSoundManager : nullptr;
@@ -665,7 +675,7 @@ StateNode Fm(EmulatorContext* context)
     StateNode chips = StateNode::Array();
     for (int i = 0; i < 2; i++)
     {
-        StateNode full = FmChipNode(device, i);
+        StateNode full = FmChipNode(device->chip(i), i, double(CPU_CLOCK_RATE), device->fmTrimDb());
         StateNode info = StateNode::Object();
         info["index"] = i;
         info["type"] = "YM2203";
@@ -687,8 +697,13 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
         return Unavailable("Sound manager not available");
     GeneralSoundCard* gs = sm->getGeneralSound();
     if (!gs)
-        return Unavailable("General Sound card not fitted (configure [SOUND] GSType=Z80, LW or NGS)");
+        return Unavailable("General Sound card not fitted (plug one: slots plug zxbus.next gs | gs-lw | neogs, or [SLOTS] zxbus.N = gs)");
+    return GeneralSoundReport(*gs, sm, ramWindow);
+}
 
+StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow)
+{
+    GeneralSoundCard* gs = &card;
     const uint8_t status = gs->getStatusRaw();
     StateNode ret = StateNode::Object();
     ret["available"] = true;
@@ -736,7 +751,7 @@ StateNode Gs(EmulatorContext* context, bool ramWindow)
     if (gs->neogsState(ngs))
     {
         StateNode n = StateNode::Object();
-        n["stereo_mode"] = neogsStereoModeName(sm->neoGSStereoMode());
+        n["stereo_mode"] = sm != nullptr ? neogsStereoModeName(sm->neoGSStereoMode()) : "separated";
         n["flash"] = ngs.flashTitle;
         n["flash_modified"] = ngs.flashModified;
         n["gscfg0"] = int(ngs.gscfg0);
@@ -864,11 +879,16 @@ StateNode Covox(EmulatorContext* context)
     if (!covox)
         return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
 
-    const bool quad = covox->fitment() == ::Covox::Fitment::Quad;
+    const ::Covox::Fitment fitment = covox->fitment();
+    const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["device"] = quad ? "SoundDrive (4 x 8-bit DAC)" : "Covox (8-bit DAC on #FB)";
-    ret["fitment"] = quad ? "quad" : "mono";
+    ret["device"] = mono ? "Covox (8-bit DAC on #FB)" : "SoundDrive (4 x 8-bit DAC)";
+    ret["fitment"] = fitment == ::Covox::Fitment::Quad    ? "quad"
+                     : fitment == ::Covox::Fitment::Mode1 ? "mode1"
+                     : fitment == ::Covox::Fitment::Mode2 ? "mode2"
+                     : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
+                                                              : "mono";
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128
@@ -1286,7 +1306,7 @@ StateNode FmChip(EmulatorContext* context, int chip)
         return Unavailable("TurboSound slot device is not TSFM (no FM half); set [SOUND] TurboSound=FM");
     if (chip < 0 || chip > 1)
         return Unavailable("FM chip index must be 0 or 1");
-    return FmChipNode(device, chip);
+    return FmChipNode(device->chip(chip), chip, double(CPU_CLOCK_RATE), device->fmTrimDb());
 }
 
 StateNode Fdc(EmulatorContext* context)
@@ -2053,6 +2073,8 @@ StateNode Network(EmulatorContext* context)
     StateNode& set = ret["settings"];
     set["card"] = st.settings.card;
     set["com_port"] = st.settings.comPort;
+    set["com_port2"] = st.settings.comPort2;
+    set["com_port_joy"] = st.settings.comPortJoy;
     set["zx_wifi"] = st.settings.zxWifi;
     set["esp_chip"] = st.settings.espChip;
     set["com_modem_lines"] = st.settings.comModemLines;
@@ -2357,6 +2379,93 @@ StateNode Network(EmulatorContext* context)
             e["bytes"] = a.bytes;
         activity.push(std::move(e));
     }
+    return ret;
+}
+
+StateNode Execution(EmulatorContext* context)
+{
+    Emulator* emulator = context ? context->pEmulator : nullptr;
+    if (!emulator)
+        return Unavailable("no emulator");
+    const execution::Snapshot snap = emulator->GetArbiter().GetSnapshot();
+    auto requester = [](const execution::Requester& r) {
+        StateNode n = StateNode::Object();
+        n["origin"] = execution::OriginName(r.origin);
+        if (!r.client.empty())
+            n["client"] = r.client;
+        return n;
+    };
+    auto entry = [&](const execution::SnapshotEntry& e) {
+        StateNode n = StateNode::Object();
+        n["seq"] = e.seq;
+        n["kind"] = e.command ? "command" : "intent";
+        if (e.command)
+            n["tag"] = e.tag;
+        else
+            n["intent"] = execution::IntentName(e.intent);
+        n["by"] = requester(e.requester);
+        n["age_ms"] = e.ageMs;
+        return n;
+    };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["phase"] = execution::PhaseName(snap.phase);
+    ret["intent"] = execution::IntentName(snap.intent);
+    ret["paused"] = emulator->IsPaused();
+    ret["intent_set_by"] = requester(snap.intentSetBy);
+    ret["intent_reason"] = snap.intentReason;
+    ret["intent_seq"] = snap.intentSeq;
+    ret["intent_age_ms"] = snap.intentAgeMs;
+    StateNode& loop = ret["main_loop"] = StateNode::Object();
+    loop["attached"] = snap.loopAttached;
+    loop["parked"] = snap.loopParked;
+    ret["may_run"] = snap.mayRun;
+    ret["parked"] = emulator->IsEmulationParked();
+    if (snap.serving)
+    {
+        StateNode serving = entry(*snap.serving);
+        serving["drives_z80"] = snap.servingDrivesZ80;
+        ret["serving"] = serving;
+    }
+    else
+        ret["serving"] = StateNode();
+    StateNode& queue = ret["queue"] = StateNode::Array();
+    for (const execution::SnapshotEntry& e : snap.queue)
+        queue.push(entry(e));
+    ret["claim"] = snap.claim ? requester(*snap.claim) : StateNode();
+    // The automation session behind the claim (design §6a): who, since when, its idle lease, the clients the user took
+    // control back from and how long until they may take it again
+    const EmulatorContext::RunControlState rc = context->GetRunControlState();
+    if (rc.claimed)
+    {
+        StateNode session = StateNode::Object();
+        session["surface"] = rc.surfaceLabel;
+        session["client"] = rc.client;
+        session["peer"] = rc.peer;
+        session["owner"] = rc.ownerUuid;
+        session["since_ms"] = rc.sinceMs;
+        session["lease_ms"] = rc.leaseMs;
+        ret["session"] = session;
+    }
+    else
+        ret["session"] = StateNode();
+    StateNode& cooldowns = ret["retake_cooldowns"] = StateNode::Array();
+    for (const auto& [key, secondsLeft] : rc.cooldowns)
+    {
+        StateNode c = StateNode::Object();
+        c["client"] = key;
+        c["seconds_left"] = secondsLeft;
+        cooldowns.push(c);
+    }
+    StateNode& counters = ret["counters"] = StateNode::Object();
+    counters["applied"] = snap.applied;
+    counters["coalesced"] = snap.coalesced;
+    counters["refused"] = snap.refused;
+    counters["busy"] = snap.busy;
+    counters["aborted"] = snap.aborted;
+    counters["edges"] = snap.edges;
+    ret["driver_violations"] = emulator->DriverViolations();
     return ret;
 }
 

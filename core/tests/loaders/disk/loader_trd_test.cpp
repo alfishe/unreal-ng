@@ -4,6 +4,8 @@
 #include <common/stringhelper.h>
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 
@@ -103,6 +105,7 @@ TEST_F(LoaderTRD_Test, Load)
     std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
+    const std::unique_ptr<DiskImage> loaded(loaderTrd._diskImage);  // the loader hands its image over
 
     ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
     ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";
@@ -117,6 +120,7 @@ TEST_F(LoaderTRD_Test, Sector9)
     std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
+    const std::unique_ptr<DiskImage> loaded(loaderTrd._diskImage);  // the loader hands its image over
 
     ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
     ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";
@@ -346,4 +350,34 @@ TEST_F(LoaderTRD_Test, GeometryFromTheDiskType)
     EXPECT_EQ(geometry(655360, 0x19), std::make_pair(80, 2)) << "a type the file does not fit in is ignored";
     EXPECT_EQ(geometry(327680, 0x00), std::make_pair(40, 2)) << "no type: 320 KiB is DS40, as before";
     EXPECT_EQ(geometry(100 * 1024, 0x00), std::make_pair(80, 2)) << "no type: DS80";
+}
+
+/// An 86-cylinder TRD (TR-DOS formatters write up to 86 tracks on 80-track drives; FloppyFormats::ProbeData takes
+/// TRD files up to 2 x 86 x 4 KiB): format() lays out 81..86 cylinders as 80-track media with every track but
+/// track 0 free, and parse() loads the whole file, the last track included
+TEST_F(LoaderTRD_Test, EightySixCylinders)
+{
+    DiskImage blank(83, 1);
+    LoaderTRD loader(_context, "");
+    ASSERT_TRUE(loader.format(&blank)) << "83 cylinders, one side";
+    const TRDVolumeInfo* blankInfo = (const TRDVolumeInfo*)blank.getTrack(0)->getDataForSector(TRD_VOLUME_SECTOR);
+    EXPECT_EQ(blankInfo->diskType, SS_80);
+    EXPECT_EQ(blankInfo->freeSectorCount, (83 - 1) * TRD_SECTORS_PER_TRACK);
+
+    // A DS 86-cylinder file (MAX_CYLINDERS: parse formats 86 x 2 itself): the TR-DOS volume sector, a marker in the
+    // last sector of the last track
+    std::vector<uint8_t> file(2u * 86 * TRD_SECTORS_PER_TRACK * TRD_SECTORS_SIZE_BYTES, 0);
+    TRDVolumeInfo* info = (TRDVolumeInfo*)(file.data() + TRD_VOLUME_SECTOR * TRD_SECTORS_SIZE_BYTES);
+    info->trDOSSignature = TRD_SIGNATURE;
+    info->diskType = DS_80;
+    file[file.size() - 1] = 0xA5;
+
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> image(loader.parse(file.data(), file.size(), warnings));
+    ASSERT_NE(image, nullptr) << (warnings.empty() ? "" : warnings.front());
+    EXPECT_EQ(image->getCylinders(), 86);
+    EXPECT_EQ(image->getSides(), 2);
+    const uint8_t* last = image->getTrackForCylinderAndSide(85, 1)->getDataForSector(TRD_SECTORS_PER_TRACK - 1);
+    ASSERT_NE(last, nullptr);
+    EXPECT_EQ(last[TRD_SECTORS_SIZE_BYTES - 1], 0xA5);
 }

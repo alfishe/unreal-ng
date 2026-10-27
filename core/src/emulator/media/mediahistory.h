@@ -8,11 +8,13 @@
 /// version it had there, so a controller that reads during the replay sees
 /// what it saw when recording, and its state where the replay stops matches.
 ///
-/// The versions come from the media layer's change layer (storage manager
-/// phases H1 and H5). Until it exists a version is the source's ContentId
-/// plus a count of the frames that wrote the medium, and no slot can go back
-/// (HasVersions false): the replay stays sealed - the CPU reads the recorded
-/// sector bytes - and the session reports the medium, without a barrier.
+/// A version is the volume's identity plus a count of the medium's changes
+/// (the frames that wrote it, write-protect toggles). While a TTD history
+/// exists the media manager keeps every change in the slot's undo log
+/// (MediaUndoLog; owner decision 2026-10-10, gaps 11-12), and SetHead sets a
+/// block medium or a floppy to any version the log reaches. A version it does
+/// not reach (another medium, past the log's budget) is reported; the replay
+/// stays sealed there - the CPU reads the recorded sector bytes.
 /// Design: docs/inprogress/2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md §4.5.
 
 #include <cstdint>
@@ -23,8 +25,8 @@ struct MediaVersionInfo
 {
     std::string slot;          ///< "fdd.a", "sd.zc", "ide0.master"
     std::string format;
-    uint64_t contentId = 0;    ///< 0: the slot is empty
-    uint64_t version = 0;      ///< the change layer's version; until then, frames that wrote it
+    uint64_t contentId = 0;    ///< the volume (Medium::VolumeId, unchanged by writes); 0: the slot is empty
+    uint64_t version = 0;      ///< the medium's changes (frames that wrote it, write-protect toggles)
     bool hasVersions = false;  ///< SetHead can set it back
 };
 
@@ -41,4 +43,6 @@ public:
     /// Set @p slot's medium to @p version (a seek). False: the slot keeps no
     /// versions, or not that one
     virtual bool SetHead(const std::string& slot, uint64_t version) = 0;
+    /// Whether SetHead(@p slot, @p version) would go ahead; changes nothing (a timeline cut's plan)
+    virtual bool Reaches(const std::string& /*slot*/, uint64_t /*version*/) const { return false; }
 };

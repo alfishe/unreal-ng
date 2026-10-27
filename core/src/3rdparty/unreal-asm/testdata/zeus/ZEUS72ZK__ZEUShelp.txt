@@ -1,0 +1,491 @@
+00010  ;    HELP ZEUSv7E.
+00020  ;
+00030  ;        ***
+00040  ;
+00050  ;        ZEUS
+00060  ; --------&adres& 56000
+00070  ; (EXIT-boot (Key Q+ER)
+00080  ;
+00090  ;   Key (M)+ER . Mon???
+00100  ;
+00110  ; &baze&  DISK TR-DOS.
+00120  ;
+00130  ;  Mon   &adres& 57344
+00140  ; (EXIT-Zeus (Key B+ER)
+00150  ;
+00160  ; Warning !!!
+00170  ; EXIT Mon  >>> ZEUS
+00180  ; Com.O ?????(ADRESS)
+00190  ; List Zeus-Text.
+00200  ;
+00210  ; ZeusBoot
+00220  ; --------&adres& 20480
+00230  ; (EXIT-Zeus (Key "Z")
+00240  ;
+00250  ; Warning !!!
+00260  ; ORG ?????  (ADRESS)
+00270  ; ENT (ADRESS SAVE CODE)
+00280  ;
+00290  ;  &baze& ZeusBoot
+00300  ;    DISK TR-DOS.
+00310  ;
+00320  ; CAT DISK &adres& 16384
+00330  ;
+00340  ;  &comand& ZEUS.vBETA
+00350  ;
+00360  ;  ( YRIC MIPh&T.93 )
+00370  ;
+00380  ;    OPEN "FILENAME
+00390  ;
+00400  ;    CLOSE "FILENAME
+00410  ;
+00420  ;   & B programme&
+00430  ;
+00440  ;00010  INCLUDE FILENAME
+00450  ;           ( Type- Z. )
+00460  ;
+00470  ;00020  PLACE FILENAME
+00480  ;           ( Type- C. )
+00490  ;
+00500  ;         (+)
+00510  ;
+00520  ;    +++&Primer&+++
+00530  ;
+00540  ;00030    LD A,%00001111
+00550  ;
+00560  ;00040    XOR %11110000
+00570  ;
+00580  ;         (+)
+00590  ;
+00600  ;00050    LD BC,9*256+5
+00610  ;
+00620  ;00060    LD A,5*25
+00630  ;
+00640  ;         (+)
+00650  ;
+00660  ;00070    LD HL,50000/10
+00670  ;
+00680  ;00080    LD A,256/10-3
+00690  ;
+00700  ;         (+)
+00710  ;
+00720  ; key (Z)-HELP FREE+ENT
+00730  ;    (ORG)+DISP+LEN+END
+00740  ;
+00750  ;         (+)
+00760  ;
+00770  ; E? No LENE  -  Editor
+00780  ;
+00790  ; SS+Q  Delete LINE
+00800  ; SS+W  Space LINE
+00810  ; SS+E  Bufer LINE
+00820  ; SS+R  Rage (-)
+00830  ; SS+T  Rage (+)
+00840  ; SS+H  Bufer
+00850  ; SS+X  Clear Bufer
+00860  ;
+00870  ; CS+1 (Edit) TAB Cursor
+00880  ; CS+2 (Caps Lock)
+00890  ; CS+3 LINE left
+00900  ; CS+4 LINE right
+00910  ;
+00920  ; Key T Help tExt+Len++
+00930  ;
+00940  ; ---
+00950  ; Lab (END Bufer)
+00960  ; ---
+00970  ;
+00980  ;(55999)Bufer Label ZEUS
+00990  ;
+01000  ; &DATA (DOWN)&
+01010  ;        ----
+01020  ;
+01030  ; Com. (Asemble) Clear
+01040  ;       Bufer
+01050  ;
+01060  ; Key (CS+SS)-EXIT
+01070  ;
+01080  ;        ###
+01090  ;
+01100  ;    "Games Boot"
+01110  ;
+01120       ORG 24576
+01130  ;    DISP ?????(ORG+MOD)
+01140       ENT ; ADRESS SAVE
+01150 NAH   CALL CLS
+01160       LD HL,50000
+01170       PUSH HL
+01180       LD DE,0
+01190       LD BC,9*256+5
+01200       CALL 15635
+01210       DI
+01220       POP HL
+01230       LD DE,45000
+01240       LD A,(HL)
+01250       OR A
+01260       JR NZ,dee
+01270       LD DE,FNO
+01280       JR F33
+01290 dee   XOR A
+01300       LD (SK),A
+01310       LD BC,8
+01320 N03   LD A,(HL)
+01330       OR A
+01340       JR Z,N00
+01350       CP 1
+01360       JR Z,N01
+01370       PUSH HL
+01380       POP IX
+01390       LD A,(IX+13)
+01400       CP 192
+01410       JR Z,GGG
+01420       PUSH BC
+01430       PUSH HL
+01440       PUSH DE
+01450       LD DE,boo
+01460       LD B,C
+01470 N06   LD A,(DE)
+01480       CP (HL)
+01490       JR NZ,N05
+01500       INC DE
+01510       INC HL
+01520       DJNZ N06
+01530       JR N07
+01540 N05   POP DE
+01550       POP HL
+01560       POP BC
+01570       PUSH HL
+01580       ADD HL,BC
+01590       LD A,(HL)
+01600       POP HL
+01610       CP "B
+01620       JR NZ,N01
+01630 GGG   PUSH BC
+01640       LDIR
+01650       LD IX,SK
+01660       INC (IX+0)
+01670       POP BC
+01680 N04   ADD HL,BC
+01690       JR N03
+01700 N07   POP DE
+01710       POP HL
+01720       POP BC
+01730 N01   ADD HL,BC
+01740       JR N04
+01750 N00   LD (DE),A
+01760       LD A,(SK)
+01770       CP 21
+01780       JR C,DAV
+01790       LD DE,MNO
+01800 F33   CALL PRI
+01810       CALL KEY
+01820       JR NAH
+01830 DAV   LD HL,#0602
+01840       LD (N0+1),HL
+01850       LD HL,45000
+01860 N2    LD DE,N0
+01870       CALL PRI
+01880       LD B,8
+01890 N1    LD A,(HL)
+01900       CALL rst
+01910       INC HL
+01920       DJNZ N1
+01930       LD A,(HL)
+01940       OR A
+01950       JR Z,RE
+01960       LD DE,NN0
+01970       CALL PRI
+01980       LD B,8
+01990 N4    LD A,(HL)
+02000       CALL rst
+02010       INC  HL
+02020       DJNZ N4
+02030       PUSH HL
+02040       LD HL,N0+1
+02050       INC (HL)
+02060       INC (HL)
+02070       LD A,22
+02080       CP (HL)
+02090       POP HL
+02100       JR Z,RE
+02110 N7    LD A,(HL)
+02120       OR A
+02130       JR NZ,N2
+02140 RE    XOR A
+02150       LD (PAD),A
+02160       LD HL,22528+64+5
+02170 FFF   LD (ATR),HL
+02180       PUSH HL
+02190       LD B,10
+02200       PUSH BC
+02210 N08   LD (HL),77
+02220       INC HL
+02230       DJNZ N08
+02240       POP BC
+02250       POP HL
+02260       LD DE,32
+02270       ADD HL,DE
+02280 N09   LD (HL),74
+02290       INC HL
+02300       DJNZ N09
+02310 NKEY  CALL KEY
+02320       LD HL,(ATR)
+02330       LD DE,64
+02340       CP 32
+02350       JP Z,NAH
+02360       CP 10
+02370       JR Z,N10
+02380       CP 11
+02390       JR Z,N11
+02400       CP 8
+02410       JR Z,N8
+02420       CP 9
+02430       JR Z,N9
+02440       CP 13
+02450       JR Z,CH
+02460       JR NKEY
+02470 N10   ADD HL,DE
+02480       INC HL
+02490       LD A,(HL)
+02500       DEC HL
+02510       OR A
+02520       JR Z,NKEY
+02530       LD A,(PAD)
+02540       INC A
+02550       INC A
+02560 fff   LD (PAD),A
+02570       CALL OV
+02580       JR FFF
+02590 N11   SBC HL,DE
+02600       INC HL
+02610       LD A,(HL)
+02620       DEC HL
+02630       OR A
+02640       JR Z,NKEY
+02650       LD A,(PAD)
+02660       DEC A
+02670       DEC A
+02680       JR fff
+02690 N9    LD E,12
+02700       ADD HL,DE
+02710       LD A,(HL)
+02720       DEC HL
+02730       OR A
+02740       JR Z,NKEY
+02750       LD A,(PAD)
+02760       INC A
+02770       JR fff
+02780 N8    LD E,10
+02790       SBC HL,DE
+02800       LD A,(HL)
+02810       DEC HL
+02820       OR A
+02830       JR Z,NKEY
+02840       LD A,(PAD)
+02850       DEC A
+02860       JR fff
+02870 OV    PUSH HL
+02880       LD HL,(ATR)
+02890       PUSH HL
+02900       LD B,10
+02910 OV0   LD (HL),2+64
+02920       INC HL
+02930       DJNZ OV0
+02940       POP HL
+02950       LD C,32
+02960       ADD HL,BC
+02970       LD B,10
+02980 OV1   LD (HL),5+64
+02990       INC HL
+03000       DJNZ OV1
+03010       POP HL
+03020       RET
+03030 CH    LD HL,45000
+03040       LD DE,8
+03050       LD A,(PAD)
+03060       OR A
+03070       JR Z,VP
+03080       LD B,A
+03090 CH0   ADD HL,DE
+03100       DJNZ CH0
+03110 VP    PUSH DE
+03120       POP BC
+03130      LD DE,00000;ADR File
+03140       LDIR
+03150       EI
+03160 CLS   LD HL,16384
+03170       LD DE,16385
+03180       LD BC,6911
+03190       LD (HL),L
+03200       LDIR
+03210       XOR A
+03220       OUT (254),A
+03230       RET
+03240 KEY   PUSH HL
+03250       LD HL,522
+03260       LD (23561),HL
+03270       EI
+03280       RES 5,(IY+1)
+03290 key   BIT 5,(IY+1)
+03300       JR Z,key
+03310       DI
+03320       LD HL,1315
+03330       LD (23561),HL
+03340       LD A,(23560)
+03350       POP HL
+03360       RET
+03370 PRI   LD A,(DE)
+03380       CP 128
+03390       RET Z
+03400       CALL rst
+03410       INC DE
+03420       JR PRI
+03430 rst   PUSH HL
+03440       PUSH BC
+03450       LD (xx),DE
+03460       CALL X1
+03470       LD DE,(xx)
+03480       POP BC
+03490       POP HL
+03500       RET
+03510 X1    CP 22
+03520       JR Z,AT
+03530       CP 167
+03540       JR Z,aA
+03550       CP 128
+03560       JR NC,x0
+03570       CP 32
+03580       JR NC,X00
+03590 x0    LD A,"?
+03600 X00   LD DE,(XX)
+03610       CALL X0
+03620       LD HL,XX
+03630       INC (HL)
+03640       LD HL,(attr)
+03650       PUSH HL
+03660       LD A,(aww)
+03670       LD (HL),A
+03680       INC L
+03690       LD (attr),HL
+03700       POP HL
+03710       LD DE,32
+03720       OR A
+03730       ADD HL,DE
+03740       LD A,(aw1)
+03750       LD (HL),A
+03760       RET
+03770 aA    INC DE
+03780       LD A,(DE)
+03790       LD (aww),A
+03800       INC DE
+03810       LD A,(DE)
+03820       LD (aw1),A
+03830       LD (xx),DE
+03840       RET
+03850 AT    INC DE
+03860       EX DE,HL
+03870       LD E,(HL)
+03880       INC HL
+03890       LD D,(HL)
+03900       LD (xx),HL
+03910       LD A,E
+03920       AND 24
+03930       ADD A,#40
+03940       LD H,A
+03950       LD A,E
+03960       AND 7
+03970       RRCA
+03980       RRCA
+03990       RRCA
+04000       ADD A,D
+04010       LD L,A
+04020       LD (XX),HL
+04030       LD A,H
+04040       RRCA
+04050       RRCA
+04060       RRCA
+04070       AND 3
+04080       OR #58
+04090       LD H,A
+04100       LD (attr),HL
+04110       RET
+04120 X0    LD L,A
+04130       LD BC,15360
+04140       LD H,C
+04150       ADD HL,HL
+04160       ADD HL,HL
+04170       ADD HL,HL
+04180       ADD HL,BC
+04190       LD B,8
+04200 L1    LD A,(HL)
+04210       RRCA
+04220       OR (HL)
+04230       PUSH AF
+04240       LD (DE),A
+04250       CALL L2
+04260       POP AF
+04270       OR (HL)
+04280       LD (DE),A
+04290       CALL L2
+04300       INC HL
+04310       DJNZ L1
+04320       RET
+04330 L2    INC D
+04340       LD A,D
+04350       AND 7
+04360       RET NZ
+04370       LD A,E
+04380       ADD A,32
+04390       LD E,A
+04400       RET C
+04410       LD A,D
+04420       SUB 8
+04430       LD D,A
+04440       RET
+04450 attr DW 0
+04460 xx   DW 0
+04470 aww  DB 0
+04480 aw1  DB 0
+04490 XX   DW 0
+04500 N0   DB 22,2,2,167
+04510      DB 2+64,5+64,128
+04520 boo  DM "boot    "
+04530 NN0  DB 167,0,0,32,32,32
+04540      DB 167,2+64,5+64,128
+04550 HH   DB 22,22,0,128
+04560 MNO  DB 22,10,8,167,2,4
+04570      DM "Max 20 File(s)!"
+04580      DB 128
+04590 ATR  DW 0
+04600 FNO  DB 22,10,10,167,2,4
+04610      DM "No File(s) !"
+04620      DB 128
+04630 PAD  DB 0
+04640 SK   DB 0
+04650  ;
+04660  ;Label  EQU XXXXX
+04670  ;
+04680  ;Lab  DS ??? (NOP)
+04690       ;
+04700       ;
+04710       ;
+04720       ;
+04730       ;
+04740       ;
+04750       ;
+04760       ;
+04770       ;
+04780       ;
+04790       ;
+04800       ;
+04810       ;
+04820       ;
+04830       ;
+04840       ;
+04850       ;
+04860       ;
+04870       ;
+04880       ;
+04890       ;
+04900       ;
+04910       ;

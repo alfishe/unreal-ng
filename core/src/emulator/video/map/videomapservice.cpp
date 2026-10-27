@@ -11,6 +11,8 @@
 #include "emulator/video/sprinter/sprintervideomapper.h"
 #include "emulator/video/tsconf/tsconfvideomapper.h"
 #include "emulator/video/zx/zxvideomapper.h"
+#include <optional>
+#include <chrono>
 
 namespace videomap
 {
@@ -77,12 +79,12 @@ VideoState VideoMapService::State() const
     {
         const VideoFrameLog published = _context->pScreen->GetVideoWriteLog().Published();
         if (published.valid)
-            return StateFrom(published.StateAt(UINT32_MAX));
+            return StateFrom(published.StateAt(UINT32_MAX), &published);
     }
     return StateFrom(_context->pScreen->CaptureVideoLatches());
 }
 
-VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
+VideoState VideoMapService::StateFrom(const VideoLatches& latches, const VideoFrameLog* frame) const
 {
     VideoState s;
     if (!_context)
@@ -100,14 +102,16 @@ VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
     s.atmBorderBright = latches.atmBorderBright != 0;
     s.zxScreenPage = latches.activeScreen ? 7 : 5;  // the page the ZX renderer draws from
     s.profiMonochrome = ProfiMonochromeHires(config);
-    s.atmPalette = state.atmPalette;
-    s.profiPalette = state.profiPalette;
+    s.atmPalette = state.atm.palette;
+    s.profiPalette = state.profi.palette;
     if (_context->pMemory)
         s.ramMask = _context->pMemory->GetRamMask();
     if (screen)
     {
         s.familyView = screen->VideoFamilyView();
-        s.flashPhase = screen->_vid.flash != 0;
+        // A logged frame's own phase (Screen::InitFrame: frame_counter & 0x10), not the live one the emulation
+        // thread is switching
+        s.flashPhase = frame ? (frame->frame & 0x10) != 0 : screen->_vid.flash != 0;
         if (s.mode < M_MAX)
         {
             s.layoutDesc = screen->rasterDescriptors[s.mode];
@@ -181,7 +185,7 @@ PixelSources VideoMapService::SourcesAt(const VideoState& s, size_t layerIndex, 
 {
     PixelSources result;
     const IVideoMapper& mapper = MapperFor(FamilyOf(s.mode));
-    const MemView memory(_context ? _context->pMemory : nullptr, _context ? _context->emulatorState.atmFontRam : nullptr);
+    const MemView memory(_context ? _context->pMemory : nullptr, _context ? _context->emulatorState.atm.fontRam : nullptr);
     if (!mapper.SourcesAt(s, memory, layerIndex, x, y, result.contribution))
         return result;
 
@@ -223,7 +227,12 @@ PixelSources VideoMapService::SourcesAtBeam(uint32_t tInFrame) const
     VideoFrameLog published;
     const VideoFrameLog* frame = nullptr;
     const bool running = MachineRunning();
-    if (running)
+    // Paused, this frame is read in place: only while no command drives the CPU (a direct run records into it,
+    // reallocating as it goes). Not handed the CPU in time: the published copy, as while running
+    std::optional<Emulator::CpuHold> hold;
+    if (!running && _context->pEmulator)
+        hold.emplace(*_context->pEmulator, "video map", std::chrono::milliseconds(250));
+    if (running || (hold && !hold->Held()))
     {
         published = log.Published();
         frame = &published;
@@ -233,7 +242,7 @@ PixelSources VideoMapService::SourcesAtBeam(uint32_t tInFrame) const
         frame = (tInFrame <= screen->GetCurrentTstate() || !log.Previous().valid) ? &log.Current() : &log.Previous();
     }
     const bool fromLog = frame->valid;
-    const VideoState s = fromLog ? StateFrom(frame->StateAt(tInFrame)) : State();
+    const VideoState s = fromLog ? StateFrom(frame->StateAt(tInFrame), frame) : State();
 
     // Where that moment's mode put the beam
     const BeamPosition beam = screen->DescribeBeam(tInFrame);
@@ -316,7 +325,7 @@ bool VideoMapService::Text(size_t layerIndex, uint16_t& columns, uint16_t& rows,
     const VideoLayout layout = mapper.Layout(s);
     if (layerIndex >= layout.layers.size() || layout.layers[layerIndex].surface.textColumns == 0)
         return false;
-    const MemView memory(_context->pMemory, _context->emulatorState.atmFontRam);
+    const MemView memory(_context->pMemory, _context->emulatorState.atm.fontRam);
     columns = layout.layers[layerIndex].surface.textColumns;
     rows = layout.layers[layerIndex].surface.textRows;
     cells.assign(static_cast<size_t>(columns) * rows, TextCell{});

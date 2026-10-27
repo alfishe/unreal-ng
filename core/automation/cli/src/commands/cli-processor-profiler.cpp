@@ -13,6 +13,7 @@
 
 #include "base/featuremanager.h"
 #include "emulator/cpu/opcode_profiler.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -186,21 +187,25 @@ void CLIProcessor::ShowProfilerOpcodeHelp(const ClientSession& session)
     oss << "  profiler opcode trace [N]    - Show last N trace entries (default: 100)" << NEWLINE;
     oss << "  profiler opcode save <file>  - Export data to YAML file" << NEWLINE;
     oss << NEWLINE;
-    oss << "Note: Enable feature first with 'feature opcodeprofiler on'" << NEWLINE;
+    oss << "Note: start switches the opcodeprofiler feature on" << NEWLINE;
     session.SendResponse(oss.str());
 }
 
 void CLIProcessor::HandleProfilerOpcodeStart(const ClientSession& session, EmulatorContext* context, OpcodeProfiler* profiler)
 {
-    // Check if feature is enabled
+    // The feature on, as POST /profiler/opcode/start and Python's profiler_start do (the CLI refused before)
+    bool switchedOn = false;
     if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kOpcodeProfiler))
     {
-        session.SendResponse("Error: OpcodeProfiler feature is disabled. Enable with 'feature opcodeprofiler on'" + std::string(NEWLINE));
-        return;
+        context->pFeatureManager->setFeature(Features::kOpcodeProfiler, true);
+        switchedOn = true;
     }
+    if (context->pCore && context->pCore->GetZ80())
+        context->pCore->GetZ80()->UpdateFeatureCache();
 
     profiler->Start();
-    session.SendResponse("Opcode profiler started. Previous data cleared." + std::string(NEWLINE));
+    session.SendResponse(std::string("Opcode profiler started. Previous data cleared.") +
+                         (switchedOn ? " (feature opcodeprofiler switched on)" : "") + NEWLINE);
 }
 
 void CLIProcessor::HandleProfilerOpcodeStop(const ClientSession& session, OpcodeProfiler* profiler)

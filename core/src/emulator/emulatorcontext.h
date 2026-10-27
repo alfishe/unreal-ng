@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include <chrono>
+#include <functional>
 #include "stdafx.h"
 
 #include <atomic>
@@ -18,6 +21,7 @@ using unreal::UUID;
 class Core;
 class Emulator;
 class Joystick;
+namespace controllers { class ControllerManager; }
 class Keyboard;
 class Mouse;
 class MouseManager;
@@ -33,6 +37,7 @@ class WD1793;
 class UPD765;
 class IdeController;
 class PortDecoder;
+class SlotManager;
 class Screen;
 class UlaContention;
 class TapeFastLoad;
@@ -47,11 +52,16 @@ class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 class MediaManager;
+class BusManager;
 class EthernetGateway;
+namespace coordinator  // emulator/coordinator/ports.h
+{
+class IMachineOps;
+}
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
+namespace ttd { class TimeTravelManager; class TimeTravelController; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
@@ -75,6 +85,19 @@ public:
     /// Power cycle (the AVR's Ctrl+Alt+key): the FPGA loads its configuration
     /// again, held keys do not survive
     virtual void RequestHardReset() = 0;
+};
+
+class Z80;
+
+/// A machine's handler of the RST $08 restart (the Next's esxDOS API without its firmware, NextEsxDos): asked at the
+/// instruction start at #0008, after the RST was taken
+class IRst8Trap
+{
+public:
+    virtual ~IRst8Trap() = default;
+    /// True: the call was served (registers, memory and PC past the call byte as the DOS leaves them), the instruction
+    /// at #0008 does not run
+    virtual bool HandleRst8(Z80& cpu) = 0;
 };
 
 class EmulatorContext
@@ -120,6 +143,7 @@ public:
 
 	// Kempston joystick instance
 	Joystick* pJoystick = nullptr;
+	controllers::ControllerManager* pControllerManager = nullptr;  ///< the machine's connectors and retro devices
 
 	// Virtual network of this machine (network adapters TDD §5): present only
 	// while a network adapter is fitted
@@ -133,6 +157,8 @@ public:
 	// The peer on the machine's own serial port when that port is no 16550 on
 	// #xxEF (ATM Turbo 2+ keyboard controller's RS-232), when fitted
 	ISerialPeer* pMachineSerialPeer = nullptr;
+	ISerialPeer* pMachineSerialPeer2 = nullptr;   ///< the peer on the machine's second serial port (the Next's UART 1)
+	ISerialPeer* pJoystickSerialPeer = nullptr;   ///< the peer on the Next's joystick connector (NR #0B UART mode)
 	// The ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, when fitted (NetworkManager owns it)
 	Atm2IoEsp* pAtm2IoEsp = nullptr;
 	// The TS AVR firmware's ZiFi block beside the #xxEF COM port (TS-Conf, ZX-Evo + TS firmware); NetworkManager owns it
@@ -170,6 +196,9 @@ public:
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;
     DiskAutostart* pDiskAutostart = nullptr;
+
+    // RST $08 handler (the Next's esxDOS mode, feature "esxdos"); nullptr while nothing serves it
+    IRst8Trap* pRst8Trap = nullptr;
 
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
@@ -211,6 +240,9 @@ public:
     // Sound manager
     SoundManager* pSoundManager = nullptr;
 
+    // The slot set of the machine (ZX-bus slots, emulator/slots/slotmanager.h): planned at creation
+    SlotManager* pSlotManager = nullptr;
+
 #ifdef ENABLE_RECORDING
     // Recording manager (video/audio capture for recordings)
     RecordingManager* pRecordingManager = nullptr;
@@ -225,11 +257,27 @@ public:
     // Time-travel debugging manager (owned by Emulator, lives across the
     // lifetime of the context). May be null on minimal builds without TTD.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
+    /// What the core calls into time travel (frame boundary, loads, input, guards): the
+    /// same object as pTimeTravelManager until the engine takes over (Phase 5). Null when
+    /// time travel is not constructed. The core uses this pointer; surfaces use the manager
+    ttd::ITimeTravelHooks* pTimeTravelHooks = nullptr;
+    /// The engine's controller when this instance runs one (Phase 5): then it is
+    /// also pTimeTravelHooks, and the verbs (TTDControl) drive it. Null otherwise
+    ttd::TimeTravelController* pTimeTravelController = nullptr;
 
     // Media manager: every storage slot and the media in them (owned by
     // Emulator; created before Core so peripherals can register their slots,
     // destroyed after Core so they can unregister)
     MediaManager* pMediaManager = nullptr;
+
+    // Bus analyzer: every peripheral bus of the machine and its cards (owned by Emulator; created before Core
+    // so bus owners can register, destroyed after Core; docs/inprogress/2026-10-11-bus-analyzer)
+    BusManager* pBusManager = nullptr;
+
+    // The machine state coordinator (owned by Emulator, set by Emulator::WireCoordinator): a subsystem whose change is
+    // a machine operation runs it here (coordinator::RunCommit: the rules, the TTD session effect, the log). Null in a
+    // bare context: the change runs alone
+    coordinator::IMachineOps* pMachineOps = nullptr;
 
     // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //
@@ -321,6 +369,12 @@ public:
     // StartRecording and cleared by StopRecording / InvalidateSession, all of
     // which run on the control thread with the emulator paused.
     bool ttdCoverageActive = false;
+    /// The recording session's coverage index while it records with coverage on, null
+    /// otherwise (Phase 5, C1d): the core records into it inline, like a direct call
+    ttd::TTDCoverageIndex* ttdCoverage = nullptr;
+    /// Who takes memory writes (debug write path) and port OUTs while time travel
+    /// records: v1's manager or the engine's controller (Phase 5, C1d)
+    ttd::ITTDWriteSink* ttdWriteSink = nullptr;
     /// endregion </Child object references>
 
     /// region <Run-control claim (GDB TDD 3.3 / parent TDD 7.2)>
@@ -328,7 +382,8 @@ public:
     // Advisory owner token: while a surface (GDB, Qt timeline, WebAPI, ...) holds the claim
     // with the target paused, other surfaces' Resume/Step/Seek/state-writes are refused.
     // Pause and read-only queries are always allowed. The claim is NOT taken automatically
-    // by Emulator::Pause() - explicit surfaces take it.
+    // by Emulator::Pause() - explicit surfaces take it, and the automation gate
+    // (EnterImplicitRunControl) takes it for a client that changes the machine without one.
     //
     // Mutex guards take/release only; never held during emulator work.
 public:
@@ -337,7 +392,70 @@ public:
         bool claimed = false;
         std::string surfaceLabel;  // "gdb", "webapi", "qt-timeline", "lua", "cli", ... for error/UI
         std::string ownerUuid;     // String form for diagnostics / JSON responses
+        std::string client;        // the client's own name (an automation session), if it gave one
+        std::string peer;          // where the client connects from (host:port), empty for an in-process script
+        int64_t sinceMs = 0;       // when the claim was taken (system clock, ms since the epoch)
+        uint32_t leaseMs = 0;      // idle lease of an HTTP session (0: ends with its connection / explicitly)
+        uint32_t leaseLeftMs = 0;  // how long until the idle lease ends without a request of the session (0: no lease)
+        bool implicit = false;     // the automation gate opened it: the client drove the machine without taking control
+        /// Clients in their re-take cooldown after the user took control back: "label/client" -> seconds left
+        std::vector<std::pair<std::string, int64_t>> cooldowns;
     };
+
+    /// Automation sessions (execution arbiter design §6a, X7): the claim is also the session an automation client
+    /// opens explicitly. `client`: the client's name (also the key of its re-take cooldown); `lease`: an
+    /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease; `peer`: where the
+    /// client connects from ("192.168.1.5:51234"; empty for an in-process script) - the GUI shows it to the user.
+    /// An explicit take takes over an implicit session of another client (it gives way, "superseded"): an implicit
+    /// session makes an un-sessioned client visible and revocable, it reserves nothing. An explicit session is never
+    /// taken over; only the user takes control back (RevokeRunControl)
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+                        const std::string& client, std::chrono::milliseconds lease, const std::string& peer = {});
+    /// The user takes control back at the GUI: the session ends, its direct run (if one is under way) is aborted at the
+    /// next instruction, its owner is refused from now on (IsRunControlRevoked: revoked_by_user), and the same client
+    /// cannot take control again for the cooldown (revoked_cooldown) unless the user allows it (AllowRunControlRetake)
+    bool RevokeRunControl(const std::string& by = "gui");
+    /// The owner's session was taken back by the user: its requests answer revoked_by_user (never retried)
+    bool IsRunControlRevoked(const unreal::UUID& owner) const;
+    /// A request of this session arrived: its idle lease starts again
+    void TouchRunControl(const unreal::UUID& owner);
+    /// The user allows a client (or, with an empty key, every client) to take control again before its cooldown ends
+    void AllowRunControlRetake(const std::string& clientKey = {});
+    /// The re-take cooldown after a take-back (tests shorten it; default 300 s)
+    void SetRunControlRetakeCooldown(uint32_t seconds);
+
+    /// The automation gate's answer for a request that changes the machine without a session
+    struct ImplicitControl
+    {
+        bool allowed = false;      // go on, as `owner`
+        bool opened = false;       // this request opened the session
+        unreal::UUID owner;
+        std::string error;         // refused: "held_by_other" (someone else's session) | "revoked_by_user"
+        std::string message;       // for a human or an agent: who holds it, and how to resolve it
+        RunControlState holder;    // held_by_other: the session that holds control (its kind, client, lease left)
+    };
+    /// One line for a refusal: who holds control, which kind of session, and how to resolve it (an implicit session:
+    /// take control explicitly, which takes it over, or wait for its lease; an explicit one: wait, or ask the user)
+    static std::string DescribeHolder(const RunControlState& holder);
+    /// The automation gate (owner decision 2026-10-11): a client that changes the machine without having taken control
+    /// gets a session implicitly - the GUI shows it and locks, the user can take control back, as for one it took
+    /// itself. `identity` tells one client from another (surface, client, peer host): the same identity goes on in its
+    /// implicit session, renewing its lease; another is refused while it is held. A client the user took control
+    /// back from is refused (revoked_by_user) until its re-take cooldown ends. `client`, `lease`, `peer` as in
+    /// TakeRunControl
+    ImplicitControl EnterImplicitRunControl(const std::string& surfaceLabel, const std::string& identity,
+                                            const std::string& client, std::chrono::milliseconds lease,
+                                            const std::string& peer = {});
+    /// The client takes control explicitly while the gate holds an implicit session for it: that session ends
+    /// (quietly, no "released" toast) so the explicit take succeeds. Nothing when the claim is not its implicit one.
+    /// Also how a client without the id ends its own implicit session (DELETE /control/session with no header).
+    /// True when it ended one
+    bool ReleaseImplicitRunControl(const std::string& identity);
+    /// The owner of the implicit session the gate holds for `identity`; nil when the claim is not that one. The same
+    /// client goes on in that session without its id, so telling it the id gives it nothing new
+    unreal::UUID ImplicitRunControlOwner(const std::string& identity) const;
+    /// Tests move the run-control clock (leases, cooldowns) instead of waiting; an empty function = steady_clock
+    void SetRunControlClock(std::function<std::chrono::steady_clock::time_point()> clock);
 
     /// Attempt to take the run-control claim.
     /// @param owner UUID of the claiming surface (use UUID::Generate() at surface startup).
@@ -345,14 +463,14 @@ public:
     /// @param errorReason Optional: filled with a reason string when returning false.
     /// @return true if claim taken (or already held by the same owner - idempotent);
     ///         false if held by a different owner.
-    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel,
                         std::string* errorReason = nullptr);
 
     /// Release the claim. No-op if @p owner does not match the current holder.
-    void ReleaseRunControl(const UUID& owner);
+    void ReleaseRunControl(const unreal::UUID& owner);
 
     /// Identity check: does @p owner currently hold the claim? No blocking.
-    bool HasRunControl(const UUID& owner) const;
+    bool HasRunControl(const unreal::UUID& owner) const;
 
     /// Is the claim held by anyone?
     bool IsRunControlClaimed() const;
@@ -363,10 +481,31 @@ public:
 private:
     struct RunControlClaim
     {
-        UUID owner;                   // Nil UUID = unclaimed
+        unreal::UUID owner;                   // Nil UUID = unclaimed
         std::string surfaceLabel;
+        std::string client;
+        std::string peer;
+        int64_t sinceMs = 0;
+        std::chrono::milliseconds lease{0};
+        std::string implicitIdentity;  // the client the automation gate opened it for ("" = taken explicitly)
+        std::chrono::steady_clock::time_point lastActivity{};
+        std::vector<std::string> revokedOwners;                                         // owners taken back
+        std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> cooldowns;  // client key -> until
+        uint32_t retakeCooldownSeconds = 300;
+        std::function<std::chrono::steady_clock::time_point()> clock;  // tests: SetRunControlClock
         mutable std::mutex mutex;     // Guards take/release only; never held during emulator work
     };
+    /// The run-control clock (the test's, else steady_clock); called with the claim's mutex held
+    std::chrono::steady_clock::time_point RunControlNow() const;
+    /// The state as GetRunControlState returns it; called with the claim's mutex held
+    RunControlState RunControlStateLocked() const;
+    /// An HTTP session whose lease ran out ends (called from the queries; posts "expired")
+    void ExpireIdleRunControl() const;
+    bool TakeRunControlAs(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+                          const std::string& client, std::chrono::milliseconds lease, const std::string& peer,
+                          const std::string& implicitIdentity);
+    void PostRunControlChanged(const std::string& event, const std::string& label, const std::string& client,
+                               const std::string& owner, const std::string& by = {}) const;
     RunControlClaim _runControlClaim;
     /// endregion </Run-control claim>
 
@@ -455,5 +594,8 @@ public:
     EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
     EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
     virtual ~EmulatorContext();
+
+    /// The contexts alive in the process: a machine that is gone (a failed create included) has freed its context
+    static size_t LiveCount();
     /// endregion </Constructors / destructors>
 };

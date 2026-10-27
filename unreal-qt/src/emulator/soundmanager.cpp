@@ -95,8 +95,20 @@ bool AppSoundManager::init()
     // resampler does the core->device conversion under our quality control.
     config.sampleRate        = 0;
     config.performanceProfile = ma_performance_profile_low_latency;
+#ifdef _WIN32
+    // WASAPI shared mode mixes in 10 ms engine periods: 2 x 5.8 ms left the device one
+    // engine period of slack, and any scheduling hiccup (another window busy) was a
+    // dropout. One engine period per callback, three of them (~30 ms); the ring and
+    // the DRC target (40 ms) sit on top as before
+    config.periodSizeInMilliseconds = 10;
+    config.periods                  = 3;
+    // MMCSS for the WASAPI device thread. miniaudio requests it only when a usage is
+    // set: without it the thread ran at plain priority and lost to any busy process
+    config.wasapi.usage = ma_wasapi_usage_pro_audio;
+#else
     config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
     config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
+#endif
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
     // Device reroute detection (default-output change / hotplug): re-init at
@@ -228,7 +240,8 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
         //            already carries time-constraint real-time scheduling -
         //            applying our own policy would only overwrite CoreAudio's
         //            tighter constraints with looser ones
-        //   Windows: the WASAPI thread is MMCSS-driven ("Audio" role)
+        //   Windows: the WASAPI thread is MMCSS-driven ("Pro Audio", requested
+        //            through config.wasapi.usage in init())
         ThreadHelper::setRealtimePriority();
 #endif
     }

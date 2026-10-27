@@ -60,6 +60,11 @@ public:
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
     void ApplyBootROMDefaults(ROMModeEnum mode) override;
+    /// A 48K / 128K snapshot: ROM (not RAM) at #0000, the ZX picture, not the system ROM (CPSYS off), no RAM extension
+    void EnterSpectrum128Paging(uint16_t pc) override;
+    /// The cold start leaves #FDFD = 3 (its resident probe selected RAM page 31): #7FFD pages land in RAM 24-31 on
+    /// 512 KB. A disk is booted the 128K way instead: #FDFD = 0, the layout above
+    bool FinishAutostartColdStart(uint16_t pc) override;
 
     /// No turbo states on the 4.50 board (ATM710 has two)
     uint8_t TtdClockUnits() const override { return 1; }

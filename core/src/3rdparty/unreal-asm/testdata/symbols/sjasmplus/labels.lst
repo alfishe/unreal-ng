@@ -1,0 +1,28 @@
+# file opened: labels.asm
+ 1    0000              ; Labels of every kind for the symbol codecs' golden files (sjasmplus 1.24)
+ 2    0000                      DEVICE ZXSPECTRUM128
+ 3    0000              SCREEN  EQU #4000
+ 4    0000              LINES   EQU 24
+ 5    0000                      ORG #8000
+ 6    8000 21 00 40     start:  ld hl,SCREEN
+ 7    8003 10 FE        .loop:  djnz .loop
+ 8    8005 CD 0E 80             call player.play
+ 9    8008 C9                   ret
+10    8009 01 02 03     data_tab: db 1,2,3
+11    800C 00 80        q?mark: dw start
+12    800E                      MODULE player
+13    800E 3E 18        play:   ld a,LINES
+14    8010 00           .frame: nop
+15    8011 C9                   ret
+16    8012                      ENDMODULE
+17    8012                      SLOT 3
+18    8012                      PAGE 1
+19    8012                      ORG #C000
+20    C000 00           paged1: nop
+21    C001 C9           .inner: ret
+22    C002                      PAGE 3
+23    C002                      ORG #C000
+24    C000 00           paged3: nop
+25    C001                      SAVEBIN "labels.bin",#8000,32
+26    C001
+# file closed: labels.asm

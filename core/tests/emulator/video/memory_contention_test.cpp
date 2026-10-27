@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -40,8 +41,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
         if (_context)
             _context->pScreen = nullptr;
 
-        delete _cpu;  // Core::Release will not delete screen since pScreen is null
-        delete _context;
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     /// Set up ZX-48K timing model with correct config values

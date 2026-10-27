@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "common/inifile.h"
+#include "emulator/coordinator/ports.h"
 
 // Forward declaration to avoid circular dependency
 class EmulatorContext;
@@ -44,6 +45,8 @@ constexpr const char* const kKempstonJoystick = "kempstonjoystick";
 constexpr const char* const kGSLightweight = "gs_lightweight";
 constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
+constexpr const char* const kTTDRestart = "ttdrestart";
+constexpr const char* const kEsxDos = "esxdos";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -70,6 +73,8 @@ constexpr const char* const kKempstonJoystickAlias = "kjoy";
 constexpr const char* const kGSLightweightAlias = "gslw";
 constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
+constexpr const char* const kTTDRestartAlias = "ttdre";
+constexpr const char* const kEsxDosAlias = "esx";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -129,6 +134,18 @@ constexpr const char* const kContentionDesc =
     "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
+constexpr const char* const kEsxDosDesc =
+    "ZX Spectrum Next esxDOS mode: without a boot ROM (the bare machine) the emulator serves the esxDOS API (RST $08 "
+    "calls #80 and up: files, directories, the file map and stream, the date) against the FAT volume of SD card 0, so "
+    "a program that uses it runs without NextZXOS. Off: RST $08 runs the ROM as on the board. Cannot change while the "
+    "machine is bound to a TTD timeline or an RZX recording plays.";
+
+constexpr const char* const kTTDRestartDesc =
+    "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "
+    "(ROM reload, model switch, General Sound card or slot change) END the current recording session; with this on a new "
+    "session starts at the next frame boundary, off (default) leaves the machine without a recording until one is started. "
+    "The black box always starts a new one.";
+
 // Categories
 constexpr const char* const kCategoryDebug = "debug";
 constexpr const char* const kCategoryAnalysis = "analysis";
@@ -150,7 +167,7 @@ constexpr const char* const kStateHigh = "high";
 /// - Query or set feature state/mode at runtime.
 /// - Load/save state from/to features.ini.
 /// - Integrate with CLI for user control.
-class FeatureManager
+class FeatureManager : public coordinator::IModeListener
 {
 public:
     // Explicitly require EmulatorContext for construction
@@ -201,6 +218,19 @@ public:
     /// read as off (they change the CPU path the recording follows)
     bool isRzxPlaying() const;
 
+    /// @brief The machine's mode changed (the coordinator's broadcast, architecture §5). A replay runs on the
+    /// instrumented memory path whatever the 'debugmode' feature says: the manager holds debug mode on while the
+    /// machine replays and gives the feature its say back after. The one writer of Z80::isDebugMode (M4)
+    void OnModeChanged(const coordinator::ModeState& from, const coordinator::ModeState& to) override;
+    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, or the taps' hold
+    bool debugModeInEffect() const;
+    /// @brief Read taps are armed, or write taps on a machine without the fast write's hook
+    /// (BreakpointManager::ApplyTapDemand, breakpoint-taps §4): the CPU runs the debug path and memory breakpoints are
+    /// checked while it holds, whatever 'debugmode' and 'breakpoints' say (a breakpoint the user set while they were
+    /// off takes effect too). Emulation thread or CPU held
+    void setTapDebugHold(bool on);
+    bool tapDebugHold() const;
+
     EmulatorContext* context() const
     {
         return _context;
@@ -221,6 +251,10 @@ private:
     /// frame, so the engine state has to be pushed here explicitly. Idempotent: only
     /// calls Core if the actual state disagrees with the desired one.
     void syncTurboModeWithTtdState();
+    /// @brief Z80::isDebugMode from debugModeInEffect(), then the memory interface and the caches that follow it
+    void applyDebugMode();
+    bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
+    bool _tapDebugHold = false;     ///< taps need the debug path (setTapDebugHold)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

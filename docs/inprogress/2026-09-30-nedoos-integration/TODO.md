@@ -15,6 +15,11 @@ Index: [README.md](README.md).
   kernel call, ending the stuck call); findings in the kernel reference, new
   NK-21..NK-23. The prototype is POC
   [020-nedoos-layer](../../../tools/poc/020-nedoos-layer/).
+- 2026-10-05 (branch `zx-bus-slots`, not committed): the runtime change of the ZX-bus network cards
+  (`network set card=`, `POST /network/config {card}`, `network_configure`, the Network window's card
+  boxes) is a slot change applied by a restart (ZX-bus slots owner decision Q11,
+  [tdd.md §16](../2026-10-03-zx-bus-slots/tdd.md#16-q11-as-built-the-network-card-change-is-a-slot-change-2026-10-05));
+  [tdd-network.md](tdd-network.md) notes it.
 
 ## Remaining
 
@@ -44,6 +49,15 @@ Index: [README.md](README.md).
 - Bug, separate fix: `GET /memory/ram/{page}/{offset}` with a negative offset
   returns host process memory.
 - Implementation: layer core, surfaces, tests; adapters in priority order.
+  Started 2026-10-23 on branch `wt-nedoos` (worktree `scratch/wt-nedoos`): the `NedoOsAnalyzer`
+  (id `nedoos`) in `core/src/debugger/analyzers/nedoos/` — kernel detection by the pgsys entry
+  stubs, page-pinned traps on `CALL #0005` / the `#0004` QUIT stub, the decoded BDOS stream
+  (76 command names, YIELD/PRCHAR-class calls counted not streamed), the app-table and
+  `tsys_pages` owner polling, and the QUIT audit finding "task exits owning pages"
+  (a synthetic `leak.com` covers it in `core/tests/debugger/analyzers/nedoos/`). One
+  `IOSAnalyzer` branch in the WebAPI/CLI/Python/Lua surfaces serves every OS analyzer
+  (`analyzer nedoos events|state` in the CLI). Driving both OS analyzers from MCP/WebAPI/CLI/Lua/Python,
+  with the leak-and-hungriness runbooks: [../2026-10-04-estex-dss-debugging/osaware-recipes.md](../2026-10-04-estex-dss-debugging/osaware-recipes.md).
 - Side note: AVR hard reset from the PS/2 stream (Ctrl-Alt-Del, F12,
   PrintScreen) and the hard vs. soft reset split (hard reset clears the PS/2
   log) are not emulated.

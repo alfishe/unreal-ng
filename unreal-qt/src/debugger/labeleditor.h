@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QTableWidget>
 #include <QPushButton>
+#include <QTabWidget>
 #include <QHeaderView>
 #include <QMenu>
 #include <QShortcut>
@@ -52,6 +53,11 @@ private slots:
     void loadLabels();
     void saveLabels();
     void saveAsLabels();
+    // Symbol files in every format, sets, the label tables of assemblers in RAM (SymbolControl)
+    void importSymbols();
+    void exportSymbols();
+    void scanLabelTables();
+    void importSourceLabels();
     void updateRecentFilesMenu();
     void loadFromFile(const QString& filePath);
     bool saveToFile(const QString& filePath);
@@ -103,6 +109,10 @@ private:
 
     // Label count display
     QLabel* _totalLabelsLabel = nullptr;
+
+    // Tabs: the labels as they show, the symbol sets behind them
+    QTabWidget* _tabs = nullptr;
+    class SymbolSetsPanel* _setsPanel = nullptr;
     
     // Future: Filter UI elements
     // QLineEdit* _searchField = nullptr;

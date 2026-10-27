@@ -14,6 +14,8 @@
 // notification in response to its own CMD_PAUSE / CMD_CONTINUE.
 
 #include "dzrpserver.h"
+#include "emulator/execution/executionarbiter.h"
+#include "common/uuid.h"
 #include "3rdparty/message-center/eventqueue.h"
 
 #include <cstdint>
@@ -27,7 +29,6 @@
 #include <vector>
 
 class Emulator;
-namespace ttd { class TimeTravelManager; }
 
 class DezogDebugAdapter : public dzrp::IDebugInterface, public Observer
 {
@@ -62,6 +63,14 @@ public:
     std::vector<uint8_t> getSlots() const override;
     void setSlot(uint8_t slot, uint8_t bank) override;
     void writeBank(uint8_t bank, const std::vector<uint8_t>& data) override;
+    std::vector<uint8_t> readBankMemory(uint8_t bank, uint16_t offset, uint16_t size) const override;
+    void writeBankMemory(uint8_t bank, uint16_t offset, const std::vector<uint8_t>& data) override;
+    std::vector<uint8_t> getSpritesPalette(uint8_t which) const override;
+    std::vector<uint8_t> getSprites(uint8_t index, uint8_t count) const override;
+    std::vector<uint8_t> getSpritePatterns(uint8_t index, uint8_t count) const override;
+    std::vector<uint8_t> getSpritesClipWindowAndControl() const override;
+    uint8_t readNextReg(uint8_t reg) const override;
+    void writeNextReg(uint8_t reg, uint8_t value) override;
 
     uint16_t addBreakpoint(uint16_t addr, uint8_t bank = 0, const std::string& condition = "",
                            bool temporary = false) override;
@@ -96,9 +105,16 @@ public:
     // (CLI / GUI / analyzers) are preserved.
     void onSessionClosed() override;
 
+    // Automation session (execution arbiter design §6a): the connected DeZog holds the emulator's run control - the
+    // GUI shows "dezog (DeZog) from <peer>" and locks; the user can take it back (controlTakenBack)
+    void onClientConnected(const std::string& peer) override;
+    bool controlTakenBack() const override;
+    /// The protocol the session came over, shown to the user with it ("DeZog (DZRP)", "DeZog (ZRCP)")
+    void setSessionClientName(std::string name) { _sessionClientName = std::move(name); }
+
     // --- Instruction history over TTD ---
     // Entries are served from the TTD per-frame decode cache
-    // (TimeTravelManager::GetFrameCache): a DeZog index is mapped to
+    // (TimeTravelController::GetFrameCache): a DeZog index is mapped to
     // (frame, entry-in-frame) via lazily-built frame segments, and the decoded
     // record (registers, slots, opcodes at PC, word at SP) is read straight
     // from the cache. Browsing is read-only under the TTD DebuggerLive mode
@@ -159,15 +175,13 @@ private:
     void ensureHistoryRecording(Emulator& emulator);
     void leaveHistory(Emulator& emulator);
     void leaveHistoryIfBrowsing();
-    // Out-of-band mutation (register/memory/slot/bank write from the debugger):
-    // TTD reconstructs history by deterministic replay, which such edits break.
-    // Both modes: record the marker, then restart recording from the edited
-    // state (history before the edit is dropped). Marker-only handling was
-    // tried for DebuggerLive and is UNSOUND - replay re-executes from the last
-    // checkpoint, so everything between it and the marker would decode as
-    // fabricated execution that never ran (§6.4). Journaling debugger writes
-    // into the TTD log is the Phase-3 fix that removes the wipe.
-    void onDebuggerEdit(Emulator& emulator, const char* what);
+    // Out-of-band mutation (register/memory/slot/bank write from the debugger).
+    // The engine (backend engine) records it as an event with what it changed,
+    // so replay reproduces it and no history is lost (D9). v1 reconstructs
+    // history by deterministic replay, which such edits break: it records the
+    // marker, then restarts recording from the edited state (history before
+    // the edit is dropped; marker-only handling is UNSOUND there, §6.4).
+    void editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit);
     void subscribe();
     void unsubscribe();
     void notify(dzrp::BreakReason reason, uint16_t addr);
@@ -176,6 +190,11 @@ private:
     void onBreakpointMessage(int id, Message* message);
 
     mutable std::mutex _mutex;
+    std::string _peer;              // where the connected DeZog is ("host:port")
+    std::string _sessionClientName = "DeZog";
+    unreal::UUID _sessionOwner;     // the run-control claim of the session (nil: none, another surface held it)
+    /// Who asks, for the execution arbiter: this session when it holds run control, else DeZog alone
+    execution::Requester sessionRequester() const;
     std::shared_ptr<Emulator> _emulator;              // Explicit binding (nullptr = dynamic)
     PauseNotifier _notifier;
 
@@ -189,7 +208,7 @@ private:
     //
     // STRATEGY (see docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md
     // §5 "Best strategy for DeZog"): a DeZog history index is served from the TTD
-    // per-frame decode cache (TimeTravelManager::GetFrameCache), not by a live
+    // per-frame decode cache (TimeTravelController::GetFrameCache), not by a live
     // seek per read. Instructions are grouped by frame; we map a global DeZog
     // index → (frame, entry-in-frame) via `_historySegs` (built lazily from the
     // present backward) and read the decoded record straight from the cache.

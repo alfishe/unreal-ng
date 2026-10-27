@@ -1,4 +1,5 @@
 #pragma once
+#include "emulator/video/displaygeometry.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -69,6 +70,8 @@ enum VideoModeEnum : uint8_t
     M_TSZX,  // TS ZX mode (TS-Conf's ZX-layout graphics in its own raster and palette)
 
     M_SPRINTER,  // Sprinter Sp2000: per-square modes from the video RAM mode table (ScreenSprinter)
+
+    M_NEXT,  // ZX Spectrum Next: layers composed per line into 640x256 (ScreenNext); the beam follows the ZX family of NR #03
 
     M_MAX
 };
@@ -581,6 +584,11 @@ public:
         // vSync + vBlank only make maxFrameTiming 320 x 224; ScreenSprinter sets the zones
         // and the 312-line frame itself
         {736, 288, 640, 256, 48, 16, 448, 64, 16, 16, 16},  // M_SPRINTER
+        // M_NEXT (ScreenNext): the 320x256 visible grid of the 7 MHz pixel clock at two sub-pixels each (the 512-pixel Timex
+        // hi-res and Layer 2's 640x256 get one each) with every line twice (the 4:3 picture of the 320x256 grid): the
+        // 512x384 paper at (64, 64). The beam timing is the ZX family's (GetTimingDescriptor); the fields after the
+        // sizes are not used for the drawing
+        {640, 512, 512, 384, 64, 64, 448, 64, 32, 8, 16},  // M_NEXT
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -619,6 +627,11 @@ protected:
 
     uint32_t _prevTstate = 0;  // Previous Draw call t-state value (since emulation is not concurrent as in hardware -
                                // we need to know what time period to replay)
+
+    // A screen that catches up on its own events (CatchesUpOnEvents): the CPU clock at the end of the last step
+    // (NoteStepEnd), where the per-step draw would stand; a step to be drawn at its end all the same
+    uint32_t _stepEndCpuT = 0;
+    bool _drawAtStepEnd = false;
 
 bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU cycle of a skipped turbo frame
 
@@ -676,9 +689,32 @@ public:
     virtual void Reset();
 
     virtual void InitFrame();
-    virtual void InitRaster();
+    /// Re-detects the video mode from the ports and config and applies it when it changed (DetectRaster); with a
+    /// RasterDeferral open only noted, and done once when the last one closes
+    void InitRaster();
+    /// Holds InitRaster off while it lives (scopes nest): the mode the ports select at its end is applied once, the
+    /// modes they pass through meanwhile are never set up. A snapshot load from its reset to its paging: the reset's
+    /// transient mode (the ATM's EGA) and its framebuffer are not built just to be replaced. Nothing may draw or
+    /// paint while one is open (the CPU held, closed before the loader paints the picture)
+    class RasterDeferral
+    {
+    public:
+        explicit RasterDeferral(Screen* screen);
+        ~RasterDeferral();
+        RasterDeferral(const RasterDeferral&) = delete;
+        RasterDeferral& operator=(const RasterDeferral&) = delete;
+
+    private:
+        Screen* _screen;
+    };
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
+
+protected:
+    /// The model's mode detection behind InitRaster
+    virtual void DetectRaster();
+
+public:
 
     /// region <Video mode detection>
 protected:
@@ -718,6 +754,8 @@ public:
     virtual void SetVideoMode(VideoModeEnum mode);
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
     virtual void SetBorderColor(uint8_t color);
+    /// The border color at a reset: taken over without drawing anything (no beam position to flush to)
+    void ResetBorderColor(uint8_t color) { _borderColor = color & 0b0000'0111; }
 
     virtual VideoModeEnum GetVideoMode();
     virtual uint8_t GetActiveScreen();
@@ -759,20 +797,44 @@ public:
     uint32_t GetTstatesPerLine() const { return _rasterState.tstatesPerLine; }
 
     virtual void UpdateScreen() = 0;
+    /// Every change of what the picture shows calls this screen's own catch-up before it lands (video RAM, palette,
+    /// border, mode registers): the per-step UpdateScreen is then needed only on the frame's last step (it draws
+    /// the tail) and where something looks mid-frame (the end of a direct run, a pause). MainLoop reads it at the
+    /// frame start. Default false: the classic screens draw from the per-step call
+    virtual bool CatchesUpOnEvents() const { return false; }
+    /// MainLoop, after every step but the frame's last on a screen that catches up on its events: the CPU clock the
+    /// step ended at, which a catch-up before a change in the next step draws to (CatchUpToStepStart). A step
+    /// marked for it (_drawAtStepEnd) is drawn here as the per-step call would have drawn it
+    void NoteStepEnd(uint32_t cpuT)
+    {
+        _stepEndCpuT = cpuT;
+        if (_drawAtStepEnd) [[unlikely]]
+            UpdateScreen();
+    }
+    /// Before a change of what the picture shows lands in the middle of a step (a write to video RAM, a port write):
+    /// draw up to where the step began, as the per-step draw had. No-op on the screens without the event rule
+    virtual void CatchUpToStepStart() {}
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
 
     /// Render the inclusive frame T-state range [from, to]. DrawPeriod calls it
     /// once per catch-up; renderers override it to loop without per-T dispatch.
+    /// The contract: nothing the picture is drawn from changes inside one call (video RAM, border, palette, mode).
+    /// The call runs on the emulation thread with the CPU stopped, and every change catches the beam up before it
+    /// lands (CatchUpToStepStart), so a change always falls between two calls. The time resolution of the picture
+    /// is set by where the callers cut the frame, never by the renderer: a renderer may draw any part of its range
+    /// in any order or in blocks, as long as each pixel shows what it would show drawn T by T
+    /// (docs/emulator/design/video/screen-rendering-pipeline.md, "The event rule and the DrawRange contract")
     virtual void DrawRange(uint32_t fromTstate, uint32_t toTstate);
 
     /// @brief Reset the previous t-state tracker used by DrawPeriod
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
     void ResetPrevTstate() { _prevTstate = 0; }
-    /// Draw cursor save/restore for TTD live-state snapshots taken mid-frame
+    /// Draw cursor save/restore for TTD live-state snapshots taken mid-frame. Restored after the CPU: a snapshot
+    /// is taken between steps, so the CPU clock is also the step end of the event rule
     uint32_t GetPrevTstate() const { return _prevTstate; }
-    void SetPrevTstate(uint32_t tstate) { _prevTstate = tstate; }
+    void SetPrevTstate(uint32_t tstate);
 
     /// @brief Suspend contingent per-t-state rendering for the current CPU
     /// frame cycle (turbo render decimation - see MainLoop::RunFrame).
@@ -953,6 +1015,10 @@ protected:
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
 
+    // RasterDeferral: the scopes open, and an InitRaster held off by them
+    uint32_t _rasterDeferrals = 0;
+    bool _rasterDeferred = false;
+
     // External picture source (SetExternalPicture): its descriptor, and the
     // present delay in its frames (converted from the native delay)
     std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
@@ -1064,6 +1130,11 @@ public:
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
 
+    /// @brief The same, and the geometry latched with that frame (its size and the working picture's rectangle).
+    /// A consumer that shows "the screen" cuts `geometry->screenWindow` out of the pixels instead of
+    /// assuming where a machine puts its paper
+    bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize, PictureGeometry* geometry);
+
     /// @brief The presented frame and its geometry as one atomic pair (any thread).
     /// The geometry was latched with the frame, so a mode switch or a resize between the two reads
     /// cannot give a size that disagrees with the pixels
@@ -1122,6 +1193,9 @@ public:
     void SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height, uint32_t framePeriodUs);
     void ClearExternalPicture();
     bool IsExternalPictureActive() const { return _externalActive.load(std::memory_order_acquire); }
+
+    /// The emulator this screen belongs to (null for a screen made without one, as in tests)
+    const EmulatorContext* GetEmulatorContext() const { return _context; }
     /// The machine's own framebuffer, whatever the monitor shows
     FramebufferDescriptor& GetNativeFramebufferDescriptor() { return _framebuffer; }
     /// Latch the external picture into the present queue (emulation thread)
@@ -1146,6 +1220,9 @@ public:
     /// Get display dimensions after viewport cropping
     uint16_t GetDisplayWidth() const;
     uint16_t GetDisplayHeight() const;
+
+    /// The picture as it looks on a screen: the viewport-cropped framebuffer in square pixels (see displaygeometry.h)
+    DisplayGeometry::Size GetDisplayGeometry() const;
 
     /// The 16 ZX colors exactly as the renderer draws them (the first 16 entries of
     /// the live palette), in the framebuffer format RGBA8888 (LE uint32 0xAABBGGRR).

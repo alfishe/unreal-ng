@@ -27,8 +27,8 @@ void TTDEvoFontRam::TTDSaveState(uint8_t* dst) const
 {
     const EmulatorState& state = _context->emulatorState;
     dst[0] = kVersion;
-    std::memcpy(dst + 1, state.atmFontRam, kFontSize);
-    dst[1 + kFontSize] = state.atmFontByte;
+    std::memcpy(dst + 1, state.atm.fontRam, kFontSize);
+    dst[1 + kFontSize] = state.atm.fontByte;
 }
 
 void TTDEvoFontRam::TTDLoadState(const uint8_t* src)
@@ -36,8 +36,8 @@ void TTDEvoFontRam::TTDLoadState(const uint8_t* src)
     if (src[0] != kVersion)
         return;
     EmulatorState& state = _context->emulatorState;
-    std::memcpy(state.atmFontRam, src + 1, kFontSize);
-    state.atmFontByte = src[1 + kFontSize];
+    std::memcpy(state.atm.fontRam, src + 1, kFontSize);
+    state.atm.fontByte = src[1 + kFontSize];
 }
 
 uint64_t TTDEvoFontRam::TTDHashState() const

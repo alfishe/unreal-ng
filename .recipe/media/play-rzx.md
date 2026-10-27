@@ -87,11 +87,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/rzx/play" -H 'Content-Type: application/
 curl -s -X POST "$BASE/emulator/$EMU_ID/pause" >/dev/null
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" | jq .state                 # "recording"
 curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 200}' >/dev/null
-curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame}'            # {"state":"playing","frame":201}
+curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame}'            # {"state":"playing","frame":200}
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" | jq .state                  # "idle"
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/json' -d '{"frame": 50}' | jq .reached
-curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame, desyncs}'   # {"state":"playing","frame":49,"desyncs":0}
-curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-back" | jq .frame             # one video frame back
+curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame, desyncs}'   # {"state":"playing","frame":50,"desyncs":0} (frame 50's end)
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-back" | jq .frame             # 50: one video frame back, frame 50's start
 curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 100}' >/dev/null
 curl -s "$BASE/emulator/$EMU_ID/rzx/status" | jq -c '{state, frame, desyncs}'   # plays on from there, 0 desyncs
 ```

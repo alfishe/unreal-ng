@@ -45,3 +45,31 @@
         "part is not fm or pcm";
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["responses"]["404"]["description"] =
         "Emulator not found, or no MoonSound fitted";
+
+    // Active emulator forms (no ID: the only or the selected emulator)
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["summary"] = "Get MoonSound (OPL4) overview (active emulator)";
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["tags"].append("Audio State (Active)");
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/audio/moonsound for the only or selected emulator.";
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["responses"]["200"]["description"] = "MoonSound overview";
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["responses"]["400"]["description"] =
+        "Several emulators running: use the {id} form";
+    paths["/api/v1/emulator/state/audio/moonsound"]["get"]["responses"]["404"]["description"] =
+        "No emulator, or no MoonSound fitted";
+
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["summary"] =
+        "Get the MoonSound FM or PCM half (active emulator)";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["tags"].append("Audio State (Active)");
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/audio/moonsound/{part} for the only or selected emulator.";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["name"] = "part";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["schema"]["enum"].append("fm");
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["parameters"][0]["schema"]["enum"].append("pcm");
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["responses"]["200"]["description"] = "FM or PCM half";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["responses"]["400"]["description"] =
+        "part is not fm or pcm, or several emulators running (use the {id} form)";
+    paths["/api/v1/emulator/state/audio/moonsound/{part}"]["get"]["responses"]["404"]["description"] =
+        "No emulator, or no MoonSound fitted";

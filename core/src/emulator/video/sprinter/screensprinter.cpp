@@ -56,7 +56,7 @@ SprinterVideoInputs ScreenSprinter::CurrentInputs() const
 
 /// region <Raster>
 
-void ScreenSprinter::InitRaster()
+void ScreenSprinter::DetectRaster()
 {
     _vid.mode = M_SPRINTER;
     _vid.raster = raster[R_736_288];
@@ -198,6 +198,12 @@ BeamPosition ScreenSprinter::DescribeBeam(uint32_t tInFrame) const
 /// endregion </Raster>
 
 /// region <Drawing>
+
+bool ScreenSprinter::CatchesUpOnEvents() const
+{
+    const PortDecoder_Sprinter* decoder = Decoder();
+    return _catchUpOnEvents && !(decoder && decoder->BeamVideo());
+}
 
 void ScreenSprinter::UpdateScreen()
 {

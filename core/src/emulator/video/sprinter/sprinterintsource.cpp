@@ -11,10 +11,20 @@
 SprinterIntSource::SprinterIntSource(EmulatorContext* context, const SprinterVideoRam& vram)
     : _context(context), _vram(vram)
 {
+    countsChanges = true;
+}
+
+void SprinterIntSource::SetCovoxBlaster(CovoxBlaster* cbl)
+{
+    changeCount++;
+    _cbl = cbl;
+    if (_cbl)
+        _cbl->SetChangeCounter(&changeCount);  // its changes count as this source's
 }
 
 void SprinterIntSource::Reset()
 {
+    changeCount++;  // IInterruptSource::changeCount
     _ackedPulse = -1;
     _keyboardInt = false;
     _dirty = true;
@@ -22,6 +32,7 @@ void SprinterIntSource::Reset()
 
 void SprinterIntSource::SetModePage(uint8_t page)
 {
+    changeCount++;  // IInterruptSource::changeCount
     page &= 1;
     if (page != _modePage)
     {
@@ -32,6 +43,7 @@ void SprinterIntSource::SetModePage(uint8_t page)
 
 void SprinterIntSource::SetFrameLines(uint16_t lines)
 {
+    changeCount++;  // IInterruptSource::changeCount
     if (lines != _frameLines)
     {
         _frameLines = lines;
@@ -122,8 +134,37 @@ bool SprinterIntSource::IsIntAsserted(uint32_t t)
     return pulse >= 0 && pulse != _ackedPulse;
 }
 
+uint32_t SprinterIntSource::NextAssertT(uint32_t t)
+{
+    // IsIntAsserted(t) was false: no keyboard INT, no CBL request, every pulse covering t acknowledged. The list
+    // is ascending and covers this frame (the engine never runs past the frame end)
+    if (_keyboardInt)
+        return t;
+    const uint32_t multiplier = Multiplier();
+    const uint32_t raster = t / multiplier;
+    uint32_t next = UINT32_MAX;  // base T-state
+    if (_cbl)
+        next = _cbl->NextIntT();
+    for (uint32_t start : Positions())
+    {
+        if (start > raster)
+        {
+            next = std::min(next, start);
+            break;
+        }
+    }
+    if (next == UINT32_MAX)
+        return UINT32_MAX;
+    if (next <= raster)
+        return t;
+    // The first CPU clock whose base T-state reaches `next`
+    const uint64_t clock = static_cast<uint64_t>(next) * multiplier;
+    return clock < UINT32_MAX ? static_cast<uint32_t>(clock) : UINT32_MAX;
+}
+
 uint8_t SprinterIntSource::AcknowledgeInterrupt(uint32_t t)
 {
+    changeCount++;  // IInterruptSource::changeCount
     _keyboardInt = false;  // one flip-flop for every PLD source
     if (_cbl)
         _cbl->Acknowledge(t / Multiplier());  // CBL_INT: preset by the acknowledge (/IORQ and /M1)

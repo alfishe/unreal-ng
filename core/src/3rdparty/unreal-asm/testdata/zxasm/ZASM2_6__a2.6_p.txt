@@ -1,0 +1,23 @@
+;*0,0,0,0,0,0,0,
+
+;----- ZX Turbo Assembler  ver. 2.6 -----
+;----------- PROJECT File --------------
+;-------- Last Changed 10.11.18 ---------
+
+        MAKE "a2.6exe",#6000
+
+        include "a2.6_1"
+        include "a2.6_2"
+        include "a2.6_3"
+        include "a2.6_4"
+
+        IF $\256:DS 0-$\256:ENDIF
+
+Font6   insert "Big6scr"
+
+Stack   DS 250
+StkTop  DW GenError
+
+END     DB 13,13,0
+
+

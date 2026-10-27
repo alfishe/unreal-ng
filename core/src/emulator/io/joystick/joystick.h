@@ -40,8 +40,24 @@ public:
     /// Power-on: every button released. Fitting and bindings are kept
     void Reset();
 
-    /// The value the port answers: the state, or 0x00 when the interface is not fitted
-    uint8_t Read() const { return IsPresent() ? State() : 0x00; }
+    /// The value the port answers: the state (bits 5-7 only on an extended interface), or 0x00 when the interface
+    /// is not fitted
+    uint8_t Read() const { return IsPresent() ? static_cast<uint8_t>(State() & _readMask.load(std::memory_order_relaxed)) : 0x00; }
+
+    /// region <Interface options (the Kempston connector's, ControllerManager)>
+    /// Off: the original interface, D5-D7 grounded (bits 5-7 read 0)
+    void SetExtended(bool extended) { _readMask.store(extended ? 0xFF : 0x1F, std::memory_order_relaxed); }
+    bool Extended() const { return _readMask.load(std::memory_order_relaxed) == 0xFF; }
+    /// A cheap interface (A5 = 0, no /RD) answers the interrupt acknowledge as a port read
+    void SetIm2Leak(bool leak) { _im2Leak.store(leak, std::memory_order_relaxed); }
+    bool Im2Leak() const { return _im2Leak.load(std::memory_order_relaxed); }
+    /// The byte the CPU takes in the interrupt acknowledge: with the leak on and A5 of the address bus (PC) low, the
+    /// interface puts the stick on the data bus instead of the idle #FF (ZEsarUX joystick.c, "joystick barato")
+    uint8_t Im2Vector(uint8_t vector, uint16_t pc) const
+    {
+        return Im2Leak() && IsPresent() && !(pc & 0x0020) ? Read() : vector;
+    }
+    /// endregion </Interface options>
 
     /// Raw state write (atomic)
     void SetState(uint8_t state) { _state.store(state, std::memory_order_relaxed); }
@@ -99,6 +115,8 @@ private:
 
     std::atomic<uint8_t> _state{0x00};
     std::atomic<bool> _present{true};
+    std::atomic<uint8_t> _readMask{0xFF};
+    std::atomic<bool> _im2Leak{false};
     /// PcKey bound to each state bit (PcKey::None = 0 = unbound)
     std::array<std::atomic<uint8_t>, 8> _boundKey{};
 };

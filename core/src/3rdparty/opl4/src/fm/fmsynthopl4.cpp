@@ -20,6 +20,8 @@
 #include "common/exptable.h"
 #include "fm/fmtables.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstring>
 
 namespace opl4
@@ -125,6 +127,11 @@ void Opl4Fm::RebuildConnections()
 
 uint32_t Opl4Fm::PhaseStep(const FmOperator& op)
 {
+    return PhaseStepAt(op, (_lfoPm >> 10) & 7);
+}
+
+uint32_t Opl4Fm::PhaseStepAt(const FmOperator& op, uint32_t pmSegment) const
+{
     // Datasheet pitch (D1/§4.2): f = fnum * 2^block * 49516.4 / 2^20 —
     // F-number 582 / block 4 = A440. Carried in a 12-bit fnumber fraction
     // (fnum << 2) so vibrato adds F-number-proportional cents like YMF262;
@@ -134,7 +141,7 @@ uint32_t Opl4Fm::PhaseStep(const FmOperator& op)
     {
         // PM: scale the top 3 fnumber bits by the bipolar LFO value;
         // 0xBD bit 6 = deep (full swing), clear = shallow (half).
-        const int pm = kPmScale[(_lfoPm >> 10) & 7]
+        const int pm = kPmScale[pmSegment]
             >> ((_regs[0xBD] & 0x40) ? 0 : 1);
         fnum12 = (fnum12 + static_cast<uint32_t>(
                      (pm * static_cast<int>(op.fnum >> 7)) >> 1)) & 0xFFF;
@@ -708,6 +715,144 @@ void Opl4Fm::Advance(FmOutput& out)
 
         out.channel[ch] = result; // raw per-channel tap; FmBus routes and mutes
     }
+}
+
+namespace
+{
+// The noise LFSR as a GF(2) matrix: row j holds the old bits new bit j is the XOR of (shift left, bit 0 = b0^b2^b9)
+using NoiseMatrix = std::array<uint32_t, 32>;
+
+uint32_t NoiseApply(const NoiseMatrix& m, uint32_t x)
+{
+    uint32_t y = 0;
+    for (int j = 0; j < 32; j++)
+        y |= static_cast<uint32_t>(std::popcount(m[j] & x) & 1) << j;
+    return y;
+}
+
+NoiseMatrix NoiseMultiply(const NoiseMatrix& a, const NoiseMatrix& b)  // a after b
+{
+    NoiseMatrix c{};
+    for (int j = 0; j < 32; j++)
+        for (int k = 0; k < 32; k++)
+            if ((a[j] >> k) & 1)
+                c[j] ^= b[k];
+    return c;
+}
+
+// The step matrix raised to 2^k, k = 0..63
+const std::array<NoiseMatrix, 64>& NoisePowers()
+{
+    static const std::array<NoiseMatrix, 64> powers = [] {
+        std::array<NoiseMatrix, 64> p{};
+        p[0][0] = (1u << 0) | (1u << 2) | (1u << 9);
+        for (int j = 1; j < 32; j++)
+            p[0][j] = 1u << (j - 1);
+        for (int k = 1; k < 64; k++)
+            p[k] = NoiseMultiply(p[k - 1], p[k - 1]);
+        return p;
+    }();
+    return powers;
+}
+} // namespace
+
+bool Opl4Fm::Idle() const
+{
+    for (const auto& op : _ops)
+    {
+        if (op.keyReq != op.keyOn || op.egState != kFmEgOff || op.envVol < kFmMaxAttIndex)
+            return false;
+    }
+    return true;
+}
+
+bool Opl4Fm::AdvanceIdle(uint64_t ticks)
+{
+    if (!Idle())
+        return false;
+    if (ticks == 0)
+        return true;
+
+    // Phases keep turning while silent. Tick i reads the PM LFO after its increment (lfo0 + i): the ticks spent in
+    // each of the 8 PM segments, for the vibrato operators
+    const uint32_t lfo0 = _lfoPm;
+    uint64_t segmentTicks[8] = {};
+    for (auto& t : segmentTicks)
+        t = (ticks / 8192) * 1024;
+    {
+        uint32_t pos = (lfo0 + 1) & 0x1FFF;
+        uint64_t rest = ticks % 8192;
+        while (rest > 0)
+        {
+            const uint64_t take = std::min<uint64_t>(rest, 1024 - (pos & 1023));
+            segmentTicks[(pos >> 10) & 7] += take;
+            pos = static_cast<uint32_t>((pos + take) & 0x1FFF);
+            rest -= take;
+        }
+    }
+    const uint64_t ticksMod = ticks & 0x7FFFF;
+    for (auto& op : _ops)
+    {
+        uint64_t add = 0;
+        if (op.vib)
+        {
+            for (uint32_t seg = 0; seg < 8; seg++)
+                add += (segmentTicks[seg] & 0x7FFFF) * PhaseStepAt(op, seg);
+        }
+        else
+            add = ticksMod * PhaseStepAt(op, 0);
+        op.phase = static_cast<uint32_t>((op.phase + add) & 0x7FFFF);
+    }
+
+    _egCnt += ticks;
+    _lfoPm = static_cast<uint32_t>((lfo0 + ticks) & 0x1FFF);
+    {
+        // Advance: ++lfoAm, back to 0 at 13440 (a loaded value at or past it wraps on the first tick)
+        uint64_t amTicks = ticks;
+        uint32_t am = _lfoAm;
+        if (am >= 13440)
+        {
+            am = 0;
+            amTicks--;
+        }
+        _lfoAm = static_cast<uint32_t>((am + amTicks % 13440) % 13440);
+    }
+    const auto& powers = NoisePowers();
+    for (int k = 0; k < 64; k++)
+    {
+        if ((ticks >> k) & 1)
+            _noise = NoiseApply(powers[k], _noise);
+    }
+
+    // Outputs as Advance leaves them: every channel operator 0, the feedback taps shifted with 0
+    auto shiftFeedback = [ticks](std::array<int32_t, 2>& h) { h = {ticks >= 2 ? 0 : h[1], 0}; };
+    for (int ch = 0; ch < kChannelCount; ch++)
+    {
+        if (_ch[ch].fourOp && _newMode)
+        {
+            const bool isMaster = (ch < 3 || (ch >= 9 && ch < 12));
+            if (!isMaster)
+                continue;
+            shiftFeedback(_fbHist[ch]);
+            _ops[_ch[ch].op1].out = 0;
+            _ops[_ch[ch].op2].out = 0;
+            _ops[_ch[ch + 3].op1].out = 0;
+            _ops[_ch[ch + 3].op2].out = 0;
+        }
+        else if (_rhythm && (ch == 7 || ch == 8))
+        {
+            _ops[_ch[ch].op1].out = 0;
+            _ops[_ch[ch].op2].out = 0;
+            _fbHist[ch] = {};
+        }
+        else
+        {
+            shiftFeedback(_fbHist[ch]);
+            _ops[_ch[ch].op1].out = 0;
+            _ops[_ch[ch].op2].out = 0;
+        }
+    }
+    return true;
 }
 
 void Opl4Fm::SaveState(uint8_t* dst) const

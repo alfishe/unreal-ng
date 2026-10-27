@@ -266,7 +266,7 @@ TEST(TimeTravelManagerGeneralSound_ShadowRegions_Test, CardRamIsARegion_Register
         const ttd::TTDCheckpoint* want = v1->GetCheckpoint(i);
         ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(want->peripheralBlobs.at(gsId), fixed, ram));
         std::vector<uint8_t> state;
-        ASSERT_TRUE(engine.DeviceState(i, gsId, state)) << "checkpoint " << i;
+        ASSERT_TRUE(engine.DeviceStateOfV1Id(i, gsId, state)) << "checkpoint " << i;
         EXPECT_EQ(state, fixed) << "registers, checkpoint " << i;
         engineRam.assign(ram.size(), 0);
         ASSERT_TRUE(engine.RestoreRegion(i, static_cast<uint32_t>(region), engineRam.data()).Ok());

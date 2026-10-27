@@ -19,7 +19,7 @@ Design facts at a glance:
 
 | Property | Value |
 |:--|:--|
-| Protocol | MCP `2025-03-26` (JSON-RPC 2.0) |
+| Protocol | MCP `2025-06-18`, also `2025-03-26` / `2024-11-05` (JSON-RPC 2.0); the `MCP-Protocol-Version` header of later requests is checked (unsupported: HTTP 400; none: `2025-03-26`) |
 | Transport | Streamable HTTP — JSON or SSE answers, stateless |
 | Endpoint | `http://localhost:8092/mcp` (also reachable on :8090) |
 | stdio | via `unreal-mcp-bridge` (one process, no deps) |
@@ -99,25 +99,55 @@ sessions to manage.
 
 All tools accept `target` (emulator id or `"auto"`) and answer with dual
 content: `content[]` (human/LLM text summary) + `structuredContent`
-(machine-readable data). Tools that perform real multi-step work report
+(machine-readable data). Some clients (claude.ai connectors) hand the model
+only `content[]`, so every tool takes `response_format`: `text` (default) keeps
+`content[]` human-readable; `json` adds `structuredContent` there as a second
+text block of compact JSON (MCP 2025-06-18, Structured Content), cut at 64 KB
+with a note. Any other value is a tool error. `capture_media screenshot` with
+`include_image: true` puts the pixels in an MCP `image` content block, so the
+model sees the picture (the JSON echo does not repeat the base64). The
+listings are in the text either way: `debug_code disassemble` writes the listing itself, one line per instruction
+(`7396  CD 00 74      call #7400            ; -> draw`); `inspect_state`
+`disasm` puts the same listing under `[disasm]`. The default text carries the data, not just a headline:
+`memory_access read` the bytes (hexdump, up to 256 lines), `control_execution bp_list` one line per breakpoint
+(`#1 0x0038 X hits 3`), `debug_code trace` one line per control-flow event (`0x02D6 jr -> 0x02C6 x7 sp 0x5BDF`), and
+an `inspect_state` aspect without a text form of its own its fields as `key=value` (`[machine] model=PENTAGON
+ram_kb=128 ...`, the first 1500 characters); `screen_attributes` the grid as attribute bytes, one row per line;
+`audio_opl4_fm` / `audio_opl4_pcm` the channel count and the keyed ones; the status calls (`emulator_manage status`,
+`analyze_performance profile_status` / `frame_cost`, `capture_media record_status` / `screen_digest`, the mouse,
+joystick and keyboard `status`) their fields as `key=value`. `manage_symbols list` takes `from` / `to` (CPU addresses)
+and `name` (a case-insensitive substring) and writes the first `limit` (default 100) labels one per line
+(`0x09F4 PRINT_OUT rom3 code ; comment`); the whole ROM set is ~2400 labels, so filter rather than page through the
+JSON. `inspect_state registers` writes the full set (the alternate registers, I, R, MEMPTR, IM, IFF1/2),
+`manage_symbols resolve` the answer (`CLS = 0x0D6B rom3 code ; comment`), `type_input list_keys` the key names.
+`control_execution bp_add` switches the breakpoints feature on when it is off (a breakpoint never fires without it)
+and says so; `run_frame` / `run_frames` / `run_tstates` / `run_to_interrupt` skip breakpoints: `resume` and `wait`
+stop at one. Live checks of all of this: [tools/verification/mcp](../../../tools/verification/mcp/README.md). Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 
 | Tool | Purpose | Progress |
 |:--|:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `switch_model` (`model`, optional `ram_size` and `stranded`: the media follow, [media.md](../media.md#model-switch)), `transfer_state` (copy the target's running state in memory into `to`, an existing instance, or into a new instance of `model` with the source's sound cards; `check: true` only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are not moved; per-item report, [automation.md](../automation.md#machine-state-transfer)), `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity. `create` with `zxpoly: true` (+ `zxpoly_file`), or with a configuration as `model` (`ZXPOLY-48K`/`ZXPOLY-128K`/`ZXPOLY-PENTAGON`), starts a ZX-Poly machine, `zxpoly_status` reports its group ([recipe](../../../.recipe/machines/zxpoly.md)) | — |
-| `load_software` | `.sna/.z80/.szx` snapshots, `.rzx` input recordings (played on the model they need), `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
-| `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
-| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio (the CD drives' audio: disc, tracks, status, head, volume, mixer row; control with invoke_api POST /api/v1/emulator/{id}/cdaudio/{verb}), rtc, mouse (device reports, see command-interface.md §3.3; CMOS cells are written with invoke_api POST /api/v1/emulator/{id}/rtc/cells), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `operations` (the operation log: reset, autostart, snapshot load, media insert / eject / discard and refusals, one line each with frame, machine mode, result and TTD effect; `since` = after that seq, `limit` = newest N, default 20; [command-interface.md](../../emulator/design/control-interfaces/command-interface.md)), `switch_model` (`model`, optional `ram_size` and `stranded`: the media follow, [media.md](../media.md#model-switch); the cards too, the dropped ones listed, [slots.md](../slots.md#model-switch)), ZX-bus slots `slots_catalog` / `slots_matrix` / `slots_plug` / `slots_remove` / `slots_set` (planned, refused with the plan without `replace_if_incompatible`, applied by a restart, [slots.md](../slots.md)), `network_configure` (`settings`: the network settings; a ZX-bus network card change is a slot change applied by a restart, [slots.md](../slots.md#the-network-cards)), `transfer_state` (copy the target's running state in memory into `to`, an existing instance, or into a new instance of `model` with the source's sound cards; `check: true` only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are not moved; per-item report, [automation.md](../automation.md#machine-state-transfer)), `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`), `switches` / `switch` (`switch`: turbo / cpm, `on`: the Profi's front panel); responses carry machine identity. `create` with `zxpoly: true` (+ `zxpoly_file`), or with a configuration as `model` (`ZXPOLY-48K`/`ZXPOLY-128K`/`ZXPOLY-PENTAGON`), starts a ZX-Poly machine, `zxpoly_status` reports its group ([recipe](../../../.recipe/machines/zxpoly.md)) | — |
+| `load_software` | `.sna/.z80/.szx` snapshots, `.rzx` input recordings (played on the model they need), `.tap/.tzx` tapes (`play`; `autostart` plays and types `LOAD ""`, a paused machine paused again), `.trd/.scl/.fdi` disks (`autostart`: drive A, TR-DOS); `paused` pauses the machine first, so the program has not run when the call returns | — |
+| `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, `run_to_scanline` (`scanline`) / `run_scanlines` (`count`) / `run_to_pixel` / `run_until_pc` (`pc`, `max_tstates`, `breakpoints`), `pace` (the paced run: `pace_op` get / set / next / prev / start / stop / toggle / step, `preset`, `interval_ms`), breakpoints (`bp_add` of every type, keyboard included; `bp_remove` / `bp_enable` / `bp_disable` / `bp_toggle` by `bp_id` or `select`: all, a kind, `group:<name>`; `bp_groups`, `bp_group_set`, `bp_note`), `set_register`, `port_out`, `take_control` / `release_control` (the automation session: a take takes over another client's implicit session, never an explicit one, and names it and the session id for a host script; a release without a session of its own ends the MCP server's implicit session, or says who holds control; a run refused `held_by_other` names the holder and how to resolve it) | — |
+| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, audio_multisound (the ZX-MultiSound: options, CPLD, YM pair, SAA, GS, DACs, MIDI), audio_midi (its MIDI line and SAM2695: parts, programs, notes, counters; panic = invoke_api POST /api/v1/emulator/{id}/control/audio/midi {action: panic}), slots (the ZX-bus slot report: buses, slots, cards, built-ins; change it with emulator_manage slots_plug / slots_remove / slots_set), fdc, ide, cdaudio (the CD drives' audio: disc, tracks, status, head, volume, mixer row; control with invoke_api POST /api/v1/emulator/{id}/cdaudio/{verb}), rtc, mouse (device reports, see command-interface.md §3.3; CMOS cells are written with invoke_api POST /api/v1/emulator/{id}/rtc/cells), ttd (time-travel session: state, recorded range, checkpoints, current position), monitor (GET /api/v1/monitor?instance=, [command-interface.md §17](../../emulator/design/control-interfaces/command-interface.md#17-monitoring): the host process's CPU %, memory and threads, the clients per plane, and the instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, labels, TTD sizes, profiler states, controllers; one text line per instance); the breakpoints aspect carries the groups (name, total, active, ids) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
-| `joystick_input` | Kempston joystick: press / release / set (exact `state` byte or `buttons` list) / tap (hold N frames) / status; forwards to `/joystick/*` | — |
-| `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index — see [Time-travel debugging](#time-travel-debugging) | — |
+| `joystick_input` | Kempston joystick: press / release / set (exact `state` byte or `buttons` list) / tap (hold N frames) / status (alias `get`); forwards to `/joystick/*` | — |
+| `controllers` | the machine's joystick connectors (`list`, `get`, `plug`, `unplug`, `options`, `targets`, `auto`, `input`; with `target`) and the host's game controllers (no target; [command-interface.md §15](../../emulator/design/control-interfaces/command-interface.md#15-game-controllers)): `devices` (the text names each device's role and layers, its battery (`unknown` when the OS says nothing), whether its light can be set, and a `notice:` line of what is missing and how to fix it), `context`, `profiles`, `profile`, `save`, `delete`, `apply`, `bindings`, `bind`, `unbind`, `scheme`, `haptics`, `rumble`, `output`, `light` (`device`, `color`: `#RRGGBB`, `r,g,b`, `off`), `match` (`path` or `signatures` / `file_sha256` / `file_set`, `machine`: the game profiles a program's signatures choose and how, the one chosen and `haptics_reason`; `context` adds the loaded program's signatures, `game_matches` and `haptics_reason` to its text); forwards to `/api/v1/emulator/{id}/controllers/*` and `/api/v1/controllers/{verb}` | — |
+| `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index (`space` for the Sprinter's video / fast RAM); `memory_at` / `memory_diff` read any recorded memory at a past checkpoint without seeking — see [Time-travel debugging](#time-travel-debugging) | — |
 | `rzx_playback` | RZX input recordings: `play` (`path`, `desync_mode`, conventions, `switch_model`: a recording for another model switches the machine, the answer's `emulator_id` is the new target), `stop`, `status` (frame, progress, desyncs), `seek` (`frame`: back through keyframes, forward by playing on) - [recipe](../../../.recipe/media/play-rzx.md) | — |
+| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset` (or its alias `address`), `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
+| `signature_info` | media signatures ([command-interface.md §18](../../emulator/design/control-interfaces/command-interface.md#18-media-signatures)): `file` (`path`, `details`, `external`: the exact SHA-256, the tape content / TR-DOS file set / snapshot memory signature, `keys` for a game profile's `match.signatures`, the `file_set` tokens), `media` (the tapes and disks loaded, with `target`), `compare` (`path`, `with`: exact, content, fuzzy, memory or none); the text carries every signature; forwards to `/api/v1/signature`, `/api/v1/signature/compare`, `/api/v1/emulator/{id}/signature`. The profile a signature chooses: `controllers` action `match` | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
-| `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace`, `vdac2_line_budget` / `vdac2_line_budget_set` (FT812 line metrics) | `profile_report` + `porttrace`: per phase |
-| `media` | every media slot: list, insert (a file or a folder; `slot:"auto"`), swap, eject, save, export, discard, rescan, create, protect ([media.md](../media.md)) | — |
-| `capture_media` | screenshot (PNG default / GIF; `area` `full` = whole frame with border, default, or `screen` = the working picture; `source` `presented` default or `live` = the frame as drawn now; the answer names the frame geometry and the rectangle cut), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling), `audio_capture` (RMS/peak/dominant-Hz, WAV), `temporal_status` / `temporal_set` (ZX DLSS de-flicker: `algorithm` name or `"off"`; one-line summary of the algorithm and the video / audio delay it causes, e.g. "ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, late 0, restarts 0"), `vdac2_capture_start` / `_stop` / `_status` (TS-Conf VDAC2 card: the FT812 bus to an .evr replay stream, `filename` = the file; [recipe](../../../.recipe/machines/tsconf-vdac2.md)) | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
+| `analyze_performance` | coverage_* (+gaps, `coverage_export`: SkoolKit code execution map), `frame_cost`, profiler suites, `profile_report`, `porttrace`, `vdac2_line_budget` / `vdac2_line_budget_set` (FT812 line metrics); `profiler` {profiler: opcode / memory / calltrace / porttrace / all, op: start / stop / pause / resume / clear / status}, `gs_trace`, `aylog`, `pchist`, `analyzers` {op, name} | `profile_report` + `porttrace`: per phase |
+| `bus_analyzer` | peripheral bus analyzer ([recipe](../../../.recipe/analysis/bus-analyzer.md)): `list` (buses `zc.spi`, `next.spi`, `divmmc.spi`, `neogs.*`, ATA `ide0` / `ide1`, their devices, trace / checks state), `enable` / `disable` / `clear` (`bus`, default all; `checks`, `capacity`, `protocol_only`), `events` (`kinds`, `slot`, `since`, `from`, `to`, `limit`: one line per chip select / byte / early access / SD command with R1 / block / ATA register, command, data word, with frame, T, PC, source), `findings` (`rules`: early_access, select_mid_byte, deselect_mid_command, command_while_busy, command_drops_answer, crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy, with PC and meaning), `sd_timing` (`profile` ideal / realistic / slow, `seed`, `slot`), `export` (`format` vcd / jsonl, `path`) | — |
+| `actions` | the host actions of the core registry ([command-interface.md §16](../../emulator/design/control-interfaces/command-interface.md#16-host-actions)): `list` (each id with kind, scope, and whether it can run now or why not), `run` (`id`, `value`: omitted = a press, `false` = a release, steps or `{delta, rate}` for a delta, 0..1 for a level, a string for text; `params`: `ttd.seek_by` `unit`, `min`, `max`, `rate_lo`, `rate_hi`); the text names a seek's frames and marks and a step-by's steps; `context` (the instance's surface context, `GET /api/v1/surfaces/context`); the surface verbs ([command-interface.md §16.1](../../emulator/design/control-interfaces/command-interface.md#161-surface-targets-readouts-activity)): `views` (the windows in focus order, the followed instance), `target` (`session`), `sessions`, `pin` (`session`, `pin`: follow, view:<id>, instance:<id>), `readouts` (`names`, `target`), `activity` (`since`, `limit`), `view_add` / `view_update` / `view_remove`, `session_open` / `session_close` (`/api/v1/surfaces/...`); forwards to `/api/v1/controllers/actions` | — |
+| `streamdeck` | the Stream Deck daemon as unreal-qt supervises it ([command-interface.md §16.2](../../emulator/design/control-interfaces/command-interface.md#162-the-stream-deck-daemon)): `status` (default: state, pid, decks, viewers, pairing), `start`, `stop`, `restart`, `settings` (`mode` off / deck / always, `activity` off / flash / line, `api_port`, `viewers_port`, `binary`), `pairing`, `pair` (the user approves it at the GUI: an agent cannot), `pair_cancel`, `revoke` (`id`), `brightness` (`deck`, `value`), `udev`; forwards to `/api/v1/streamdeck/...` | — |
+| `audio_mixer` | the sound mixer and settings ([mixer channels](../../emulator/design/audio/mixer-channels-and-settings.md)): `get` (default: the rows; with `source` a row and its channels), `source` (one row or channel), `set` (`source` a row or channel `ay1.a`; `muted`, `solo`, `volume`, `gain_db`), `mute` / `unmute` (`muted` of `source`, default the master), `levels` (every row's and channel's peak, active, mute, solo), `settings`, `set_setting` (`name`: `ay_stereo`, `ay_chip`, `ay_voicing`, `ay_room`, `ay_punch`, `beeper_punch`, `fm_trim_db`, `neogs_stereo`, `covox_dc_removal`, `fir_filter`, `audio_rate`; `value`); forwards to `/audio/mixer`, `/audio/levels`, `/settings` | — |
+| `media` | every media slot: list, insert (a file or a folder; `slot:"auto"`), swap, eject, save, export (another format by the path's extension: a disk as trd / scl / udi / fdi / dsk / td0 / mgt / img / hfe / scp, the tape as tap / tzx), discard, rescan, create (`format` `trdos` / `plus3` / `unformatted`, `size` for a card), protect ([media.md](../media.md)); `recent` / `recent_clear` (`kind`): the files opened lately ([media.md → Recent files](../media.md#recent-files); open one with `actions` `run` `media.open_recent`) | — |
+| `capture_media` | screenshot (PNG default / GIF; `area` `full` = whole frame with border, default, or `screen` = the working picture; `source` `presented` default, `live` = the frame as drawn now, or `window` = the picture as the unreal-qt window draws it (its shape, CRT shader, HUD; GUI only, `area=full`; adds `window`: viewport, picture, device pixel ratio, backend; 409 `no-window` without the GUI); the answer names the frame geometry and the rectangle cut), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling; `preset`, `container`, `record_mode` single / multi / audio; `record_presets` lists the core's presets), `audio_capture` (RMS/peak/dominant-Hz, WAV), `temporal_status` / `temporal_set` (ZX DLSS de-flicker: `algorithm` name or `"off"`; one-line summary of the algorithm and the video / audio delay it causes, e.g. "ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, late 0, restarts 0"), `window_display` / `window_display_set` (the GUI window's display settings: GPU acceleration, CRT effects and profile, temporal blending, full screen, scale, toolbar / status bar, HUD with its theme and notices, on-screen keyboard and its picture, the ZX Next layers window; `display` = any of `gpu`, `crt`, `crt_profile` (a profile or `shader:<name>`), `blending`, `blending_frames`, `blending_weights`, `blending_decay`, `fullscreen`, `scale`, `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_notices` {id: bool}, `osd_keyboard`, `osd_keyboard_picture`, `osd_keyboard_style` (photo / schematic / hybrid), `next_layers`, `next_layers_mode`, `next_layers_shown` {name: bool}; a summary, e.g. "window gpu on (available), crt basic, blending off (2 frames, equal), scale 2x, toolbar on, status bar on, hud off (theme dark_glass), keyboard off, next layers off", then `crt_profiles:`, `hud_themes:`, `osd_keyboard_pictures:`, `osd_keyboard_styles:` and `hud_notices (off):` - the words the setters take (CRT off still names the chosen profile); 409 `no-window` headless), `window_crt_params` / `window_crt_params_set` (the active CRT profile's parameters via `/video/window/crt_params`; `crt_params` = {values, steps, reset}; the text lists each one with its value, range and step), `viewport` / `viewport_set` (the overscan frame's crop via `/video/viewport`; `viewport` = full, symmetric, standard, screen_only, next, prev), `window_record_start` / `_frames` / `_stop` / `_status` (the GUI window as drawn, the on-screen keyboard and the machine's sound, frame for frame at the machine's rate, via `/video/window/record*`; `filename`, `keyboard`, `codec`, `audio`, `scale`, `picture_height`, `width` / `height`, `layout`; `window_record_frames {frames}` steps a paused machine; [recipe](../../../.recipe/media/window-recording.md)), `vdac2_capture_start` / `_stop` / `_status` (TS-Conf VDAC2 card: the FT812 bus to an .evr replay stream, `filename` = the file; [recipe](../../../.recipe/machines/tsconf-vdac2.md)) | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` | — |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution | — |
 
@@ -155,9 +185,10 @@ the internals).
 | Action | Arguments | What it does |
 |:--|:--|:--|
 | `status` | — | Session state, recorded frame range, checkpoint count, memory use |
-| `start` | `journal`: `true` also records the write journal (default `false`) | Begin recording |
+| `start` | `journal`: `true` also records the write journal (default `false`); `black_box`: `true` records as the black box (the engine): the last `minutes` (default 5, 1..1440), turbo and host speed stay free | Begin recording |
 | `journal_on` / `journal_off` | — | Switch the write journal at any moment, also while recording; the answer lists the spans it covers |
 | `journal_build` | `from_frame` / `to_frame` (optional; default: the whole session) | Build the write journal by replaying those frames, about 2-4 ms per frame; not while recording |
+| `journal_build_cancel` | — | Stop a write-journal build that runs |
 | `stop` | — | Stop recording; history is kept and can be browsed |
 | `invalidate` | `reason` (optional) | Drop all history |
 | `position` | — | Current point and session end |
@@ -165,13 +196,14 @@ the internals).
 | `seek` | `frame`, `tinframe` (default 0) | Move the machine to that point in the recording |
 | `step_back_frame` / `step_forward_frame` | — | One frame back / forward |
 | `step_back_instruction` / `step_forward_instruction` | — | One instruction back / forward |
-| `reverse_step` | `count` (instructions) **or** `tstates` | Step back several instructions or T-states |
+| `reverse_step` | `count` (instructions) **or** `tstates` **or** `scanlines` | Step back several instructions, T-states or scanlines of the machine |
 | `reverse_continue` | `pcs`: list of addresses | Run backward until the CPU was about to execute one of them |
-| `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
+| `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `space` (`ram` / `vram` / `cache`: the Sprinter's video or fast RAM by offset), `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
 | `port_events` | `event` (`key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`, `in`, `out`); optional `event_arg` (a key name or an AY register), `limit`, `newest`, `from_frame`/`to_frame`, `port`/`port_mask`, `value`/`value_mask`, `match`, `trigger`, `ay_register`, `file` (a saved `.ttd` searched without loading it) | "When did the program ...": every matching IN/OUT with frame, tinframe, PC, port, value - from the port journals, no replay (needs a stopped or paused recording) |
 | `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded**. Needs the machine positioned in history (`seek` or a step first); right after `stop` it fails |
-| `dump` / `load` | `path` | Save / load a `.ttd` session file |
+| `dump` / `load` | `path` | Save / load a `.ttd` session file; `load` also takes a recording's folder (or one of its `segment-NNNN.ttd` files), e.g. one a black box left when it restarted |
 | `file_info` | `path` | Describe a `.ttd` file without loading it and without a target: frame range, checkpoints, sections and the recorded machine (model, ROM signature, devices, General Sound card, TurboSound slot device). Load needs that model and card |
+| `export_clip` | `from_frame`, `to_frame`, `path`, optional `chunk` | Write frames from..to as a lossless clip into the directory `path` (final picture, plane B when `zxdlss` is on, frame meta) in one call; not while recording |
 | `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |
 | `coverage_probe` / `coverage_scan` / `coverage_summary` | `frame` or `from_frame`/`to_frame`, `kind`, `addr_from`/`addr_to`, … | Which frames touched which addresses, without replaying |
 
@@ -199,10 +231,14 @@ searches outside replay)`, `covers the whole session` or `covers nothing`.
 - **These wipe the history:** loading a snapshot, tape or disk (or creating a
   disk), reloading the ROM, changing the speed on a stopped session that still
   holds history, and `invalidate`. Load your software *before* `start`.
+- **A media change while recording is an event of the recording.** A tape,
+  disk or other medium inserted, ejected or created while a recording runs
+  lands at the next frame boundary and the recording goes on; seeking back to
+  before that frame shows the slot empty.
 - **Reset keeps the history.** A reset (including a disk autostart) stops the
   recording; the recorded history stays browsable.
-- **Devices TTD cannot follow end the recording.** Using the ZX-Evo SD card
-  while recording ends (and drops) the session at the next frame boundary.
+- **The ZX-Evo SD card is recorded.** Using it while recording no longer
+  ends the session.
 - **`load`** only restores into a machine of the model the session was
   recorded on (the error names both models). After a load the session is
   `idle`: `seek` to position the machine inside it. The path is resolved by
@@ -232,7 +268,8 @@ that did it.
 
 Narrow a noisy search with `value` (only writes of that byte), `pc_from` /
 `pc_to` (only code in that range) or `phys_page` (only that RAM bank on a
-128K+ machine).
+128K+ machine). On the Sprinter, `space: "vram"` or `"cache"` searches its
+video RAM or fast RAM, `addr` then an offset in it.
 
 ### Worked example: when was this routine last entered?
 
@@ -275,17 +312,21 @@ before the marker is out of reach for that search.
 
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"initialize",
-   "params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
+   "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
 ← {"jsonrpc":"2.0","id":1,"result":{
-     "protocolVersion":"2025-03-26",
+     "protocolVersion":"2025-06-18",
      "capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},
      "serverInfo":{"name":"unreal-ng","version":"1.0.0"},
      "instructions":"…agent-facing briefing…"}}
 ```
 
-The server echoes the client's `protocolVersion` when supported, otherwise
-answers with `2025-03-26`. `notifications/initialized` completes the
-handshake (acknowledged with `202` + empty body, like every notification).
+The server echoes the client's `protocolVersion` when supported (`2025-06-18`, `2025-03-26`, `2024-11-05`),
+otherwise answers with `2025-06-18`. `notifications/initialized` completes the
+handshake (acknowledged with `202` + empty body, like every notification). Later requests may carry
+`MCP-Protocol-Version: <revision>` (2025-06-18 clients do): an unsupported revision is refused with HTTP 400 and a
+JSON-RPC `-32600` naming the supported ones; without the header the request is served as `2025-03-26`. A request
+with an `Origin` header that is not this machine (`http(s)://localhost`, `127.0.0.1`, `[::1]`, any port) is refused
+with HTTP 403 (DNS rebinding from a web page); the stdio bridge, curl and scripts send no `Origin` and pass.
 
 ### Progress streaming
 

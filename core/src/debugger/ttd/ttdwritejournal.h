@@ -42,6 +42,8 @@
 #include <ostream>
 #include <istream>
 
+#include "debugger/ttd/ttdphyspage.h"
+
 
 namespace ttd {
 
@@ -58,14 +60,27 @@ struct TTDWriteRecord
                               ///< T-state, ~10 h at 8)
     uint64_t addr     : 16;   ///< Z80 address (or port number when isIo == 1)
     uint64_t isIo     : 1;    ///< 1 = port OUT, 0 = memory write
-    uint64_t pad      : 7;    ///< Reserved (alignment / future flags)
+    uint64_t pageHigh : 1;    ///< bit 8 of the page: a virtual page of another memory space (ttdphyspage.h)
+    uint64_t pad      : 6;    ///< Reserved (alignment / future flags)
     uint16_t m1pc;            ///< PC of the writing instruction
     uint8_t  value;           ///< Byte written
-    uint8_t  physPage;        ///< Physical RAM page (disambiguates banked writes)
+    uint8_t  physPage;        ///< Physical RAM page (disambiguates banked writes); its low 8 bits
 };
 #pragma pack(pop)
 static_assert(sizeof(TTDWriteRecord) == 8 + 2 + 1 + 1,
               "TTDWriteRecord must pack to 12 bytes per TDD §9.3");
+
+/// The record's page: a RAM page 0..255, or a virtual page of another memory space (0x110.., ttdphyspage.h)
+inline ttd::PhysPage RecordPage(const TTDWriteRecord& r)
+{
+    return static_cast<ttd::PhysPage>(r.physPage | (static_cast<unsigned>(r.pageHigh) << 8));
+}
+/// kPhysPageNone (ROM, no page) stays the 0xFF it always was: bit 8 is set for a page of another space only
+inline void SetRecordPage(TTDWriteRecord& r, ttd::PhysPage page)
+{
+    r.physPage = static_cast<uint8_t>(page);
+    r.pageHigh = ttd::SpaceOfPage(page) != ttd::TTDMemorySpace::Ram ? 1u : 0u;
+}
 
 /// @brief Ring-buffered journal of memory/port writes.
 ///

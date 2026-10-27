@@ -44,7 +44,9 @@ void Record(TTDPortJournal& j, uint64_t from, uint64_t count)
     {
         const TTDPortRecord r = RecordOf(i);
         if (j.GetDirection() == Direction::Read)
+        {
             EXPECT_EQ(j.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc), r.value) << "recording passes the value through";
+        }
         else
             j.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc);
     }

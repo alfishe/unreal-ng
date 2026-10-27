@@ -1,0 +1,722 @@
+
+         ent  $
+
+START    im   1
+         ei
+         call MAKETAB
+
+         ld   a,4
+         out  (254),a
+
+         ld   b,10
+LOOP0    push bc
+
+         ld   bc,0
+LOOP1    push bc
+         ld   a,0
+         call DRAWRFST
+         pop  bc
+         inc  b
+         ld   a,b
+         cp   192
+         jr   c,LOOP1
+
+         pop  bc
+         djnz LOOP0
+
+         ld   bc,0
+LOOP3    push bc
+         ld   a,0
+         call DRAWRGHT
+         pop  bc
+         inc  b
+         ld   a,b
+         cp   192
+         jr   c,LOOP3
+
+         ld   bc,0
+LOOP4    push bc
+         ld   a,192
+         call DRAWDOWN
+         pop  bc
+         inc  c
+         jr   nz,LOOP4
+
+STEP     equ  5
+
+         ld   a,0
+LOOP     push af
+         ld   de,96*256+128
+         call CIRCLE
+         pop  af
+         add  a,STEP
+         cp   96
+         jr   c,LOOP
+
+         ld   a,0
+LOOP2    push af
+         ld   de,96*256+128
+         call CIRCLE
+         pop  af
+         add  a,STEP
+         cp   96
+         jr   c,LOOP2
+
+         call RANDRAW
+
+         ld   a,1
+         ld   de,96*256+50
+LOOP5    push af
+         push de
+         call RING
+         pop  de
+         inc  e
+         pop  af
+         add  a,1
+         cp   96
+         jr   c,LOOP5
+
+         dec  e
+         ld   a,95
+LOOP8    push af
+         push de
+         call RING
+         pop  de
+         dec  e
+         pop  af
+         sub  1
+         jr   nc,LOOP8
+
+RANDRAW  ld   bc,0
+         ld   (LASTXY+1),bc
+         call PLOT3
+
+         ld   bc,191*256+255
+         ld   de,257
+         call DRAW
+
+         ld   b,20
+         ld   hl,0
+         ld   (RANDOM+1),hl
+LOOP6    push bc
+LOOP7    call RANDOM
+         ld   a,h
+         cp   192
+         jr   nc,LOOP7
+         ld   b,h
+         ld   c,l
+         call DRAWTO
+         pop  bc
+         djnz LOOP6
+         ret
+
+
+
+DRAWDOWN ld   e,a
+         ld   l,b
+         ld   h,SCRNADRS/512
+         add  hl,hl
+         ld   a,(hl)
+         inc  l
+         ld   h,(hl)
+         ld   l,a
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,l
+         ld   l,a
+         ld   a,c
+         and  7
+         ld   c,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         ld   c,a
+         ld   b,e
+DRAWD2   ld   a,(hl)
+         xor  c
+         ld   (hl),a
+         call DOWNHL
+         djnz DRAWD2
+         ret
+
+DRAWRGHT ld   e,a
+         ld   l,b
+         ld   h,SCRNADRS/512
+         add  hl,hl
+         ld   a,(hl)
+         inc  l
+         ld   h,(hl)
+         ld   l,a
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,l
+         ld   l,a
+         ld   a,c
+         and  7
+         ld   c,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         ld   c,a
+         ld   b,e
+DRAWR2   ld   a,(hl)
+         xor  c
+         ld   (hl),a
+         rrc  c
+         jr   nc,DRAWR3
+         inc  l
+DRAWR3   djnz DRAWR2
+         ret
+
+DRAWRFST ld   d,a
+         ld   l,b
+         ld   h,SCRNADRS/512
+         add  hl,hl
+         ld   a,(hl)
+         inc  l
+         ld   h,(hl)
+         ld   l,a
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,l
+         ld   l,a
+         ld   a,c
+         or   d
+         ld   e,255
+         ld   b,32
+         jr   z,DRAWRF3
+         ld   a,c
+         and  7
+         add  a,TABLE2-TABLE
+         ld   c,a
+         ld   b,TABLE2/256
+         ld   a,(bc)
+         ld   e,a
+
+         ld   a,c
+         and  7
+         add  a,d
+         sub  8
+         ld   d,a
+         jr   c,DRAWRF2
+
+         ld   a,(hl)
+         xor  e
+         ld   (hl),a
+         inc  l
+
+         ld   a,d
+         rra
+         rra
+         rra
+         and  31
+         ld   e,255
+         jr   z,DRAWRF2
+         ld   b,a
+
+DRAWRF3  ld   a,(hl)
+         xor  e
+         ld   (hl),a
+         inc  l
+         djnz DRAWRF3
+
+DRAWRF2  ld   a,d
+         and  7
+         ret  z
+         add  a,TABLE3-TABLE
+         ld   c,a
+         ld   b,TABLE3/256
+         ld   a,(bc)
+         and  e
+         xor  (hl)
+         ld   (hl),a
+         ret
+
+DRAWTO   ld   hl,(LASTXY+1)
+         ld   de,257
+         ld   a,b
+         sub  h
+         jr   nc,DRAWTO2
+         cpl
+         inc  a
+         ld   d,-1
+DRAWTO2  ld   b,a
+         ld   a,c
+         sub  l
+         jr   nc,DRAWTO3
+         cpl
+         inc  a
+         ld   e,-1
+DRAWTO3  ld   c,a
+
+DRAW     ld   a,c
+         cp   b
+         jr   nc,DLXGTY
+         ld   l,c
+         push de
+         xor  a
+         ld   e,a
+         jr   DLLARGER
+
+DLXGTY   or   c
+         ret  z
+         ld   l,b
+         ld   b,c
+         push de
+         ld   d,0
+DLLARGER ld   h,b
+         ld   a,b
+         rra
+DLLOOP   add  a,l
+         jr   c,DLDIAG
+         cp   h
+         jr   c,DLHRVT
+DLDIAG   sub  h
+         ld   c,a
+         exx
+         pop  bc
+         push bc
+         jr   LASTXY
+
+DLHRVT   ld   c,a
+         push de
+         exx
+         pop  bc
+LASTXY   ld   hl,0
+         ld   a,b
+         add  a,h
+         ld   b,a
+         ld   a,c
+         inc  a
+         add  a,l
+         jr   c,DLRANGE
+         jr   z,DLERR
+DLPLOT   dec  a
+         ld   c,a
+         ld   (LASTXY+1),bc
+         call PLOT3
+         exx
+         ld   a,c
+         djnz DLLOOP
+         pop  de
+         ret
+
+DLRANGE  jr   z,DLPLOT
+DLERR    pop  af
+         ret
+
+
+PLOT3    push de
+         push hl
+         ld   l,b
+         ld   h,SCRNADRS/512
+         add  hl,hl
+         ld   a,(hl)
+         inc  l
+         ld   h,(hl)
+         ld   l,a
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,l
+         ld   l,a
+         ld   a,c
+         and  7
+         ld   c,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         xor  (hl)
+         ld   (hl),a
+         pop  hl
+         pop  de
+         ret
+
+CIRCLE   call SQUAREA
+         push hl
+         srl  h
+         rr   l
+         call SQROOT
+         ld   a,c
+         pop  hl
+
+         push af
+         inc  a
+         push af
+         dec  a
+
+         push hl
+         call SQUAREA
+         ld   c,l
+         ld   b,h
+         pop  hl
+         or   a
+         push hl
+         sbc  hl,bc
+         call SQROOT
+         pop  hl
+
+         pop  bc
+         ld   c,b
+         sub  c
+         dec  a
+         jr   nz,CIRCLE0
+
+         push bc
+         ld   a,d
+         add  a,b
+         ld   b,a
+         ld   a,e
+         add  a,c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         add  a,b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  b
+         ld   b,a
+         ld   a,e
+         add  a,c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+CIRCLE0  pop  af
+
+CIRCLE2  push af
+         push af
+         push hl
+         call SQUAREA
+         ld   c,l
+         ld   b,h
+         pop  hl
+         or   a
+         push hl
+         sbc  hl,bc
+         call SQROOT
+         ld   b,a
+         pop  hl
+         pop  af
+         ld   c,a
+
+         push bc
+         ld   a,d
+         add  a,c
+         ex   af,af'
+         ld   a,e
+         add  a,b
+         ld   c,a
+         ex   af,af'
+         ld   b,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         add  a,b
+         ld   b,a
+         ld   a,e
+         add  a,c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         add  a,c
+         ex   af,af'
+         ld   a,e
+         sub  b
+         ld   c,a
+         ex   af,af'
+         ld   b,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         pop  af
+         push af
+         or   a
+         jr   z,CIRCLE3
+
+         push bc
+         ld   a,d
+         add  a,b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  b
+         ld   b,a
+         ld   a,e
+         add  a,c
+         ld   c,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  c
+         ex   af,af'
+         ld   a,e
+         add  a,b
+         ld   c,a
+         ex   af,af'
+         ld   b,a
+         call PLOT3
+         pop  bc
+
+         push bc
+         ld   a,d
+         sub  c
+         ex   af,af'
+         ld   a,e
+         sub  b
+         ld   c,a
+         ex   af,af'
+         ld   b,a
+         call PLOT3
+         pop  bc
+
+CIRCLE3  pop  af
+         sub  1
+         jp   nc,CIRCLE2
+         ret
+
+RING     push af
+         call SQUAREA
+         pop  af
+
+RING2    push hl
+         push af
+         push af
+         push hl
+         call SQUAREA
+         ld   c,l
+         ld   b,h
+         pop  hl
+         or   a
+         push hl
+         sbc  hl,bc
+         call SQROOT
+         ld   c,a
+         pop  hl
+         pop  af
+         ld   b,a
+
+         push bc
+         ld   a,c
+         add  a,a
+         ld   l,a
+         ld   a,d
+         sub  b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         push de
+         ld   a,l
+         push hl
+         call DRAWRFST
+         pop  hl
+         pop  de
+         pop  bc
+
+         pop  af
+         push af
+         or   a
+         jr   z,RING3
+
+         push bc
+         ld   a,d
+         add  a,b
+         ld   b,a
+         ld   a,e
+         sub  c
+         ld   c,a
+         push de
+         ld   a,l
+         call DRAWRFST
+         pop  de
+         pop  bc
+
+RING3    pop  af
+         pop  hl
+         sub  1
+         jp   nc,RING2
+         ret
+
+
+SQROOT   xor  a
+         push de
+         push hl
+SQR2     ld   de,64
+         ld   a,l
+         ld   l,h
+         ld   h,d
+         ld   b,8
+SQR4     sbc  hl,de
+         jr   nc,SQR3
+         add  hl,de
+SQR3     ccf
+         rl   d
+         add  a,a
+         adc  hl,hl
+         add  a,a
+         adc  hl,hl
+         djnz SQR4
+         xor  a
+         sub  h
+         ld   a,0
+         adc  a,d
+         ld   c,d
+         pop  hl
+         pop  de
+         ret
+
+SQUAREA  ld   b,8
+         push de
+         ld   hl,0
+         ld   d,l
+         ld   e,a
+SQ2      add  hl,hl
+         rla
+         jr   nc,SQ3
+         add  hl,de
+SQ3      djnz SQ2
+         pop  de
+         ret
+
+MAKETAB  ld   b,192
+         ld   de,16384
+         ld   hl,SCRNADRS
+MAKETAB2 ld   (hl),e
+         inc  hl
+         ld   (hl),d
+         inc  hl
+         ex   de,hl
+         call DOWNHL
+         ex   de,hl
+         djnz MAKETAB2
+         ret
+
+RANDOM   ld   de,0
+         ld   h,e
+         ld   l,253
+         ld   a,d
+         or   a
+         sbc  hl,de
+         sbc  a,0
+         sbc  hl,de
+         sbc  a,0
+         ld   e,a
+         ld   d,0
+         sbc  hl,de
+         jr   nc,AB
+         inc  hl
+AB       ld   (RANDOM+1),hl
+         ret
+
+UPHL     ld   a,h
+         dec  h
+         and  7
+         ret  nz
+         ld   a,l
+         sub  32
+         ld   l,a
+         ld   a,h
+         jr   c,UPHL2
+         add  a,8
+         ld   h,a
+UPHL2    cp   64
+         ret  nc
+         ld   h,87
+         ret
+
+
+DOWNHL   inc  h
+         ld   a,h
+         and  7
+         ret  nz
+         ld   a,l
+         add  a,32
+         ld   l,a
+         ld   a,h
+         jr   c,DOWNHL2
+         sub  8
+         ld   h,a
+DOWNHL2  cp   88
+         ret  c
+         ld   h,64
+         ret
+LAST
+A0LEN    equ  $-START
+
+         org  LAST/512+1*512
+
+SCRNADRS defs 512
+
+TABLE    defb 128,64,32,16
+         defb 8,4,2,1
+
+TABLE2   defb %11111111
+         defb %01111111
+         defb %00111111
+         defb %00011111
+         defb %00001111
+         defb %00000111
+         defb %00000011
+         defb %00000001
+
+TABLE3   defb %00000000
+         defb %10000000
+         defb %11000000
+         defb %11100000
+         defb %11110000
+         defb %11111000
+         defb %11111100
+         defb %11111110
+

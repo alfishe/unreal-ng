@@ -113,6 +113,16 @@ class UnrealApiClient:
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/reset"))
         return self._handle_response(resp)
 
+    def get_operations(self, emulator_id, since=None, limit=None):
+        """GET /api/v1/emulator/{id}/operations?since=&limit= - the operation log (machine state coordinator)"""
+        params = {}
+        if since is not None:
+            params["since"] = since
+        if limit is not None:
+            params["limit"] = limit
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/operations"), params=params)
+        return self._handle_response(resp)
+
     # --- Tape Control ---
     def load_tape(self, emulator_id, file_path):
         """POST /api/v1/emulator/{id}/tape/load"""

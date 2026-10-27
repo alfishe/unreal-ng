@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // Platform-specific socket implementation
 #ifdef _WIN32
 // Windows socket headers
@@ -93,6 +95,13 @@ inline void cleanupSockets()
     WSACleanup();
 }
 
+// Wake whoever waits on the socket (recv answers 0) without closing it: its owner closes it (Windows implementation)
+inline void shutdownSocket(SOCKET sock)
+{
+    if (sock != INVALID_SOCKET)
+        shutdown(sock, SD_BOTH);
+}
+
 // Close socket safely (Windows implementation)
 inline void closeSocket(SOCKET& sock)
 {
@@ -156,6 +165,13 @@ inline void cleanupSockets()
     // No cleanup needed for UNIX
 }
 
+// Wake whoever waits on the socket (recv answers 0) without closing it: its owner closes it (UNIX implementation)
+inline void shutdownSocket(SOCKET sock)
+{
+    if (sock != INVALID_SOCKET)
+        shutdown(sock, SHUT_RDWR);
+}
+
 // Close socket safely (UNIX implementation)
 inline void closeSocket(SOCKET& sock)
 {
@@ -185,6 +201,16 @@ inline bool setSocketNonBlocking(SOCKET sock)
 #endif
 
 // Platform-agnostic interface
+
+// Wake whoever waits on the socket without closing it (platform-agnostic)
+inline void shutdownSocket(SOCKET sock)
+{
+#ifdef _WIN32
+    win_sockets::shutdownSocket(sock);
+#else
+    unix_sockets::shutdownSocket(sock);
+#endif
+}
 
 // Close socket safely (platform-agnostic)
 inline void closeSocket(SOCKET& sock)
@@ -287,4 +313,28 @@ inline int waitForSocketRead(SOCKET sock, int timeoutMs)
     pfd.revents = 0;
     return poll(&pfd, 1, timeoutMs);
 #endif
+}
+
+// Where a connected socket's client is: "192.168.1.5:51234" ("[::1]:51234" for IPv6), empty when unknown. The GUI
+// shows it to the user while the client holds the emulator's run control (execution arbiter design §6a)
+inline std::string PeerAddressOf(SOCKET sock)
+{
+    sockaddr_storage address{};
+    socklen_t length = sizeof(address);
+    if (getpeername(sock, reinterpret_cast<sockaddr*>(&address), &length) != 0)
+        return {};
+    char host[INET6_ADDRSTRLEN] = {};
+    if (address.ss_family == AF_INET)
+    {
+        const auto* v4 = reinterpret_cast<const sockaddr_in*>(&address);
+        inet_ntop(AF_INET, &v4->sin_addr, host, sizeof(host));
+        return std::string(host) + ":" + std::to_string(ntohs(v4->sin_port));
+    }
+    if (address.ss_family == AF_INET6)
+    {
+        const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        inet_ntop(AF_INET6, &v6->sin6_addr, host, sizeof(host));
+        return "[" + std::string(host) + "]:" + std::to_string(ntohs(v6->sin6_port));
+    }
+    return "local socket";
 }

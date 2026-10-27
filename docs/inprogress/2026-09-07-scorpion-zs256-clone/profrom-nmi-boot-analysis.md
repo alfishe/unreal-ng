@@ -211,6 +211,14 @@ MAME (`sinclair/scorpion.cpp`) is the closest reference for the trigger mechanic
 
 ## 7. Boot sequence — and the EAR defect that used to wedge it
 
+> **Correction (2026-10-08).** The reading below is wrong. `#FFBE` is the SMUC IDE status
+> register: bit 7 = BSY, bit 6 = DRDY, and error `#61` is the DRDY timeout (`#60` BSY, `#62`
+> DRQ). The spin at `#1D0A-#1D0E` was the BSY wait on a #FE mirror reading `#BF`; EAR = 1 made
+> `#FFBE` read `#FF`, which the ROM takes as "no IDE controller" (`#1E96`), so the boot went on
+> by accident. The SMUC stub now answers `#FFBE`, and the idle EAR level is LOW again on the
+> Scorpions (tape.cpp). Nothing in the schematic sets that level. Evidence:
+> [2026-10-08-z80test-in-ear](../2026-10-08-z80test-in-ear/README.md), "The Scorpion and the ProfROM".
+
 ### 7.1 The wedge (pass30/pass31 evidence)
 
 Before the fix, every cold boot of a `PROFSCORP` instance died the same way:

@@ -59,6 +59,38 @@ struct TTDRestoreIssue
     uint64_t lastFrame = 0;
 };
 
+/// The automation name of a status ("exact", "not_bit_exact", "degraded", "damaged"): a contract of every surface
+inline const char* TTDRestoreStatusName(TTDRestoreStatus status)
+{
+    switch (status)
+    {
+    case TTDRestoreStatus::Exact: return "exact";
+    case TTDRestoreStatus::NotBitExact: return "not_bit_exact";
+    case TTDRestoreStatus::Degraded: return "degraded";
+    case TTDRestoreStatus::Damaged: return "damaged";
+    }
+    return "unknown";
+}
+
+/// The automation name of an issue kind ("configuration_differs", "media_version_differs", ...)
+inline const char* TTDRestoreIssueKindName(TTDRestoreIssueKind kind)
+{
+    switch (kind)
+    {
+    case TTDRestoreIssueKind::DeviceMissingState: return "device_missing_state";
+    case TTDRestoreIssueKind::DeviceNotPresent: return "device_not_present";
+    case TTDRestoreIssueKind::LayoutUnsupported: return "layout_unsupported";
+    case TTDRestoreIssueKind::SizeMismatch: return "size_mismatch";
+    case TTDRestoreIssueKind::DeviceSetDiffers: return "device_set_differs";
+    case TTDRestoreIssueKind::FirmwareDiffers: return "firmware_differs";
+    case TTDRestoreIssueKind::ConfigurationDiffers: return "configuration_differs";
+    case TTDRestoreIssueKind::DataDamaged: return "data_damaged";
+    case TTDRestoreIssueKind::AfterRestoreFailed: return "after_restore_failed";
+    case TTDRestoreIssueKind::MediaVersionDiffers: return "media_version_differs";
+    }
+    return "unknown";
+}
+
 struct TTDRestoreResult
 {
     TTDRestoreStatus status = TTDRestoreStatus::Exact;   ///< the worst issue

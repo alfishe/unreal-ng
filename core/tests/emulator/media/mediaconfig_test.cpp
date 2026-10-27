@@ -116,11 +116,17 @@ TEST(MediaConfig_Test, LegacyKeysFillOnlyWhatMediaLeavesUnset)
     EXPECT_EQ(master->access.value_or(AccessMode::Session), AccessMode::ReadOnly) << "HD0RO=1";
     EXPECT_EQ(Find(legacyOnly, "ide0.slave"), nullptr) << "an empty Image1 sets nothing";
 
+    // absolute on this platform: on Windows a path without a drive is relative to the config folder
+#ifdef _WIN32
+    const std::string card = "C:/new/card.img";
+#else
+    const std::string card = "/new/card.img";
+#endif
     IniFile both;
-    both.LoadData("[MEDIA]\nsd.zc = /new/card.img\n[ZC]\nSDCARD=wc.img\n");
+    both.LoadData("[MEDIA]\nsd.zc = " + card + "\n[ZC]\nSDCARD=wc.img\n");
     const auto set = MediaConfig::FromIni(both, "/configs/atm3");
     ASSERT_NE(Find(set, "sd.zc"), nullptr);
-    EXPECT_EQ(Find(set, "sd.zc")->source.path, FileHelper::LexicallyNormalPath("/new/card.img")) << "[MEDIA] wins";
+    EXPECT_EQ(Find(set, "sd.zc")->source.path, FileHelper::LexicallyNormalPath(card)) << "[MEDIA] wins";
     EXPECT_FALSE(Find(set, "sd.zc")->legacy);
 }
 
@@ -180,4 +186,76 @@ TEST(MediaConfig_Test, ManagerAppliesTheSetBeforeTheFirstReset)
     ASSERT_EQ(problems.size(), 1u) << "the legacy sd.ngs entry is quiet on a machine without NeoGS";
     EXPECT_NE(problems[0].find("nope.slot"), std::string::npos);
     manager.UnregisterSlot("sd.zc");
+}
+
+/// SessionMemoryLimit and SpillFolder are settings in [MEDIA], not slots (multi-source phases/c10d-session-spill.md)
+TEST(MediaConfig_Test, SessionSettingsAreNotSlots)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nsd.zc = card.img\nSessionMemoryLimit = 64\nSpillFolder = spill\n");
+    std::vector<std::string> report;
+    const std::vector<MediaSetEntry> set = MediaConfig::FromIni(ini, "/cfg", &report);
+    ASSERT_EQ(set.size(), 1u) << "only sd.zc is a slot";
+    EXPECT_EQ(set[0].slotId, "sd.zc");
+    const MediaSettings settings = MediaConfig::SettingsFromIni(ini, "/cfg", &report);
+    ASSERT_TRUE(settings.sessionMemoryLimit.has_value());
+    EXPECT_EQ(*settings.sessionMemoryLimit, 64ull * 1024 * 1024);
+    ASSERT_TRUE(settings.spillFolder.has_value());
+    EXPECT_EQ(*settings.spillFolder, MediaConfig::ResolvePath("spill", "/cfg")) << "relative to the config file";
+    EXPECT_TRUE(report.empty());
+
+    IniFile none;
+    none.LoadData("[MEDIA]\nSessionMemoryLimit = 0\n");
+    EXPECT_EQ(MediaConfig::SettingsFromIni(none, "").sessionMemoryLimit, std::optional<uint64_t>(0)) << "0: no limit";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nSessionMemoryLimit = lots\n");
+    std::vector<std::string> badReport;
+    EXPECT_FALSE(MediaConfig::SettingsFromIni(bad, "", &badReport).sessionMemoryLimit.has_value());
+    ASSERT_EQ(badReport.size(), 1u);
+    EXPECT_NE(badReport[0].find("SessionMemoryLimit"), std::string::npos) << badReport[0];
+}
+
+/// Every C10e key: arena size, flush and sync intervals, the journal switch; bad values reported, the default kept
+TEST(MediaConfig_Test, SessionJournalSettings)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nSessionArenaKiB = 256\nSessionFlushSeconds = 5\nSessionSyncSeconds = 0\nSessionJournal = off\n"
+                 "SessionIoThreads = 0\n");
+    std::vector<std::string> report;
+    const MediaSettings settings = MediaConfig::SettingsFromIni(ini, "", &report);
+    EXPECT_TRUE(report.empty());
+    EXPECT_EQ(settings.sessionArenaBytes, std::optional<uint32_t>(256 * 1024));
+    EXPECT_EQ(settings.sessionFlushSeconds, std::optional<uint32_t>(5));
+    EXPECT_EQ(settings.sessionSyncSeconds, std::optional<uint32_t>(0));
+    EXPECT_EQ(settings.sessionJournal, std::optional<bool>(false));
+    EXPECT_EQ(settings.sessionIoThreads, std::optional<uint32_t>(0)) << "0: a quarter of the cores";
+    EXPECT_TRUE(MediaConfig::FromIni(ini, "", &report).empty()) << "none of them is a slot";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nSessionArenaKiB = 100\nSessionFlushSeconds = soon\nSessionJournal = maybe\nSessionIoThreads = 9\n");
+    std::vector<std::string> badReport;
+    const MediaSettings kept = MediaConfig::SettingsFromIni(bad, "", &badReport);
+    EXPECT_FALSE(kept.sessionArenaBytes.has_value()) << "not a power of two";
+    EXPECT_FALSE(kept.sessionFlushSeconds.has_value());
+    EXPECT_FALSE(kept.sessionJournal.has_value());
+    EXPECT_FALSE(kept.sessionIoThreads.has_value()) << "at most 4";
+    EXPECT_EQ(badReport.size(), 4u);
+}
+
+/// NFR-M5: [MEDIA] ExtentBudget is a setting (0: no limit), not a slot; a bad value is reported
+TEST(MediaConfig_Test, ExtentBudget)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nExtentBudget = 1000\n");
+    std::vector<std::string> report;
+    EXPECT_EQ(MediaConfig::SettingsFromIni(ini, "", &report).extentBudget, std::optional<uint64_t>(1000));
+    EXPECT_TRUE(report.empty());
+    EXPECT_TRUE(MediaConfig::FromIni(ini, "", &report).empty()) << "not a slot";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nExtentBudget = lots\n");
+    std::vector<std::string> badReport;
+    EXPECT_FALSE(MediaConfig::SettingsFromIni(bad, "", &badReport).extentBudget.has_value());
+    EXPECT_EQ(badReport.size(), 1u);
 }

@@ -7,6 +7,8 @@
 // dispatcher/tools/router drogon-free so they can be unit-tested with a fake,
 // while WebApiClient (webapi-client.cpp) performs the actual async HTTP calls.
 
+#include <mutex>
+#include <atomic>
 #include <json/json.h>
 
 #include <cstdint>
@@ -42,6 +44,16 @@ public:
                          const std::vector<uint8_t>& body,
                          const std::map<std::string, std::string>& headers,
                          ApiCallback callback) = 0;
+
+    /// Automation session (execution arbiter design §6a): the id sent as X-Unreal-Session on every call (empty: none)
+    virtual void SetSession(const std::string& sessionId) { (void)sessionId; }
+    virtual std::string Session() const { return {}; }
+    /// A call was answered revoked_by_user since the last check (the user took control back at the GUI): the session
+    /// is forgotten. True once per take-back
+    virtual bool TakeRevoked() { return false; }
+    /// The automation gate opened a session for a call that changed the machine without one (automationgate.h): the
+    /// advice to take control explicitly, once per such session; empty otherwise
+    virtual std::string TakeImplicitAdvice() { return {}; }
 };
 
 /// endregion </IApiCaller>
@@ -64,8 +76,20 @@ public:
                  const std::vector<uint8_t>& body,
                  const std::map<std::string, std::string>& headers,
                  ApiCallback callback) override;
+    void SetSession(const std::string& sessionId) override;
+    std::string Session() const override;
+    bool TakeRevoked() override;
+    std::string TakeImplicitAdvice() override;
 
 private:
+    /// Notes a revoked_by_user answer: the session is over, the dispatcher tells the agent to stop
+    void NoteResponse(int status, const Json::Value& body);
+    mutable std::mutex _sessionMutex;
+    std::string _session;
+    std::atomic<bool> _revoked{false};
+    std::string _implicitAdvice;      // pending for the dispatcher (guarded by _sessionMutex)
+    std::string _advisedSession;      // the implicit session the agent was already told about
+
     /// Lazily created loopback client (requires the drogon app loop to be running)
     void EnsureClient();
 

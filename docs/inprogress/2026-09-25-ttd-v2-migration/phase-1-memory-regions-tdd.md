@@ -195,6 +195,8 @@ enum class TTDRegionId : uint16_t          // stable, stored in files, appended,
     Vdac2Inflight = 14,
     EvoAvrEeprom = 15,
     SmucEeprom = 16,
+    MultiSoundGsRam = 17,
+    EvoFlash = 18,
 };
 
 struct TTDRegionDesc
@@ -305,6 +307,7 @@ The game is the one case slower than v1 (+8%): the pieces that differ between tw
 | 6 | VDAC2 (FT812) | `Vdac2GraphicsMemory` (RAM_G), `Vdac2DisplayList0/1`, `Vdac2Registers`, `Vdac2CommandFifo`, `Vdac2Special`, `Vdac2Inflight` | 1 MB, 2 × 8 KB, 4 KB, 4 KB, 4 KB, 1.06 MB | eve-emu's dirty bitmap (one bit per 4 KB page, every chip write path), read before each capture | copy, then `EveMemoryRestored` (the chip rebuilds what it derives), as v1's `Vdac2Memory` blob does |
 | 7 | ZX-Evo AVR | `EvoAvrEeprom` | 4 KiB (1 piece) | the EEPROM-window write | copy |
 | 8 | Scorpion SMUC | `SmucEeprom` | 2 KiB (1 partial piece) | the page commit on STOP | copy; the serial-link state goes into a SMUC blob |
+| 9 | ZX-Evo ROM flash (TS-Conf, ATM3) | `EvoFlash` (the machine's ROM pages 0-31) | 512 KB | the chip's program and erase completions (`Flash29F040B`, the same tracker hook as `NeoGSFlash`) | copy; the command state is the blob `EvoFlash` (61) ([tdd-evo-flash.md](../2026-09-27-tsconf/tdd-evo-flash.md)) |
 
 - **Cost rule** (performance guidelines): the NeoGS, GS and MoonSound write paths run per card-CPU write. The hook is one bit-set behind the existing "recording" check: no work at all when nothing records, and an A/B benchmark (`core-benchmarks`, the card's frame benchmark) shows it within noise before it lands.
 - In shadow mode v1 still copies the GS RAM into its blob; the engine's region is checked against it by the oracle. NeoGS, MoonSound, VDAC2 and the EEPROMs are not in v1 files, so their regions are checked by round-trip tests (record, write, seek back, compare) and by live shadow runs.

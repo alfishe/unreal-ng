@@ -194,6 +194,34 @@ TEST_F(DeviceState_Test, AyReportDecodesRegisters)
     EXPECT_FALSE(At(DeviceState::AyChip(_context, 7), "available").b);
 }
 
+/// R7 bits 6 / 7 set the I/O ports' direction: 1 = output, 0 = input (AY-3-8910 datasheet; ayioport.h)
+TEST_F(DeviceState_Test, AyReportPortDirectionFollowsR7)
+{
+    ITurboSoundDevice* ts = _context->pSoundManager->getTurboSound();
+    ASSERT_NE(ts, nullptr);
+    SetT(1000);
+    ts->portDeviceOutMethod(PORT_FFFD, 0xFE);  // chip 0, register mode
+    const auto writeR7 = [&](uint8_t value)
+    {
+        ts->portDeviceOutMethod(PORT_FFFD, 7);
+        ts->portDeviceOutMethod(PORT_BFFD, value);
+    };
+
+    writeR7(0x40);  // port A output, port B input
+    StateNode ay = DeviceState::AyChip(_context, 0);
+    EXPECT_EQ(At(At(ay, "io_ports"), "porta_direction").s, "output");
+    EXPECT_EQ(At(At(ay, "io_ports"), "portb_direction").s, "input");
+    EXPECT_FALSE(At(At(ay, "mixer"), "porta_input").b);
+    EXPECT_TRUE(At(At(ay, "mixer"), "portb_input").b);
+
+    writeR7(0x80);  // port A input, port B output
+    ay = DeviceState::AyChip(_context, 0);
+    EXPECT_EQ(At(At(ay, "io_ports"), "porta_direction").s, "input");
+    EXPECT_EQ(At(At(ay, "io_ports"), "portb_direction").s, "output");
+    EXPECT_TRUE(At(At(ay, "mixer"), "porta_input").b);
+    EXPECT_FALSE(At(At(ay, "mixer"), "portb_input").b);
+}
+
 /// What a debugger shows of the port side: the register #FFFD last selected on each chip, and which chip the
 /// ports talk to (TSFM: the CPLD's chip bit, #FF / #FE on #FFFD)
 TEST_F(DeviceState_Test, AyReportShowsLatchedRegisterAndSelectedChip)
@@ -398,7 +426,7 @@ TEST(DeviceStateScreen_Test, ModeReportFollowsTheActiveMode)
         // ATM 4.50: the mode is the low address byte of the last #FE write (OUT #BE = 640x200), no #FF77
         ScreenMachine m("ATM450");
         ASSERT_NE(m.context, nullptr);
-        m.context->emulatorState.aFE = 0xBE;
+        m.context->emulatorState.atm.aFE = 0xBE;
         m.Redetect();
         const StateNode r = DeviceState::ScreenMode(m.context);
         EXPECT_EQ(At(r, "video_mode").s, "ATMHR");
@@ -407,7 +435,7 @@ TEST(DeviceStateScreen_Test, ModeReportFollowsTheActiveMode)
         EXPECT_TRUE(At(At(r, "afe"), "rom_at_0000").b);
         EXPECT_EQ(r.find("ff77"), nullptr) << "the 4.50 board has no #FF77";
 
-        m.context->emulatorState.aFE = 0x9E;  // EGA 320x200x16
+        m.context->emulatorState.atm.aFE = 0x9E;  // EGA 320x200x16
         m.Redetect();
         EXPECT_EQ(At(DeviceState::ScreenMode(m.context), "video_mode").s, "ATM16");
     }

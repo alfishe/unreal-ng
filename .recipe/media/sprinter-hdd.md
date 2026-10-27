@@ -116,7 +116,7 @@ media list
 
 ## Assert on
 
-- The screenshot (text mode, 736 x 288): "Detecting IDE Primary Master ... UNREAL-NG HDD",
+- The screenshot (text mode, the 736 x 288 frame as a 736 x 576 image): "Detecting IDE Primary Master ... UNREAL-NG HDD",
   "Boot from HDD Primary IDE Master OK" (3.06 / 3.07) or "Start from Hard disk...Ok" (3.04), then the DSS
   banner: "Estex DSS Version 1.62.92" / "Estex DSS version 1.71.57. Shell version 1.2.522." and
   the `C:\>` prompt (a `SYSTEM.BAT` that runs `fn` switches to Flex Navigator's graphics screen).
@@ -138,3 +138,5 @@ media list
   "[Press F4 to skip]" line. In the Qt GUI F4 reaches the machine while the screen has focus (the
   menu's F-key shortcuts give way on PC-keyboard machines, [keyboard.md](../../docs/features/keyboard.md)).
 - **TTD does not record the Sprinter yet** (phase S7).
+- **A disk that starts your program at boot** (your files over the system disk, a changed `SYSTEM.BAT`):
+  [sprinter-test-images.md](sprinter-test-images.md).

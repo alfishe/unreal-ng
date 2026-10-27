@@ -36,9 +36,11 @@ a device-state report. The isolation test keeps passing.
   files copied (the library and the two decoder sources it compiles, not its tests,
   benchmarks and tools) and how to update. `core/src/CMakeLists.txt` keeps the copy out of
   the core source glob; the library builds with its own CMake.
-- Root `CMakeLists.txt`: `ENABLE_VDAC2` (**ON** by default) and `EVE_EMU_DIR` (default the
-  vendored copy; a developer points it at an eve-emu checkout while working on both);
-  built-in decoders (A3); the library's tests, benchmarks and tools off.
+- `core/src/CMakeLists.txt` (next to opl4; the root file until 2026-10-09, which left every
+  build configured from `unreal-qt/` - `docker/linux/build.sh`, the CI test job - without the
+  card): `ENABLE_VDAC2` (**ON** by default) and `EVE_EMU_DIR` (default the vendored copy; a
+  developer points it at an eve-emu checkout while working on both); built-in decoders (A3);
+  the library's tests, benchmarks and tools off.
 - `core/src/CMakeLists.txt`: with `ENABLE_VDAC2`, `target_link_libraries(core PRIVATE
   eve::emu)` and `target_compile_definitions(core PUBLIC ENABLE_VDAC2)`. The gate is
   PUBLIC like `UNREALNG_HAVE_OPL4`: `core-tests` compiles core sources itself and links

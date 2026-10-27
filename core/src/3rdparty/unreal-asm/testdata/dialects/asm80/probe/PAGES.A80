@@ -1,0 +1,13 @@
+*O
+        ORG #8000
+        LD A,(Data3)
+        RET
+*P3
+        ORG #C000
+Data3   DEFB 3,3
+*P4
+        ORG #C000
+Data4   DEFB 4,4,4
+*P0
+        ORG #9000
+        LD HL,Data4

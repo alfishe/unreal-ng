@@ -15,6 +15,7 @@
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
+#include "emulator/ports/models/sprinter/sprinterstatetransferhost.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
@@ -107,7 +108,7 @@ public:
     /// (s7-ttd-outcome.md): the port journals record on the Sprinter
     bool TtdEnginesSealed() const override { return true; }
     /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
-    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const override;
+    bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
     /// A ZX-bus only through an ISA ZX-bus adapter ([ISA] SlotN=ZXBUS; 2026-10-02-sprinter-isa/tdd.md §6, phase I2):
     /// the General Sound / NeoGS of [SOUND] GSType is fitted only then. The adapter passes I/O cycles only, so
     /// no ZX-bus card sees the Sprinter's memory cycles (the NeoGS ZX-DMA cannot install)
@@ -125,9 +126,9 @@ public:
     /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
     FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
     /// Code #15 (port #FF in TR-DOS, #1F / #0F outside it) carries the Kempston bits
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView; this debug read: PeekMouseView)
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {
@@ -149,6 +150,8 @@ public:
     /// #3D13 (ToBios3D13), where the port table's "DOS on" half answers
     void BeforeMachineM1(uint16_t address) override;
     void OnMachineM1(uint16_t address) override { (void)address; }
+    /// BeforeMachineM1 would not move the DOS signal
+    bool RepeatM1IsInert(uint16_t address) const override;
     /// endregion
 
     /// region <IMachineStepHook: PLD-driven CPU resets, the loader watchdog>
@@ -170,6 +173,8 @@ public:
 
     /// region <PLD state and parts>
 public:
+    /// A Spectrum state moves into / out of the ZX mode the machine runs, behind its PLD cells (MachineStateTransfer)
+    const IStateTransferHost* GetStateTransferHost() const override { return &SprinterStateTransferHost::Instance(); }
     SprinterPldState& GetPldState() { return _pld; }
     const SprinterPldState& GetPldState() const { return _pld; }
     SprinterVideoRam& GetVideoRam() { return _vram; }
@@ -179,6 +184,8 @@ public:
     void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) override { out.push_back(&_vramRegion); }
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
+    /// The Z84C15 engine the CPU runs on (null before the Z80 exists)
+    Z84C15Engine* GetCpuEngine() { return _cpuEngine.get(); }
     SprinterInput& GetInput() { return _input; }
     /// The two ISA-8 slots (Sprinter ISA tdd §4): window 3 in ISA mode reaches them, code #1B writes the latch
     SprinterIsaBus& GetIsaBus() { return _isaBus; }
@@ -373,6 +380,19 @@ private:
     SprinterInput _input{_context, _z84, _intSource, _pld};
     /// The Z84C15 as the CPU's engine (created once the Z80 exists, installed by InstallHooks)
     std::unique_ptr<Z84C15Engine> _cpuEngine;
+    /// The engine's fused bus: this machine's memory in one call per access (SprinterMemory::FusedRead / FusedWrite)
+    class FastBus final : public IZ84FastBus
+    {
+    public:
+        explicit FastBus(PortDecoder_Sprinter& owner) : _owner(owner) {}
+        bool Matches() override;
+        uint8_t Read(uint16_t addr, bool isExecution) override;
+        void Write(uint16_t addr, uint8_t value) override;
+
+    private:
+        PortDecoder_Sprinter& _owner;
+    };
+    FastBus _fastBus{*this};
     SprinterMemory* _sprinterMemory = nullptr;
     std::unique_ptr<SprinterWaits> _waits;
     std::unique_ptr<SprinterOrigWaits> _origWaits;

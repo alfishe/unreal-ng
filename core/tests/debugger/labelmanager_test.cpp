@@ -1,14 +1,25 @@
 #include "labelmanager_test.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 
 #include "common/modulelogger.h"
+#include "common/signaturecache.h"
 #include "common/stringhelper.h"
+#include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/labels/symbolfiles.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/memory/memory.h"
 #include "emulator/emulatorcontext.h"
 #include "pch.h"
 #include "_helpers/testpathhelper.h"
+#include "unrealasm/symbols/symbol.h"
 
 namespace
 {
@@ -295,6 +306,32 @@ TEST_F(LabelManager_test, AutoDetectFileFormat)
     std::filesystem::remove(symFilePath);
 }
 
+// sjasmplus --sym writes "NAME: EQU 0x00008000" as .sym: the content says so, the extension alone would read it as
+// the simple format and add nothing
+TEST_F(LabelManager_test, ImportReadsAnSjasmplusSymByItsContent)
+{
+    ScopedTestFile sjasmplus(TestPathHelper::GetUniqueTestScratchPath("sjasmplus.sym"));
+    {
+        std::ofstream out(sjasmplus);
+        out << "Frame: EQU 0x00008012\nFrame.End: EQU 0x00008018\nPlasma: EQU 0x0000801A\n";
+    }
+    const SymbolImportResult result = _labelManager->ImportSymbols(sjasmplus, SymbolImportRequest{});
+    EXPECT_TRUE(result.ok) << result.message;
+    EXPECT_EQ(result.format, "sjasmplus-sym");
+    EXPECT_EQ(result.records, 3u);
+    auto label = _labelManager->GetLabelByName("Frame.End");
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->address, 0x8018);
+
+    // A simple .sym still goes to the simple format
+    ScopedTestFile simple(TestPathHelper::GetUniqueTestScratchPath("simple.sym"));
+    {
+        std::ofstream out(simple);
+        out << _testSymFile.str();
+    }
+    EXPECT_EQ(_labelManager->ImportSymbols(simple, SymbolImportRequest{}).format, "simple-sym");
+}
+
 TEST_F(LabelManager_test, SaveLabels)
 {
     // Add some test labels
@@ -484,4 +521,338 @@ TEST_F(LabelManager_test, GetLabelsFilterByBank)
     results = _labelManager->GetLabels(filter);
     EXPECT_EQ(results.size(), 1);
     EXPECT_EQ(results[0]->name, "bank5");
+}
+
+// ============================================================================
+// Golden files: what LoadLabels makes of every shipped symbol file and of one crafted file per format
+// (testdata/debugger/labels/*.golden.txt; UNREAL_UPDATE_GOLDEN=1 rewrites them)
+// ============================================================================
+
+namespace
+{
+std::string DumpLabels(const LabelManager& manager)
+{
+    auto labels = manager.GetAllLabels();
+    std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) {
+        return a->name != b->name ? a->name < b->name : a->address < b->address;
+    });
+    std::ostringstream out;
+    for (const auto& l : labels)
+        out << l->name << '|' << std::hex << std::uppercase << l->address << '|' << std::dec << l->bank << '|' << l->bankOffset << '|'
+            << (l->isROM() ? "ROM" : "RAM") << '|' << l->type << '|' << l->module << '|' << l->comment << '|' << l->active << '\n';
+    return out.str();
+}
+}  // namespace
+
+TEST_F(LabelManager_test, LoadLabelsMatchesGolden)
+{
+    const std::filesystem::path root = TestPathHelper::FindProjectRoot();
+    const std::filesystem::path labels = root / "testdata" / "debugger" / "labels";
+    std::vector<std::pair<std::filesystem::path, std::string>> inputs;   // file, golden name
+    for (const char* name : {"48k_rom.map", "48k_variables.map", "128k_rom.map", "128k_rom_relabeled.map", "128k_variables.map"})
+        inputs.push_back({root / "data" / "symbols" / name, name});
+    for (const auto& entry : std::filesystem::directory_iterator(root / "data" / "symbols" / "sprinter"))
+        if (entry.path().extension() == ".map")
+            inputs.push_back({entry.path(), "sprinter-" + entry.path().filename().string()});
+    for (const char* name : {"sample-banks.map", "sample.sym", "sample.vice", "sample.s", "sample.z88"})
+        inputs.push_back({labels / name, name});
+    // z80asm's own .map goes to the z88dk-map codec, not to our MAP format
+    inputs.push_back({root / "core" / "src" / "3rdparty" / "unreal-asm" / "testdata" / "symbols" / "z88dk" / "labels.map", "z88dk-labels.map"});
+    const bool update = std::getenv("UNREAL_UPDATE_GOLDEN") != nullptr;
+    for (const auto& [input, name] : inputs)
+    {
+        _labelManager->ClearAllLabels();
+        EXPECT_TRUE(_labelManager->LoadLabels(input.string())) << input;
+        const std::string dump = DumpLabels(*_labelManager);
+        const std::filesystem::path golden = labels / (name + ".golden.txt");
+        if (update)
+        {
+            std::ofstream(golden, std::ios::binary) << dump;
+            continue;
+        }
+        std::ifstream in(golden, std::ios::binary);
+        const std::string expected((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(dump, expected) << name;
+    }
+}
+
+// ============================================================================
+// The symbol store behind the labels: sets, priorities, the Label view
+// ============================================================================
+
+namespace
+{
+std::string WriteSym(const std::string& name, const std::string& text)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+    std::ofstream(path, std::ios::binary) << text;
+    return path;
+}
+
+bool SameLabel(const Label& a, const Label& b)
+{
+    return a.name == b.name && a.address == b.address && a.bank == b.bank && a.bankOffset == b.bankOffset && a.bankType == b.bankType &&
+           a.type == b.type && a.module == b.module && a.comment == b.comment && a.active == b.active;
+}
+}  // namespace
+
+TEST_F(LabelManager_test, EachFileIsASetAndALaterLoadWins)
+{
+    ScopedTestFile first(WriteSym("first.sym", "8000 SHARED\n8010 ONLY_FIRST\n"));
+    ScopedTestFile second(WriteSym("second.sym", "9000 SHARED\n9010 ONLY_SECOND\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(first));
+    ASSERT_TRUE(_labelManager->LoadLabels(second));
+
+    const auto sets = _labelManager->GetSymbolSets();
+    ASSERT_EQ(sets.size(), 2u);
+    EXPECT_EQ(sets[0].id, "file:" + first.path());
+    EXPECT_LT(sets[0].priority, sets[1].priority);
+
+    EXPECT_EQ(_labelManager->GetLabelCount(), 3u);
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x9000);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr) << "the shadowed record shows nowhere";
+
+    // The earlier file above: its record shows
+    ASSERT_TRUE(_labelManager->SetSymbolSetPriority("file:" + first.path(), 1000));
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x8000);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x9000), nullptr);
+
+    // A set switched off hides its labels; dropped, they are gone
+    ASSERT_TRUE(_labelManager->SetSymbolSetEnabled("file:" + first.path(), false));
+    EXPECT_EQ(_labelManager->GetLabelByName("ONLY_FIRST"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x9000);
+    ASSERT_TRUE(_labelManager->DropSymbolSet("file:" + second.path()));
+    EXPECT_EQ(_labelManager->GetLabelCount(), 0u);
+    EXPECT_FALSE(_labelManager->DropSymbolSet("no-such-set"));
+}
+
+TEST_F(LabelManager_test, AFileLoadedAgainReplacesItsSet)
+{
+    ScopedTestFile file(WriteSym("reload.sym", "8000 OLD_NAME\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    std::ofstream(file.path(), std::ios::binary) << "8000 NEW_NAME\n";
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetSymbolSets().size(), 1u);
+    EXPECT_EQ(_labelManager->GetLabelByName("OLD_NAME"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "NEW_NAME");
+}
+
+TEST_F(LabelManager_test, UserLabelsWinOverFilesAndEditsSurviveAReload)
+{
+    ScopedTestFile file(WriteSym("user.sym", "8000 START\n8100 LOOP\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    ASSERT_TRUE(_labelManager->AddLabel("START", 0x8001, UINT16_MAX, UINT16_MAX, "data"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetLabelByName("START")->address, 0x8001);
+
+    Label edited = *_labelManager->GetLabelByName("LOOP");
+    edited.address = 0x8102;
+    edited.comment = "moved";
+    ASSERT_TRUE(_labelManager->UpdateLabel(edited));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->address, 0x8102);
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->comment, "moved");
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8100), nullptr);
+
+    // The file's own records stay under the user set: switching it off shows them again
+    const auto sets = _labelManager->GetSymbolSets();
+    const auto user = std::find_if(sets.begin(), sets.end(), [](const auto& set) { return set.id == LabelManager::USER_SET; });
+    ASSERT_NE(user, sets.end());
+    EXPECT_EQ(user->priority, LabelManager::USER_SET_PRIORITY);
+    EXPECT_EQ(user->symbols.size(), 2u);
+    ASSERT_TRUE(_labelManager->SetSymbolSetEnabled(LabelManager::USER_SET, false));
+    EXPECT_EQ(_labelManager->GetLabelByName("START")->address, 0x8000);
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->address, 0x8100);
+}
+
+TEST_F(LabelManager_test, RemoveLabelTakesTheNameFromEverySet)
+{
+    ScopedTestFile file(WriteSym("remove.sym", "8000 START\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    ASSERT_TRUE(_labelManager->AddLabel("START", 0x8001, UINT16_MAX, UINT16_MAX));
+    ASSERT_TRUE(_labelManager->RemoveLabel("START"));
+    EXPECT_EQ(_labelManager->GetLabelByName("START"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8001), nullptr);
+}
+
+TEST_F(LabelManager_test, AddressShowsTheLastLabelPlacedAndKeepsTheOthers)
+{
+    ASSERT_TRUE(_labelManager->AddLabel("FIRST", 0x8000, UINT16_MAX, UINT16_MAX));
+    ASSERT_TRUE(_labelManager->AddLabel("SECOND", 0x8000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "SECOND");
+    ASSERT_TRUE(_labelManager->AddLabel("FIRST", 0x8000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "FIRST");
+    ASSERT_TRUE(_labelManager->RemoveLabel("FIRST"));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "SECOND");
+    // A name added again leaves its old address
+    ASSERT_TRUE(_labelManager->AddLabel("SECOND", 0x9000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr);
+
+    // Both names of one address are saved
+    ASSERT_TRUE(_labelManager->AddLabel("ALIAS", 0x9000, UINT16_MAX, UINT16_MAX));
+    ScopedTestFile saved(TestPathHelper::GetUniqueTestScratchPath("aliases.sym"));
+    ASSERT_TRUE(_labelManager->SaveLabels(saved));
+    _labelManager->ClearAllLabels();
+    ASSERT_TRUE(_labelManager->LoadLabels(saved));
+    EXPECT_EQ(_labelManager->GetLabelCount(), 2u);
+}
+
+TEST_F(LabelManager_test, EveryLabelSurvivesTheStore)
+{
+    // Labels a symbol cannot say by itself: a bank offset beyond the page, an address outside the page's window, a ROM
+    // bank type above #4000, an empty type, a type in capitals, bank #FF
+    std::vector<Label> labels(7);
+    labels[0].name = "OFFSET";
+    labels[0].address = 0x1234, labels[0].bank = 0, labels[0].bankOffset = 0x5678, labels[0].type = "code";
+    labels[1].name = "WINDOW";
+    labels[1].address = 0xC010, labels[1].bank = 3, labels[1].bankOffset = 0x0020, labels[1].type = "data";
+    labels[2].name = "ROM_HIGH";
+    labels[2].address = 0x8000, labels[2].bankType = BANK_ROM, labels[2].type = "const";
+    labels[3].name = "NO_TYPE";
+    labels[3].address = 0x4000;
+    labels[4].name = "CAPITALS";
+    labels[4].address = 0x0038, labels[4].bankType = BANK_ROM, labels[4].type = "CODE";
+    labels[5].name = "BANK_FF";
+    labels[5].address = 0xC000, labels[5].bank = 0xFF, labels[5].bankOffset = 0, labels[5].type = "bss", labels[5].active = false;
+    labels[6].name = "NO_OFFSET";
+    labels[6].address = 0xC123, labels[6].bank = 7, labels[6].type = "code", labels[6].module = "M", labels[6].comment = "c";
+    for (const Label& label : labels)
+    {
+        const auto back = LabelManager::ToLabel(LabelManager::FromLabel(label, {}));
+        ASSERT_TRUE(back.has_value()) << label.name;
+        EXPECT_TRUE(SameLabel(*back, label)) << label.name;
+    }
+}
+
+TEST_F(LabelManager_test, LabelsAddedOneByOneMatchARebuild)
+{
+    // AddLabel of a new name only adds to the view; a rebuild from the store must show the same
+    ScopedTestFile file(WriteSym("under.sym", "8000 FILE_A\n8002 FILE_B\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    const std::vector<std::pair<std::string, uint16_t>> added = {{"U1", 0x8000}, {"U2", 0x8001}, {"U3", 0x8001}, {"FILE_B", 0x9000}, {"U4", 0x8002}};
+    for (const auto& [name, address] : added)
+        ASSERT_TRUE(_labelManager->AddLabel(name, address, UINT16_MAX, UINT16_MAX));
+    const auto byAddress = [&]() {
+        std::string out;
+        for (uint16_t a : {0x8000, 0x8001, 0x8002, 0x9000})
+            out += (_labelManager->GetLabelByZ80Address(a) ? _labelManager->GetLabelByZ80Address(a)->name : "-") + ",";
+        return out;
+    };
+    const std::string labels = DumpLabels(*_labelManager);
+    const std::string addresses = byAddress();
+    EXPECT_EQ(addresses, "U1,U3,U4,FILE_B,");
+
+    ASSERT_TRUE(_labelManager->SetSymbolSetPriority(LabelManager::USER_SET, LabelManager::USER_SET_PRIORITY));
+    EXPECT_EQ(DumpLabels(*_labelManager), labels);
+    EXPECT_EQ(byAddress(), addresses);
+}
+
+// ============================================================================
+// Symbol bundles: data/symbols/manifest.json against the ROM pages of data/rom
+// ============================================================================
+
+namespace
+{
+std::vector<std::string> RomPages(const std::filesystem::path& file)
+{
+    std::ifstream in(file, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<std::string> pages;
+    for (size_t at = 0; at + 0x4000 <= bytes.size(); at += 0x4000)
+        pages.push_back(SignatureCache::Sha256Hex(bytes.data() + at, 0x4000));
+    return pages;
+}
+}  // namespace
+
+TEST_F(LabelManager_test, BundlesFollowTheRomPages)
+{
+    const std::filesystem::path root = TestPathHelper::FindProjectRoot();
+    const std::string folder = (root / "data" / "symbols").string();
+
+    // A 48K: its ROM's labels at page 0 and the system variables
+    std::vector<std::string> sets = _labelManager->ApplyBundles(folder, RomPages(root / "data" / "rom" / "48.rom"));
+    EXPECT_EQ(sets, (std::vector<std::string>{"bundle:rom:48k", "bundle:sysvars:48k"}));
+    auto start = _labelManager->GetLabelByName("START");
+    ASSERT_NE(start, nullptr);
+    EXPECT_EQ(start->address, 0x0000);
+    EXPECT_EQ(start->bank, 0);
+    EXPECT_TRUE(start->isROM());
+    ASSERT_NE(_labelManager->GetLabelByName("LASTK"), nullptr) << "the system variables";
+    for (const auto& set : _labelManager->GetSymbolSets())
+    {
+        EXPECT_EQ(set.origin.kind, "bundle");
+        EXPECT_EQ(set.priority, LabelManager::BUNDLE_PRIORITY);
+    }
+
+    // A file loaded later wins over a bundle; a bundle set switched off stays off when the bundles apply again
+    ASSERT_TRUE(_labelManager->AddLabel("START", 0x0000, UINT16_MAX, UINT16_MAX, "code", "", "mine"));
+    EXPECT_EQ(_labelManager->GetLabelByName("START")->comment, "mine");
+    ASSERT_TRUE(_labelManager->SetSymbolSetEnabled("bundle:sysvars:48k", false));
+    _labelManager->ApplyBundles(folder, RomPages(root / "data" / "rom" / "48.rom"));
+    EXPECT_EQ(_labelManager->GetLabelByName("LASTK"), nullptr);
+
+    // A 128K: the editor ROM at page 0, the 48 BASIC at page 1 without its "spare" label; the 48K's sets are gone
+    sets = _labelManager->ApplyBundles(folder, RomPages(root / "data" / "rom" / "128.rom"));
+    EXPECT_EQ(sets, (std::vector<std::string>{"bundle:rom:48k-in-128", "bundle:rom:128k-rom0", "bundle:sysvars:48k", "bundle:sysvars:128k"}));
+    const auto all = _labelManager->GetSymbolSets();
+    EXPECT_TRUE(std::none_of(all.begin(), all.end(), [](const auto& s) { return s.id == "bundle:rom:48k"; }));
+    const auto basic = std::find_if(all.begin(), all.end(), [](const auto& s) { return s.id == "bundle:rom:48k-in-128"; });
+    ASSERT_NE(basic, all.end());
+    EXPECT_TRUE(std::none_of(basic->symbols.begin(), basic->symbols.end(), [](const auto& s) { return s.name == "spare"; }));
+    EXPECT_EQ(basic->symbols.front().location.space.Format(), "rom1");
+
+    // A machine no bundle knows: every bundle set goes, the user's labels stay
+    EXPECT_TRUE(_labelManager->ApplyBundles(folder, {"00"}).empty());
+    EXPECT_EQ(_labelManager->GetSymbolSets().size(), 1u);
+    EXPECT_TRUE(_labelManager->ApplyBundles((root / "no-such-folder").string(), {"00"}).empty());
+}
+
+TEST_F(LabelManager_test, TheMappedPageWinsWhereLabelsOfSeveralPagesMeet)
+{
+    // ROM 0 and ROM 1 both have a label at #0000, RAM 3 and RAM 4 at #C000: without memory the last placed shows; on a
+    // machine the page mapped at the window decides, and a CPU-view label (no page) placed later still wins
+    ASSERT_TRUE(_labelManager->AddLabel("EDITOR_START", 0x0000, 0, 0x0000));
+    ASSERT_TRUE(_labelManager->AddLabel("BASIC_START", 0x0000, 1, 0x0000));
+    ASSERT_TRUE(_labelManager->AddLabel("RAM3_TOP", 0xC000, 3, 0x0000));
+    ASSERT_TRUE(_labelManager->AddLabel("RAM4_TOP", 0xC000, 4, 0x0000));
+    ASSERT_TRUE(_labelManager->AddLabel("PLAIN", 0x8000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x0000)->name, "BASIC_START");
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0xC000)->name, "RAM4_TOP");
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "PLAIN");
+    EXPECT_EQ(_labelManager->GetAllLabelsAtAddress(0x0000).size(), 2u);
+}
+
+TEST(LabelManager_Machine_test, TheMappedPageDecidesOnARunningMachine)
+{
+    // A 128K, not run: the paging is set directly
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("labels-paging", "128K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    LabelManager& labels = *context->pDebugManager->GetLabelManager();
+    labels.ClearAllLabels();
+    ASSERT_TRUE(labels.AddLabel("EDITOR_START", 0x0000, 0, 0x0000));
+    ASSERT_TRUE(labels.AddLabel("BASIC_START", 0x0000, 1, 0x0000));
+    ASSERT_TRUE(labels.AddLabel("RAM3_TOP", 0xC000, 3, 0x0000));
+    ASSERT_TRUE(labels.AddLabel("RAM4_TOP", 0xC000, 4, 0x0000));
+
+    Memory& memory = *context->pMemory;
+    memory.SetROMPage(0);
+    memory.SetRAMPageToBank3(3);
+    EXPECT_EQ(labels.GetLabelByZ80Address(0x0000)->name, "EDITOR_START");
+    EXPECT_EQ(labels.GetLabelByZ80Address(0xC000)->name, "RAM3_TOP");
+    memory.SetROMPage(1);
+    memory.SetRAMPageToBank3(4);
+    EXPECT_EQ(labels.GetLabelByZ80Address(0x0000)->name, "BASIC_START");
+    EXPECT_EQ(labels.GetLabelByZ80Address(0xC000)->name, "RAM4_TOP");
+    // A page with no label of its own there: the last placed shows, as everywhere else
+    memory.SetRAMPageToBank3(6);
+    EXPECT_EQ(labels.GetLabelByZ80Address(0xC000)->name, "RAM4_TOP");
+    // A CPU-view label placed later wins over every page
+    ASSERT_TRUE(labels.AddLabel("ANY_PAGE", 0xC000, UINT16_MAX, UINT16_MAX));
+    memory.SetRAMPageToBank3(3);
+    EXPECT_EQ(labels.GetLabelByZ80Address(0xC000)->name, "ANY_PAGE");
+
+    manager->RemoveEmulator(emulator->GetUUID());
 }

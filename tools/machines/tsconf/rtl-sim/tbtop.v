@@ -5,7 +5,7 @@
 // from the C++ memory image (DPI) and held on the read-data bus for that whole
 // cycle, so video_strobe (c3 at the end of the cycle) latches it. The CPU side is
 // a single cpu_req input (idle or requesting every cycle) to exercise arbitration;
-// no DMA or copper traffic. Register writes come from the C++ testbench.
+// no DMA or copper traffic. Register and SFILE writes come from the C++ testbench.
 `include "tune.v"
 
 module tbtop
@@ -22,6 +22,12 @@ module tbtop
   input  wire       gy_offsh_wr,
   input  wire       palsel_wr,
   input  wire       tsconf_wr,
+  input  wire       t0x_offsl_wr, t0x_offsh_wr, t0y_offsl_wr, t0y_offsh_wr,
+  input  wire       t1x_offsl_wr, t1x_offsh_wr, t1y_offsl_wr, t1y_offsh_wr,
+  input  wire       tmpage_wr, t0gpage_wr, t1gpage_wr, sgpage_wr,
+  input  wire       sfile_we,    // SFILE word write: zma = word address, zmd = data
+  input  wire [7:0] zma,
+  input  wire [15:0] zmd,
   input  wire       cpu_req,     // 1 = CPU asks for every DRAM cycle (worst-case contention)
 
   output wire [8:0] ray_x,
@@ -30,7 +36,18 @@ module tbtop
   output wire [7:0] vdata_o,     // palette index entering CRAM (video_out.vdata)
   output wire [7:0] vplex_o,     // video_render output (before the video_out c3 register)
   output wire       hvpix_o,
-  output wire       tv_hires_o
+  output wire       tv_hires_o,
+  // TSU observation (the tsulatch command)
+  output wire       line_start_o,  // video_sync line_start_s
+  output wire       ts_start_o,    // video_sync ts_start
+  output wire       tsr_go_o,      // an object handed to the TS renderer
+  output wire       tsr_sprite_o,  // ... it is a sprite (else a tile)
+  output wire [8:0] tsr_x_o,
+  output wire [7:0] tsr_page_o,
+  output wire [3:0] tsr_pal_o,
+  output wire       ts_next_o,     // a TS renderer DRAM cycle (c2)
+  output wire       tm_next_o,     // a tilemap prefetch DRAM cycle (c2)
+  output wire [4:0] curr_cycle_o   // arbiter: owner of the DRAM cycle in progress (0 = free)
 );
   import "DPI-C" function int dram_read(input int addr);
 
@@ -80,13 +97,13 @@ module tbtop
     .vred(vred), .vgrn(vgrn), .vblu(vblu),
     .vred_raw(vred_raw), .vgrn_raw(vgrn_raw), .vblu_raw(vblu_raw), .vdac_mode(vdac_mode),
     .hsync(hsync), .vsync(vsync), .csync(csync), .ray_x(ray_x), .ray_y(ray_y),
-    .d(8'd0), .zmd(16'd0), .zma(8'd0), .cram_we(1'b0), .sfile_we(1'b0), .xt_wr_data(xt_wr_data),
+    .d(8'd0), .zmd(zmd), .zma(zma), .cram_we(1'b0), .sfile_we(sfile_we), .xt_wr_data(xt_wr_data),
     .zborder_wr(1'b0), .border_wr(border_wr), .zvpage_wr(1'b0), .vpage_wr(vpage_wr), .vconf_wr(vconf_wr),
     .gx_offsl_wr(gx_offsl_wr), .gx_offsh_wr(gx_offsh_wr), .gy_offsl_wr(gy_offsl_wr), .gy_offsh_wr(gy_offsh_wr),
-    .t0x_offsl_wr(1'b0), .t0x_offsh_wr(1'b0), .t0y_offsl_wr(1'b0), .t0y_offsh_wr(1'b0),
-    .t1x_offsl_wr(1'b0), .t1x_offsh_wr(1'b0), .t1y_offsl_wr(1'b0), .t1y_offsh_wr(1'b0),
-    .tsconf_wr(tsconf_wr), .palsel_wr(palsel_wr), .tmpage_wr(1'b0), .t0gpage_wr(1'b0), .t1gpage_wr(1'b0),
-    .sgpage_wr(1'b0), .hint_beg_wr(1'b0), .vint_begl_wr(1'b0), .vint_begh_wr(1'b0),
+    .t0x_offsl_wr(t0x_offsl_wr), .t0x_offsh_wr(t0x_offsh_wr), .t0y_offsl_wr(t0y_offsl_wr), .t0y_offsh_wr(t0y_offsh_wr),
+    .t1x_offsl_wr(t1x_offsl_wr), .t1x_offsh_wr(t1x_offsh_wr), .t1y_offsl_wr(t1y_offsl_wr), .t1y_offsh_wr(t1y_offsh_wr),
+    .tsconf_wr(tsconf_wr), .palsel_wr(palsel_wr), .tmpage_wr(tmpage_wr), .t0gpage_wr(t0gpage_wr), .t1gpage_wr(t1gpage_wr),
+    .sgpage_wr(sgpage_wr), .hint_beg_wr(1'b0), .vint_begl_wr(1'b0), .vint_begh_wr(1'b0),
     .res(res), .int_start_s(int_start_s), .line_start_s(line_start_s), .frame_start_s(frame_start_s),
     .video_addr(video_addr), .video_bw(video_bw), .video_go(video_go), .dram_rdata(rd),
     .video_pre_next(video_pre_next), .video_strobe(video_strobe),
@@ -103,4 +120,14 @@ module tbtop
   assign vplex_o = video_top.vplex;
   assign hvpix_o = video_top.hvpix;
   assign tv_hires_o = video_top.tv_hires;
+  assign line_start_o = line_start_s;
+  assign ts_start_o = video_top.ts_start;
+  assign tsr_go_o = video_top.tsr_go;
+  assign tsr_sprite_o = video_top.video_ts.sprites;
+  assign tsr_x_o = video_top.tsr_x;
+  assign tsr_page_o = video_top.tsr_page;
+  assign tsr_pal_o = video_top.tsr_pal;
+  assign ts_next_o = ts_next;
+  assign tm_next_o = tm_next;
+  assign curr_cycle_o = arbiter.curr_cycle;
 endmodule

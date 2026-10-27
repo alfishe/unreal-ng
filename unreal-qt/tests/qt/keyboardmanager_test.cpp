@@ -308,12 +308,98 @@ TEST(KeyboardManager_Test, NonLatinLayoutUsesThePhysicalKey)
     EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Comma, true), Zx(ZXKEY_EXT_COMMA, true),
                                                      Pc(PcKey::Comma, false), Zx(ZXKEY_EXT_COMMA, false)}));
 
-    // Latin layout, an unmapped punctuation key (';'): the physical key only, as before
+    // Latin layout: ';' is Symbol Shift + O
     const QKeyEvent semiDown = HostKey(QEvent::KeyPress, Qt::Key_Semicolon, 0x29, 0x27, 39);
     const QKeyEvent semiUp = HostKey(QEvent::KeyRelease, Qt::Key_Semicolon, 0x29, 0x27, 39);
     KeyboardManager::postHostKey(&semiDown, KEY_PRESSED, kTarget);
     KeyboardManager::postHostKey(&semiUp, KEY_RELEASED, kTarget);
-    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Semicolon, true), Pc(PcKey::Semicolon, false)}));
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Semicolon, true), Zx(ZXKEY_EXT_SEMICOLON, true),
+                                                     Pc(PcKey::Semicolon, false), Zx(ZXKEY_EXT_SEMICOLON, false)}));
+}
+
+// The digit row goes by position: German Shift+2 is '"' to Qt, Caps Shift + 2 (CAPS LOCK) to the machine as on a US
+// keyboard; the AZERTY key of '"' and 3, unshifted, is 3. The symbols the layout has keys for are the ZX symbols
+TEST(KeyboardManager_Test, DigitRowByPositionSymbolsByCharacter)
+{
+    HostLayout layout(/*mac=*/false, /*commandToGuest=*/false);
+    KeyRecorder recorder;
+    auto tap = [](int qtKey, quint32 mac, quint32 win, quint32 evdev, Qt::KeyboardModifiers modifiers) {
+        const QKeyEvent down = HostKey(QEvent::KeyPress, qtKey, mac, win, evdev, modifiers);
+        const QKeyEvent up = HostKey(QEvent::KeyRelease, qtKey, mac, win, evdev, modifiers);
+        KeyboardManager::postHostKey(&down, KEY_PRESSED, kTarget);
+        KeyboardManager::postHostKey(&up, KEY_RELEASED, kTarget);
+    };
+
+    tap(Qt::Key_QuoteDbl, 0x13, 0x03, 3, Qt::ShiftModifier);   // German Shift+2
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Digit2, true), Zx(ZXKEY_2, true),
+                                                     Pc(PcKey::Digit2, false), Zx(ZXKEY_2, false)}));
+    tap(Qt::Key_QuoteDbl, 0x14, 0x04, 4, Qt::NoModifier);      // AZERTY 3
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Digit3, true), Zx(ZXKEY_3, true),
+                                                     Pc(PcKey::Digit3, false), Zx(ZXKEY_3, false)}));
+    tap(Qt::Key_QuoteDbl, 0x27, 0x28, 40, Qt::ShiftModifier);  // US Shift+'
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Quote, true), Zx(ZXKEY_EXT_DBLQUOTE, true),
+                                                     Pc(PcKey::Quote, false), Zx(ZXKEY_EXT_DBLQUOTE, false)}));
+    tap(Qt::Key_Question, 0x2C, 0x35, 53, Qt::ShiftModifier);  // US Shift+/
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Slash, true), Zx(ZXKEY_EXT_QUESTION, true),
+                                                     Pc(PcKey::Slash, false), Zx(ZXKEY_EXT_QUESTION, false)}));
+    tap(Qt::Key_Asterisk, 0x43, 0x37, 55, Qt::KeypadModifier);  // keypad *
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::KeypadMultiply, true), Zx(ZXKEY_EXT_MULTIPLY, true),
+                                                     Pc(PcKey::KeypadMultiply, false),
+                                                     Zx(ZXKEY_EXT_MULTIPLY, false)}));
+}
+
+// The machine's keys win over the app's shortcuts while the screen has focus (docs/features/keyboard.md "App
+// shortcuts and the machine's keys"): Ctrl + a key everywhere (Symbol Shift), Alt + a key and the F-keys where a
+// PS/2 keyboard is reached; the full screen key and Cmd / Win combinations stay with the GUI
+TEST(KeyboardManager_Test, TheMachineOwnsCtrlAndOnPcKeyboardsAltAndTheFKeys)
+{
+    // A bare keyboard, and one with a PS/2 controller as the ZX-Evo's AVR (route Auto: both)
+    struct Ps2Sink : IPs2KeySink
+    {
+        void OnPcKey(PcKey, bool) override {}
+        void ReleaseAllPcKeys() override {}
+    } sink;
+    EmulatorContext matrixContext(LoggerLevel::LogError);
+    EmulatorContext ps2Context(LoggerLevel::LogError);
+    Keyboard matrixKeyboard(&matrixContext);
+    Keyboard ps2Keyboard(&ps2Context);
+    ps2Keyboard.SetPs2Sink(&sink);
+    const Keyboard* matrix = &matrixKeyboard;
+    const Keyboard* ps2 = &ps2Keyboard;
+    ASSERT_TRUE(ps2->RoutesToPs2());
+    ASSERT_FALSE(matrix->RoutesToPs2());
+
+    auto owns = [](const Keyboard* keyboard, int key, Qt::KeyboardModifiers modifiers) {
+        const QKeyEvent event(QEvent::ShortcutOverride, key, modifiers);
+        return KeyboardManager::machineOwnsKey(&event, keyboard);
+    };
+    {
+        HostLayout layout(/*mac=*/false, /*commandToGuest=*/false);
+        for (const Keyboard* keyboard : {matrix, ps2})
+        {
+            EXPECT_TRUE(owns(keyboard, Qt::Key_O, Qt::ControlModifier)) << "Ctrl+O is ';', not Open";
+            EXPECT_TRUE(owns(keyboard, Qt::Key_F, Qt::ControlModifier)) << "Ctrl+F is TO";
+            EXPECT_TRUE(owns(keyboard, Qt::Key_Q, Qt::ControlModifier | Qt::ShiftModifier));
+            EXPECT_FALSE(owns(keyboard, Qt::Key_Return, Qt::AltModifier)) << "full screen";
+            EXPECT_FALSE(owns(keyboard, Qt::Key_Enter, Qt::AltModifier | Qt::KeypadModifier)) << "full screen";
+            EXPECT_FALSE(owns(keyboard, Qt::Key_O, Qt::ControlModifier | Qt::MetaModifier)) << "Win combinations";
+            EXPECT_FALSE(owns(keyboard, Qt::Key_A, Qt::NoModifier)) << "no shortcut to override";
+        }
+        EXPECT_TRUE(owns(ps2, Qt::Key_F, Qt::AltModifier)) << "Alt+F is the machine's, not the File menu";
+        EXPECT_TRUE(owns(ps2, Qt::Key_F12, Qt::ControlModifier | Qt::AltModifier));
+        EXPECT_TRUE(owns(ps2, Qt::Key_F4, Qt::ShiftModifier));
+        EXPECT_FALSE(owns(matrix, Qt::Key_F, Qt::AltModifier)) << "the matrix has no Alt: the menus keep it";
+        EXPECT_FALSE(owns(matrix, Qt::Key_F4, Qt::NoModifier));
+    }
+    {
+        // macOS: Qt's Ctrl is Command (the app's), Meta the physical Control (the machine's Symbol Shift)
+        HostLayout layout(/*mac=*/true, /*commandToGuest=*/false);
+        EXPECT_FALSE(owns(matrix, Qt::Key_F, Qt::ControlModifier)) << "Cmd+F is full screen";
+        EXPECT_FALSE(owns(matrix, Qt::Key_O, Qt::ControlModifier)) << "Cmd+O is Open";
+        EXPECT_TRUE(owns(matrix, Qt::Key_F, Qt::MetaModifier)) << "Control+F is TO";
+        EXPECT_TRUE(owns(ps2, Qt::Key_Return, Qt::AltModifier)) << "Option+Return is the machine's on a Mac";
+    }
+
 }
 
 // Windows / Linux layout: Ctrl is Ctrl, the Win / Super key is the GUI key (and Symbol Shift, as before)

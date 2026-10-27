@@ -1,0 +1,25 @@
+        ORG #6000
+CNT     EQU 5
+LAB     LD A,7*3+1/2
+        LD HL,LAB+2
+        LD HL,1+2*255
+        DB 1,2,3,#FF,%101,'A'
+        DB 'HELLO',#00
+        DB #AA DUP 3
+        DW #1234,LAB,$
+        DW #A0ED DUP 2
+        LD A,'1'
+        CP '5'
+        LD BC,0-8
+        LD A,100/7
+        LD A,#F0-#10
+        LD (IX+5),A
+        LD A,(IY+0)
+        SLI B
+        JR LAB
+        DJNZ $
+        EX AF,AF'
+        LD B,CNT ; COMMENT
+L_X     NOP
+        ENT
+        RET

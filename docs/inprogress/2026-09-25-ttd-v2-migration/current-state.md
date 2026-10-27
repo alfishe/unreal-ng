@@ -140,6 +140,7 @@ live model, checkpoint ordering, reserved bytes, checksums.
 | Gap | Effect |
 |---|---|
 | ~~**RAM page 255 on 4 MB machines**~~ — **fixed 2026-09-27** (16-bit `ttd::PhysPage`, sentinel `0xFFFF`) | Was: never marked dirty or journaled; changes appeared only at the next key frame; coverage lumped it with ROM |
+| ~~**Sprinter video RAM and fast RAM in reverse queries**~~ — **fixed 2026-10-08** (memory spaces: virtual pages 0x110.. / 0x120.., `find-last space=vram\|cache`) | Was: the journal and the probe saw RAM pages only; "who wrote this pixel" had no answer |
 | Keyboard matrix, joystick | Replay starts from the live host keyboard state |
 | Input journal, external-event markers — in the **file** | A loaded session replays inside a frame without the recorded keys and crosses tape/disk barriers silently |
 | Disk and tape image contents | By design: loads invalidate the session; disk writes are barriers (lost on save, see above) |
@@ -201,13 +202,13 @@ Why:
 | B6 | Page-255 gap (§7) | **fixed 2026-09-27**, with the stale-cache-on-ROM-switch defect found alongside it |
 | B7 | `sessionHeapBytes` ("Memory MB" in Qt and WebAPI) excludes page payloads, the 64 MB journal, coverage and caches | **fixed 2026-09-28**: it now sums the slot table and every compressed page payload, the write journal's committed ring chunks, the coverage index and the frame cache (still zero without a session) |
 | B8 | Python analyzer: does not know flag bit 3 (bookmarks) → reports `trailing_bytes` on files with bookmarks. (The missing CRC comparison and the false "writer stores 0" comments were fixed 2026-09-25: 300/300 payload flips now caught) | **fixed 2026-09-28**: the analyzer parses the bookmarks section (`info` lists them, `validate` is clean) |
-| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | **fixed** in `e175ff42`: a running recording refuses switching them off (and loads, ROM, invalidate, journal-mode change) with a reason on every surface. The engine replaces the refusal with a clean stop (FR-17) and makes a load a timeline event (D10): [Phase 5 TDD](phase-5-switchover-tdd.md) |
+| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | **fixed** in `e175ff42`: a running recording refuses switching them off (and loads, ROM, invalidate, journal-mode change) with a reason on every surface. The engine replaces the refusal with a clean stop (FR-17) and makes a load a timeline event (D10): [Phase 5 TDD](phase-5-switchover-tdd.md) Superseded by Phase 5, item 3 (FR-17, 2026-10-04): switching them off stops the recording cleanly instead of refusing; the history stays valid and `last_stop_reason` names the switch. |
 | B10 | The #7FFD paging lock lived in a decoder-private flag no checkpoint captured: a seek back across a lock left the machine locked (and on 128K/Pentagon/+2 mapped to the locked page); 128K/Pentagon also stored and applied locked writes, unlike the hardware | **fixed 2026-09-28**, found by the FR-3 state-completeness test: a locked port ignores the whole write (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2, MiSTer agree) and the lock is derived from the latches (`PortDecoder::IsPagingLocked`) |
 
 Stale documentation in code: re-checked 2026-09-28, the pre-codec format
 comment block, `_forceNextKeyFrame` "set by reset/load", "no heap allocation"
 in `ttdserializable.h` and "64 MB budget" in the page store header are all
-corrected; the PoC reader `tools/poc/010-ttd-gui` still says the writer stores
+corrected; the PoC reader `tools/poc/027-ttd-gui` still says the writer stores
 CRC 0. Dead code: the two journal offsets in `TTDCheckpoint` were removed
 2026-09-28 (never populated, not in the file). `MaterializedRamCache` is gone; `DebuggerEdit` is written
 (tool edits while recording) and `HardwareReset` is a documented reserved kind.
@@ -228,5 +229,5 @@ A format or architecture change touches all of these together:
   validator, fixture recorder), `ttd.ksy`, `testdata/ttd/` fixtures gated by
   `TTD_Corpus_Test`, `.recipe/analysis/ttd-*.md`, 49 test files in
   `core/tests/debugger/ttd/`, the benchmarks in `core/benchmarks/debugger/ttd/`.
-- **PoCs**: `tools/poc/010-ttd-gui` (its reader expects schema 3 — already
+- **PoCs**: `tools/poc/027-ttd-gui` (its reader expects schema 3 — already
   broken), `tools/poc/011-ttd-v2-capture-analysis`.

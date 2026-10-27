@@ -34,6 +34,7 @@ uint32_t Loaded(uint8_t value)
 
 void Z84Ctc::Reset()
 {
+    _version++;  // StateVersion
     for (ChannelState& ch : _ch)
         ch = ChannelState{};
     _nextDue = kNever;
@@ -43,6 +44,7 @@ void Z84Ctc::Reset()
 
 void Z84Ctc::SetUnitsPerSecond(uint64_t unitsPerSecond)
 {
+    _version++;  // StateVersion
     const uint64_t now = Now();
     for (uint8_t i = 0; i < 4; i++)
         Fold(i, now);
@@ -53,6 +55,7 @@ void Z84Ctc::SetUnitsPerSecond(uint64_t unitsPerSecond)
 
 void Z84Ctc::SetSystemClockPeriod(uint32_t num, uint32_t den)
 {
+    _version++;  // StateVersion
     if (!num || !den || (num == _clkNum && den == _clkDen))
         return;
     // The timers' steps so far at the old rate, then on at the new one
@@ -66,12 +69,14 @@ void Z84Ctc::SetSystemClockPeriod(uint32_t num, uint32_t den)
 
 void Z84Ctc::RestoreSystemClockPeriod(uint32_t num, uint32_t den)
 {
+    _version++;  // StateVersion
     _clkNum = num ? num : 1;
     _clkDen = den ? den : 1;
 }
 
 void Z84Ctc::SetTrigger(uint8_t channel, Trigger trigger)
 {
+    _version++;  // StateVersion
     const uint8_t i = channel & 3;
     if (trigger.kind == TriggerKind::Cascade && trigger.source >= i)
         trigger = Trigger{};  // only a lower channel: the inputs never form a loop
@@ -285,6 +290,7 @@ uint8_t Z84Ctc::Read(uint8_t channel)
 
 void Z84Ctc::Write(uint8_t channel, uint8_t value)
 {
+    _version++;  // StateVersion
     const uint8_t i = channel & 3;
     ChannelState& ch = _ch[i];
     const uint64_t now = Now();

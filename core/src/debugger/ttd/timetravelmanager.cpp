@@ -6,6 +6,8 @@
 /// CPU/chipset are field-copied via the helpers in ttdcheckpoint.cpp.
 
 #include "timetravelmanager.h"
+
+#include <optional>
 #include "ttddisplayparticipant.h"
 
 #include "timetravelengine.h"
@@ -34,7 +36,9 @@
 #include <random>
 #include <ctime>
 #include "emulator/config.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
+#include "emulator/slots/slotmanager.h"  // the slot-set guard on a session load
 #include "emulator/io/rtc/ds12887.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/media/mediamanager.h"
@@ -65,6 +69,7 @@
 #endif
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
+#include "debugger/ttd/ttdsessionport.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -95,21 +100,6 @@ TTDTimePoint TimePointOf(uint64_t globalT, uint32_t frameT)
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Public helpers
-// ---------------------------------------------------------------------------
-
-const char* TTDSessionStateToString(TTDSessionState state)
-{
-    switch (state)
-    {
-        case TTDSessionState::Idle:      return "idle";
-        case TTDSessionState::Recording: return "recording";
-        case TTDSessionState::Detached:  return "detached";
-    }
-    return "unknown";
-}
-
-// ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
@@ -129,6 +119,10 @@ TimeTravelManager::TimeTravelManager(EmulatorContext* context)
 
 TimeTravelManager::~TimeTravelManager()
 {
+    if (_context && _context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
+    if (_context && _context->ttdWriteSink == this)
+        _context->ttdWriteSink = nullptr;
     if (_context && _context->ttdPortReads == &_portReads)
         _context->ttdPortReads = nullptr;
     if (_context && _context->ttdPortWrites == &_portWrites)
@@ -159,15 +153,18 @@ bool TimeTravelManager::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+    _lastStartError.clear();
 
     if (!_unavailableReason.empty())
     {
         MLOGWARNING("TimeTravelManager::StartRecording — refused: %s", _unavailableReason.c_str());
+        _lastStartError = _unavailableReason;
         return false;
     }
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
+    _lastStopReason.clear();
 
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
@@ -179,6 +176,7 @@ bool TimeTravelManager::StartRecording()
     {
         MLOGWARNING("TimeTravelManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
+        _lastStartError = "the machine is not ready (no context, memory or dirty tracker)";
         return false;
     }
 
@@ -187,12 +185,12 @@ bool TimeTravelManager::StartRecording()
     // the CPU thread), so we must not race with emulation. Pause blocks
     // until the Z80 thread has parked.
     Emulator* emu = _context->pEmulator;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
-    if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. Paused is
+    // not idle - a direct run (run_frames on a paused machine) records too: the hold waits for it; on the machine's
+    // own thread it is free (nested)
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (emu)
+        cpuHold.emplace(*emu, "ttd");
 
     // One time base for the session: the host's wall time now, at the
     // machine's emulated time now. Every real-time clock anchors at it (their
@@ -230,8 +228,7 @@ bool TimeTravelManager::StartRecording()
         }
         _toggledDebugModeOn = false;
         _toggledTimeTravelOn = false;
-        if (wasRunning && emu)
-            emu->Resume(false);
+        cpuHold.reset();
         return false;
     };
 
@@ -247,6 +244,7 @@ bool TimeTravelManager::StartRecording()
         {
             MLOGERROR("TimeTravelManager::StartRecording - refusing to record: %s",
                       registrationError.c_str());
+            _lastStartError = registrationError;
             return refuse();
         }
     }
@@ -258,6 +256,7 @@ bool TimeTravelManager::StartRecording()
         for (auto& cp : _timeline)
             ReleaseCheckpointRefs(cp);
         _timeline.clear();
+        NoteTimelineEnd();
         _blobBytes = 0;
         _pageStore.Reset();
         _dirtyTracker->ResetSession();
@@ -297,8 +296,11 @@ bool TimeTravelManager::StartRecording()
         MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        _lastStartError = "the machine reports no RAM pages to record";
         return refuse();
     }
+
+    ++_recordingNumber;   // past the last refusal: this is a new recording session
 
     // Engaged before the baseline (past the last refusal above), so the very
     // first checkpoint already holds the 1x machine; SetState below is then a no-op
@@ -332,6 +334,7 @@ bool TimeTravelManager::StartRecording()
     CaptureNow(baseline);
     _blobBytes += BlobBytes(baseline);
     _timeline.push_back(std::move(baseline));
+    NoteTimelineEnd();
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
@@ -344,7 +347,7 @@ bool TimeTravelManager::StartRecording()
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
@@ -360,8 +363,7 @@ bool TimeTravelManager::StartRecording()
 
     // Resume the emulator if we paused it. The recording OnFrameBoundary
     // hook will now see dirty bits being set correctly.
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 
     return true;
 }
@@ -384,12 +386,12 @@ void TimeTravelManager::StopRecording()
     // beside a frame (same pause discipline as StartRecording, TDD section
     // 7.2). From the machine's own thread the wait returns at once.
     Emulator* emu = _context ? _context->pEmulator : nullptr;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
-    if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. Paused is
+    // not idle - a direct run (run_frames on a paused machine) records too: the hold waits for it; on the machine's
+    // own thread it is free (nested)
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (emu)
+        cpuHold.emplace(*emu, "ttd");
 
     // Compress whatever coverage is still accumulating (see above)
     _coverageIndex.FlushOpenBlocks();
@@ -447,8 +449,7 @@ void TimeTravelManager::StopRecording()
 
     PublishSessionInfo();
 
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 }
 
 bool TimeTravelManager::BeginDebuggerLiveHistory()
@@ -516,6 +517,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
     _timeline.clear();
+    NoteTimelineEnd();
     _blobBytes = 0;
     _pageStore.Reset();
     _dirtyScratch.clear();
@@ -536,7 +538,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
@@ -597,12 +599,18 @@ void TimeTravelManager::EngageCaptureFeatures()
 
 void TimeTravelManager::SetState(TTDSessionState next)
 {
+    if (next == TTDSessionState::Recording)
+        NoteTimelineEnd();   // read by other threads from now on (SessionEndPosition)
     _state = next;
+    SyncCoverageSink();
     if (next == TTDSessionState::Recording)
         EngageRecordingLock();
     else if (next == TTDSessionState::Idle)
         ReleaseRecordingLock();
     SyncJournalSegment();   // a recording starts or ends a journal segment (D40)
+    ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();   // into history or back to live: the haptics follow at once
 }
 
 bool TimeTravelManager::JournalLive() const
@@ -718,6 +726,17 @@ void TimeTravelManager::ReleaseRecordingLock()
     _savedHostSpeedMultiplier = 1;
 }
 
+void TimeTravelManager::StopForFeatureChange(const char* feature)
+{
+    if (!IsRecording())
+        return;
+    // StopRecording parks the machine first, so no write slips between the stop and the
+    // flag; the history and the stop position stay valid and browsable
+    StopRecording();
+    _lastStopReason = std::string("feature-off:") + (feature ? feature : "");
+    MLOGINFO("TimeTravelManager - recording stopped: %s", _lastStopReason.c_str());
+}
+
 void TimeTravelManager::UpdateFeatureCache()
 {
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
@@ -741,7 +760,9 @@ void TimeTravelManager::UpdateFeatureCache()
     }
 
     // When TimeTravel feature is disabled and we're not recording,
-    // deallocate the write journal to free memory (~64MB)
+    // deallocate the write journal to free memory (~64MB). A history that
+    // stays (FR-17's clean stop) loses only this accelerator: reverse queries
+    // replay a frame instead, and status reports the journal absent
     if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
     {
         MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD disabled, deallocating write journal");
@@ -753,6 +774,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
+    info.lastCheck = _lastEngineCheck;
     info.checkpointCount    = _timeline.size();
     info.pageStoreBytes     = _pageStore.GetCapacityBytes();
     info.pageStoreUsedBytes = _pageStore.GetUsedBytes();
@@ -787,10 +809,13 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
+        ttd::PeripheralMask peripheralMask;
         for (const auto& blob : _timeline.front().peripheralBlobs)
-            if (blob.first < 64)
-                info.machine.peripheralMask |= uint64_t(1) << blob.first;
-        info.machine.notRecordedMask = NotRecordedMask();
+            if (blob.first != static_cast<uint8_t>(PeripheralId::None))
+                peripheralMask.Set(blob.first);
+        info.machine.devices = DevicesOfV1Mask(peripheralMask);
+        for (const TTDDeviceKey& key : NotRecorded())
+            info.machine.notRecordedDevices.push_back({key, PeripheralId::None});
         ttd::DescribeRecordedMachine(info.machine);
     }
     info.recordedBy = _loadedFromFile ? _loadedRecordedBy : std::string();
@@ -824,6 +849,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.portReplayValueMismatches = _portReads.ValueMismatches();
     info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
     info.lastDropReason = _lastDropReason;
+    info.lastStopReason = _lastStopReason;
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -858,6 +884,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.writeJournalSpans.emplace_back(TimePointOf(s.from, FrameSpan()), TimePointOf(s.to, FrameSpan()));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
 
+    PublishCursor();
     PublishSessionInfo(info);
     return info;
 }
@@ -879,15 +906,14 @@ bool TimeTravelManager::SetWriteJournalCapacity(size_t bytes)
 bool TimeTravelManager::SwitchWriteJournal(bool enable)
 {
     Emulator* emu = _context ? _context->pEmulator : nullptr;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
-    if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. Paused is
+    // not idle - a direct run (run_frames on a paused machine) records too: the hold waits for it; on the machine's
+    // own thread it is free (nested)
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (emu)
+        cpuHold.emplace(*emu, "ttd");
     const bool ok = SetEnableWriteJournal(enable);
-    if (wasRunning)
-        emu->Resume(false);
+    cpuHold.reset();
     return ok;
 }
 
@@ -915,11 +941,10 @@ TimeTravelManager::SessionOperation::SessionOperation(const TimeTravelManager& m
     // running machine: park it for the operation. Already paused - by the
     // caller, an outer operation or a breakpoint - nothing to do
     Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-    if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning() && !emu->IsPaused())
+    if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning())
     {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-        _parked = true;
+        _hold = emu->GetArbiter().BeginHold(execution::Requester{execution::Origin::Ttd, {}}, "ttd session operation",
+                                               execution::Clock::now() + std::chrono::seconds(5));
     }
 }
 
@@ -932,15 +957,15 @@ TimeTravelManager::SessionOperation::~SessionOperation()
         // executing a recording (an operation that resumed a recording
         // machine itself - StartRecording - published before it did)
         Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsPaused() &&
+        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsEmulationParked() &&
                                           _manager._state.load() == TTDSessionState::Recording;
         if (!_locked || (_manager._operationDepth == 1 && !recordingMachineRuns))
             _manager.PublishSessionInfo();
     }
-    if (_parked)
+    if (_hold.Valid())
     {
         if (Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr)
-            emu->Resume(false);
+            emu->GetArbiter().EndHold(_hold);
     }
     if (_locked)
     {
@@ -1120,9 +1145,6 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
 
     switch (action)
     {
-        case TTDGuardedAction::LoadSnapshot:
-            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
-                   "the recorded history. Stop the recording first.";
         case TTDGuardedAction::LoadTape:
             return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
                    "it before starting the recording, or stop the recording first.";
@@ -1137,20 +1159,30 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
                    "be dropped. Stop the recording first.";
         case TTDGuardedAction::Invalidate:
             return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
-        case TTDGuardedAction::DisableTimeTravel:
-            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
-                   "and the recorded history would be corrupt. Stop the recording first.";
-        case TTDGuardedAction::DisableDebugMode:
-            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
-                   "recorded history, which would then be corrupt. Stop the recording first.";
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";
+        case TTDGuardedAction::SwitchModel:
+            return "Cannot switch the machine model while TTD is recording: the recorded history belongs to this "
+                   "machine. Stop the recording first.";
         case TTDGuardedAction::CdFrontPanel:
             return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                    "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
+        case TTDGuardedAction::ChangeSlots:
+            return "Cannot change the slot set while TTD is recording session " + RecordingSessionLabel() +
+                   ": the device set is fixed for a session. Stop the recording first.";
     }
     return "This action is not allowed while TTD is recording. Stop the recording first.";
+}
+
+std::string TimeTravelManager::RecordingSessionLabel() const
+{
+    if (!IsRecording())
+        return {};
+    std::string label = "#" + std::to_string(_recordingNumber);
+    if (!_timeline.empty())
+        label += ", started at frame " + std::to_string(_timeline.front().time.frame);
+    return label;
 }
 
 void TimeTravelManager::RequestInvalidation(const char* reason)
@@ -1168,6 +1200,19 @@ void TimeTravelManager::OnFrameBoundary()
 {
     if (!_context)
         return;
+
+    // The published cursor follows the machine: written as the boundary is left, whichever way this function ends.
+    // A control thread's throwaway replays cross boundaries of a restored machine: those are not published, the
+    // operation's end publishes where it left the machine
+    struct CursorAtExit
+    {
+        const TimeTravelManager& self;
+        ~CursorAtExit()
+        {
+            if (!self._inReplayMode || self.OnMachineThread())
+                self.PublishCursor();
+        }
+    } cursorAtExit{*this};
 
     // A device TTD cannot follow was used during the frame that just ended:
     // its checkpoint would not be restorable, so the session ends here
@@ -1213,6 +1258,7 @@ void TimeTravelManager::OnFrameBoundary()
         CaptureNow(cp);
         _blobBytes += BlobBytes(cp);
         _timeline.push_back(std::move(cp));
+        NoteTimelineEnd();
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
@@ -1230,8 +1276,8 @@ void TimeTravelManager::OnFrameBoundary()
     //
     // This runs on the thread driving the frame (called from
     // MainLoop::CompleteFrame, the boundary of every run path). Emulator::Pause() is
-    // safe to call here — it just sets the _isPaused flag, which the
-    // MainLoop checks at the top of its next iteration.
+    // safe to call here: it submits the pause to the execution arbiter without waiting (on the loop's thread the
+    // priority lane; on a direct run's thread it applies after the run), and the loop parks at its next check.
     // ------------------------------------------------------------------
     // A throwaway replay (ComposeDisplay, frame-cache builds) crossing the
     // session end is not execution running into unrecorded territory; it
@@ -1251,7 +1297,7 @@ void TimeTravelManager::OnFrameBoundary()
             // async main loop isn't running in test mode).
             _autoPauseRequested.store(true, std::memory_order_release);
             if (_context->pEmulator)
-                _context->pEmulator->Pause();
+                _context->pEmulator->Pause(execution::Requester{execution::Origin::Ttd, {}}, "ttd session end");
         }
         MaybePublishAtFrameBoundary();
     }
@@ -1635,6 +1681,10 @@ uint16_t TimeTravelManager::ResolveModelRamPages() const
     if (cfg.mem_model == MM_SPECTRUM48)
         return 6;  // pages {0, 2, 5} in use → highest index 5
 
+    // The Next addresses 2 MB whatever its board holds (a 4 MB Issue 3 is the same to the core): the pages above 128 are not reachable
+    if (cfg.mem_model == MM_NEXT)
+        return static_cast<uint16_t>(std::min<uint32_t>(cfg.ramsize / (PAGE_SIZE / 1024), 128));
+
     // config.ramsize is in KB; each page is PAGE_SIZE = 16 KB.
     if (cfg.ramsize == 0 || cfg.ramsize > MAX_RAM_PAGES * (PAGE_SIZE / 1024))
     {
@@ -1701,7 +1751,25 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
     // The device set is enumerated in one place (ttdmachineperipherals.cpp),
     // shared with MachineStateTransfer. On failure the registry is left empty.
-    return RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err);
+    if (!RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err))
+        return false;
+    // The keyboard joysticks (a type past the v1 ids) with nothing plugged hold nothing v1 must keep: leave them out,
+    // so a machine without one records as before. One plugged: v1 refuses below, the engine records it
+    if (_context && _context->pControllerManager && !_context->pControllerManager->HasOverlayDevices())
+        _peripherals.UnregisterType(ttd::TTDDeviceType::Controllers);
+    // v1 keeps one blob per v1 id: a device added after the freeze (no v1 id) or two devices under one id cannot be
+    // recorded here (D23): the engine records them
+    std::string why;
+    if (!_peripherals.V1Recordable(why))
+    {
+        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", why.c_str());
+        if (err)
+            *err = why;
+        _peripherals.Clear();
+        _ownedPeripherals.clear();
+        return false;
+    }
+    return true;
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
@@ -1781,6 +1849,9 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // RestoreChipsetState is a pure field copy into emulatorState. It does
     // NOT re-run the port decoder — that's the next sub-step.
     RestoreChipsetState(chipsetState, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
 
     // The CPU's in-frame position (the frame-end overshoot) - before the
     // peripherals load, so devices rebuild their timelines around the
@@ -1972,16 +2043,13 @@ void TimeTravelManager::EnterReplayMode()
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
     // The user's debug mode may have that path switched off (a recording
-    // switches it back off on stop), so engage it for the replay only; the
-    // feature settings stay untouched.
-    if (Core* core = _context->pCore)
-    {
-        _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
-        core->GetZ80()->isDebugMode = true;
-        core->SelectMemoryInterface();  // the debug path, contended where the machine is
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    // switches it back off on stop): the feature manager, the one writer of
+    // debug mode, holds it on while the machine replays (the coordinator's
+    // mode broadcast, M4); the feature settings stay untouched
+    ttd::NoteSessionChange(_context);
+    // The game's rumble stops now, not at the host's next gate poll (haptics.md §8)
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (host audio output held)");
 }
@@ -2009,13 +2077,9 @@ void TimeTravelManager::ExitReplayMode()
         _replayEngine->BusVectors().Stop();
     SyncMediaReadJournal();
 
-    if (Core* core = _context->pCore)
-    {
-        core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
-        core->SelectMemoryInterface();
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    ttd::NoteSessionChange(_context);   // debug mode back to the feature's
+    if (_context->pControllerManager)
+        _context->pControllerManager->UpdateHapticHold();
 
     MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (host audio output released)");
 }
@@ -2533,11 +2597,18 @@ TTDPortSearchResult TimeTravelManager::SearchPortEvents(const TTDPortQuery& q) c
     // A recording that is running appends to the journals from the emulation
     // thread; paused (or replaying) they only grow on that thread's next step
     Emulator* emu = _context ? _context->pEmulator : nullptr;
-    if (_state == TTDSessionState::Recording && emu && emu->IsRunning() && !emu->IsPaused())
+    // Recording, the journals grow on whichever thread runs the machine (its loop or a direct run): read them with
+    // the CPU held
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (_state == TTDSessionState::Recording && emu)
     {
-        TTDPortSearchResult result;
-        result.error = "the recording is running and still writing the journals: pause or stop it first";
-        return result;
+        cpuHold.emplace(*emu, "ttd port search");
+        if (!cpuHold->Held())
+        {
+            TTDPortSearchResult result;
+            result.error = "the recording is busy writing the journals (a long run): try again when it ends";
+            return result;
+        }
     }
     return ttd::SearchPortEvents(_portReads, _portWrites, q);
 }
@@ -2576,14 +2647,14 @@ void TimeTravelManager::BeginToolEdit()
     _toolEditOpen = _state == TTDSessionState::Recording;
     if (!_toolEditOpen)
         return;
-    for (const auto& [id, device] : _peripherals.Devices())
-        if (device && device->TTDStateSize() != 0)
-            device->TTDSaveStateTo(_toolEditBefore[id]);
+    for (const TTDRegistryEntry& e : _peripherals.Entries())
+        if (e.device && e.legacyId != PeripheralId::None && e.device->TTDStateSize() != 0)
+            e.device->TTDSaveStateTo(_toolEditBefore[static_cast<uint8_t>(e.legacyId)]);
 }
 
 void TimeTravelManager::EndToolEdit(const char* source)
 {
-    if (!_toolEditOpen || _state != TTDSessionState::Recording)
+    if (!_toolEditOpen || _state != TTDSessionState::Recording || !source)
     {
         _toolEditOpen = false;
         return;
@@ -2600,8 +2671,7 @@ void TimeTravelManager::EndToolEdit(const char* source)
             if (_dirtyTracker->IsDirty(page))
                 PutEditRecord(payload, kEditRamPage, 0, page, _memory->RAMPageAddress(page), 0x4000);
     std::vector<TTDDeviceRegion> regions;
-    for (ITTDRegionSource* src : _peripherals.RegionSources())
-        src->TTDRegions(regions);
+    _peripherals.CollectRegions(regions);
     for (const TTDDeviceRegion& r : regions)
     {
         if (!r.desc.memory)
@@ -2616,10 +2686,12 @@ void TimeTravelManager::EndToolEdit(const char* source)
         }
     }
     std::vector<uint8_t> after;
-    for (const auto& [id, device] : _peripherals.Devices())
+    for (const TTDRegistryEntry& e : _peripherals.Entries())
     {
-        if (!device || device->TTDStateSize() == 0)
+        TTDSerializable* device = e.device;
+        if (!device || e.legacyId == PeripheralId::None || device->TTDStateSize() == 0)
             continue;
+        const auto id = static_cast<uint8_t>(e.legacyId);
         device->TTDSaveStateTo(after);
         const auto it = _toolEditBefore.find(id);
         if (it == _toolEditBefore.end() || it->second != after)
@@ -2659,10 +2731,9 @@ void TimeTravelManager::ApplyToolEdit(const std::vector<uint8_t>& payload)
         }
         else if (kind == kEditDeviceState)
         {
-            const auto it = _peripherals.Devices().find(static_cast<uint8_t>(id));
-            if (it != _peripherals.Devices().end() && it->second &&
-                (it->second->TTDStateSize() == length || it->second->TTDVariableSize()))
-                it->second->TTDLoadState(bytes);
+            TTDSerializable* device = id <= 0xFF ? _peripherals.FindLegacy(static_cast<uint8_t>(id)) : nullptr;
+            if (device && (device->TTDStateSize() == length || device->TTDVariableSize()))
+                device->TTDLoadState(bytes);
         }
     }
     if (_memory)
@@ -2767,12 +2838,51 @@ void TimeTravelManager::RunToTInFrame(uint32_t targetTInFrame)
     }
 }
 
+void TimeTravelManager::NoteTimelineEnd()
+{
+    const TTDTimePoint end = _timeline.empty() ? TTDTimePoint{} : _timeline.back().time;
+    std::lock_guard<std::mutex> lock(_liveEndMutex);
+    _liveEnd = end;
+}
+
 TTDTimePoint TimeTravelManager::SessionEndPosition() const
 {
+    // A running recording ends at its last checkpoint, noted by the machine's thread: no park for another thread
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+    {
+        std::lock_guard<std::mutex> lock(_liveEndMutex);
+        return _liveEnd;
+    }
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_timeline.empty())
         return TTDTimePoint{};
     return _timeline.back().time;
+}
+
+void TimeTravelManager::PublishCursor() const
+{
+    TTDCursor cursor;
+    const TTDTimePoint position = CurrentPosition();
+    cursor.frame = position.frame;
+    cursor.tinframe = position.tInFrame;
+    cursor.state = _state.load();
+    cursor.history = !_timeline.empty();
+    if (cursor.history)
+    {
+        cursor.first = _timeline.front().time.frame;
+        cursor.end = _timeline.back().time.frame;
+        cursor.endTinframe = _timeline.back().time.tInFrame;
+    }
+    if (_cursor.Publish(cursor))
+        NoteHistoryChange(_context, cursor.history);
+}
+
+TTDCursor TimeTravelManager::PublishedCursor() const
+{
+    TTDCursor cursor = _cursor.Read();
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    cursor.paused = emulator != nullptr && emulator->IsPaused();
+    return cursor;
 }
 
 bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
@@ -2864,12 +2974,18 @@ bool TimeTravelManager::AddBookmark(const TTDTimePoint& time, const std::string&
 
 std::vector<TTDBookmark> TimeTravelManager::GetBookmarks() const
 {
+    // The bookmark store locks itself: a running recording is not parked for a read of it (the machine's thread only
+    // drops the bookmarks an eviction leaves behind, under that lock)
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+        return _bookmarks.Snapshot();
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Snapshot();
 }
 
 bool TimeTravelManager::FindBookmark(const std::string& label, TTDBookmark& out) const
 {
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+        return _bookmarks.Find(label, out);   // the store locks itself (GetBookmarks)
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Find(label, out);
 }
@@ -3628,12 +3744,12 @@ bool TimeTravelManager::ResumeRecordingLive()
     // kDebugMode swaps the memory interface, so pause if running
     // (defensive; the debugger browse/leave flow calls this while paused).
     Emulator* emu = _context->pEmulator;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
-    if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. Paused is
+    // not idle - a direct run (run_frames on a paused machine) records too: the hold waits for it; on the machine's
+    // own thread it is free (nested)
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (emu)
+        cpuHold.emplace(*emu, "ttd");
 
     EngageCaptureFeatures();
 
@@ -3666,8 +3782,7 @@ bool TimeTravelManager::ResumeRecordingLive()
     // Published while the machine is still parked (it records once resumed)
     PublishSessionInfo();
 
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 
     return true;
 }
@@ -3728,6 +3843,7 @@ void TimeTravelManager::EvictOldest(size_t count)
         _blobBytes -= BlobBytes(_timeline[i]);
     }
     _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
+    NoteTimelineEnd();
     _evictedCheckpoints += count;
 
     // The journals start where the history now starts
@@ -3898,8 +4014,7 @@ std::vector<TTDRegionDesc> TimeTravelManager::LiveRegions() const
     ram.memory = _memory ? _memory->RAMPageAddress(0) : nullptr;
     regions.push_back(ram);
     std::vector<TTDDeviceRegion> device;
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
-        source->TTDRegions(device);
+    _peripherals.CollectRegions(device);
     for (const TTDDeviceRegion& r : device)
         regions.push_back(r.desc);
     return regions;
@@ -3911,9 +4026,10 @@ void TimeTravelManager::CheckEngineCheckpoint(size_t index, bool forReplay)
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
     if (!forReplay)
         return;
-    // A medium that changed since this checkpoint: set back to its recorded
-    // version, or, without versions, reported (the CPU still reads the
-    // recorded sectors; the controller's state where the replay stops may differ)
+    // A medium that changed since this checkpoint is reported (the CPU still
+    // reads the recorded sectors; the controller's state where the replay
+    // stops may differ). v1 checks after its replay, whose writes the medium
+    // already holds: it never sets a medium back (TTD v2 does, at the restore)
     IMediaHistory* media = _context->pMediaManager;
     if (!media)
         return;
@@ -3929,8 +4045,6 @@ void TimeTravelManager::CheckEngineCheckpoint(size_t index, bool forReplay)
                                      [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
         const TTDMediaVersion now = it == live.end() ? TTDMediaVersion{} : TTDMediaVersion{it->contentId, it->version};
         if (now == recorded)
-            continue;
-        if (now.contentId == recorded.contentId && media->SetHead(slots[s].slot, recorded.version))
             continue;
         TTDRestoreIssue issue;
         issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;
@@ -3974,8 +4088,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         // Device memory as further regions (NeoGS RAM and flash, ...)
         ArmShadowRegions(false);
         _shadowDeviceRegions.clear();
-        for (ITTDRegionSource* source : _peripherals.RegionSources())
-            source->TTDRegions(_shadowDeviceRegions);
+        _peripherals.CollectRegions(_shadowDeviceRegions);
         std::vector<TTDRegionDesc> regions = {ram};
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
@@ -4050,24 +4163,24 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // its state without that memory
     std::deque<std::vector<uint8_t>> stripped;   // stable addresses while it grows
     in.deviceStateBytes = _peripherals.LastCaptureStateBytes();
-    std::array<const std::vector<uint8_t>*, 256> without{};
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
+    const std::vector<TTDRegistryEntry>& entries = _peripherals.Entries();
+    for (size_t i = 0; i < entries.size(); ++i)
     {
-        uint8_t id = 0;
-        stripped.emplace_back();
-        if (!source->TTDStateWithoutRegions(id, stripped.back()) || !out.peripheralBlobs.count(id))
-        {
-            stripped.pop_back();
+        const TTDRegistryEntry& e = entries[i];
+        if (e.legacyId == PeripheralId::None || !out.peripheralBlobs.count(static_cast<uint8_t>(e.legacyId)))
             continue;
+        const int32_t device = engine.DeviceIndex(e.key);
+        if (device < 0)
+            continue;
+        const std::vector<uint8_t>* raw = &_peripherals.LastCaptureState(i);
+        stripped.emplace_back();
+        if (e.regions && e.regions->TTDStateWithoutRegions(stripped.back()))
+        {
+            // The engine serializes the state without the region memory
+            in.deviceStateBytes = in.deviceStateBytes - raw->size() + stripped.back().size();
+            raw = &stripped.back();
         }
-        without[id] = &stripped.back();
-        // The engine serializes the state without the region memory
-        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.back().size();
-    }
-    for (const auto& [id, blob] : out.peripheralBlobs)
-    {
-        const std::vector<uint8_t>& raw = without[id] ? *without[id] : _peripherals.LastCaptureState(id);
-        in.deviceStates.push_back({id, raw.data(), raw.size()});
+        in.deviceStates.push_back({static_cast<uint32_t>(device), raw->data(), raw->size()});
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);
@@ -4231,6 +4344,7 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
     }
 
     _timeline.erase(upperIt, _timeline.end());
+    NoteTimelineEnd();
 
     MLOGINFO("TimeTravelManager::TruncateTimelineAfter — dropped %zu checkpoints "
              "after (frame=%llu, tInFrame=%u); timeline now has %zu entries",
@@ -4294,6 +4408,46 @@ bool ReadPod(std::istream& in, Pod& value, std::string& err)
     {
         err = "stream read failed";
         return false;
+    }
+    return true;
+}
+
+/// @brief A header mask (schema 3): u8 word count (1..4), then the u64 words.
+bool WriteMask(std::ostream& out, const ttd::PeripheralMask& mask, std::string& err)
+{
+    const uint8_t words = static_cast<uint8_t>(mask.WordCount());
+    if (!WritePod(out, words, err)) return false;
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        const uint64_t value = mask.Word(w);
+        if (!WritePod(out, value, err)) return false;
+    }
+    return true;
+}
+
+/// @brief A header mask: one u64 before schema 3, a word list from it.
+bool ReadMask(std::istream& in, uint16_t schemaVersion, ttd::PeripheralMask& mask, std::string& err)
+{
+    mask = ttd::PeripheralMask{};
+    if (schemaVersion < ttd::dump::kSchemaVersionWideMask)
+    {
+        uint64_t low = 0;
+        if (!ReadPod(in, low, err)) return false;
+        mask = ttd::PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!ReadPod(in, words, err)) return false;
+    if (words == 0 || words > ttd::PeripheralMask::kWords)
+    {
+        err = "implausible peripheral mask word count " + std::to_string(words);
+        return false;
+    }
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        uint64_t value = 0;
+        if (!ReadPod(in, value, err)) return false;
+        mask.SetWord(w, value);
     }
     return true;
 }
@@ -4752,12 +4906,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // The recorded device set, in the header: readers provision a matching
     // machine before the load (ttdfileinfo.h). The baseline checkpoint's blob
     // ids speak for the whole session, as the loader's slot checks assume.
-    uint64_t peripheralMask = 0;
+    ttd::PeripheralMask peripheralMask;
     if (!_timeline.empty())
     {
         for (const auto& blob : _timeline.front().peripheralBlobs)
-            if (blob.first < 64)
-                peripheralMask |= uint64_t(1) << blob.first;
+            if (blob.first != static_cast<uint8_t>(ttd::PeripheralId::None))
+                peripheralMask.Set(blob.first);
     }
     flags |= ttd::dump::kFlagsHasPeripheralMask;
     // Network inputs only when the session has them: sessions without a
@@ -4766,8 +4920,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         flags |= ttd::dump::kFlagsHasNetInputs;
     // Devices fitted but deliberately not recorded (the lightweight GS): named
     // in the header, only when there are any
-    const uint64_t notRecordedMask = NotRecordedMask();
-    if (notRecordedMask != 0)
+    const ttd::PeripheralMask notRecordedMask = TTDPeripheralRegistry::V1MaskOf(NotRecorded());
+    if (notRecordedMask.Any())
         flags |= ttd::dump::kFlagsHasNotRecordedMask;
     if (!WritePod(out, flags, err)) return false;
 
@@ -4808,8 +4962,9 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     static_assert(ttd::dump::kSubPageSize == TTDCodecPageStore::kPageSize,
                   "sub-page size mismatch between format and codec page store");
     // Formerly 8 reserved bytes: the peripheral mask (kFlagsHasPeripheralMask)
-    if (!WritePod(out, peripheralMask, err)) return false;
-    if (notRecordedMask != 0 && !WritePod(out, notRecordedMask, err)) return false;
+    // From schema 3 the masks are word lists: u8 word count, the u64 words (ttddumpformat.h)
+    if (!WriteMask(out, peripheralMask, err)) return false;
+    if (notRecordedMask.Any() && !WriteMask(out, notRecordedMask, err)) return false;
 
     // --- Write page store (only live slots, in remapped order) ---
     //
@@ -5048,31 +5203,6 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     return true;
 }
 
-bool TimeTravelManager::TurboSoundSessionKindMatches(
-    const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
-    const TTDSerializable& liveSlotDevice)
-{
-    const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
-    const uint8_t fmId = static_cast<uint8_t>(PeripheralId::TSFM);
-    const uint8_t liveId = static_cast<uint8_t>(liveSlotDevice.TTDPeripheralId());
-
-    const bool sessionHasLegacy = sessionBlobs.find(legacyId) != sessionBlobs.end();
-    const bool sessionHasFm = sessionBlobs.find(fmId) != sessionBlobs.end();
-
-    // No slot blob in the session: the recording machine had no slot device -
-    // nothing to mismatch against (RestoreAll's missingBlobs path covers it).
-    if (!sessionHasLegacy && !sessionHasFm)
-        return true;
-
-    // Defensive: one device occupies the slot, so a session carrying both ids
-    // cannot come from a healthy writer - refuse rather than guess which
-    // blob to trust.
-    if (sessionHasLegacy && sessionHasFm)
-        return false;
-
-    return sessionHasLegacy ? liveId == legacyId : liveId == fmId;
-}
-
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
@@ -5121,11 +5251,11 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
 
     uint16_t schemaVersion = 0;
     if (!ReadPod(in, schemaVersion, err)) return false;
-    if (schemaVersion != ttd::dump::kSchemaVersion)
+    if (!ttd::dump::IsReadableSchema(schemaVersion))
     {
         err = "unsupported schema v" + std::to_string(schemaVersion) +
-              " (this reader requires v" + std::to_string(ttd::dump::kSchemaVersion) +
-              "; re-capture the session)";
+              " (this reader requires v" + std::to_string(ttd::dump::kSchemaVersionFirst) + " or v" +
+              std::to_string(ttd::dump::kSchemaVersion) + "; re-capture the session)";
         return false;
     }
 
@@ -5235,11 +5365,11 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     // The peripheral mask (kFlagsHasPeripheralMask; zero in older files). The
     // loader does not need it: it checks the devices against the baseline
     // checkpoint's blobs below, and GetSessionInfo reads them from there too.
-    uint64_t peripheralMask = 0;
-    if (!ReadPod(in, peripheralMask, err)) return false;
-    (void)peripheralMask;
-    uint64_t notRecordedMask = 0;
-    if ((flags & ttd::dump::kFlagsHasNotRecordedMask) && !ReadPod(in, notRecordedMask, err)) return false;
+    ttd::PeripheralMask peripheralMask;
+    if (!ReadMask(in, schemaVersion, peripheralMask, err)) return false;
+    ttd::PeripheralMask notRecordedMask;
+    if ((flags & ttd::dump::kFlagsHasNotRecordedMask) && !ReadMask(in, schemaVersion, notRecordedMask, err))
+        return false;
 
     // --- Staging ---
     // The file replaces the current session only once it has been read in
@@ -5428,108 +5558,23 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     for (uint32_t i = 0; i < pageStoreCount; ++i)
         stagedStore.Release(i);
 
-    // TurboSound-slot session-kind guard (TSFM design §8.2), following the
-    // model-id check's philosophy: a session recorded with the other slot
-    // device (legacy TurboSound = blob id 0, TSFM = blob id 4) is refused,
-    // not loaded. RestoreAll would restore neither device - the live one
-    // would keep whatever state it held before the load, a silent divergence
-    // with no trail back to this decision. The baseline checkpoint's blob
-    // map speaks for the whole session: one device occupies the slot for the
-    // instance's lifetime (design §3.1 - no runtime switching).
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
+    // Slot-set guard (ZX-bus slots SL-5; before: the TurboSound-slot and General Sound personality guards and the
+    // Sprinter's ISA population): a session recorded with other cards in the slots is refused with every
+    // difference listed, not loaded half-way - RestoreAll would restore neither card, leaving the live one's state
+    // behind silently. The baseline checkpoint names the cards of the whole session: the device set is fixed for a
+    // session (D38)
+    if (!journalsOnly && !stagedTimeline.empty() && _context)
     {
-        if (ITurboSoundDevice* slotDevice = _context->pSoundManager->getTurboSound())
-        {
-            if (!TurboSoundSessionKindMatches(stagedTimeline.front().peripheralBlobs, *slotDevice))
-            {
-                const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
-                const uint8_t sessionId =
-                    stagedTimeline.front().peripheralBlobs.find(legacyId) != stagedTimeline.front().peripheralBlobs.end()
-                        ? legacyId
-                        : static_cast<uint8_t>(PeripheralId::TSFM);
-                const uint8_t liveId = static_cast<uint8_t>(slotDevice->TTDPeripheralId());
-                err = "TurboSound slot mismatch: session was recorded with device id " +
-                      std::to_string(sessionId) +
-                      (sessionId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
-                      ", this instance runs device id " + std::to_string(liveId) +
-                      (liveId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
-                      " - set [SOUND] TurboSound to the recorded kind and restart";
-                return false;
-            }
-        }
-        else
-        {
-            // Empty slot (TurboSound = None) but the session carries a slot
-            // blob: the recording machine answered the AY ports, this one
-            // leaves them on the floating bus - a replay would diverge on the
-            // first AY read. Refused for the same reason as a kind mismatch.
-            const auto& blobs = stagedTimeline.front().peripheralBlobs;
-            const bool sessionHasSlot =
-                blobs.find(static_cast<uint8_t>(PeripheralId::TurboSound)) != blobs.end() ||
-                blobs.find(static_cast<uint8_t>(PeripheralId::TSFM)) != blobs.end();
-            if (sessionHasSlot)
-            {
-                err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
-                      "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
-                return false;
-            }
-        }
-    }
-
-    // General Sound slot guard (neogs-tdd.md §7.4): a session recorded with one
-    // GS-slot personality (classic GS, lightweight player, NeoGS) is refused
-    // on an instance fitted with another - RestoreAll would restore neither,
-    // leaving the live card's state behind silently. The baseline checkpoint
-    // names the personality at the start of the recording; switches inside
-    // the session are replayed by UpdatePeripheral. An instance with no GS
-    // card keeps the missing-blob report (RestoreAll) rather than a refusal.
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
-    {
-        if (GeneralSoundCard* liveGs = _context->pSoundManager->getGeneralSound())
-        {
-            static const struct
-            {
-                PeripheralId id;
-                const char* name;
-            } kGsSlot[] = {{PeripheralId::GeneralSound, "GS"},
-                           {PeripheralId::GeneralSoundLightweight, "GS lightweight"},
-                           {PeripheralId::NeoGS, "NeoGS"}};
-            const auto& blobs = stagedTimeline.front().peripheralBlobs;
-            const char* recorded = nullptr;
-            PeripheralId recordedId = PeripheralId::Count;
-            for (const auto& slot : kGsSlot)
-            {
-                // A card fitted but not recorded (the lightweight GS) is named by the header, not by a blob
-                const bool notRecorded = (notRecordedMask >> static_cast<uint8_t>(slot.id)) & 1u;
-                if (notRecorded || blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
-                {
-                    recorded = slot.name;
-                    recordedId = slot.id;
-                    break;
-                }
-            }
-            if (recorded && recordedId != liveGs->TTDPeripheralId())
-            {
-                const char* fitted = "another card";
-                for (const auto& slot : kGsSlot)
-                {
-                    if (slot.id == liveGs->TTDPeripheralId())
-                        fitted = slot.name;
-                }
-                err = std::string("General Sound slot mismatch: recorded with ") + recorded + ", fitted: " + fitted +
-                      " - set [SOUND] GSType to the recorded card and restart";
-                return false;
-            }
-        }
-    }
-
-    // Machine slot guard (Sprinter ISA tdd §9): the model compares its fixed expansion-slot population with
-    // the baseline's blobs (the Sprinter's ISA slots, blob 33) - a recording made with another card in a slot
-    // is refused, not loaded half-way
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pPortDecoder)
-    {
+        const TTDDeviceStates states = _peripherals.StatesOfV1Blobs(stagedTimeline.front().peripheralBlobs);
+        const SlotManager::TtdDeviceSet recorded =
+            SlotManager::TtdDeviceSet::Of(states, TTDPeripheralRegistry::KeysOfV1Mask(notRecordedMask));
         std::string why;
-        if (!_context->pPortDecoder->TtdSessionMatches(stagedTimeline.front().peripheralBlobs, why))
+        bool matches = true;
+        if (_context->pSlotManager)
+            matches = _context->pSlotManager->TtdSessionMatches(recorded, states, _peripherals, why);
+        else
+            matches = SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, states, _peripherals, why);
+        if (!matches)
         {
             err = why;
             return false;
@@ -5806,7 +5851,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _capturedAtUnixMs = capturedAtMs;
     _sessionModelId   = modelId;
     _loadedRomSignature = romSignature;
-    _loadedNotRecordedMask = notRecordedMask;
+    _loadedNotRecorded = TTDPeripheralRegistry::KeysOfV1Mask(notRecordedMask);
     _loadedRecordedBy = emulatorId;
 
     // --- Finalize state ---
@@ -5905,6 +5950,17 @@ void TimeTravelManager::SetEnableCoverageIndex(bool enable)
     // sets it otherwise.
     if (_context && _state == TTDSessionState::Recording)
         _context->ttdCoverageActive = enable;
+    SyncCoverageSink();
+}
+
+void TimeTravelManager::SyncCoverageSink()
+{
+    if (!_context)
+        return;
+    if (_state == TTDSessionState::Recording && _enableCoverageIndex)
+        _context->ttdCoverage = &_coverageIndex;
+    else if (_context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
 }
 
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
@@ -5945,7 +6001,7 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
     // and RAM pages are 0..255, so the record's byte holds it exactly.
-    rec.physPage = static_cast<uint8_t>(physPage);
+    SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -6086,7 +6142,7 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
             rec.isIo = 0;
             rec.m1pc = h.pc;
             rec.value = h.value;
-            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            SetRecordPage(rec, h.physPage);   // as the live journal stores it
             f.records.push_back(rec);
         }
         r.records += f.records.size();
@@ -6319,7 +6375,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
-        if (q.hasPhysPageFilter && rec.physPage != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
         return true;
     };
 
@@ -6343,7 +6399,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
                     answer.time = TimePointOf(rec->globalT, frameT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
-                    answer.physPage = PhysPage{rec->physPage};
+                    answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
                     reportWindow(answer.time, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
@@ -7385,6 +7441,9 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->SetNmiPending(snap.cpu.nmi_pending != 0);
     }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
     if (z80)
     {
         z80->t = snap.z80TInFrame;

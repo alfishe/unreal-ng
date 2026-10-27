@@ -113,7 +113,7 @@ state rtc               CMOS clock: time, registers A-D, alarms, every cell (ali
 state profi             ZX Profi board chips: the port map in force, 8255, 8253 counters, 8251 and the #B3 latch
 network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity), expansion slot cards (the Sprinter's NE2000 / 3C509B / SprinterESP rows; a 3C509B: ID port, window, FIFOs, EEPROM, link) (alias: net)
 key route [auto|matrix|ps2|both]  Where host and injected keys go: the ZX matrix, the PS/2 keyboard controller (ZX-Evo, ATM Turbo 2+), both
-network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. remote_access=on|off (the host listeners of guest servers: on = 0.0.0.0, other computers on the LAN can connect; off = 127.0.0.1 only; alone it keeps every connection, `network` shows virtual_network.listen_address) connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's own serial port: the ZX-Evo AVR's; modem = a Hayes modem that dials host:port) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222) isa1_peer=at|modem[,port]|loopback|tcp:..|serial:.. isa2_peer=.. (Sprinter: a UART card's line - SprinterESP default at, ISA modem default modem, SprinterSerial COM1 default none; `network` prints its slot row with the UART, the ESP's session or the modem's call) isa1_peer_b= isa2_peer_b= (SprinterSerial COM2 #2F8) modem_phonebook=5551234=host:port,.. (the numbers a Hayes modem peer dials with ATDT, any machine: com_port=modem puts one on the machine's own serial port) avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) zifi=none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:..|serial:.. (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to; the state's zifi block shows the API registers and both rings); devices the machine cannot take are listed under not_fitted in `network`
+network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. remote_access=on|off (the host listeners of guest servers: on = 0.0.0.0, other computers on the LAN can connect; off = 127.0.0.1 only; alone it keeps every connection, `network` shows virtual_network.listen_address) connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's own serial port: the ZX-Evo AVR's; modem = a Hayes modem that dials host:port) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222) isa1_peer=at|modem[,port]|loopback|tcp:..|serial:.. isa2_peer=.. (Sprinter: a UART card's line - SprinterESP default at, ISA modem default modem, SprinterSerial COM1 default none; `network` prints its slot row with the UART, the ESP's session or the modem's call) isa1_peer_b= isa2_peer_b= (SprinterSerial COM2 #2F8) modem_phonebook=5551234=host:port,.. (the numbers a Hayes modem peer dials with ATDT, any machine: com_port=modem puts one on the machine's own serial port) avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) zifi=none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:..|serial:.. (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to; the state's zifi block shows the API registers and both rings); devices the machine cannot take are listed under not_fitted in `network`. A card= value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11, like `slots plug` / `remove`): flags --replace (allow removals / an unrealistic fit), --dry-run (the plan only), --media save|discard, --json; the other keys go to the restarted machine. Without a card change the settings apply in place (accepted)
 rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
 rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
@@ -121,9 +121,29 @@ state screen            Screen state: video mode, active screen + RAM pages, con
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
 state screen flash      FLASH phase and timing
+state next [regs|mmu|journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | journal on|off|clear]  ZX Spectrum Next: machine, the NextREG table, the 8K slots, the NextREG write journal (who wrote which register, when, through which door; off by default)
+state next sd [kinds=command,read,write] [card=0|1] [since=N] [from=F] [to=F] [limit=N] | sd on|off|clear  ZX Spectrum Next SD cards (type, protocol state, blocks), the SPI engine and the SD journal (every command with argument and R1, every block read / written; off by default)
+bus [list]                       Bus analyzer: every bus (zc.spi, next.spi, divmmc.spi, neogs.*, ATA ide0 / ide1), its devices, trace and checks state
+bus <id|all> on [checks|nochecks] [protocol] [capacity=N] | off | clear   trace / checks on (off by default; observes only); protocol: no single bytes, data words or status reads (a whole boot fits)
+bus <id> events [kinds=spi,sd,ata,...] [slot=N] [since=N] [from=F] [to=F] [limit=N]   the trace, one line per event (seq, frame, T, PC, source, slot, kind, data)
+bus <id> findings [rules=...] [since=N] [limit=N]   the checks' findings with severity, PC and what each means on the hardware
+bus <id> sd-timing [ideal|realistic|slow] [seed=N] [slot=N]   an SD card's timing profile (changes the machine)
+bus <id> export <vcd|jsonl> <file> [kinds=] [since=] ...   VCD (SPI wires for GTKWave / PulseView) or JSON lines
+state next divmmc [kinds=map_in,esx_call] [since=N] [from=F] [to=F] [limit=N] | divmmc on|off|clear  ZX Spectrum Next DivMMC: #E3, the automap latch and entries (NR #B8-#BB decoded), and the DivMMC journal (what paged it in and out; the esxDOS calls with their registers; off by default)
+state next nmi [kinds=int_ack,nmi_request] [since=N] [from=F] [to=F] [limit=N] | nmi on|off|clear  ZX Spectrum Next NMI sources (would fire / blocked by), NMI in service, Multiface, reset bits, interrupts pending / in service, and the interrupt / NMI / reset journal (the interrupt accepted with its source and vector, RETI, an NMI request accepted or refused with the reason, RETN, the reset; off by default). `nmi` is the bare /NMI pulse, `mni` the magic button (the DRIVE button on a Next); the M1 button is `next nextreg 02 08`
+state next audio | input  ZX Spectrum Next sound as configured (chip model, ABC / ACB, turbosound, per chip pan / registers / periods / volumes, the DAC) and joystick modes (NR #05 / #0B, which port each answers, the Kempston port #1F decoded, what is not modelled)
+state next uart                 ZX Spectrum Next UARTs (ESP, Pi): prescaler / baud, frame, RTS, the Rx / Tx FIFOs, the status byte, byte counters, NR #C6 interrupt enables and what is on each line (ComPort= / ComPort2=)
+state next dma | video | palette [palette=selected|0-7|name|all] [range=0-255] | ports [port=6B] [access=r|w] | nextreg [reg=07] [changed=true] | copper [from=0] [count=64] [raw=true] | sprites [from=0] [count=128] [all=true]  ZX Spectrum Next debugger reports; none has a side effect on the machine (`next dma` etc. are aliases)
+state next pixel <x> <y> [sx]  ZX Spectrum Next pixel inspector (last captured frame; x 0-319, y 0-255, sx the sub-pixel 0|1): which layer won the pixel, its colour, per layer why it painted or not and where its byte came from
+next layer-capture [on|off|status]  ZX Spectrum Next: switch / show the per-layer record of the screen (on by default; `state next layer-capture` is the same)
+next nextreg <reg> <value> [nextreg|port|internal]  ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it; `nextreg` = the NEXTREG instruction, `port` = OUT #243B / #253B)
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
+mixer <source>                                    One row and its channels (mute, solo, volume, peak where metered)
+mixer channels                                    Every row with its channels
+mixer <source>.<channel> [muted=] [solo=] [volume=] [gain_db=]  One channel: ay1.a, covox.lb, gs.3, fm1.2, moonsound_fm.7, ms_midi.10, next_dac.c (solo within its row)
+setting ay_stereo|ay_chip|fm_trim_db|neogs_stereo|covox_dc_removal|fir_filter [value]  Sound settings (also ay_voicing, ay_room, ay_punch, beeper_punch, audio_rate)
 ```
 
 The screen reports ([command-interface.md §6.6](./command-interface.md#66-screen-configuration)) are rendered from the same core reports.
@@ -221,6 +241,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
 | `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |
+| `GET /emulator/{id}/operations?since=&limit=` | `ops [n\|all]`, `ops since <seq> [n\|all]` | Same source (`OperationsStatus`, the machine state coordinator's log); the CLI answers one line per operation, the newest 20 by default ([command-interface.md, Operation log](./command-interface.md)) |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 
@@ -238,15 +259,16 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
 | `ttd limit [frames N] [bytes N[K\|M\|G]]` | `ttd history-limit` | Bound the history: the oldest frames are released while recording beyond either limit (`off` clears; no arguments shows it). See command-interface.md. | ✅ Implemented |
-| `ttd seek --frame N` | `ttd goto` | Seek to a (frame, tstate) point; optionally `--tstate T` for intra-frame. | ✅ Implemented |
+| `ttd seek <frame> [tinframe]`, `ttd seek --bookmark <label>` | `ttd goto` | Seek to a (frame, T-state) point or a bookmark. Refused while recording; the machine stays paused at the target. | ✅ Implemented |
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
-| `ttd resume` | — | Truncate future at the current (detached) position and resume live recording. | ✅ Implemented |
-| `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
+| `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
+| `ttd position` | `ttd pos` | Current time point (frame/tstate), session bounds, the history's first frame, state, paused, frame rate. Never parks the machine (the TTD's published cursor). | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
 | `ttd info <path>` | `ttd file-info` | Describe a `.ttd` file without loading it (no emulator needed): frames, sections, recorded machine - model, ROM signature, General Sound card, TurboSound slot device, devices. `ttd info` without a path is `ttd status`. | ✅ Implemented |
+| `ttd export-clip <from> <to> <dir> [--chunk N]` | `ttd clip` | Write frames from..to as a lossless clip into dir (final picture, plane B with `zxdlss`, frame meta); not while recording. See command-interface.md → Exporting a clip. | ✅ Implemented |
 | `ttd find-last --addr A` | `ttd fl` | Reverse watchpoint: find the last access at an address (full filter set in the command reference). | ✅ Implemented |
 | `ttd port-events <event> [arg]` | `ttd pe` | "When did the program ..." - saw a key (`key space`), the tape signal change (`ear`), wrote an AY register (`ay-write 7`), changed the border... From the port journals, no replay ([command reference](./command-interface.md), "Port events"). | ✅ Implemented |
 | `ttd step-instruction` | `si-back` / `si-forward` | Step one Z80 instruction back or forward within recorded history. | ✅ Implemented |
@@ -264,7 +286,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 > pause
 > ttd find-last --addr 0x5B00 --access write
 frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
-> ttd seek --frame 4823 --tstate 14982
+> ttd seek 4823 14982
 [ok target]
 > ttd step-back
 > disasm
@@ -385,6 +407,149 @@ Error: state=300 out of range 0..255
 Joystick tap: fire for 3 frames -> state=0x18 buttons=up,fire (IN #1F=0x18)
 ```
 
+### Game Controller Commands
+
+The `controllers` verb (source: `core/automation/cli/src/commands/cli-processor-controllers.cpp`): the machine's
+joystick connectors and the host's game controllers, their profiles, bindings and haptics. Full table and the other
+surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `controllers [list]`, `get <connector>`, `plug <connector\|auto> <device> [opt=val ..]`, `unplug`, `options`, `targets <device>`, `auto [apply]` | The machine's connectors and the retro devices in them |
+| `controllers devices`, `context`, `profiles`, `profile <id>`, `save <file>`, `delete <id>`, `apply <id\|none>` | The host devices (each with its battery, whether its light can be set, and a `notice:` line of what is missing) and the profiles |
+| `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
+| `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
+| `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
+| `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
+| `controllers haptics_probe <kind> <address> [page=N port_mask=M play=hit]` | A haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`) as a source of the loaded game's user profile, with a rule |
+| `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
+| `controllers role <device> <player\|debugger-remote\|disabled>`, `pin <device> <follow-focus\|all\|pinned:<id>>`, `identify <device>` | What a host device is for, which instance it drives; rumble and blink it to tell two pads apart |
+| `controllers player <device> [connector\|auto\|none]` | The connector a pad's `auto:` targets drive: read, choose, back to automatic, none |
+| `controllers probe [device]`, `reports <device>` | The backends and the devices they found, a device's endpoints; its newest raw input reports in hex |
+| `controllers database [<vid:pid>\|<SDL GUID>\|<device>\|<family>] [bus=usb\|bt] [name=..] [version=..]` | The device database: what a device of those ids matches (family, layout, images, map, match step and score), and the ids of devices.user.json |
+| `controllers database_save <file>`, `database_delete <id>` | Add or replace an entry of devices.user.json (one family as JSON), remove one |
+| `controllers database_import <file> [save=false]` | A `gamecontrollerdb.txt` line or a RetroArch autoconfig `.cfg` as the user family `user-<vid><pid>` with its control map |
+| `controllers learn <device> [start\|status\|skip\|back\|finish\|cancel] [controls=..]`, `learn <device> sample <control> [value]` | The learn wizard of an unknown device: press the prompted control on it after each step; `finish` saves the map |
+| `controllers aliases`, `unalias <old id>` | The device aliases (old id -> new: a `gc:` pad matched to its HID device keeps its profiles) and forgetting one |
+| `controllers match [path] [signatures=a,b] [file_set=..]` | The game profiles a program's signatures choose and how (`signature ...`, `file sha256 ...`, `file set: every entry kept, 1 of 5 files changed, 0 added`); without options the loaded program. `context` shows the loaded program's signatures, matches and `haptics_reason` |
+| `signature <file> [--details] [--external]`, `signature media`, `signature compare <known> <candidate>` | Media signatures ([command-interface.md §18](./command-interface.md#18-media-signatures)): the exact SHA-256, the tape content / TR-DOS file set / snapshot memory signature, the file set; of the loaded media; how two files relate (`exact`, `content`, `fuzzy`, `memory`, `none`) |
+
+`--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
+
+```
+> controllers rumble bt:045e:0b22:c6928f45 swell
+OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
+> controllers rumble usb:045e:0b00:0516:3032 identify
+Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
+> controllers output bt:045e:091b:3c1e2f4a steps=36 clicks=off
+OK: 36 steps per turn, free wheel on Surface Dial (until its context or layers change)
+> controllers devices
+Host devices:
+  usb:054c:0ce6:0100:a0b1c2d3e4f5  DualSense Wireless Controller (dualsense)
+    role player (default); layers play
+    battery charging, 40 %; light settable
+> controllers light usb:054c:0ce6:0100:a0b1c2d3e4f5 #ff8000
+OK: light #ff8000 on DualSense Wireless Controller
+```
+
+### Host Action Commands
+
+The `action` verb (source: `core/automation/cli/src/commands/cli-processor-action.cpp`): the host actions of the core
+`ActionRegistry` - the ids a pad, the Surface Dial or a Stream Deck runs. Full table and the other surfaces:
+[command-interface.md §16](./command-interface.md#16-host-actions).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `action [list] [--json]` | Every action, `*` when it can run now on the selected instance, else why not |
+| `action run <id> [value] [param=val ..] [--json]` | Run one and wait for it: press (default) / `release`, signed steps, a 0..1 level or text |
+| `action context [--json]` | The selected instance's surface context (`play`, `ttd`, ...), who set it, its default; set it with `action run ctx.set <name>` |
+
+The registry applies this connection's gate: a changing action without a session opens the implicit one (it ends
+with the connection, as for any other changing command); a companion connection (`companion auth`) is checked
+against its scopes.
+
+```
+> action run run.pause_toggle
+OK: run.pause_toggle - Emulator paused
+> action run run.step_in --json
+{"ok":true,"action":"run.step_in","instance":"…","message":"Executed 1 instruction","result":{"status":"success",…}}
+> action run ttd.jog_frames -10
+Error: Conflict - no time travel history
+> action run ttd.seek_by -3 rate=18 unit=seconds
+OK: ttd.seek_by
+{"reached":true,"arrived_at":{"frame":1834,"tinframe":0},"halt_reason":"target",…,"from":1981,"frame":1834,"frames":-147,"fps":48.828125,"marks":[{"kind":"ten_seconds","frame":1954}]}
+> action run ctx.set ttd.timecode
+OK: ctx.set
+{"context":"ttd.timecode","previous":"ttd","set":true,"by":"cli:cli","default":"ttd"}
+> action context
+Context: ttd.timecode (set by cli:cli)
+```
+
+`ttd.seek_by` takes its rate and curve as parameters here (`rate=`, `unit=frames|seconds`, `min=`, `max=`,
+`rate_lo=`, `rate_hi=`); `run.step_by` steps in forward and back through the history (`action run run.step_by -4`).
+
+The `surface` verb (source: `core/automation/cli/src/commands/cli-processor-surface.cpp`): the control surfaces'
+targets, readouts and activity ([command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)).
+Positional words fill the verb's arguments in order, `name=value` words name them, `--json` prints the reply.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `surface [views]` | The views in focus order and the followed instance (what a WebAPI call without an id acts on) |
+| `surface target [session]` | The followed instance's target, or a session's |
+| `surface sessions` | Every surface session and its target |
+| `surface pin <session> <target>` | `follow`, `view:<id>`, `instance:<id|index>` |
+| `surface readouts [names] [instance=]` | The readout values (`run.state,media.*`; default all) |
+| `surface activity [since] [limit=] [instance=]` | The activity feed |
+| `surface view_add <name> [active=]`, `view_update <view> [active=] [activate=true]`, `view_remove <view>` | Views of the automation plane |
+| `surface session_open <name> [target=]`, `session <id>`, `session_close <id>` | Sessions of the automation plane |
+
+```
+> surface views
+Followed: #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+  v1 Main window [unreal-qt] active 0f3a…
+> surface session_open "my script"
+OK: s1 my script -> #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+> surface pin s1 instance:1
+OK: s1 my script -> #1 48K 48K (7c21…), instance:7c21… [none]
+```
+
+The Stream Deck daemon as unreal-qt supervises it
+([command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)):
+
+| CLI Command | Description |
+| :--- | :--- |
+| `streamdeck [status]` | The daemon and its supervisor: state, pid, version, decks, viewers, pairing |
+| `streamdeck start`, `stop`, `restart` | Start it (or adopt the one running), stop it, both |
+| `streamdeck settings [mode=] [activity=] [api_port=] [viewers_port=] [binary=]` | Read, or change and read |
+| `streamdeck pairing`, `pair`, `pair_cancel` | The pairing's state; ask for one (approve it at the GUI); cancel it |
+| `streamdeck revoke [id]` | Revoke the daemon's companion |
+| `streamdeck brightness [deck] [value]` | A deck's brightness (`streamdeck brightness 40`: the first deck) |
+| `streamdeck packs` | The daemon's icon packs |
+| `streamdeck pack [deck] [name\|scenario]` | A deck's icon pack (`streamdeck pack os4`: the first deck; `scenario`: its scenario's again) |
+| `streamdeck udev` | The Linux udev rule |
+
+Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), read-only:
+
+| CLI Command | Description |
+| :--- | :--- |
+| `monitor [all] [instance=]` | Host, clients, every instance's pace and breakpoints |
+| `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
+| `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` | The summaries (JSON) |
+| `monitor <name> --json` | The reply every plane returns |
+
+```
+> streamdeck
+Stream Deck daemon: running (mode deck, activity flash)
+  pid 51234, ours, automation 127.0.0.1:37053, viewers 37050
+  decks on USB 1, restarts 0
+  version 1.0, decks 1, viewers 0, surface connected
+  pairing paired, paired yes, companion c-5f2a91e0b7c4
+  deck A1B2C3 Stream Deck + XL brightness 70 pack magicwb (setting scenario)
+> streamdeck pack os4
+Deck A1B2C3: icon pack os4 (setting os4, its scenario's -)
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation
@@ -395,8 +560,16 @@ reference: [command-interface.md](./command-interface.md).
 | :--- | :--- |
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `pace [show\|presets\|set <preset> [ms]\|interval <ms>\|next\|prev\|start\|stop\|toggle\|step] [--json]` | The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)): `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; a frame, lines or an instruction per interval (1..5000 ms), stopping at a breakpoint. `pace` alone shows it. |
+| `ttd reverse-step --scanlines L`, `ttd journal build-cancel` | Back L scanlines of the machine; stop a write-journal build that runs. |
 | (run control) | `step`, `steps`, `stepover`, `stepout`, `skip_until` and every `run_*` answer "Error: Run-control held by <surface>" while another surface (a GDB client) holds the run-control claim. |
-| `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
+| `session take [name]` / `session release` / `session` | Take run control for this connection (it takes over another client's implicit session, never an explicit one, and says whose) / end it ("holds no session here" with the holder otherwise) / who holds it, implicit or explicit, the lease left. A change refused by the gate answers `Error: held_by_other - <who holds it and how to resolve it>`. |
+| `companion auth <token>` / `companion logout` | Act as a companion client on this connection: a device acting as the user's hands; its changes open no session. It may do anything within its scopes (run, input, media, machine, rewind, debug, takeback): a scope not granted answers `companion_forbidden`, a change while a session holds the machine `held_by_session`, a step or direct run while the machine runs `not_now` ([companion clients](../../../inprogress/2026-10-16-companion-client/surfaces.md#3-cli)). |
+| `companion` / `companion list` / `companion revoke <id\|name\|all\|me>` | This connection, the machine's control state and what the companion may do now ("Available now", "Not now" with the reasons); the companions and pending pairings; revoke. Pairing is approved at the GUI only. |
+| `companion take-back` / `companion allow-again` | A companion with the `takeback` scope ends the session holding the machine (as the GUI's Take back control) / lifts the re-take cooldowns. |
+| `bpon` / `bpoff` / `bpclear` / `bptoggle <target>` | Breakpoints by selection: an id, `all`, a kind (`mem`, `port`, `read`, `write`, `exec`, `in`, `out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`), `group <name>` or `group:<name>`; `bptoggle` turns the target all on when one of it is off, else all off. `bpgroup on\|off\|toggle <name>` the same for a group. |
+| `bkey <key\|any> [press\|release\|both]` | Keyboard breakpoint: the first keyboard read that sees the key change (`--hits`, `--group`, a note). `bpnote <id> [text]` sets a note; `--group G` on any `bp*` command puts a new breakpoint in a group. |
+| `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0\|<region>`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
 | `out <port> <value>` | A debugger's port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border): no breakpoints, no device waits, a TTD tool edit; paused, stopped or running. Numbers: `0x13AF`, `#13AF`, `13AFh` or decimal. |
 | `pchist [depth]` / `pchist on\|off` | PC history: the newest instructions the CPU started, each with its window's page (`C000  ram32`), newest first; the first read starts recording; `debug-snapshot --pchist N` adds it to a snapshot. |
 | `debug-wait [since] [--timeout ms]` | Wait until something a debugger shows changes (a stop, a run start, a tool edit) or the timeout (default 10000 ms, at most 60000) passes: `Changed: seq 43, paused at breakpoint #3 (8000)` or `No change: seq 42, running`. |
@@ -411,14 +584,19 @@ reference: [command-interface.md](./command-interface.md).
 | `video text [layer]` | Exact text grid of an ATM / ZX-Evo / TS-Conf text mode, or the Sprinter's text squares. |
 | `video address vram <offset>` | Every pixel a byte of the machine's own video RAM feeds (the Sprinter). |
 | `video changes [1\|2]` | Video change log: latch changes (mode, #7FFD, border, the Sprinter's RGMOD / HOLD / PORT_Y / ALL_MODE / frame height) with T, line and PC; palette / mode table writes per frame. |
-| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
+| `capture screen --layer=ula\|layer2\|tilemap\|sprites\|ids [--format=png\|rgba] [--alpha=false] [file]` | ZX Spectrum Next: ONE LAYER of the last completed frame (alpha 0 where the layer does not paint; `ids` = the winner of every pixel, the legend is printed); 640 x 512 like the screenshot; prints the frame and size and a data URI, or saves to `file`. Needs the layer record (`next layer-capture on`, the default). |
+| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped), or `--source=window`, the picture as the unreal-qt window draws it (GUI only). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
 | `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
+| `video window [status \| <key>=<value> ...]` | GUI window display settings: show them, or change any of `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` (on / off), `crt_profile` (one of `crt_profiles`: none, basic, ..., shader:<name>: a libretro preset or a custom shader, with the GPU), `blending_frames` (2..5), `blending_weights` (equal / exponential), `blending_decay` (0.1..0.9), `scale` (1..4), `hud_theme`, `hud_notice.<id>` (on / off), `osd_keyboard_picture`, `osd_keyboard_style` (photo / schematic / hybrid), `next_layers_mode` (layers / composed / winner), `next_layer.<ula\|layer2\|tilemap\|sprites>` the way the View menu does, e.g. `video window crt_profile=basic blending=on hud_theme=retro_zx`. Headless: `Error (no-window)` (see [command-interface.md](./command-interface.md#gui-window-display-settings)). |
+| `video window crt_params [<name>=<v> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them with their ranges, set, move by a dial's steps, reset; e.g. `video window crt_params CRTgamma=2.4 curvature+=2` ([command-interface.md](./command-interface.md#gui-window-display-settings)). |
+| `video viewport [status \| full \| symmetric \| standard \| screen_only \| next \| prev]` | The Pentagon overscan frame's crop (overscan itself: `feature overscan on`); a crop other than `full` needs overscan on ([command-interface.md](./command-interface.md#overscan-viewport)). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
-| `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
+| `coverage <start\|stop\|clear\|gaps\|status\|export>` | Executed-address coverage analysis; `export [<path>] [--start A] [--end B] [--merge]` writes the SkoolKit code execution map. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
 | `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
-| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--profile native\|1080p\|1440p\|4k` (a fixed frame, the picture scaled sharply into it with black bars; h264/h265 only), `--acceleration auto\|hardware\|software` (GPU or software encoder), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
+| `recent [kind] [--json]` / `recent clear [kind]` | The files opened lately, newest first, with each one's index (`kind`: all, snapshot, tape, disk, rzx, image, cd); open one with `action run media.open_recent index=N [kind=K]` ([media.md → Recent files](../../../features/media.md#recent-files)). |
+| `videorecord <start\|stop\|pause\|resume\|toggle\|status\|presets>` | Screen recording (requires `ENABLE_RECORDING` build). `presets` lists the core's presets; `start` accepts `--preset NAME` (gameplay, music, audio, gif, hq, multitrack), `--mode single\|multi\|audio`, `--container EXT`, `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--profile native\|1080p\|1440p\|4k` (a fixed frame, the picture scaled sharply into it with black bars; h264/h265 only), `--acceleration auto\|hardware\|software` (GPU or software encoder), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |

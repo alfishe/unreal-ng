@@ -1,6 +1,7 @@
 #include "gdbserver.h"
 #include "gdbpacket.h"
 #include "gdbtarget_z80.h"
+#include "gdbmonitormemory.h"
 
 #include <common/uuid.h>
 #include <emulator/emulator.h>
@@ -12,11 +13,15 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <emulator/coordinator/machineop.h>
+#include <debugger/ttd/ttdcontrol.h>
+#include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <3rdparty/message-center/messagecenter.h>
 
 #include <cctype>
+#include <map>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -29,9 +34,36 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+
+namespace
+{
+/// Where the GDB client is ("192.168.1.5:51234"): the GUI shows it while the session holds run control
+std::string PeerAddressOf(int socket)
+{
+    sockaddr_storage address{};
+    socklen_t length = sizeof(address);
+    if (getpeername(socket, reinterpret_cast<sockaddr*>(&address), &length) != 0)
+        return {};
+    char host[INET6_ADDRSTRLEN] = {};
+    if (address.ss_family == AF_INET)
+    {
+        const auto* v4 = reinterpret_cast<const sockaddr_in*>(&address);
+        inet_ntop(AF_INET, &v4->sin_addr, host, sizeof(host));
+        return std::string(host) + ":" + std::to_string(ntohs(v4->sin_port));
+    }
+    if (address.ss_family == AF_INET6)
+    {
+        const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        inet_ntop(AF_INET6, &v6->sin6_addr, host, sizeof(host));
+        return "[" + std::string(host) + "]:" + std::to_string(ntohs(v6->sin6_port));
+    }
+    return "local socket";
+}
+}  // namespace
 
 GDBServer::GDBServer() = default;
 
@@ -129,7 +161,15 @@ void GDBServer::stop()
     _stopping = true;
     _running = false;
 
-    // Close server socket to unblock accept()
+    // The accept loop polls with a timeout and re-checks the flags, so it ends within one poll quantum; the socket
+    // is closed after the join. Closing it under a thread blocked in accept() does not wake it on Linux, and
+    // deadlocks on Darwin (the DeZog and ZRCP servers, dzrpserver.cpp)
+    if (_acceptThread && _acceptThread->joinable())
+    {
+        _acceptThread->join();
+    }
+    _acceptThread.reset();
+
     if (_serverSocket >= 0)
     {
 #ifdef _WIN32
@@ -139,13 +179,6 @@ void GDBServer::stop()
 #endif
         _serverSocket = -1;
     }
-
-    // Wait for accept thread
-    if (_acceptThread && _acceptThread->joinable())
-    {
-        _acceptThread->join();
-    }
-    _acceptThread.reset();
 
     // Close all sessions - shutdown first to unblock recv()
     {
@@ -184,6 +217,20 @@ void GDBServer::acceptLoop()
         struct sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
 
+        // Wait at most 100 ms for a client, then re-check the flags: stop() joins this thread before it closes the
+        // socket
+#ifdef _WIN32
+        WSAPOLLFD pfd{static_cast<SOCKET>(_serverSocket), POLLIN, 0};
+        const int ready = WSAPoll(&pfd, 1, 100);
+#else
+        struct pollfd pfd{_serverSocket, POLLIN, 0};
+        const int ready = poll(&pfd, 1, 100);
+#endif
+        if (ready < 0)
+            break;   // listen socket error
+        if (ready == 0)
+            continue;
+
         int clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
 
         if (clientSocket < 0)
@@ -204,6 +251,7 @@ void GDBServer::acceptLoop()
 
 void GDBServer::handleClient(int clientSocket)
 {
+    coordinator::SetThreadSource(coordinator::OpSource::Gdb);   // the operation log names this session's operations
     auto session = std::make_unique<GDBSession>(clientSocket);
     session->setAutoAttach(_autoAttach);
 
@@ -314,6 +362,23 @@ void GDBSession::stop()
     _context = nullptr;
 }
 
+bool GDBSession::RefuseAfterTakeBack(const std::string& packet)
+{
+    if (!_context || !_context->IsRunControlRevoked(_sessionUuid))
+        return false;
+    // Reads, queries, breakpoints and detach stay; whatever runs, steps or writes the machine is refused
+    const char c = packet[0];
+    const bool controls = c == 'c' || c == 'C' || c == 's' || c == 'S' || c == 'b' || c == 'G' || c == 'P' ||
+                          c == 'M' || c == 'X' || packet.starts_with("vCont;");
+    if (!controls)
+        return false;
+    sendPacket(
+        "O" + GDBPacket::hexEncode("revoked_by_user: the user took control back (at the GUI or from a companion); this "
+                                   "session no longer controls the machine. Do not retry - detach, and ask "
+                                   "the user before attaching again.\n"));
+    return true;
+}
+
 bool GDBSession::sendPacket(const std::string& data)
 {
     std::string packet = GDBPacket::encode(data);
@@ -390,6 +455,9 @@ std::string GDBSession::handlePacket(const std::string& packet)
     {
         return handleInterrupt();
     }
+
+    if (RefuseAfterTakeBack(packet))
+        return "E5E";
 
     char cmd = packet[0];
     std::string args = packet.substr(1);
@@ -553,7 +621,7 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "multiprocess-;";
 
     // Advertise reverse debugging support when TTD is available
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         caps += "ReverseStep+;";
         caps += "ReverseContinue+;";
@@ -669,12 +737,14 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor instances - list emulator instances\n";
         response += "  monitor frame     - show frame/tstate info\n";
         response += "  monitor bankinfo  - show memory bank info\n";
+        response += "  monitor regions   - list the device memories (video RAM, sound card RAM, ...)\n";
+        response += "  monitor mem <space:offset> [len] - dump any memory (cpu, ram5, rom2, cache0, a region)\n";
         response += "  monitor load <path> - load snap/tape/disk (paused only)\n";
         response += "  monitor ttd status  - show TTD session info\n";
         response += "  monitor ttd start   - start TTD recording\n";
         response += "  monitor ttd stop    - stop TTD recording\n";
         response += "  monitor ttd seek <frame> - seek to frame\n";
-        response += "  monitor ttd findlast <w|r|x> <addr> - find last access\n";
+        response += "  monitor ttd findlast <w|r|x> <addr|vram:offset|cache:offset> - find last access\n";
         response += "  monitor bport <in|out> <port> - set port breakpoint\n";
         response += "  monitor bport clear <id> - remove port breakpoint\n";
     }
@@ -777,6 +847,15 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
             response = "No emulator attached\n";
         }
     }
+    else if (cmd == "regions")
+    {
+        response = _context ? GdbMonitorMemory::Regions(_context) : "No emulator attached\n";
+    }
+    else if (cmd.starts_with("mem ") || cmd == "mem")
+    {
+        response = _context ? GdbMonitorMemory::Dump(_context, cmd.size() > 4 ? cmd.substr(4) : std::string())
+                            : "No emulator attached\n";
+    }
     else if (cmd == "bankinfo")
     {
         if (_context && _context->pMemory)
@@ -816,20 +895,19 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
                 bool ok = false;
-                std::string refusal;  // B9: a TTD recording refuses loads; report why
-                if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx")
+                std::string refusal;  // B9: a TTD recording refuses a medium load; report why
+                if (ext == "sna" || ext == "snx" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx")
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
-                    ok = refusal.empty() && _emulator->LoadSnapshot(path);
+                    ok = _emulator->LoadSnapshot(path);   // ends a TTD recording session, never refused by it
                 }
                 else if (Emulator::IsTapeExtension(ext))
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path);
                     ok = refusal.empty() && _emulator->LoadTape(path);
                 }
                 else if (ext == "trd" || ext == "scl" || ext == "fdi")
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 0, path);
                     ok = refusal.empty() && _emulator->LoadDisk(path);
                 }
                 else
@@ -859,13 +937,14 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     else if (cmd.starts_with("ttd "))
     {
         std::string subcmd = cmd.substr(4);
-        if (!_context || !_context->pTimeTravelManager)
+        if (!_context || !_context->pTimeTravelHooks)
         {
             response = "TTD not available\n";
         }
         else
         {
-            auto* ttd = _context->pTimeTravelManager;
+            const ttd::TTDSessionView view(_context);
+            const ttd::TTDSessionView* ttd = &view;
 
             if (subcmd == "status")
             {
@@ -889,21 +968,21 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else
                 {
-                    if (ttd->StartRecording())
+                    const ttd::TTDReply started = ttd::TTDControl(_context).Execute({"start", {}});
+                    if (started.Ok() && (started.body.find("started")->b || started.body.find("already_active")->b))
                     {
                         response = "TTD recording started\n";
                     }
                     else
                     {
-                        const std::string& reason = ttd->GetUnavailableReason();
-                        response = "Error: TTD recording failed to start" + (reason.empty() ? "" : ": " + reason) +
-                                   "\n";
+                        response = "Error: TTD recording failed to start" +
+                                   (started.message.empty() ? "" : ": " + started.message) + "\n";
                     }
                 }
             }
             else if (subcmd == "stop")
             {
-                ttd->StopRecording();
+                (void)ttd::TTDControl(_context).Execute({"stop", {}});
                 response = "TTD recording stopped\n";
             }
             else if (subcmd.starts_with("seek "))
@@ -911,22 +990,18 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 std::string frameStr = subcmd.substr(5);
                 try
                 {
-                    uint64_t frame = std::stoull(frameStr);
-                    if (!_emulator->IsPaused())
-                    {
-                        _emulator->Pause();
-                    }
-                    ttd::TTDTimePoint target{frame, 0};
-                    ttd::TimeTravelManager::TTDSeekResult result;
-                    if (ttd->SeekTo(target, &result))
+                    const uint64_t frame = std::stoull(frameStr);
+                    const ttd::TTDReply sought =
+                        ttd::TTDControl(_context).Execute({"seek", {{"frame", std::to_string(frame)}}});
+                    if (sought.Ok() && sought.body.find("reached")->b)
                     {
                         std::ostringstream ss;
-                        ss << "Seeked to frame " << result.arrivedAt.frame << "\n";
+                        ss << "Seeked to frame " << sought.body.find("arrived_at")->find("frame")->i << "\n";
                         response = ss.str();
                     }
                     else
                     {
-                        response = "Error: seek failed\n";
+                        response = "Error: seek failed" + (sought.message.empty() ? "" : ": " + sought.message) + "\n";
                     }
                 }
                 catch (...)
@@ -945,52 +1020,48 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else
                 {
-                    char accessType = args[0];
-                    std::string addrStr = args.substr(spacePos + 1);
-
-                    ttd::TTDAccessType access;
-                    if (accessType == 'w' || accessType == 'W')
-                        access = ttd::TTDAccessType::Write;
-                    else if (accessType == 'r' || accessType == 'R')
-                        access = ttd::TTDAccessType::Read;
-                    else if (accessType == 'x' || accessType == 'X')
-                        access = ttd::TTDAccessType::Execute;
-                    else
+                    const char accessType = static_cast<char>(std::tolower(static_cast<unsigned char>(args[0])));
+                    const char* access = accessType == 'w' ? "write" : accessType == 'r' ? "read"
+                                                             : accessType == 'x' ? "execute" : nullptr;
+                    if (!access)
                     {
                         response = "Error: access type must be w, r, or x\n";
                         goto done_ttd;
                     }
 
-                    auto addrOpt = GDBPacket::parseHex(addrStr);
-                    if (!addrOpt)
+                    // The address is hex without a prefix here (GDB's convention); "vram:4805" / "cache:123" name a byte
+                    // of the Sprinter's video / fast RAM
+                    std::string space;
+                    uint32_t address = 0;
+                    if (!GdbMonitorMemory::ParseLocation(args.substr(spacePos + 1), space, address))
                     {
                         response = "Error: invalid address\n";
                         goto done_ttd;
                     }
-
-                    uint16_t addr = static_cast<uint16_t>(*addrOpt);
-
-                    ttd::TTDSearchQuery query;
-                    query.addrFrom = addr;
-                    query.addrTo = addr;
-                    query.access = access;
-
-                    ttd::TTDExternalEvent marker;
-                    auto result = ttd->FindLastAccess(query, &marker);
-
-                    if (result)
+                    std::map<std::string, std::string> options{{"addr", std::to_string(address)}, {"access", access}};
+                    if (space != "cpu")
+                        options["space"] = space;
+                    const ttd::TTDReply found = ttd::TTDControl(_context).Execute({"find-last", options});
+                    const StateNode& b = found.body;
+                    if (!found.Ok())
+                    {
+                        response = "Error: " + found.message + "\n";
+                    }
+                    else if (b.find("found")->b)
                     {
                         std::ostringstream ss;
-                        ss << "Found at frame " << result->time.frame
-                           << ", t=" << result->time.tInFrame;
-                        if (access == ttd::TTDAccessType::Write)
-                            ss << ", value=0x" << std::hex << static_cast<int>(result->value);
-                        ss << ", pc=0x" << std::hex << result->pc << "\n";
+                        ss << "Found at frame " << b.find("frame")->i << ", t=" << b.find("tinframe")->i;
+                        if (accessType == 'w')
+                            ss << ", value=0x" << std::hex << b.find("value")->i;
+                        ss << ", pc=0x" << std::hex << b.find("pc")->i;
+                        if (const StateNode* offset = b.find("offset"))
+                            ss << ", " << b.find("space")->s << " offset 0x" << offset->i;
+                        ss << "\n";
                         response = ss.str();
                     }
-                    else if (marker.reason[0] != '\0')
+                    else if (const StateNode* reason = b.find("marker_reason"))
                     {
-                        response = "Blocked by barrier: " + std::string(marker.reason) + "\n";
+                        response = "Blocked by barrier: " + reason->s + "\n";
                     }
                     else
                     {
@@ -1104,9 +1175,9 @@ std::string GDBSession::handleWriteRegisters(const std::string& data)
     }
 
     // Refuse writes in TTD detached state (read-only historical view)
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";  // Read-only in detached state
@@ -1162,9 +1233,9 @@ std::string GDBSession::handleWriteRegister(const std::string& params)
     }
 
     // Refuse writes in TTD detached state
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
@@ -1263,53 +1334,23 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
     }
 
     // Refuse writes in TTD detached state
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        auto state = _context->pTimeTravelManager->ReadSessionInfo().state;
+        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
         if (state == ttd::TTDSessionState::Detached)
         {
             return "E0D";
         }
     }
 
-    std::string data = params.substr(colonPos + 1);
-    Memory* memory = _context->pMemory;
-
     // Decode hex data
-    auto bytes = GDBPacket::hexToBytes(data);
+    auto bytes = GDBPacket::hexToBytes(params.substr(colonPos + 1));
     if (bytes.size() != *len)
     {
         return "E01";
     }
 
-    // Check for physical memory access (0x01PPAAAA format)
-    if ((*addr & 0xFF000000) == 0x01000000)
-    {
-        uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
-        uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
-
-        uint8_t* pageAddr = memory->RAMPageAddress(page);
-        if (!pageAddr)
-        {
-            return "E01";  // Invalid page
-        }
-
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
-            pageAddr[pageOffset] = bytes[i];
-        }
-    }
-    else
-    {
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-            memory->DirectWriteToZ80Memory(address, bytes[i]);
-        }
-    }
-
-    return "OK";
+    return GDBTargetZ80::writeMemory(_context, *addr, bytes) ? "OK" : "E01";
 }
 
 std::string GDBSession::handleSetBreakpoint(const std::string& params)
@@ -1501,10 +1542,11 @@ std::string GDBSession::handleContinue()
 
     _waitingForStop = true;
     _externalStopPending = false;
-    _emulator->Resume();
+    _emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
 
-    // Wait for stop (breakpoint, external pause, or interrupt)
-    while (_active && !_emulator->IsPaused() && !_externalStopPending)
+    // Wait for stop (breakpoint, external pause, interrupt, or the user taking control back at the GUI)
+    while (_active && !_emulator->IsPaused() && !_externalStopPending &&
+           !(_context && _context->IsRunControlRevoked(_sessionUuid)))
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -1534,7 +1576,7 @@ std::string GDBSession::handleStep()
 
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Execute single instruction
@@ -1548,7 +1590,7 @@ std::string GDBSession::handleInterrupt()
 {
     if (_emulator && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     _lastStopReason = StopReason::Interrupt;
@@ -1557,12 +1599,12 @@ std::string GDBSession::handleInterrupt()
 
 std::string GDBSession::handleBackwardStep()
 {
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelHooks)
     {
         return "E01";  // TTD not available
     }
 
-    auto* ttd = _context->pTimeTravelManager;
+    auto* ttd = _context->pTimeTravelHooks;
     auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)
@@ -1570,18 +1612,13 @@ std::string GDBSession::handleBackwardStep()
         return "E01";  // No TTD session active
     }
 
-    if (!_emulator->IsPaused())
-    {
-        _emulator->Pause();
-    }
-
-    // Stop recording to allow reverse execution (transitions to Detached)
+    // GDB reverse execution while recording: stop the recording first (it keeps the history)
+    ttd::TTDControl control(_context);
     if (state == ttd::TTDSessionState::Recording)
-    {
-        ttd->StopRecording();
-    }
+        (void)control.Execute({"stop", {}});
 
-    if (!ttd->StepBackInstruction())
+    const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
+    if (!stepped.Ok() || !stepped.body.find("stepped")->b)
     {
         // At beginning of history
         _lastStopReason = StopReason::Step;
@@ -1594,12 +1631,12 @@ std::string GDBSession::handleBackwardStep()
 
 std::string GDBSession::handleBackwardContinue()
 {
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelHooks)
     {
         return "E01";  // TTD not available
     }
 
-    auto* ttd = _context->pTimeTravelManager;
+    auto* ttd = _context->pTimeTravelHooks;
     auto state = ttd->ReadSessionInfo().state;
 
     if (state == ttd::TTDSessionState::Idle)
@@ -1607,16 +1644,10 @@ std::string GDBSession::handleBackwardContinue()
         return "E01";  // No TTD session active
     }
 
-    if (!_emulator->IsPaused())
-    {
-        _emulator->Pause();
-    }
-
-    // Stop recording to allow reverse execution
+    // GDB reverse execution while recording: stop the recording first (it keeps the history)
+    ttd::TTDControl control(_context);
     if (state == ttd::TTDSessionState::Recording)
-    {
-        ttd->StopRecording();
-    }
+        (void)control.Execute({"stop", {}});
 
     // Gather active execution breakpoints
     std::vector<uint16_t> breakpoints;
@@ -1640,7 +1671,8 @@ std::string GDBSession::handleBackwardContinue()
     if (breakpoints.empty())
     {
         // No breakpoints to search for - step back one instruction instead
-        if (!ttd->StepBackInstruction())
+        const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
+        if (!stepped.Ok() || !stepped.body.find("stepped")->b)
         {
             return "T05replaylog:begin;thread:01;";
         }
@@ -1648,14 +1680,17 @@ std::string GDBSession::handleBackwardContinue()
         return formatStopReply();
     }
 
-    auto result = ttd->ReverseContinue(breakpoints);
+    std::string pcs;
+    for (uint16_t pc : breakpoints)
+        pcs += (pcs.empty() ? "" : ",") + std::to_string(pc);
+    const ttd::TTDReply result = control.Execute({"reverse-continue", {{"pcs", pcs}}});
 
-    if (result.matched)
+    if (result.Ok() && result.body.find("matched")->b)
     {
         _lastStopReason = StopReason::Breakpoint;
         return "T05swbreak:;thread:01;";
     }
-    else if (result.blockingMarker.reason[0] != '\0')
+    else if (result.Ok() && result.body.find("blocked_by_marker"))
     {
         // Hit a barrier (tape, disk, etc)
         _lastStopReason = StopReason::Step;
@@ -1726,14 +1761,15 @@ std::string GDBSession::handleAttach(const std::string& pid)
     // Pause if running
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Take run-control claim (TDD §3.3)
     if (_context)
     {
         std::string errorReason;
-        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason))
+        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason, "GDB", std::chrono::milliseconds(0),
+                                      PeerAddressOf(_socket)))
         {
             // Another surface holds the claim - report but don't fail attach
             // (read-only operations still allowed)

@@ -127,6 +127,7 @@ void PolyphaseResampler::Configure(double inputRate, double outputRate, Quality 
     _orderedR.assign(_taps, 0.0);
     _histPos = 0;
     _phase = 0.0;
+    _zeroRun = _taps;
 }
 
 void PolyphaseResampler::Reset()
@@ -137,6 +138,7 @@ void PolyphaseResampler::Reset()
     std::fill(_orderedR.begin(), _orderedR.end(), 0.0);
     _histPos = 0;
     _phase = 0.0;
+    _zeroRun = _taps;
 }
 
 double PolyphaseResampler::Convolve(const double* hist, size_t phase) const
@@ -160,6 +162,24 @@ size_t PolyphaseResampler::Process(float inL, float inR, float* out)
     // Push into the history ring (newest at _histPos, older backwards).
     _histL[_histPos] = inL;
     _histR[_histPos] = inR;
+
+    // Silence: with every tap's input zero each product is a signed zero and the sum, started at +0.0, is +0.0 -
+    // the outputs are exactly what Convolve gives, without it (a silent chip costs no filtering)
+    _zeroRun = (inL == 0.0f && inR == 0.0f) ? std::min(_zeroRun + 1, _taps) : 0;
+    if (_zeroRun >= _taps)
+    {
+        _histPos = (_histPos + 1) % _taps;
+        size_t written = 0;
+        while (_phase < 1.0)
+        {
+            out[written * 2 + 0] = 0.0f;
+            out[written * 2 + 1] = 0.0f;
+            written++;
+            _phase += _phaseStep;
+        }
+        _phase -= 1.0;
+        return written;
+    }
 
     // Materialise an ordered view into pre-allocated scratch:
     // ordered[0] = newest. (Linear gather, exact, allocation-free.)

@@ -96,8 +96,10 @@ TEST_F(InstructionStart_Test, OncePerInstructionAtItsFirstByte)
         _z80->Z80Step();
         boundaries.insert(_z80->t);
         if (in.writesMemory)
+        {
             EXPECT_EQ(_z80->m1_pc, in.start)
                 << in.text << ": its memory accesses must be attributed to the instruction start";
+        }
     }
     EXPECT_EQ(_z80->pc, 0x8017u) << "program ran to its end";
 

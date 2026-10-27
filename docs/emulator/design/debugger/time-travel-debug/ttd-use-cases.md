@@ -138,12 +138,22 @@ the physical page — everything needed to jump there and look.
 | Value | `--value V` | Only accesses that wrote exactly V |
 | Writer PC range | `--pc-from A --pc-to B` | Only accesses made by code in that range |
 | Physical page | `--phys-page P` | Bank-aware: pin the query to one RAM page |
+| Memory space | `--space vram\|cache` | The Sprinter's video RAM / fast RAM: the address is an offset in it |
 | Time bound | `--before-frame F --before-tin T` | Search backwards from a point other than now |
 
 **`--phys-page` matters more than it looks on a 128K machine.** A Z80 address
 like `0xC000` names different bytes depending on which page is banked in, so
 without the filter the answer may be a write to a page you never meant. If you
 know the page, say so.
+
+**On the Sprinter, a pixel is not at a Z80 address.** Its byte lives in the
+video RAM and is written through a graphics window (or by the accelerator).
+Ask by the video RAM offset:
+
+```sh
+ttd fl --addr 0x4805 --space vram      # PC, value, "Offset: vram 0x04805"
+ttd fl --addr 0x0123 --space cache     # the fast RAM
+```
 
 ### Speed, and why it differs by access kind
 

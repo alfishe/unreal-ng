@@ -4,11 +4,13 @@
 #include <functional>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
 
 class EmulatorContext;
 class TsConfDma;
 class TsConfInterrupts;
+class TsConfMemory;
 struct TsConfState;
 
 /// Registers one raster line is displayed with (the line-latched set of
@@ -29,6 +31,9 @@ struct TsConfLine
     bool tsu = false;     ///< the TSU drew something on this line
     uint16_t videoCost = 0;  ///< DRAM accesses of the graphics fetch on this line
     uint16_t tsuCost = 0;    ///< DRAM accesses of the TSU (prefetch + objects)
+    /// TSU DRAM cycles of the pass that drew this line before line_start: objects after them took this
+    /// line's latch (TsConfTsu "When"); 0xFFFF = the whole pass took the previous line's
+    uint16_t tsuSplit = 0xFFFF;
 };
 
 /// TS-Conf line engine (TSConf technical-design §3.8): advances with the CPU
@@ -102,6 +107,15 @@ public:
     /// Draw the picture up to raster tact `raster` (the screen's hook): a DMA
     /// CRAM write draws the dots before it with the old colour (TIM-5)
     void SetVideoFlush(std::function<void(uint32_t raster)> flush) { _videoFlush = std::move(flush); }
+    /// Called before the DMA moves anything in this catch-up: a screen that draws only when its inputs change draws
+    /// what it has not drawn yet first (ScreenTSConf::CatchUpToStepEnd)
+    void SetVideoCatchUp(std::function<void()> catchUp) { _videoCatchUp = std::move(catchUp); }
+    /// The raster tact the last finished instruction ended at (0 at the frame start): up to here a screen drawn
+    /// after every instruction has drawn
+    uint32_t StepEndRaster() const { return _stepEndRaster; }
+    /// A reset or a loaded state replaced TsConfState: the step end is where the engine's accounting stands (a state is taken
+    /// between instructions, where the two are the same)
+    void NoteStateApplied();
     /// Called at the end of the frame rollover, once the old frame is fully
     /// accounted (its DMA and its interrupt events included): a device that
     /// keeps time in raster tacts (the VDAC2 card) closes its frame here
@@ -114,9 +128,16 @@ public:
     /// when Line(line).tsu; 0 = transparent)
     const uint8_t* TsuRow(uint32_t line) const { return _tsu[line < kLines ? line : kLines - 1]; }
 
+    /// The CPU's memory, whose DRAM reads count in the budget (nullptr: none counted for idle fetches)
+    void AttachMemory(TsConfMemory* memory) { _memory = memory; }
+
     /// region <IMachineStepHook>
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
+    /// Not while the DMA runs; a fetch that takes a DRAM cycle up to the line's end (the TSU budget of the next
+    /// line counts the CPU's cycles of this one, LineStart)
+    uint32_t IdleFetchesUntil(uint16_t fetch, uint32_t t) override;
+    void OnIdleFetches(uint16_t fetch, uint32_t count) override;
     /// endregion
 
 private:
@@ -124,8 +145,17 @@ private:
     void LineStart(uint32_t line);
     /// TS window of the line and its TSU pixels (hs §4.4)
     /// The TSU draws `line` into its buffer and line entry, with the registers
-    /// latched for `latch` (the line during which it works)
-    void RenderTsu(uint32_t line, const TsConfLine& latch);
+    /// latched for `latch` (the line during which it works). `split`: stop at
+    /// the DRAM position of line_start, LineStart finishes the pass with the
+    /// new latch; otherwise the whole pass takes `latch`
+    void RenderTsu(uint32_t line, const TsConfLine& latch, bool split);
+    /// Video DRAM cycles of a line's graphics fetch before DRAM cycle `cycle` of the line
+    static uint32_t VideoCyclesBefore(const TsConfArbiter::Fetch& fetch, uint32_t cycle);
+    /// The DRAM cycle a TSU pass from ts_start before window dot `x0` starts at (x0 + 1, x0 + 2 without a
+    /// prefetch); adds to `prefetch` (its words) the cycle it holds after them unless video takes that cycle
+    static uint32_t PassStart(const TsConfArbiter::Fetch& fetch, uint32_t x0, uint32_t& prefetch);
+    /// DRAM cycle `cycle` of the line is a video cycle (the CPU idle)
+    static bool IsVideoCycle(const TsConfArbiter::Fetch& fetch, uint32_t cycle);
 
     TsConfLine LatchedSet() const;
     /// Hand the DMA its share of the DRAM cycles from budgetRaster to `raster`
@@ -136,8 +166,11 @@ private:
     TsConfState& _ts;
     TsConfInterrupts& _interrupts;
     TsConfDma& _dma;
+    TsConfMemory* _memory = nullptr;
     uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     std::function<void(uint32_t)> _videoFlush;
+    std::function<void()> _videoCatchUp;
+    uint32_t _stepEndRaster = 0;  // derived from the CPU's clock at the step, not state
     std::function<void()> _frameEnd;
     TsConfLine _lines[kLines];
     uint8_t _tsu[kLines][360] = {};  ///< TSU line buffers of the frame (TsConfTsu::kMaxWidth)
@@ -145,4 +178,8 @@ private:
     /// refills it before the TS window starts (the prefetch runs from 17 lines
     /// above the window, and the window starts at line 32 or later)
     uint16_t _mapRing[4][64][2] = {};
+    /// The pass stopped at line_start (RenderTsu with split) and its line,
+    /// kLines = none. Not TTD state: RebuildLineTable draws the first part again
+    TsConfTsu::Pass _pass;
+    uint32_t _passLine = kLines;
 };

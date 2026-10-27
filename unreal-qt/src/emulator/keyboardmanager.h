@@ -58,6 +58,9 @@ public:
     /// The ZX key of a physical key whose Qt key a non-Latin layout hides (a Cyrillic letter on the K key):
     /// letters, digits and the punctuation keys the ZX extended keys use (US positions). ZXKEY_NONE for others
     static quint8 mapPcKeyToEmulatorKey(PcKey pcKey);
+    /// A key whose ZX key comes from its position whatever the layout prints on it: the digit row (Shift+2 is
+    /// CAPS LOCK on a German keyboard too) and the keypad / * - +
+    static bool positionalKey(PcKey pcKey);
     /// Layout-dependent fallback: Qt key (as Qt reports it) -> physical key (US layout), the macOS
     /// Control / Command swap undone (physicalQtKey)
     static PcKey mapQtKeyToPcKey(int qtKey);
@@ -78,16 +81,25 @@ public:
     /// The keys posted as held (tests)
     static size_t heldPcKeyCount() { return _heldPcKeys.size(); }
     static size_t heldMatrixKeyCount() { return _heldMatrixKeys.size(); }
+    /// A key held on the host keyboard (the on-screen keyboard lights it)
+    static bool pcKeyHeld(PcKey key) { return _heldPcKeys.count(static_cast<uint8_t>(key)) != 0; }
+    /// The matrix keys held on the host keyboard as posted: an extended key (host Left: ZXKEY_EXT_LEFT) as itself
+    static const std::multiset<uint8_t>& heldMatrixKeys() { return _heldMatrixKeys; }
 
-    /// Menu shortcuts and PC keyboards (docs/features/keyboard.md "Function keys on PC-keyboard machines"):
-    /// while the emulator view has focus, a bare function key F1-F12 (Shift allowed; no Ctrl / Alt / Cmd)
-    /// belongs to the machine when the host keyboard reaches its PS/2 keyboard (route ps2 or both; Auto on
-    /// the ZX-Evo, TS-Conf, ATM Turbo 2+ and the Sprinter: BIOS SETUP's F4 skip, DSS and Flex Navigator use
-    /// them). The screen accepts the key's ShortcutOverride, so the menu's bare F-key shortcuts (speed
-    /// F1-F4, Start / Pause / Resume F5-F7, debugger F8-F11) do not fire and the key reaches the machine.
-    /// Matrix-only machines (and the route "matrix") keep the shortcuts; Ctrl / Alt / Cmd combinations stay
-    /// with the GUI everywhere
+    /// App shortcuts and the machine's keys (docs/features/keyboard.md "App shortcuts and the machine's keys"):
+    /// while the emulator view has focus, the machine owns
+    /// - Ctrl + any key without Alt, on every machine: Ctrl is Symbol Shift on the matrix and Ctrl on a PC
+    ///   keyboard, so Ctrl+O / Ctrl+S / Ctrl+Q type (';', SS+S, '<=') instead of opening, saving or quitting;
+    /// - where the host keyboard reaches a PS/2 keyboard (route ps2 or both; Auto on the ZX-Evo, TS-Conf, ATM
+    ///   Turbo 2+ and the Sprinter): Alt + any key (no menu mnemonics: DSS, Flex Navigator, Wild Commander use
+    ///   them) and the bare function keys F1-F12 (Shift allowed: BIOS SETUP's F4 skip, F-key file managers).
+    /// The screen accepts the key's ShortcutOverride, so the shortcut does not fire and the key reaches the
+    /// machine. The full screen key (fullScreenSequence) and Cmd / Win combinations stay with the GUI everywhere
     static bool machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard);
+    /// View > Full Screen: Cmd+F on macOS, Alt+Enter elsewhere (Ctrl+F is Symbol Shift + F, TO in 48K BASIC)
+    static QKeyCombination fullScreenKey();
+    /// The event is the full screen key (Alt + the keypad Enter too)
+    static bool isFullScreenKey(const QKeyEvent* event);
 
 protected:
     /// The macOS Command key (left or right) on a macOS modifier layout

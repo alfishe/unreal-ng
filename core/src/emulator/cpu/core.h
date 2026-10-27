@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <mutex>
+#include <string>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
@@ -8,6 +9,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/memory/hostbusoverlay.h"
@@ -36,6 +38,7 @@ class DiskFastLoad;
 class DiskAutostart;
 class HostBusOverlay;
 class NetworkManager;
+class SlotManager;
 
 class Core
 {
@@ -67,6 +70,7 @@ protected:
     Mouse* _mouse = nullptr;
     MouseManager* _mouseManager = nullptr;
     Joystick* _joystick = nullptr;
+    controllers::ControllerManager* _controllerManager = nullptr;
     Tape* _tape = nullptr;
     TapeFastLoad* _tapeFastLoad = nullptr;
     TapeTurboController* _tapeTurboController = nullptr;
@@ -86,6 +90,8 @@ protected:
 #endif
     IdeController* _ide = nullptr;
     NetworkManager* _networkManager = nullptr;  // network adapters (ZXNETUSB); empty unless fitted
+    SlotManager* _slotManager = nullptr;        // the slot set, planned before any card is built (ZX-bus slots SL-4)
+    std::string _initError;                     // why Init() refused the configuration (the slot set's conflicts, Q8)
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
@@ -100,6 +106,7 @@ protected:
     HostBusOverlay* _busOverlays[HostBusOverlayChain::kMaxOverlays] = {};
     size_t _busOverlayCount = 0;
     HostBusOverlay* _busOverlay = nullptr;  // what Memory calls: none, the only overlay, or _busOverlayChain
+    uint32_t _memIfGeneration = 0;           // GetMemoryInterfaceGeneration
     HostBusOverlayChain _busOverlayChain;
     void UpdateEffectiveBusOverlay();  // under _memIfMutex
     /// endregion </Fields>
@@ -114,6 +121,8 @@ public:
     /// region <Initialization>
     [[nodiscard]] bool Init();
     void Release();
+    /// Why Init() refused the machine's configuration (the slot set's conflicts, ZX-bus slots Q8); "" otherwise
+    const std::string& GetInitError() const { return _initError; }
     /// endregion </Initialization>
 
     /// region <Peripherals>
@@ -133,6 +142,7 @@ public:
     void OnNetworkFrame();
 
     NetworkManager* GetNetworkManager() { return _networkManager; }
+    SlotManager* GetSlotManager() { return _slotManager; }
     /// endregion </Peripherals>
 
     /// region <Properties>
@@ -179,6 +189,11 @@ public:
     void ClearBusOverlays();
     bool IsBusOverlayInstalled(const HostBusOverlay* overlay) const;
     size_t GetBusOverlayCount() const { return _busOverlayCount; }
+    /// The installed overlays in install order (index < GetBusOverlayCount())
+    HostBusOverlay* GetBusOverlayAt(size_t index) const { return index < _busOverlayCount ? _busOverlays[index] : nullptr; }
+    /// Bumped whenever the memory interface is selected again (an overlay added or removed, debug mode, contention):
+    /// a fused bus path checks it before each access and revalidates when it moved
+    uint32_t GetMemoryInterfaceGeneration() const { return _memIfGeneration; }
     /// What the memory interface calls: nullptr, the only overlay, or the
     /// chain that forwards to all of them
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
@@ -208,6 +223,10 @@ public:
     void Reset();
     /// Reset with an explicit ROM mode instead of the configured RESET= mode (e.g. RM_DOS: reset into TR-DOS)
     void Reset(ROMModeEnum mode);
+    /// A reset that stands in for loading a program (disk autostart, snapshot load): Reset, then the guest's hardware
+    /// clock select is put back (PortDecoder::GetClockSelect), so the program runs at the clock the machine ran at
+    void ResetKeepingClock();
+    void ResetKeepingClock(ROMModeEnum mode);
 
     void SetCPUClockSpeed(uint8_t);
     uint32_t GetBaseCPUFrequency();
@@ -218,6 +237,8 @@ public:
     /// @return false when refused: while TTD is recording only 1x is accepted
     bool SetSpeedMultiplier(uint8_t multiplier);
     bool CanSetSpeedMultiplier(uint8_t multiplier) const;
+    /// Why the host speed may not change now ("" = it may): TTD's speed lock (a history recorded at 1x)
+    std::string SpeedLockReason() const;
     uint8_t GetSpeedMultiplier() const;
     /// Host speed control setting (1x..16x) without the emulated hardware turbo
     uint8_t GetHostSpeedMultiplier() const;

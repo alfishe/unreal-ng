@@ -22,7 +22,10 @@ StateNode Registers(EmulatorContext* context);
 /// The same object for a saved register set (the snapshot's prev_regs)
 StateNode RegistersOf(const Z80State& state);
 
-/// `count` (1..100) instructions from `address` in the CPU view: the GET /disasm object (address, count,
+/// Most instructions one Disasm call lists
+constexpr size_t kMaxDisasmLines = 256;
+
+/// `count` (1..kMaxDisasmLines) instructions from `address` in the CPU view: the GET /disasm object (address, count,
 /// instructions[] with address, bytes, mnemonic, size, label, target, targetLabel, displacement, effectiveAddress,
 /// effectiveAddressLabel). Stops at the 64K wrap. {available: false, description} without a disassembler
 StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count);

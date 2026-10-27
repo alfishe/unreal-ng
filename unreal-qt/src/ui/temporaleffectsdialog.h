@@ -36,6 +36,8 @@ public:
 signals:
     /// The GUI frame blending was switched on or off here (the View menu's check mark follows)
     void blendingChanged(bool enabled);
+    /// The blending's frames, weights or decay changed here
+    void settingsChanged();
 
 public slots:
     void updateFromScreen();

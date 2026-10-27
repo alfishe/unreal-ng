@@ -19,7 +19,7 @@
 #include <thread>
 
 #include "_helpers/testwaithelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
@@ -86,7 +86,7 @@ TEST_F(HostKeyboardMenu_Test, BoundEmulatorShowsItsRoute)
 {
     auto emulator = _manager->CreateEmulator();
     ASSERT_NE(emulator, nullptr);
-    _binding.bind(emulator.get());
+    _binding.bind(emulator);
 
     OpenMachineMenu();
     ASSERT_TRUE(_lastState.has_value());
@@ -107,13 +107,13 @@ TEST_F(HostKeyboardMenu_Test, InstanceRemovedWhileBoundShowsNoRoute)
 {
     auto emulator = _manager->CreateEmulator();  // the UI keeps its shared_ptr, as MainWindow does
     ASSERT_NE(emulator, nullptr);
-    _binding.bind(emulator.get());
+    _binding.bind(emulator);
     OpenMachineMenu();
     ASSERT_TRUE(_lastState.has_value());
 
     RemoveFromAutomationThread(emulator->GetId());
-    ASSERT_TRUE(emulator->IsReleased());
-    ASSERT_EQ(emulator->GetContext(), nullptr);
+    ASSERT_TRUE(emulator->IsRetired()) << "removed: retired, kept readable while the UI holds it (BUGS.md #11)";
+    ASSERT_FALSE(emulator->IsReleased());
     ASSERT_TRUE(_binding.isBound()) << "the queued unbind has not run yet";
 
     OpenMachineMenu();
@@ -139,13 +139,13 @@ TEST_F(HostKeyboardMenu_Test, InstanceRecreatedAroundQueuedAdoption)
                 const Emulator::ContextLease lease = emulator->LeaseContext();
                 if (!lease)
                     return;  // removed before the adoption ran
-                _binding.bind(emulator.get());
+                _binding.bind(emulator);
                 if (whileLeased)
                     whileLeased();
                 // Everything the adoption reads stays alive under the lease
                 ASSERT_NE(lease->pKeyboard, nullptr);
-                ASSERT_NE(lease->pTimeTravelManager, nullptr);
-                lease->pTimeTravelManager->GetSessionInfo();
+                ASSERT_TRUE(ttd::TTDSessionRef(lease.get()));
+                ttd::TTDSessionRef(lease.get())->GetSessionInfo();
                 adoptions++;
             },
             Qt::QueuedConnection);
@@ -183,7 +183,7 @@ TEST_F(HostKeyboardMenu_Test, InstanceRecreatedAroundQueuedAdoption)
         remover.join();
     EXPECT_EQ(adoptions.load(), 1);
     EXPECT_TRUE(removed.load());
-    EXPECT_TRUE(second->IsReleased());
+    EXPECT_TRUE(second->IsRetired()) << "retired, freed by its last holder (BUGS.md #11)";
     ASSERT_TRUE(_binding.isBound()) << "bound to the removed instance until the queued unbind";
 
     OpenMachineMenu();

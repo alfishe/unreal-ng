@@ -55,37 +55,61 @@ uint32_t TsConfTsu::Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t
 }
 
 template <bool kProbe>
-bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, [[maybe_unused]] Source* sources,
-                          uint32_t budget, uint32_t& used)
+TsConfTsu::Result TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, bool pause,
+                                       const uint8_t* ram, const MapRing& ring, uint32_t layer, uint8_t* out,
+                                       [[maybe_unused]] Source* sources, Pass& pass)
 {
     const uint8_t* r = ts.regs;
     const uint8_t tConfig = r[TsConfReg::TConfig];
     const bool drawZero = tConfig & (layer ? kTile1Zero : kTile0Zero);
     const uint32_t yRegister = TsConfReg::T0XOffsL + (layer ? 6u : 2u);
     const uint32_t fine = r[yRegister] & 0x07;
-    const uint32_t xOffs = layer ? set.t1XOffs : set.t0XOffs;
-    const uint8_t gPage = layer ? set.t1GPage : set.t0GPage;
-    const uint8_t bank = static_cast<uint8_t>(((set.palSel >> (layer ? 6 : 4)) & 0x03) << 6);
+    const uint32_t y = pass.y;
+    const uint32_t width = pass.width;
+
+    // The latched registers of a tile: the set in force when the TSU takes it ([V] video_ts.v:162-171)
+    bool late = false;
+    uint32_t xOffs = 0;
+    uint8_t gPage = 0;
+    uint8_t bank = 0;
+    auto take = [&](const TsConfLine& from) {
+        xOffs = layer ? from.t1XOffs : from.t0XOffs;
+        gPage = layer ? from.t1GPage : from.t0GPage;
+        bank = static_cast<uint8_t>(((from.palSel >> (layer ? 6 : 4)) & 0x03) << 6);
+    };
+    take(set);
 
     // The ring slot and the tile line: (y + fine Y) of a 5-bit line counter
     const uint32_t tLine = ((y & 0x1F) + fine) & 0x1F;
     const uint32_t slot = tLine >> 3;
     const uint32_t tileLine = tLine & 0x07;
 
-    // Tiles left to right; the first starts at -(X offset & 7)
-    for (int32_t x0 = -static_cast<int32_t>(xOffs & 7), k = 0; x0 < static_cast<int32_t>(width); x0 += 8, k++)
+    // Tile k at x 8k - (X offset & 7), map column k + X offset / 8; the layer ends after width / 8 + 1 tiles
+    // ([V] video_ts.v:170-177: tx runs 1 .. x_tiles - 1)
+    const uint32_t tiles = width / 8 + 1;
+    for (uint32_t k = pass.index; k < tiles; k++)
     {
-        const uint32_t column = ((xOffs >> 3) + static_cast<uint32_t>(k)) & 0x3F;
+        if (!late && pass.used > pass.split)
+        {
+            if (pause)
+            {
+                pass.index = static_cast<uint8_t>(k);
+                return Result::Paused;
+            }
+            late = true;
+            take(lateSet);
+        }
+        const int32_t x0 = static_cast<int32_t>(8 * k) - static_cast<int32_t>(xOffs & 7);
+        const uint32_t column = ((xOffs >> 3) + k) & 0x3F;
         const uint16_t entry = ring[slot][column][layer];
         const uint32_t tile = entry & 0x0FFF;
         if (tile == 0 && !drawZero)
             continue;  // skipped: no graphics fetch
         // Two words; a cut tile shows the 4 pixels of its first word ([V] video_ts_render.v:84-107)
-        const uint32_t words = std::min<uint32_t>(2, budget > used ? budget - used : 0);
+        const uint32_t words = std::min<uint32_t>(2, pass.budget > pass.used ? pass.budget - pass.used : 0);
         if (!words)
-            return false;
-        used += words;
+            return Result::Starved;
+        pass.used += words;
         const uint32_t fetched = words * 4;
 
         const uint32_t fy = (entry & 0x8000) ? 7 - tileLine : tileLine;
@@ -107,8 +131,7 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
                 if constexpr (kProbe)
                 {
                     // The map word the ring slot holds: the row it was prefetched from
-                    const uint32_t yRegisterNow = TsConfReg::T0XOffsL + (layer ? 6u : 2u);
-                    const uint32_t mapRow = ((((y & 0x1FF) + (r[yRegisterNow] | ((r[yRegisterNow + 1] & 1u) << 8))) >> 3)) & 0x3F;
+                    const uint32_t mapRow = ((((y & 0x1FF) + (r[yRegister] | ((r[yRegister + 1] & 1u) << 8))) >> 3)) & 0x3F;
                     Source& src = sources[x];
                     src.layer = layer ? Layer::T1 : Layer::T0;
                     src.mapColumn = static_cast<uint8_t>(column);
@@ -119,18 +142,20 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
             }
         }
         if (fetched < 8)
-            return false;  // the budget ran out inside this tile
+            return Result::Starved;  // the budget ran out inside this tile
     }
-    return true;
+    return Result::Done;
 }
 
 template <bool kProbe>
-bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_unused]] Layer layer, uint32_t first,
-                            uint32_t end, uint32_t y, uint32_t width, uint8_t* out, [[maybe_unused]] Source* sources,
-                            uint32_t budget, uint32_t& used)
+TsConfTsu::Result TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_unused]] Layer layer,
+                                         uint32_t first, uint32_t end, bool pause, uint8_t* out,
+                                         [[maybe_unused]] Source* sources, Pass& pass)
 {
     const uint8_t sgPage = ts.regs[TsConfReg::SGPage];
-    for (uint32_t d = first; d < end; d++)
+    const uint32_t y = pass.y;
+    const uint32_t width = pass.width;
+    for (uint32_t d = std::max<uint32_t>(first, pass.index); d < end; d++)
     {
         const uint16_t w0 = ts.sfile[d * 3];
         const uint16_t w1 = ts.sfile[d * 3 + 1];
@@ -143,14 +168,21 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
         if (line > yMax)
             continue;
 
+        // Sprites take no latched register: past the split they only stop a paused pass
+        if (pause && pass.used > pass.split)
+        {
+            pass.index = static_cast<uint8_t>(d);
+            return Result::Paused;
+        }
+
         const uint32_t fy = (w0 & 0x8000) ? yMax - line : line;
         const uint32_t spriteWidth = (((w1 >> 9) & 0x07) + 1) * 8;
         const uint32_t cost = spriteWidth / 4;  // 4 bpp: 4 pixels per word
         // A cut sprite shows the pixels of the words it got, in bitmap order ([V] video_ts_render.v:84-107)
-        const uint32_t words = std::min(cost, budget > used ? budget - used : 0u);
+        const uint32_t words = std::min(cost, pass.budget > pass.used ? pass.budget - pass.used : 0u);
         if (!words)
-            return false;
-        used += words;
+            return Result::Starved;
+        pass.used += words;
         const uint32_t fetched = words * 4;
 
         const bool xFlip = w1 & 0x8000;
@@ -182,9 +214,9 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_u
             }
         }
         if (words < cost)
-            return false;  // the budget ran out inside this sprite
+            return Result::Starved;  // the budget ran out inside this sprite
     }
-    return true;
+    return Result::Done;
 }
 
 void TsConfTsu::LayerBounds(const TsConfState& ts, uint32_t (&bounds)[4])
@@ -205,47 +237,106 @@ void TsConfTsu::LayerBounds(const TsConfState& ts, uint32_t (&bounds)[4])
 }
 
 template <bool kProbe>
-bool TsConfTsu::Render(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                       uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used)
+void TsConfTsu::Run(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, bool pause,
+                    const uint8_t* ram, const MapRing& ring, uint8_t* out, Source* sources, Pass& pass)
 {
-    const uint8_t tConfig = ts.regs[TsConfReg::TConfig];
-    if (!(tConfig & (kSpritesEnable | kTile0Enable | kTile1Enable)))
-        return false;
-
-    std::memset(out, 0, width);
-    if constexpr (kProbe)
-    {
-        for (uint32_t x = 0; x < width; x++)
-            sources[x] = Source{};
-    }
-
+    pass.paused = false;
     uint32_t bounds[4];
-    LayerBounds(ts, bounds);
+    if (pass.layers & kSpritesEnable)
+        LayerBounds(ts, bounds);
 
     // Processing order S0, T0, S1, T1, S2 is also the drawing order; the
     // first object that does not fit ends the line
-    const bool sprites = tConfig & kSpritesEnable;
-    if (sprites && !DrawSprites<kProbe>(ts, ram, Layer::S0, bounds[0], bounds[1], y, width, out, sources, budget, used))
-        return true;
-    if ((tConfig & kTile0Enable) && !DrawTiles<kProbe>(ts, set, ram, ring, 0, y, width, out, sources, budget, used))
-        return true;
-    if (sprites && !DrawSprites<kProbe>(ts, ram, Layer::S1, bounds[1], bounds[2], y, width, out, sources, budget, used))
-        return true;
-    if ((tConfig & kTile1Enable) && !DrawTiles<kProbe>(ts, set, ram, ring, 1, y, width, out, sources, budget, used))
-        return true;
-    if (sprites)
-        DrawSprites<kProbe>(ts, ram, Layer::S2, bounds[2], bounds[3], y, width, out, sources, budget, used);
-    return true;
+    for (; pass.phase < 5; pass.phase++, pass.index = 0)
+    {
+        Result result = Result::Done;
+        switch (pass.phase)
+        {
+            case 1:
+            case 3:
+            {
+                const uint32_t layer = pass.phase == 3 ? 1u : 0u;
+                if (pass.layers & (layer ? kTile1Enable : kTile0Enable))
+                    result = DrawTiles<kProbe>(ts, set, lateSet, pause, ram, ring, layer, out, sources, pass);
+                break;
+            }
+            default:
+            {
+                const uint32_t n = pass.phase / 2u;  // S0, S1, S2
+                if (pass.layers & kSpritesEnable)
+                    result = DrawSprites<kProbe>(ts, ram, static_cast<Layer>(static_cast<uint8_t>(Layer::S0) + 2 * n),
+                                                 bounds[n], bounds[n + 1], pause, out, sources, pass);
+                break;
+            }
+        }
+        if (result == Result::Paused)
+        {
+            pass.paused = true;
+            return;
+        }
+        if (result == Result::Starved)
+            break;
+    }
+    pass.phase = 5;
 }
 
 bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
                            uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
 {
-    return Render<false>(ts, set, ram, ring, y, width, out, nullptr, budget, used);
+    Pass pass;
+    const bool on = BeginLine(ts, set, ram, ring, y, width, out, budget, UINT32_MAX, used, pass);
+    used = pass.used;
+    return on;
 }
 
-bool TsConfTsu::ProbeLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used)
+bool TsConfTsu::BeginLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                          uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t split, uint32_t used,
+                          Pass& pass)
 {
-    return Render<true>(ts, set, ram, ring, y, width, out, sources, budget, used);
+    pass = Pass{};
+    pass.used = used;
+    pass.layers = static_cast<uint8_t>(ts.regs[TsConfReg::TConfig] & (kSpritesEnable | kTile0Enable | kTile1Enable));
+    if (!pass.layers)
+    {
+        pass.phase = 5;
+        return false;
+    }
+    pass.y = y;
+    pass.width = width;
+    pass.budget = budget;
+    pass.split = split;
+    std::memset(out, 0, width);
+    Run<false>(ts, set, set, true, ram, ring, out, nullptr, pass);
+    return true;
+}
+
+void TsConfTsu::FinishLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                           uint8_t* out, Pass& pass)
+{
+    if (!pass.paused)
+        return;
+    // Every object left is late: split 0 hands each one `set`
+    pass.split = 0;
+    Run<false>(ts, set, set, false, ram, ring, out, nullptr, pass);
+}
+
+bool TsConfTsu::ProbeLine(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, const uint8_t* ram,
+                          const MapRing& ring, uint32_t y, uint32_t width, uint8_t* out, Source* sources,
+                          uint32_t budget, uint32_t split, uint32_t& used)
+{
+    Pass pass;
+    pass.used = used;
+    pass.layers = static_cast<uint8_t>(ts.regs[TsConfReg::TConfig] & (kSpritesEnable | kTile0Enable | kTile1Enable));
+    if (!pass.layers)
+        return false;
+    pass.y = y;
+    pass.width = width;
+    pass.budget = budget;
+    pass.split = split;
+    std::memset(out, 0, width);
+    for (uint32_t x = 0; x < width; x++)
+        sources[x] = Source{};
+    Run<true>(ts, set, lateSet, false, ram, ring, out, sources, pass);
+    used = pass.used;
+    return true;
 }

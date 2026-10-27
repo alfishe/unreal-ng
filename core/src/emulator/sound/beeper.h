@@ -52,6 +52,8 @@ protected:
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
     bool _synthesisSuppressed = false;
+    bool _useCustomLevels = false;
+    int32_t _customLevels[4] = {};
 
     // Last amplitudes written to blip_buf (tracked independently for Port #FE OUT vs Tape IN)
     int32_t _lastPortFEAmplitude = DAC_LEVEL_00;
@@ -59,10 +61,12 @@ protected:
 
     // Previous port #FE state (bits 3-4: MIC/EAR)
     uint8_t _portFEState = 0;
+    uint32_t _earEdges = 0;  ///< TakeEarEdges
 
     // Output buffer — points into SoundManager's beeper AudioFrameDescriptor
     int16_t* _outputBuffer = nullptr;
     int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
+    bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Audio-settings LED (and the HUD nudge held from it): a level change
     // landed this frame. Not the output peak - a level left away from rest
@@ -85,6 +89,9 @@ public:
     /// region <Methods>
 public:
     void reset();
+    /// Drop the deltas no frame end has read (synthesis resuming, a restored machine: a search replays one frame
+    /// many times) and restart the buffers at the level the circuit holds, so later deltas stay relative to it
+    void discardPending();
 
     /// A level change (port #FE or tape) landed in the last finished frame
     bool hadSoundLastFrame() const { return _hadSoundLastFrame; }
@@ -102,11 +109,25 @@ public:
     /// Called at the start of each video frame.
     void handleFrameStart();
 
+    /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart). The blip
+    /// stream follows it after a frame that moved only one of the two - a host speed multiplier (the blip closed the
+    /// multiplied frame, the mixer counted the base one) or a synthesis gap (the blip was cleared): its fractional
+    /// sample position is re-placed on the mixer's grid, so it delivers the mixer's count again. At 1x the two run in
+    /// step and nothing is touched
+    void followSamplePhase(uint64_t phase);
+
     /// Called on each OUT to port #FE. Records a band-limited delta
     /// at the exact T-state position.
     /// @param value  Full port #FE byte (bits 3-4 = MIC/EAR)
     /// @param frameTState  T-state counter within the current frame
     void handlePortOut(uint8_t value, uint32_t frameTState);
+    /// EAR (bit 4) edges since the last call: the haptic feed's beeper-density (controller manager haptics.md §4)
+    uint32_t TakeEarEdges()
+    {
+        const uint32_t edges = _earEdges;
+        _earEdges = 0;
+        return edges;
+    }
 
     /// Turbo mode (audio muted, frame-end synthesis skipped): keep tracking the
     /// port #FE / tape levels so the next edge after turbo is correct, but do not
@@ -138,5 +159,18 @@ protected:
     /// Look up DAC amplitude from EAR and MIC bits.
     /// @param earMicBits  Bits 3-4 of port #FE value (masked)
     static int32_t dacAmplitude(uint8_t earMicBits);
+
+public:
+    /// A machine whose ULA output goes through its own mixer (the Next: EAR 2048, MIC 512 of 32768) replaces the four
+    /// levels (index = EAR << 1 | MIC); clearDacLevels returns the ULA circuit's levels
+    void setDacLevels(const int32_t levels[4])
+    {
+        for (int i = 0; i < 4; i++)
+            _customLevels[i] = levels[i];
+        _useCustomLevels = true;
+    }
+    void clearDacLevels() { _useCustomLevels = false; }
+    int32_t levelFor(uint8_t earMicBits) const;
+protected:
     /// endregion </Helper methods>
 };

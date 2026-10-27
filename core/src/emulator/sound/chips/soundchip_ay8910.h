@@ -108,9 +108,6 @@ protected:
     static constexpr int CPU_BASE_FREQUENCY = 3.5 * 1'000'000;
     static constexpr int CPU_CYCLES_PER_SAMPLE = CPU_BASE_FREQUENCY / AY_SAMPLING_RATE;
 
-
-    // How many AY cycles in each audio sample (at selected sampling rate / frequency)
-    static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
 public:
     static const char* AYRegisterNames[16];
 
@@ -168,6 +165,8 @@ protected:
         0.63517204547200, 0.75800717174000,
         0.87992675669500, 1.0
     };
+    // silentAtRest: amplitude 0 and 1 (volume 0 with the gate open) are the same DAC level, 0
+    static_assert(AY_DAC_TABLE[0] == 0.0 && AY_DAC_TABLE[1] == 0.0 && YM_DAC_TABLE[0] == 0.0 && YM_DAC_TABLE[1] == 0.0);
 
     const double* _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
 
@@ -283,9 +282,39 @@ protected:
         void setPeriod(uint8_t period);
         void updateState();
         bool out() { return _out; };
+        /// `ticks` x updateState() in one step: the shifts the run contains (one each time the counter reaches
+        /// twice the period, the counter then restarting at 0), the register shifted that many times
+        void advance(uint32_t ticks)
+        {
+            if (ticks == 0)
+                return;
+            // updateState counts first, then tests: a shift at tick i when counter + 1 + i reaches the limit, then
+            // one every limit ticks (every tick with a 0 period)
+            const uint32_t limit = uint32_t(_period) << 1;
+            const uint32_t first = (uint32_t(_counter) + 1 >= limit) ? 0 : limit - uint32_t(_counter) - 1;
+            if (first >= ticks)
+            {
+                _counter = static_cast<uint16_t>(_counter + ticks);
+                return;
+            }
+            const uint32_t stride = limit ? limit : 1;
+            const uint32_t shifts = 1 + (ticks - 1 - first) / stride;
+            const uint32_t last = first + (shifts - 1) * stride;
+            _counter = static_cast<uint16_t>(ticks - 1 - last);
+            for (uint32_t i = 0; i < shifts; i++)
+                _out = shiftLSFR();
+        }
 
     protected:
-        inline bool shiftLSFR();
+        /// Returns LSFR-generated random numbers for noise generator: the output, bit 0. The Random Number Generator of
+        /// the 8910 is a 17-bit shift register; the input to the shift register is bit 0 XOR bit 3 (17 stages, 1 tap).
+        /// See: https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
+        bool shiftLSFR()
+        {
+            const uint32_t tapBit = (_registerLSFR & 1) ^ ((_registerLSFR >> 3) & 1);
+            _registerLSFR = (_registerLSFR >> 1) | (tapBit << 16);
+            return _registerLSFR & 1;
+        }
         /// endregion </Methods>
     };
 
@@ -357,6 +386,9 @@ protected:
         void setPeriod(uint8_t fine, uint8_t coarse);
         void setShape(uint8_t shape);
         uint8_t updateState();
+        /// `ticks` x updateState() in one step: the handler steps the run contains (the first when the counter
+        /// reaches the period, then one every period), applied a segment at a time
+        void advance(uint32_t ticks);
         /// endregion </Methods>
 
         /// region <Helper methods>
@@ -417,6 +449,7 @@ protected:
 
     // Tracks whether this chip has received any register writes (for TurboSound detection)
     bool _hasBeenWritten = false;
+    uint8_t _envelopeRestarts = 0;  ///< TakeEnvelopeRestarts
 
     // Board wiring on the I/O port pins (ayioportinput.h), set by the machine that has some (the 128K family).
     // Null on every other machine: the R14 / R15 read is the chip alone. Board configuration, not chip state:
@@ -464,6 +497,49 @@ public:
     void reset() override;
     void updateState(bool bypassPrescaler = false);
     void updateMixer();
+
+    /// Every channel at amplitude 0 (volume 0, no envelope: the DAC gives 0 whatever the tone and noise gates do) and
+    /// both output filters at rest on 0: updateMixer would leave every output and filter state as it is
+    bool silentAtRest() const
+    {
+        for (const ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._envelopeEnabled || tone._volume != 0)
+                return false;
+        }
+        return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
+    }
+    /// `ticks` x updateState(true) of a chip that is silentAtRest (the mixer would change nothing): the generators
+    /// advance, each in one step (the tones and the noise count their turns, the envelope its steps) - the generators do
+    /// not depend on each other, so the order within a tick is no matter
+    void advanceSilent(uint32_t ticks)
+    {
+        _tick += ticks;
+
+        _noiseGenerator.advance(ticks);
+
+        _envelopeGenerator.advance(ticks);
+
+        for (ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._period == 0)
+                continue;  // a 0 period is not played (ToneGenerator::updateState)
+            // updateState counts first, then tests: a toggle at tick i when counter + 1 + i reaches the period, then
+            // one every period ticks
+            const uint32_t period = tone._period;
+            const uint32_t first = (uint32_t(tone._counter) + 1 >= period) ? 0 : period - uint32_t(tone._counter) - 1;
+            if (first >= ticks)
+            {
+                tone._counter = static_cast<uint16_t>(tone._counter + ticks);
+                continue;
+            }
+            const uint32_t toggles = 1 + (ticks - 1 - first) / period;
+            const uint32_t last = first + (toggles - 1) * period;
+            tone._counter = static_cast<uint16_t>(ticks - 1 - last);
+            if (toggles & 1)
+                tone._out = !tone._out;
+        }
+    }
 
     void setMixer(uint8_t mixerValue);
     void setVolume(uint8_t volume, uint8_t channel);
@@ -555,6 +631,14 @@ protected:
 public:
     // Access to internal state for debugging
     const uint8_t* getRegisters() const { return _registers; }
+    /// R13 writes (each restarts the envelope) since the last call: the haptic feed's ay-envelope (controller manager
+    /// haptics.md §4). Host output only, not part of the chip's state
+    uint8_t TakeEnvelopeRestarts()
+    {
+        const uint8_t restarts = _envelopeRestarts;
+        _envelopeRestarts = 0;
+        return restarts;
+    }
     const ToneGenerator* getToneGenerators() const { return _toneGenerators; }
     const NoiseGenerator& getNoiseGenerator() const { return _noiseGenerator; }
     const EnvelopeGenerator& getEnvelopeGenerator() const { return _envelopeGenerator; }

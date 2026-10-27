@@ -1,0 +1,165 @@
+  100        ORG  33000
+  105        ENT  $
+  110 *D+
+  111        LD   A,2
+  112        CALL 5633
+  115 START  CALL CLEAR
+  120        CALL FNT
+  125        CALL LIST
+  130        DI
+  135 HEAD   XOR  A
+  140        LD   (PAG),A
+  145        LD   (T20),A
+  155        CALL NODES
+  160        LD   A,(T20)
+  165        LD   C,20
+  170        ADD  A,C
+  175        CP   160
+  180        JR   NZ,HEAD+1
+  185        CALL TXTOK
+  190        CALL KEY
+  195        JR   START
+  230 TOP    LD   B,20
+  235        LD   IX,MAS
+  240        LD   A,(T20)
+  245        LD   (TR),A
+  250 L9     PUSH BC
+  255        PUSH IX
+  260        LD   A,(IX+0)
+  265        CALL RAMPAG
+  270        LD   L,0
+  275        LD   H,(IX+1)
+  280        CALL RS
+  285        LD   HL,TR
+  290        INC  (HL)
+  295        POP  IX
+  300        INC  IX
+  305        INC  IX
+  310        POP  BC
+  315        DJNZ L9
+  320        NOP
+  325        NOP
+  330        NOP
+  335        RET
+  340 RAMPAG LD   HL,PAG
+  345        CP   (HL)
+  350        RET  Z
+  355        LD   BC,32765
+  360        OUT  (C),A
+  365        LD   (HL),A
+  370        RET
+  375 NTR    DEFB 0,1,2,3,8
+  380 MAS    DEFB 0,192,0,213,0,234
+  385        DEFB 1,192,1,213,1,234
+  390        DEFB 3,192,3,213,3,234
+  395        DEFB 4,192,4,213,4,234
+  400        DEFB 6,192,6,213,6,234
+  405        DEFB 7,192,7,213,7,234
+  410        DEFB 2,213,2,234
+  415 PAG    NOP
+  420 TR     NOP
+  425 T20    NOP
+  430 
+  435 NODES
+  440        LD   A,5
+  442        LD   (OP),A
+  444        CALL TIND
+  446        CALL TOP
+  448        LD   A,6
+  450        LD   (OP),A
+  452        CALL TOUD
+  454        CALL TOP
+  456        RET
+  520 RS     LD   IX,NTR
+  525        LD   B,5
+  530 L11    PUSH BC
+  535 OP     EQU  $+1
+  540        LD   C,5
+  545        LD   B,1
+  550        PUSH HL
+  555        LD   A,(TR)
+  560        LD   D,A
+  565        LD   E,(IX+0)
+  570        NOP
+  575        NOP
+  580        NOP
+  585        CALL 15635
+  590 IGN    POP  HL
+  595        INC  H
+  600        INC  H
+  605        INC  H
+  610        INC  H
+  615        INC  IX
+  620        POP  BC
+  625        DJNZ L11
+  630        RET
+  635 CLEAR  XOR  A
+  640        OUT  (254),A
+  645        LD   HL,16384
+  650        LD   DE,16385
+  655        LD   BC,6911
+  660        LD   (HL),A
+  665        LDIR
+  670        RET
+  675 KEY    LD   A,#7F
+  680        IN   A,(254)
+  685        RRA
+  690        RRA
+  695        RET  NC
+  700        JR   KEY
+  705 TT1    DEFB 22,0,7,17,0,16,4
+  710        DEFM "INSERT ***** DISK!"
+  715        DEFB 22,1,7,16,6
+  720        DEFM "PRESS SUMVOL/SHIFT"
+  725 TT2    DEFB 22,0,14,17,0,16,1
+  730        DEFM "INPUT"
+  735 TT3    DEFB 22,0,14,17,0,16,2
+  740        DEFM "OUPUT"
+  745 TT4    DEFB 22,0,7,16,5
+  750        DEFM "*** COPY O.K.! ***"
+  755 TT5    DEFB 22,3,4,17,0,16,7
+  760        DEFM "Group ~VIRTUAL REALITY~"
+  765        DEFB 22,5,4
+  770        DEFM "       Grogno'95       "
+  775 LIST   LD   DE,TT5
+  780        LD   BC,54
+  785        CALL 8252
+  790        LD   DE,TT1
+  795        LD   BC,48
+  800        CALL 8252
+  805        RET
+  810 TXTOK  LD   DE,TT4
+  815        LD   BC,23
+  820        CALL 8252
+  825        RET
+  830 FNT    LD   H,61
+  835        LD   L,0
+  840        LD   DE,BFON
+  845        LD   BC,768
+  850        PUSH BC
+  855        PUSH DE
+  860        LDIR
+  865        POP  HL
+  870        POP  BC
+  875 LKL    LD   A,(HL)
+  880        RLC  A
+  885        OR   (HL)
+  890        LD   (HL),A
+  895        INC  HL
+  900        DEC  BC
+  905        LD   A,B
+  910        OR   C
+  915        JR   NZ,LKL
+  920        LD   HL,BFON
+  925        DEC  H
+  930        LD   (23606),HL
+  935        RET
+ 5555 TIND   LD   DE,TT2
+ 5560        LD   BC,12
+ 5565        CALL 8252
+ 5566        CALL KEY
+ 5570        RET
+ 5575 TOUD   LD   DE,TT3
+ 5580        JR   TIND+3
+ 5588 BFON   DEFS 768
+ 5590        NOP

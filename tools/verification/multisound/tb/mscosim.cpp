@@ -1,6 +1,10 @@
 // mscosim: ZX-MultiSound CPLD (cpld/rtl/top.v, Verilator) vs MultiSoundLogic co-simulation.
 //
 //   mscosim run <scenario.msc> [--dump] [--expect <out>]   play a scenario into both, report the first difference
+//   mscosim trace <trace.msc[.zst]> <out.rtl> [--mask pro|classic] [--dip <list>]
+//                                                          a real-program trace (CL-2): RTL vs logic vs what the
+//                                                          emulator saw, the RTL records frozen as hashes; --mask /
+//                                                          --dip replay it on another card configuration
 //   mscosim sweep <tables.h>                               decode sweep + GS map sweep from the RTL -> core-tests tables
 //   mscosim dac                                            DAC transfer (duty) of the RTL vs MultiSoundLogic helpers
 //   mscosim gsint                                          GS INT period and width of the RTL
@@ -438,6 +442,20 @@ std::unique_ptr<IRtlBus> MakeRtl(const MultiSoundOptions& options, double cpuMHz
 
 bool ReadFile(const std::string& path, std::string& text)
 {
+    if (path.size() > 4 && path.compare(path.size() - 4, 4, ".zst") == 0)
+    {
+        // Stored traces are zstd-compressed: the zstd command line tool decompresses them
+        const std::string command = "zstd -dcq '" + path + "'";
+        FILE* pipe = popen(command.c_str(), "r");
+        if (pipe == nullptr)
+            return false;
+        char buffer[65536];
+        size_t n = 0;
+        text.clear();
+        while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0)
+            text.append(buffer, n);
+        return pclose(pipe) == 0;
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in)
         return false;
@@ -523,6 +541,103 @@ int Run(int argc, char** argv)
     }
     std::printf("%s: %zu cycles, %d differing\n", path.c_str(), scenario.cycles.size(), differences);
     return differences ? 1 : 0;
+}
+
+/// A real-program trace: every line into the RTL and MultiSoundLogic. Checks (1) the logic's records equal the RTL's,
+/// (2) every read the emulator saw ('=XX' / '=--') against the RTL: driven or not, and the value unless the YM2203
+/// answers (the testbench's stand-in drives a marker). Writes the RTL records as an FNV-1a hash chain with a
+/// checkpoint every MultiSoundTraceCheckpoint lines (core-tests: MultiSoundTrace_Test)
+int Trace(int argc, char** argv)
+{
+    if (argc < 4)
+        return 2;
+    const std::string path = argv[2];
+    std::string text;
+    if (!ReadFile(path, text))
+    {
+        std::fprintf(stderr, "cannot read %s\n", path.c_str());
+        return 2;
+    }
+    MultiSoundScenario scenario;
+    std::string error;
+    if (!ParseMultiSoundScenario(text, scenario, error))
+    {
+        std::fprintf(stderr, "%s: %s\n", path.c_str(), error.c_str());
+        return 2;
+    }
+    bool overridden = false;
+    for (int i = 4; i + 1 < argc; i += 2)
+    {
+        overridden = true;
+        if (std::strcmp(argv[i], "--mask") == 0)
+            scenario.options.ctrlMask = std::strcmp(argv[i + 1], "classic") == 0 ? MultiSoundCtrlMask::Classic : MultiSoundCtrlMask::Pro;
+        else if (std::strcmp(argv[i], "--dip") == 0)
+        {
+            MultiSoundScenario dip;
+            if (!ParseMultiSoundScenario(std::string("dip ") + argv[i + 1] + "\n", dip, error))
+                return 2;
+            ApplyMultiSoundDipBits(scenario.options, MultiSoundDipBits(dip.options));
+        }
+        else
+            return 2;
+    }
+
+    std::unique_ptr<IRtlBus> rtl = MakeRtl(scenario.options, scenario.cpuMHz);
+    MultiSoundLogicBus logic(scenario);
+    uint64_t hash = MultiSoundHashSeed;
+    std::string checkpoints;
+    int logicDiffs = 0, readDiffs = 0;
+    uint64_t reads = 0, valueChecked = 0, notes = 0;
+    for (size_t i = 0; i < scenario.cycles.size(); i++)
+    {
+        const MultiSoundCycle& cycle = scenario.cycles[i];
+        const bool ymRead = cycle.op == Op::In && MultiSoundTraceReadIsYm(logic.Logic(), cycle.address);
+        std::vector<std::string> cycleNotes;
+        const MultiSoundCycleRecord r = rtl->Execute(cycle, cycleNotes);
+        const MultiSoundCycleRecord l = logic.Execute(cycle);
+        notes += cycleNotes.size();
+        hash = HashMultiSoundRecord(hash, r);
+        if ((i + 1) % MultiSoundTraceCheckpoint == 0)
+        {
+            char line[64];
+            std::snprintf(line, sizeof(line), "at %zu %016llX\n", i + 1, static_cast<unsigned long long>(hash));
+            checkpoints += line;
+        }
+        if (r.Bytes() != l.Bytes() && logicDiffs++ < 3)
+        {
+            std::printf("LOGIC DIFFERS at %s:%d '%s'\n  rtl:   %s\n  logic: %s\n", path.c_str(), cycle.sourceLine,
+                        FormatMultiSoundCycle(cycle).c_str(), FormatMultiSoundRecord(r).c_str(),
+                        FormatMultiSoundRecord(l).c_str());
+        }
+        if (cycle.observed && !overridden)  // the emulator's reads belong to the captured configuration
+        {
+            reads++;
+            std::string why;
+            if (!MultiSoundTraceReadMatches(cycle, r, ymRead, why))
+            {
+                if (readDiffs++ < 10)
+                    std::printf("READ DIFFERS at %s:%d '%s': %s\n  rtl: %s\n", path.c_str(), cycle.sourceLine,
+                                FormatMultiSoundCycle(cycle).c_str(), why.c_str(), FormatMultiSoundRecord(r).c_str());
+            }
+            else if (!ymRead && cycle.observedDriven)
+                valueChecked++;
+        }
+    }
+    std::ofstream out(argv[3], std::ios::binary);
+    out << "# RTL replay of " << path.substr(path.find_last_of('/') + 1)
+        << " (generated by tools/verification/multisound: mscosim trace; do not edit)\n";
+    if (overridden)
+        out << "# card configuration: mask " << (scenario.options.ctrlMask == MultiSoundCtrlMask::Classic ? "classic" : "pro")
+            << ", dip " << FormatMultiSoundDip(scenario.options) << "\n";
+    char line[160];
+    std::snprintf(line, sizeof(line), "cycles %zu\nhash %016llX\nreads %llu\nvalues %llu\n", scenario.cycles.size(),
+                  static_cast<unsigned long long>(hash), static_cast<unsigned long long>(reads),
+                  static_cast<unsigned long long>(valueChecked));
+    out << line << checkpoints;
+    std::printf("%s: %zu cycles, %llu reads (%llu values compared), %d logic differences, %d read differences, %llu notes\n",
+                path.c_str(), scenario.cycles.size(), static_cast<unsigned long long>(reads),
+                static_cast<unsigned long long>(valueChecked), logicDiffs, readDiffs, static_cast<unsigned long long>(notes));
+    return logicDiffs || readDiffs ? 1 : 0;
 }
 
 struct SweepCounts
@@ -736,12 +851,14 @@ int main(int argc, char** argv)
     Verilated::commandArgs(1, argv);
     if (argc >= 2 && std::strcmp(argv[1], "run") == 0)
         return Run(argc, argv);
+    if (argc >= 2 && std::strcmp(argv[1], "trace") == 0)
+        return Trace(argc, argv);
     if (argc >= 2 && std::strcmp(argv[1], "sweep") == 0)
         return Sweep(argc, argv);
     if (argc >= 2 && std::strcmp(argv[1], "dac") == 0)
         return Dac();
     if (argc >= 2 && std::strcmp(argv[1], "gsint") == 0)
         return GsInt();
-    std::fprintf(stderr, "usage: mscosim run <scenario.msc> [--dump] [--expect <out>] | sweep <tables.h> | dac | gsint\n");
+    std::fprintf(stderr, "usage: mscosim run <scenario.msc> [--dump] [--expect <out>] | trace <trace> <out.rtl> | sweep <tables.h> | dac | gsint\n");
     return 2;
 }

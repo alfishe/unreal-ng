@@ -134,7 +134,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" >/dev/null
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" >/dev/null
 
 # 2. capture the death state
-curl -s "$BASE/emulator/$EMU_ID/state/registers" | jq '{pc, sp, af, hl}'
+curl -s "$BASE/emulator/$EMU_ID/registers" | jq '{pc: .special.pc, sp: .special.sp, af: .main.af, hl: .main.hl}'
 curl -s "$BASE/emulator/$EMU_ID/capture/ocr" | jq -r .text   # error message?
 
 # 3. when did we last execute the crash PC? walk back from there

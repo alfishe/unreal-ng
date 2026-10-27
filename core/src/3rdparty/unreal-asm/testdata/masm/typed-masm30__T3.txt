@@ -1,0 +1,9 @@
+        LD      A,(HL)
+LABEL   LD A,B ;COMMENT
+X  Y   Z
+        DEFB "LD A",1
+ABC CBE LDIR LDIRX EXA
+        MAC 2
+        BANK 1:BORDER 2:CLS
+ld A,B
+

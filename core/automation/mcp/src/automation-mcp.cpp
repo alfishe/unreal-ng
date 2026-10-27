@@ -32,6 +32,40 @@
 #include <unistd.h>
 #endif
 
+/// region <Request checks>
+
+/// The request checks of every /mcp method: a non-local Origin is refused with 403 (DNS rebinding); then
+/// MCP-Protocol-Version (2025-06-18): a client names the negotiated revision on every request after initialize. An
+/// unsupported one is refused with 400 (the spec's answer); none means 2025-03-26 and passes. True when refused
+static bool RefuseRequest(const drogon::HttpRequestPtr& req,
+                                             const std::function<void(const drogon::HttpResponsePtr&)>& callback)
+{
+    // Origin (MCP Streamable HTTP, DNS rebinding): a web page's request carries the page's origin; only a local one
+    // may drive the emulator. The stdio bridge, curl and scripts send none and pass
+    if (const std::string origin = req->getHeader("Origin"); !origin.empty() && !mcp::IsLocalOrigin(origin))
+    {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(
+            mcp::MakeRpcError(Json::Value(), mcp::kInvalidRequest, "Origin not allowed: " + origin + " (local origins only)"));
+        resp->setStatusCode(drogon::HttpStatusCode::k403Forbidden);
+        callback(resp);
+        return true;
+    }
+    const std::string version = req->getHeader(mcp::kProtocolVersionHeader);
+    if (version.empty() || mcp::IsSupportedProtocolVersion(version))
+        return false;
+    std::string supported;
+    for (const char* v : mcp::kSupportedProtocolVersions)
+        supported += (supported.empty() ? "" : ", ") + std::string(v);
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(mcp::MakeRpcError(
+        Json::Value(), mcp::kInvalidRequest,
+        "Unsupported " + std::string(mcp::kProtocolVersionHeader) + ": " + version + " (supported: " + supported + ")"));
+    resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+    callback(resp);
+    return true;
+}
+
+/// endregion </Request checks>
+
 /// region <Port availability>
 
 // Helper function to check if a port is available (same pattern as
@@ -151,6 +185,8 @@ void AutomationMCP::start()
         "/mcp",
         [dispatcher, caller](const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (RefuseRequest(req, callback))
+                return;
             // Parse the JSON-RPC request body
             Json::Value request;
             std::string parseErrors;
@@ -168,6 +204,14 @@ void AutomationMCP::start()
                     return;
                 }
             }
+
+            // control_execution take_control: the agent's own address goes with the session, so the GUI can show
+            // the user where the automation comes from (the WebAPI only sees this server's loopback)
+            if (request.isMember("params") && request["params"].isObject() &&
+                request["params"]["name"].asString() == "control_execution" &&
+                request["params"]["arguments"].isObject() &&
+                request["params"]["arguments"]["action"].asString() == "take_control")
+                request["params"]["arguments"]["_peer"] = req->getPeerAddr().toIpPort();
 
             const bool wantsEventStream =
                 req->getHeader("Accept").find("text/event-stream") != std::string::npos;
@@ -239,6 +283,8 @@ void AutomationMCP::start()
         "/mcp",
         [](const drogon::HttpRequestPtr& req,
            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (RefuseRequest(req, callback))
+                return;
             if (req->isHead())
             {
                 auto resp = drogon::HttpResponse::newHttpResponse();
@@ -252,10 +298,12 @@ void AutomationMCP::start()
                     auto streamShared = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
                     streamShared->send(mcp::kSseKeepalive); // establish liveness immediately
                     auto ping = std::make_shared<std::function<void()>>();
-                    *ping = [streamShared, ping]() {
+                    // Weak self-reference, the pending timer holds it: the chain is freed when the stream closes
+                    // (a strong self-capture never was, BUGS.md 2026-10-11 #7)
+                    *ping = [streamShared, weakSelf = std::weak_ptr<std::function<void()>>(ping)]() {
                         if (streamShared->send(mcp::kSseKeepalive))
                         {
-                            drogon::app().getLoop()->runAfter(15.0, [ping]() { (*ping)(); });
+                            drogon::app().getLoop()->runAfter(15.0, [ping = weakSelf.lock()]() { (*ping)(); });
                         }
                         else
                         {

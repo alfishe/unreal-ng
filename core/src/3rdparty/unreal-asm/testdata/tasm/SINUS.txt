@@ -1,0 +1,42 @@
+;
+;----------------------------
+        .IF     PASS
+PASS    EQU     1
+REPTCNT EQU     1
+        .ENDIF
+;
+        DEFMAC  GENSINUS
+;
+        ORG     SIN_ADR
+        DEFB    SIN_X/256
+        ORG     $+127
+        DEFB    0-(SIN_X/256)
+;
+        ORG     SIN_ADR-1+(REPTCNT*2)
+        DEFB    SIN_X/256
+        ORG     $+127
+        DEFB    0-(SIN_X/256)
+;
+SIN_ADR =       SIN_ADR+1
+;
+SIN_X   =       SIN_X+(SIN_Y/41)
+SIN_Y   =       SIN_Y-(SIN_X/41)
+;
+REPTCNT =       REPTCNT-1
+        .IF     REPTCNT
+        .ELSE
+        GENSINUS
+        .ENDIF
+        ENDMAC
+;
+;=====================
+        ORG     #8000
+;
+SIN_X           EQU     0
+SIN_Y           EQU     #7F00
+SIN_ADR         EQU     $
+        GENSINUS
+REPTCNT         =       64
+        ORG     SIN_ADR+256
+;
+

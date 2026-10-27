@@ -44,16 +44,38 @@ void PortDecoder_ATM450::ApplyBootROMDefaults(ROMModeEnum mode)
     if (mode == RM_DOS)
     {
         Port_FE_AddressLatch(ATM450_AFE_ROM | ATM450_AFE_VMODE);
-        _state->aFB = 0x00;
+        _state->atm.aFB = 0x00;
     }
     else
     {
         Port_FE_AddressLatch(ATM450_AFE_ROM);
-        _state->aFB = ATM450_AFB_CPSYS;
+        _state->atm.aFB = ATM450_AFB_CPSYS;
     }
 
     if (_memory)
         _memory->UpdateZ80Banks();
+}
+
+void PortDecoder_ATM450::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
+{
+    // The reset starts the machine in its system ROM (CPSYS) with video mode 0 and leaves the ROM / video choice to it. A
+    // Spectrum program wants what RM_DOS sets up: ROM at #0000, the ZX screen, the 48K / 128K / DOS ROM by #7FFD
+    Port_FE_AddressLatch(ATM450_AFE_ROM | ATM450_AFE_VMODE);
+    _state->atm.aFB = 0x00;
+    _state->pFDFD = 0x00;
+    if (_memory)
+        _memory->UpdateZ80Banks();
+}
+
+bool PortDecoder_ATM450::FinishAutostartColdStart(uint16_t pc)
+{
+    // The 4.50 DOS ROM has the ATM2 resident probe too ($0000 -> $3C50): its page select at $3CC5 writes A >> 3 & 3 to
+    // #FDFD and A & 7 | #10 to #7FFD, called with A = #1F. Without a resident in pages 27-31 nothing selects page 0
+    // again, and every #7FFD page is 24 + n on 512 KB while the picture stays in RAM 5 / 7. RM_DOS already set up the
+    // rest of what EnterSpectrum128Paging lays out (ROM at #0000, the ZX picture, CPSYS off)
+    // (docs/inprogress/2026-10-11-atm-autostart-128k-paging)
+    EnterSpectrum128Paging(pc);
+    return true;
 }
 
 IdeAdapter::Gate PortDecoder_ATM450::IdeGate()
@@ -169,7 +191,7 @@ void PortDecoder_ATM450::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     if (IsPort_FE(port))
     {
         Default_Port_FE_Out(port, value, pc);
-        _state->atmBorderBright = (port & 0x0008) ? 0 : 1;
+        _state->atm.borderBright = (port & 0x0008) ? 0 : 1;
         Port_FE_AddressLatch(port);
 
         disp.decodedPort = 0x00FE;
@@ -288,9 +310,9 @@ uint8_t PortDecoder_ATM450::PalMarker(uint32_t sinceInt)
 void PortDecoder_ATM450::Port_FE_AddressLatch(uint16_t port)
 {
     // set_atm_aFE((unsigned char)port): the latch takes the LOW address byte
-    const uint8_t oldValue = _state->aFE;
+    const uint8_t oldValue = _state->atm.aFE;
     const uint8_t newValue = static_cast<uint8_t>(port & 0x00FF);
-    _state->aFE = newValue;
+    _state->atm.aFE = newValue;
 
     const uint8_t changed = oldValue ^ newValue;
 
@@ -312,7 +334,7 @@ void PortDecoder_ATM450::Port_FE_AddressLatch(uint16_t port)
 void PortDecoder_ATM450::Port_FB_AddressLatch(uint16_t port)
 {
     // comp.aFB = (unsigned char)port; set_banks()
-    _state->aFB = static_cast<uint8_t>(port & 0x00FF);
+    _state->atm.aFB = static_cast<uint8_t>(port & 0x00FF);
 
     if (_memory)
         _memory->UpdateZ80Banks();
@@ -336,8 +358,8 @@ void PortDecoder_ATM450::Port_FDFD_Out(uint8_t value)
 // 4-bit component is 0xA * high + 5 * low on the {0x00, 0x11 .. 0xFF} ladder
 void PortDecoder_ATM450::Port_7DFD_PaletteOut(uint8_t value)
 {
-    const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
-    _state->atmPaletteRegs[cell] = value;
+    const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atm.borderBright & 1) << 3));
+    _state->atm.paletteRegs[cell] = value;
 
     const uint8_t v = static_cast<uint8_t>(value ^ 0xFF);
     const uint8_t blue = static_cast<uint8_t>(0x0A * ((v >> 0) & 1) + 0x05 * ((v >> 3) & 1));
@@ -345,10 +367,10 @@ void PortDecoder_ATM450::Port_7DFD_PaletteOut(uint8_t value)
     const uint8_t green = static_cast<uint8_t>(0x0A * ((v >> 2) & 1) + 0x05 * ((v >> 5) & 1));
 
     // 4-bit -> 8-bit is x * 0x11 (the atm2clev ladder); ABGR packing like the ULA tables
-    _state->atmPalette[cell] = 0xFF000000u | (static_cast<uint32_t>(blue * 0x11) << 16) |
+    _state->atm.palette[cell] = 0xFF000000u | (static_cast<uint32_t>(blue * 0x11) << 16) |
                                (static_cast<uint32_t>(green * 0x11) << 8) | static_cast<uint32_t>(red * 0x11);
 
-    MLOGDEBUG("Port_7DFD_PaletteOut: value=0x%02X cell=%d -> 0x%08X", value, cell, _state->atmPalette[cell]);
+    MLOGDEBUG("Port_7DFD_PaletteOut: value=0x%02X cell=%d -> 0x%08X", value, cell, _state->atm.palette[cell]);
     if (_context->pScreen)
         _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, cell);  // the video change log
 }
@@ -373,7 +395,7 @@ void PortDecoder_ATM450::updateMemoryBanks()
     _memory->SetRAMPageToBank2(2);
 
     // aFE.7 = 0: RAM at #0000 - page 0 in window 0 and page 4 (not 5) in window 1
-    if (!(_state->aFE & ATM450_AFE_ROM))
+    if (!(_state->atm.aFE & ATM450_AFE_ROM))
     {
         _memory->SetRAMPageToBank0(0);
         _memory->SetRAMPageToBank1(4);
@@ -387,11 +409,11 @@ void PortDecoder_ATM450::updateMemoryBanks()
     // The ROM arbitration rewrites the CPSYS latch itself: the 48K lock drops
     // it, CPNET inside a TR-DOS session raises it ("more priority, then 7FFD")
     if (_state->p7FFD & PORT_7FFD_LOCK)
-        _state->aFB &= static_cast<uint8_t>(~ATM450_AFB_CPSYS);
+        _state->atm.aFB &= static_cast<uint8_t>(~ATM450_AFB_CPSYS);
     if (trdos && (_state->pFDFD & ATM450_FDFD_CPNET))
-        _state->aFB |= ATM450_AFB_CPSYS;
+        _state->atm.aFB |= ATM450_AFB_CPSYS;
 
-    if (_state->aFB & ATM450_AFB_CPSYS)
+    if (_state->atm.aFB & ATM450_AFB_CPSYS)
         _memory->SetROMSystem();
     else if (trdos)
         _memory->SetROMDOS();  // whatever 7FFD.4 says

@@ -5,6 +5,7 @@
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/profi/ttdprofixtkbc.h"
@@ -22,6 +23,8 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
+
+#include <atomic>
 
 namespace
 {
@@ -49,8 +52,9 @@ namespace
 PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
-    _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
+    // Its snapshot view exists while the window map is a Spectrum 128K (both boards: RAM page n is bank n there)
+    SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
+    BindRtc(_rtc);
     // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
     _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();
@@ -225,18 +229,30 @@ void PortDecoder_Profi::reset()
     if (!_switchFromConfig)
     {
         _switchFromConfig = true;
-        state.profi_turbo_switch = _context->config.profi_turbo ? 1 : 0;
-        state.profi_cpm_switch = (_board.palette && _context->config.profi_cpm) ? 1 : 0;
+        state.profi.turboSwitch = _context->config.profi_turbo ? 1 : 0;
+        state.profi.cpmSwitch = (_board.palette && _context->config.profi_cpm) ? 1 : 0;
     }
     SyncTurbo();
     SyncWaits();
 }
 
+// The switches are read by automation threads (the front panel action, the WebAPI) while the emulation thread sets
+// them (a TTD live input): atomic byte access on both sides, without parking the CPU for a read
+static uint8_t LoadSwitch(uint8_t& field)
+{
+    return std::atomic_ref<uint8_t>(field).load(std::memory_order_relaxed);
+}
+
+static void StoreSwitch(uint8_t& field, bool on)
+{
+    std::atomic_ref<uint8_t>(field).store(on ? 1 : 0, std::memory_order_relaxed);
+}
+
 bool PortDecoder_Profi::GetFrontPanelSwitch(FrontPanelSwitch sw) const
 {
     if (sw == FrontPanelSwitch::Cpm)
-        return _board.palette && _state->profi_cpm_switch != 0;
-    return sw == FrontPanelSwitch::Turbo && _state->profi_turbo_switch != 0;
+        return _board.palette && LoadSwitch(_state->profi.cpmSwitch) != 0;
+    return sw == FrontPanelSwitch::Turbo && LoadSwitch(_state->profi.turboSwitch) != 0;
 }
 
 bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
@@ -244,14 +260,14 @@ bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
     if (sw == FrontPanelSwitch::Cpm && _board.palette)
     {
         // research-profi-v5-open-items.md Q6: the switch drives the clear input of the #DFFD latches (/ONOFF)
-        _state->profi_cpm_switch = on ? 1 : 0;
+        StoreSwitch(_state->profi.cpmSwitch, on);
         if (on && _state->pDFFD != 0)
             ApplyDffd(0);
         return true;
     }
     if (sw != FrontPanelSwitch::Turbo)
         return false;
-    _state->profi_turbo_switch = on ? 1 : 0;
+    StoreSwitch(_state->profi.turboSwitch, on);
     SyncTurbo();
     SyncWaits();
     return true;
@@ -261,7 +277,7 @@ void PortDecoder_Profi::SyncTurbo()
 {
     Core* core = _context->pCore;
     Z80* z80 = core ? core->GetZ80() : nullptr;
-    const bool pressed = _state->profi_turbo_switch != 0;
+    const bool pressed = _state->profi.turboSwitch != 0;
 
     // v3: the VG93's HLD pin is the board's /TURBO, so a loaded head holds 3.5 MHz; follow it while the switch is
     // pressed (the machine step hook costs nothing otherwise). The v5 board has no such link in its drawings
@@ -338,7 +354,7 @@ void PortDecoder_Profi::SyncWaits()
 
     // v5: the video WAIT at 3.5 MHz (unless SB8 is in its PENTAGON position) and the turbo waits; v3: turbo only
     const CONFIG& config = _context->config;
-    const bool pressed = _state->profi_turbo_switch != 0;
+    const bool pressed = _state->profi.turboSwitch != 0;
     // In hi-res the v5 arbiter waits whatever SB8 says (design-hires.md H3)
     const bool hires = (_state->pDFFD & 0x80) != 0;
     const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed || hires) : pressed;
@@ -847,18 +863,18 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
     return binding;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_Profi::GetTTDModelStateTypes() const
 {
     // The clock is on the v5 board only; the PROFI-XT controller when fitted
-    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ppi8255};
+    std::vector<ttd::TTDDeviceType> ids{ttd::TTDDeviceType::ProfiPaging, ttd::TTDDeviceType::Ppi8255};
     if (_board.extendedPorts)
     {
-        ids.push_back(ttd::PeripheralId::Ds12887);
-        ids.push_back(ttd::PeripheralId::Pit8253);     // the COM port's baud timer
-        ids.push_back(ttd::PeripheralId::Usart8251);   // the COM port (its peer: MachineSerialPeer)
+        ids.push_back(ttd::TTDDeviceType::Ds12887);
+        ids.push_back(ttd::TTDDeviceType::Pit8253);     // the COM port's baud timer
+        ids.push_back(ttd::TTDDeviceType::Usart8251);   // the COM port (its peer: MachineSerialPeer)
     }
     if (_xtKbc)
-        ids.push_back(ttd::PeripheralId::ProfiXtKbc);
+        ids.push_back(ttd::TTDDeviceType::ProfiXtKbc);
     return ids;
 }
 
@@ -1054,7 +1070,7 @@ void PortDecoder_Profi::Port_Palette_Out(uint16_t port)
     const uint8_t index = static_cast<uint8_t>((_state->pFE ^ 0x0F) & 0x0F);
     const uint16_t colour = static_cast<uint16_t>(static_cast<uint8_t>(~(port >> 8)));
     const uint16_t blueLsb = (_state->pFE & 0x80) ? 0x01 : 0x00;
-    _state->profiPalette[index] = static_cast<uint16_t>((colour << 1) | blueLsb);
+    _state->profi.palette[index] = static_cast<uint16_t>((colour << 1) | blueLsb);
     if (_context->pScreen)
         _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);  // the video change log
 }
@@ -1065,7 +1081,7 @@ uint8_t PortDecoder_Profi::Port_FE_In_GX0() const
     // idx is the same (previous #FE value ^ 0xF) index the palette write uses; bit 6 of our
     // 9-bit entry is G's LSB, bit 0 is the extra blue LSB (see Port_Palette_Out).
     const uint8_t index = static_cast<uint8_t>((_state->pFE ^ 0x0F) & 0x0F);
-    const uint16_t entry = _state->profiPalette[index];
+    const uint16_t entry = _state->profi.palette[index];
     const bool gx0 = ((entry >> 6) ^ entry) & 0x01;
     return gx0 ? 0x80 : 0x00;
 }
@@ -1083,7 +1099,7 @@ void PortDecoder_Profi::ResetPalette()
         const uint16_t green = (i & 0x04) ? level : 0x00;
         const uint16_t red = (i & 0x02) ? level : 0x00;
         const uint16_t blue = (i & 0x01) ? level : 0x00;
-        _state->profiPalette[i] = static_cast<uint16_t>((green << 6) | (red << 3) | blue);
+        _state->profi.palette[i] = static_cast<uint16_t>((green << 6) | (red << 3) | blue);
     }
 }
 
@@ -1130,7 +1146,7 @@ bool PortDecoder_Profi::DffdAnswers(uint16_t port) const
 void PortDecoder_Profi::Port_DFFD(uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     // The CP/M switch holds the latches cleared: the write is lost
-    if (_state->profi_cpm_switch)
+    if (_state->profi.cpmSwitch)
         return;
     ApplyDffd(value);
 }

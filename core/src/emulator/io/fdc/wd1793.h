@@ -595,7 +595,6 @@ public:
     static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;  // 3.5 t-states per microsecond
 
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
-    static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
 
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
@@ -1316,8 +1315,21 @@ protected:
     /// region <Emulation events>
 public:
     void handleFrameStart();
-    void handleStep();
+    /// Called after every instruction (MainLoop::OnCPUStep): asleep it is one test here, no call
+    void handleStep()
+    {
+        if (!_sleeping)
+            handleStepAwake();
+    }
+    /// handleStep would not act at this step: asleep, or idle with the motor off (it only counts toward sleep).
+    /// A CPU engine may then run idle steps without it (Z80::IdleStepsInert)
+    bool IsStepInert() const
+    {
+        return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
+    }
     void handleFrameEnd();
+    /// handleStep's work while the controller is awake
+    void handleStepAwake();
     /// endregion </Emulation events>
 
     /// region <PortDevice interface methods>
@@ -1393,6 +1405,10 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.instance = "betadisk";
+        // The controller's clocks advance with emulated time (the layout table in wd1793.cpp): _time at 22, _lastTime
+        // at 30, and the motor's countdown _motorTimeoutTStates at 114 - time fields (measured 2026-10-09: all three
+        // move every frame while the controller is clocked)
+        d.timeFields = {{22, 8}, {30, 8}, {114, 8}};
         return d;
     }
     /// endregion </TTDSerializable interface>

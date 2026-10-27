@@ -1,18 +1,18 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <functional>
 
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/im2daisychain.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portinterceptor.h"
 #include "stdafx.h"
 
-// Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
-extern uint8_t* direct_registers[8];
-
 // Forward declaration
 class OpcodeProfiler;
+class PortReadWatch;
 
 /// region <Structures>
 
@@ -316,6 +316,14 @@ public:
     /// After the opcode read (the refresh edge)
     /// @param address the address the opcode byte was fetched from
     virtual void OnMachineM1(uint16_t address) = 0;
+    /// Another M1 at `address`, with nothing else in between, would change nothing in the board (BeforeMachineM1
+    /// and OnMachineM1 both no-ops now): a halted CPU's repeated idle fetch may then run without them. Default:
+    /// false (every fetch runs the hook)
+    virtual bool RepeatM1IsInert(uint16_t address) const
+    {
+        (void)address;
+        return false;
+    }
 };
 
 /// Model-side owner of the /INT pin (see Z80::SetInterruptSource). Shared
@@ -343,6 +351,16 @@ public:
     /// peripherals watch the bus for it to end their interrupt service (the
     /// Z84C15 daisy chain; the Sprinter re-arms its accelerator)
     virtual void OnReti() {}
+    /// Called right after IsIntAsserted(t) returned false: the earliest t' >= t at which it may return true while
+    /// nothing touches the machine (no port or memory access, acknowledge, RETI or host input) - a lower bound,
+    /// the source is asked again there. Returning `t` (the default) means "unknown: ask at every boundary".
+    /// Lets an engine run a halted CPU's idle cycles in one go (Z84C15Engine)
+    virtual uint32_t NextAssertT(uint32_t t) { return t; }
+    /// A change count of everything IsIntAsserted reads besides the time, kept by sources with countsChanges: while
+    /// it stays the same (and the frame, the clock multiplier), a "no" holds up to NextAssertT. A plain field, read
+    /// at every boundary without a call. A source without it (countsChanges false) is asked at every boundary
+    uint32_t changeCount = 0;
+    bool countsChanges = false;
     /// The source wants OnWait for every stretch of the CPU clock (Z80::AddWaitStates / AddWaitTicks): a pulse
     /// that counts only CPU clocks without /WAIT (TS-Conf's frame INT). Asked once, in SetInterruptSource;
     /// a source that does not need it costs the other machines nothing
@@ -369,6 +387,20 @@ public:
     /// The frame ended: Z80::t was just rebased by `frameLength` (the scaled
     /// frame). Frame-relative positions held by the engine are rebased too
     virtual void OnMachineFrameRollover(uint32_t frameLength) { (void)frameLength; }
+    /// A halted CPU's idle fetches at `fetch` from frame T-state t on (Z80::RunHaltedIdle): the fetches that start
+    /// before the result may run as time without a step each; then OnIdleFetches with their count and OnMachineStep
+    /// at the T-state they reached. `t` (the default): every fetch is a step
+    virtual uint32_t IdleFetchesUntil(uint16_t fetch, uint32_t t)
+    {
+        (void)fetch;
+        return t;
+    }
+    /// `count` idle fetches at `fetch` ran as time (no memory read): what each would have left behind in the engine
+    virtual void OnIdleFetches(uint16_t fetch, uint32_t count)
+    {
+        (void)fetch;
+        (void)count;
+    }
 };
 
 /// An instruction engine that replaces the native interpreter for one machine
@@ -445,6 +477,9 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
     // Debugger related - master switch for all features
     bool isDebugMode;
+    /// Exec breakpoints are checked at each instruction start without the debug mode while exec taps are armed
+    /// (BreakpointManager::ApplyTapDemand): the memory keeps the fast interface
+    bool execTapHold = false;
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 
@@ -495,9 +530,6 @@ protected:
     EmulatorContext* _context;
     Memory* _memory;
 
-    uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
-                             // op_ddcb.cpp and direct_registers[6] unused pointer)
-
 protected:
     int _nmi_pending_count = 0;
 
@@ -506,6 +538,8 @@ protected:
 
     // Device INT lines (SetDeviceIntLine): bit set = that device holds /INT low
     uint32_t _deviceIntLines = 0;
+    // The daisy chain on the bus (Im2DaisyChain): its line kDeviceIntIm2Chain is set while a device is armed
+    Im2DaisyChain _im2Chain{*this};
     uint64_t _localIntEndFrame = 0;
     uint32_t _localIntEndT = 0;
     
@@ -529,6 +563,7 @@ public:
     /// region <Z80 lifecycle>
 public:
     uint8_t m1_cycle();
+    uint8_t FetchM1();  // m1_cycle's body, inline in Z80Step
     void HaltedM1();  // one idle fetch of the halted CPU, at the byte after the HALT (out of line, cold)
     void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
     bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
@@ -630,6 +665,9 @@ public:
     /// the CPU has taken the byte. Null unless a model decoder needs it (the 128K / +2 paging latch). The end of
     /// an IN tests one flag for it and the port interceptor together (_inResultHooks)
     IReadCycleLatch* readCycleLatch = nullptr;
+    /// A screen on the event rule (ScreenZX::CatchUpToStepStart): told before a port write and before a
+    /// read-clocked latch takes its byte, both of which may move what the picture shows. Null on the other machines
+    Screen* videoCatchUp = nullptr;
     uint16_t readCycleLatchMask = 0;
     uint16_t readCycleLatchMatch = 0;
     void SetReadCycleLatch(IReadCycleLatch* latch, uint16_t mask = 0, uint16_t match = 0)
@@ -640,10 +678,22 @@ public:
         UpdateInResultHooks();
     }
 
+    /// The controllers' port-read evidence (ControllerManager, retro-devices.md §6): told the port of every IN while
+    /// the watch runs. Null otherwise; tested behind _inResultHooks. Set on the machine's thread only
+    PortReadWatch* portReadWatch = nullptr;
+    void SetPortReadWatch(PortReadWatch* watch)
+    {
+        portReadWatch = watch;
+        UpdateInResultHooks();
+    }
+
 private:
-    /// Something observes the result of an IN (the port interceptor, a read-cycle latch)
+    /// Something observes the result of an IN (the port interceptor, a read-cycle latch, the port-read watch)
     bool _inResultHooks = false;
-    void UpdateInResultHooks() { _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr; }
+    void UpdateInResultHooks()
+    {
+        _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr || portReadWatch != nullptr;
+    }
 
 public:
 
@@ -715,6 +765,8 @@ public:
     StepResult StepInstruction(bool skipBreakpoints = false);
     /// StepInstruction with rare work around the step (the per-step gate was non-zero)
     StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
+    bool InterruptsIdle() const;  // the step needs no interrupt decision (StepInstruction)
+    bool SourceIdle(IInterruptSource& source);  // the same for a machine that owns INT (RunHaltedIdle)
 
     /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
     /// that an R delta across a step still counts the step's fetches (the
@@ -723,6 +775,51 @@ public:
 
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
+
+    /// region <Idle steps in one go (a halted CPU)>
+    /// The frame T before which an instruction engine (ICpuEngine) may run a halted CPU's idle M1 cycles in one
+    /// go instead of one per step (never past the frame end, _frameLimit, either; UINT32_MAX: up to the frame
+    /// end); 0 (the default): one per step. Set only by the drivers that run a stretch of
+    /// time without looking at single steps - the frame loop, Emulator::RunNFrames and RunTStates (IdleSkipScope);
+    /// a single step, the debugger's stepping and the run-until loops keep 0, so they still see every idle cycle
+    uint32_t idleSkipLimit = 0;
+    /// Every per-step job would be a no-op for another idle step now: no work-gate job outside `allowedWork` (the
+    /// ones the caller handles itself: EmulatorContext::kStepWork*), no NMI request, no debug mode (breakpoints, the debug memory interface), no bus / M1
+    /// tracer, TTD probe or coverage, CPU-step analyzer, call trace, opcode profiler or state dump, no TTD session,
+    /// no TR-DOS session switch and no trap at this PC, the tape stopped and the floppy controller idle. The
+    /// screen and the sound catch up by time, so their per-step calls need not run (the engine's precondition
+    /// for the idle fast-forward: Z84C15Engine, RunHaltedIdle)
+    bool IdleStepsInert(uint32_t allowedWork) const;
+    /// The native step's idle fast-forward (StepInstruction with no work-gate job, or only the machine's interrupt
+    /// source and step hook): after a step that left the CPU halted, the idle fetches that follow run as arithmetic
+    /// up to the next boundary where the interrupt decision may change, the frame end or idleSkipLimit (no-op while
+    /// idleSkipLimit is 0), then OnCPUStep. true: time moved
+    bool RunHaltedIdle(bool skipBreakpoints);
+    void RunHaltedIdleAfterWork(bool skipBreakpoints);
+    /// Another idle fetch at `fetch` through the current memory interface reads a byte and nothing else: a plain
+    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; a bus overlay
+    /// watching the address only with waits by the start's phase (`period`: its phase period, 1 without one);
+    /// the board's M1 hook and the memory model agree
+    bool HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const;
+    /// The frame T-state up to which the fetches that start from t keep HaltedFetchIsPure's rule (the overlay's
+    /// RepeatFetchPureUntil); UINT32_MAX: the frame end
+    uint32_t HaltedFetchPureUntil(uint16_t fetch) const;
+    /// The longest phase period of the idle fetch RunHaltedIdle learns lengths for
+    static constexpr uint32_t kMaxHaltedIdlePeriod = 8;
+    /// Sets idleSkipLimit for a scope and restores it
+    class IdleSkipScope
+    {
+    public:
+        IdleSkipScope(Z80& cpu, uint32_t limit) : _cpu(cpu), _saved(cpu.idleSkipLimit) { cpu.idleSkipLimit = limit; }
+        ~IdleSkipScope() { _cpu.idleSkipLimit = _saved; }
+        IdleSkipScope(const IdleSkipScope&) = delete;
+        IdleSkipScope& operator=(const IdleSkipScope&) = delete;
+
+    private:
+        Z80& _cpu;
+        uint32_t _saved;
+    };
+    /// endregion </Idle steps in one go>
 
     /// CPU half of the frame start (MainLoop::CompleteFrame / RestartFrame):
     /// apply the queued frequency multiplier, derive the frame geometry, and
@@ -735,7 +832,7 @@ public:
     ///
     /// The effective multiplier composes the host speed control
     /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
-    /// state (hw_turbo_ratio, driven by the model decoder - Scorpion: scorpion_turbo,
+    /// state (hw_turbo_ratio, driven by the model decoder - Scorpion: scorpion.turbo,
     /// hardware-reference 13). Called once per frame start by BeginFrame, so
     /// the scaled INT window / frame limit are always derived from the
     /// applied value.
@@ -813,7 +910,13 @@ public:
     {
         kDeviceIntZxNetUsb = 1u << 0,   ///< ZXNETUSB card (W5300), ZX-Bus /INT
         kDeviceIntAtm2Kbc = 1u << 1,    ///< ATM Turbo 2+ keyboard controller (INT_T, P1.5)
+        /// The IM 2 daisy chain (Im2DaisyChain): not a level - set while a chain device is armed, the chain says at
+        /// each boundary whether it pulls /INT, and its device drives the vector in the acknowledge
+        kDeviceIntIm2Chain = 1u << 2,
     };
+
+    /// The Z80-family peripherals on the bus that drive their own IM 2 vector and decode RETI (a slot card's PIO)
+    Im2DaisyChain& Im2Chain() { return _im2Chain; }
 
     /// A device drives its /INT output: asserted = the line held low. A level,
     /// not a pulse: it stays until the device releases it (the program clears
@@ -823,6 +926,10 @@ public:
     /// bit only while a line is low, so a machine without such a device, or
     /// with the line released, keeps the plain step
     void SetDeviceIntLine(uint32_t line, bool asserted);
+    /// The device lines as /INT sees them at this boundary (the daisy chain's bit only while the chain pulls it)
+    bool DeviceIntAsserted();
+    /// The acknowledge cycle on the daisy chain: true with the vector when a chain device drove the data bus
+    bool ChainAcknowledge(uint8_t& vector);
     uint32_t GetDeviceIntLines() const { return _deviceIntLines; }
 
     /// An NMI requested and not taken yet (TTD: TTDCpuState::nmi_pending)
@@ -838,8 +945,9 @@ public:
     }
 
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
-    /// does not see the common frame INT). Local INT is not affected
-    bool frameIntMasked = false;
+    /// does not see the common frame INT). Local INT is not affected. Atomic: a ZX-Poly master's port write sets it
+    /// for slaves running on the group's worker threads (relaxed: a plain load on the instruction path)
+    std::atomic<bool> frameIntMasked{false};
 private:
     /// StepInstructionWithWork while an RZX recording plays: the frame end at
     /// the recorded fetch count; true when its interrupt was taken as this step
@@ -956,4 +1064,18 @@ public:
     /// Z80BoundaryEnum as the debugger protocol names it: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack
     static const char* BoundaryName(uint8_t boundary);
     /// endregion </Register Access API>
+
+    // Last, so the step's hot fields keep their offsets
+    /// RunHaltedIdle's switch (tests compare a machine with it off) and the idle fetches it ran as arithmetic
+    bool haltedIdleInOneGo = true;
+    uint64_t haltedIdleFetchesInOneGo = 0;
+    /// RunHaltedIdle's last refusal: no new check before this T (_haltedIdleRetrySpan after it: kHaltedIdleRetryT
+    /// raster T-states, scaled by the clock multiplier)
+    static constexpr uint32_t kHaltedIdleRetryT = 256;
+    uint32_t _haltedIdleRetryAt = 0;
+    uint32_t _haltedIdleRetrySpan = kHaltedIdleRetryT;
+    void NoteHaltedIdleRefused();
+    /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
+    /// Statistics only: not machine state, not in snapshots or TTD checkpoints
+    uint64_t interruptsAccepted = 0;
 };

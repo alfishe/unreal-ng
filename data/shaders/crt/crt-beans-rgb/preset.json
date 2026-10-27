@@ -1,0 +1,464 @@
+{
+ "key": "crt-beans-rgb",
+ "preset": "crt/crt-beans-rgb.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-beans/transform.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "YIQ": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/filter.slang",
+   "alias": "Filtered",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Absolute",
+     "factor": 1024
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "Cutoff": "float",
+    "ICutoff": "float",
+    "QCutoff": "float",
+    "YIQ": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/calculate_widths.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "MaxSpotSize": "float",
+    "MinSpotSize": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/scanlines_cubic.slang",
+   "alias": "Scanlines",
+   "filter": "Nearest",
+   "wrap": "ClampToEdge",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "MaxSpotSize": "float",
+    "MinSpotSize": "float",
+    "OddFieldFirst": "float",
+    "OverscanHorizontal": "float",
+    "OverscanVertical": "float",
+    "MaskType": "float",
+    "SubpixelMaskPattern": "float",
+    "SubpixelPattern": "float",
+    "DynamicMaskTriads": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/cubic_downsample.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 0.5
+    },
+    "y": {
+     "type": "Input",
+     "factor": 0.5
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/cubic_downsample.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 0.5
+    },
+    "y": {
+     "type": "Input",
+     "factor": 0.5
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/cubic_downsample.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 0.5
+    },
+    "y": {
+     "type": "Input",
+     "factor": 0.5
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/blur_horizontal.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "GlowSigma": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/blur_vertical.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "GlowSigma": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/bilinear_upsample.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 2.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 2.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/bilinear_upsample.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 2.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 2.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4"
+   }
+  },
+  {
+   "source": "crt/shaders/crt-beans/composite_output.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputGamma": "float",
+    "SourceSize": "vec4",
+    "ScanlinesSize": "vec4",
+    "FrameCount": "uint",
+    "GlowSigma": "float",
+    "GlowAmount": "float"
+   }
+  }
+ ],
+ "textures": [
+  {
+   "name": "BlueNoiseTex",
+   "file": "BlueNoiseTex.png",
+   "filter": "Linear",
+   "wrap": "Repeat",
+   "mipmap": false
+  }
+ ],
+ "parameters": {
+  "OutputGamma": {
+   "description": "Output gamma (0: sRGB, 1: 2.2 gamma)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "OverscanHorizontal": {
+   "description": "Horizontal overscan (proportion to crop)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.1,
+   "step": 0.01
+  },
+  "OverscanVertical": {
+   "description": "Vertical overscan (proportion to crop)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.1,
+   "step": 0.01
+  },
+  "MaxSpotSize": {
+   "description": "Maximum spot size (proportion of scanline)",
+   "initial": 0.9,
+   "minimum": 0.6,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "MinSpotSize": {
+   "description": "Minimum spot size (proportion of maximum)",
+   "initial": 0.4,
+   "minimum": 0.3,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "MaskType": {
+   "description": "Mask type (0: disabled, 1: subpixel, 2: dynamic)",
+   "initial": 2.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "SubpixelPattern": {
+   "description": "Monitor subpixel pattern (0: RGB, 1: BGR)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "SubpixelMaskPattern": {
+   "description": "Subpixel mask width (pixels per triad)",
+   "initial": 4.0,
+   "minimum": 2.0,
+   "maximum": 5.0,
+   "step": 1.0
+  },
+  "DynamicMaskTriads": {
+   "description": "Dynamic mask phosphor triads (per screen width)",
+   "initial": 550.0,
+   "minimum": 400.0,
+   "maximum": 800.0,
+   "step": 25.0
+  },
+  "GlowSigma": {
+   "description": "Glow width (proportion of screen height)",
+   "initial": 0.05,
+   "minimum": 0.01,
+   "maximum": 0.1,
+   "step": 0.01
+  },
+  "GlowAmount": {
+   "description": "Glow amount (mix ratio)",
+   "initial": 0.04,
+   "minimum": 0.0,
+   "maximum": 0.1,
+   "step": 0.005
+  },
+  "YIQ": {
+   "description": "Composite (0: RGB, 1: YIQ/composite)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "Cutoff": {
+   "description": "RGB/Y bandwidth (MHz)",
+   "initial": 4.0,
+   "minimum": 0.6,
+   "maximum": 6.0,
+   "step": 0.2
+  },
+  "ICutoff": {
+   "description": "I bandwidth (MHz)",
+   "initial": 0.6,
+   "minimum": 0.6,
+   "maximum": 6.0,
+   "step": 0.2
+  },
+  "QCutoff": {
+   "description": "Q bandwidth (MHz)",
+   "initial": 0.6,
+   "minimum": 0.6,
+   "maximum": 6.0,
+   "step": 0.2
+  },
+  "OddFieldFirst": {
+   "description": "Interlacing (0/1: bob/phase, 2: weave)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  }
+ }
+}

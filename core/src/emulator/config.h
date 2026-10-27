@@ -4,6 +4,7 @@
 
 #include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/controllers/controllerconfig.h"
 #include <functional>
 #include <string>
 
@@ -38,6 +39,8 @@ private:
     static constexpr const char* ngs = "NGS";
     static constexpr const char* zc = "ZC";
     static constexpr const char* network = "NETWORK";
+    static constexpr const char* slotsSection = "SLOTS";   // not `slots`: a Qt macro
+    static constexpr const char* midi = "MIDI";
     static constexpr const char* vdac2 = "VDAC2";
 
     // Separate ROM file variables within ROMSET profile
@@ -68,7 +71,7 @@ private:
 		{ "Quorum", "QUORUM",                    MM_QUORUM, 1024, RAM_128 | RAM_1024 },
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
-		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
+		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_1024 | RAM_2048 },  // Issue 1: 1 MB, 2: 2 MB. Issue 3 (4 MB) is asked for as 4096 through the API: this core addresses 2 MB, so it is created as 2048 with a note (Config::EffectiveRamSize); not in the menus
 		{ "Sprinter 2000", "SPRINTER",           MM_SPRINTER, 4096, RAM_4096 },
 	};
 
@@ -93,6 +96,14 @@ protected:
     // [MEDIA] and the legacy media keys of the loaded config (media manager)
     std::vector<MediaSetEntry> _mediaSet;
     std::vector<std::string> _mediaReport;
+
+    // [CONTROLLERS] and the legacy [INPUT] Joystick= keyboard joysticks (controller manager)
+    std::vector<controllers::ControllerSetEntry> _controllerSet;
+    std::vector<std::string> _controllerReport;
+
+    // [MIDI] Bank= (here, not in CONFIG: a field in CONFIG moves every EmulatorContext member after it, so the CPU
+    // and port paths' code changes for a card no machine fits by default - ZX-bus slots tdd.md §12)
+    std::string _midiBank;
 
 public:
 	static const char* GetDefaultConfig();
@@ -120,6 +131,21 @@ public:
 	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
 	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
 
+	/// The connector plugs the config states ([CONTROLLERS] + legacy [INPUT] Joystick=); problems in the report
+	const std::vector<controllers::ControllerSetEntry>& GetControllerSet() const { return _controllerSet; }
+	const std::vector<std::string>& GetControllerReport() const { return _controllerReport; }
+
+	/// [MIDI] Bank= : the SoundFont 2 bank of a slot card's General MIDI synthesizer (the ZX-MultiSound's SAM2695),
+	/// resolved like a ROM path. Empty = the card's default (midi/generaluser-gs.sf2, shipped from data/midi);
+	/// NONE = no bank (the synthesizer stays silent, nothing is loaded)
+	const std::string& GetMidiBank() const { return _midiBank; }
+
+	/// Process-wide hook on the [MIDI] Bank= value of every config as it is read (the bank is loader state, not in
+	/// CONFIG, so ConfigLoadedHook cannot reach it). The test runner keeps the shipped default bank (30 MB, about
+	/// 165 ms to load per card) out of machines whose test did not ask for it. An empty hook changes nothing
+	using MidiBankHook = std::function<void(std::string& bank)>;
+	static void SetMidiBankHook(MidiBankHook hook);
+
 	/// Process-wide hook called for every config that loaded and validated
 	/// successfully (model resolved, model timing defaults applied) - the last
 	/// step of ParseConfig, before any device is created from the config.
@@ -138,6 +164,7 @@ public:
 
 private:
 	static ConfigLoadedHook& ConfigLoadedHookStorage();
+	static MidiBankHook& MidiBankHookStorage();
 
 public:
 
@@ -205,12 +232,24 @@ public:
 	 */
 	static bool IsModelCreatable(const TMemModel& model);
 
+	/**
+	 * The RAM size a create / switch request really gets. The ZX Next of Issue 3 has 4 MB, which the core this emulator follows (3.02.03:
+	 * an 8-bit MMU page of 8 KB) cannot address: 4096 is accepted by the API and the machine is created with 2048, with a note. It is not an
+	 * offered size (no menu, not in available_ram_sizes_kb). Every other request is returned as it came.
+	 *
+	 * @param model Model of the request
+	 * @param requestedKb Size asked for (KB)
+	 * @param note Set when the size was changed: what happened and why
+	 * @return The size to create with
+	 */
+	static uint32_t EffectiveRamSize(MEM_MODEL model, uint32_t requestedKb, std::string& note);
+
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);
 
 	/// Strip the heritage "<file>:<quadrant>" ProfROM selector suffix if present.
-	/// Quadrant selection is runtime state (EmulatorState::profrom_bank) and
+	/// Quadrant selection is runtime state (ScorpionState::profromBank) and
 	/// quadrant 0 is the boot quadrant, so the suffix is never part of the path.
 	void StripProfRomQuadrantSuffix(char* path, size_t len);
     std::string StripComment(const char* src);

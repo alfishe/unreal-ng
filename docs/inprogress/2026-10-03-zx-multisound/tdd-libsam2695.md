@@ -208,9 +208,7 @@ zones), so the unit tests need no external file (as built: fingerprints in the l
 | SAM-4 | Effects (reverb, chorus, EQ) and render modes | M |
 | SAM-5 | Verification against FluidSynth, bank corpus, golden digests | M |
 | SAM-6 (later) | Host MIDI output (CoreMIDI / WinMM / ALSA) as an alternative sink; DLS loader | M |
-| SAM-7 (research) | **Dream-native banks** (`.DXB` / `.B16`, header `Bank`): Dream's own GM banks GMBK5X128 / GMBK5X64 and the Serdaco DreamBlaster banks are in `testdata/midi/` with Dream's bank maps and the MakeRom guide. If the format can be read (reverse engineering from the files and the guides), an `ISoundBank` for it brings Dream's own samples and instrument parameters - the closest available approach to the chip's sound. The SAM2695's CleanWave ROM itself is not among them. **License:** these banks are
-licensed for use on DreamBlaster cards only, so they are never shipped or committed; the loader reads a bank the user
-supplies (like a ROM), and the research only studies the file format for interoperability | M-L |
+| SAM-7 (research) | **Dream-native banks** (`.DXB` / `.B16`, header `Bank`): Dream's own GM banks GMBK5X128 / GMBK5X64 and the Serdaco DreamBlaster banks are in `testdata/midi/` with Dream's bank maps and the MakeRom guide. If the format can be read (reverse engineering from the files and the guides), an `ISoundBank` for it brings Dream's own samples and instrument parameters - the closest available approach to the chip's sound. The SAM2695's CleanWave ROM itself is not among them. The loader reads a bank file the user supplies (like a ROM). Research done 2026-10-08: [sam7-dream-banks.md](sam7-dream-banks.md) (format, POC in `tools/poc/024-dream-banks`, phases D-1..D-5, owner questions) | M-L |
 
 ## 9. Sources
 
@@ -361,10 +359,21 @@ and test), "GS parts and SysEx", "Pedals and portamento", "Effects and output".
   over). The soft clipper engages on 42 banks (peak above the 0.75 knee); the loudest peaks at 0.9999
   (eapci8m Hedsound), the next at 0.965.
 - **Cost:** GeneralUser GS through the GM test file, 25 s of audio: 474 ms with the effects, 426 ms dry.
+  Idle effects (2026-10-08): an effect whose state is all +0.0 skips the blocks without input, bit-identically
+  (library README "Idle effects", `Fx.IdleEffects*`, `Fx.IdleEqualizerTakesTheSpatialTail`; suite now 114 tests).
+  Tail floor (2026-10-08): a block without input that leaves the reverb's lines and filters, the chorus line or
+  the equalizer's memory below 2^-24 of full scale (-144 dBFS, half the LSB of a 24-bit word, the finest word
+  length documented in the SAM2695's family) sets them to +0.0, so every tail ends (hall2 5.8 s after the
+  note-off, pan delay 8.0 s) and the effects go idle after playback; part of the model with the skip on or off,
+  TTD-exact (library README "Tail floor", `Fx.TailsEndAtTheFloor`, `Fx.TailOutAcrossState`; suite 116 tests).
+  Output change at most 1.0e-7 (0.003 of a 16-bit LSB); the card's int16 MIDI row is unchanged.
 - Full emulator build (`tools/build/build.sh`): zero warnings; `tools/build/test.sh`: 6918 tests in 20 shards, 6845 passed, 73 skipped, 0 failed.
 
 ### 10.8 Left for SAM-5
 
+- **Real-chip check done (owner, 2026-10-05):** the synthesizer compared by ear with recordings of real SAM2695
+  boards (YouTube): "very similar, good enough" - accepted. No official CleanWave bank exists to compare the bank
+  itself against; the items below stay as refinements, not blockers.
 - Recordings of a Dreamblaster S2 / SAM2695 board for an informative comparison - now of the effects too: the
   curves this phase had to choose (REV_TIME, chorus parameters, the GS part NRPN scales, soft pedal, portamento,
   the soft-clip knee, the EQ Q) are the first things a capture would settle.

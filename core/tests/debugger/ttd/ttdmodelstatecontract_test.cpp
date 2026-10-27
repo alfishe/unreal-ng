@@ -15,10 +15,14 @@
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 
 /// @file ttdmodelstatecontract_test.cpp
@@ -43,9 +47,9 @@ class LyingDecoder : public PortDecoder_Pentagon128
 public:
     using PortDecoder_Pentagon128::PortDecoder_Pentagon128;
 
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override
     {
-        return {ttd::PeripheralId::NeoGS};
+        return {ttd::TTDDeviceType::NeoGS};
     }
     // CreateTTDSerializers() deliberately left as the empty base implementation.
 };
@@ -66,17 +70,17 @@ TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
         ASSERT_NE(context, nullptr) << model;
         ASSERT_NE(context->pPortDecoder, nullptr) << model;
 
-        const auto declared = context->pPortDecoder->GetTTDModelStateIds();
+        const auto declared = context->pPortDecoder->GetTTDModelStateTypes();
         const auto serializers = context->pPortDecoder->CreateTTDSerializers();
 
-        std::vector<ttd::PeripheralId> provided;
+        std::vector<ttd::TTDDeviceType> provided;
         for (const auto& s : serializers)
         {
             ASSERT_NE(s, nullptr) << model << ": CreateTTDSerializers returned a null entry";
-            provided.push_back(s->TTDPeripheralId());
+            provided.push_back(s->TTDType());
         }
 
-        for (ttd::PeripheralId id : declared)
+        for (ttd::TTDDeviceType id : declared)
         {
             EXPECT_NE(std::find(provided.begin(), provided.end(), id), provided.end())
                 << model << " declares TTD state id " << static_cast<unsigned>(id)
@@ -98,9 +102,9 @@ TEST(TTDModelStateContract_Test, ScorpionModelsDeclareScorpionState)
         ASSERT_NE(emulator, nullptr) << model;
 
         EmulatorContext* context = emulator->GetContext();
-        const auto declared = context->pPortDecoder->GetTTDModelStateIds();
+        const auto declared = context->pPortDecoder->GetTTDModelStateTypes();
 
-        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::ScorpionProfROM),
+        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::TTDDeviceType::ScorpionProfROM),
                   declared.end())
             << model << " must declare ScorpionProfROM state (#1FFD, DOS trigger, plane)";
 
@@ -117,14 +121,14 @@ TEST(TTDModelStateContract_Test, StandardModelDeclaresNothingAndStillRecords)
     ASSERT_NE(emulator, nullptr);
 
     EmulatorContext* context = emulator->GetContext();
-    EXPECT_TRUE(context->pPortDecoder->GetTTDModelStateIds().empty());
+    EXPECT_TRUE(context->pPortDecoder->GetTTDModelStateTypes().empty());
 
     FeatureManager* fm = emulator->GetFeatureManager();
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
 
-    EXPECT_TRUE(context->pTimeTravelManager->StartRecording());
-    context->pTimeTravelManager->StopRecording();
+    EXPECT_TRUE(context->pTimeTravelController->StartRecording());
+    context->pTimeTravelController->StopRecording();
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -152,13 +156,13 @@ TEST(TTDModelStateContract_Test, DeclaredButUnimplementedStateRefusesRecording)
 
         // Exercised through the public entry point: refusing to record is the
         // behaviour that matters, not the private helper that decides it.
-        started = context->pTimeTravelManager->StartRecording();
+        started = context->pTimeTravelController->StartRecording();
 
         context->pPortDecoder = original;  // restore before anything else touches it
     }
 
     EXPECT_FALSE(started) << "a model declaring uncovered state must not record";
-    EXPECT_NE(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Recording);
+    EXPECT_NE(context->pTimeTravelController->GetState(), ttd::TTDSessionState::Recording);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -180,7 +184,7 @@ TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
         PortDecoder* original = context->pPortDecoder;
         LyingDecoder lying(context);
         context->pPortDecoder = &lying;
-        started = context->pTimeTravelManager->StartRecording();
+        started = context->pTimeTravelController->StartRecording();
         context->pPortDecoder = original;
     }
 
@@ -262,6 +266,14 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::EvoAvrVolatile, 55, "EvoAvrVolatile"},
         {ttd::PeripheralId::KeyboardMatrix, 56, "KeyboardMatrix"},
         {ttd::PeripheralId::RzxPlayback, 57, "RzxPlayback"},
+        {ttd::PeripheralId::MultiSound, 58, "MultiSound"},
+        {ttd::PeripheralId::Sam2695, 59, "Sam2695"},
+        {ttd::PeripheralId::MultiSoundGs, 60, "MultiSoundGs"},
+        {ttd::PeripheralId::EvoFlash, 61, "EvoFlash"},
+        {ttd::PeripheralId::NextState, 62, "NextState"},
+        {ttd::PeripheralId::NextSystemArea, 63, "NextSystemArea"},
+        {ttd::PeripheralId::MachineSerialPeer2, 64, "MachineSerialPeer2"},
+        {ttd::PeripheralId::JoystickSerialPeer, 65, "JoystickSerialPeer"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 
@@ -305,6 +317,9 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
             // TSFM in the TurboSound slot where the helper can stage it (it
             // finds no config folder for the ATM models and machine variants:
             // those keep their own slot)
+            // The card fitted at creation: several models ship without a GS (owner decision 2026-10-04), and a
+            // switch cannot fill an empty slot
+            GeneralSoundFitScope fit(gs);
             Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(model, TurboSoundKind::FM);
             if (emulator == nullptr)
                 emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
@@ -328,6 +343,58 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
         }
     }
     EXPECT_EQ(checked, 32u) << "every model is creatable in this build";
+
+    // The cards the slots build themselves (the ZX-MultiSound), on every model with a ZX-bus: the card's devices
+    // (MultiSound, SAA1099, SAM2695, its GS) next to the machine's own. The card replaces the config's slot set (a GS
+    // card would conflict with the card's GS). Where the bus cannot take it (the Scorpion's system port has no +12 V)
+    // the card is left out with the reason and nothing is checked; ~25 ms per machine
+    std::vector<std::string> fitted;
+    for (const char* model : {"PENTAGON", "SCORPION", "PROFSCORP", "ATM3", "TSL", "ATM710", "ATM450"})
+    {
+        SCOPED_TRACE(std::string(model) + " + ZX-MultiSound");
+        const bool atm = std::string(model) == "ATM710" || std::string(model) == "ATM450";
+        const std::string slot = atm ? "cpu-socket.1" : "zxbus.1";
+        std::string createError;
+        std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+            "", model, LoggerLevel::LogError, &createError, [&slot, atm](CONFIG& config) {
+                std::vector<std::pair<std::string, std::string>> lines = {{slot, "multisound"}};
+                if (atm)
+                    lines.push_back({slot + ".adapter", "atm-cpu-socket-zxbus"});
+                config.slotConfig = SlotConfig{};
+                ParseSlotsSection(lines, config.slotConfig);
+                SlotManager::Project(config.slotConfig, config);
+            });
+        ASSERT_NE(emulator, nullptr) << createError;
+        struct Remove
+        {
+            std::string id;
+            ~Remove() { EmulatorManager::GetInstance()->RemoveEmulator(id); }
+        } remove{emulator->GetId()};
+        EmulatorContext* context = emulator->GetContext();
+        if (context->pSlotManager->FindCard(slot) == nullptr)
+        {
+            for (const SlotManager::Slot& entry : context->pSlotManager->Current().entries)
+                if (entry.entry.slot == slot)
+                {
+                    EXPECT_FALSE(entry.entry.disabledReason.empty());
+                }
+            continue;
+        }
+        fitted.push_back(model);
+
+        ttd::TTDPeripheralRegistry registry;
+        std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+        std::string error;
+        EXPECT_TRUE(ttd::RegisterMachinePeripherals(context, registry, owned, &error)) << error;
+        for (ttd::TTDDeviceType id : {ttd::TTDDeviceType::MultiSound, ttd::TTDDeviceType::Saa1099,
+                                      ttd::TTDDeviceType::Sam2695, ttd::TTDDeviceType::MultiSoundGs})
+            EXPECT_TRUE(registry.IsRegistered(id)) << static_cast<int>(id);
+        std::string tableError;
+        EXPECT_TRUE(registry.CheckDeviceTable(tableError)) << tableError;
+        EXPECT_EQ(registry.DeviceEntries().size(), registry.Count());
+    }
+    EXPECT_EQ(fitted, (std::vector<std::string>{"PENTAGON", "PROFSCORP", "ATM3", "TSL", "ATM710", "ATM450"}))
+        << "every ZX-bus but the Scorpion's (no +12 V) takes the card";
 }
 
 namespace
@@ -337,6 +404,7 @@ struct ContractDevice : ttd::TTDSerializable
     ttd::PeripheralId id = ttd::PeripheralId::Covox;
     ttd::TTDDeviceDescriptor extra;
     bool describeOther = false;
+    bool describeOtherV1Id = false;
     size_t TTDStateSize() const override { return 8; }
     void TTDSaveState(uint8_t* dst) const override { std::memset(dst, 0, 8); }
     void TTDLoadState(const uint8_t*) override {}
@@ -349,13 +417,15 @@ struct ContractDevice : ttd::TTDSerializable
         d.restoreAfter = extra.restoreAfter;
         if (describeOther)
             d.stateSize = 16;
+        if (describeOtherV1Id)
+            d.legacyId = ttd::PeripheralId::Tape;
         return d;
     }
 };
 }  // namespace
 
-/// The registration check names what does not match: a device registered
-/// under another id, a descriptor whose size is not the device's, a time field
+/// The registration check names what does not match: a descriptor naming
+/// another v1 id than the device, a descriptor whose size is not the device's, a time field
 /// outside the state, a dependency on a device the machine lacks
 TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
 {
@@ -363,13 +433,14 @@ TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
     {
         ContractDevice d;
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::Covox, &d);
+        registry.Register(&d);
         EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
     }
     {
         ContractDevice d;
+        d.describeOtherV1Id = true;
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::Tape, &d);
+        registry.Register(&d);
         EXPECT_FALSE(registry.CheckDeviceTable(error));
         EXPECT_NE(error.find("Contract"), std::string::npos) << error;
     }
@@ -377,7 +448,7 @@ TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
         ContractDevice d;
         d.describeOther = true;
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::Covox, &d);
+        registry.Register(&d);
         EXPECT_FALSE(registry.CheckDeviceTable(error));
         EXPECT_NE(error.find("16 bytes"), std::string::npos) << error;
     }
@@ -385,7 +456,7 @@ TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
         ContractDevice d;
         d.extra.timeFields = {{4, 8}};
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::Covox, &d);
+        registry.Register(&d);
         EXPECT_FALSE(registry.CheckDeviceTable(error));
         EXPECT_NE(error.find("time field"), std::string::npos) << error;
     }
@@ -393,7 +464,7 @@ TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
         ContractDevice d;
         d.extra.restoreAfter = {{ttd::TTDDeviceType::BetaDisk, "betadisk"}};
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::Covox, &d);
+        registry.Register(&d);
         EXPECT_FALSE(registry.CheckDeviceTable(error));
         EXPECT_NE(error.find("betadisk"), std::string::npos) << error;
     }

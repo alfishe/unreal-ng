@@ -14,7 +14,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -26,9 +26,9 @@
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
 
-/// NeoGS under the TTD engine (neogs-tdd.md §7.4). TTD v1 checkpoints carry
-/// the card's registers and device state but not its RAM (2-4 MB) or flash
-/// (512 KB): large memories wait for TTD v2 memory regions. The card boots its
+/// NeoGS under the TTD engine (neogs-tdd.md §7.4). The card's registers and
+/// device state are its blob; its RAM (2-4 MB) and flash (512 KB) are the
+/// engine's regions 4 and 5 (a v1 session records neither). The card boots its
 /// firmware from an SD card image while the recording runs - SD protocol, SPI
 /// masters, card CPU and RAM all busy.
 ///
@@ -56,7 +56,7 @@ protected:
 
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     SoundManager* _sm = nullptr;
 
     void SetUp() override
@@ -64,7 +64,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator(kGsCapableModel, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _sm = _context->pSoundManager;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -212,14 +212,14 @@ protected:
     SoundCardScope _soundCards;
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);

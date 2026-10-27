@@ -1,5 +1,9 @@
 #include "z80.h"
 
+#include <algorithm>
+#include <iterator>
+#include <numeric>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -8,6 +12,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
@@ -15,6 +20,10 @@
 #include "emulator/emulator.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/controllers/portreadwatch.h"
+#include "emulator/io/joystick/joystick.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -35,14 +44,16 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     _logger = context->pModuleLogger;
     _memory = context->pMemory;
 
-    // Initialize memory access interfaces
+    // Initialize memory access interfaces. The contended and overlay fast ones read without the virtual call where
+    // MemoryReadFast is Memory's own (the memory exists before the CPU, Core::Init, and keeps its class)
+    const bool stockRead = _memory && _memory->HasStockFastRead();
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
-    FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
+    FastContendedMemIf = Memory::GetFastContendedMemoryInterface(stockRead);
     DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
-    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false, stockRead);
     OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
-    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true);
+    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true, stockRead);
     OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
     MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
@@ -78,26 +89,6 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     int_pending = false;
     int_gate = true;
     nmi_in_progress = false;
-
-    // Supply direct references to registers for DDCB prefix operation results
-    // Indexes:
-    // [0] - b
-    // [1] - c
-    // [2] - d
-    // [3] - e
-    // [4] - h
-    // [5] - l
-    // [6] - <unused>
-    // [7] - a
-    direct_registers[0] = &b;
-    direct_registers[1] = &c;
-    direct_registers[2] = &d;
-    direct_registers[3] = &e;
-    direct_registers[4] = &h;
-    direct_registers[5] = &l;
-    direct_registers[6] =
-        &_trashRegister;  // Redirect DDCB operation writes with no destination registers to unused register variable
-    direct_registers[7] = &a;
 
     // Create opcode profiler
     _opcodeProfiler = new OpcodeProfiler(context);
@@ -206,7 +197,6 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     /// region  <Ports logic>
 
@@ -267,47 +257,18 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     /// endregion  </Ports logic>
 
     // Let debugger process step event
-    if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execTapHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
         uint16_t breakpointID = brk.HandlePCChange(pc);
         if (breakpointID != BRK_INVALID)
         {
-            AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
-
-            // Get current memory page information for page-specific breakpoint matching
-            Memory& mem = *_context->pMemory;
-            MemoryPageDescriptor pageInfo = mem.MapZ80AddressToPhysicalPage(pc);
-
-            // Check if this is an analyzer-owned breakpoint (should not pause)
-            // Must check both address-only AND page-specific ownership
-            bool isAnalyzerBreakpoint = false;
-            if (analyzerMgr)
-            {
-                // First check page-specific match (for breakpoints like TR-DOS ROM)
-                isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc, pageInfo.page, pageInfo.mode);
-
-                // Fall back to address-only match (for non-page-specific breakpoints)
-                if (!isAnalyzerBreakpoint)
-                {
-                    isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc);
-                }
-            }
-
-            // Always dispatch breakpoint hit to analyzer manager for notification
-            // Note: No MessageCenter notification is sent for analyzer breakpoints
-            if (analyzerMgr)
-            {
-                analyzerMgr->dispatchBreakpointHit(pc, breakpointID, this);
-            }
-
-            // Only pause for debugger breakpoints (not analyzer-owned)
-            if (!isAnalyzerBreakpoint)
-            {
-                // Pause and park, or during a direct run stop before this instruction
-                if (emulator.OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
-                    return true;
-            }
+            // Pause and park, or during a direct run stop before this instruction
+            // A bare Core (tests) has no emulator to stop
+            Emulator* emulator = _context->pEmulator;
+            if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                return true;
         }
     }
 
@@ -335,33 +296,356 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // so the trap is active in both debug and release sessions.
     if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        // While TTD records (a black box: an explicit recording masks the
+        // shortcut) the trap is an edit with what it did - the block's bytes,
+        // the registers, the tape cursor and its time - so a replay repeats it
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pTapeFastLoad->HandleLDBytesTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast tape" : nullptr);
+        if (consumed)
         {
             // Trap consumed the invocation — the routine never executes
             return true;
         }
     }
 
-    // TR-DOS disk autostart: one-shot rewrite of the cold-start RUN "boot" line into RUN "<name>".
-    // Only armed for a single-BASIC-program autostart; one compare per instruction otherwise
+    // TR-DOS disk autostart: one-shot finish of the cold start for the model (its paging), then the rewrite of the
+    // cold-start RUN "boot" line into RUN "<name>" (armed for a single-BASIC-program autostart only); one compare
+    // per instruction otherwise. While TTD records (a black box restarted after the autostart's reset) the hook's
+    // work is an edit with its bytes and device state, so a replay repeats it; a replay never runs the hook itself
+    // (state-registry gap 16)
     if (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart != nullptr &&
-        _context->pDiskAutostart->IsArmed())
+        _context->pDiskAutostart->IsHookPending())
     {
-        _context->pDiskAutostart->HandleCommandLoopHook(*this);
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        if (!ttd || !ttd->IsReplayActive())
+        {
+            const bool recorded = ttd && ttd->IsRecording();
+            if (recorded)
+                ttd->BeginToolEdit();
+            const bool rewritten = _context->pDiskAutostart->HandleCommandLoopHook(*this);
+            if (recorded)
+                ttd->EndToolEdit(rewritten ? "disk autostart" : nullptr);
+        }
     }
 
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).
     // Drains pending sector bytes directly into memory via Z80::wd() when armed.
     if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)
     {
-        if (_context->pDiskFastLoad->HandleSectorDrainTrap(*this))
+        // Recorded as an edit like the tape trap above (the FDC's state is in it)
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pDiskFastLoad->HandleSectorDrainTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast disk" : nullptr);
+        if (consumed)
         {
             // Trap consumed the sector drain loop invocation
             return true;
         }
     }
 
+    // The esxDOS API without its firmware (the Next's esxDOS mode, NextEsxDos): a call served against the card
+    // replaces the DOS code. Not a tool edit for TTD: it is a function of the machine's state and the card, as the
+    // firmware's own SPI reads are, so a replay serves it again with the same result
+    if (pc == 0x0008 && _context->pRst8Trap != nullptr && _context->pRst8Trap->HandleRst8(*this))
+        return true;
+
     return false;
+}
+
+bool Z80::IdleStepsInert(uint32_t allowedWork) const
+{
+    // The work gate: only the jobs the caller handles (TTD input, RZX, a device INT line, the PC history act per step)
+    if (_context->stepWork.load(std::memory_order_relaxed) & ~allowedWork)
+        return false;
+    if (_nmi_pending_count > 0 || _context->emulatorState.nmiAtIntStartPending)
+        return false;
+
+    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
+    if (isDebugMode || execTapHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+        return false;
+    if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        return false;
+    if (_feature_calltrace_enabled && _memory && _memory->GetAccessTracker().IsCalltraceCapturing())
+        return false;
+    if (DebugManager* debug = _context->pDebugManager)
+    {
+        const AnalyzerManager* analyzers = debug->GetAnalyzerManager();
+        if (analyzers && analyzers->hasCPUStepSubscribers())
+            return false;
+    }
+    // The TR-DOS session switch (RunInstructionStartHooks) acts on the PC at the instruction start: idle steps repeat
+    // the same PC, so only a switch that would fire at this PC stops them
+    const uint32_t dosFlags = _context->emulatorState.flags;
+    if (dosFlags & CF_SETDOSROM)
+    {
+        if (pch == 0x3D)
+            return false;
+    }
+    else if (dosFlags & CF_LEAVEDOSADR)
+    {
+        if (pch & 0xC0)
+            return false;
+    }
+    else if (dosFlags & CF_LEAVEDOSRAM)
+    {
+        const PortDecoder* ports = _context->pPortDecoder;
+        if ((pch & 0x3F) == 0x3D || !ports || ports->IsDosLeavingBank(static_cast<uint8_t>((pc >> 14) & 3)))
+            return false;
+    }
+    if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
+        (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart) || (pc == 0x0008 && _context->pRst8Trap))
+        return false;
+    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && (ttd->IsRecording() || ttd->IsReplayActive()))
+        return false;
+
+    // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
+    // its edges into the sound per step, the floppy controller runs its state machine per step
+    if (_context->pTape && _context->pTape->IsPlaying())
+        return false;
+    if (_context->pBetaDisk && !_context->pBetaDisk->IsStepInert())
+        return false;
+    return true;
+}
+
+/// The idle fetches of a halted CPU in one go (the plain step's counterpart of Z84C15Engine::RunIdleCycles). The
+/// step loop would run one idle fetch per step, asking the interrupt question at every boundary: while nothing but
+/// time changes (IdleStepsInert, HaltedFetchIsPure), the answer depends on the boundary's T alone - "no" up to the
+/// INT pulse (t <= _intStart; a wrapping pulse was raised at the frame start), and up to the frame end past it. The
+/// fetches that start before that boundary, the frame end and the driver's limit become T-states and one R tick
+/// each. Their length is learned from real fetches, one per start phase (the Scorpion's Even M1 adds a T to a fetch
+/// that starts on an odd T). The screen and the sound catch up by time on its own OnCPUStep (true: time moved).
+/// A machine that owns INT (IInterruptSource) says when its "no" may change instead (NextAssertT); a machine step
+/// hook says how far it may be caught up once for the fetches between (IdleFetchesUntil, TSConf: to the line end
+/// while each fetch takes a DRAM cycle the line's budget counts) and is told their count (OnIdleFetches)
+bool Z80::RunHaltedIdle(bool skipBreakpoints)
+{
+    if (idleSkipLimit == 0 || !haltedIdleInOneGo || halted != 1 || vm1 || boundary != Z80_BOUNDARY_NONE)
+        return false;
+    const uint32_t work = _context->stepWork.load(std::memory_order_relaxed);
+    IInterruptSource* const source = (work & EmulatorContext::kStepWorkInterruptSource) ? _interruptSource : nullptr;
+    IMachineStepHook* const hook = (work & EmulatorContext::kStepWorkMachineStep) ? _machineStepHook : nullptr;
+    const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
+    const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
+    uint32_t busPeriod = 1;
+    constexpr uint32_t kHandledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(kHandledWork) ||
+        !HaltedFetchIsPure(fetch, busPeriod) || std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
+    {
+        NoteHaltedIdleRefused();
+        return false;
+    }
+    // The source's "no" holds up to its next possible assert (asked at the boundary just checked)
+    const uint32_t sourceDue = source ? source->NextAssertT(t) : UINT32_MAX;
+    // The fetch's length by its start phase: the Even M1's T on an odd start, the bus overlay's waits by its phase
+    const uint32_t period = std::lcm(evenM1Period, busPeriod);
+
+    const uint32_t start = t;
+    uint32_t length[kMaxHaltedIdlePeriod] = {};
+    uint32_t pureUntil = 0;  // the end of the stretch of the bus rule the learned lengths hold for
+    uint32_t hookUntil = hook ? t : UINT32_MAX;  // the end of the stretch the step hook allows
+    uint32_t hookFetches = 0;  // fetches run as time since the hook last saw a step
+    uint32_t fetches = 0;
+    for (;;)
+    {
+        // The first boundary the step loop would treat differently: the INT pulse, the frame end, the driver's limit
+        uint32_t target = std::min(idleSkipLimit, _frameLimit);
+        if (source)
+            target = std::min(target, sourceDue);
+        else if (!_intWraps && t <= _intStart)
+            target = std::min(target, _intStart + 1);
+        else if (!_intWraps && t < _intEnd)
+            break;
+        if (t >= target)
+            break;
+        // The step hook sees a step at the end of each stretch it allows, with the fetches run as time in it
+        if (t >= hookUntil)
+        {
+            if (hookFetches)
+                hook->OnIdleFetches(fetch, hookFetches);
+            hookFetches = 0;
+            hook->OnMachineStep(t);
+            hookUntil = hook->IdleFetchesUntil(fetch, t);
+            if (hookUntil <= t)
+                break;
+        }
+        target = std::min(target, hookUntil);
+        // A bus rule that follows the frame position (a fetch window): its lengths are learned again per stretch
+        if (t >= pureUntil)
+        {
+            pureUntil = std::max<uint32_t>(HaltedFetchPureUntil(fetch), t + 1);
+            std::fill(std::begin(length), std::end(length), 0u);
+        }
+        target = std::min(target, pureUntil);
+
+        const uint32_t phase = t % period;
+        if (length[phase] == 0)
+        {
+            // A real idle fetch: its length at this phase
+            const uint32_t before = t;
+            Z80Step(skipBreakpoints);
+            length[phase] = t - before;
+            if (length[phase] == 0)
+                break;
+            continue;
+        }
+        const uint32_t len = length[phase];
+        if ((phase + len) % period == phase)
+        {
+            // Every fetch from here starts on this phase: those that start before the target
+            const uint32_t n = (target - t + len - 1) / len;
+            t += n * len;
+            fetches += n;
+            hookFetches += n;
+        }
+        else
+        {
+            t += len;
+            fetches++;
+            hookFetches++;
+        }
+    }
+    haltedIdleFetchesInOneGo += fetches;
+    if (fetches)
+        r_low = static_cast<uint8_t>(((r_low + fetches) & 0x7F) | (r_low & 0x80));  // HaltedM1's refresh tick
+    if (t == start)
+    {
+        NoteHaltedIdleRefused();
+        return false;
+    }
+    if (hook)
+    {
+        if (hookFetches)
+            hook->OnIdleFetches(fetch, hookFetches);
+        hook->OnMachineStep(t);
+    }
+    OnCPUStep();  // the peripherals see the end of the idle fetches
+    return true;
+}
+
+bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
+{
+    period = 1;
+    const MemoryInterface* const memIf = MemIf;
+    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf;
+    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf;
+    if (!contended && !overlay && memIf != FastMemIf)
+        return false;
+    if (contended)
+    {
+        // Memory::MemoryReadContended waits only in slow memory; MemoryReadM1Snow notes a refresh only with I there
+        const UlaContention* ula = _context->pUlaContention;
+        if (!ula || ula->IsContendedAt(fetch) ||
+            (!ula->IsGateArray() && ula->IsContendedAt(static_cast<uint16_t>(i << 8))))
+            return false;
+    }
+    if (overlay)
+    {
+        // An overlay watching the fetch: only one whose effect on it is a constant wait (the length is learned)
+        const HostBusOverlay* bus = _memory->GetBusOverlay();
+        if (!bus)
+            return false;
+        if (bus->observesReads && fetch >= bus->windowStart && fetch < bus->windowEnd &&
+            (!bus->RepeatFetchIsPure(fetch, period) || period == 0))
+            return false;
+    }
+    if (machineM1Hook && !machineM1Hook->RepeatM1IsInert(fetch))
+        return false;
+    return _memory->RepeatFetchIsPure(fetch);
+}
+
+/// After a step with work that left the CPU halted (an accepted INT or NMI ends the HALT), outside the retry
+/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook, which it asks itself.
+/// Out of line: the work step keeps nothing live across OnCPUStep for it
+UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
+{
+    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
+    {
+        NoteHaltedIdleRefused();
+        return;
+    }
+    RunHaltedIdle(skipBreakpoints);
+}
+
+void Z80::NoteHaltedIdleRefused()
+{
+    // In raster time: a faster CPU clock asks no more often (TS-Conf at 14 MHz refuses on every DRAM wait)
+    const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    _haltedIdleRetrySpan = kHaltedIdleRetryT * (multiplier ? multiplier : 1u);
+    _haltedIdleRetryAt = t + _haltedIdleRetrySpan;
+}
+
+uint32_t Z80::HaltedFetchPureUntil(uint16_t fetch) const
+{
+    if (MemIf != OverlayFastMemIf && MemIf != OverlayFastContendedMemIf)
+        return UINT32_MAX;
+    const HostBusOverlay* bus = _memory->GetBusOverlay();
+    if (!bus || !bus->observesReads || fetch < bus->windowStart || fetch >= bus->windowEnd)
+        return UINT32_MAX;
+    return bus->RepeatFetchPureUntil(fetch, t);
+}
+
+// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)
+// Inline in Z80Step: one fetch per instruction, the call cost 1-4 % of a turbo frame. m1_cycle is the out-of-line copy
+__forceinline uint8_t Z80::FetchM1()
+{
+    /// region <Overriding submodule for module logger>
+    [[maybe_unused]]
+    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
+    /// endregion </Overriding submodule for module logger>
+
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const TEMP& temporary = _context->temporary;
+    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
+
+    // Record PC for current opcode (prefixes should not alter original PC):
+    // only the M1 that starts an instruction runs the instruction-start work.
+    // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
+    // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
+    // The fast path stays inline (one store and one observer test); the
+    // observers run out of line only while one is armed
+    if (prefix == 0x0000)
+    {
+        m1_pc = cpu.pc;
+        if (InstructionStartObserved())
+            NotifyInstructionStart();
+    }
+
+    // Z80 CPU M1 cycle logic
+    r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
+
+    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1Before(cpu.pc);
+
+    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
+    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
+
+    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
+    // Out of line like NotifyInstructionStart: the hot path is one pointer test
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1(cpu.pc);
+
+    // Point PC to next byte
+    cpu.pc++;
+
+    // M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
+    // +3 will be done in rd() (Memory read) method
+    // +1 will be done here
+    IncrementCPUCyclesCounter(1);
+
+    return opcode;
 }
 
 /// Single CPU command cycle (non-interruptable)
@@ -374,7 +658,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     // Boundary state describes the boundary BEFORE this step (it already
     // decided INT/NMI acceptance in ProcessInterrupts); this step's own
@@ -458,7 +741,7 @@ void Z80::Z80Step(bool skipBreakpoints)
 
             // Regular Z80 bus cycle
             // 1. Fetch opcode (Z80 M1 bus cycle)
-            cpu.opcode = m1_cycle();
+            cpu.opcode = FetchM1();
         }
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
@@ -716,8 +999,26 @@ void Z80::BeginFrame()
 
     // INT interrupt handling lasts for more than 1 frame (unless the pulse was
     // already acknowledged on a machine that clears INT at the acknowledge)
-    if (_intWraps && !int_acked_in_pulse && !frameIntMasked)
+    if (_intWraps && !int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
         int_pending = true;
+}
+
+/// The interrupt decision of a machine that owns INT would decide nothing at this boundary: no NMI, the source's
+/// pin not asserted (ProcessInterruptsImpl<true, false> asks it at every boundary, so asking here changes nothing)
+bool Z80::SourceIdle(IInterruptSource& source)
+{
+    return _nmi_pending_count == 0 && !_context->emulatorState.nmiAtIntStartPending && !source.IsIntAsserted(t);
+}
+
+/// No NMI, no INT pending, nothing to re-arm and the frame INT outside its
+/// pulse - not due yet (raised strictly after _intStart) or over (a pulse
+/// raised at t >= _intEnd drops at once; a wrapping pulse is raised by
+/// BeginFrame): ProcessInterruptsImpl<false, false> would decide nothing and
+/// return false. The machine's own INT logic and device lines are not covered
+__forceinline bool Z80::InterruptsIdle() const
+{
+    return _nmi_pending_count == 0 && !int_pending && !int_acked_in_pulse && !_localIntArmed &&
+           (_intWraps || t <= _intStart || t >= _intEnd) && !_context->emulatorState.nmiAtIntStartPending;
 }
 
 // CPU-LIBRARY-MIGRATION(step-routing): the plain step calls the engine; the kStepWorkEngine bit goes
@@ -736,6 +1037,20 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
         return StepInstructionWithWork(work, skipBreakpoints);
 
     StepResult result;
+
+    // Nearly every step: the instruction runs without the interrupt decision (InterruptsIdle)
+    if (InterruptsIdle()) [[likely]]
+    {
+        Z80Step(skipBreakpoints);
+        OnCPUStep();
+        // The peripherals saw this step's end (a device starts its time axis at the first step after a reset):
+        // the idle fetches after it in one go, then their end
+        // A refusal holds for kHaltedIdleRetryT raster T-states: a HALT whose fetch is not pure (slow memory, waits) asks again
+        // later, not at every fetch (the frame end's wrap of t asks at once)
+        if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= _haltedIdleRetrySpan) [[unlikely]]
+            RunHaltedIdle(skipBreakpoints);
+        return result;
+    }
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
     // in that case the acceptance IS the "instruction" that consumes this step
@@ -769,8 +1084,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // at or before now (TTD playback) and live input queued by other threads.
     // An event stamped T is first visible to the instruction starting at T -
     // the machine state AT T (a seek target, a pause) does not include it yet
-    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->ServiceInput();
 
     StepResult result;
 
@@ -799,9 +1114,11 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     else
     {
         const bool nmiPending = _nmi_pending_count > 0;
-        const bool accepted = ProcessInterruptsSelect((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource,
-                                                      (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines,
-                                                      _intWraps, _intStart, _intEnd);
+        const bool useSource = (work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource;
+        const bool deviceInt = (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines;
+        const bool accepted = (!useSource && !deviceInt && InterruptsIdle())
+                                  ? false
+                                  : ProcessInterruptsSelect(useSource, deviceInt, _intWraps, _intStart, _intEnd);
         if (accepted)
         {
             if (nmiPending)
@@ -833,6 +1150,11 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
 
     OnCPUStep();
 
+    // A halted CPU of a machine with its own INT logic and engine (TSConf): the idle fetches in one go. The retry
+    // window is tested here: a call per idle fetch cost TS-Conf at 14 MHz (refused) 3-4 % per frame
+    if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= _haltedIdleRetrySpan) [[unlikely]]
+        RunHaltedIdleAfterWork(skipBreakpoints);
+
     if (rzxPlayer) [[unlikely]]
     {
         // The step's fetches: the R delta (7 bits); the acknowledge of an
@@ -849,8 +1171,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         // A frame end (with its interrupt or, IFF1 clear, without) while TTD
         // records: a fact at the end of this step, where a seek to "RZX
         // frame N" lands (Phase 3, Step 2)
-        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
+        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
                                                           rzxBoundary == RzxBoundary::Interrupt);
         if (rzxPlayer->EndPending())
             rzxPlayer->NotifyEnded();
@@ -907,6 +1229,22 @@ void Z80::SetInterruptSource(IInterruptSource* source)
     _interruptSource = source;
     _waitObserver = source && source->ObservesWaits() ? source : nullptr;
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
+}
+
+bool Z80::DeviceIntAsserted()
+{
+    uint32_t lines = _deviceIntLines;
+    // The chain's bit says only that a device is armed: whether it pulls /INT now is the chain's answer
+    if ((lines & kDeviceIntIm2Chain) && !_im2Chain.IsIntAsserted(t)) [[unlikely]]
+        lines &= ~kDeviceIntIm2Chain;
+    return lines != 0;
+}
+
+bool Z80::ChainAcknowledge(uint8_t& vector)
+{
+    if ((_deviceIntLines & kDeviceIntIm2Chain) == 0) [[likely]]
+        return false;
+    return _im2Chain.Acknowledge(t, vector);
 }
 
 void Z80::SetDeviceIntLine(uint32_t line, bool asserted)
@@ -981,18 +1319,19 @@ void Z80::Z80FrameCycle()
     if (_frameLimit == 0)
         RecomputeFrameTiming();
 
+    // A halted CPU's idle cycles may run in one go up to the frame end (an engine's fast-forward)
+    IdleSkipScope idleSkip(*this, UINT32_MAX);
+
     // Cover whole frame (control by effective t-states)
     while (t < _frameLimit)
     {
-        // Mid-frame pause park. Pause() is otherwise observed only at frame
-        // boundaries (MainLoop::Run), so an in-flight frame - which under
-        // turbo/debug-mode or TTD recording can take hundreds of milliseconds -
-        // would delay the park and its confirmation until the frame completes.
-        // One volatile read per instruction keeps the unpaused hot path cheap;
-        // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
-        // Everything the loop reads lives in members, so work done while parked
-        // (a TTD restore, stepping from another thread) is picked up here
-        if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
+        // Mid-frame park. The execution arbiter asks for it (a pause, or a command that needs the CPU still), and
+        // the frame-end check alone would delay it until the frame completes - which under turbo/debug-mode or TTD
+        // recording can take hundreds of milliseconds. One relaxed atomic load per instruction (ShouldPark, inline)
+        // keeps the running hot path cheap; WaitWhilePaused parks and wakes when the machine may run again.
+        // Everything the loop reads lives in members, so work done while parked (a TTD restore, stepping from
+        // another thread) is picked up here
+        if (Emulator* emulator = _context->pEmulator; emulator && emulator->ShouldPark())
             emulator->WaitWhilePaused();
 
         StepInstruction();
@@ -1017,7 +1356,7 @@ void Z80::NotifyMachineM1Before(uint16_t address)
 void Z80::NoteAcknowledgeRefresh(uint32_t t3)
 {
     // As Memory::MemoryReadM1Snow: R before the increment; the Ferranti ULA machines only (ioContention)
-    if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(i >> 6)))
+    if (ioContention && ioContention->IsContendedAt(static_cast<uint16_t>(i << 8)))
         ioContention->NoteRefresh(t3, static_cast<uint8_t>(r_low - 1));
 }
 
@@ -1026,57 +1365,10 @@ void Z80::NotifyMachineM1(uint16_t address)
     machineM1Hook->OnMachineM1(address);
 }
 
-// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)
+/// The M1 fetch for the prefix handlers (CB / ED / DD / FD); Z80Step inlines FetchM1 itself
 uint8_t Z80::m1_cycle()
 {
-    /// region <Overriding submodule for module logger>
-    [[maybe_unused]]
-    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
-    /// endregion </Overriding submodule for module logger>
-
-    [[maybe_unused]] Z80& cpu = *this;
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
-    [[maybe_unused]] const TEMP& temporary = _context->temporary;
-    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
-
-    // Record PC for current opcode (prefixes should not alter original PC):
-    // only the M1 that starts an instruction runs the instruction-start work.
-    // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
-    // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
-    // The fast path stays inline (one store and one observer test); the
-    // observers run out of line only while one is armed
-    if (prefix == 0x0000)
-    {
-        m1_pc = cpu.pc;
-        if (InstructionStartObserved())
-            NotifyInstructionStart();
-    }
-
-    // Z80 CPU M1 cycle logic
-    r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
-
-    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
-    if (machineM1Hook) [[unlikely]]
-        NotifyMachineM1Before(cpu.pc);
-
-    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
-    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
-
-    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
-    // Out of line like NotifyInstructionStart: the hot path is one pointer test
-    if (machineM1Hook) [[unlikely]]
-        NotifyMachineM1(cpu.pc);
-
-    // Point PC to next byte
-    cpu.pc++;
-
-    // M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
-    // +3 will be done in rd() (Memory read) method
-    // +1 will be done here
-    IncrementCPUCyclesCounter(1);
-
-    return opcode;
+    return FetchM1();
 }
 
 /// One idle opcode fetch of the halted CPU (docs/inprogress/2026-10-02-halt-fetch-address). The Z80's program
@@ -1144,10 +1436,10 @@ void Z80::NotifyInstructionStart()
     // actually capturing. This is the only record that a frame executed a
     // given address - instruction fetches are not journalled - so without
     // it a reverse breakpoint has no choice but to replay every frame.
-    if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    if (_context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
-        _context->pTimeTravelManager->RecordExecutedCoverage(
-            _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Executed,
+                                      ttd::MakeCoverageKey(_memory->GetPhysPageForZ80Address(m1_pc), m1_pc));
     }
 
     // Phase 4 - access probe for Execute access type (TDD 9.2).
@@ -1279,27 +1571,11 @@ uint8_t Z80::inFromBus(uint16_t port)
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Full-decode observer tap (raw port, pre-decode): a real bus card that
-    // fully decodes this address drives the data bus in the same cycle as the
-    // model-decoded device (shared bus, e.g. ZXM-MoonSound vs ULA/AY/Beta-128)
-    bool fullDecodeHandled = false;
-    bool fullDecodeClaims = false;
-    const uint8_t fullDecodeValue = portDecoder.NotifyFullDecodeIn(port, fullDecodeHandled, fullDecodeClaims);
-
-    // Let model-specific decoder to process port input
-    uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
-
-    // Shared read cycle, legacy-device priority (R6): when the model decode
-    // already handed the port to a device (ULA/AY/FDC...), that device's value
-    // IS the bus value - the observer's data is discarded (its access side
-    // effects still happened above). Two exceptions drive the bus with the
-    // observer's value: an otherwise-undecoded port (the floating bus was
-    // already suppressed for it, so the observer value replaces the 0xFF
-    // placeholder) and a CLAIMED port - an armed card overriding the legacy
-    // mirror (ZXM-MoonSound wave data at #7F once OPL4 NEW is set;
-    // MoonService-verified behaviour).
-    if (fullDecodeHandled && (fullDecodeClaims || !portDecoder.WasLastPortDecoded()))
-        result = fullDecodeValue;
+    // One bus cycle: the cards claiming the port (ZX-bus slots claim table) and
+    // the model decode, resolved in one pass (PortDecoder::ReadCycle: the
+    // shared-bus rule R6 lives there). A port no card claims costs one bit test
+    bool cardDrove = false;
+    uint8_t result = portDecoder.ReadCycle(port, m1_pc, cardDrove);
 
     if (busTraceHook)
         busTraceHook('I', port, result);
@@ -1314,7 +1590,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     // port always has a driver on the bus, floating bus must not apply.
     bool fromFloatingBus = false;
     bool lateWaitsCounted = false;
-    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
+    if (!portDecoder.WasLastPortDecoded() && portDecoder.FloatingBusDrives(port) && !cardDrove)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
@@ -1324,7 +1600,7 @@ uint8_t Z80::inFromBus(uint16_t port)
             uint8_t floatVal;
             if (ula->IsGateArray())
                 floatVal = ula->GetGateArrayFloatingBus(port);
-            else if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(port >> 14))) [[unlikely]]
+            else if (ioContention && ioContention->IsOddPortContended(port)) [[unlikely]]
             {
                 floatVal = FloatingBusAfterLateWaits(port, ioWait);
                 lateWaitsCounted = true;
@@ -1342,14 +1618,20 @@ uint8_t Z80::inFromBus(uint16_t port)
     if (ioContention && !lateWaitsCounted)
         IoWaitAfterIorq(port, ioWait);
 
-    // One flag for both observers: machines with neither test it once
+    // One flag for the observers: machines with none test it once
     if (_inResultHooks) [[unlikely]]
     {
+        if (portReadWatch)
+            portReadWatch->OnRead(port, pc);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)
         if (readCycleLatch && (port & readCycleLatchMask) == readCycleLatchMatch)
+        {
+            if (videoCatchUp)
+                videoCatchUp->CatchUpToStepStart();
             readCycleLatch->OnReadCycle(port, result);
+        }
     }
 
     return result;
@@ -1364,6 +1646,10 @@ void Z80::out(uint16_t port, uint8_t val)
     if (ttd::TTDPortJournal* journal = _context->ttdPortWrites) [[unlikely]]
         journal->OnWrite(port, val, _context->emulatorState.frame_counter, _context->emulatorState.TtdTInFrame(t),
                          m1_pc);
+
+    // A screen on the event rule draws up to where this step began before the write moves its state
+    if (videoCatchUp)
+        videoCatchUp->CatchUpToStepStart();
 
     // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
     // border latch) sees the delayed T; the waits after IORQ follow the write
@@ -1387,12 +1673,10 @@ void Z80::out(uint16_t port, uint8_t val)
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Full-decode observer tap (raw port, pre-decode): the card observes the
-    // write cycle in addition to whatever device the model decode hands it to
-    portDecoder.NotifyFullDecodeOut(port, val);
-
-    // Let model-specific decoder to process port output
-    portDecoder.DecodePortOut(port, val, m1_pc);
+    // One bus cycle: the cards claiming the port see the write first, then the
+    // model decode (PortDecoder::WriteCycle). A port no card claims costs one
+    // bit test
+    portDecoder.WriteCycle(port, val, m1_pc);
 
     if (busTraceHook)
         busTraceHook('O', port, val);
@@ -1425,7 +1709,7 @@ uint8_t Z80::FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait)
 // CPU-LIBRARY-MIGRATION(idle-cycles): the engine's Internal access kind on the contention hook
 void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
 {
-    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    const bool contended = idleContention && idleContention->IsContendedAt(addr);
     for (uint8_t i = 0; i < cycles; i++)
     {
         if (busTraceHook)
@@ -1643,12 +1927,20 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         const bool sourceInt = _interruptSource->IsIntAsserted(cpu.t);
         cpu.int_pending = sourceInt;
         if constexpr (DeviceInt)
-            cpu.int_pending = sourceInt || _deviceIntLines != 0;
+            cpu.int_pending = sourceInt || DeviceIntAsserted();
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            // Wired-OR: the machine's logic drives its vector when it asserts;
-            // a device alone drives none, the bus reads #FF
-            uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            // Wired-OR: a daisy-chain device that requests drives its vector (the machine's request stays pending);
+            // else the machine's logic drives its vector when it asserts; a plain device line drives none, the bus
+            // reads #FF
+            uint8_t vector = 0xFF;
+            bool chainDrove = false;
+            if constexpr (DeviceInt)
+                chainDrove = ChainAcknowledge(vector);
+            if (!chainDrove && sourceInt)
+                vector = _interruptSource->AcknowledgeInterrupt(cpu.t);
+            if (const Joystick* joystick = _context->pJoystick)
+                vector = joystick->Im2Vector(vector, cpu.pc);
             // TTD (Phase 3): every vector the CPU took, recorded (a check and a
             // search key); a replay from the engine hands back the recorded one
             if (ttd::TTDPortJournal* journal = _context->ttdVectors) [[unlikely]]
@@ -1682,7 +1974,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             cpu.int_acked_in_pulse = 0;
     }
 
-    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked)
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -1711,11 +2003,17 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     // in int_pending, which tracks the machine's own pulse
     bool intLine = cpu.int_pending;
     if constexpr (DeviceInt)
-        intLine = intLine || _deviceIntLines != 0;
+        intLine = intLine || DeviceIntAsserted();
 
     if (intLine && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
-        HandleINT();
+        // The idle bus reads #FF; a daisy-chain device that requests drives its vector (Im2DaisyChain), a cheap
+        // Kempston interface may drive it too (Joystick::Im2Vector)
+        uint8_t vector = 0xFF;
+        if constexpr (DeviceInt)
+            ChainAcknowledge(vector);
+        const Joystick* joystick = _context->pJoystick;
+        HandleINT(joystick ? joystick->Im2Vector(vector, cpu.pc) : vector);
         intHandled = true;  // Signal caller to skip Z80Step this iteration
     }
 
@@ -1745,6 +2043,7 @@ bool Z80::IntClearedByAcknowledge() const
 void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
+    interruptsAccepted++;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction

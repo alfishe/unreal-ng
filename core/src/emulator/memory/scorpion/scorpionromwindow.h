@@ -6,7 +6,7 @@
 /// @brief Scorpion ProfROM quadrant window - stateless policy object (design §4.2).
 ///
 /// Every byte of quadrant state lives in the existing EmulatorState / TEMP fields
-/// (profrom_bank, p7EFD, profrom_mask, profrom_window_mask), so TTD checkpoints,
+/// (scorpion.profromBank, scorpion.p7EFD, profrom_mask, profrom_window_mask), so TTD checkpoints,
 /// the divergence hash and any future serializer see it without special cases.
 /// The object itself only carries image geometry derived by Configure().
 ///
@@ -27,7 +27,7 @@ public:
 
     /// @brief Read strobe for the #0100-#010F block (caller gates on the Service
     ///        ROM being paged).
-    /// @param state EmulatorState carrying profrom_bank (updated in place)
+    /// @param state EmulatorState carrying scorpion.profromBank (updated in place)
     /// @param temp TEMP carrying profrom_mask
     /// @param addr address being read (only bits 3:2 select the table row)
     /// @return true when the quadrant changed and the ROM bases need a rebuild
@@ -35,12 +35,12 @@ public:
 
     /// @brief #7EFD latch write: refresh the quadrant's window bits above the
     ///        state machine's two (inert while profrom_window_mask is 0).
-    /// @param state EmulatorState carrying profrom_bank and p7EFD (both updated)
+    /// @param state EmulatorState carrying scorpion.profromBank and scorpion.p7EFD (both updated)
     /// @param temp TEMP carrying profrom_window_mask
     /// @param value byte written to #7EFD
     void OnWindowPortWrite(EmulatorState& state, const TEMP& temp, uint8_t value);
 
-    /// @brief Effective quadrant 0..31 - state.profrom_bank, kept inside the
+    /// @brief Effective quadrant 0..31 - state.scorpion.profromBank, kept inside the
     ///        image bounds by construction (masks compose the value from parts)
     uint8_t Quadrant(const EmulatorState& state) const;
 

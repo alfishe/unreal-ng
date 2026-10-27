@@ -13,6 +13,7 @@
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/keyboardmanager.h"
 #include "platform/macos/mousecapture_macos.h"
+#include "platform/windows/mousecapture_windows.h"
 
 #ifndef Q_OS_MACOS
 void* MouseCaptureMacOS::Begin(double, double, MotionFn)
@@ -185,10 +186,24 @@ void MouseCaptureController::capture()
     {
         _warpCenterGlobal = centerGlobal;
         recenterCursor();
+        // Windows: Qt has put the cursor on the center (its logical -> physical mapping);
+        // from here on the backend samples the physical position itself
+        if (_surface.allowNativeCapture)
+        {
+            const double dpr = _surface.devicePixelRatio ? _surface.devicePixelRatio() : 1.0;
+            const QSize size = _surface.logicalSize ? _surface.logicalSize() : QSize();
+            _windowsCapture = MouseCaptureWindows::Begin(
+                static_cast<int>(size.width() * dpr / 2.0), static_cast<int>(size.height() * dpr / 2.0),
+                [this](int dx, int dy) {
+                    const double ratio = _surface.devicePixelRatio ? _surface.devicePixelRatio() : 1.0;
+                    applyHostMotion(dx / ratio, dy / ratio);
+                });
+        }
     }
 
+    const char* backend = _nativeCapture ? "macOS native" : (_windowsCapture ? "Windows native" : "Qt warp");
     qDebug() << "MouseCaptureController: capture ON  (target" << QString::fromStdString(_targetId) << ", backend"
-             << (_nativeCapture ? "macOS native" : "Qt warp") << ", release" << _releaseKey.toString() << ")";
+             << backend << ", release" << _releaseKey.toString() << ")";
     emit stateChanged();
 }
 
@@ -206,8 +221,11 @@ void MouseCaptureController::release()
         MouseCaptureMacOS::End(_nativeCapture);
         _nativeCapture = nullptr;
     }
-    _ignoreNextMove = false;
-
+    if (_windowsCapture)
+    {
+        MouseCaptureWindows::End(_windowsCapture);
+        _windowsCapture = nullptr;
+    }
     if (_surface.setMouseTracking)
         _surface.setMouseTracking(false);
     if (_surface.setCursorHidden)
@@ -252,8 +270,8 @@ void MouseCaptureController::recenterCursor()
         _surface.warpCursor(_warpCenterGlobal);
     else
         QCursor::setPos(_warpCenterGlobal);
-    // setPos generates a move event back to the center - it is not user travel
-    _ignoreNextMove = true;
+    // setPos generates a move event back to the center - it is not user travel.
+    // handleMouseMove identifies that echo by its destination coordinates.
 }
 
 /// endregion </Capture>
@@ -315,12 +333,21 @@ bool MouseCaptureController::handleMouseMove(QMouseEvent* event)
     if (_nativeCapture)
         return true;
 
-    const QPoint position = event->globalPosition().toPoint();
-    if (_ignoreNextMove || position == _warpCenterGlobal)
+    // Windows: the move is only a trigger, the backend reads the cursor itself
+    if (_windowsCapture)
     {
-        _ignoreNextMove = false;
+        MouseCaptureWindows::Sample(_windowsCapture);
         return true;
     }
+
+    // Where the pointer is now, not where the event says: moves queued before the
+    // last warp still carry pre-warp positions, and measuring those against the
+    // center again reports the same travel twice (the guest pointer leaps). The
+    // current position after a warp is the center plus only the travel since it
+    Q_UNUSED(event);
+    const QPoint position = _surface.cursorPosition ? _surface.cursorPosition() : QCursor::pos();
+    if (position == _warpCenterGlobal)
+        return true;  // the echo of the warp, or a stale move: no travel
 
     applyHostMotion(position.x() - _warpCenterGlobal.x(), position.y() - _warpCenterGlobal.y());
     recenterCursor();

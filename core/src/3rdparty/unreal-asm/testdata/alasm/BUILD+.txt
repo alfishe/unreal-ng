@@ -1,0 +1,106 @@
+;Build &Session &Date counter v2.0
+;begin build countin' 28.02.04
+;begin session countin' 28.02.04
+BUILD=00123
+SESSION=00467
+
+;кол-во компиляций и перезаписей проекта + дата
+
+BUILD=BUILD+1
+_Bpg=$$
+        ORG $,2
+_pAgEdB=.{#C0E3}
+_aDrBlD=#C0AA;Адр 1й цифры билда
+_aDrSeS=#C0B8;Адр 1й цифры сессии
+_OLDADR
+        MACRO VAL_
+_sum=\0
+_zxc=10000
+        DUP 5
+_nnn=0
+        DUP 9
+        IF0 _sum-_zxc<1&1
+_sum=_sum-_zxc
+_nnn=_nnn+1
+        ENDIF
+        EDUP
+        DB _nnn+"0
+_zxc=_zxc/10
+        EDUP
+        ENDM
+        ORG _aDrBlD,_pAgEdB
+        IFN "BU"-{$-6}
+        DISPLAY "Wrong BUILD adr:",{$-6},"<>BU
+        ELSE
+VAL_    BUILD
+        ORG _aDrSeS
+        IFN "SE"-{$-8}
+        DISPLAY "Wrong SESSION adr:",{$-8},"<>SE
+        ELSE
+        IF0 .{#C027}
+SESSION=SESSION+1
+VAL_    SESSION
+        ENDIF
+        ENDIF
+        ORG #C027;флаг измен-сти
+        DB 1
+        ENDIF
+        ORG #5F00
+rDCM    LD BC,#EFF7,A,#80
+        OUT (C),A
+        LD B,#DF
+        OUT (C),D
+        LD B,#BF
+        IN E,(C)
+        LD B,#EF
+        XOR A
+        OUT (C),A
+        RET
+CMBCD   CALL rDCM
+        LD A,E
+        CALL $+9
+        LD C,A,A,E
+        RRA
+        RRA
+        RRA
+        RRA
+        AND 15
+        ADD A,#90
+        DAA
+        ADC A,#40
+        DAA
+        RET
+RDCM    PUSH DE
+        LD D,#B
+        CALL rDCM
+        BIT 2,E
+        POP DE
+        JZ CMBCD
+        CALL rDCM
+        LD C,47,A,E
+        INC C
+        SUB 10
+        JNC $-3
+        SUB -58
+        RET
+rDDT    LD HL,#5EFA,D,7
+        DUP 3
+        CALL RDCM
+        LD (HL),A
+        INC HL
+        LD (HL),C
+        INC HL,D
+        EDUP
+        RET
+        RUN rDDT
+        ORG _OLDADR
+VAL_    BUILD
+        DISPLAY /D,/T,BUILD
+        DISPLAY /D,/T,SESSION
+        DB 32
+        DW {#5EFA}
+        DB ".
+        DW {#5EFC}
+        DB ".
+        DW {#5EFE}
+        ORG $,_Bpg

@@ -451,3 +451,41 @@ TEST(FilterVoicing_Test, TableRowsFollowEnumOrder)
         EXPECT_EQ(parsed, preset) << FilterVoicing::presetId(preset);
     }
 }
+
+/// A silent frame at rest skips the biquads (processInt16): every profile, a tone, a silence long enough for the filter to
+/// settle to exact zero, the tone again and a short silence - the same samples as with every frame filtered, and the
+/// filter at rest (so skipping) through the long silence. Not skipping a frame that should be filtered, or keeping the
+/// state of a frame that was skipped wrongly, shows at the second tone
+TEST(FilterVoicing_Test, SilentFramesAtRestMatchEveryFrameFiltered)
+{
+    constexpr size_t kFrame = 882;
+    for (size_t i = 0; i < FilterVoicing::PRESET_COUNT; i++)
+    {
+        const Preset preset = static_cast<Preset>(i);
+        FilterVoicing skipping(44100.0, preset);
+        FilterVoicing full(44100.0, preset);
+        full.setSilenceSkipped(false);
+        bool rested = false;
+        for (size_t k = 0; k < 760; k++)
+        {
+            const bool tone = k < 10 || (k >= 700 && k < 710);
+            std::vector<int16_t> frame(kFrame * 2, 0);
+            for (size_t n = 0; tone && n < kFrame; n++)
+            {
+                const double t = static_cast<double>(k * kFrame + n) / 44100.0;
+                frame[n * 2] = static_cast<int16_t>(12000.0 * (std::sin(2.0 * kPi * 440.0 * t) > 0.0 ? 1.0 : -1.0));
+                frame[n * 2 + 1] = static_cast<int16_t>(9000.0 * std::sin(2.0 * kPi * 660.0 * t));
+            }
+            std::vector<int16_t> other = frame;
+            if (k > 10 && k < 700 && skipping.atRest())
+                rested = true;
+            skipping.processInt16(frame.data(), kFrame);
+            full.processInt16(other.data(), kFrame);
+            ASSERT_EQ(frame, other) << FilterVoicing::presetId(preset) << ": frame " << k;
+        }
+        if (!skipping.isBypass())
+        {
+            EXPECT_TRUE(rested) << FilterVoicing::presetId(preset) << ": never at rest in the silence";
+        }
+    }
+}

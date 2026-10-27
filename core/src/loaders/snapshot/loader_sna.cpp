@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <cstddef>
+
 #include "common/modulelogger.h"
 
 #include "loader_sna.h"
@@ -11,6 +13,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 /// region <Constructors / destructors>
 
@@ -20,12 +23,12 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
     _logger = context->pModuleLogger;
 
     _path = FileHelper::AbsolutePath(path, false);  // Expand tilde, don't resolve symlinks for non-existent files
+    _snx = StringHelper::ToLower(FileHelper::GetFileExtension(_path)) == "snx";
 
     // Initialize all staging buffers to zero for deterministic state
     // Prevents uninitialized POD members from causing inconsistent snapshot loading
     memset(&_header, 0, sizeof(_header));
     memset(&_ext128Header, 0, sizeof(_ext128Header));
-    _borderColor = 0;
 
     // Initialize memory pages with proper size
     for (int i = 0; i < 8; i++)
@@ -76,7 +79,7 @@ bool LoaderSNA::load()
 snapshot::Image LoaderSNA::BuildImage() const
 {
     snapshot::Image image;
-    image.format = "sna";
+    image.format = _snx ? "snx" : "sna";
     image.sourcePath = _path;
     image.timingHint = _snapshotMode == SNA_48 ? "48k" : "128k";
     image.machineHint = _snapshotMode == SNA_48 ? "48k" : "128k-family";
@@ -135,6 +138,8 @@ snapshot::Image LoaderSNA::BuildImage() const
         }
         else
         {
+            // SP in the ROM or at the top of memory: the machine's memory at SP decides (the commit pops it)
+            cpu.pcOnMachineStack = true;
             image.warnings.push_back("the stack pointer is in the ROM: the PC cannot be read off the stack here");
         }
     }
@@ -154,6 +159,15 @@ bool LoaderSNA::planSnapshot()
     _image = BuildImage();
     _report = snapshot::Report();
     _decision = snapshot::Pipeline::Plan(_image, _context, _options, _report);
+    if (_snx)
+    {
+        // NextZXOS keeps the file open as handle 0 for the program: no handle is open here, the data is not loaded
+        if (_privateBytes)
+            _report.warnings.push_back("the .snx carries " + std::to_string(_privateBytes) +
+                                       " bytes of private data after its banks: not loaded (NextZXOS's open handle 0 is not modelled)");
+        else
+            _report.warnings.push_back("NextZXOS's open handle 0 of an .snx is not modelled");
+    }
     return _decision.Proceeds();
 }
 
@@ -178,8 +192,10 @@ bool LoaderSNA::validate()
         {
             _fileSize = _data.size();
             _readPos = 0;
+            _extraBanks = 0;
+            _privateBytes = 0;
 
-            if (is48kSnapshot())
+            if (_snx ? _fileSize == _snaHeaderSize + 3 * PAGE_SIZE : is48kSnapshot())
             {
                 _snapshotMode = SNA_48;
                 
@@ -191,9 +207,26 @@ bool LoaderSNA::validate()
                     _snapshotMode = SNA_UNKNOWN;
                 }
             }
-            else if (is128kSnapshot())
+            else if (_snx && _fileSize >= _sna128HeaderSize + 3 * PAGE_SIZE)
+            {
+                // An .snx of a 128K machine: the banks #7FFD leaves (5, or 6 when bank 5 or 2 is at #C000), then private data.
+                // A 48K one is exactly 49179 bytes (above), so a 48K file with private data does not exist
+                _snapshotMode = SNA_128;
+                const uint8_t top = _data[_snaHeaderSize + 3 * PAGE_SIZE + offsetof(sna128Header, port_7FFD)] & 0x07u;
+                _extraBanks = top == 5 || top == 2 ? 6 : 5;
+                const size_t banksEnd = _sna128HeaderSize + (3 + _extraBanks) * PAGE_SIZE;
+                if (_fileSize < banksEnd)
+                {
+                    MLOGWARNING("Invalid 128K SNX file size: %zu (the banks need %zu)", _fileSize, banksEnd);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
+                else
+                    _privateBytes = _fileSize - banksEnd;
+            }
+            else if (!_snx && is128kSnapshot())
             {
                 _snapshotMode = SNA_128;
+                _extraBanks = (_fileSize - _sna128HeaderSize - 3 * PAGE_SIZE) / PAGE_SIZE;
                 
                 // 128K SNA format is flexible - minimum is 49183 bytes (base structure),
                 // plus 0-8 additional 16KB RAM banks depending on which banks were saved
@@ -327,6 +360,7 @@ bool LoaderSNA::is128kSnapshot() const
 bool LoaderSNA::loadToStaging()
 {
     bool result = false;
+    _image = snapshot::Image();   // staged afresh: an image built from an earlier staging is stale
 
     switch (_snapshotMode)
     {
@@ -380,8 +414,7 @@ bool LoaderSNA::load48kToStaging()
         }
         _memoryPagesUsed[0] = true;
 
-        // Only set border color and staging flag after all reads succeed
-        _borderColor = _header.border & 0b0000'0111;
+        // Only set the staging flag after all reads succeed
         _stagingLoaded = true;
         result = true;
     }
@@ -395,7 +428,7 @@ bool LoaderSNA::load128kToStaging()
 
     if (_snapshotMode == SNA_128 && !_data.empty())
     {
-        int memoryPagesToLoad = (_fileSize - sizeof(snaHeader) - 3 * PAGE_SIZE - sizeof (sna128Header)) / PAGE_SIZE;
+        const int memoryPagesToLoad = static_cast<int>(_extraBanks);
 
         // Ensure we're reading from file start
         _readPos = 0;
@@ -506,11 +539,10 @@ bool LoaderSNA::load128kToStaging()
             }
         }
 
-        // Only set border color and staging flag after all reads succeed
+        // Only set the staging flag after all reads succeed
         // Prevents applySnapshotFromStaging() from using partial/garbage data
         if (result)
         {
-            _borderColor = _header.border & 0b0000'0111;
             _stagingLoaded = true;
         }
     }
@@ -530,57 +562,55 @@ bool LoaderSNA::applySnapshotFromStaging()
 
     if (_stagingLoaded)
     {
-        // Reset Z80 and all peripherals
-        core.Reset();
+        // The commit reads the image (snapshot pipeline P9), not the staging buffers. load() has built it for the plan;
+        // a caller that stages and applies by hand has not
+        if (_image.format.empty())
+            _image = BuildImage();
+        const snapshot::Image& image = _image;
+        const snapshot::Cpu& cpu = image.cpu;
+        const bool is48 = image.memoryModel == snapshot::MemoryModel::Mem48k;
 
-        // Transfer RAM data to emulator (only pages existed in snapshot will be updated)
-        for (int pageNum = 0; pageNum < 8; pageNum++)
+        // Reset Z80 and all peripherals; no RAM page keeps the program before it (the snapshot may not carry all). The
+        // file has no clock: the program runs at the clock the machine ran at (ATM #FF77 turbo, as Xpeccy keeps it)
         {
-            if (_memoryPagesUsed[pageNum])
-            {
-                memory.LoadRAMPageData(pageNum, _memoryPages[pageNum], PAGE_SIZE);
+            // The video mode of the 128K paging is set up once: the reset's on the way (the ATM's EGA) is not built
+            Screen::RasterDeferral raster(&screen);
+            core.ResetKeepingClock();
+            memory.ClearModelRAM();
+            // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+            _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);
+        }
 
-                ramPagesLoaded++;
-            }
+        // Transfer RAM data to emulator (only the banks the snapshot has)
+        for (const auto& bank : image.banks)
+        {
+            memory.LoadRAMPageData(bank.first, const_cast<uint8_t*>(bank.second.data()), PAGE_SIZE);
+            ramPagesLoaded++;
         }
 
         // Transfer registers
-        z80.alt.h = _header._h;
-        z80.alt.l = _header._l;
-        z80.alt.d = _header._d;
-        z80.alt.e = _header._e;
-        z80.alt.b = _header._b;
-        z80.alt.c = _header._c;
-        z80.alt.a = _header._a;
-        z80.alt.f = _header._f;
+        z80.af = cpu.af;
+        z80.bc = cpu.bc;
+        z80.de = cpu.de;
+        z80.hl = cpu.hl;
+        z80.alt.af = cpu.af2;
+        z80.alt.bc = cpu.bc2;
+        z80.alt.de = cpu.de2;
+        z80.alt.hl = cpu.hl2;
+        z80.ix = cpu.ix;
+        z80.iy = cpu.iy;
+        z80.sp = cpu.sp;
 
-        z80.h = _header.h;
-        z80.l = _header.l;
-        z80.d = _header.d;
-        z80.e = _header.e;
-        z80.b = _header.b;
-        z80.c = _header.c;
-        z80.a = _header.a;
-        z80.f = _header.f;
-
-        z80.xh = _header.hx;
-        z80.xl = _header.lx;
-        z80.yh = _header.hy;
-        z80.yl = _header.ly;
-
-        z80.sph = _header.hsp;
-        z80.spl = _header.lsp;
-
-        z80.i = _header.i;
-        z80.r_low = _header.r;
-        z80.r_hi = _header.r & 0x80u;
-        z80.im = _header.imod & 0x03u;
+        z80.i = cpu.i;
+        z80.r_low = cpu.r;
+        z80.r_hi = cpu.r & 0x80u;
+        z80.im = cpu.im & 0x03u;
         // Byte 19 bit 2 is IFF2. The format was born as an NMI-taken image
         // resumed by RETN, which copies IFF2 into IFF1, so both flip-flops
         // come from the one bit (libspectrum/FUSE do the same). Forcing IFF2
         // to 1 left a DI snapshot in the "inside an NMI handler" state
         // (IFF1=0, IFF2=1): its first RETN/RETI would enable interrupts
-        z80.iff2 = (_header.flag19 & 0b00000'0100u) >> 2;
+        z80.iff2 = cpu.iff2 ? 1 : 0;
         z80.iff1 = z80.iff2;
 
         // Initialize undocumented registers (not stored in SNA format)
@@ -588,7 +618,7 @@ bool LoaderSNA::applySnapshotFromStaging()
         z80.q = 0;
 
         // Set up ports
-        if (_snapshotMode == SNA_48)
+        if (is48)
         {
             // A 48K snapshot carries no TR-DOS state: end any TR-DOS session the
             // machine was in (e.g. the Pentagon boot menu), exactly as the Z80
@@ -604,21 +634,37 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(0);
 
+            // The 48K BASIC, latches included (what the reset does for RM_SOS): with the shipped RESET=128 the latch still
+            // says BASIC-128, and the first bank recompute (any #7FFD write, a TR-DOS page-in) would swap the ROM under
+            // the program. Written through the decoder so models that keep the ROM bit elsewhere (TS-Conf) follow
+            memory.SetROMMode(RM_SOS);
+            const uint8_t rom48Latch = _context->emulatorState.p7FFD;
+            _context->pPortDecoder->UnlockPaging();
+            _context->pPortDecoder->DecodePortOut(0x7FFD, rom48Latch, z80.pc);
+
             // The 48K BASIC ROM, wherever the model keeps it (Memory::base_sos_rom: page 3 on the Pentagon,
             // page 1 on the 128K, the only ROM on the 48K - a fixed page 3 was empty there)
             memory.SetROM48k();
 
-            // 48k SNA files store Z80 PC on stack, so we need to pop it and load to PC
+            // 48k SNA files store Z80 PC on stack. The image has read it off the stack in the file's RAM; when the stack
+            // is elsewhere (the ROM, the top of memory) the machine's memory at SP says, as it always has.
             // Z80 is little-endian: low byte at SP, high byte at SP+1
-            uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
-            uint8_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
-            z80.pc = (pc_high << 8) | pc_low;
+            if (cpu.pcOnMachineStack)
+            {
+                uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
+                uint8_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
+                z80.pc = (pc_high << 8) | pc_low;
+            }
+            else
+            {
+                z80.pc = cpu.pc;
+            }
         }
-
-        if (_snapshotMode == SNA_128)
+        else
         {
             // Memory page mapped to [C000:FFFF]
-            uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
+            const uint8_t port7FFD = image.paging.p7FFD.value_or(0);
+            uint8_t currentTopPage = port7FFD & 0x07u;
 
             // Step 1: Unlock paging for state-independent loading
             // Ensures snapshot loads correctly even if port 7FFD was previously locked
@@ -629,7 +675,7 @@ bool LoaderSNA::applySnapshotFromStaging()
             // the 7FFD write below maps the ROM by bit 4 (bank 0 stays on the
             // DOS/SYS ROM while a session is active) and the Beta128 ports
             // leave the bus; step 5 re-activates the session for TR-DOS snapshots.
-            if (!_ext128Header.is_TRDOS)
+            if (!image.trdosPaged)
             {
                 _context->emulatorState.flags &= ~CF_TRDOS;
                 memory.UpdateZ80Banks();
@@ -640,20 +686,20 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(currentTopPage);
 
-            z80.pc = _ext128Header.reg_PC;
+            z80.pc = cpu.pc;
 
             // Step 3: Set port values via decoder
-            _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
-            
+            _context->pPortDecoder->DecodePortOut(0x7FFD, port7FFD, z80.pc);
+
             // Step 4: Explicit state assignment (including lock bit if present)
-            _context->emulatorState.p7FFD = _ext128Header.port_7FFD;
+            _context->emulatorState.p7FFD = port7FFD;
 
             // Step 5: Activate TR-DOS ROM if needed
-            if (_ext128Header.is_TRDOS)
+            if (image.trdosPaged)
             {
                 // Set CF_TRDOS flag to indicate TR-DOS is active
                 _context->emulatorState.flags |= CF_TRDOS;
-                
+
                 // Activate TR-DOS ROM
                 _context->pMemory->SetROMDOS();
             }
@@ -671,7 +717,8 @@ bool LoaderSNA::applySnapshotFromStaging()
         }
 
         // Pre-fill border with color
-        screen.FillBorderWithColor(_borderColor);
+        const uint8_t borderColor = image.border & 0b0000'0111;
+        screen.FillBorderWithColor(borderColor);
 
         // Keep the machine state in step with the picture. FillBorderWithColor
         // only paints; pFE is the port latch every consumer reads back, and
@@ -680,9 +727,8 @@ bool LoaderSNA::applySnapshotFromStaging()
         // record a border the machine never had - a snapshot with a black
         // border restored as white on seek.
         EmulatorState& borderState = _context->emulatorState;
-        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
-                                               (_borderColor & 0b0000'0111));
-        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) | borderColor);
+        borderState.border_attr = borderColor;
 
 
         // Trigger screen redraw to show snapshot screen immediately
@@ -718,500 +764,132 @@ bool LoaderSNA::applySnapshotFromStaging()
 
 /// region <Save methods>
 
-/// Determine output format based on current emulator mode
-/// If paging is locked (bit 5 of port 7FFD set), use 48K format
-/// Otherwise use 128K format
-SNA_MODE LoaderSNA::determineOutputFormat()
-{
-    EmulatorState& state = _context->emulatorState;
-    
-    // Check if paging is locked (48K mode)
-    if (state.p7FFD & PORT_7FFD_LOCK)
-    {
-        return SNA_48;
-    }
-    
-    return SNA_128;
-}
-
-/// Check if a RAM page contains only zeros (empty)
-/// Used for optimizing 128K save by skipping empty pages
-bool LoaderSNA::isPageEmpty(int pageNum)
-{
-    if (pageNum < 0 || pageNum >= MAX_RAM_PAGES)
-    {
-        return true;  // Invalid page treated as empty
-    }
-    
-    Memory& memory = *_context->pMemory;
-    uint8_t* pageData = memory.RAMPageAddress(pageNum);
-    
-    // Check 32-bit blocks for speed
-    uint32_t* data32 = (uint32_t*)pageData;
-    size_t count = PAGE_SIZE / sizeof(uint32_t);
-    
-    for (size_t i = 0; i < count; i++)
-    {
-        if (data32[i] != 0)
-        {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-/// Capture current emulator state to staging buffers
-bool LoaderSNA::captureStateToStaging()
-{
-    // Null pointer checks - all these must be valid for save to work
-    if (!_context)
-    {
-        MLOGERROR("captureStateToStaging: _context is null");
-        return false;
-    }
-    
-    if (!_context->pMemory)
-    {
-        MLOGERROR("captureStateToStaging: pMemory is null");
-        return false;
-    }
-    
-    if (!_context->pCore)
-    {
-        MLOGERROR("captureStateToStaging: pCore is null");
-        return false;
-    }
-    
-    if (!_context->pCore->GetZ80())
-    {
-        MLOGERROR("captureStateToStaging: GetZ80() returned null");
-        return false;
-    }
-    
-    Memory& memory = *_context->pMemory;
-    Z80& z80 = *_context->pCore->GetZ80();
-    EmulatorState& state = _context->emulatorState;
-    
-    // Clear staging
-    memset(&_header, 0, sizeof(_header));
-    memset(&_ext128Header, 0, sizeof(_ext128Header));
-    memset(_memoryPages, 0, sizeof(_memoryPages));
-    memset(_memoryPagesUsed, 0, sizeof(_memoryPagesUsed));
-    
-    // Capture Z80 registers to header
-    // Alternate registers
-    _header._h = z80.alt.h;
-    _header._l = z80.alt.l;
-    _header._d = z80.alt.d;
-    _header._e = z80.alt.e;
-    _header._b = z80.alt.b;
-    _header._c = z80.alt.c;
-    _header._a = z80.alt.a;
-    _header._f = z80.alt.f;
-    
-    // Main registers
-    _header.h = z80.h;
-    _header.l = z80.l;
-    _header.d = z80.d;
-    _header.e = z80.e;
-    _header.b = z80.b;
-    _header.c = z80.c;
-    _header.a = z80.a;
-    _header.f = z80.f;
-    
-    // Index and control registers
-    _header.hx = z80.xh;
-    _header.lx = z80.xl;
-    _header.hy = z80.yh;
-    _header.ly = z80.yl;
-    
-    _header.hsp = z80.sph;
-    _header.lsp = z80.spl;
-    
-    _header.i = z80.i;
-    _header.r = (z80.r_hi & 0x80) | (z80.r_low & 0x7F);
-    _header.imod = z80.im & 0x03;
-    _header.flag19 = (z80.iff2 & 1) << 2;
-    
-    // Border color (lower 3 bits) - use screen if available, else default to 0
-    if (_context->pScreen)
-    {
-        _header.border = _context->pScreen->GetBorderColor() & 0x07;
-    }
-    else
-    {
-        _header.border = 0;  // Default border color
-    }
-    _borderColor = _header.border;
-    
-    // Determine format
-    _snapshotMode = determineOutputFormat();
-    
-    // Capture 128K extended header if needed
-    if (_snapshotMode == SNA_128)
-    {
-        _ext128Header.reg_PC = z80.pc;
-        _ext128Header.port_7FFD = state.p7FFD;
-        _ext128Header.is_TRDOS = (state.flags & CF_TRDOS) ? 1 : 0;
-    }
-    
-    // Capture memory pages
-    // SNA format only supports 8 RAM pages (128K Spectrum), not MAX_RAM_PAGES (256)
-    constexpr int SNA_RAM_PAGES = 8;
-    for (int pageNum = 0; pageNum < SNA_RAM_PAGES; pageNum++)
-    {
-        memcpy(_memoryPages[pageNum], memory.RAMPageAddress(pageNum), PAGE_SIZE);
-        _memoryPagesUsed[pageNum] = true;
-    }
-    
-    _stagingLoaded = true;
-    return true;
-}
-
-/// Save 48K SNA format
-/// Structure: 27-byte header + 48KB RAM (pages 5, 2, 0)
-/// PC is pushed to stack (not stored in header)
-bool LoaderSNA::save48kFromStaging()
-{
-    Z80& z80 = *_context->pCore->GetZ80();
-    
-    // Open file for writing
-    FILE* file = FileHelper::OpenFile(_path, "wb");
-    if (!file)
-    {
-        MLOGERROR("Cannot create file: %s", _path.c_str());
-        return false;
-    }
-    
-    // For 48K, PC is pushed to stack
-    // We need to modify the snapshot to reflect this
-    // Decrement SP by 2 and write PC to that location in page 5
-    uint16_t sp = (z80.sph << 8) | z80.spl;
-    uint16_t pc = z80.pc;
-    
-    // Push PC to stack (little-endian)
-    sp -= 2;
-    
-    // Update SP in header
-    _header.lsp = sp & 0xFF;
-    _header.hsp = (sp >> 8) & 0xFF;
-    
-    // Write PC to stack in memory (pages 5, 2, 0 map to 0x4000-0xFFFF)
-    // Calculate which page and offset for SP address
-    if (sp >= 0x4000)
-    {
-        // Stack is in addressable RAM
-        uint16_t offset = sp - 0x4000;
-        int pageIdx = offset / PAGE_SIZE;  // 0=page5, 1=page2, 2=page0
-        int pageOffset = offset % PAGE_SIZE;
-        
-        int pageMap[3] = {5, 2, 0};
-        if (pageIdx < 3)
-        {
-            int actualPage = pageMap[pageIdx];
-            _memoryPages[actualPage][pageOffset] = pc & 0xFF;       // Low byte
-            _memoryPages[actualPage][pageOffset + 1] = (pc >> 8);   // High byte
-        }
-    }
-    
-    // Write header
-    if (fwrite(&_header, sizeof(_header), 1, file) != 1)
-    {
-        fclose(file);
-        remove(_path.c_str());
-        MLOGERROR("Failed to write header");
-        return false;
-    }
-    
-    // Write RAM pages: 5, 2, 0 (in order from 0x4000)
-    const int pages48k[] = {5, 2, 0};
-    for (int i = 0; i < 3; i++)
-    {
-        if (fwrite(_memoryPages[pages48k[i]], PAGE_SIZE, 1, file) != 1)
-        {
-            fclose(file);
-            remove(_path.c_str());
-            MLOGERROR("Failed to write RAM page %d", pages48k[i]);
-            return false;
-        }
-    }
-    
-    fclose(file);
-    
-    MLOGINFO("Saved 48K SNA: %s", _path.c_str());
-    return true;
-}
-
-/// Save 128K SNA format
-/// Structure: 27-byte header + pages 5, 2, N (current paged) + 4-byte ext header + remaining pages (0,1,3,4,6 or 7)
-bool LoaderSNA::save128kFromStaging()
-{
-    EmulatorState& state = _context->emulatorState;
-    
-    // Open file for writing  
-    FILE* file = FileHelper::OpenFile(_path, "wb");
-    if (!file)
-    {
-        MLOGERROR("Cannot create file: %s", _path.c_str());
-        return false;
-    }
-    
-    // Write header
-    if (fwrite(&_header, sizeof(_header), 1, file) != 1)
-    {
-        fclose(file);
-        remove(_path.c_str());
-        MLOGERROR("Failed to write header");
-        return false;
-    }
-    
-    // Get current paged bank (bits 0-2 of 7FFD)
-    uint8_t currentPage = state.p7FFD & 0x07;
-    
-    // Write base pages: 5, 2, currentPage (in order from 0x4000)
-    if (fwrite(_memoryPages[5], PAGE_SIZE, 1, file) != 1 ||
-        fwrite(_memoryPages[2], PAGE_SIZE, 1, file) != 1 ||
-        fwrite(_memoryPages[currentPage], PAGE_SIZE, 1, file) != 1)
-    {
-        fclose(file);
-        remove(_path.c_str());
-        MLOGERROR("Failed to write base RAM pages");
-        return false;
-    }
-    
-    // Write extended header (PC, port 7FFD, TR-DOS flag)
-    if (fwrite(&_ext128Header, sizeof(_ext128Header), 1, file) != 1)
-    {
-        fclose(file);
-        remove(_path.c_str());
-        MLOGERROR("Failed to write extended header");
-        return false;
-    }
-    
-    // Write remaining pages in ascending order (skip 5, 2, and currentPage)
-    // SNA format only supports 8 RAM pages (128K Spectrum)
-    constexpr int SNA_RAM_PAGES = 8;
-    for (int pageNum = 0; pageNum < SNA_RAM_PAGES; pageNum++)
-    {
-        if (pageNum == 5 || pageNum == 2 || pageNum == currentPage)
-        {
-            continue;  // Already written
-        }
-        
-        if (fwrite(_memoryPages[pageNum], PAGE_SIZE, 1, file) != 1)
-        {
-            fclose(file);
-            remove(_path.c_str());
-            MLOGERROR("Failed to write RAM page %d", pageNum);
-            return false;
-        }
-    }
-    
-    fclose(file);
-    
-    MLOGINFO("Saved 128K SNA: %s", _path.c_str());
-    return true;
-}
-
-/// Main save method - saves current emulator state directly to SNA file
-/// No staging buffers needed - writes directly from emulator state
+/// Save through the pipeline's save side: the machine's 128K view, the formats the machine can be saved in, the file
+/// written from the captured image (snapshot::SaveSnapshotFile). A refusal is logged and writes nothing
 bool LoaderSNA::save()
 {
-    // Null pointer checks
-    if (!_context || !_context->pMemory || !_context->pCore || !_context->pCore->GetZ80())
+    if (!_context)
     {
         MLOGERROR("save: Invalid emulator context");
         return false;
     }
-    
-    Memory& memory = *_context->pMemory;
-    Z80& z80 = *_context->pCore->GetZ80();
-    EmulatorState& state = _context->emulatorState;
-    
-    // Determine output format based on paging lock
-    _snapshotMode = determineOutputFormat();
-    
-    // Build header directly from Z80 state
+    const snapshot::SaveResult result = snapshot::SaveSnapshotFile(*_context, snapshot::SaveFormat::Sna, _path);
+    if (!result.ok)
+        MLOGERROR("%s", result.text.c_str());
+    return result.ok;
+}
+
+bool LoaderSNA::WriteImage(const snapshot::Image& image, std::string& error)
+{
+    const bool layout48 = snapshot::SavesAs48K(image);
+    auto bankOf = [&](uint16_t bank) -> const std::vector<uint8_t>* {
+        const auto it = image.banks.find(bank);
+        return (it != image.banks.end() && it->second.size() == PAGE_SIZE) ? &it->second : nullptr;
+    };
+    for (uint16_t bank : {5, 2, 0})
+    {
+        if (!bankOf(bank))
+        {
+            error = "the machine state has no RAM bank " + std::to_string(bank);
+            return false;
+        }
+    }
+
+    const snapshot::Cpu& cpu = image.cpu;
     snaHeader header;
     memset(&header, 0, sizeof(header));
-    
-    // Alternate registers
-    header._h = z80.alt.h;
-    header._l = z80.alt.l;
-    header._d = z80.alt.d;
-    header._e = z80.alt.e;
-    header._b = z80.alt.b;
-    header._c = z80.alt.c;
-    header._a = z80.alt.a;
-    header._f = z80.alt.f;
-    
-    // Main registers
-    header.h = z80.h;
-    header.l = z80.l;
-    header.d = z80.d;
-    header.e = z80.e;
-    header.b = z80.b;
-    header.c = z80.c;
-    header.a = z80.a;
-    header.f = z80.f;
-    
-    // Index and control registers
-    header.hx = z80.xh;
-    header.lx = z80.xl;
-    header.hy = z80.yh;
-    header.ly = z80.yl;
-    
-    header.i = z80.i;
-    header.r = (z80.r_hi & 0x80) | (z80.r_low & 0x7F);
-    header.imod = z80.im & 0x03;
-    header.flag19 = (z80.iff2 & 1) << 2;
-    
-    // Border color
-    if (_context->pScreen)
+    header._h = cpu.hl2 >> 8;
+    header._l = cpu.hl2 & 0xFF;
+    header._d = cpu.de2 >> 8;
+    header._e = cpu.de2 & 0xFF;
+    header._b = cpu.bc2 >> 8;
+    header._c = cpu.bc2 & 0xFF;
+    header._a = cpu.af2 >> 8;
+    header._f = cpu.af2 & 0xFF;
+    header.h = cpu.hl >> 8;
+    header.l = cpu.hl & 0xFF;
+    header.d = cpu.de >> 8;
+    header.e = cpu.de & 0xFF;
+    header.b = cpu.bc >> 8;
+    header.c = cpu.bc & 0xFF;
+    header.a = cpu.af >> 8;
+    header.f = cpu.af & 0xFF;
+    header.hx = cpu.ix >> 8;
+    header.lx = cpu.ix & 0xFF;
+    header.hy = cpu.iy >> 8;
+    header.ly = cpu.iy & 0xFF;
+    header.i = cpu.i;
+    header.r = cpu.r;
+    header.imod = cpu.im & 0x03;
+    header.flag19 = static_cast<uint8_t>((cpu.iff2 ? 1 : 0) << 2);
+    header.border = image.border & 0x07;
+
+    std::vector<uint8_t> file;
+    auto append = [&](const void* bytes, size_t size) {
+        const uint8_t* p = static_cast<const uint8_t*>(bytes);
+        file.insert(file.end(), p, p + size);
+    };
+
+    if (layout48)
     {
-        header.border = _context->pScreen->GetBorderColor() & 0x07;
-    }
-    
-    // Open file for writing
-    FILE* file = FileHelper::OpenFile(_path, "wb");
-    if (!file)
-    {
-        MLOGERROR("Cannot create file: %s", _path.c_str());
-        return false;
-    }
-    
-    if (_snapshotMode == SNA_48)
-    {
-        // 48K: PC pushed to stack, SP decremented by 2
-        uint16_t sp = (z80.sph << 8) | z80.spl;
-        uint16_t pc = z80.pc;
-        
-        sp -= 2;
+        // The three pages as the CPU sees 0x4000-0xFFFF; the PC goes on the stack in this FILE's copy, never in the machine's RAM
+        std::vector<uint8_t> ram;
+        for (uint16_t bank : {5, 2, 0})
+            ram.insert(ram.end(), bankOf(bank)->begin(), bankOf(bank)->end());
+
+        uint16_t sp = cpu.sp;
+        if (sp >= 1 && sp < 0x4002)
+        {
+            error = "a 48K .sna keeps the PC on the stack, and SP is " + StringHelper::Format("#%04X", sp) +
+                    ": the stack is in ROM (or wraps through it); save as .z80 or .szx";
+            return false;
+        }
+        sp = static_cast<uint16_t>(sp - 2);
+        ram[static_cast<size_t>(static_cast<uint16_t>(sp - 0x4000))] = cpu.pc & 0xFF;
+        ram[static_cast<size_t>(static_cast<uint16_t>(sp + 1 - 0x4000))] = cpu.pc >> 8;
         header.lsp = sp & 0xFF;
-        header.hsp = (sp >> 8) & 0xFF;
-        
-        // Write header
-        if (fwrite(&header, sizeof(header), 1, file) != 1)
-        {
-            fclose(file);
-            remove(_path.c_str());
-            MLOGERROR("Failed to write header");
-            return false;
-        }
-        
-        // Write PC to stack location in memory before saving
-        // Stack is in pages 5, 2, 0 (0x4000-0xFFFF)
-        if (sp >= 0x4000)
-        {
-            uint16_t offset = sp - 0x4000;
-            int pageIdx = offset / PAGE_SIZE;
-            int pageOffset = offset % PAGE_SIZE;
-            int pageMap[3] = {5, 2, 0};
-            
-            if (pageIdx < 3)
-            {
-                uint8_t* pagePtr = memory.RAMPageAddress(pageMap[pageIdx]);
-                if (pagePtr)
-                {
-                    pagePtr[pageOffset] = pc & 0xFF;
-                    pagePtr[pageOffset + 1] = (pc >> 8) & 0xFF;
-                }
-            }
-        }
-        
-        // Write RAM pages: 5, 2, 0 directly from memory
-        const int pages48k[] = {5, 2, 0};
-        for (int i = 0; i < 3; i++)
-        {
-            uint8_t* pagePtr = memory.RAMPageAddress(pages48k[i]);
-            if (!pagePtr || fwrite(pagePtr, PAGE_SIZE, 1, file) != 1)
-            {
-                fclose(file);
-                remove(_path.c_str());
-                MLOGERROR("Failed to write RAM page %d", pages48k[i]);
-                return false;
-            }
-        }
-        
-        fclose(file);
-        MLOGINFO("Saved 48K SNA: %s", _path.c_str());
-    }
-    else if (_snapshotMode == SNA_128)
-    {
-        // 128K: SP unchanged, PC in extended header
-        header.lsp = z80.spl;
-        header.hsp = z80.sph;
-        
-        // Write header
-        if (fwrite(&header, sizeof(header), 1, file) != 1)
-        {
-            fclose(file);
-            remove(_path.c_str());
-            MLOGERROR("Failed to write header");
-            return false;
-        }
-        
-        // Get current paged bank
-        uint8_t currentPage = state.p7FFD & 0x07;
-        
-        // Write base pages: 5, 2, currentPage
-        const int basePages[] = {5, 2, (int)currentPage};
-        for (int i = 0; i < 3; i++)
-        {
-            uint8_t* pagePtr = memory.RAMPageAddress(basePages[i]);
-            if (!pagePtr || fwrite(pagePtr, PAGE_SIZE, 1, file) != 1)
-            {
-                fclose(file);
-                remove(_path.c_str());
-                MLOGERROR("Failed to write base RAM page %d", basePages[i]);
-                return false;
-            }
-        }
-        
-        // Write extended header
-        sna128Header ext128Header;
-        ext128Header.reg_PC = z80.pc;
-        ext128Header.port_7FFD = state.p7FFD;
-        ext128Header.is_TRDOS = (state.flags & CF_TRDOS) ? 1 : 0;
-        
-        if (fwrite(&ext128Header, sizeof(ext128Header), 1, file) != 1)
-        {
-            fclose(file);
-            remove(_path.c_str());
-            MLOGERROR("Failed to write extended header");
-            return false;
-        }
-        
-        // Write remaining pages in ascending order (0,1,3,4,6,7)
-        // Standard 128K SNA has 8 pages (0-7), not MAX_RAM_PAGES
-        const int SNA_128_PAGES = 8;
-        for (int pageNum = 0; pageNum < SNA_128_PAGES; pageNum++)
-        {
-            if (pageNum == 5 || pageNum == 2 || pageNum == currentPage)
-                continue;
-            
-            uint8_t* pagePtr = memory.RAMPageAddress(pageNum);
-            if (!pagePtr || fwrite(pagePtr, PAGE_SIZE, 1, file) != 1)
-            {
-                fclose(file);
-                remove(_path.c_str());
-                MLOGERROR("Failed to write RAM page %d", pageNum);
-                return false;
-            }
-        }
-        
-        fclose(file);
-        MLOGINFO("Saved 128K SNA: %s", _path.c_str());
+        header.hsp = sp >> 8;
+        append(&header, sizeof(header));
+        file.insert(file.end(), ram.begin(), ram.end());
     }
     else
     {
-        fclose(file);
-        remove(_path.c_str());
-        MLOGERROR("Unknown snapshot mode for save");
+        for (uint16_t bank = 0; bank < 8; bank++)
+        {
+            if (!bankOf(bank))
+            {
+                error = "the machine state has no RAM bank " + std::to_string(bank);
+                return false;
+            }
+        }
+        // 128K: SP unchanged, the PC in the extended header; banks 5, 2, the one at 0xC000, then the others ascending
+        // (the one at 0xC000 is not repeated unless it is 5 or 2, whose second copy the format keeps)
+        header.lsp = cpu.sp & 0xFF;
+        header.hsp = cpu.sp >> 8;
+        const uint8_t p7ffd = image.paging.p7FFD.value_or(0);
+        const uint16_t current = p7ffd & 0x07;
+        append(&header, sizeof(header));
+        for (uint16_t bank : {static_cast<uint16_t>(5), static_cast<uint16_t>(2), current})
+            file.insert(file.end(), bankOf(bank)->begin(), bankOf(bank)->end());
+        sna128Header ext;
+        ext.reg_PC = cpu.pc;
+        ext.port_7FFD = p7ffd;
+        ext.is_TRDOS = image.trdosPaged ? 1 : 0;
+        append(&ext, sizeof(ext));
+        for (uint16_t bank = 0; bank < 8; bank++)
+        {
+            if (bank == 5 || bank == 2 || bank == current)
+                continue;
+            file.insert(file.end(), bankOf(bank)->begin(), bankOf(bank)->end());
+        }
+    }
+
+    if (!FileHelper::SaveBufferToFile(_path, file.data(), file.size()))
+    {
+        error = "cannot write '" + _path + "'";
         return false;
     }
-    
+    MLOGINFO("Saved %s SNA: %s", layout48 ? "48K" : "128K", _path.c_str());
     return true;
 }
 

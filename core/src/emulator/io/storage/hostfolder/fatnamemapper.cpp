@@ -57,6 +57,30 @@ namespace
         return bytes;
     }
 
+    /// A character no FAT long name may hold
+    bool IsBadLongNameChar(char32_t c)
+    {
+        return c < 0x20 || c == U'"' || c == U'*' || c == U'/' || c == U':' || c == U'<' || c == U'>' || c == U'?' ||
+               c == U'\\' || c == U'|';
+    }
+
+    /// The UTF-16 length of a UTF-32 name
+    size_t Utf16Length(const std::u32string& name)
+    {
+        size_t units = 0;
+        for (char32_t c : name)
+            units += c >= 0x10000 ? 2 : 1;
+        return units;
+    }
+
+    std::u32string Upper(const std::u32string& name)
+    {
+        std::u32string upper;
+        for (char32_t c : name)
+            upper.push_back(UnicodeHelper::ToUpper(c));
+        return upper;
+    }
+
     FatShortName Compose(const std::vector<uint8_t>& base, const std::vector<uint8_t>& ext)
     {
         FatShortName name;
@@ -69,10 +93,16 @@ namespace
     }
 }  // namespace
 
-std::vector<FatMappedName> FatNameMapper::MapFolder(const std::vector<std::string>& utf8Names, CodePage page)
+std::vector<FatMappedName> FatNameMapper::MapFolder(const std::vector<std::string>& utf8Names, CodePage page,
+                                                   const std::set<FatShortName>& taken, bool replaceBadNames)
 {
     std::vector<FatMappedName> result(utf8Names.size());
-    std::set<FatShortName> used;
+    std::set<FatShortName> used = taken;
+    // replaceBadNames: a replaced long name must not take a sibling's (case-insensitive, as FAT compares them)
+    std::set<std::u32string> longNames;
+    if (replaceBadNames)
+        for (const std::string& n : utf8Names)
+            longNames.insert(Upper(UnicodeHelper::DecodeUtf8(n)));
 
     // Two passes: exact short names first, so a lossless name keeps its short
     // name even when a lossy sibling earlier in the list would map onto it
@@ -83,19 +113,56 @@ std::vector<FatMappedName> FatNameMapper::MapFolder(const std::vector<std::strin
     for (size_t i = 0; i < utf8Names.size(); i++)
     {
         FatMappedName& out = result[i];
-        const std::u32string name = UnicodeHelper::DecodeUtf8(utf8Names[i]);
+        std::u32string name = UnicodeHelper::DecodeUtf8(utf8Names[i]);
+
+        const bool badChar = std::any_of(name.begin(), name.end(), IsBadLongNameChar);
+        const bool tooLong = Utf16Length(name) > kMaxLongName;
+        if (!replaceBadNames || (!badChar && !tooLong && !name.empty()))
+        {
+            if (name.empty())
+            {
+                out.reason = "empty name";
+                continue;
+            }
+            if (badChar)
+            {
+                out.reason = "the name holds a character FAT cannot store (\\ / : * ? \" < > | or a control character)";
+                continue;
+            }
+            if (tooLong)
+            {
+                out.reason = "name longer than 255 UTF-16 units";
+                continue;
+            }
+        }
+        else
+        {
+            // onBadName: replace
+            for (char32_t& c : name)
+                if (IsBadLongNameChar(c))
+                    c = U'_';
+            if (name.empty())
+                name = U"_";
+            const size_t dot = name.rfind(U'.');
+            std::u32string base = dot == std::u32string::npos || dot == 0 ? name : name.substr(0, dot);
+            const std::u32string ext = dot == std::u32string::npos || dot == 0 ? std::u32string() : name.substr(dot);
+            while (base.size() > 1 && Utf16Length(base) + Utf16Length(ext) > kMaxLongName)
+                base.pop_back();
+            name = base + ext;
+            // A sibling has that name already: a "~n" before the extension
+            for (uint32_t n = 2; longNames.count(Upper(name)) && n < 100000; n++)
+            {
+                const std::u32string tail = UnicodeHelper::DecodeUtf8("~" + std::to_string(n));
+                std::u32string cut = base;
+                while (cut.size() > 1 && Utf16Length(cut) + Utf16Length(tail) + Utf16Length(ext) > kMaxLongName)
+                    cut.pop_back();
+                name = cut + tail + ext;
+            }
+            longNames.insert(Upper(name));
+            out.renamed = UnicodeHelper::EncodeUtf8(name);
+        }
 
         out.longName = UnicodeHelper::ToUtf16(name);
-        if (name.empty())
-        {
-            out.reason = "empty name";
-            continue;
-        }
-        if (out.longName.size() > kMaxLongName)
-        {
-            out.reason = "name longer than 255 UTF-16 units";
-            continue;
-        }
 
         // Leading dots and spaces never start a short name
         size_t start = 0;

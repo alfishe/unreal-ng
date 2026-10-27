@@ -43,12 +43,12 @@ ScorpionProfROMState TTDScorpionProfROM::Snapshot() const
 
     const EmulatorState& state = _context->emulatorState;
 
-    blob.plane_id = state.profrom_bank;
+    blob.plane_id = state.scorpion.profromBank;
     blob.rom_page = CurrentRomPage();
-    blob.p7EFD = state.p7EFD;
+    blob.p7EFD = state.scorpion.p7EFD;
     blob.p1FFD = state.p1FFD;
-    blob.scorpionDosTrigger = state.scorpionDosTrigger;
-    blob.scorpionTurbo = state.scorpion_turbo ? 1 : 0;
+    blob.scorpionDosTrigger = state.scorpion.dosTrigger;
+    blob.scorpionTurbo = state.scorpion.turbo ? 1 : 0;
 
     return blob;
 }
@@ -72,11 +72,11 @@ void TTDScorpionProfROM::TTDLoadState(const uint8_t* src)
 
     EmulatorState& state = _context->emulatorState;
 
-    state.profrom_bank = blob.plane_id;
-    state.p7EFD = blob.p7EFD;
+    state.scorpion.profromBank = blob.plane_id;
+    state.scorpion.p7EFD = blob.p7EFD;
     state.p1FFD = blob.p1FFD;
-    state.scorpionDosTrigger = blob.scorpionDosTrigger;
-    state.scorpion_turbo = blob.scorpionTurbo ? 1 : 0;
+    state.scorpion.dosTrigger = blob.scorpionDosTrigger;
+    state.scorpion.turbo = blob.scorpionTurbo ? 1 : 0;
 
     // The turbo clock came back with the chipset state (a field copy), the latch above: the wait overlay and the
     // /INT-pulse step hook follow the latch

@@ -151,9 +151,11 @@ bool Execute(EmulatorContext* context, const std::string& rawAction, int slot, u
     if (edit)
     {
         if (context->pEmulator)
-            context->pEmulator->EditMemoryFromTool(source ? source : "isa", edit);
+            error = context->pEmulator->EditMemoryFromTool(source ? source : "isa", edit);   // the recorded past
         else
             edit();
+        if (!error.empty())
+            return false;
     }
 
     result = StateNode::Object();

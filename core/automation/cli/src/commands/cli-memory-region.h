@@ -14,6 +14,7 @@
 ///
 /// Worked example (Sprinter): `memory region write vram 0x17F0 00 00 A8` makes text paper 5 blue.
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -44,12 +45,24 @@ inline std::string Text(EmulatorContext* context, const std::vector<std::string>
         if (regions.empty())
             return std::string("No device memory regions on this machine") + newline;
         std::string out = "Device memory regions:" + std::string(newline);
+        // The names (with their aliases) padded to the longest
+        std::vector<std::string> names;
+        size_t width = 0;
         for (IDeviceMemoryRegion* r : regions)
         {
-            char line[160];
-            std::snprintf(line, sizeof line, "  %-8s %7u bytes, %u pages of %u%s", r->Name(), r->Size(),
-                          r->PageSize() ? r->Size() / r->PageSize() : 0u, r->PageSize(), r->Writable() ? "" : ", read-only");
-            out += line + std::string(newline) + "           " + r->Description() + newline;
+            std::string name = r->Name();
+            if (r->Aliases() && *r->Aliases())
+                name += " (" + std::string(r->Aliases()) + ")";
+            width = std::max(width, name.size());
+            names.push_back(std::move(name));
+        }
+        for (size_t i = 0; i < regions.size(); i++)
+        {
+            const IDeviceMemoryRegion* r = regions[i];
+            const uint32_t pages = r->PageSize() ? r->Size() / r->PageSize() : 0u;
+            out += "  " + names[i] + std::string(width - names[i].size(), ' ') + "  " + std::to_string(r->Size()) +
+                   " bytes, " + std::to_string(pages) + " pages of " + std::to_string(r->PageSize()) +
+                   (r->Writable() ? "" : ", read-only") + newline + "      " + r->Description() + newline;
         }
         return out;
     }

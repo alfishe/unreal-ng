@@ -19,10 +19,11 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/ttdwriterecords.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -32,7 +33,7 @@ namespace
 struct Machine
 {
     Emulator* emulator = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
 
     Machine()
     {
@@ -42,7 +43,7 @@ struct Machine
         emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
         emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
         emulator->GetContext()->pMemory->UpdateFeatureCache();
-        ttd = emulator->GetContext()->pTimeTravelManager;
+        ttd = emulator->GetContext()->pTimeTravelController;
         // DI; loop: INC A; LD (#C000),A; OUT (#FE),A; JP loop - a write every 38 T-states
         Memory* memory = emulator->GetContext()->pMemory;
         const uint8_t program[] = {0xF3, 0x3C, 0x32, 0x00, 0xC0, 0xD3, 0xFE, 0xC3, 0x01, 0x80};
@@ -71,7 +72,7 @@ struct Machine
 };
 
 /// Query times across the whole session, a few thousand T-states apart
-std::vector<uint64_t> QueryTimes(ttd::TimeTravelManager& ttd)
+std::vector<uint64_t> QueryTimes(ttd::TimeTravelController& ttd)
 {
     std::vector<uint64_t> out;
     const uint64_t from = ttd.GlobalT(ttd.GetCheckpoint(0)->time);
@@ -265,7 +266,8 @@ TEST(TimeTravelManager_JournalSegments_Test, RecordingAgainFromAnEarlierPointCut
     ASSERT_TRUE(m.ttd->SeekTo(cut));
     ASSERT_TRUE(m.ttd->ResumeRecordingFrom(cut));
     const uint64_t cutT = m.ttd->GlobalT(m.ttd->CurrentPosition());
-    EXPECT_LE(m.ttd->GetWriteJournal()->NewestGlobalT(), cutT) << "the old future's writes are gone";
+    const auto newest = ttdtest::LastWriteRecord(*m.ttd, [](const ttd::TTDWriteRecord&) { return true; });
+    EXPECT_TRUE(!newest || uint64_t(newest->globalT) <= cutT) << "the old future's writes are gone";
     m.Frames(1);
     m.ttd->StopRecording();
 
@@ -281,12 +283,13 @@ TEST(TimeTravelManager_JournalSegments_Test, RecordingAgainFromAnEarlierPointCut
 namespace
 {
 /// The journal's records with @p from < globalT <= @p to
-std::vector<ttd::TTDWriteRecord> Records(const ttd::TTDWriteJournal& j, uint64_t from, uint64_t to)
+/// The session's journal records in (from, to]
+std::vector<ttd::TTDWriteRecord> Records(const ttd::TimeTravelController& ttd, uint64_t from, uint64_t to)
 {
     std::vector<ttd::TTDWriteRecord> out;
-    for (uint64_t seq = j.SeqTail(); seq < j.SeqHead(); ++seq)
-        if (j.RecordAt(seq).globalT > from && j.RecordAt(seq).globalT <= to)
-            out.push_back(j.RecordAt(seq));
+    for (const ttd::TTDWriteRecord& r : ttdtest::WriteRecords(ttd))
+        if (r.globalT > from && r.globalT <= to)
+            out.push_back(r);
     return out;
 }
 
@@ -339,8 +342,8 @@ TEST(TimeTravelManager_JournalSegments_Test, BuildingTheWholeSessionEqualsTheRec
     ASSERT_EQ(info.writeJournalSegments.size(), 1u);
     EXPECT_TRUE(info.writeJournalComplete) << "the whole session is covered now";
     const ttd::TTDJournalSegment seg = info.writeJournalSegments[0];
-    ExpectSameRecords(Records(*built.ttd->GetWriteJournal(), seg.from, seg.to),
-                      Records(*whole.ttd->GetWriteJournal(), seg.from, seg.to));
+    ExpectSameRecords(Records(*built.ttd, seg.from, seg.to),
+                      Records(*whole.ttd, seg.from, seg.to));
     ExpectSameAnswers(whole, built);
 
     const ttd::TTDJournalBuildResult again = built.ttd->BuildWriteJournal(0, UINT64_MAX);
@@ -378,8 +381,8 @@ TEST(TimeTravelManager_JournalSegments_Test, ABuiltSpanJoinsTheRecordedSegment)
     ASSERT_EQ(segments.size(), 1u) << "the built frames and the recorded segment are one span";
     EXPECT_LT(segments[0].from, recorded.from);
     EXPECT_EQ(segments[0].to, recorded.to);
-    ExpectSameRecords(Records(*partial.ttd->GetWriteJournal(), segments[0].from, segments[0].to),
-                      Records(*whole.ttd->GetWriteJournal(), segments[0].from, segments[0].to));
+    ExpectSameRecords(Records(*partial.ttd, segments[0].from, segments[0].to),
+                      Records(*whole.ttd, segments[0].from, segments[0].to));
     ExpectSameAnswers(whole, partial);
 }
 
@@ -517,43 +520,3 @@ TEST(TimeTravelManager_JournalSegments_Test, BuildingByFrameNumbers)
 // The engine keeps the same journal (J6)
 // ===========================================================================
 
-TEST(TimeTravelManager_JournalSegments_Test, TheShadowEngineKeepsTheSameJournalAndSegments)
-{
-    Machine m;
-    ASSERT_NE(m.ttd, nullptr);
-    ttd::TimeTravelEngine engine;
-    m.ttd->SetShadowEngine(&engine);
-    ASSERT_TRUE(m.ttd->StartRecording());
-    m.Frames(2);
-    m.TStates(9000);
-    m.ttd->SetEnableWriteJournal(true);
-    m.Frames(3);
-    m.TStates(4000);
-    m.ttd->SetEnableWriteJournal(false);
-    m.Frames(2);
-    m.ttd->SetEnableWriteJournal(true);
-    m.Frames(2);
-    m.ttd->StopRecording();
-    m.ttd->SetShadowEngine(nullptr);
-
-    // The engine takes the journal at each capture: its records are v1's up
-    // to the last checkpoint; the writes after it (to the stop) are v1's alone
-    const ttd::TTDWriteJournal& v1 = *m.ttd->GetWriteJournal();
-    std::vector<ttd::TTDWriteRecord> engineRecords;
-    engine.Writes().ForEach([&](const ttd::TTDWriteRecord& r) { engineRecords.push_back(r); });
-    const std::vector<ttd::TTDWriteRecord> v1Records = Records(v1, 0, UINT64_MAX);
-    ASSERT_GT(engineRecords.size(), 0u);
-    ASSERT_LE(engineRecords.size(), v1Records.size());
-    ExpectSameRecords(engineRecords,
-                      std::vector<ttd::TTDWriteRecord>(v1Records.begin(), v1Records.begin() + engineRecords.size()));
-    const uint64_t lastCheckpoint = m.ttd->GlobalT(m.ttd->GetCheckpoint(m.ttd->GetCheckpointCount() - 1)->time);
-    for (size_t k = engineRecords.size(); k < v1Records.size(); ++k)
-        ASSERT_GT(uint64_t(v1Records[k].globalT), lastCheckpoint) << "only writes after the last capture are missing";
-
-    // The segments as v1 had them at its last capture: the open one closed there
-    const std::vector<ttd::TTDJournalSegment> v1Segments = m.ttd->GetSessionInfo().writeJournalSegments;
-    ASSERT_EQ(engine.Writes().Segments().size(), v1Segments.size());
-    EXPECT_EQ(engine.Writes().Segments()[0], v1Segments[0]);
-    EXPECT_LT(engine.HeapBreakdown().writeJournal, v1.Size() * sizeof(ttd::TTDWriteRecord))
-        << "compressed blocks, not v1's raw ring";
-}

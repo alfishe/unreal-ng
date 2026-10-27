@@ -5,6 +5,9 @@ buffer, server-side saves, and offline analysis.
 
 The recorder is gated by the runtime feature `"porttrace"` (alias `"pt"`).
 
+For SD / SPI traffic the [bus analyzer](bus-analyzer.md) is the better instrument: it decodes the SD protocol
+(commands with R1, blocks), covers the DMA's bytes and the cards' own CPUs, and checks the driver.
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `analyze_performance` one-shot answers quick questions, `invoke_api` drives
 > full sessions. Use [WebAPI](#webapi) only inside host-side Python/bash
@@ -149,7 +152,8 @@ Query params: `limit` (default 0 = all — beware multi-MB responses) and
 `since` (t-state floor). Nothing else is accepted here.
 
 Event fields (verbose form): `index`, `timestamp` (t-state), `frame`,
-`raw_port`, `decoded_port`, `decode_rule`, `value`, `pc`, `direction`
+`raw_port`, `decoded_port`, `decode_rule` (the model's table index; 255 unmapped, 254 BDI fallback,
+253 no table, 252 no bus cycle: the Next's NEXTREG instruction as OUT #243B / #253B), `value`, `pc`, `direction`
 (`IN`/`OUT`), `device`, flag booleans (`decoded`, `had_handler`,
 `beta128_gated`, ...) and, on decoders with codes, `code` / `code_name`.
 The compact form (`ts`, `raw`, `dec`, `val`, `dev`, `flags`) is what the
@@ -200,3 +204,7 @@ coverage, PC attribution ("who hammers port X").
 - **Beta128 gating**: TR-DOS paged-in accesses can be suppressed by the
   `beta128_gated` counter — compare `total_produced` vs `events` before
   assuming the disk controller was silent.
+- **No `IN #7F` data bytes on a TR-DOS sector read**: not a filter problem. `INI` / `INIR` are traced byte by
+  byte, but the `fastdisk` feature (on by default) traps the ROM's sector loop at `#3FEC` and moves the whole
+  sector in one step, so only the command / status traffic (`#1F`, `#FF`) is left. For the data bytes:
+  `PUT /feature/fastdisk {"enabled":false}` before the capture (a TTD recording turns it off by itself).

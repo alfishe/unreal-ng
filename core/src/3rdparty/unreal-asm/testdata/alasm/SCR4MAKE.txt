@@ -1,0 +1,19 @@
+FNT     EQU     #8800               
+        ORG     #9000
+FNT4    INCBIN "fnt26",#800
+
+        ORG #8000
+        LD L,#80 ;#20
+        LD DE,FNT
+        LD C,128 ;#E0
+CCC     LD H,'FNT4
+        LD B,5
+ddd     LD A,(HL)
+        LD (DE),A
+        INC H,DE
+        DJNZ ddd
+        INC L
+        DEC C
+        JR NZ,CCC
+        RET                
+

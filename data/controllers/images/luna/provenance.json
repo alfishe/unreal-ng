@@ -1,0 +1,36 @@
+{
+  "family": "luna",
+  "images": [
+    {
+      "view": "front",
+      "title": "Amazon Luna controller",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 156.4 x 107.6 x 58.5 mm (Amazon's figure)",
+          "source": "https://www.ifixit.com/Device/Amazon_Luna_Controller (and the Woot listing)",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "near top-down photo of the controller on a worktop: the outline (right half), the plate's edge, both sticks, the D-pad, face buttons, the small keys and the Luna button",
+          "source": "https://commons.wikimedia.org/wiki/File:Amazon_Luna_Controller.jpg",
+          "author": "Montero3456",
+          "licence": "CC0",
+          "use": "measured geometry only (trace.py outline, positions on a 5 mm grid); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the press render: the colours of the grips, plate and the stick collars",
+          "source": "https://www.aftvnews.com/wp-content/uploads/2020/09/Amazon-Luna-Game-Controller.jpg (Amazon press image)",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24",
+          "note": "the photo is foreshortened below the centre line and the gap between the grips is read by eye: the grips' inner edge and the depth are estimates (about 2 mm)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# Sample scenario: proves the loop spec <-> Stream Deck Studio project <-> deck (not the product layout).
+# Format and commands: docs/companions/streamdeck/pipeline.md
+scenario: sample
+model: plusxl
+pack: magicwb
+settings: {brightness: 60, activity: {ignore: [ttd.seek_by]}}
+
+menu home:
+  title: Home
+  context: play
+  strip: {content: title, status: ttd, target: true}
+  dials:
+    0: {label: TTD, uc: U2.1, turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds, min: 1, max: 50}}, press: {action: run.pause_toggle}}
+  keys:
+    # C1: control the machine
+    pause:  {at: [0, 0], uc: C1.1, action: run.pause_toggle}
+    reset:  {at: [0, 1], uc: C1.2, action: mach.reset}
+    nmi:    {at: [0, 2], uc: C1.3, action: mach.nmi}
+    # C2: speed
+    turbo:  {at: [1, 0], uc: C2.2, action: mach.turbo_toggle}
+    hold:   {at: [1, 1], uc: C2.2, action: run.turbo_hold}
+    x1:     {at: [1, 2], uc: C2.5, action: set.speed, value: {value: 1}, label: X1}
+    speed:  {at: [1, 3], open: speed}      # the shared menu src/shared/speed.spec.yaml
+    # C6: save state
+    qsave:  {at: [2, 0], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 1}, label: S1}
+    qload:  {at: [2, 1], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 1}, label: L1}
+    save:   {at: [2, 2], open: save}       # the menu below
+
+menu save:
+  title: Save state
+  uc: C6
+  glyph: snapshot.save
+  keys:
+    save2:  {at: [0, 1], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 2}, label: S2}
+    save3:  {at: [0, 2], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 3}, label: S3}
+    load2:  {at: [1, 1], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 2}, label: L2}
+    load3:  {at: [1, 2], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 3}, label: L3}
+    file:   {at: [0, 4], uc: C6.2, action: snapshot.save, value: {path: $user/snapshots/deck.szx}}
+    disk:   {at: [1, 4], uc: C6.3, action: media.save, value: {drive: A}, label: A}
+    gohome: {at: [3, 8], nav: home}

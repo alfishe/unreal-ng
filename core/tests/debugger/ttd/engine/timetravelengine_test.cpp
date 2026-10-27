@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "debugger/ttd/engine/ttdsessionfile.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
@@ -185,11 +186,21 @@ TEST(TimeTravelEngine_Test, OneChangedPieceRecordsOneChange_TheRestIsShared)
     ASSERT_TRUE(engine.CaptureFrame(f1, err));
     for (uint32_t p = 0; p < 1024; ++p)
         if (p / 32 != 100 / 32)
+        {
             ASSERT_EQ(engine.VersionAt(0, 0, p), engine.VersionAt(1, 0, p));
+        }
     EXPECT_NE(engine.VersionAt(0, 0, 100), engine.VersionAt(1, 0, 100));
 
     // One change record, not a copy of the whole map
     EXPECT_EQ(engine.ChangeCount(1, 0), 1u);
+    const auto changes = engine.ChangesAt(1, 0);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, 100u);
+    EXPECT_EQ(changes[0].second, engine.VersionAt(1, 0, 100));
+    std::vector<uint8_t> decoded(kTTDPieceSize);
+    ASSERT_TRUE(engine.PieceStore().Decode(changes[0].second, decoded.data()));
+    EXPECT_EQ(decoded, changed);
+    EXPECT_TRUE(engine.ChangesAt(9, 0).empty()) << "no such checkpoint";
     (void)blocksAfterFirst;
 }
 
@@ -463,13 +474,13 @@ TEST(TimeTravelEngine_TimeFields_Test, EveryValueComesBackExactly_SteadyFieldsCo
 
         TTDFrameInput in;
         in.position = {0, f, 0};
-        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        in.deviceStates.push_back({0 /* the one device */, dev.state, sizeof(dev.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
     }
     for (size_t i = 0; i < expected.size(); ++i)
     {
         std::vector<uint8_t> got;
-        ASSERT_TRUE(engine.DeviceState(i, id, got)) << "checkpoint " << i;
+        ASSERT_TRUE(engine.DeviceStateOfV1Id(i, id, got)) << "checkpoint " << i;
         ASSERT_TRUE(got == expected[i]) << "checkpoint " << i;
     }
 }
@@ -510,7 +521,7 @@ TEST(TimeTravelEngine_TimeFields_Test, AFieldKeepingItsPaceAddsNoVersions)
         std::memcpy(dev.state + 8, &timer, 4);
         TTDFrameInput in;
         in.position = {0, f, 0};
-        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        in.deviceStates.push_back({0 /* the one device */, dev.state, sizeof(dev.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
         if (f == 10)
             versions = engine.PieceStore().LiveVersions();
@@ -522,7 +533,7 @@ TEST(TimeTravelEngine_TimeFields_Test, AFieldKeepingItsPaceAddsNoVersions)
     for (size_t i = 0; i < 200; ++i)
     {
         std::vector<uint8_t> got;
-        ASSERT_TRUE(engine.DeviceState(i, id, got));
+        ASSERT_TRUE(engine.DeviceStateOfV1Id(i, id, got));
         uint64_t clock = 0;
         uint32_t timer = 0;
         std::memcpy(&clock, got.data(), 8);
@@ -566,14 +577,14 @@ TEST(TimeTravelEngine_TimeFields_Test, AnEvenPaceStoresNothingAfterTheLineIsSet)
         std::memcpy(dev.state, &origin, 8);
         TTDFrameInput in;
         in.position = {0, f, 0};
-        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        in.deviceStates.push_back({0 /* the one device */, dev.state, sizeof(dev.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
         if (f == 5)
             versionsAt5 = engine.PieceStore().LiveVersions();
     }
     EXPECT_EQ(engine.PieceStore().LiveVersions(), versionsAt5) << "a steady clock adds no version once its line is set";
     std::vector<uint8_t> got;
-    ASSERT_TRUE(engine.DeviceState(99, id, got));
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(99, id, got));
     uint64_t origin = 0;
     std::memcpy(&origin, got.data(), 8);
     EXPECT_EQ(origin, 71680u * 99);
@@ -615,14 +626,13 @@ TEST(TimeTravelEngine_Sync_Test, ADeviceNotAtTheBoundaryIsReportedAtCaptureAndRe
     r.pieces = 1;
     r.bytes = kTTDPieceSize;
     ASSERT_TRUE(engine.BeginSession({r}, {{card.TTDDescribe(), &card, nullptr}}, err)) << err;
-    const auto id = static_cast<uint8_t>(PeripheralId::NeoGS);
     for (uint64_t f = 0; f < 4; ++f)
     {
         card.synced = f != 2;
         card.offset = f == 2 ? -700 : 0;
         TTDFrameInput in;
         in.position = {0, f, 0};
-        in.deviceStates.push_back({id, card.state, sizeof(card.state)});
+        in.deviceStates.push_back({0 /* the one device */, card.state, sizeof(card.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
     }
     EXPECT_EQ(engine.CheckpointCount(), 4u) << "a miss is reported, the frame still recorded";
@@ -717,14 +727,13 @@ TEST(TimeTravelEngine_Damage_Test, DeviceDamageAndMissingStateAreNamedWithTheirF
     r.pieces = 1;
     r.bytes = kTTDPieceSize;
     ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
-    const auto id = static_cast<uint8_t>(PeripheralId::Covox);
     for (uint64_t f = 0; f < 12; ++f)
     {
         dev.state[0] = static_cast<uint8_t>(f < 6 ? 1 : 2);
         TTDFrameInput in;
         in.position = {0, f, 0};
         if (f < 8 || f > 9)   // frames 8 and 9: the device gives no state
-            in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+            in.deviceStates.push_back({0 /* the one device */, dev.state, sizeof(dev.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
     }
     uint32_t region = 0;
@@ -833,3 +842,417 @@ TEST(TimeTravelEngine_Config_Test, MediaVersionsAreKeptWhenTheyChange)
     EXPECT_TRUE(at == v1);
     EXPECT_FALSE(engine.MediaVersionAt(0, 1, at)) << "no such slot";
 }
+
+namespace
+{
+/// A device that may hold up to 1 MB of state and usually holds a few KB (a
+/// network card's queues)
+class LargeStateDevice : public TTDSerializable
+{
+public:
+    size_t TTDStateSize() const override { return size_t(1) << 20; }
+    void TTDSaveState(uint8_t*) const override {}
+    void TTDLoadState(const uint8_t*) override {}
+    std::string TTDDeviceName() const override { return "LargeState"; }
+    PeripheralId TTDPeripheralId() const override { return PeripheralId::Covox; }
+};
+}  // namespace
+
+/// A device's declared maximum is not the work per frame: only the pieces its
+/// state reaches now or reached last time are compared (a 16 MB network card
+/// once cost a millisecond a frame). Every checkpoint gives back exactly the
+/// state of its frame - grown, shrunk, absent, and after a resume from the past
+TEST(TimeTravelEngine_DeviceState_Test, WorkFollowsTheStateNotItsMaximum)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    LargeStateDevice dev;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const uint8_t id = static_cast<uint8_t>(PeripheralId::Covox);
+
+    const std::vector<size_t> sizes = {100, 100, 9000, 300, 0 /* absent */, 300, 5000, 5000, 64, 64};
+    std::vector<std::vector<uint8_t>> expected;
+    std::vector<uint64_t> offered;
+    for (uint64_t f = 0; f < sizes.size(); ++f)
+    {
+        std::vector<uint8_t> state(sizes[f]);
+        for (size_t i = 0; i < state.size(); ++i)
+            state[i] = static_cast<uint8_t>(i * 7 + f);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        if (sizes[f])
+            in.deviceStates.push_back({0 /* the one device */, state.data(), state.size()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        expected.push_back(state);
+        offered.push_back(engine.LastCaptureWork().devicePiecesOffered);
+    }
+    const uint32_t regionPieces = ((1u << 20) + 4 + kTTDPieceSize - 1) / kTTDPieceSize;
+    EXPECT_EQ(offered[0], regionPieces) << "the first capture lays the region out whole";
+    for (size_t f = 1; f < offered.size(); ++f)
+        EXPECT_LE(offered[f], 4u) << "frame " << f << ": the state's pieces, not the 1 MB maximum";
+    for (size_t i = 0; i < expected.size(); ++i)
+    {
+        std::vector<uint8_t> got;
+        if (expected[i].empty())
+        {
+            EXPECT_FALSE(engine.DeviceStateOfV1Id(i, id, got)) << "checkpoint " << i << " has no state";
+            continue;
+        }
+        ASSERT_TRUE(engine.DeviceStateOfV1Id(i, id, got)) << "checkpoint " << i;
+        EXPECT_TRUE(got == expected[i]) << "checkpoint " << i << " (" << expected[i].size() << " bytes)";
+    }
+
+    // Resumed at the 9000-byte frame, then a short state: the long one's tail is gone
+    ASSERT_TRUE(engine.TruncateAfter(2, {0, 2, 0}, err)) << err;
+    std::vector<uint8_t> shortState(200, 0xAB);
+    TTDFrameInput in;
+    in.position = {0, 3, 0};
+    in.start = 3 * 70000;
+    in.deviceStates.push_back({0 /* the one device */, shortState.data(), shortState.size()});
+    ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(3, id, got));
+    EXPECT_TRUE(got == shortState);
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(2, id, got));
+    EXPECT_TRUE(got == expected[2]) << "the kept checkpoint still holds its long state";
+}
+
+namespace
+{
+/// A variable-size device declaring 64 MiB (a network adapter's tail of queued bytes) and holding a few KB
+class GrowingStateDevice : public LargeStateDevice
+{
+public:
+    size_t TTDStateSize() const override { return size_t(64) << 20; }
+    bool TTDVariableSize() const override { return true; }
+};
+}  // namespace
+
+/// A variable-size state without time fields costs memory by the size it reaches, not by its declared maximum: the
+/// capture scratch and the delta base grow with it (a 64 MiB network declaration held 136 MB of a session's memory).
+/// Every checkpoint still gives back its frame's state - grown, shrunk, absent, and after a resume from the past
+TEST(TimeTravelEngine_DeviceState_Test, AVariableSizeStateHoldsMemoryByItsSize)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    GrowingStateDevice dev;
+    TTDHistoryPolicy policy;
+    policy.segmentFrames = 3;   // baselines store every piece the region holds whole
+    engine.SetHistoryPolicy(policy);
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const uint8_t id = static_cast<uint8_t>(PeripheralId::Covox);
+
+    const std::vector<size_t> sizes = {100, 9000, 300, 0 /* absent */, 300, 20000, 64};
+    std::vector<std::vector<uint8_t>> expected;
+    for (uint64_t f = 0; f < sizes.size(); ++f)
+    {
+        std::vector<uint8_t> state(sizes[f]);
+        for (size_t i = 0; i < state.size(); ++i)
+            state[i] = static_cast<uint8_t>(i * 7 + f);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        if (sizes[f])
+            in.deviceStates.push_back({0 /* the one device */, state.data(), state.size()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        EXPECT_LE(engine.LastCaptureWork().devicePiecesOffered, 6u) << "frame " << f << ": the state's pieces only";
+        expected.push_back(state);
+    }
+    const TTDEngineHeapBreakdown heap = engine.HeapBreakdown();
+    EXPECT_LT(heap.deltaBase, size_t(64) << 10) << "the delta base covers the 20000 bytes reached, not 64 MiB";
+    EXPECT_LT(heap.bookkeeping, size_t(1) << 20) << "the capture scratch too";
+    for (size_t i = 0; i < expected.size(); ++i)
+    {
+        std::vector<uint8_t> got;
+        if (expected[i].empty())
+        {
+            EXPECT_FALSE(engine.DeviceStateOfV1Id(i, id, got)) << "checkpoint " << i << " has no state";
+            continue;
+        }
+        ASSERT_TRUE(engine.DeviceStateOfV1Id(i, id, got)) << "checkpoint " << i;
+        EXPECT_TRUE(got == expected[i]) << "checkpoint " << i << " (" << expected[i].size() << " bytes)";
+    }
+
+    // Resumed at the 9000-byte frame, then a state longer than any before it, then a short one
+    ASSERT_TRUE(engine.TruncateAfter(1, {0, 1, 0}, err)) << err;
+    std::vector<uint8_t> longState(40000);
+    for (size_t i = 0; i < longState.size(); ++i)
+        longState[i] = static_cast<uint8_t>(i * 13 + 5);
+    const std::vector<uint8_t> shortState(200, 0xAB);
+    for (uint64_t f = 2; f <= 3; ++f)
+    {
+        const std::vector<uint8_t>& state = f == 2 ? longState : shortState;
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        in.deviceStates.push_back({0 /* the one device */, state.data(), state.size()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(1, id, got));
+    EXPECT_TRUE(got == expected[1]) << "the kept checkpoint still holds its state";
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(2, id, got));
+    EXPECT_TRUE(got == longState) << "the grown state";
+    ASSERT_TRUE(engine.DeviceStateOfV1Id(3, id, got));
+    EXPECT_TRUE(got == shortState) << "the long one's tail is gone";
+}
+
+/// A session loaded from a file has no delta base yet: continuing it from its last checkpoint gives the base every
+/// piece the growing state holds there, so recapturing the same state stores nothing and the state comes back whole
+TEST(TimeTravelEngine_DeviceState_Test, ALoadedSessionContinuesAVariableSizeState)
+{
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    GrowingStateDevice dev;
+    const uint8_t id = static_cast<uint8_t>(PeripheralId::Covox);
+    std::vector<uint8_t> state(9000);
+    for (size_t i = 0; i < state.size(); ++i)
+        state[i] = static_cast<uint8_t>(i * 11 + 3);
+    auto capture = [&](TimeTravelEngine& engine, uint64_t f) {
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        in.deviceStates.push_back({0 /* the one device */, state.data(), state.size()});
+        std::string err;
+        EXPECT_TRUE(engine.CaptureFrame(in, err)) << err;
+    };
+
+    TimeTravelEngine original;
+    std::string err;
+    ASSERT_TRUE(original.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    capture(original, 0);
+    capture(original, 1);
+    TTDMemorySink sink;
+    TTDSessionSaveParams params;
+    ASSERT_TRUE(TTDSessionFile::Save(original, sink, err, params)) << err;
+
+    TimeTravelEngine loaded;
+    TTDMemorySource source(sink.bytes);
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, err)) << err;
+    ASSERT_TRUE(loaded.TruncateAfter(1, {0, 1, 0}, err)) << err;
+    capture(loaded, 2);
+    EXPECT_EQ(loaded.LastCaptureWork().versionsStored, 0u) << "the base holds all three pieces of the state";
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(loaded.DeviceStateOfV1Id(2, id, got));
+    EXPECT_TRUE(got == state);
+}
+
+/// The delta base keeps a copy only of pieces that are not one repeated byte: a uniform piece (zeros, an erased
+/// flash's #FF) is its value, read through a shared page; a piece changes kind both ways; never set reads as zeros
+TEST(TTDDeltaBase_Test, UniformPiecesKeepOnlyTheirValue)
+{
+    TTDDeltaBase base;
+    base.Reset(2);
+    std::vector<uint8_t> mixed(kTTDPieceSize);
+    for (size_t i = 0; i < mixed.size(); ++i)
+        mixed[i] = static_cast<uint8_t>(i * 13 + 1);
+    const std::vector<uint8_t> ff(kTTDPieceSize, 0xFF);
+    const std::vector<uint8_t> zero(kTTDPieceSize, 0);
+
+    EXPECT_TRUE(base.Equals(1, 300, zero.data())) << "never set: zeros";
+    EXPECT_EQ(base.Set(0, 5, ff.data()), 0u);
+    EXPECT_EQ(base.Set(1, 7, mixed.data()), kTTDPieceSize);
+    EXPECT_EQ(base.StoredPieces(), 1u);
+    EXPECT_TRUE(base.Equals(0, 5, ff.data()));
+    EXPECT_TRUE(base.Equals(1, 7, mixed.data()));
+    EXPECT_EQ(base.Set(1, 7, base.Get(1, 7)), kTTDPieceSize) << "its own bytes";
+    EXPECT_TRUE(base.Equals(1, 7, mixed.data()));
+
+    // mixed -> uniform -> mixed
+    std::vector<uint8_t> almost(ff);
+    almost[kTTDPieceSize - 1] = 0xFE;
+    EXPECT_EQ(base.Set(1, 7, ff.data()), 0u);
+    EXPECT_EQ(base.StoredPieces(), 0u);
+    EXPECT_TRUE(base.Equals(1, 7, ff.data()));
+    EXPECT_EQ(base.Set(1, 7, almost.data()), kTTDPieceSize) << "one byte off is not uniform";
+    EXPECT_TRUE(base.Equals(1, 7, almost.data()));
+    EXPECT_LT(base.HeapBytes(), size_t(4) * kTTDPieceSize);
+}
+
+/// A large region of mostly uniform memory (zeros and #FF, like NeoGS's RAM and flash) costs the delta base its
+/// few pieces of real content, not its size; every checkpoint restores exactly, across baselines and after a resume
+/// from the past (which rebuilds the base from the stored versions)
+TEST(TimeTravelEngine_Test, AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly)
+{
+    constexpr uint32_t kPieces = 512;   // 2 MB
+    std::vector<uint8_t> mem(size_t(kPieces) * kTTDPieceSize, 0);
+    auto fill = [&](uint32_t p, uint32_t seed) {
+        for (size_t i = 0; i < kTTDPieceSize; ++i)
+            mem[size_t(p) * kTTDPieceSize + i] = static_cast<uint8_t>((i * 31 + seed * 7) ^ (i >> 5));
+    };
+    for (uint32_t p = 0; p < 4; ++p)
+        fill(p, p);
+    std::memset(mem.data() + size_t(100) * kTTDPieceSize, 0xFF, size_t(100) * kTTDPieceSize);
+
+    TimeTravelEngine engine;
+    std::string err;
+    TTDRegionDesc r;
+    r.name = "big";
+    r.memory = mem.data();
+    r.pieces = kPieces;
+    r.bytes = mem.size();
+    TTDHistoryPolicy policy;
+    policy.segmentFrames = 4;   // baselines store every piece whole, from the delta base
+    engine.SetHistoryPolicy(policy);
+    ASSERT_TRUE(engine.BeginSession({r}, {}, err)) << err;
+
+    std::vector<std::vector<uint8_t>> expected;
+    auto capture = [&](uint64_t f, const std::vector<uint32_t>& changed) {
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        for (uint32_t p : changed)
+            in.changed.push_back({0, p, mem.data() + size_t(p) * kTTDPieceSize});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        expected.push_back(mem);
+    };
+    std::vector<uint32_t> all(kPieces);
+    for (uint32_t p = 0; p < kPieces; ++p)
+        all[p] = p;
+    capture(0, all);
+    for (uint64_t f = 1; f < 10; ++f)
+    {
+        std::vector<uint32_t> changed = {static_cast<uint32_t>(10 + f)};
+        fill(10 + static_cast<uint32_t>(f), static_cast<uint32_t>(f));
+        if (f == 4)
+        {
+            std::memset(mem.data() + size_t(2) * kTTDPieceSize, 0, kTTDPieceSize);   // content -> zeros
+            changed.push_back(2);
+        }
+        if (f == 5 || f == 7)
+        {
+            if (f == 5)
+                fill(150, 99);   // #FF -> content -> #FF
+            else
+                std::memset(mem.data() + size_t(150) * kTTDPieceSize, 0xFF, kTTDPieceSize);
+            changed.push_back(150);
+        }
+        capture(f, changed);
+    }
+    const TTDEngineHeapBreakdown heap = engine.HeapBreakdown();
+    EXPECT_LT(heap.deltaBase, size_t(128) << 10) << "about 13 pieces of content, not 2 MB";
+
+    auto expectRestores = [&](const char* when) {
+        std::vector<uint8_t> out(mem.size());
+        for (size_t i = 0; i < expected.size(); ++i)
+        {
+            ASSERT_TRUE(engine.RestoreRegion(i, 0, out.data()).Ok()) << when << " checkpoint " << i;
+            ASSERT_TRUE(out == expected[i]) << when << " checkpoint " << i;
+        }
+    };
+    expectRestores("recorded");
+
+    // Resume from frame 5: the base is rebuilt from that checkpoint's versions, then capture goes on
+    ASSERT_TRUE(engine.TruncateAfter(5, {0, 5, 0}, err)) << err;
+    expected.resize(6);
+    mem = expected[5];
+    for (uint64_t f = 6; f < 12; ++f)
+    {
+        std::vector<uint32_t> changed = {150, 3};
+        if (f % 2)
+            std::memset(mem.data() + size_t(150) * kTTDPieceSize, 0xFF, kTTDPieceSize);
+        else
+            fill(150, static_cast<uint32_t>(f));
+        fill(3, static_cast<uint32_t>(f + 40));
+        capture(f, changed);
+    }
+    expectRestores("after the resume");
+    EXPECT_LT(engine.HeapBreakdown().deltaBase, size_t(128) << 10);
+}
+
+// region <D23: devices are keys (d23-device-keys.md)>
+
+namespace
+{
+/// A device added after the v1 ids froze (type 66 and on, no v1 id), one instance of several
+class KeyedDevice : public TTDSerializable
+{
+public:
+    KeyedDevice(uint16_t type, std::string instance) : _type(static_cast<TTDDeviceType>(type)), _instance(std::move(instance)) {}
+    size_t TTDStateSize() const override { return sizeof(state); }
+    void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+    void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+    std::string TTDDeviceName() const override { return _instance; }
+    TTDDeviceType TTDType() const override { return _type; }
+    uint8_t state[40] = {};
+
+private:
+    TTDDeviceType _type;
+    std::string _instance;
+};
+}  // namespace
+
+/// Two instances of a type past the v1 ids (66) record side by side, each under its key: read back by key, through a
+/// session file (the device table names both, v1 id none), and restored each into its own device
+TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestoreByKey)
+{
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    KeyedDevice a(66, "next.uart0");
+    KeyedDevice b(66, "next.uart1");
+    TimeTravelEngine engine;
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({r}, {{a.TTDDescribe(), &a, nullptr}, {b.TTDDescribe(), &b, nullptr}}, err)) << err;
+    for (uint64_t f = 0; f < 3; ++f)
+    {
+        std::memset(a.state, static_cast<int>(0x10 + f), sizeof(a.state));
+        std::memset(b.state, static_cast<int>(0x80 + f), sizeof(b.state));
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        in.deviceStates.push_back({0, a.state, sizeof(a.state)});
+        in.deviceStates.push_back({1, b.state, sizeof(b.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    const TTDDeviceKey keyA{static_cast<TTDDeviceType>(66), "next.uart0"};
+    const TTDDeviceKey keyB{static_cast<TTDDeviceType>(66), "next.uart1"};
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(engine.DeviceState(1, keyB, got));
+    EXPECT_EQ(got, std::vector<uint8_t>(40, 0x81));
+    EXPECT_FALSE(engine.DeviceStateOfV1Id(1, static_cast<uint8_t>(PeripheralId::None), got)) << "no v1 id to find";
+
+    TTDMemorySink sink;
+    ASSERT_TRUE(TTDSessionFile::Save(engine, sink, err, {})) << err;
+    TTDMemorySource source(sink.bytes);
+    std::vector<TTDDeviceDescriptor> devices;
+    ASSERT_TRUE(TTDSessionFile::ReadDevices(source, devices, err)) << err;
+    ASSERT_EQ(devices.size(), 2u);
+    EXPECT_EQ(devices[0].Key(), keyA);
+    EXPECT_EQ(devices[1].Key(), keyB);
+    EXPECT_EQ(devices[1].legacyId, PeripheralId::None);
+
+    TimeTravelEngine loaded;
+    ASSERT_TRUE(TTDSessionFile::Load(loaded, source, err)) << err;
+    ASSERT_TRUE(loaded.DeviceState(2, keyA, got));
+    EXPECT_EQ(got, std::vector<uint8_t>(40, 0x12));
+    // Bound to two live devices of the same keys, a restore loads each its own state
+    KeyedDevice liveA(66, "next.uart0");
+    KeyedDevice liveB(66, "next.uart1");
+    EXPECT_EQ(loaded.BindLive({r}, {{liveA.TTDDescribe(), &liveA, nullptr}, {liveB.TTDDescribe(), &liveB, nullptr}}), 0u);
+    EXPECT_EQ(loaded.RestoreDevices(1, {}).status, TTDRestoreStatus::Exact);
+    EXPECT_EQ(std::vector<uint8_t>(liveA.state, liveA.state + 40), std::vector<uint8_t>(40, 0x11));
+    EXPECT_EQ(std::vector<uint8_t>(liveB.state, liveB.state + 40), std::vector<uint8_t>(40, 0x81));
+}
+
+// endregion </D23>

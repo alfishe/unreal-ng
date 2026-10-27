@@ -1,0 +1,377 @@
+;-----------------------------------------------------------
+;SCREEN TOOLS SOURCE
+;ORIGINALLY (C)Lynx/xplosive team
+;-----------------------------------------------------------
+               ORG     #9c40
+               LD      IX,windsc
+stwin          CALL    setwin
+rep            CALL    animal
+               CALL    checkw
+               JR      rep
+ldos           RET
+
+vbf1           LD      HL,#c000
+               JR      vbf
+vbf2           LD      HL,#db00
+               JR      vbf
+vbf            PUSH    HL
+               CALL    sssr
+               LD      A,#11
+               CALL    page
+               POP     HL
+               LD      DE,#4000
+               LD      BC,#1b00
+               LDIR
+               CALL    rpkey
+               CALL    ankey
+               CALL    ussr
+               CALL    rpkey
+               LD      A,#16
+               CALL    page
+               RET
+film           CALL    getfil
+               CALL    rpkey
+               LD      A,#10
+               CALL    page
+               CALL    gtadr
+               LD      DE,11
+               ADD     HL,DE
+               LD      A,(HL)
+               INC     HL
+               OR      A
+               RET     NZ
+               LD      A,(HL)
+               CP      #1b
+               RET     NZ
+               CALL    gtadr
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      A,#11
+               CALL    page
+               CALL    dos
+               LD      C,14
+               LD      A,#ff
+               LD      HL,#c000
+               CALL    dos
+               RET
+slebf          PUSH    IX
+               LD      IX,sbfwin
+               CALL    setwin
+               CALL    rep
+               POP     IX
+               LD      A,#16
+               CALL    page
+               CALL    frfsh
+               LD      H,#ff
+               RET
+sssd           PUSH    HL
+               CALL    remw
+               LD      IX,windsc
+               CALL    frfsh
+               POP     HL
+               RET
+sbf1           LD      HL,#c000
+               POP     DE,DE,DE,DE,DE,DE,DE
+               CALL    sssd
+               RET
+sbf2           LD      HL,#db00
+               POP     DE,DE,DE,DE,DE,DE,DE
+               CALL    sssd
+               RET
+inv            CALL    slebf
+               LD      A,H
+               CP      #ff
+               RET     Z
+               LD      A,#11
+               CALL    page
+               LD      BC,#1800
+inv_1          LD      A,(HL)
+               CPL
+               LD      (HL),A
+               DEC     BC
+               INC     HL
+               LD      A,B
+               OR      C
+               JR      NZ,inv_1
+               RET
+
+optimiz
+               CALL    slebf
+               PUSH    HL
+               CALL    sssr
+               POP     HL
+               LD      A,#11
+               CALL    page
+               LD      A,H
+               CP      #ff
+               RET     Z
+               PUSH    HL
+               LD      DE,#4000
+               LD      BC,#1b00
+               LDIR
+               CALL    opty
+               POP     DE
+               LD      HL,#4000
+               LD      BC,#1b00
+               LDIR
+               CALL    ussr
+               RET
+
+
+opty           LD      HL,#5800
+               LD      BC,#300
+utrom          LD      E,(HL)
+               LD      A,E
+               AND     7
+               LD      D,A;INK
+               LD      A,E
+               AND     #38
+               SRA     A
+               SRA     A
+               SRA     A;PAPER
+               CP      D
+               JR      Z,equal
+               JR      NC,more
+next           INC     HL
+               DEC     BC
+               LD      A,B
+               OR      C
+               JR      NZ,utrom
+               RET
+equal          AND     7
+               CP      1
+               JR      NC,eqfil
+
+               SLA     A
+               SLA     A
+               SLA     A
+               OR      A
+               JR      NZ,eq_1
+               LD      A,7
+eq_1           LD      (HL),A
+               PUSH    HL
+               CALL    attosc
+               CALL    xordsym
+               POP     HL
+               JR      next
+eqfil          AND     7
+               LD      (HL),A
+               PUSH    HL
+               CALL    attosc
+               CALL    whsymb
+               POP     HL
+               JR      next
+
+more           LD      E,A
+               LD      A,D
+               SLA     A
+               SLA     A
+               SLA     A
+               OR      E
+               LD      (HL),A
+               PUSH    HL
+               CALL    attosc
+               CALL    invsym
+               POP     HL
+               JR      next
+xordsym        XOR     A
+               !ASSM   8
+               LD      (HL),A
+               INC     H
+               !CONT
+               RET
+whsymb         LD      A,#ff
+               !ASSM   8
+               LD      (HL),A
+               INC     H
+               !CONT
+               RET
+
+
+
+invsym
+               !ASSM   8
+               LD      A,(HL)
+               CPL
+               LD      (HL),A
+               INC     H
+               !CONT
+               RET
+
+attosc         LD      A,H
+               ADD     A,A
+               ADD     A,A
+               ADD     A,A
+               AND     #7f
+               LD      H,A
+               RET
+unpck
+               CALL    slebf
+               PUSH    HL
+               CALL    sssr
+               POP     HL
+               LD      A,H
+               CP      #ff
+               RET     Z
+               LD      A,#11
+               CALL    page
+               LD      (makemoreshit+1),HL
+               PUSH    HL,IX,IY
+makemoreshit
+               CALL    0
+               POP     IY,IX,DE
+               LD      HL,#4000
+               LD      BC,#1b00
+               LDIR
+               CALL    ussr
+               RET
+upd1           LD      DE,#100
+               LD      HL,(lents)
+               ADD     HL,DE
+               LD      (lents),HL
+               CALL    rfsh
+               RET
+upd2           LD      DE,#100
+               LD      HL,(lents)
+               AND     A
+               SBC     HL,DE
+               LD      (lents),HL
+               CALL    rfsh
+               RET
+
+
+windsc         DB      5,5,6,6
+               DW      nmedsc,vbf1,vbf2
+               DB      17,1,1
+               DW      opy1
+               DB      7,17,2,1
+               DW      opy2
+               DB      7,17,3,1
+               DW      opy3
+               DB      7,17,4,1
+               DW      opy31
+               DB      7,17,5,1
+               DW      opy32
+               DB      7,17,6,1
+               DW      opy4
+               DB      7,#FF
+sbfwin         DB      7,8,7,2
+               DW      nmesel,vbf1,vbf2
+               DB      17,1,1
+               DW      opy5
+               DB      7,17,2,1
+               DW      opy6
+               DB      7,#FF
+hlpwin         DB      1,1,19,17
+               DW      hlpnm,ldos,ldos
+               DB      16,1,1
+               DW      heltxt
+               DB      0,#FF
+svwin          DB      4,5,8,4
+               DW      svnm,vbf1,vbf2
+               DB      19,1,3
+               DW      fnamer
+               DB      9,17,2,1
+               DW      opy7
+               DB      9,17,3,1
+               DW      opy8
+               DB      9,17,4,1
+               DW      opy9
+               DB      9,#FF
+slwin          DB      8,10,7,3
+               DW      slnm,vbf1,vbf2
+               DB      20,2,3
+               DW      lents
+               DB      6,10,2,7
+               DW      upd2
+               DB      0,11,2,8
+               DW      upd1
+               DB      0,#FF
+
+
+sethlp         PUSH    IX
+               LD      IX,hlpwin
+               CALL    stwin
+               POP     IX
+               CALL    frfsh
+               RET
+savwin         PUSH    IX
+               LD      IX,svwin
+               CALL    stwin
+               POP     IX
+               CALL    frfsh
+               RET
+selwin         PUSH    IX
+               LD      IX,slwin
+               CALL    stwin
+               POP     IX
+               CALL    frfsh
+               RET
+sv1bf          LD      HL,#c000
+               JR      sv
+sv2bf          LD      HL,#db00
+sv             LD      A,#11
+               CALL    page
+               PUSH    HL
+               CALL    olen
+               LD      HL,fnamer
+               LD      DE,#5cdd
+               LD      BC,8
+               LDIR
+               POP     HL
+               LD      A,"C"
+               LD      (#5ce5),A
+               LD      C,11
+               LD      DE,(lents)
+               CALL    dos
+               LD      A,#16
+               CALL    page
+               RET
+olen           LD      HL,fnamer
+               LD      B,8
+nn             LD      A,(HL)
+               OR      A
+               JR      Z,nn2
+               INC     HL
+               DJNZ    nn
+               RET
+nn2            LD      A,#20
+mm3            LD      (HL),A
+               DJNZ    mm3
+               RET
+
+
+
+hlpnm          DB      " Information...",0
+nmedsc         DB      "SCTools",0
+nmesel         DB      "Select...",0
+opy1           DW      film
+               DB      " - File Menu -",0
+opy2           DW      optimiz
+               DB      " - Optimize -",0
+opy3           DW      inv
+               DB      "  - Invert -",0
+opy31          DW      unpck
+               DB      "  - Unpack - ",0
+opy32          DW      savwin
+               DB      "   - Save -",0
+opy4           DW      sethlp
+               DB      "   - Info -",0
+opy5           DW      sbf1
+               DB      " - Buffer 1 -",0
+opy6           DW      sbf2
+               DB      " - Buffer 2 -",0
+opy7           DW      sv1bf
+               DB      " - Save Buffer 1 -",0
+opy8           DW      sv2bf
+               DB      " - Save Buffer 2 -",0
+svnm           DB      "Save...",0
+opy9           DW      selwin
+               DB      " - Select length -",0
+slnm           DB      "New length",0
+lents          DW      6912
+fnamer         DB      "filename  ",0,0,0,0,0,0,0
+
+heltxt         LCODE   "sctHE.tx";HELP TEXT
+               DB      0,0,0

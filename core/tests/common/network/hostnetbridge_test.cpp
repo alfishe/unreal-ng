@@ -127,7 +127,9 @@ TEST(HostNetBridge_Test, RefusedConnect)
     HostNetBridge bridge;
     bridge.TcpConnect(7, {kLoopback, port});
     HostNetEvent ev;
-    ASSERT_TRUE(NextEvent(bridge, ev));
+    // Windows reports a refused loopback connect only after its SYN retries (about 2 s): a longer bound for the
+    // failure case, the wait ends as soon as the event is there
+    ASSERT_TRUE(TestWait::For([&] { return bridge.PollEvent(ev); }, std::chrono::milliseconds(10000)));
     EXPECT_EQ(ev.type, NetEventType::ConnectFailed);
     EXPECT_EQ(ev.socket, 7);
 }

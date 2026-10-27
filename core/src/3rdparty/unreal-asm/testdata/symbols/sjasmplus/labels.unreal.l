@@ -1,0 +1,11 @@
+07:0018 LINES
+05:0000 SCREEN
+02:0009 data_tab
+01:0000 paged1
+01:0001 paged1.inner
+03:0000 paged3
+02:000E player.play
+02:0010 player.play.frame
+02:000C q?mark
+02:0000 start
+02:0003 start.loop

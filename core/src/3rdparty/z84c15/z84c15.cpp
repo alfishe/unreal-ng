@@ -3,6 +3,8 @@
 
 #include "z84c15.h"
 
+#include <algorithm>
+
 #include "z84cpu-internal.h"
 
 namespace Z84Lib
@@ -56,6 +58,7 @@ Z84C15::~Z84C15()
 
 void Z84C15::PowerOn()
 {
+    _version++;  // StateVersion
     // Reset values (PS0182 p. 316-321; MAME z84c015 / tmpz84c015 device_reset)
     system = Z84SystemRegs{};
 
@@ -78,6 +81,7 @@ void Z84C15::PowerOn()
 
 void Z84C15::Reset()
 {
+    _version++;  // StateVersion
     ctc.Reset();
     sio.Reset();
     pio.Reset();
@@ -91,6 +95,7 @@ void Z84C15::SetClock(std::function<uint64_t()> clock)
 
 void Z84C15::SetSystemClockPeriod(uint32_t num, uint32_t den)
 {
+    _version++;  // StateVersion
     if (!num || !den || (num == ctc.SystemClockNum() && den == ctc.SystemClockDen()))
         return;
     // The watchdog's clocks so far at the old rate
@@ -108,6 +113,7 @@ bool Z84C15::Owns(uint16_t port)
 
 uint8_t Z84C15::Read(uint8_t lowByte)
 {
+    _version++;  // StateVersion
     if (lowByte >= 0x10 && lowByte <= 0x13)
         return ctc.Read(lowByte & 3);
     if (lowByte >= 0x18 && lowByte <= 0x1B)
@@ -137,6 +143,7 @@ uint8_t Z84C15::Read(uint8_t lowByte)
 
 void Z84C15::Write(uint8_t lowByte, uint8_t value)
 {
+    _version++;  // StateVersion
     if (lowByte >= 0x10 && lowByte <= 0x13)
     {
         ctc.Write(lowByte & 3, value);
@@ -223,6 +230,14 @@ uint64_t Z84C15::WatchdogDeadline() const
     return _wdtStart + Detail::MulDivCeil(period - _wdtClocksBefore, ctc.SystemClockNum(), ctc.SystemClockDen());
 }
 
+uint64_t Z84C15::NextEventClock() const
+{
+    uint64_t due = ctc.NextDue();
+    if (_watchdogHandler && _wdtRunning && !_wdtFired)
+        due = std::min(due, WatchdogDeadline());
+    return due;
+}
+
 void Z84C15::ClearWatchdog()
 {
     _wdtStart = Now();
@@ -237,6 +252,7 @@ void Z84C15::PollWatchdog()
     if (Now() >= WatchdogDeadline())
     {
         _wdtFired = true;
+        _version++;  // StateVersion
         _watchdogHandler();
     }
 }
@@ -344,6 +360,7 @@ void Z84C15::SaveState(uint8_t* dst) const
 
 void Z84C15::LoadState(const uint8_t* src)
 {
+    _version++;  // StateVersion
     const uint8_t* p = src;
     system.scrp = *p++;
     system.wcr = *p++;
@@ -527,6 +544,7 @@ bool Z84C15::IntPending()
 
 uint8_t Z84C15::AcknowledgeInterrupt()
 {
+    _version++;  // StateVersion
     Source order[kMaxSources];
     const int n = Order(order);
     for (int i = 0; i < n; i++)
@@ -545,6 +563,7 @@ uint8_t Z84C15::AcknowledgeInterrupt()
 
 void Z84C15::OnReti()
 {
+    _version++;  // StateVersion
     Source order[kMaxSources];
     const int n = Order(order);
     for (int i = 0; i < n; i++)
@@ -559,6 +578,7 @@ void Z84C15::OnReti()
 
 void Z84C15::ReturnFromIntInSio()
 {
+    _version++;  // StateVersion
     for (uint8_t ch = 0; ch < 2; ch++)
     {
         if (sio.GetChannel(ch).rxIus)

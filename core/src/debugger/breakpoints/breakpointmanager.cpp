@@ -1,19 +1,45 @@
 #include "breakpointmanager.h"
 
+#include "debugger/ttd/ttdphyspage.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
+#include "base/featuremanager.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
+
+/// Every change of the set (see the class comment): the CPU held - the main loop parked at an instruction boundary,
+/// no direct run on another thread - then the lock against the other surfaces. Both are free when nested, and the
+/// hold is free on the thread that drives the Z80 (the emulation thread, a direct run, a CpuHold) and on a machine
+/// that does not run
+class BreakpointManager::ChangeScope
+{
+public:
+    explicit ChangeScope(BreakpointManager& manager)
+    {
+        if (manager._context && manager._context->pEmulator)
+            _hold.emplace(*manager._context->pEmulator, "breakpoints");
+        _lock = std::unique_lock<std::recursive_mutex>(manager._mutex);
+    }
+
+private:
+    std::optional<Emulator::CpuHold> _hold;
+    std::unique_lock<std::recursive_mutex> _lock;  // released before the hold
+};
 
 /// region <Constructors / destructors>
 
@@ -29,7 +55,8 @@ BreakpointManager::BreakpointManager(EmulatorContext* context)
 /// @brief Destroys the Breakpoint Manager and cleans up all breakpoints
 BreakpointManager::~BreakpointManager()
 {
-    ClearBreakpoints();
+    // The emulator is going away: nothing runs the hot path, and holding its CPU now is not possible
+    DeleteAllBreakpoints();
 
     _context = nullptr;
 }
@@ -44,11 +71,42 @@ BreakpointManager::~BreakpointManager()
 /// clearing all breakpoints that were previously set.
 void BreakpointManager::ClearBreakpoints()
 {
+    ChangeScope change(*this);
+    DeleteAllBreakpoints();
+}
+
+void BreakpointManager::DeleteAllBreakpoints()
+{
+    // The hot path's tables point at the descriptors: repaint before they go
+    std::vector<BreakpointDescriptor*> descriptors;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        descriptors.push_back(descriptor);
     _breakpointMapByAddress.clear();
     _breakpointMapByPort.clear();
     _breakpointMapByID.clear();
 
     RebuildFilters();
+    for (BreakpointDescriptor* descriptor : descriptors)
+        delete descriptor;
+}
+
+bool BreakpointManager::IsUserBreakpoint(const BreakpointDescriptor& descriptor)
+{
+    return !descriptor.hidden && descriptor.owner == OWNER_INTERACTIVE;
+}
+
+void BreakpointManager::ClearUserBreakpoints()
+{
+    ChangeScope change(*this);
+    // Collect first: removing while iterating the map is unsafe
+    std::vector<uint16_t> user;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+    {
+        if (descriptor != nullptr && IsUserBreakpoint(*descriptor))
+            user.push_back(id);
+    }
+    for (const uint16_t id : user)
+        RemoveBreakpointByID(id);
 }
 
 /// @brief Adds a new breakpoint with the given descriptor
@@ -56,11 +114,28 @@ void BreakpointManager::ClearBreakpoints()
 /// @param descriptor Pointer to a BreakpointDescriptor containing breakpoint configuration
 /// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
 ///
-/// @note The descriptor object is owned by the BreakpointManager after this call
+/// @note The descriptor object is owned by the BreakpointManager after this call: stored, or freed when it is not
+/// (a duplicate of a plain breakpoint returns the existing id; it leaked before, BUGS.md 2026-10-11 #9)
 /// @throws std::logic_error if an invalid breakpoint type is specified (debug builds only)
 uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
 {
+    bool adopted = false;
+    return AddBreakpoint(descriptor, adopted);
+}
+
+uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor, bool& adopted)
+{
+    const uint16_t result = AddBreakpointAdopting(descriptor, adopted);
+    if (!adopted)
+        delete descriptor;
+    return result;
+}
+
+uint16_t BreakpointManager::AddBreakpointAdopting(BreakpointDescriptor* descriptor, bool& adopted)
+{
     uint16_t result = BRK_INVALID;
+    adopted = false;
+    ChangeScope change(*this);
 
     /// region <Input parameter(s) validation>
     if (descriptor == nullptr)
@@ -81,6 +156,15 @@ uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
         case BRK_IO:
             result = AddPortBreakpoint(descriptor);
             break;
+        case BRK_NEXTREG:
+        case BRK_BEAM:
+        case BRK_COPPER:
+        case BRK_MAGIC:
+            result = AddNextRegBreakpoint(descriptor);
+            break;
+        case BRK_KEYBOARD:
+            result = AddKeyboardBreakpoint(descriptor);
+            break;
         default:
 #ifdef _DEBUG
         {
@@ -92,6 +176,11 @@ uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
         break;
     }
 
+    if (result != BRK_INVALID)
+    {
+        const auto it = _breakpointMapByID.find(result);
+        adopted = it != _breakpointMapByID.end() && it->second == descriptor;
+    }
     return result;
 }
 
@@ -103,7 +192,95 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "the range ends before it starts";
         return BRK_INVALID;
     }
-    if (spec.type == BRK_MEMORY)
+    if (spec.type != BRK_NEXTREG && (spec.nrMask != 0 || spec.nrDoors != BRK_NR_DOOR_ALL))
+    {
+        error = "doors and a value apply to NextREG breakpoints";
+        return BRK_INVALID;
+    }
+    if (spec.type == BRK_MAGIC)
+    {
+        if (spec.hasEnd || spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF || spec.beamHc != 0)
+        {
+            error = "a magic breakpoint takes the opcode word only";
+            return BRK_INVALID;
+        }
+        if (spec.address != BRK_MAGIC_ED_FF && spec.address != BRK_MAGIC_DD_01)
+        {
+            error = "magic opcodes: ED FF (0xEDFF) or DD 01 (0xDD01)";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type != BRK_BEAM && spec.beamHc != 0)
+    {
+        error = "a pixel clock applies to beam breakpoints";
+        return BRK_INVALID;
+    }
+    if (spec.type == BRK_MAGIC)
+    {
+        // validated above
+    }
+    else if (spec.type == BRK_BEAM || spec.type == BRK_COPPER)
+    {
+        if (spec.hasEnd && spec.type == BRK_BEAM)
+        {
+            error = "a beam breakpoint is one place in the raster";
+            return BRK_INVALID;
+        }
+        if (end > (spec.type == BRK_BEAM ? BRK_BEAM_MAX_LINE : BRK_COPPER_LIST_MAX) || spec.beamHc > BRK_BEAM_MAX_HC)
+        {
+            error = spec.type == BRK_BEAM ? "a beam breakpoint takes line 0..511 and pixel clock 0..511"
+                                          : "a copper breakpoint takes list index 0..1023";
+            return BRK_INVALID;
+        }
+        if (spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "a beam / copper breakpoint takes a position only";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type == BRK_NEXTREG)
+    {
+        if (end > 0xFF)
+        {
+            error = "a NextREG breakpoint takes registers 0..255";
+            return BRK_INVALID;
+        }
+        if (spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "a NextREG breakpoint takes a register, an access, doors and a value";
+            return BRK_INVALID;
+        }
+        if (!(spec.access & (BRK_IO_IN | BRK_IO_OUT)) || (spec.access & ~(BRK_IO_IN | BRK_IO_OUT)))
+        {
+            error = "a NextREG breakpoint watches read or write";
+            return BRK_INVALID;
+        }
+        if (spec.nrDoors == 0 || (spec.nrDoors & ~BRK_NR_DOOR_ALL))
+        {
+            error = "doors: nextreg, port, copper";
+            return BRK_INVALID;
+        }
+        if (spec.access == BRK_IO_IN && !(spec.nrDoors & BRK_NR_DOOR_PORT))
+        {
+            error = "a NextREG register is read through port #253B only (door port)";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.spacePage != 0xFFFF)
+    {
+        // A watchpoint on another memory space: read / write, one 16 KB page
+        if (spec.type != BRK_MEMORY || (spec.access & BRK_MEM_EXECUTE) || !(spec.access & (BRK_MEM_READ | BRK_MEM_WRITE)))
+        {
+            error = "a page of another memory space (vramN) takes read and write watchpoints";
+            return BRK_INVALID;
+        }
+        if (spec.hasPage || spec.slotOnly || (spec.address >> 14) != (end >> 14))
+        {
+            error = "a vram watchpoint's range stays inside its 16 KB page (offsets 0..#3FFF)";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type == BRK_MEMORY)
     {
         if (spec.portMask != 0xFFFF)
         {
@@ -134,6 +311,26 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
             return BRK_INVALID;
         }
     }
+    else if (spec.type == BRK_KEYBOARD)
+    {
+        if (spec.hasEnd || spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "a keyboard breakpoint takes a key and press / release only";
+            return BRK_INVALID;
+        }
+        uint8_t row = 0;
+        uint8_t bit = 0;
+        if (spec.address != BRK_KEY_ANY && !Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(spec.address), row, bit))
+        {
+            error = "a keyboard breakpoint takes a key of the matrix (a cursor or other combined key: its base key)";
+            return BRK_INVALID;
+        }
+        if (!(spec.access & (BRK_KEY_PRESS | BRK_KEY_RELEASE)) || (spec.access & ~(BRK_KEY_PRESS | BRK_KEY_RELEASE)))
+        {
+            error = "a keyboard breakpoint watches press or release";
+            return BRK_INVALID;
+        }
+    }
     else if (spec.type == BRK_IO)
     {
         if (spec.hasPage || spec.slotOnly)
@@ -158,10 +355,13 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         return BRK_INVALID;
     }
 
+    ChangeScope change(*this);
     auto* d = new BreakpointDescriptor();
     d->type = spec.type;
     if (spec.type == BRK_MEMORY)
         d->memoryType = spec.access;
+    else if (spec.type == BRK_KEYBOARD)
+        d->keyType = spec.access;
     else
         d->ioType = spec.access;
     d->z80address = spec.address;
@@ -174,7 +374,12 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->pageType = spec.pageType;
         d->slotOnly = spec.slotOnly;
     }
+    d->spacePage = spec.spacePage;
     d->portMask = spec.portMask;
+    d->nrDoors = spec.nrDoors;
+    d->nrValue = spec.nrValue;
+    d->nrMask = spec.nrMask;
+    d->beamHc = spec.beamHc;
     d->hitMode = spec.hitMode;
     d->hitTarget = spec.hitMode == BRK_HIT_ALWAYS ? 0 : spec.hitTarget;
     d->note = spec.note;
@@ -183,14 +388,15 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     if (!spec.owner.empty())
         d->owner = spec.owner;
 
-    const uint16_t id = AddBreakpoint(d);
+    bool adopted = false;
+    const uint16_t id = AddBreakpointAdopting(d, adopted);
     if (id == BRK_INVALID)
     {
         delete d;
         error = "the breakpoint was not added";
         return BRK_INVALID;
     }
-    if (_breakpointMapByID[id] != d)
+    if (!adopted)
     {
         // The same plain breakpoint existed: the note and group of the request go to it
         delete d;
@@ -200,6 +406,36 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
             SetBreakpointGroup(id, spec.group);
     }
     return id;
+}
+
+bool BreakpointManager::ParseKeyboardInto(const std::string& key, const std::string& on, BreakpointSpec& spec,
+                                          std::string& error)
+{
+    spec.type = BRK_KEYBOARD;
+    if (key.empty() || key == "any")
+        spec.address = BRK_KEY_ANY;
+    else
+    {
+        const ZXKeysEnum code = DebugKeyboardManager::ResolveKeyName(key);
+        if (code == ZXKEY_NONE)
+        {
+            error = "Unknown key '" + key + "' (space, enter, caps, symbol, a..z, 0..9; or any)";
+            return false;
+        }
+        spec.address = static_cast<uint16_t>(code);
+    }
+    if (on.empty() || on == "press")
+        spec.access = BRK_KEY_PRESS;
+    else if (on == "release")
+        spec.access = BRK_KEY_RELEASE;
+    else if (on == "both")
+        spec.access = BRK_KEY_PRESS | BRK_KEY_RELEASE;
+    else
+    {
+        error = "on: press, release or both";
+        return false;
+    }
+    return true;
 }
 
 bool BreakpointManager::ParseHitSpec(const std::string& text, BreakpointHitModeEnum& mode, uint32_t& target, std::string& error)
@@ -270,12 +506,8 @@ bool BreakpointManager::ParseHitModeName(const std::string& text, BreakpointHitM
 bool BreakpointManager::ApplyScriptOptions(BreakpointSpec& spec, const std::string& page, int32_t to, bool slotOnly,
                                            int32_t mask, const std::string& hits, std::string& error)
 {
-    if (!page.empty())
-    {
-        if (!ParsePageSpec(page, spec.page, spec.pageType, error))
-            return false;
-        spec.hasPage = true;
-    }
+    if (!page.empty() && !ParsePageInto(page, spec, error))
+        return false;
     if (to >= 0)
     {
         if (to > 0xFFFF)
@@ -299,8 +531,46 @@ bool BreakpointManager::ApplyScriptOptions(BreakpointSpec& spec, const std::stri
     return ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error);
 }
 
+bool BreakpointManager::ApplyNextRegOptions(BreakpointSpec& spec, int32_t to, const std::string& doors, int32_t value,
+                                            int32_t valueMask, const std::string& hits, std::string& error)
+{
+    if (to >= 0)
+    {
+        if (to > 0xFF)
+        {
+            error = "the register range end must be 0..255";
+            return false;
+        }
+        spec.hasEnd = true;
+        spec.addressEnd = static_cast<uint16_t>(to);
+    }
+    if (!ParseNextRegDoors(doors, spec.nrDoors, error))
+        return false;
+    if (value >= 0)
+    {
+        if (value > 0xFF)
+        {
+            error = "the value must be 0..255";
+            return false;
+        }
+        spec.nrValue = static_cast<uint8_t>(value);
+        spec.nrMask = 0xFF;
+    }
+    if (valueMask >= 0)
+    {
+        if (valueMask > 0xFF)
+        {
+            error = "the value mask must be 0..255";
+            return false;
+        }
+        spec.nrMask = static_cast<uint8_t>(valueMask);
+    }
+    return ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error);
+}
+
 bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     auto it = _breakpointMapByID.find(breakpointID);
     if (it == _breakpointMapByID.end())
         return false;
@@ -310,6 +580,7 @@ bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
 
 void BreakpointManager::ResetAllHitCounts()
 {
+    ChangeScope change(*this);
     for (auto& [id, bp] : _breakpointMapByID)
         if (bp)
             bp->hitCount = 0;
@@ -342,6 +613,7 @@ bool BreakpointManager::RemoveBreakpoint(BreakpointDescriptor* descriptor)
 /// frees the associated descriptor memory.
 bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     auto it = _breakpointMapByID.find(breakpointID);
     if (it == _breakpointMapByID.end())
         return false;
@@ -369,9 +641,8 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
             break;
     }
 
-    // Remove from the ID map and delete the descriptor
+    // Remove from the ID map; the descriptor goes after the repaint (the hot path's tables point at it)
     _breakpointMapByID.erase(it);
-    delete breakpoint;
 
     // Update the next ID to be one more than the current maximum ID
     if (_breakpointMapByID.empty())
@@ -385,33 +656,38 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
     }
 
     RebuildFilters();
+    delete breakpoint;
 
     return true;
 }
 
-size_t BreakpointManager::GetBreakpointsCount()
+size_t BreakpointManager::GetBreakpointsCount() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _breakpointMapByID.size();
 }
 
-BreakpointDescriptor* BreakpointManager::GetBreakpointById(uint16_t breakpointID)
+BreakpointSnapshot BreakpointManager::GetBreakpointById(uint16_t breakpointID) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _breakpointMapByID.find(breakpointID);
-    if (it == _breakpointMapByID.end())
+    if (it == _breakpointMapByID.end() || !it->second)
         return nullptr;
-    return it->second;
+    return std::make_shared<const BreakpointDescriptor>(*it->second);
 }
 
 BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreakpointInfo() const
 {
     BreakpointStatusInfo info;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
-    if (_lastTriggeredBreakpointID == BRK_INVALID)
+    const uint16_t lastId = GetLastTriggeredBreakpointID();
+    if (lastId == BRK_INVALID)
     {
         return info;  // Returns default with valid=false
     }
 
-    auto it = _breakpointMapByID.find(_lastTriggeredBreakpointID);
+    auto it = _breakpointMapByID.find(lastId);
     if (it == _breakpointMapByID.end())
     {
         return info;  // Breakpoint was removed after triggering
@@ -420,14 +696,19 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     BreakpointDescriptor* bp = it->second;
 
     info.valid = true;
-    info.id = _lastTriggeredBreakpointID;
+    info.id = lastId;
     info.address = bp->z80address;
     info.active = bp->active;
     info.note = bp->note;
     info.group = bp->group;
     info.page = PageSpecName(*bp);
     info.hitCount = bp->hitCount;
-    if (bp->matchType == BRK_MATCH_BANK_ADDR)
+    if (bp->spacePage != 0xFFFF)
+    {
+        info.pageKind = "vram";
+        info.pageNumber = static_cast<uint8_t>(bp->spacePage - ttd::kVramPageBase);
+    }
+    else if (bp->matchType == BRK_MATCH_BANK_ADDR)
     {
         info.pageKind = PageKindName(bp->pageType);
         info.pageNumber = bp->page;
@@ -444,6 +725,18 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
             break;
         case BRK_KEYBOARD:
             info.type = "keyboard";
+            break;
+        case BRK_NEXTREG:
+            info.type = "nextreg";
+            break;
+        case BRK_BEAM:
+            info.type = "beam";
+            break;
+        case BRK_COPPER:
+            info.type = "copper";
+            break;
+        case BRK_MAGIC:
+            info.type = "magic";
             break;
         default:
             info.type = "unknown";
@@ -467,6 +760,20 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
             accessStr += "in,";
         if (bp->ioType & BRK_IO_OUT)
             accessStr += "out,";
+    }
+    else if (bp->type == BRK_NEXTREG)
+    {
+        if (bp->ioType & BRK_IO_IN)
+            accessStr += "read,";
+        if (bp->ioType & BRK_IO_OUT)
+            accessStr += "write,";
+    }
+    else if (bp->type == BRK_KEYBOARD)
+    {
+        if (bp->keyType & BRK_KEY_PRESS)
+            accessStr += "press,";
+        if (bp->keyType & BRK_KEY_RELEASE)
+            accessStr += "release,";
     }
     // Trim trailing comma
     if (!accessStr.empty() && accessStr.back() == ',')
@@ -777,6 +1084,90 @@ bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, Me
     return true;
 }
 
+bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& spec, std::string& error)
+{
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower.rfind("vram", 0) == 0)
+    {
+        const std::string number = lower.substr(4);
+        char* end = nullptr;
+        const unsigned long value = number.empty() ? 99 : std::strtoul(number.c_str(), &end, 10);
+        if (number.empty() || *end != '\0' || value >= ttd::kSpacePages)
+        {
+            error = "a video RAM page is vram0..vram15 (16 KB each), got '" + text + "'";
+            return false;
+        }
+        spec.spacePage = static_cast<uint16_t>(ttd::kVramPageBase + value);
+        return true;
+    }
+    if (!ParsePageSpec(text, spec.page, spec.pageType, error))
+    {
+        error += " (or vram0..vram15, the Sprinter's video RAM)";
+        return false;
+    }
+    spec.hasPage = true;
+    return true;
+}
+
+bool BreakpointManager::ParseNextRegDoors(const std::string& text, uint8_t& doors, std::string& error)
+{
+    doors = BRK_NR_DOOR_ALL;
+    std::string token;
+    uint8_t mask = 0;
+    bool any = false;
+    auto flush = [&]() -> bool {
+        if (token.empty())
+            return true;
+        std::string lower;
+        for (char c : token)
+            lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        token.clear();
+        any = true;
+        if (lower == "all")
+            mask |= BRK_NR_DOOR_ALL;
+        else if (lower == "nextreg")
+            mask |= BRK_NR_DOOR_NEXTREG;
+        else if (lower == "port")
+            mask |= BRK_NR_DOOR_PORT;
+        else if (lower == "copper")
+            mask |= BRK_NR_DOOR_COPPER;
+        else
+        {
+            error = "door '" + lower + "': nextreg, port, copper or all";
+            return false;
+        }
+        return true;
+    };
+    for (char c : text)
+    {
+        if (c == ',' || c == '+' || c == ' ')
+        {
+            if (!flush())
+                return false;
+        }
+        else
+            token += c;
+    }
+    if (!flush())
+        return false;
+    doors = any ? mask : BRK_NR_DOOR_ALL;
+    return true;
+}
+
+std::string BreakpointManager::NextRegDoorsName(uint8_t doors)
+{
+    std::string out;
+    auto add = [&](uint8_t bit, const char* name) {
+        if (doors & bit)
+            out += (out.empty() ? "" : ",") + std::string(name);
+    };
+    add(BRK_NR_DOOR_NEXTREG, "nextreg");
+    add(BRK_NR_DOOR_PORT, "port");
+    add(BRK_NR_DOOR_COPPER, "copper");
+    return out;
+}
+
 const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
 {
     return pageType == BANK_ROM ? "rom" : (pageType == BANK_CACHE ? "cache" : "ram");
@@ -784,6 +1175,8 @@ const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
 
 std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoint)
 {
+    if (breakpoint.spacePage != 0xFFFF)
+        return "vram" + std::to_string(breakpoint.spacePage - ttd::kVramPageBase);
     if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
         return {};
     return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
@@ -827,15 +1220,15 @@ uint16_t BreakpointManager::AddMemoryBreakpointInPageSpec(uint16_t z80address, u
 
 // Breakpoint listing
 
-// Retrieves a reference to the map containing all breakpoints
-//
-// @return const BreakpointMapByID& Reference to the internal breakpoint map
-//
-// This method provides direct access to the internal breakpoint storage.
-// Use with caution as modifications to the map may break internal consistency.
-const BreakpointMapByID& BreakpointManager::GetAllBreakpoints() const
+// Copies of all breakpoints, by id (the descriptors themselves stay the manager's)
+BreakpointListByID BreakpointManager::GetAllBreakpoints() const
 {
-    return _breakpointMapByID;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    BreakpointListByID result;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        if (descriptor)
+            result.emplace(id, std::make_shared<const BreakpointDescriptor>(*descriptor));
+    return result;
 }
 
 /// @brief Formats information about a specific breakpoint as a human-readable string
@@ -853,6 +1246,7 @@ const BreakpointMapByID& BreakpointManager::GetAllBreakpoints() const
 std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 {
     std::ostringstream oss;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
@@ -874,6 +1268,18 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             case BRK_KEYBOARD:
                 typeStr = "Keyboard";
                 break;
+            case BRK_NEXTREG:
+                typeStr = "NextREG";
+                break;
+            case BRK_BEAM:
+                typeStr = "Beam";
+                break;
+            case BRK_COPPER:
+                typeStr = "Copper";
+                break;
+            case BRK_MAGIC:
+                typeStr = "Magic";
+                break;
             default:
                 typeStr = "Unknown";
                 break;
@@ -881,10 +1287,26 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
         oss << std::setw(10) << std::left << typeStr << " ";
 
         // Format address - fixed width 8 characters
-        if (bp->type == BRK_MEMORY || bp->type == BRK_IO)
+        if (bp->type == BRK_BEAM)
+            oss << std::setw(8) << std::left << ("L" + std::to_string(bp->z80address));
+        else if (bp->type == BRK_COPPER)
+            oss << std::setw(8) << std::left << ("#" + std::to_string(bp->z80address));
+        else if (bp->type == BRK_MAGIC)
+            oss << std::setw(8) << std::left << (bp->z80address == BRK_MAGIC_ED_FF ? "ED FF" : "DD 01");
+        else if (bp->type == BRK_KEYBOARD)
+            oss << std::setw(8) << std::left
+                << (bp->z80address == BRK_KEY_ANY ? std::string("any key")
+                                                  : DebugKeyboardManager::GetKeyDisplayName(static_cast<ZXKeysEnum>(bp->z80address)));
+        else if (bp->type == BRK_NEXTREG)
         {
-            oss << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->z80address
-                << std::setfill(' ');
+            oss << "NR 0x" << std::hex << std::uppercase << std::right << std::setw(2) << std::setfill('0') << (bp->z80address & 0xFF)
+                << std::setfill(' ') << std::dec << "  ";  // 8 characters like the others
+        }
+        else if (bp->type == BRK_MEMORY || bp->type == BRK_IO)
+        {
+            // std::right: the type column left std::left set, which padded #38 as "3800"
+            oss << "0x" << std::hex << std::uppercase << std::right << std::setw(4) << std::setfill('0') << bp->z80address
+                << std::setfill(' ') << std::dec;
             // Ensure exact 8 characters width
             oss << std::string(8 - 6, ' ');  // 6 = "0x" + 4 hex digits
         }
@@ -911,6 +1333,20 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             if (bp->ioType & BRK_IO_OUT)
                 access += "O";
         }
+        else if (bp->type == BRK_NEXTREG)
+        {
+            if (bp->ioType & BRK_IO_IN)
+                access += "R";
+            if (bp->ioType & BRK_IO_OUT)
+                access += "W";
+        }
+        else if (bp->type == BRK_KEYBOARD)
+        {
+            if (bp->keyType & BRK_KEY_PRESS)
+                access += "P";
+            if (bp->keyType & BRK_KEY_RELEASE)
+                access += "U";
+        }
         // Exactly 5 characters for "Access" column
         oss << " " << std::setw(5) << std::left << access;
 
@@ -918,14 +1354,26 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
         oss << " " << std::setw(8) << std::left << (bp->active ? "Active" : "Inactive");
 
         // The rest of what the breakpoint is: range end, page (physical, or one slot), mask, hit policy
+        oss << std::right;  // the columns above left std::left set: a zero-padded number would pad on the right
         if (bp->isRange)
             oss << " to 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->z80addressEnd
                 << std::setfill(' ') << std::dec;
-        if (bp->matchType == BRK_MATCH_BANK_ADDR)
+        if (bp->matchType == BRK_MATCH_BANK_ADDR || bp->spacePage != 0xFFFF)
             oss << " in " << PageSpecName(*bp) << (bp->slotOnly ? " (this slot only)" : "");
         if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
             oss << " mask 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->portMask
                 << std::setfill(' ') << std::dec;
+        if (bp->type == BRK_BEAM)
+            oss << " hc " << std::dec << bp->beamHc;
+        if (bp->type == BRK_NEXTREG)
+        {
+            if (bp->nrDoors != BRK_NR_DOOR_ALL)
+                oss << " via " << NextRegDoorsName(bp->nrDoors);
+            if (bp->nrMask)
+                oss << " value 0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+                    << static_cast<unsigned>(bp->nrValue & bp->nrMask) << " mask 0x" << std::setw(2)
+                    << static_cast<unsigned>(bp->nrMask) << std::setfill(' ') << std::dec;
+        }
         if (bp->hitMode != BRK_HIT_ALWAYS)
             oss << " hits " << HitSpecName(*bp);
         if (bp->hitCount)
@@ -955,6 +1403,7 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 std::string BreakpointManager::GetBreakpointListAsString(const std::string& newline) const
 {
     std::ostringstream oss;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (_breakpointMapByID.empty())
     {
@@ -985,6 +1434,7 @@ std::string BreakpointManager::GetBreakpointListAsString(const std::string& newl
 /// An active breakpoint will trigger when its conditions are met during emulation.
 bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
@@ -1003,6 +1453,7 @@ bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
 /// A deactivated breakpoint will not trigger when its conditions are met during emulation.
 bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
@@ -1019,6 +1470,7 @@ bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
 /// After this call, all breakpoints will trigger when their conditions are met.
 void BreakpointManager::ActivateAllBreakpoints()
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         pair.second->active = true;
@@ -1032,6 +1484,7 @@ void BreakpointManager::ActivateAllBreakpoints()
 /// After this call, no breakpoints will trigger until they are explicitly activated.
 void BreakpointManager::DeactivateAllBreakpoints()
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         pair.second->active = false;
@@ -1047,6 +1500,7 @@ void BreakpointManager::DeactivateAllBreakpoints()
 /// Other breakpoints remain in their current state.
 void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == type)
@@ -1065,6 +1519,7 @@ void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
 /// Other breakpoints remain in their current state.
 void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == type)
@@ -1083,6 +1538,7 @@ void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
@@ -1101,6 +1557,7 @@ void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
@@ -1119,6 +1576,7 @@ void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
@@ -1137,6 +1595,7 @@ void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
@@ -1159,6 +1618,7 @@ void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
 /// on related breakpoints. The group is created if it doesn't already exist.
 uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (descriptor == nullptr || groupName.empty() || descriptor->breakpointID == BRK_INVALID)
     {
         return BRK_INVALID;
@@ -1184,6 +1644,7 @@ uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descripto
 /// The group is created if it doesn't already exist.
 bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty() || !key_exists(_breakpointMapByID, breakpointID))
     {
         return false;
@@ -1198,6 +1659,7 @@ bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::str
 
 bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::string& note)
 {
+    ChangeScope change(*this);
     if (!key_exists(_breakpointMapByID, breakpointID))
         return false;
     _breakpointMapByID[breakpointID]->note = note;
@@ -1213,6 +1675,7 @@ bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::stri
 /// have at least one breakpoint assigned to them.
 std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::set<std::string> groups;
 
     for (const auto& [id, breakpoint] : _breakpointMapByID)
@@ -1226,6 +1689,64 @@ std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
     return std::vector<std::string>(groups.begin(), groups.end());
 }
 
+BreakpointManager::BreakpointSummary BreakpointManager::GetSummary() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    BreakpointSummary summary;
+    std::map<std::string, BreakpointSummary::Group> groups;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (bp == nullptr)
+            continue;
+        if (!IsUserBreakpoint(*bp))
+        {
+            summary.owned++;
+            continue;
+        }
+        summary.total++;
+        if (bp->active)
+            summary.active++;
+        switch (bp->type)
+        {
+            case BRK_MEMORY:
+                summary.memory++;
+                summary.exec += (bp->memoryType & BRK_MEM_EXECUTE) ? 1u : 0u;
+                summary.read += (bp->memoryType & BRK_MEM_READ) ? 1u : 0u;
+                summary.write += (bp->memoryType & BRK_MEM_WRITE) ? 1u : 0u;
+                break;
+            case BRK_IO:
+                summary.port++;
+                summary.portIn += (bp->ioType & BRK_IO_IN) ? 1u : 0u;
+                summary.portOut += (bp->ioType & BRK_IO_OUT) ? 1u : 0u;
+                break;
+            case BRK_KEYBOARD:
+                summary.keyboard++;
+                break;
+            case BRK_NEXTREG:
+                summary.nextreg++;
+                break;
+            case BRK_BEAM:
+                summary.beam++;
+                break;
+            case BRK_COPPER:
+                summary.copper++;
+                break;
+            case BRK_MAGIC:
+                summary.magic++;
+                break;
+        }
+        BreakpointSummary::Group& group = groups[bp->group];
+        group.name = bp->group;
+        group.total++;
+        if (bp->active)
+            group.active++;
+        group.ids.push_back(id);
+    }
+    for (auto& [name, group] : groups)
+        summary.groups.push_back(std::move(group));
+    return summary;
+}
+
 /// @brief Retrieves all breakpoint IDs belonging to a specific group
 ///
 /// @param groupName The name of the group to query
@@ -1234,6 +1755,7 @@ std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
 /// If the group doesn't exist or is empty, returns an empty vector.
 std::vector<uint16_t> BreakpointManager::GetBreakpointsByGroup(const std::string& groupName) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::vector<uint16_t> breakpointIDs;
 
     if (groupName.empty())
@@ -1261,6 +1783,7 @@ std::vector<uint16_t> BreakpointManager::GetBreakpointsByGroup(const std::string
 /// breakpoints that belong to the specified group.
 std::string BreakpointManager::GetBreakpointListAsStringByGroup(const std::string& groupName) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (groupName.empty())
     {
         return "No group name specified\n";
@@ -1294,6 +1817,7 @@ std::string BreakpointManager::GetBreakpointListAsStringByGroup(const std::strin
 /// Breakpoints in other groups are not affected.
 void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1317,6 +1841,7 @@ void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
 /// Breakpoints in other groups are not affected.
 void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1341,6 +1866,7 @@ void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
 /// The breakpoint itself remains active and functional.
 bool BreakpointManager::RemoveBreakpointFromGroup(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (!key_exists(_breakpointMapByID, breakpointID))
     {
         return false;
@@ -1362,6 +1888,7 @@ bool BreakpointManager::RemoveBreakpointFromGroup(uint16_t breakpointID)
 /// The group itself is also removed from the manager.
 void BreakpointManager::RemoveBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1395,6 +1922,7 @@ void BreakpointManager::RemoveBreakpointGroup(const std::string& groupName)
 /// the specified memory address.
 bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
 {
+    ChangeScope change(*this);
     BreakpointDescriptor* bp = FindAddressBreakpoint(address);
     if (bp != nullptr)
     {
@@ -1412,6 +1940,7 @@ bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
 /// regardless of whether they are for input, output, or both operations.
 bool BreakpointManager::RemoveBreakpointByPort(uint16_t port)
 {
+    ChangeScope change(*this);
     BreakpointDescriptor* bp = FindPortBreakpoint(port);
     if (bp != nullptr)
     {
@@ -1428,6 +1957,7 @@ bool BreakpointManager::RemoveBreakpointByPort(uint16_t port)
 /// Use with caution as this operation cannot be undone.
 void BreakpointManager::RemoveBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1454,6 +1984,7 @@ void BreakpointManager::RemoveBreakpointsByType(BreakpointTypeEnum type)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::RemoveMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1480,6 +2011,7 @@ void BreakpointManager::RemoveMemoryBreakpointsByType(uint8_t memoryType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1518,7 +2050,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 
     uint16_t result = BRK_INVALID;
     if (!_cpuHeads[kind].empty())
-        result = WalkCandidates(_cpuHeads[kind][address], -1, result);
+        result = WalkCandidates(_cpuHeads[kind][address], -1, result, static_cast<BreakpointTapKind>(kind), address);
 
     // Physical breakpoints: the page the slot shows now, from the memory model (no remap tracking needed:
     // the filter does not depend on the mapping, design §5.2)
@@ -1529,37 +2061,27 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
         {
             const size_t pageId = (static_cast<size_t>(where.mode) << 8) | where.page;
             if (pageId < kPageIds && _pageSlices[kind][pageId])
-                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result);
+                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result,
+                                        static_cast<BreakpointTapKind>(kind), address);
         }
     }
 
     if (result != BRK_INVALID)
-        _lastTriggeredBreakpointID = result;  // Track for automation API queries
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);  // Track for automation API queries
     return result;
 }
 
-uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port)
+uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bool write)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
-    if (_portHeads[direction].empty())
-        return BRK_INVALID;
-    const uint16_t result = WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID);
-    if (result != BRK_INVALID)
-        _lastTriggeredBreakpointID = result;
-    return result;
-}
-
-uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first)
-{
-    if (set == 0 || set >= _candidateSets.size())
-        return first;
-    for (BreakpointDescriptor* bp : _candidateSets[set])
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
     {
-        // A slot-only physical breakpoint fires only through the slot it was set in
-        if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
+        if (!bp || !bp->active || bp->spacePage != spacePage || !(bp->memoryType & (write ? BRK_MEM_WRITE : BRK_MEM_READ)))
             continue;
-        // Every matching access counts; the policy decides whether it stops
+        if (offset < (bp->z80address & 0x3FFF) || offset > (bp->EndAddress() & 0x3FFF))
+            continue;
         const uint32_t n = ++bp->hitCount;
         bool stop = true;
         switch (bp->hitMode)
@@ -1569,6 +2091,194 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
             case BRK_HIT_AT_LEAST: stop = n >= bp->hitTarget; break;
             case BRK_HIT_MULTIPLE: stop = bp->hitTarget != 0 && n % bp->hitTarget == 0; break;
         }
+        if (stop && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port, int value)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    if (_portHeads[direction].empty())
+        return BRK_INVALID;
+    const uint16_t result =
+        WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID,
+                       direction == BRK_PORT_IN ? BRK_TAP_PORT_IN : BRK_TAP_PORT_OUT, port, value);
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+/// Every matching access counts; the hit policy decides whether it stops
+static bool HitStops(BreakpointDescriptor& bp)
+{
+    const uint32_t n = ++bp.hitCount;
+    switch (bp.hitMode)
+    {
+        case BRK_HIT_ALWAYS: return true;
+        case BRK_HIT_EQUAL: return n == bp.hitTarget;
+        case BRK_HIT_AT_LEAST: return n >= bp.hitTarget;
+        case BRK_HIT_MULTIPLE: return bp.hitTarget != 0 && n % bp.hitTarget == 0;
+    }
+    return true;
+}
+
+uint16_t BreakpointManager::ResolveCopperPc(uint16_t pc)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_COPPER || pc < bp->z80address || pc > bp->EndAddress())
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_MAGIC || bp->z80address != opcodeWord)
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8])
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_KEYBOARD)
+            continue;
+        // What this read shows of the key: per selected row, down or not
+        uint8_t downRows = 0;
+        uint8_t seenRows = selectedRows;
+        if (bp->z80address == BRK_KEY_ANY)
+        {
+            for (uint8_t r = 0; r < 8; r++)
+                if ((selectedRows & (1u << r)) && (rows[r] & 0x1F) != 0x1F)
+                    downRows |= static_cast<uint8_t>(1u << r);
+        }
+        else
+        {
+            uint8_t row = 0;
+            uint8_t bit = 0;
+            if (!Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(bp->z80address), row, bit) ||
+                !(selectedRows & (1u << row)))
+                continue;  // the read does not look at the key's row
+            seenRows = static_cast<uint8_t>(1u << row);
+            if (!(rows[row] & (1u << bit)))
+                downRows = seenRows;
+        }
+        const uint8_t before = bp->keySeenRows & seenRows;
+        bp->keySeenRows = static_cast<uint8_t>((bp->keySeenRows & ~seenRows) | downRows);
+        const bool pressed = (downRows & ~before) != 0;   // a row seen up is now seen down
+        const bool released = (before & ~downRows) != 0;  // a row seen down is now seen up
+        if (!((pressed && (bp->keyType & BRK_KEY_PRESS)) || (released && (bp->keyType & BRK_KEY_RELEASE))))
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_BEAM || !crossed(bp->z80address, bp->beamHc))
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    const uint8_t access = direction == BRK_NR_READ ? BRK_IO_IN : BRK_IO_OUT;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_NEXTREG || !(bp->ioType & access) || !(bp->nrDoors & door))
+            continue;
+        if (reg < bp->z80address || reg > bp->EndAddress())
+            continue;
+        if ((value & bp->nrMask) != (bp->nrValue & bp->nrMask))
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind,
+                                           uint16_t address, int value)
+{
+    if (set == 0 || set >= _candidateSets.size())
+        return first;
+    for (BreakpointDescriptor* bp : _candidateSets[set])
+    {
+        // A slot-only physical breakpoint fires only through the slot it was set in
+        if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
+            continue;
+        // Every matching access counts; the policy decides whether it stops, or for a tap whether its sink is told
+        const uint32_t n = ++bp->hitCount;
+        bool stop = true;
+        switch (bp->hitMode)
+        {
+            case BRK_HIT_ALWAYS: stop = true; break;
+            case BRK_HIT_EQUAL: stop = n == bp->hitTarget; break;
+            case BRK_HIT_AT_LEAST: stop = n >= bp->hitTarget; break;
+            case BRK_HIT_MULTIPLE: stop = bp->hitTarget != 0 && n % bp->hitTarget == 0; break;
+        }
+        // A tap never stops: its sink is told (breakpoint-taps §3)
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (stop)
+                if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+                {
+                    BreakpointTapHit hit;
+                    hit.cookie = bp->tapCookie;
+                    hit.breakpointID = bp->breakpointID;
+                    hit.address = address;
+                    hit.value = value;
+                    hit.kind = kind;
+                    sink->OnTap(hit);
+                }
+            continue;
+        }
         if (stop && first == BRK_INVALID)
             first = bp->breakpointID;
     }
@@ -1577,8 +2287,8 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
 
 bool BreakpointManager::CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page)
 {
-    if (bp.type != BRK_MEMORY)
-        return false;
+    if (bp.type != BRK_MEMORY || bp.spacePage != 0xFFFF)
+        return false;   // a space page's watchpoint never matches a CPU address
     if (bp.matchType == BRK_MATCH_ADDR)
         return address >= bp.z80address && address <= bp.EndAddress();
     // Physical: the page, the offsets, and for slot-only the slot
@@ -1621,13 +2331,15 @@ uint16_t BreakpointManager::GenerateNewBreakpointID()
 
 /// A single-address breakpoint without range, slot filter or hit policy: adding the same one again returns
 /// the existing id (the key maps). Anything richer is its own breakpoint
+/// A plain breakpoint shares its address with an equal one; a tap is always its own (it must not adopt a user's
+/// breakpoint, nor a user's adopt it)
 static bool IsPlainMemory(const BreakpointDescriptor& d)
 {
-    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS;
+    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
 }
 static bool IsPlainPort(const BreakpointDescriptor& d)
 {
-    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS;
+    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
 }
 
 uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor)
@@ -1646,7 +2358,10 @@ uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor
     switch (descriptor->matchType)
     {
         case BRK_MATCH_ADDR:
-            key = 0xFFFF'0000 | descriptor->z80address;
+            // A space page's watchpoint keys apart from the CPU address of the same number
+            key = descriptor->spacePage != 0xFFFF
+                      ? (0xFE00'0000u | (static_cast<uint32_t>(descriptor->spacePage & 0xFF) << 16) | descriptor->z80address)
+                      : (0xFFFF'0000 | descriptor->z80address);
             break;
         case BRK_MATCH_BANK_ADDR:
             // Key format: [pageType:8][page:8][z80address:16]
@@ -1701,6 +2416,27 @@ uint16_t BreakpointManager::AddPortBreakpoint(BreakpointDescriptor* descriptor)
         RebuildFilters();
     }
     return result;
+}
+
+uint16_t BreakpointManager::AddNextRegBreakpoint(BreakpointDescriptor* descriptor)
+{
+    // Every NextREG breakpoint is its own (doors, a value, a hit policy make two on one register different)
+    descriptor->breakpointID = GenerateNewBreakpointID();
+    descriptor->keyAddress = 0xFFFF'FFFF;
+    _breakpointMapByID.insert({descriptor->breakpointID, descriptor});
+    RebuildFilters();
+    return descriptor->breakpointID;
+}
+
+uint16_t BreakpointManager::AddKeyboardBreakpoint(BreakpointDescriptor* descriptor)
+{
+    // Every keyboard breakpoint is its own (press and release, a hit policy make two on one key different)
+    descriptor->breakpointID = GenerateNewBreakpointID();
+    descriptor->keyAddress = 0xFFFF'FFFF;
+    descriptor->keySeenRows = 0;
+    _breakpointMapByID.insert({descriptor->breakpointID, descriptor});
+    RebuildFilters();
+    return descriptor->breakpointID;
 }
 
 BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
@@ -1813,6 +2549,7 @@ void BreakpointManager::RebuildFilters()
         }
     };
 
+    BreakpointTapDemand demand;
     std::vector<Interval> cpu[3];
     std::map<size_t, std::vector<Interval>> pages[3];
     std::map<uint16_t, std::vector<BreakpointDescriptor*>> ports[2];
@@ -1842,14 +2579,51 @@ void BreakpointManager::RebuildFilters()
             }
             continue;
         }
+        if (bp->type == BRK_MAGIC)
+        {
+            _hotState.hasMagic = 1;
+            continue;
+        }
+        if (bp->type == BRK_KEYBOARD)
+        {
+            _hotState.hasKeyboard = 1;
+            continue;
+        }
+        if (bp->type == BRK_BEAM || bp->type == BRK_COPPER)
+        {
+            (bp->type == BRK_BEAM ? _hotState.hasBeam : _hotState.hasCopperPc) = 1;
+            _hotState.copperWatch = 1;
+            continue;
+        }
+        if (bp->type == BRK_NEXTREG)
+        {
+            for (int d = 0; d < 2; d++)
+            {
+                if (!(bp->ioType & (d == BRK_NR_READ ? BRK_IO_IN : BRK_IO_OUT)))
+                    continue;
+                (d == BRK_NR_READ ? _hotState.hasNextRegRead : _hotState.hasNextRegWrite) = 1;
+                if (d == BRK_NR_WRITE && (bp->nrDoors & BRK_NR_DOOR_COPPER))
+                    _hotState.copperWatch = 1;
+                for (uint32_t r = bp->z80address; r <= bp->EndAddress() && r <= 0xFF; r++)
+                    _hotState.nextRegFilter[d][r >> 6] |= 1ull << (r & 63);
+            }
+            continue;
+        }
         if (bp->type != BRK_MEMORY)
             continue;
+        if (bp->spacePage != 0xFFFF)
+        {
+            _hotState.hasSpace = 1;   // matched by its memory's hooks (ResolveSpace), not the CPU filters
+            continue;
+        }
         for (int k = 0; k < 3; k++)
         {
             const uint8_t bit = k == BRK_KIND_EXEC ? BRK_MEM_EXECUTE : (k == BRK_KIND_READ ? BRK_MEM_READ : BRK_MEM_WRITE);
             if (!(bp->memoryType & bit))
                 continue;
             (k == BRK_KIND_EXEC ? _hotState.hasExec : k == BRK_KIND_READ ? _hotState.hasRead : _hotState.hasWrite) = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                (k == BRK_KIND_EXEC ? demand.exec : k == BRK_KIND_READ ? demand.read : demand.write) = true;
             if (bp->matchType == BRK_MATCH_ADDR)
             {
                 cpu[k].push_back({bp->z80address, bp->EndAddress(), bp});
@@ -1910,17 +2684,80 @@ void BreakpointManager::RebuildFilters()
             _portHeads[d][port] = intern(set);
     }
 
+    ApplyTapDemand(demand);
+
     // Every mutation of the set ends here: tell the surfaces
     NotifyBreakpointsChanged();
 }
 
+/// The CPU checks the instruction start without the debug mode while exec taps are armed; the memory tests the write
+/// filter in its fast write while write taps are (a machine without that hook, and read taps, take the debug path)
+void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
+{
+    if (demand == _tapDemand)
+        return;
+    _tapDemand = demand;
+    if (_context == nullptr || _context->pCore == nullptr)
+        return;
+    _context->pCore->GetZ80()->execTapHold = demand.exec;
+    Memory* memory = _context->pCore->GetMemory();
+    const bool hooked = demand.write && memory != nullptr && memory->SupportsWriteTapHook();
+    if (memory != nullptr)
+        memory->SetWriteTapDemand(hooked, &_hotState);
+    if (_context->pFeatureManager != nullptr)
+        _context->pFeatureManager->setTapDebugHold(demand.read || (demand.write && !hooked));
+}
+
+uint8_t BreakpointManager::RegisterTapSink(IBreakpointTapSink* sink)
+{
+    if (sink == nullptr)
+        return BRK_NO_TAP;
+    ChangeScope change(*this);
+    for (size_t id = 1; id < _tapSinks.size(); id++)
+        if (_tapSinks[id] == nullptr)
+        {
+            _tapSinks[id] = sink;
+            return static_cast<uint8_t>(id);
+        }
+    return BRK_NO_TAP;
+}
+
+void BreakpointManager::UnregisterTapSink(uint8_t sinkId)
+{
+    if (sinkId == BRK_NO_TAP)
+        return;
+    ChangeScope change(*this);
+    std::vector<uint16_t> taps;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        if (descriptor != nullptr && descriptor->tapSink == sinkId)
+            taps.push_back(id);
+    {
+        Batch batch(*this);
+        for (const uint16_t id : taps)
+            RemoveBreakpointByID(id);
+    }
+    _tapSinks[sinkId] = nullptr;
+}
+
+BreakpointManager::Batch::Batch(BreakpointManager& manager) : _manager(manager), _scope(std::make_unique<ChangeScope>(manager))
+{
+    _manager.BeginBatch();
+}
+
+BreakpointManager::Batch::~Batch()
+{
+    _manager.EndBatch();
+}
+
 void BreakpointManager::BeginBatch()
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _batchDepth++;
 }
 
 void BreakpointManager::EndBatch()
 {
+    ChangeScope change(*this);
     if (_batchDepth > 0 && --_batchDepth == 0 && _rebuildPending)
     {
         _rebuildPending = false;
@@ -1930,7 +2767,9 @@ void BreakpointManager::EndBatch()
 
 std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
 {
-    return std::to_string(bp.type) + "|" + std::to_string(bp.matchType) + "|" + std::to_string(bp.memoryType) + "|" +
+    return std::to_string(bp.nrDoors) + "/" + std::to_string(bp.nrValue) + "/" + std::to_string(bp.nrMask) + "/" +
+           std::to_string(bp.beamHc) + "|" +
+           std::to_string(bp.type) + "|" + std::to_string(bp.matchType) + "|" + std::to_string(bp.memoryType) + "|" +
            std::to_string(bp.ioType) + "|" + std::to_string(bp.keyType) + "|" + std::to_string(bp.z80address) + "|" +
            std::to_string(bp.page) + "|" + std::to_string(bp.pageType) + "|" + (bp.active ? "1" : "0") + "|" +
            std::to_string(bp.EndAddress()) + "|" + (bp.slotOnly ? "s" : "-") + "|" + std::to_string(bp.portMask) + "|" +
@@ -1940,6 +2779,7 @@ std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
 
 void BreakpointManager::NotifyBreakpointsChanged()
 {
+    _revision.fetch_add(1, std::memory_order_relaxed);
     // A manager without an emulator (unit tests) has nobody to tell: the changes wait for the next report
     if (!_context || !_context->pEmulator)
         return;

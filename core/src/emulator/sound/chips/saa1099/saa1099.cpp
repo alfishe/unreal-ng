@@ -81,7 +81,7 @@ constexpr EnvShape kEnvShapes[8] = {
 constexpr uint32_t kNoiseSeed = 0x3FFFF;   // 18 bits, all ones (any non-zero seed; the chip's is unknown)
 constexpr uint32_t kNoiseTaps = 0x20400;   // x^18 + x^11 + 1, Galois form, right shift
 constexpr int kBlipSamples = MAX_SAMPLES_PER_FRAME + 64;
-constexpr size_t kBlobSize = 1 + 32 + 4 + 6 * (4 + 3) + 2 * (4 + 4) + 2 * 11 + 4 * 8;
+constexpr size_t kBlobSize = 1 + 32 + 4 + 6 * (4 + 3) + 2 * (4 + 4) + 2 * 11 + 4 * 8 + 2 * 4;
 
 // Little-endian blob writer / reader: explicit fields, no struct padding in the blob
 struct BlobWriter
@@ -204,7 +204,14 @@ void Saa1099::Reset(uint64_t t)
 void Saa1099::SetClockEnabled(uint64_t t, bool enabled)
 {
     Run(t);
+    const bool resumed = enabled && !_s.clockEnabled;
     _s.clockEnabled = enabled ? 1 : 0;
+    // Stopped, the output holds its last level; running again, it follows the registers latched meanwhile
+    if (resumed)
+    {
+        RefreshVoices();
+        UpdateOutput();
+    }
 }
 
 void Saa1099::SetOutputRate(uint32_t rate)
@@ -625,7 +632,10 @@ void Saa1099::ComputeOutput(int32_t& left, int32_t& right) const
 
 void Saa1099::UpdateOutput()
 {
-    ComputeOutput(_s.outLeft, _s.outRight);
+    // With the chip clock stopped the output logic does not run: the output holds its last level whatever the
+    // registers say (tdd-saa1099 "Clock gate"; the writes are latched and act when the clock runs again)
+    if (_s.clockEnabled)
+        ComputeOutput(_s.outLeft, _s.outRight);
     Emit(_s.outLeft, _s.outRight);
 }
 
@@ -797,6 +807,9 @@ void Saa1099::TTDSaveState(uint8_t* dst) const
     w.U64(_s.ratioRemainder);
     w.U64(_s.chipClock);
     w.U64(_s.ungatedClock);
+    // The output level: with the clock stopped it is held, not derivable from the registers (version 2)
+    w.U32(static_cast<uint32_t>(_s.outLeft));
+    w.U32(static_cast<uint32_t>(_s.outRight));
 }
 
 void Saa1099::TTDLoadState(const uint8_t* src)
@@ -846,6 +859,8 @@ void Saa1099::TTDLoadState(const uint8_t* src)
     _s.ratioRemainder = r.U64() % _cfg.hostTickRate;
     _s.chipClock = r.U64();
     _s.ungatedClock = r.U64();
+    _s.outLeft = static_cast<int32_t>(r.U32());
+    _s.outRight = static_cast<int32_t>(r.U32());
 
     // The output buffers belong to the host: restart the frame here from silence and
     // step to the restored level at its start. The output is unipolar and blip_buf

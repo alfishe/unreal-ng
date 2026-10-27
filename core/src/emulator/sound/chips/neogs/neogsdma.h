@@ -61,6 +61,8 @@ public:
 
     void attachSd(SpiDevice* sd) { _sd = sd; }
     void attachMp3(Vs10xxDecoder* mp3) { _mp3 = mp3; }
+    /// The decoder's data port as the DMA clocks it (the bus analyzer's tap in front of it); default: the decoder's own
+    void attachMp3Data(SpiDevice* port) { _mp3Data = port; }
 
     /// FPGA reset: every run bit clears (addresses have no reset)
     void reset();
@@ -107,6 +109,7 @@ private:
     NeoGSInterrupts& _irq;
     SpiDevice* _sd = nullptr;
     Vs10xxDecoder* _mp3 = nullptr;
+    SpiDevice* _mp3Data = nullptr;
 
     uint8_t _select = 0;
     uint8_t _regs[3][4] = {};  // HAD MAD LAD CST

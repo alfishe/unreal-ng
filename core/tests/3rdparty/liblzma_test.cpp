@@ -16,6 +16,7 @@
 
 // Test path helper for finding project root
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 
 namespace fs = std::filesystem;
 
@@ -571,7 +572,10 @@ TEST_F(LzmaTest, PackCoreSrcFolder)
 {
     // Use the shared TestPathHelper to find the project root
     fs::path projectRoot = TestPathHelper::findProjectRoot();
+    // core/src/common (about 100 files) proves the round trip of a source tree; all of core/src in the long tier
     fs::path srcPath = projectRoot / "core" / "src";
+    if (!TestTier::Long())
+        srcPath /= "common";
     
     // Ensure the source directory exists
     ASSERT_TRUE(fs::exists(srcPath)) << "core/src directory does not exist at: " << srcPath;

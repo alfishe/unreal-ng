@@ -2,7 +2,7 @@
 /// @brief Kempston Mouse injection funnel (automation-interfaces §5.1-§5.4) and the input
 ///        journal / replay guard fixes it shares with the keyboard.
 ///
-/// Real Emulator instance (DebugManager, Mouse, TimeTravelManager wired as in the app),
+/// Real Emulator instance (DebugManager, Mouse, the TTD controller wired as in the app),
 /// no running CPU unless a test drives frames explicitly.
 
 #include <gtest/gtest.h>
@@ -16,7 +16,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -34,7 +34,7 @@ protected:
     EmulatorContext* _context = nullptr;
     DebugMouseManager* _manager = nullptr;
     Mouse* _mouse = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
@@ -47,7 +47,7 @@ protected:
         ASSERT_NE(_manager, nullptr);
         _mouse = _context->pMouse;
         ASSERT_NE(_mouse, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
     }
 
     void TearDown() override
@@ -419,6 +419,35 @@ TEST_F(DebugMouseManager_Test, FeatureFlagControlsPresence)
     EXPECT_TRUE(_mouse->IsPresent());
 }
 
+/// Host input keeps arriving on the message center's thread while the emulator is released: the handlers reach the
+/// debug manager, the TTD controller and the core's devices, so they are detached before any of those goes (TSan / ASan
+/// catch the old order: ~DebugManager and Core::Release against MouseManager::OnMouseMove and InputDevicesOf)
+TEST_F(DebugMouseManager_Test, HostInputDuringRelease_StopsBeforeTheMachineGoes)
+{
+    ASSERT_TRUE(EnableRecording());
+    const std::string id = _emulator->GetId();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<bool> stop{false};
+    std::thread poster([&] {
+        for (int i = 0; i < 20000 && !stop.load(); ++i)
+        {
+            mc.Post(MC_MOUSE_MOVE, MouseEvent::Move(1, 1, id));
+            mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_Q, KEY_PRESSED, id));
+            mc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_Q, KEY_RELEASED, id));
+            std::this_thread::yield();
+        }
+    });
+    // Release while the handlers are busy, not before the first one ran
+    EXPECT_TRUE(TestWait::For([&] { return _mouse->GetX() != Mouse::RESET_X; }));  // not ASSERT: join the poster
+
+    _emulator->Release();
+    stop = true;
+    poster.join();
+    delete _emulator;
+    _emulator = nullptr;
+}
+
 /// endregion </Device>
 
 /// region <Keyboard journal fixes>
@@ -472,10 +501,13 @@ TEST_F(DebugMouseManager_Test, HostKeystrokes_JournalledWhileRecordingAndSuppres
     const std::string id = std::string(_emulator->GetUUID());
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
 
+    // The MessageCenter worker applies the keystroke (the machine is not running): read the matrix once it is done
     mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_W, KEY_PRESSED, id));
-    ASSERT_TRUE(TestWait::For([&] { return KeyDown(0xFBFE, 1); }));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    ASSERT_TRUE(KeyDown(0xFBFE, 1));
     mc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_W, KEY_RELEASED, id));
-    ASSERT_TRUE(TestWait::For([&] { return !KeyDown(0xFBFE, 1); }));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    ASSERT_FALSE(KeyDown(0xFBFE, 1));
 
     auto keys = JournalOfKind(TTDInputKind::Key);
     ASSERT_EQ(keys.size(), 2u) << "desktop keystrokes are journalled like automation input";
@@ -484,11 +516,11 @@ TEST_F(DebugMouseManager_Test, HostKeystrokes_JournalledWhileRecordingAndSuppres
 
     _context->ttdReplayActive = true;
     mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_E, KEY_PRESSED, id));
-    // Marker: a mouse event on the same MessageCenter worker proves the key event was dispatched
-    _context->ttdReplayActive = true;
+    // A mouse event too; the drain barrier proves both were dispatched
     _mouse->SetCounters(0, 0);
     mc.Post(MC_MOUSE_MOVE, MouseEvent::Move(1, 0, id));
-    const bool markerApplied = TestWait::For([&] { return _mouse->GetX() == 1; }, std::chrono::milliseconds(300));
+    ASSERT_TRUE(mc.WaitForOutstandingMessages());
+    const bool markerApplied = _mouse->GetX() == 1;
     _context->ttdReplayActive = false;
 
     EXPECT_FALSE(markerApplied) << "host mouse input is suppressed during replay too";

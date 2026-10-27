@@ -191,6 +191,141 @@ TEST_F(TsConfTsu_Test, TSU4_TilesZeroAndIndex)
     EXPECT_EQ(Line(0)[3], 0x80 | 0x10 | 4);
 }
 
+/// TSU-1b: the sprite Y hit is a 9-bit subtraction, so a sprite whose Y + height passes 511 goes on at TS line 0
+/// ([V] video_ts.v:326-328 s_line = line - s_ycrd, 9 bit; [U] tsconf.cpp:655 & 0x1FF) (TS-Conf audit, tsu row 13)
+TEST_F(TsConfTsu_Test, TSU1b_SpriteWrapsAtLine512)
+{
+    Reg(TsConfReg::TConfig, 0x80);
+    Pixel(kSpritePage, 0, 0, 5);    // bitmap line 0
+    Pixel(kSpritePage, 0, 4, 7);    // bitmap line 4
+    Pixel(kSpritePage, 0, 15, 9);   // bitmap line 15, the last of 16
+    Sprite(0, kActive | (1 << 9) | 508, 0, 0x2000);  // Y 508, 16 high; X 0, 8 wide; PAL 2
+
+    EXPECT_EQ(Line(507)[0], 0x00);
+    EXPECT_EQ(Line(508)[0], 0x25) << "bitmap line 0";
+    EXPECT_EQ(Line(0)[0], 0x27) << "TS line 0 shows bitmap line 4";
+    EXPECT_EQ(Line(11)[0], 0x29) << "bitmap line 15";
+    EXPECT_EQ(Line(12)[0], 0x00) << "16 lines: 508..511, 0..11";
+}
+
+/// TSU-1c: the TS line address is 9 bits, so pixels past x 511 land at x 0.. ([V] video_ts_render.v:127,136-141
+/// ts_waddr [8:0]; [U] tsconf.cpp:659,685 & 0x1FF) (TS-Conf audit, tsu row 17)
+TEST_F(TsConfTsu_Test, TSU1c_SpriteWrapsAtX512)
+{
+    Reg(TsConfReg::TConfig, 0x80);
+    for (uint32_t x = 0; x < 8; x++)
+        Pixel(kSpritePage, x, 0, static_cast<uint8_t>(x + 1));
+    Sprite(0, kActive, 508, 0x3000);  // X 508, 8 wide; PAL 3
+
+    const std::vector<uint8_t> line = Line(0);
+    for (uint32_t x = 0; x < 4; x++)
+        EXPECT_EQ(line[x], 0x30 | (x + 5)) << "x " << x << ": bitmap pixel " << x + 4;
+    EXPECT_EQ(line[4], 0x00);
+
+    Sprite(0, kActive, 0x8000 | 508, 0x3000);  // XF: bitmap pixels 3..0 land at x 0..3
+    const std::vector<uint8_t> flipped = Line(0);
+    for (uint32_t x = 0; x < 4; x++)
+        EXPECT_EQ(flipped[x], 0x30 | (4 - x)) << "x " << x;
+}
+
+/// TSU-1e: the tile graphics pages use bits 7:3 only - a 128 KB block at page & #F8 ([V] video_ts_render.v:71
+/// addr_offset = {page[7:3], line}, video_ts.v:167 tile_page; [U] tsconf.cpp:710 & 0xF8) (TS-Conf audit, tsu row 20)
+TEST_F(TsConfTsu_Test, TSU1e_TilePagesUseTheirEightPageBlock)
+{
+    Reg(TsConfReg::TConfig, 0x20 | 0x40);
+    Reg(TsConfReg::PalSel, 0x00);
+    Pixel(kTilePage, 8, 0, 6);         // tile 1, pixel 0 of page #28's sheet
+    Pixel(kTilePage, 8 + 1, 0, 7);     // tile 1, pixel 1
+    Tile(0, 0, 0, 0x0001);
+    Tile(1, 0, 1, 0x0001);             // T1, column 1 (x 8)
+    Reg(TsConfReg::T0GPage, kTilePage | 0x05);  // #2D
+    Reg(TsConfReg::T1GPage, kTilePage | 0x07);  // #2F
+
+    const std::vector<uint8_t> line = Line(0);
+    EXPECT_EQ(line[0], 0x06) << "T0 from #28";
+    EXPECT_EQ(line[1], 0x07);
+    EXPECT_EQ(line[8], 0x06) << "T1 from #28";
+}
+
+/// TSU-4b: T_CONFIG bit 3 (T1Z) makes tile 0 of layer T1 a drawn tile; T0Z (bit 2) is the other layer's
+/// ([V] video_ts.v:69-70,202 tile_valid = |t_tnum || (t_sel ? t0z_en : t1z_en); [U] tsconf.h:331-332,
+/// tsconf.cpp:712) (TS-Conf audit, tsu row 2)
+TEST_F(TsConfTsu_Test, TSU4b_T1ZeroTile)
+{
+    Reg(TsConfReg::PalSel, 0x00);
+    Pixel(kTilePage, 0, 0, 9);  // tile 0, pixel 0
+    Tile(1, 0, 0, 0x1000);      // T1: tile 0, pal 1
+
+    Reg(TsConfReg::TConfig, 0x40);
+    EXPECT_EQ(Line(0)[0], 0x00) << "tile 0 skipped";
+    Reg(TsConfReg::TConfig, 0x40 | 0x04);
+    EXPECT_EQ(Line(0)[0], 0x00) << "T0Z does not apply to T1";
+    Reg(TsConfReg::TConfig, 0x40 | 0x08);
+    EXPECT_EQ(Line(0)[0], 0x19) << "T1Z: drawn, {T1 bank 0, pal 1, nibble 9}";
+}
+
+/// TSU-4c: tile flips - XF draws the tile's pixel 0 at x 7, YF shows bitmap line 7 - line on line 0 ([V] video_ts.v:168
+/// t_line ^ {3{t_yflp}}, :433 tsr_xf = t_xflp, video_ts_render.v:127,136; [U] tsconf.cpp:594-603,624-628)
+/// (TS-Conf audit, tsu rows 26-27)
+TEST_F(TsConfTsu_Test, TSU4c_TileFlips)
+{
+    Reg(TsConfReg::TConfig, 0x20);
+    Reg(TsConfReg::PalSel, 0x00);
+    Pixel(kTilePage, 8 + 0, 0, 5);  // tile 1, line 0, pixel 0
+    Pixel(kTilePage, 8 + 2, 7, 6);  // tile 1, line 7, pixel 2
+
+    Tile(0, 0, 0, 0x0001);
+    EXPECT_EQ(Line(0)[0], 0x05);
+    EXPECT_EQ(Line(0)[7], 0x00);
+
+    Tile(0, 0, 0, 0x4001);  // XF
+    EXPECT_EQ(Line(0)[7], 0x05) << "pixel 0 at x 7";
+    EXPECT_EQ(Line(0)[0], 0x00);
+
+    Tile(0, 0, 0, 0x8001);  // YF
+    EXPECT_EQ(Line(0)[2], 0x06) << "line 0 shows bitmap line 7";
+    EXPECT_EQ(Line(7)[0], 0x05) << "line 7 shows bitmap line 0";
+
+    Tile(0, 0, 0, 0xC001);  // both
+    EXPECT_EQ(Line(0)[5], 0x06);
+}
+
+/// TSU-4d: layer T1 takes its palette bank from PAL_SEL bits 7:6, T0 from bits 5:4 ([V] video_ts.v:171 tile_pal,
+/// video_top.v:408-409 t0_palsel = palsel[5:4], t1_palsel = palsel[7:6]; [U] tsconf.cpp:591,626,711) (TS-Conf audit,
+/// tsu row 23)
+TEST_F(TsConfTsu_Test, TSU4d_T1UsesPalSelBits7And6)
+{
+    Reg(TsConfReg::TConfig, 0x40);
+    Pixel(kTilePage, 8, 0, 4);  // tile 1, pixel 0
+    Tile(1, 0, 0, 0x1001);      // T1: tile 1, pal 1
+
+    Reg(TsConfReg::PalSel, 0x80);
+    EXPECT_EQ(Line(0)[0], 0x80 | 0x10 | 4) << "bank 2";
+    Reg(TsConfReg::PalSel, 0xB0);
+    EXPECT_EQ(Line(0)[0], 0x80 | 0x10 | 4) << "bits 5:4 are T0's";
+    Reg(TsConfReg::PalSel, 0x40);
+    EXPECT_EQ(Line(0)[0], 0x40 | 0x10 | 4) << "bank 1";
+}
+
+/// TSU-4e: the map column is 6 bits and wraps at 64: with X offset #1F8 (column 63) x 0..7 show column 63 and
+/// x 8..15 column 0 ([V] video_ts.v:174 tmb_raddr column tx + tx_offs[8:3]; [U] tsconf.cpp:616,620,707,713)
+/// (TS-Conf audit, tsu row 29)
+TEST_F(TsConfTsu_Test, TSU4e_MapColumnWrapsAt64)
+{
+    Reg(TsConfReg::TConfig, 0x20);
+    Reg(TsConfReg::PalSel, 0x00);
+    Pixel(kTilePage, 8, 0, 3);   // tile 1, pixel 0
+    Pixel(kTilePage, 16, 0, 4);  // tile 2, pixel 0
+    Tile(0, 0, 63, 0x0001);
+    Tile(0, 0, 0, 0x0002);
+    Reg(TsConfReg::T0XOffsL, 0xF8);
+    Reg(TsConfReg::T0XOffsL + 1, 0x01);
+
+    const std::vector<uint8_t> line = Line(0);
+    EXPECT_EQ(line[0], 0x03) << "column 63";
+    EXPECT_EQ(line[8], 0x04) << "column 0";
+}
+
 /// TSU-5 and the video plex: TSU over graphics, NOTSU, GFXOVR, the TS window over the border
 TEST_F(TsConfTsu_Test, TSU5_MixingAndTheTsWindow)
 {

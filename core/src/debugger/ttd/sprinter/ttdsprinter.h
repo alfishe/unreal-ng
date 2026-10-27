@@ -59,19 +59,30 @@ public:
     static constexpr size_t kFixedSize = 175;
     /// Longest module name the blob keeps (the registry looks the module up by it)
     static constexpr size_t kModuleNameSize = 32;
+    /// The module state room of every blob before TMK (Game's 16 bytes): the least room a blob has
+    static constexpr size_t kMinModuleRoom = 16;
 
     explicit TTDSprinterPld(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
 
+    /// The largest blob (the largest module's room); a blob holds the active module's room only
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
+    bool TTDVariableSize() const override { return true; }
+    void TTDSaveStateTo(std::vector<uint8_t>& out) const override;
     std::string TTDDeviceName() const override { return "SprinterPld"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterPld; }
     uint64_t TTDHashState() const override;
+    /// The INT source's acknowledged pulse (an i64 machine time at 128: frame x frame length + start) advances every
+    /// frame: a time field (measured 2026-10-09)
+    TTDDeviceDescriptor TTDDescribe() const override;
+    static constexpr uint16_t kAckedPulseOffset = 128;
 
 private:
-    /// The largest StateSize() of the registered modules: the blob has room for any of them
+    /// The largest StateSize() of the registered modules (at least kMinModuleRoom): the largest blob
     size_t ModuleStateRoom() const;
+    /// The room of this blob: the active module's StateSize(), at least kMinModuleRoom
+    size_t ActiveModuleRoom() const;
 
     PortDecoder_Sprinter& _decoder;
 };
@@ -135,7 +146,7 @@ public:
     /// Time-travel engine region (compared at each capture; restore rebuilds the palette and the INT list)
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
@@ -162,7 +173,7 @@ public:
     /// Time-travel engine region (compared at each capture: written through the generic CPU path)
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:

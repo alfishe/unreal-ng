@@ -8,7 +8,11 @@
         "Joystick fitted (config and feature); when false the guest reads 0x00 on the port";
     schemas["JoystickState"]["properties"]["wired"]["type"] = "boolean";
     schemas["JoystickState"]["properties"]["wired"]["description"] =
-        "This machine's port decoder answers a Kempston joystick";
+        "This machine answers a Kempston joystick: its board decodes one, or the slot card `kempston` is fitted";
+    schemas["JoystickState"]["properties"]["fit"]["type"] = "string";
+    schemas["JoystickState"]["properties"]["fit"]["description"] =
+        "When not wired: how to fit the Kempston interface here (the slot plug of the card `kempston`, with the "
+        "override when the fit needs it); empty when wired or when it cannot be fitted";
     schemas["JoystickState"]["properties"]["state"]["type"] = "integer";
     schemas["JoystickState"]["properties"]["state"]["description"] =
         "Device byte, active high: right=1 left=2 down=4 up=8 fire=0x10, D5..D7 raw";
@@ -43,7 +47,8 @@
     schemas["JoystickInjectResponse"]["properties"]["message"]["type"] = "string";
     schemas["JoystickInjectResponse"]["properties"]["warning"]["type"] = "string";
     schemas["JoystickInjectResponse"]["properties"]["warning"]["description"] =
-        "Set when the input cannot reach the guest (joystick not fitted, or the machine does not decode it)";
+        "Set when the input cannot reach the guest (joystick not fitted, or the machine has no Kempston interface: the "
+        "warning then says how to fit the slot card `kempston`)";
     schemas["JoystickInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/JoystickState";
     schemas["JoystickInjectResponse"]["properties"]["buttons"]["type"] = "string";
     schemas["JoystickInjectResponse"]["properties"]["buttons"]["description"] =

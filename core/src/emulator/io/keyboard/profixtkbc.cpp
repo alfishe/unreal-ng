@@ -582,6 +582,13 @@ std::vector<PcKey> ProfiXtKbc::PcKeysForZxKey(ZXKeysEnum key) const
         case ZXKEY_EXT_BAR: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_S; break;
         case ZXKEY_EXT_BACKSLASH: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_D; break;
         case ZXKEY_EXT_DBLQUOTE: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_P; break;
+        case ZXKEY_EXT_SEMICOLON: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_O; break;
+        case ZXKEY_EXT_APOSTROPHE: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_7; break;
+        case ZXKEY_EXT_COLON: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_Z; break;
+        case ZXKEY_EXT_QUESTION: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_C; break;
+        case ZXKEY_EXT_LESS: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_R; break;
+        case ZXKEY_EXT_GREATER: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_T; break;
+        case ZXKEY_EXT_UNDERSCORE: modifier = ZXKEY_SYM_SHIFT; base = ZXKEY_0; break;
         default: break;
     }
     auto one = [](ZXKeysEnum zx) -> PcKey {

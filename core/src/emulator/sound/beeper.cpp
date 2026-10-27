@@ -72,9 +72,35 @@ void Beeper::reset()
     if (_blipR) blip_clear(_blipR);
 }
 
+void Beeper::discardPending()
+{
+    if (!_blipL || !_blipR)
+        return;
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+    // The buffers' 0 is reset()'s baseline (EAR = MIC = 0, no tape): left behind, the integrator drifted by the
+    // level held at the clear, up to twice the range, and overflowed
+    const int32_t level = _lastPortFEAmplitude - DAC_LEVEL_00 + _lastTapeAmplitude;
+    if (level != 0 && !_synthesisSuppressed)
+    {
+        blip_add_delta(_blipL, 0, level);
+        blip_add_delta(_blipR, 0, level);
+    }
+}
+
 void Beeper::handleFrameStart()
 {
     _frameHadSound = false;
+}
+
+void Beeper::followSamplePhase(uint64_t phase)
+{
+    if (!_phaseAlignPending)
+        return;
+    _phaseAlignPending = false;
+    const double fraction = static_cast<double>(phase) / static_cast<double>(CPU_CLOCK_RATE);
+    blip_align_phase(_blipL, fraction);
+    blip_align_phase(_blipR, fraction);
 }
 
 void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
@@ -86,10 +112,12 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     if (earMicBits == _portFEState)
         return;
 
+    if ((earMicBits ^ _portFEState) & 0b0001'0000)
+        _earEdges++;
     _portFEState = earMicBits;
 
     // Look up the DAC amplitude for this EAR/MIC combination
-    int32_t newAmplitude = dacAmplitude(earMicBits);
+    int32_t newAmplitude = levelFor(earMicBits);
 
     // Compute the delta from the previous Port #FE amplitude
     int32_t delta = newAmplitude - _lastPortFEAmplitude;
@@ -128,10 +156,10 @@ void Beeper::setSynthesisSuppressed(bool suppressed)
     _synthesisSuppressed = suppressed;
     if (!suppressed)
     {
-        // Resume from silence at the current level: discard deltas accumulated before
-        // suppression that were never consumed by a frame end
-        if (_blipL) blip_clear(_blipL);
-        if (_blipR) blip_clear(_blipR);
+        // Discard deltas accumulated before suppression that were never consumed by a frame end
+        discardPending();
+        // The mixer kept counting through the gap: back on its grid at the next frame start
+        _phaseAlignPending = true;
     }
 }
 
@@ -159,6 +187,11 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
 
     _lastSamplesRead = avail;
 
+    // A frame longer than the base frame (host speed multiplier) moved the blip's sample position by its own length,
+    // the mixer's by the base frame's: re-join the mixer's grid at the next frame start
+    if (_context && frameDuration != _context->config.frame)
+        _phaseAlignPending = true;
+
     // HUD activity: SoundManager (AudioActivityIndicators), from the
     // audio-settings LED computed on this buffer
 }
@@ -166,6 +199,13 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
 /// endregion </Methods>
 
 /// region <Helper methods>
+
+int32_t Beeper::levelFor(uint8_t earMicBits) const
+{
+    if (!_useCustomLevels)
+        return dacAmplitude(earMicBits);
+    return _customLevels[(((earMicBits >> 4) & 1) << 1) | ((earMicBits >> 3) & 1)];
+}
 
 int32_t Beeper::dacAmplitude(uint8_t earMicBits)
 {

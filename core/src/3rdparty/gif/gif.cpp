@@ -310,6 +310,9 @@ int GifPickChangedPixels(const uint8_t* lastFrame, uint8_t* frame, int numPixels
 void GifMakePalette(const uint8_t* lastFrame, const uint8_t* nextFrame, uint32_t width, uint32_t height, int bitDepth,
                     bool buildForDither, GifPalette* pPal)
 {
+    // Local change: GifSplitPalette returns from a subtree without pixels before it fills the node, and callers pass a
+    // stack palette - a garbage split component indexed GifGetClosestPaletteColor's comps[3] out of bounds. Start empty
+    memset(pPal, 0, sizeof(*pPal));
     pPal->bitDepth = bitDepth;
 
     // SplitPalette is destructive (it sorts the pixels by color) so

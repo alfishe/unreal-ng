@@ -2,9 +2,10 @@
 #include "pch.h"
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -34,8 +35,9 @@
 #include <vector>
 
 /// ZX-Poly group on stock models: the .zxp corpus runs in lockstep on four
-/// instances. Boot-bound: every case runs hundreds of emulated frames on four
-/// machines, so it is well over the 50 ms guideline by design.
+/// instances. A group frame is four machine frames (about 3 ms): the default run
+/// takes short scenarios and a sample, the long tier (UNREAL_LONG_TESTS=1) the
+/// full ones.
 ///
 /// Set ZXPOLY_DUMP_PNG=1 to write the composed frames to
 /// scratch/zxpoly/<model>/<title>-<frame>.png for visual review.
@@ -121,7 +123,7 @@ TEST_P(ZXPolyGroupCorpus_Test, ZxpRunsInLockstep)
 
     DumpPng(model, title, 0);
 
-    constexpr unsigned FRAMES = 250;    // 5 s of emulated time
+    const unsigned FRAMES = TestTier::Pick(50u, 250u);   // 1 s / 5 s of emulated time
     const unsigned done = RunInLockstep(FRAMES, divergence);
     DumpPng(model, title, done);
 
@@ -129,21 +131,24 @@ TEST_P(ZXPolyGroupCorpus_Test, ZxpRunsInLockstep)
                             << done << ": " << divergence.what;
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Corpus, ZXPolyGroupCorpus_Test,
-    ::testing::Combine(::testing::Values(std::string("128k"), std::string("PENTAGON")),
-                       ::testing::Values(std::string("Alien8.zxp"), std::string("buratino_adventures.zxp"),
-                                         std::string("ComandoQuatro.zxp"), std::string("flyshark.zxp"),
-                                         std::string("OFCZXPOLY.zxp"), std::string("SummerSanta2022.zxp"),
-                                         std::string("fh.zxp"))),
-    [](const ::testing::TestParamInfo<std::tuple<std::string, std::string>>& info) {
-        std::string file = std::get<1>(info.param);
-        std::string name = std::get<0>(info.param) + "_" + file.substr(0, file.find('.'));
-        for (char& c : name)
-            if (!isalnum(static_cast<unsigned char>(c)))
-                c = '_';
-        return name;
-    });
+const std::vector<std::string> kCorpusTitles = {"Alien8.zxp",    "buratino_adventures.zxp", "ComandoQuatro.zxp",
+                                                 "flyshark.zxp",  "OFCZXPOLY.zxp",           "SummerSanta2022.zxp",
+                                                 "fh.zxp"};
+
+static std::string CorpusCaseName(const ::testing::TestParamInfo<std::tuple<std::string, std::string>>& info)
+{
+    std::string file = std::get<1>(info.param);
+    std::string name = std::get<0>(info.param) + "_" + file.substr(0, file.find('.'));
+    for (char& c : name)
+        if (!isalnum(static_cast<unsigned char>(c)))
+            c = '_';
+    return name;
+}
+
+INSTANTIATE_TEST_SUITE_P(Corpus, ZXPolyGroupCorpus_Test,
+                         ::testing::Combine(::testing::Values(std::string("128k"), std::string("PENTAGON")),
+                                            ::testing::ValuesIn(kCorpusTitles)),
+                         CorpusCaseName);
 
 class ZXPolyGroupModels_Test : public ZXPolyGroup_Test, public ::testing::WithParamInterface<std::string>
 {
@@ -171,11 +176,15 @@ INSTANTIATE_TEST_SUITE_P(Models, ZXPolyGroupModels_Test, ::testing::Values(std::
                              return info.param == "128k" ? std::string("Spectrum128") : info.param;
                          });
 
+class ZXPolyGroupPlay_Test : public ZXPolyGroupCorpus_Test
+{
+};
+
 /// Gameplay: a deterministic input script (menu keys, then Sinclair/QAOP
-/// directions and fire) drives every title past its menu; the group must stay
+/// directions and fire) drives a title past its menu; the group must stay
 /// in lockstep with keys applied at frame boundaries to all four instances.
-/// Boot-bound (1500 frames on four machines per case).
-TEST_P(ZXPolyGroupCorpus_Test, ScriptedPlayStaysInLockstep)
+/// One title per model for 240 frames; every title for 1500 in the long tier
+TEST_P(ZXPolyGroupPlay_Test, ScriptedPlayStaysInLockstep)
 {
     const std::string model = std::get<0>(GetParam());
     const std::string file = std::get<1>(GetParam());
@@ -198,7 +207,8 @@ TEST_P(ZXPolyGroupCorpus_Test, ScriptedPlayStaysInLockstep)
         return rng >> 16;
     };
 
-    constexpr unsigned FRAMES = 1500;   // 30 s of emulated time
+    const unsigned FRAMES = TestTier::Pick(240u, 1500u);   // 4.8 s / 30 s of emulated time
+    const unsigned menuStep = TestTier::Pick(20u, 100u);  // frames per menu key: six of them, then play keys
     ZXPolyGroup::Divergence divergence;
     ZXKeysEnum held = ZXKEY_NONE;
     unsigned done = 0;
@@ -209,7 +219,8 @@ TEST_P(ZXPolyGroupCorpus_Test, ScriptedPlayStaysInLockstep)
         {
             if (held != ZXKEY_NONE)
                 _group->ReleaseKey(held);
-            held = f < 600 ? menuKeys[(f / 100) % std::size(menuKeys)] : playKeys[next() % std::size(playKeys)];
+            held = f < menuStep * std::size(menuKeys) ? menuKeys[(f / menuStep) % std::size(menuKeys)]
+                                                      : playKeys[next() % std::size(playKeys)];
             _group->PressKey(held);
         }
         else if (f % 10 == 6 && held != ZXKEY_NONE)
@@ -231,6 +242,20 @@ TEST_P(ZXPolyGroupCorpus_Test, ScriptedPlayStaysInLockstep)
     EXPECT_EQ(done, FRAMES) << title << " on " << model << ": module " << divergence.module
                             << " left lockstep at frame " << done << ": " << divergence.what;
 }
+
+/// Every title on both models in the long tier; otherwise one title per model
+static std::vector<std::tuple<std::string, std::string>> PlayCases()
+{
+    if (!TestTier::Long())
+        return {{"128k", "Alien8.zxp"}, {"PENTAGON", "flyshark.zxp"}};
+    std::vector<std::tuple<std::string, std::string>> cases;
+    for (const char* model : {"128k", "PENTAGON"})
+        for (const std::string& title : kCorpusTitles)
+            cases.emplace_back(model, title);
+    return cases;
+}
+
+INSTANTIATE_TEST_SUITE_P(Corpus, ZXPolyGroupPlay_Test, ::testing::ValuesIn(PlayCases()), CorpusCaseName);
 
 struct ZXPolyDiskCase
 {
@@ -281,7 +306,7 @@ TEST_P(ZXPolyGroupDisk_Test, MultiloaderBootsAndRunsInLockstep)
     ZXKeysEnum held = ZXKEY_NONE;
 
     ZXPolyGroup::Divergence divergence;
-    constexpr unsigned FRAMES = 1000;
+    const unsigned FRAMES = TestTier::Pick(150u, 1000u);   // past the start key into play / the long tier
     unsigned done = 0;
     for (; done < FRAMES; done++)
     {
@@ -1172,7 +1197,7 @@ TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
     CreateGroup("PENTAGON");
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = _group->GetContext(m)->pTimeTravelController;
         ASSERT_NE(ttd, nullptr);
         EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
         EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
@@ -1190,12 +1215,12 @@ TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
     ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error)) << error;
     ASSERT_TRUE(_group->StartRecording(&error)) << error;
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
-        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelManager->IsRecording()) << "module " << m;
+        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelController->IsRecording()) << "module " << m;
     _group->RunFrames(2);
     _group->StopRecording();
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = _group->GetContext(m)->pTimeTravelController;
         EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
         EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
     }

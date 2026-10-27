@@ -11,6 +11,7 @@
 #include "common/filehelper.h"
 #include "common/signaturecache.h"
 #include "common/stringhelper.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 
@@ -148,6 +149,9 @@ std::string ROM::GetROMFilename()
             break;
         case MM_SPRINTER:
             result = config.sprinter_rom_path;
+            break;
+        case MM_NEXT:
+            result = config.next_rom_path;
             break;
         case MM_GMX:
             assert("Not implemented");
@@ -305,6 +309,15 @@ bool ROM::LoadROM()
 			memory.base_sys_rom = nullptr;
 			romname = config.sprinter_rom_path;
 			break;
+	    case MM_NEXT:
+			// Bare personality: four 16K ROMs picked by {#1FFD bit 2, #7FFD bit 4} like the +3's; the roles
+			// follow the +3 order (128 editor, 128 syntax checker, +3DOS, 48 BASIC). NextMemory maps them itself
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
+			memory.base_dos_rom = nullptr;
+			memory.base_sys_rom = nullptr;
+			romname = config.next_rom_path;
+			break;
 	    case MM_GMX:
             assert("Not implemented");
             break;
@@ -451,6 +464,9 @@ bool ROM::LoadROM()
 				// ProfROM image geometry for the quadrant window (design §4.2);
 				// no-op on every other model
 				memory.OnRomLoaded(_ROMBanksLoaded);
+				// A board whose ROM is a flash lays its saved flash over the image (ZX-Evo)
+				if (_context->pPortDecoder)
+					_context->pPortDecoder->OnRomLoaded(_ROMBanksLoaded);
 
 				MLOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
 			}

@@ -22,6 +22,7 @@ Extends the unified media manager ([2026-09-28-storage-manager](../2026-09-28-st
 | [flatten-strategies.md](flatten-strategies.md) | Sector provenance, change attribution, and the strategies S1 flat image (mandatory), S2 session delta, S3 graft-base commit, S4 file write-back |
 | [tdd.md](tdd.md) | Technical design: descriptor schema, classes and data structures, union and layout algorithms, graft, ISO writer, partitions, integration, memory budget, code placement, phases C0-C9 |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Test-first order, oracles, every unit / acceptance test, benchmark families, mode comparison, scalability charts C1-C8, results table |
+| [phases/](phases/README.md) | One document per implementation phase C0-C9: the design before the code, the as-built record after |
 | [library-extraction/](library-extraction/README.md) | **Follow-up plan** (after C0-C9): extracting the whole media layer into the standalone MIT library unreal-media, one VFS for every guest file system, platform packs and plugins (incl. tape codecs), reference integrations into other emulators and platforms |
 
 ## In one picture

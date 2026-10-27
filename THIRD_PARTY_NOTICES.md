@@ -29,6 +29,7 @@ contributors) as the format reference; no MAME source is vendored.
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
 | z84c15, a fork of unreal-z80 0.5.0 @ a0433ec (the Sprinter's Zilog Z84C15 CPU; local changes in `README.md` there) | `core/src/3rdparty/z84c15/` | MIT | static |
+| unreal-next-z80, the ZX Spectrum Next's Z80N CPU: a fork of the z84c15 core (unreal-z80 0.5.0 @ a0433ec) without the chip; local changes in `README.md` there | `core/src/3rdparty/unreal-next-z80/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | miniz 3.1.2 (zlib streams of SZX snapshots, the CHD `zlib` codec; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
@@ -54,6 +55,19 @@ contributors) as the format reference; no MAME source is vendored.
 | QHexView 5.0 | `unreal-qt/3rdparty/QHexView-5.0/` | MIT | static |
 | ayumi (interpolation filter excerpt) | `core/src/common/sound/filters/filter_interpolate.h` | MIT | source |
 
+## Stream Deck companion (`UNREAL_STREAMDECK`, off by default)
+
+| Component | Location | License | Use |
+|-----------|----------|---------|-----|
+| hidapi 0.15.0 (mac, windows, linux hidraw backends) | `companions/streamdeck/3rdparty/hidapi/` | BSD-3-Clause (triple BSD / GPL-3.0 / original; BSD elected) | static |
+| nlohmann/json 3.11.3 | `companions/streamdeck/3rdparty/nlohmann/` | MIT | header |
+| cpp-httplib 0.61.0 | `companions/streamdeck/3rdparty/httplib.h` | MIT | header (automation server) |
+| fkYAML 0.5.0 | `companions/streamdeck/3rdparty/fkYAML.hpp` | MIT | header (scenario YAML) |
+| rapidcsv 9.07 | `companions/streamdeck/3rdparty/rapidcsv.h` | BSD-3-Clause | header (scenario CSV / TSV) |
+| nanosvg | `companions/streamdeck/3rdparty/nanosvg.h`, `nanosvgrast.h` | zlib | header (SVG icons) |
+| stb_image | `companions/streamdeck/3rdparty/stb_image.h` | MIT / public domain | header (image loading) |
+| TooJpeg (commit 341de5c295e4), altered: the base of the JPEG encoder | `companions/streamdeck/lib/src/jpeg.cpp` (notice in the file) | zlib | static (JPEG encoder; arithmetic after libjpeg / libjpeg-turbo, IJG / BSD-3-Clause) |
+
 ## Tools, tests and benchmarks only
 
 | Component | Location | License |
@@ -65,7 +79,7 @@ contributors) as the format reference; no MAME source is vendored.
 | vcd-writer | `core/src/3rdparty/vcd-writer/` | MIT (unused) |
 | libwave | `core/src/3rdparty/wave/` | MIT (unused) |
 | ownShell | `testclient/src/3rdparty/ownshell/` | MIT |
-| FastLZ 0.5.0 | `tools/poc/01-ttd-compression/cpp/vendored/fastlz/` | MIT |
+| FastLZ 0.5.0 | `tools/poc/010-ttd-compression/cpp/vendored/fastlz/` | MIT |
 | python-cmake-buildsystem, cmake-python-build | `core/automation/python/3rdparty/` | Apache-2.0 (unused) |
 | NeoGS flash parts (loader, main ROM v1.11, FPGA boot + configuration) from the NedoPC `ngs` sources | `tools/neogs/parts/`, packed into `data/rom/neogs/full_ngs.rom` | treated as MIT (no licence file upstream) |
 | Z80 test suites: ZEXALL (GPL-2.0-or-later), z80test by Patrik Rak (MIT), z80bltst (MIT), Z80 XCF Flavor (GPL-3.0-or-later), FUSE test vectors (GPL-2.0-or-later) | `data/testsoft/`, `core/tests/z80/`, `testdata/z80/` | as listed |

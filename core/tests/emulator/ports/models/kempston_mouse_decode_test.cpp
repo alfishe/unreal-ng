@@ -196,7 +196,7 @@ TEST(KempstonMouseDecodePriority_Test, ScorpionTrDosSelectionHandsMouseAddresses
     context->pMouse->SetCounters(kTestX, kTestY);
     state.flags = 0;
     state.p1FFD = 0x00;
-    state.scorpionDosTrigger = 0;
+    state.scorpion.dosTrigger = 0;
 
     // Not selected: the mouse answers its canonical port and the #xx9F mirror alike
     EXPECT_EQ(decoder->DecodePortIn(0xFBDF, 0x0000), kTestX);
@@ -210,7 +210,7 @@ TEST(KempstonMouseDecodePriority_Test, ScorpionTrDosSelectionHandsMouseAddresses
         if (selection == 0)
             state.flags |= CF_TRDOS;
         else
-            state.scorpionDosTrigger = 1;
+            state.scorpion.dosTrigger = 1;
 
         const uint8_t systemRegister = decoder->DecodePortIn(0x00FF, 0x0000);
         for (uint16_t port : {0xFBDF, 0xFFDF, 0xFADF, 0x039F})
@@ -223,7 +223,7 @@ TEST(KempstonMouseDecodePriority_Test, ScorpionTrDosSelectionHandsMouseAddresses
         EXPECT_EQ(decoder->DecodePortIn(0x035F, 0x0000), decoder->DecodePortIn(0x005F, 0x0000));
 
         state.flags = 0;
-        state.scorpionDosTrigger = 0;
+        state.scorpion.dosTrigger = 0;
     }
 
     EXPECT_EQ(decoder->DecodePortIn(0xFBDF, 0x0000), kTestX) << "selection released: mouse back";
@@ -240,7 +240,7 @@ TEST(KempstonMouseDecodePriority_Test, ScorpionMonitorLatchKeepsMouse)
     EmulatorState& state = context->emulatorState;
     context->pMouse->SetCounters(kTestX, kTestY);
     state.flags = 0;
-    state.scorpionDosTrigger = 0;
+    state.scorpion.dosTrigger = 0;
 
     // Shadow Monitor latch without TR-DOS: MiSTer masks only the Beta low bytes, #xxDF stays mouse
     state.p1FFD = 0x02;

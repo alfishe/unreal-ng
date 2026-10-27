@@ -1,0 +1,39 @@
+;пример рекурсивного макроса by ACi8 oct'05
+mstack=#C000
+        MACRO push
+mstack=mstack-2
+        ORG mstack
+        DW \0
+        ENDM
+
+        MACRO pop
+\0={mstack}
+mstack=mstack+2
+        ENDM
+
+        MACRO fibo
+a=\0
+       IF0 \0-2<1&1
+        fibo \0-1
+        push a
+        fibo \0-2
+        pop x
+a=a+x
+       ENDIF
+        ENDM
+
+        fibo 6
+        DISPLAY a
+        fibo 5
+        DISPLAY a
+        fibo 4
+        DISPLAY a
+        fibo 3
+        DISPLAY a
+        fibo 2
+        DISPLAY a
+        fibo 1
+        DISPLAY a
+        fibo 0
+        DISPLAY a
+

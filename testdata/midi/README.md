@@ -28,6 +28,8 @@ Ogg-compressed samples). **DXB/B16** = Dream soundbank binaries for DreamBlaster
 
 Folder: `generaluser-gs/` | Version: 2.0.3 (2026-02-22), repository commit 684543d
 
+The product copy (the same file, byte for byte) lives in `data/midi/generaluser-gs.sf2` with its license and README.
+
 License (as stated by the author): GeneralUser GS License v2.0 (`LICENSE.txt`): use without restriction for private or commercial music; may be used, modified and repackaged in software projects. Samples carry the rights of their (freely available) sources.
 
 Note: GM + Roland GS; 261 presets, 13 drum kits; 30.8 MB file, 30.7 MB RAM. Detailed programming, relies on a standards-compliant SF2 synth. Also contains the author's demo MIDIs (`demo-midis/`).

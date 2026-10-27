@@ -483,6 +483,50 @@ TEST(Saa1099_Test, ClockGateFreezes)
     EXPECT_EQ(b.Report().chipClocks, before.chipClocks + 16000);
 }
 
+/// MS-7 (LnxTracker Demo on the ZX-MultiSound): the player writes #FE / #FF every frame, which stops the SAA clock,
+/// and keeps writing the SAA registers. With the clock stopped the output holds its last level (tdd-saa1099 "Clock
+/// gate": what stopping SAA_CLK does on the card) - register writes are latched, but no amplitude, mixer or sound
+/// enable write steps the output until the clock runs again. Before the fix every write re-evaluated the output and
+/// the stopped chip played its amplitude writes as steps (an audible 3-7 Hz "tune" where the card is silent)
+TEST(Saa1099_Test, ClockGateHoldsOutputAcrossRegisterWrites)
+{
+    for (const Saa1099RenderMode mode : {Saa1099RenderMode::HiFi, Saa1099RenderMode::Authentic})
+    {
+        Bench b(mode, 3500000);
+        b.chip.SetClockEnabled(b.t, false); // the card's reset state: SAA clock off
+        std::vector<int16_t> frame(882 * 2);
+        b.chip.EndFrame(b.t, frame.data(), 882);
+        const int32_t held = b.chip.OutputLeft();
+        for (int i = 0; i < 16; i++)
+        {
+            b.Reg(0x14, 0x3F);                                   // every tone on
+            b.Reg(0x1C, 0x01);                                   // sound enabled
+            b.Reg(static_cast<uint8_t>(i % 6), static_cast<uint8_t>(i * 0x11)); // amplitudes
+            b.Run(4000);
+        }
+        b.chip.EndFrame(b.t, frame.data(), 882);
+        EXPECT_EQ(b.chip.OutputLeft(), held) << "held while the clock is stopped";
+        EXPECT_EQ(b.chip.OutputRight(), b.chip.OutputLeft());
+        for (size_t i = 2; i < frame.size(); i += 2)
+            ASSERT_LE(std::abs(frame[i] - frame[i - 2]), 2) << i;
+        EXPECT_EQ(b.Report().registers[0x1C], 0x01) << "the writes themselves are latched";
+
+        // A checkpoint while stopped, after the writes: a restore gives the held level, not the latched registers'
+        std::vector<uint8_t> blob(b.chip.TTDStateSize());
+        b.chip.TTDSaveState(blob.data());
+        Bench r(mode, 3500000);
+        r.chip.TTDLoadState(blob.data());
+        EXPECT_EQ(r.chip.OutputLeft(), held);
+        EXPECT_EQ(r.chip.TTDHashState(), b.chip.TTDHashState());
+
+        // The clock runs again: the output follows the latched registers at once
+        b.chip.SetClockEnabled(b.t, true);
+        b.Run(7000);
+        if (mode == Saa1099RenderMode::HiFi) // Authentic: one PDM slot, which may be 0 at this instant
+            EXPECT_GT(b.chip.OutputLeft() + b.chip.OutputRight(), held) << "amplitudes, tones and sound enable act";
+    }
+}
+
 TEST(Saa1099_Test, OutputRateChangeKeepsState)
 {
     Bench b(Saa1099RenderMode::HiFi, 3500000);

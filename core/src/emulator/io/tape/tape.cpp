@@ -10,7 +10,8 @@
 #include "loaders/tape/loader_tape.h"
 #include "stdafx.h"
 #include <cstring>
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
+#include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks (Item 6 markers)
+#include "debugger/ttd/ttdexternalevents.h"
 
 /// region <Constructors / destructors>
 
@@ -38,8 +39,8 @@ void Tape::startTape()
     // No-op unless the TTD session is Recording - same guard as
     // RecordInputEvent. The CLI / WebAPI handlers pause the emulator
     // before calling startTape, so frame_counter and z80.t are stable.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape play");
 
     _playbackFrozen = false;
@@ -53,8 +54,8 @@ void Tape::startTape()
 void Tape::stopTape()
 {
     // Phase 2 Item 6 - see startTape() for rationale.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape stop");
 
     _tapeStarted = false;
@@ -89,8 +90,8 @@ void Tape::stopPlayback()
     // Phase 2 Item 6 - same replay fencing as stopTape(): the playback region
     // itself is wall-clock driven (nondeterministic), so a stop boundary must
     // remain a SeekTo barrier.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape stop");
 
     // A stop never consumes a partly played block (nonstandard-loader
@@ -127,8 +128,8 @@ void Tape::pausePlayback()
 
     // Same replay fencing as stopPlayback(): a pause boundary is still a
     // wall-clock-driven playback boundary for SeekTo.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape pause");
 
     MLOGINFO("Tape paused at block %zu, pulse %zu (no loader listening)",
@@ -168,8 +169,8 @@ void Tape::ResumePlaybackAfterPoll()
         return;
     }
 
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape play");
 
     // Same flag set as startTape(), but position and last level survive
@@ -452,11 +453,11 @@ bool Tape::SeekToBlock(size_t index)
 
     // TTD (design §11): seek is a position-changing tape-control command —
     // same invalidation class as rewind. The marker carries the target.
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         char reason[32];
         snprintf(reason, sizeof(reason), "tape seek %zu", index);
-        _context->pTimeTravelManager->RecordExternalEvent(
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, reason);
     }
 
@@ -515,8 +516,8 @@ void Tape::ResumePlaybackFromPause()
         return;
     }
 
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape resume");
 
     // Same flags startTape() sets; position and last EAR level survive, so
@@ -559,8 +560,8 @@ void Tape::reset()
     // Phase 2 Item 6 - only record a rewind marker when reset() actually
     // changes tape state mid-session. A no-op reset (constructor, system
     // reset before any session) must not pollute the journal.
-    if (wasStarted && _context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (wasStarted && _context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape rewind");
 
 };
@@ -627,20 +628,31 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
 
         /// region <Idle EAR level>
 
-        // No playback: the EAR input idles HIGH - the line is not driven low
-        // until the first edge of a real tape pulse arrives (on hardware the
-        // input is pulled up; UnrealSpeccy models the idle level as
-        // tape_bit() = -1, all bits set). Firmware EAR tests depend on this:
-        // the ProfROM monitor's tape-port check reads #FFBE and treats
-        // bit 6 = 0 as "no signal" (error #61), so a low idle level wedged its
-        // input polling forever. This also holds with NO tape image loaded:
-        // the monitor's boot/NMI path polls the tape port with no tape present
-        // (2026-09-10: the no-tape EAR-LOW exception kept for the z80test CRC
-        // snapshot re-wedged it; the z80test golden CRCs of the port-reading
-        // vectors were regenerated for the HIGH idle level instead).
-        // Deterministic by design - a random idle level would turn firmware
-        // timing into a lottery
-        result = 0b0100'0000;
+        // No playback: the level depends on the board. Deterministic by
+        // design - a random idle level would turn firmware timing into a lottery.
+        // - Ferranti ULA (48K / 128K / +2), issue 3: the EAR output feeds back
+        //   into the input, bit 6 follows bit 4 of the last #FE write. z80test's
+        //   hardware CRCs of the IN tests (z80full: IN A,(N) .. INDR->NOP')
+        //   are taken this way, with bit 4 = 0.
+        // - Every other board: LOW with no tape image (z80full passes as on the
+        //   48K), HIGH once an image is loaded - the line is not driven low
+        //   until the first edge of a real tape pulse arrives. No clone feeds
+        //   the output back: on the Scorpion the tape input is a self-biased
+        //   CD4069 amplifier with no pull-up, its idle level set by no part.
+        //   The ProfROM's #FFBE reads are the SMUC IDE status (bit 6 = DRDY,
+        //   error #61 = DRDY timeout), not the tape port.
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+            case MM_SPECTRUM128:
+            case MM_PLUS2:
+            case MM_NEXT:
+                result = (prevPortValue & 0b0001'0000) ? 0b0100'0000 : 0;
+                break;
+            default:
+                result = _imageLoadedPath.empty() ? 0 : 0b0100'0000;
+                break;
+        }
 
         /// endregion </Idle EAR level>
 
@@ -742,11 +754,8 @@ void Tape::handleFrameStart()
     }
 }
 
-void Tape::handleStep()
+void Tape::handleStepPlaying()
 {
-    if (!_tapeStarted)
-        return;
-
     Z80& cpu = *_context->pCore->GetZ80();
     const uint32_t tState = cpu.t;
     uint64_t clockCount = ClockCount();
@@ -894,8 +903,8 @@ bool Tape::IsListeningRead(TapeReadKind kind, uint64_t clockCount)
 void Tape::ParkAtNextBlock()
 {
     // Same replay fencing as pausePlayback()
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape park");
 
     _currentTapeBlockIndex++;
@@ -1069,6 +1078,11 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tS
     // Signal half-periods come from the shared pure generator (tapepulsegen —
     // tape-audio-bridge design §4.3); the engine-side addition is the pause
     // hold-edge the playback cursor semantics rely on (1 ms == 3500 T-states).
+    // The edges replace any earlier ones: a block restarted at its first pulse
+    // (StartPlaybackAtCursor, from both WebAPI play and the ROM anchor at #0564)
+    // is generated again, and appending played it twice - the header replayed
+    // where LD-BYTES expected the data block
+    tapeBlock.edgePulseTimings.clear();
     uint64_t signalTotal = TapePulseGen::GenerateHalfPeriods(tapeBlock.data,
                                                              pilotHalfPeriod_tStates, synchro1_tStates, synchro2_tStates,
                                                              zeroEncodingHalfPeriod_tState, oneEncodingHalfPeriod_tStates,

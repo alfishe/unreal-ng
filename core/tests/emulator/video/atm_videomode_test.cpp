@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/video/atm/atmfont.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/zx/screenzx.h"
@@ -30,17 +31,7 @@ protected:
 
     void TearDown() override
     {
-        if (_cpu != nullptr)
-        {
-            delete _cpu;
-            _cpu = nullptr;
-        }
-
-        if (_context != nullptr)
-        {
-            delete _context;
-            _context = nullptr;
-        }
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     void SetATMModel()
@@ -62,7 +53,7 @@ protected:
         // mode 3: ZX Standard (FF77_ZX)
         // mode 6: Text 80x25 (FF77_TX)
         _context->emulatorState.pFF77 = (mode & 0x07) | 0x20; // bit 5 = INT gate
-        _context->emulatorState.aFF77 = 0x0100; // PEN=1 to enable ATM paging
+        _context->emulatorState.atm.aFF77 = 0x0100; // PEN=1 to enable ATM paging
     }
 };
 
@@ -178,8 +169,8 @@ TEST_F(ATMVideoMode_Test, DrawCallbackArrayHasCorrectSize)
     // array despite the name - the real guard is the static_assert on
     // videoModeName in screen.cpp, which fails the build on a mismatch.
     // 20 since the Scorpion merge appended M_SCORPION; 21 with the Profi hi-res mode;
-    // 22 with TS-Conf's ZX mode (M_TSZX); 23 with the Sprinter (M_SPRINTER).
-    EXPECT_EQ(M_MAX, 23);  // Update if VideoModeEnum changes
+    // 22 with TS-Conf's ZX mode (M_TSZX); 23 with the Sprinter (M_SPRINTER); 24 with the Next (M_NEXT).
+    EXPECT_EQ(M_MAX, 24);  // Update if VideoModeEnum changes
 }
 
 /// endregion </Callback Array Tests>
@@ -259,7 +250,7 @@ TEST_F(ATMVideoMode_Test, PortFF77Write_TriggersVideoModeChange)
 
     // Start in ZX mode (mode 3 = 0x03, with INT gate = 0x20)
     _context->emulatorState.pFF77 = 0x23;  // bits 0,1 = mode 3, bit 5 = INT gate
-    _context->emulatorState.aFF77 = 0x0100;  // PEN=1
+    _context->emulatorState.atm.aFF77 = 0x0100;  // PEN=1
     _screen->InitRaster();
     // Mode 3 (FF77_ZX) stays in ZX-compatible mode (ZX48-class timing)
     EXPECT_EQ(_screen->_vid.mode, M_ZX48);
@@ -274,8 +265,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersVideoModeChange)
 {
     // Need to create a fresh context with ATM model set BEFORE Core::Init()
     // because port decoder is created during Init()
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;  // Set BEFORE Init()
@@ -316,8 +306,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersVideoModeChange)
 TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersFullModeSwitch)
 {
     // Comprehensive test: verify video mode, raster changes
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;
@@ -365,8 +354,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_NotifiesOnModeChange)
     // we verify that the notification code path exists but skip execution.
     // The notification IS sent in the real app when pEmulator is available.
 
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;
@@ -617,3 +605,44 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
 }
 
 /// endregion </ATM Renderer Tests>
+
+/// region <Raster deferral>
+
+/// A snapshot load holds InitRaster off (Screen::RasterDeferral): the ATM reset's EGA mode on the way to the
+/// snapshot's ZX mode is never set up - no 320x200 framebuffer, no timing table - and the mode the ports select at the
+/// end is applied once
+TEST_F(ATMVideoMode_Test, RasterDeferral_AppliesOnlyTheModeTheEndSelects)
+{
+    SetATMModel();
+    SetVideoMode(FF77_ZX);
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_ZX48);
+    const uint8_t* zxBuffer = _screen->GetFramebufferDescriptor().memoryBuffer;
+    const uint16_t zxWidth = _screen->GetFramebufferDescriptor().width;
+
+    {
+        Screen::RasterDeferral deferral(_screen);
+        SetVideoMode(FF77_16);
+        _screen->InitRaster();
+        EXPECT_EQ(_screen->GetVideoMode(), M_ZX48) << "the EGA mode on the way was set up";
+        SetVideoMode(FF77_ZX);
+        _screen->InitRaster();
+    }
+    EXPECT_EQ(_screen->GetVideoMode(), M_ZX48);
+    EXPECT_EQ(_screen->GetFramebufferDescriptor().memoryBuffer, zxBuffer) << "the framebuffer was built again";
+    EXPECT_EQ(_screen->GetFramebufferDescriptor().width, zxWidth);
+
+    // Nested scopes: the outer one's end applies
+    {
+        Screen::RasterDeferral outer(_screen);
+        {
+            Screen::RasterDeferral inner(_screen);
+            SetVideoMode(FF77_16);
+            _screen->InitRaster();
+        }
+        EXPECT_EQ(_screen->GetVideoMode(), M_ZX48);
+    }
+    EXPECT_EQ(_screen->GetVideoMode(), M_ATM16);
+}
+
+/// endregion </Raster deferral>

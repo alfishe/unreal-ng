@@ -53,7 +53,7 @@ the CPU reset follows.
 | Catching the load | the whole stream: every CPU memory write during loading goes to a sink, 473 720 writes; a watchdog ends a load that never reaches the count (Standard + warning). `[SPRINTER] FastStart=1` (test default) skips the stream and starts as the loader would leave the machine; an equivalence test keeps both paths identical | `PortDecoder_Sprinter::FinishLoad`, [tdd-ports-memory.md](tdd-ports-memory.md) §6 |
 | Identification | two hashes: the **full stream** (FNV-1a of the 473 720 writes, exact firmware) and the **head** (first 4 096 writes, MAME's constants reusable); lookup by full hash first, head hash as the fallback | §6.1 there |
 | Module interface | `SprinterPldConfiguration`: descriptor `{ name, fullStreamHash, headHash, streams }`, hooks 1 port decoding, 2 memory mapping, 3 video, 3b video with state (`BeamVideo`), 4 accelerator, 5 initial cells (`InitialCells`); every hook a module does not override falls through to Standard; Standard itself is a module | §6.1 there |
-| Known modules | Standard (0); Game (1) since 2026-10-03 | [game-configuration.md](game-configuration.md) |
+| Known modules | Standard (0); Game (1) since 2026-10-03; TMK (2, the extended accelerator) since 2026-10-18 | [game-configuration.md](game-configuration.md), [tmk-accelerator.md](tmk-accelerator.md) |
 | Unknown bitstream | runs as Standard, and the PLD journal and reports say so: `unknown PLD bitstream, full hash ..., head hash ..., using Standard`, `pld.selected_by` (example: LDConf's `STREAM.300/303/305`) | §6.1 there |
 | Loader timing | 142 T per byte: the Z84C15 wait generator (WCR / MWBR) is modeled | [mame-gap-analysis.md](mame-gap-analysis.md) C7 |
 | RESET button | reloads the PLD, as on the board | §7 there, gap B3 |

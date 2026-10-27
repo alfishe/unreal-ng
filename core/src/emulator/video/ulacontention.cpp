@@ -30,6 +30,19 @@ void UlaContention::SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* c
 void UlaContention::UpdateRaster(const ContentionRaster& raster)
 {
     _raster = raster;
+    RebuildDelayLut();
+}
+
+void UlaContention::RebuildDelayLut()
+{
+    const uint32_t size = _raster.screenAreaEnd >= _raster.screenAreaStart && _raster.tstatesPerLine
+                              ? _raster.screenAreaEnd - _raster.screenAreaStart + 1
+                              : 0;
+    _delayLutStorage.assign(size, 0);
+    for (uint32_t d = 0; d < size; d++)
+        _delayLutStorage[d] = ComputeContentionDelay(_raster.screenAreaStart + d);
+    _delayLut = _delayLutStorage.data();
+    _delayLutSize = size;
 }
 
 uint8_t UlaContention::GetContentionDelay() const
@@ -58,6 +71,8 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     // fetch cell and closes with the same 1 T hold after the last one, so offset 128 still waits 1 (Rak's
     // Timing Test v0.3 "contended NOP" on a real +3 and a real +2A; every emulator surveyed - Fuse, MAME,
     // BizHawk, ZXMAK2, ZEsarUX, Xpeccy - reuses the ULA's 128 T without +3-specific evidence)
+    if (_gateArray && _windowedWait)
+        return WindowedGateArrayWait(tInLine);
     const uint32_t contentionStart = _raster.screenLineAreaStart - kContentionLeadT;
     const uint32_t contentionLast = _raster.screenLineAreaEnd - kContentionLeadT + (_gateArray ? 1 : 0);
     if (tInLine < contentionStart || tInLine > contentionLast)
@@ -72,13 +87,55 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     return _gateArray ? gateArrayContentionPattern[offsetInCell] : contentionPattern[offsetInCell];
 }
 
+uint8_t UlaContention::WindowedGateArrayWait(uint32_t tInLine, bool dma) const
+{
+    // zxula.vhd 589-600: WAIT is low while the cycle's MREQ is (contended memory only, no I/O, no internal T-states) and wait_s
+    // holds, wait_s being the 128 T window of the 48K / 128K contention less one T in every 8 (hc(3:0) + 1 in 2-3). The T80 samples
+    // WAIT from T2 on, so the first sample is the T after the cycle's start, and the waits end where the window does (hc(8) = 1).
+    // On the window's grid (y = 0 at hc 0, where the 128K's 6 falls on y = 2): the 1,0,7,...,2 pattern 3 T before the ULA's, its
+    // last cell one shorter. The +3 timing's hc 0 comes 1 T later after the INT than the 128K's (zxula_timing.vhd c_int_h 126 against
+    // 128), the raster here being the 128K's. The RTL in GHDL agrees on every access (POC 036).
+    // The DMA registers WAIT on the clock's falling edge (dma.vhd wait_n_s, read in READ_4 / WRITE_4), half a T before the T80
+    // samples it: its free T of a cell is one earlier on the grid (`dma`; fitted to every byte of two 256-byte blocks, POC 036)
+    const int32_t windowStart = static_cast<int32_t>(_raster.screenLineAreaStart) - static_cast<int32_t>(kContentionLeadT) - 1;
+    const int32_t windowLength = static_cast<int32_t>(_raster.screenLineAreaEnd - _raster.screenLineAreaStart + 1);
+    const int32_t free = dma ? 0 : 1;
+    uint8_t waits = 0;
+    for (int32_t y = static_cast<int32_t>(tInLine) - windowStart + 1; y >= 0 && y < windowLength && (y & 7) != free; y++)
+        waits++;
+    return waits;
+}
+
+uint8_t UlaContention::DmaDelayAt(uint32_t t) const
+{
+    if (!_gateArray || !_windowedWait)
+        return DelayAt(t);
+    if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)
+        return 0;
+    return WindowedGateArrayWait((t - _raster.screenAreaStart) % _raster.tstatesPerLine, true);
+}
+
+uint32_t UlaContention::LineWindowEndFrom(uint32_t t) const
+{
+    const uint32_t perLine = _raster.tstatesPerLine;
+    if (!perLine || _raster.screenLineAreaStart < kContentionLeadT)
+        return t;
+    const uint32_t windowStart = _raster.screenLineAreaStart - kContentionLeadT;
+    const uint32_t windowLength = _raster.screenLineAreaEnd - _raster.screenLineAreaStart + 1;
+    // The lines are counted from the first paper line's start, as ComputeContentionDelay counts them
+    const uint32_t tInLine = (t % perLine + perLine - _raster.screenAreaStart % perLine) % perLine;
+    if (tInLine < windowStart || tInLine >= windowStart + windowLength)
+        return t;
+    return t + (windowStart + windowLength - tInLine);
+}
+
 uint8_t UlaContention::IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) const
 {
     // The +2A/+3 gate array contends memory cycles only, never I/O
     if (!_contentionEnabled || _gateArray)
         return 0;
     // C:1 when the high byte addresses contended memory, N:1 otherwise
-    return _slotContended[port >> 14] ? ComputeContentionDelay(cycleStartT) : 0;
+    return _slotContended[port >> 13] ? ComputeContentionDelay(cycleStartT) : 0;
 }
 
 uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
@@ -90,8 +147,12 @@ uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
     if ((port & 0x0001) == 0)
         return ComputeContentionDelay(iorqT);
 
+    // The Next: the odd ports that contend (#7FFD, ULA+) have the same pattern as a ULA port
+    if (_oddPortRule && _oddPortRule(_oddPortOwner, port))
+        return ComputeContentionDelay(iorqT);
+
     // Only the high byte contended: C:1, C:1, C:1 - a wait before each of the remaining T-states
-    if (_slotContended[port >> 14])
+    if (_slotContended[port >> 13])
     {
         uint32_t t = iorqT;
         uint32_t waits = 0;
@@ -128,8 +189,12 @@ uint8_t UlaContention::GetGateArrayFloatingBus(uint16_t port) const
         return 0xFF;  // paging locked: the gate array stops driving the bus
 
     uint8_t value = 0xFF;
-    if (!FetchedByte(value))
+    const bool video = FetchedByte(value);
+    if (!video)
         value = _lastContendedByte;
+    // zxula.vhd o_ula_floating_bus: on the Next bit 0 is forced only on the video byte, the last contended byte comes as is
+    if (_context && _context->config.mem_model == MM_NEXT && !video)
+        return value;
     return static_cast<uint8_t>(value | 0x01);
 }
 

@@ -1,0 +1,1142 @@
+From 64c2e29a42d960f9ca14982d06f8c8ddedb4a3c2 Mon Sep 17 00:00:00 2001
+From: Ilia Sharin <isharin@gmail.com>
+Date: Wed, 7 Oct 2026 09:12:34 -0400
+Subject: [PATCH 1/5] proto(sound): one multi-stream FIR pass + SIMD kernels
+ for the channel decimators
+
+FilterDecimator::getOutputs evaluates decimators that share an output
+instant and a coefficient row pair in one pass over the taps
+(DecimatorDot: NEON / SSE2 kernels with a scalar fallback). The history
+ring is stored newest-first so the taps load forward. Every kernel keeps
+the original summation order and the compilers' multiply-add contraction
+rule, so the output is bit-identical (DecimatorDot_Test, golden digests,
+the A/B renders of the quality harness).
+
+Users: Ym2203Pair::renderChannels (ZX-MultiSound, 8 streams), the TSFM
+board (6), the TurboSound / AY device (4).
+
+Ym2203PairQuality_Test (DISABLED_ tools): trace capture of real tunes and
+synthetic worst cases, renders for the A/B comparison.
+
+Prototype, docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md
+---
+ core/src/common/sound/filters/decimatordot.h  | 232 ++++++++++
+ .../common/sound/filters/filter_decimator.h   | 117 +++--
+ .../sound/chips/soundchip_turbosound.cpp      |  13 +-
+ .../sound/chips/soundchip_turbosoundfm.cpp    |  19 +-
+ .../emulator/sound/chips/tsfm/ym2203pair.cpp  |  39 +-
+ core/tests/common/decimatordot_test.cpp       | 161 +++++++
+ .../sound/tsfm/ym2203pairquality_test.cpp     | 422 ++++++++++++++++++
+ 7 files changed, 934 insertions(+), 69 deletions(-)
+ create mode 100644 core/src/common/sound/filters/decimatordot.h
+ create mode 100644 core/tests/common/decimatordot_test.cpp
+ create mode 100644 core/tests/emulator/sound/tsfm/ym2203pairquality_test.cpp
+
+diff --git a/core/src/common/sound/filters/decimatordot.h b/core/src/common/sound/filters/decimatordot.h
+new file mode 100644
+index 000000000..1a97736cd
+--- /dev/null
++++ b/core/src/common/sound/filters/decimatordot.h
+@@ -0,0 +1,232 @@
++#pragma once
++
++#include <cmath>
++#include <cstddef>
++
++#if defined(DECIMATOR_DOT_FORCE_SCALAR)
++// The scalar fallback on any target (A/B builds, tests of the fallback)
++#elif defined(__SSE2__) || defined(_M_AMD64) || defined(_M_X64)
++#if defined(__FMA__) && !defined(_MSC_VER)
++#include <immintrin.h>
++#else
++#include <emmintrin.h>
++#endif
++#define DECIMATOR_DOT_SSE2 1
++#elif defined(__aarch64__) || defined(_M_ARM64)
++#if defined(_MSC_VER) && !defined(__clang__)
++#include <arm64_neon.h>
++#else
++#include <arm_neon.h>
++#endif
++#define DECIMATOR_DOT_NEON 1
++#endif
++
++/// @file decimatordot.h
++/// @brief The dot products of FilterDecimator::getOutput / getOutputs: K input streams against one pair of
++/// coefficient rows (the two tabulated phases the output instant falls between).
++///
++/// Every stream keeps the summation order of the original scalar loop: four interleaved accumulators per row
++/// (accumulator j sums the taps i with i % 4 == j, in increasing i), the taps past the last group of four go to
++/// accumulator 0, the result is (acc0 + acc1) + (acc2 + acc3). The SIMD kernels hold accumulators (0, 1) and (2, 3)
++/// in two 2-lane registers, which is that same order lane by lane, so every kernel returns the same bits as the
++/// scalar one. The multiply-add is fused or not by one rule for every kernel (kFused), the rule the compilers apply
++/// to the original `acc += s * c` in their default modes: GCC and clang contract it to one fused multiply-add where
++/// the target has one (aarch64; x86-64 with -mfma / -march=x86-64-v3), MSVC never does. So the kernels return the
++/// historical bits in the default builds and agree with each other under any flags (-ffp-contract=off included).
++/// DecimatorDot_Test checks scalar == SIMD bit for bit.
++///
++/// Several streams share the coefficient loads of one pass over the taps (the YM2203 pair evaluates eight
++/// decimators at one output instant): more independent accumulator chains, fewer loads per multiply-add.
++///
++/// x[k] points at stream k's newest tap; tap i is x[k][i] (FilterDecimator stores its history newest-first).
++namespace DecimatorDot
++{
++/// The multiply-add rule (see above)
++#if !defined(_MSC_VER) && (defined(__aarch64__) || defined(__FMA__))
++constexpr bool kFused = true;
++#else
++constexpr bool kFused = false;
++#endif
++
++inline double MultiplyAdd(double acc, double s, double c)
++{
++    if constexpr (kFused)
++        return std::fma(s, c, acc);
++    else
++        return acc + s * c;
++}
++
++/// Streams one kernel call handles (registers: K streams x 4 accumulators + 4 coefficient registers)
++#if defined(DECIMATOR_DOT_NEON)
++constexpr size_t kMaxStreams = 4;   // 32 vector registers
++#else
++constexpr size_t kMaxStreams = 2;   // 16 xmm registers on x86-64; the scalar fallback
++#endif
++
++template <size_t K>
++inline void Scalar(const double* const* x, const double* a, const double* b, size_t length, double* ya, double* yb)
++{
++    double a0[K], a1[K], a2[K], a3[K], b0[K], b1[K], b2[K], b3[K];
++    for (size_t k = 0; k < K; k++)
++        a0[k] = a1[k] = a2[k] = a3[k] = b0[k] = b1[k] = b2[k] = b3[k] = 0.0;
++    size_t i = 0;
++    for (; i + 3 < length; i += 4)
++    {
++        for (size_t k = 0; k < K; k++)
++        {
++            const double s0 = x[k][i];
++            const double s1 = x[k][i + 1];
++            const double s2 = x[k][i + 2];
++            const double s3 = x[k][i + 3];
++            a0[k] = MultiplyAdd(a0[k], s0, a[i]);
++            a1[k] = MultiplyAdd(a1[k], s1, a[i + 1]);
++            a2[k] = MultiplyAdd(a2[k], s2, a[i + 2]);
++            a3[k] = MultiplyAdd(a3[k], s3, a[i + 3]);
++            b0[k] = MultiplyAdd(b0[k], s0, b[i]);
++            b1[k] = MultiplyAdd(b1[k], s1, b[i + 1]);
++            b2[k] = MultiplyAdd(b2[k], s2, b[i + 2]);
++            b3[k] = MultiplyAdd(b3[k], s3, b[i + 3]);
++        }
++    }
++    for (size_t k = 0; k < K; k++)
++    {
++        for (size_t j = i; j < length; j++)
++        {
++            const double s0 = x[k][j];
++            a0[k] = MultiplyAdd(a0[k], s0, a[j]);
++            b0[k] = MultiplyAdd(b0[k], s0, b[j]);
++        }
++        ya[k] = (a0[k] + a1[k]) + (a2[k] + a3[k]);
++        yb[k] = (b0[k] + b1[k]) + (b2[k] + b3[k]);
++    }
++}
++
++#if defined(DECIMATOR_DOT_NEON)
++inline float64x2_t MultiplyAdd(float64x2_t acc, float64x2_t s, float64x2_t c)
++{
++    if constexpr (kFused)
++        return vfmaq_f64(acc, s, c);
++    else
++        return vaddq_f64(acc, vmulq_f64(s, c));
++}
++
++template <size_t K>
++inline void Simd(const double* const* x, const double* a, const double* b, size_t length, double* ya, double* yb)
++{
++    float64x2_t accA01[K], accA23[K], accB01[K], accB23[K];
++    for (size_t k = 0; k < K; k++)
++        accA01[k] = accA23[k] = accB01[k] = accB23[k] = vdupq_n_f64(0.0);
++    size_t i = 0;
++    for (; i + 3 < length; i += 4)
++    {
++        const float64x2_t ca01 = vld1q_f64(a + i);
++        const float64x2_t ca23 = vld1q_f64(a + i + 2);
++        const float64x2_t cb01 = vld1q_f64(b + i);
++        const float64x2_t cb23 = vld1q_f64(b + i + 2);
++        for (size_t k = 0; k < K; k++)
++        {
++            const float64x2_t s01 = vld1q_f64(x[k] + i);
++            const float64x2_t s23 = vld1q_f64(x[k] + i + 2);
++            accA01[k] = MultiplyAdd(accA01[k], s01, ca01);
++            accA23[k] = MultiplyAdd(accA23[k], s23, ca23);
++            accB01[k] = MultiplyAdd(accB01[k], s01, cb01);
++            accB23[k] = MultiplyAdd(accB23[k], s23, cb23);
++        }
++    }
++    for (size_t k = 0; k < K; k++)
++    {
++        double a0 = vgetq_lane_f64(accA01[k], 0);
++        double b0 = vgetq_lane_f64(accB01[k], 0);
++        for (size_t j = i; j < length; j++)
++        {
++            const double s0 = x[k][j];
++            a0 = MultiplyAdd(a0, s0, a[j]);
++            b0 = MultiplyAdd(b0, s0, b[j]);
++        }
++        ya[k] = (a0 + vgetq_lane_f64(accA01[k], 1)) + (vgetq_lane_f64(accA23[k], 0) + vgetq_lane_f64(accA23[k], 1));
++        yb[k] = (b0 + vgetq_lane_f64(accB01[k], 1)) + (vgetq_lane_f64(accB23[k], 0) + vgetq_lane_f64(accB23[k], 1));
++    }
++}
++#elif defined(DECIMATOR_DOT_SSE2)
++inline __m128d MultiplyAdd(__m128d acc, __m128d s, __m128d c)
++{
++#if defined(__FMA__) && !defined(_MSC_VER)
++    return _mm_fmadd_pd(s, c, acc);
++#else
++    return _mm_add_pd(acc, _mm_mul_pd(s, c));
++#endif
++}
++inline double Low(__m128d v) { return _mm_cvtsd_f64(v); }
++inline double High(__m128d v) { return _mm_cvtsd_f64(_mm_unpackhi_pd(v, v)); }
++
++template <size_t K>
++inline void Simd(const double* const* x, const double* a, const double* b, size_t length, double* ya, double* yb)
++{
++    __m128d accA01[K], accA23[K], accB01[K], accB23[K];
++    for (size_t k = 0; k < K; k++)
++        accA01[k] = accA23[k] = accB01[k] = accB23[k] = _mm_setzero_pd();
++    size_t i = 0;
++    for (; i + 3 < length; i += 4)
++    {
++        const __m128d ca01 = _mm_loadu_pd(a + i);
++        const __m128d ca23 = _mm_loadu_pd(a + i + 2);
++        const __m128d cb01 = _mm_loadu_pd(b + i);
++        const __m128d cb23 = _mm_loadu_pd(b + i + 2);
++        for (size_t k = 0; k < K; k++)
++        {
++            const __m128d s01 = _mm_loadu_pd(x[k] + i);
++            const __m128d s23 = _mm_loadu_pd(x[k] + i + 2);
++            accA01[k] = MultiplyAdd(accA01[k], s01, ca01);
++            accA23[k] = MultiplyAdd(accA23[k], s23, ca23);
++            accB01[k] = MultiplyAdd(accB01[k], s01, cb01);
++            accB23[k] = MultiplyAdd(accB23[k], s23, cb23);
++        }
++    }
++    for (size_t k = 0; k < K; k++)
++    {
++        double a0 = Low(accA01[k]);
++        double b0 = Low(accB01[k]);
++        for (size_t j = i; j < length; j++)
++        {
++            const double s0 = x[k][j];
++            a0 = MultiplyAdd(a0, s0, a[j]);
++            b0 = MultiplyAdd(b0, s0, b[j]);
++        }
++        ya[k] = (a0 + High(accA01[k])) + (Low(accA23[k]) + High(accA23[k]));
++        yb[k] = (b0 + High(accB01[k])) + (Low(accB23[k]) + High(accB23[k]));
++    }
++}
++#else
++// SIMD-CANDIDATE(fir-decimator-dot): no SIMD kernel for this target; the scalar loop is the reference order
++template <size_t K>
++inline void Simd(const double* const* x, const double* a, const double* b, size_t length, double* ya, double* yb)
++{
++    Scalar<K>(x, a, b, length, ya, yb);
++}
++#endif
++
++/// `count` streams (any number) against one pair of rows: kernel calls of up to kMaxStreams streams
++inline void Rows(const double* const* x, size_t count, const double* a, const double* b, size_t length, double* ya,
++                 double* yb)
++{
++    size_t k = 0;
++    for (; k + kMaxStreams <= count; k += kMaxStreams)
++        Simd<kMaxStreams>(x + k, a, b, length, ya + k, yb + k);
++    switch (count - k)
++    {
++        case 1:
++            Simd<1>(x + k, a, b, length, ya + k, yb + k);
++            break;
++#if defined(DECIMATOR_DOT_NEON)
++        case 2:
++            Simd<2>(x + k, a, b, length, ya + k, yb + k);
++            break;
++        case 3:
++            Simd<3>(x + k, a, b, length, ya + k, yb + k);
++            break;
++#endif
++        default:
++            break;
++    }
++}
++}  // namespace DecimatorDot
+diff --git a/core/src/common/sound/filters/filter_decimator.h b/core/src/common/sound/filters/filter_decimator.h
+index c4e5a4788..8eb3e8a7f 100644
+--- a/core/src/common/sound/filters/filter_decimator.h
++++ b/core/src/common/sound/filters/filter_decimator.h
+@@ -9,6 +9,7 @@
+ #include <tuple>
+ #include <vector>
+ 
++#include "decimatordot.h"
+ #include "fir_designer.h"
+ 
+ /// Polyphase FIR decimator for AY native clock rendering
+@@ -85,12 +86,14 @@ private:
+     /// standalone. Cleared by configure() — re-attach after a redesign.
+     const FilterDecimator* _master = nullptr;
+ 
+-    // History ring, mirrored: every sample is stored at i and at i + HISTORY,
+-    // so the taps of getOutput() read one contiguous run backwards from any
+-    // start without a wrap check per tap (the same values in the same order,
+-    // bit-identical output - it only removes the per-tap branch/modulo)
++    // History ring, newest first and mirrored: a sample is written below the
++    // previous one (the index counts down) and stored at i and at i + HISTORY,
++    // so the taps of getOutput() - newest first - read one contiguous run
++    // forwards from any start without a wrap check per tap (the same values in
++    // the same order, bit-identical output). Forwards: the SIMD kernels load
++    // two taps per register in tap order (DecimatorDot)
+     double _buffer[2 * HISTORY];
+-    size_t _bufferIndex;
++    size_t _bufferIndex;   // the newest sample
+     double _phase;
+ 
+     static std::shared_ptr<const PhaseTable> phaseTableFor(size_t taps, double fc, double inputRate, double beta)
+@@ -247,9 +250,9 @@ public:
+     /// sample joins the history ring; the master owns the output cadence.
+     void feedSample(double sample)
+     {
++        _bufferIndex = (_bufferIndex == 0) ? HISTORY - 1 : _bufferIndex - 1;
+         _buffer[_bufferIndex] = sample;
+         _buffer[_bufferIndex + HISTORY] = sample;
+-        _bufferIndex = (_bufferIndex + 1) % HISTORY;
+         if (!_master)
+             _phase += 1.0;
+     }
+@@ -266,6 +269,63 @@ public:
+     /// the instant from its master (scaled to its own input rate), whether
+     /// the master has already produced this output or not.
+     double getOutput()
++    {
++        const Instant in = takeInstant();
++        const double* x = &_buffer[_bufferIndex + in.whole];
++        double ya;
++        double yb;
++        DecimatorDot::Rows(&x, 1, in.a, in.b, _table->rowLength, &ya, &yb);
++        return ya + in.t * (yb - ya);
++    }
++
++    /// getOutput() of `count` decimators at one output instant, out[k] for decimators[k] - the same bits as calling
++    /// getOutput() on each in this order. Decimators whose instant falls on the same pair of coefficient rows (one
++    /// design, the same phase: the slaves of one master at its rate, standalone decimators fed in lockstep) share
++    /// one pass over the taps (DecimatorDot: the coefficient loads, independent accumulator chains). Neighbours in
++    /// the list group, so list such decimators next to each other
++    static void getOutputs(FilterDecimator* const* decimators, size_t count, double* out)
++    {
++        constexpr size_t kChunk = 8;
++        Instant in[kChunk];
++        const double* x[kChunk];
++        double ya[kChunk];
++        double yb[kChunk];
++        for (size_t base = 0; base < count; base += kChunk)
++        {
++            const size_t n = std::min(kChunk, count - base);
++            for (size_t k = 0; k < n; k++)
++            {
++                FilterDecimator& d = *decimators[base + k];
++                in[k] = d.takeInstant();
++                x[k] = &d._buffer[d._bufferIndex + in[k].whole];
++            }
++            for (size_t first = 0; first < n;)
++            {
++                size_t last = first + 1;
++                while (last < n && in[last].a == in[first].a && in[last].t == in[first].t)
++                    last++;
++                DecimatorDot::Rows(&x[first], last - first, in[first].a, in[first].b,
++                                   decimators[base + first]->_table->rowLength, &ya[first], &yb[first]);
++                for (size_t k = first; k < last; k++)
++                    out[base + k] = ya[k] + in[k].t * (yb[k] - ya[k]);
++                first = last;
++            }
++        }
++    }
++
++private:
++    /// Where an output falls: the two coefficient rows around the instant, the weight between them and how many
++    /// whole input samples back from the newest one it lies
++    struct Instant
++    {
++        const double* a;
++        const double* b;
++        double t;
++        size_t whole;
++    };
++
++    /// The output instant of the getOutput() due now (a standalone or master decimator consumes its phase)
++    Instant takeInstant()
+     {
+         double delay;  // input samples back from the newest one
+         if (_master)
+@@ -301,49 +361,10 @@ public:
+             t = 1.0;
+         }
+ 
++        // Taps newest first from the output instant: the run starting `whole` samples behind the newest one
++        // (length <= MAX_TAPS + 1 and whole <= MAX_DELAY keep it inside the mirrored ring)
+         const size_t length = _table->rowLength;
+         const double* a = &_table->rows[row * length];
+-        const double* b = a + length;
+-        double ya = 0.0;
+-        double yb = 0.0;
+-        // Newest-first taps: the sample just before `start`, then backwards.
+-        // In the mirrored ring that is one contiguous run ending at
+-        // start + HISTORY - 1 (length <= MAX_TAPS < HISTORY keeps it in range).
+-        // Four interleaved accumulators per dot product: independent chains the
+-        // compiler can pipeline/vectorize (a single running sum is one serial
+-        // dependency chain under strict FP). Deterministic - the summation
+-        // order is fixed - but not bit-identical to a single-chain sum.
+-        // SIMD-CANDIDATE(fir-decimator-dot): two rows x four accumulators; the
+-        // ZX-MultiSound evaluates eight of these per output sample (frame-cost
+-        // profile 2026-10-06, docs/inprogress/2026-10-03-zx-multisound/TODO.md)
+-        const size_t start = (_bufferIndex + HISTORY - whole) % HISTORY;
+-        const double* x = &_buffer[start + HISTORY - 1];
+-        double ya0 = 0.0, ya1 = 0.0, ya2 = 0.0, ya3 = 0.0;
+-        double yb0 = 0.0, yb1 = 0.0, yb2 = 0.0, yb3 = 0.0;
+-        size_t i = 0;
+-        for (; i + 3 < length; i += 4)
+-        {
+-            const double s0 = x[-static_cast<ptrdiff_t>(i)];
+-            const double s1 = x[-static_cast<ptrdiff_t>(i + 1)];
+-            const double s2 = x[-static_cast<ptrdiff_t>(i + 2)];
+-            const double s3 = x[-static_cast<ptrdiff_t>(i + 3)];
+-            ya0 += s0 * a[i];
+-            ya1 += s1 * a[i + 1];
+-            ya2 += s2 * a[i + 2];
+-            ya3 += s3 * a[i + 3];
+-            yb0 += s0 * b[i];
+-            yb1 += s1 * b[i + 1];
+-            yb2 += s2 * b[i + 2];
+-            yb3 += s3 * b[i + 3];
+-        }
+-        for (; i < length; i++)
+-        {
+-            const double s0 = x[-static_cast<ptrdiff_t>(i)];
+-            ya0 += s0 * a[i];
+-            yb0 += s0 * b[i];
+-        }
+-        ya = (ya0 + ya1) + (ya2 + ya3);
+-        yb = (yb0 + yb1) + (yb2 + yb3);
+-        return ya + t * (yb - ya);
++        return Instant{a, a + length, t, whole};
+     }
+ };
+diff --git a/core/src/emulator/sound/chips/soundchip_turbosound.cpp b/core/src/emulator/sound/chips/soundchip_turbosound.cpp
+index d1da806b2..802acd4ae 100644
+--- a/core/src/emulator/sound/chips/soundchip_turbosound.cpp
++++ b/core/src/emulator/sound/chips/soundchip_turbosound.cpp
+@@ -313,10 +313,15 @@ void SoundChip_TurboSound::handleStep()
+                 }
+ 
+                 // Get decimated output per chip
+-                float c0L = _chip0->decimatorLeft().getOutput();
+-                float c0R = _chip0->decimatorRight().getOutput();
+-                float c1L = _chip1->decimatorLeft().getOutput();
+-                float c1R = _chip1->decimatorRight().getOutput();
++                // One pass over the taps for the four decimators fed in lockstep (FilterDecimator::getOutputs)
++                FilterDecimator* decimators[4] = {&_chip0->decimatorLeft(), &_chip0->decimatorRight(),
++                                                  &_chip1->decimatorLeft(), &_chip1->decimatorRight()};
++                double values[4];
++                FilterDecimator::getOutputs(decimators, 4, values);
++                float c0L = static_cast<float>(values[0]);
++                float c0R = static_cast<float>(values[1]);
++                float c1L = static_cast<float>(values[2]);
++                float c1R = static_cast<float>(values[3]);
+ 
+                 // Store per-chip buffers for registry-driven capture
+                 _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
+diff --git a/core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp b/core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp
+index fbb1a270a..b340d1169 100644
+--- a/core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp
++++ b/core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp
+@@ -217,12 +217,19 @@ void SoundChip_TurboSoundFM::handleStep()
+ 
+                 // Get decimated output per chip (SSG verbatim; FM slaves
+                 // follow the master's cadence, gain-scaled, §7.1)
+-                float c0L = chip0.ssg.decimatorLeft().getOutput();
+-                float c0R = chip0.ssg.decimatorRight().getOutput();
+-                float c1L = chip1.ssg.decimatorLeft().getOutput();
+-                float c1R = chip1.ssg.decimatorRight().getOutput();
+-                float f0 = static_cast<float>(chip0.out.decimator.getOutput() * _fmGain);
+-                float f1 = static_cast<float>(chip1.out.decimator.getOutput() * _fmGain);
++                // One pass per design (FilterDecimator::getOutputs): the four SSG decimators are fed in lockstep
++                // and share their rows, the two FM slaves theirs; the same order as one getOutput() each
++                FilterDecimator* decimators[6] = {&chip0.ssg.decimatorLeft(), &chip0.ssg.decimatorRight(),
++                                                  &chip1.ssg.decimatorLeft(), &chip1.ssg.decimatorRight(),
++                                                  &chip0.out.decimator,       &chip1.out.decimator};
++                double values[6];
++                FilterDecimator::getOutputs(decimators, 6, values);
++                float c0L = static_cast<float>(values[0]);
++                float c0R = static_cast<float>(values[1]);
++                float c1L = static_cast<float>(values[2]);
++                float c1R = static_cast<float>(values[3]);
++                float f0 = static_cast<float>(values[4] * _fmGain);
++                float f1 = static_cast<float>(values[5] * _fmGain);
+ 
+                 // Store per-chip buffers (SSG for registry-driven capture,
+                 // FM centre-panned, §6.4/§7.2)
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+index e9c72e771..216c70d1c 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+@@ -356,25 +356,42 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+             _renderT += 16;
+         }
+ 
+-        // Slaves first (a slave takes the output instant from the master's phase, before or after the master
+-        // consumed it alike)
++        // All eight at one output instant in one pass per design (FilterDecimator::getOutputs: the six SSG
++        // decimators share their rows, the two FM ones theirs). Slaves first, the master last (a slave takes the
++        // output instant from the master's phase, before or after the master consumed it alike)
++        FilterDecimator* decimators[8];
++        float* targets[8];
++        size_t count = 0;
+         for (int i = 0; i < 2; i++)
+         {
+-            const float fm = fmZeroRun[i] >= fmDec[i].window() ? 0.0f : static_cast<float>(fmDec[i].getOutput());
+-            if (block.fm[i])
+-                block.fm[i][n] = fm;
+             for (int ch = 0; ch < 3; ch++)
+             {
+                 if (i == 0 && ch == 0)
+                     continue;
+-                const float v = static_cast<float>(_channels->ssg[i][ch].getOutput());
+-                if (block.ssg[i][ch])
+-                    block.ssg[i][ch][n] = v;
++                decimators[count] = &_channels->ssg[i][ch];
++                targets[count++] = block.ssg[i][ch] ? &block.ssg[i][ch][n] : nullptr;
+             }
+         }
+-        const float a0 = static_cast<float>(master.getOutput());
+-        if (block.ssg[0][0])
+-            block.ssg[0][0][n] = a0;
++        decimators[count] = &master;
++        targets[count++] = block.ssg[0][0] ? &block.ssg[0][0][n] : nullptr;
++        for (int i = 0; i < 2; i++)
++        {
++            if (fmZeroRun[i] >= fmDec[i].window())
++            {
++                if (block.fm[i])
++                    block.fm[i][n] = 0.0f;
++                continue;
++            }
++            decimators[count] = &fmDec[i];
++            targets[count++] = block.fm[i] ? &block.fm[i][n] : nullptr;
++        }
++        double values[8];
++        FilterDecimator::getOutputs(decimators, count, values);
++        for (size_t k = 0; k < count; k++)
++        {
++            if (targets[k])
++                *targets[k] = static_cast<float>(values[k]);
++        }
+     }
+     return frames;
+ }
+diff --git a/core/tests/common/decimatordot_test.cpp b/core/tests/common/decimatordot_test.cpp
+new file mode 100644
+index 000000000..3a1e60bcc
+--- /dev/null
++++ b/core/tests/common/decimatordot_test.cpp
+@@ -0,0 +1,161 @@
++#include "pch.h"
++
++#include <cstdint>
++#include <cstring>
++#include <random>
++#include <vector>
++
++#include <gtest/gtest.h>
++
++#include "common/sound/filters/decimatordot.h"
++#include "common/sound/filters/filter_decimator.h"
++
++/// DecimatorDot kernels and FilterDecimator::getOutputs: every path returns the bits of the scalar reference order
++/// (docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md)
++namespace
++{
++bool SameBits(double a, double b)
++{
++    uint64_t x = 0;
++    uint64_t y = 0;
++    std::memcpy(&x, &a, 8);
++    std::memcpy(&y, &b, 8);
++    return x == y;
++}
++
++template <size_t K>
++void CheckKernel(std::mt19937_64& rng, size_t length)
++{
++    std::uniform_real_distribution<double> dist(-1.0, 1.0);
++    std::vector<double> data[K];
++    const double* x[K];
++    for (size_t k = 0; k < K; k++)
++    {
++        data[k].resize(length);
++        for (double& v : data[k])
++            v = dist(rng);
++        x[k] = data[k].data();
++    }
++    std::vector<double> a(length);
++    std::vector<double> b(length);
++    for (size_t i = 0; i < length; i++)
++    {
++        a[i] = dist(rng);
++        b[i] = dist(rng);
++    }
++    double sa[K], sb[K], va[K], vb[K];
++    DecimatorDot::Scalar<K>(x, a.data(), b.data(), length, sa, sb);
++    DecimatorDot::Simd<K>(x, a.data(), b.data(), length, va, vb);
++    for (size_t k = 0; k < K; k++)
++    {
++        EXPECT_TRUE(SameBits(sa[k], va[k])) << "K " << K << " length " << length << " stream " << k;
++        EXPECT_TRUE(SameBits(sb[k], vb[k])) << "K " << K << " length " << length << " stream " << k;
++    }
++}
++}  // namespace
++
++class DecimatorDot_Test : public ::testing::Test
++{
++};
++
++TEST_F(DecimatorDot_Test, SimdKernelReturnsTheScalarBits)
++{
++    std::mt19937_64 rng(7);
++    for (size_t length : {size_t{1}, size_t{3}, size_t{4}, size_t{5}, size_t{8}, size_t{97}, size_t{193}, size_t{385}})
++    {
++        for (int round = 0; round < 20; round++)
++        {
++            CheckKernel<1>(rng, length);
++            CheckKernel<2>(rng, length);
++            CheckKernel<3>(rng, length);
++            CheckKernel<4>(rng, length);
++        }
++    }
++}
++
++TEST_F(DecimatorDot_Test, GetOutputsReturnsTheBitsOfOneGetOutputEach)
++{
++    // The ZX-MultiSound layout: six SSG decimators at 218.75 kHz (a master and five slaves), two FM slaves at
++    // 437.5 kHz, plus a standalone pair fed in lockstep (the TSFM / TurboSound layout). Two identical sets: one
++    // evaluated by getOutput() each, the other by one getOutputs() call
++    struct Set
++    {
++        FilterDecimator ssg[6];
++        FilterDecimator fm[2];
++        FilterDecimator standalone[2];
++        Set()
++        {
++            for (int i = 0; i < 6; i++)
++            {
++                ssg[i].configure(44100.0, FilterDecimator::Quality::Reference, false, 218750.0);
++                if (i > 0)
++                    ssg[i].attachMaster(&ssg[0]);
++            }
++            for (auto& d : fm)
++            {
++                d.configure(44100.0, FilterDecimator::Quality::Reference, false, 437500.0);
++                d.attachMaster(&ssg[0]);
++            }
++            for (auto& d : standalone)
++                d.configure(44100.0, FilterDecimator::Quality::Reference, false, 218750.0);
++        }
++    };
++    Set one;
++    Set many;
++    std::mt19937_64 rng(11);
++    std::uniform_real_distribution<double> dist(-1.0, 1.0);
++    size_t compared = 0;
++    for (int n = 0; n < 3000; n++)
++    {
++        while (!one.ssg[0].hasOutput())
++        {
++            for (int half = 0; half < 2; half++)
++            {
++                for (int i = 0; i < 2; i++)
++                {
++                    const double v = dist(rng);
++                    one.fm[i].feedSample(v);
++                    many.fm[i].feedSample(v);
++                }
++            }
++            for (int i = 0; i < 6; i++)
++            {
++                const double v = (n % 7 == 0) ? 0.25 : dist(rng);   // constant stretches too
++                one.ssg[i].feedSample(v);
++                many.ssg[i].feedSample(v);
++            }
++            for (int i = 0; i < 2; i++)
++            {
++                const double v = dist(rng);
++                one.standalone[i].feedSample(v);
++                many.standalone[i].feedSample(v);
++            }
++        }
++        ASSERT_TRUE(many.ssg[0].hasOutput());
++
++        // Slaves first, the master last, as the pair renders
++        double expected[10];
++        size_t k = 0;
++        for (int i = 1; i < 6; i++)
++            expected[k++] = one.ssg[i].getOutput();
++        expected[k++] = one.ssg[0].getOutput();
++        expected[k++] = one.fm[0].getOutput();
++        expected[k++] = one.fm[1].getOutput();
++        expected[k++] = one.standalone[0].getOutput();
++        expected[k++] = one.standalone[1].getOutput();
++
++        FilterDecimator* list[10] = {&many.ssg[1], &many.ssg[2],       &many.ssg[3],       &many.ssg[4],
++                                     &many.ssg[5], &many.ssg[0],       &many.fm[0],        &many.fm[1],
++                                     &many.standalone[0], &many.standalone[1]};
++        double got[10];
++        FilterDecimator::getOutputs(list, 10, got);
++        for (size_t i = 0; i < 10; i++)
++        {
++            ASSERT_TRUE(SameBits(expected[i], got[i])) << "output " << n << " stream " << i;
++            compared++;
++        }
++        ASSERT_EQ(one.ssg[0].phase(), many.ssg[0].phase());
++        ASSERT_EQ(one.standalone[1].phase(), many.standalone[1].phase());
++    }
++    EXPECT_EQ(compared, 30000u);
++}
+diff --git a/core/tests/emulator/sound/tsfm/ym2203pairquality_test.cpp b/core/tests/emulator/sound/tsfm/ym2203pairquality_test.cpp
+new file mode 100644
+index 000000000..9f6b578b4
+--- /dev/null
++++ b/core/tests/emulator/sound/tsfm/ym2203pairquality_test.cpp
+@@ -0,0 +1,422 @@
++#include "stdafx.h"
++#include "pch.h"
++
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <memory>
++#include <string>
++#include <vector>
++
++#include <gtest/gtest.h>
++
++#include "_helpers/emulatortesthelper.h"
++#include "_helpers/soundcardscope.h"
++#include "_helpers/testpathhelper.h"
++#include "_helpers/tsfmplayerharness.h"
++#include "emulator/cpu/core.h"
++#include "emulator/cpu/z80.h"
++#include "emulator/emulator.h"
++#include "emulator/emulatorcontext.h"
++#include "emulator/sound/chips/soundchip_turbosoundfm.h"
++#include "emulator/sound/chips/tsfm/ym2203pair.h"
++
++/// YM2203 decimator prototype quality harness (docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md).
++///
++/// Tools, not checks (DISABLED_, run by name with --gtest_also_run_disabled_tests):
++///  - CaptureTraces: timed #FFFD / #BFFD writes of real tunes (tech_support.sna on a TSFM Pentagon, the TFM Music
++///    Compiler tunes of TSFM-EL.TAP) into $YMQ_DIR/traces/<name>.txt;
++///  - RenderTraces: every trace plus synthetic worst cases (constant SSG levels, fast volume writes, noise, a tone
++///    sweep) rendered through the per-channel outputs of a Ym2203Pair (the ZX-MultiSound path: 8 float streams,
++///    $YMQ_DIR/out/<name>.pair.f32, interleaved FM0 FM1 SSG0A..C SSG1A..C) and through a SoundChip_TurboSoundFM
++///    (the board path: stereo mix, chip and FM buffers, $YMQ_DIR/out/<name>.tsfm.s16).
++/// The same traces through two builds give the files the analysis compares (tools in the worktree's scratch/).
++namespace
++{
++constexpr uint64_t kFrameTicks = 71680;   // Pentagon
++
++struct TraceWrite
++{
++    uint32_t frame;
++    uint32_t t;
++    uint16_t port;    // 0xFFFD or 0xBFFD
++    uint8_t value;
++};
++
++std::filesystem::path OutDir()
++{
++    const char* dir = std::getenv("YMQ_DIR");
++    return dir ? std::filesystem::path(dir) : TestPathHelper::FindProjectRoot() / "scratch/ym-quality";
++}
++
++void SaveTrace(const std::string& name, const std::vector<TraceWrite>& writes, uint32_t frames)
++{
++    const auto dir = OutDir() / "traces";
++    std::filesystem::create_directories(dir);
++    std::ofstream f(dir / (name + ".txt"));
++    f << "frames " << frames << "\n";
++    for (const TraceWrite& w : writes)
++        f << w.frame << " " << w.t << " " << w.port << " " << unsigned(w.value) << "\n";
++}
++
++bool LoadTrace(const std::filesystem::path& path, std::vector<TraceWrite>& writes, uint32_t& frames)
++{
++    std::ifstream f(path);
++    std::string word;
++    if (!(f >> word >> frames))
++        return false;
++    TraceWrite w{};
++    unsigned port = 0;
++    unsigned value = 0;
++    while (f >> w.frame >> w.t >> port >> value)
++    {
++        w.port = static_cast<uint16_t>(port);
++        w.value = static_cast<uint8_t>(value);
++        writes.push_back(w);
++    }
++    return true;
++}
++
++/// A TS port write seen by the Z80 (partial decode as the TSFM: A15 A14 A1)
++bool TsPort(uint16_t port, uint16_t& normalized)
++{
++    if ((port & 0xC002) == 0xC000)
++        normalized = 0xFFFD;
++    else if ((port & 0xC002) == 0x8000)
++        normalized = 0xBFFD;
++    else
++        return false;
++    return true;
++}
++
++/// Synthetic worst cases, written with TSFM control words (0xFB: chip 0, FM on; 0xFA: chip 1)
++class Synth
++{
++public:
++    void Reg(uint32_t frame, uint32_t& t, uint8_t reg, uint8_t value)
++    {
++        _w.push_back({frame, t, 0xFFFD, reg});
++        _w.push_back({frame, t + 40, 0xBFFD, value});
++        t += 80;
++    }
++    void Control(uint32_t frame, uint32_t& t, uint8_t value)
++    {
++        _w.push_back({frame, t, 0xFFFD, value});
++        t += 40;
++    }
++    std::vector<TraceWrite> _w;
++};
++
++std::vector<TraceWrite> SynthConstant(uint32_t frames)
++{
++    // Tone and noise off: every channel holds its volume's level; the volumes step every 50 frames
++    Synth s;
++    for (uint32_t f = 0; f < frames; f++)
++    {
++        uint32_t t = 100;
++        if (f % 50 != 0)
++            continue;
++        for (uint8_t chip : {uint8_t{0xFB}, uint8_t{0xFA}})
++        {
++            s.Control(f, t, chip);
++            s.Reg(f, t, 7, 0x3F);
++            s.Reg(f, t, 8, static_cast<uint8_t>((f / 50 * 3) % 16));
++            s.Reg(f, t, 9, static_cast<uint8_t>((f / 50 * 5 + 7) % 16));
++            s.Reg(f, t, 10, chip == 0xFB ? 0 : 15);
++        }
++    }
++    return s._w;
++}
++
++std::vector<TraceWrite> SynthFastVolume(uint32_t frames)
++{
++    // 4-bit sample playback through the SSG volume (tone and noise off): channel A rewritten every 224 ticks
++    // (15.6 kHz) with a 1 kHz-ish triangle, channel B of chip 1 with a pseudo-random sequence
++    Synth s;
++    uint32_t lcg = 12345;
++    {
++        uint32_t t = 100;
++        s.Control(0, t, 0xFB);
++        s.Reg(0, t, 7, 0x3F);
++        s.Control(0, t, 0xFA);
++        s.Reg(0, t, 7, 0x3F);
++    }
++    for (uint32_t f = 1; f < frames; f++)
++    {
++        uint32_t n = 0;
++        for (uint32_t t = 100; t + 224 < kFrameTicks; t += 224, n++)
++        {
++            uint32_t at = t;
++            const uint32_t k = (f * 320 + n) % 16;
++            const uint8_t tri = static_cast<uint8_t>(k < 8 ? k * 2 : (15 - k) * 2);
++            s.Control(f, at, 0xFB);
++            s.Reg(f, at, 8, tri);
++            lcg = lcg * 1103515245u + 12345u;
++            s.Control(f, at, 0xFA);
++            s.Reg(f, at, 9, static_cast<uint8_t>((lcg >> 16) & 15));
++        }
++    }
++    return s._w;
++}
++
++std::vector<TraceWrite> SynthNoise(uint32_t frames)
++{
++    // Noise on all six channels at volume 15, the noise period swept 0..31
++    Synth s;
++    for (uint32_t f = 0; f < frames; f++)
++    {
++        uint32_t t = 100;
++        for (uint8_t chip : {uint8_t{0xFB}, uint8_t{0xFA}})
++        {
++            s.Control(f, t, chip);
++            if (f == 0)
++            {
++                s.Reg(f, t, 7, 0x07);    // tone off, noise on
++                s.Reg(f, t, 8, 15);
++                s.Reg(f, t, 9, 15);
++                s.Reg(f, t, 10, 15);
++            }
++            s.Reg(f, t, 6, static_cast<uint8_t>((f / 8) % 32));
++        }
++    }
++    return s._w;
++}
++
++std::vector<TraceWrite> SynthToneSweep(uint32_t frames)
++{
++    // Square tones swept from period 1 (109 kHz) to 1000 on chip 0 A, a fixed high tone (period 3) on chip 1 C,
++    // and an FM note on chip 0 (one carrier, algorithm 7) - the images above 20 kHz the decimator must remove
++    Synth s;
++    {
++        uint32_t t = 100;
++        s.Control(0, t, 0xFB);
++        s.Reg(0, t, 7, 0x3E);
++        s.Reg(0, t, 8, 15);
++        s.Reg(0, t, 0xB0, 0x07);
++        for (uint8_t op = 0; op < 4; op++)
++        {
++            s.Reg(0, t, static_cast<uint8_t>(0x30 + op * 4), 0x01);
++            s.Reg(0, t, static_cast<uint8_t>(0x40 + op * 4), op == 3 ? 0x00 : 0x7F);
++            s.Reg(0, t, static_cast<uint8_t>(0x50 + op * 4), 0x1F);
++            s.Reg(0, t, static_cast<uint8_t>(0x80 + op * 4), 0x0F);
++        }
++        s.Reg(0, t, 0xA4, 0x22);
++        s.Reg(0, t, 0xA0, 0x69);
++        s.Reg(0, t, 0x28, 0xF0);
++        s.Control(0, t, 0xFA);
++        s.Reg(0, t, 7, 0x3B);
++        s.Reg(0, t, 10, 12);
++        s.Reg(0, t, 4, 3);
++        s.Reg(0, t, 5, 0);
++    }
++    for (uint32_t f = 1; f < frames; f++)
++    {
++        uint32_t t = 100;
++        const uint32_t period = 1 + f * 999 / frames;
++        s.Control(f, t, 0xFB);
++        s.Reg(f, t, 0, static_cast<uint8_t>(period & 0xFF));
++        s.Reg(f, t, 1, static_cast<uint8_t>(period >> 8));
++    }
++    return s._w;
++}
++
++/// The ZX-MultiSound path: per-channel outputs of a Ym2203Pair on a continuous card axis (the card's own
++/// configuration), the TSFM control word (bit 0 = 0: chip 1; bit 2 set: FM off), one render per frame
++void RenderPair(EmulatorContext* context, const std::vector<TraceWrite>& writes, uint32_t frames,
++                const std::filesystem::path& out)
++{
++    Ym2203PairConfig config;
++    config.masterClockHz = 3500000;
++    config.hostTickRate = 3500000;
++    config.continuousHostAxis = true;
++    Ym2203Pair pair(context, config);
++    pair.configureChannelOutputs(44100);
++    pair.syncTo(0);
++
++    std::ofstream f(out, std::ios::binary);
++    std::vector<float> streams[8];
++    int chip = 0;
++    bool fmEnabled = true;
++    size_t index = 0;
++    uint64_t samplesAcc = 0;
++    for (uint32_t frame = 0; frame < frames; frame++)
++    {
++        const uint64_t base = uint64_t(frame) * kFrameTicks;
++        for (; index < writes.size() && writes[index].frame == frame; index++)
++        {
++            const TraceWrite& w = writes[index];
++            pair.syncTo(base + w.t);
++            if (w.port == 0xFFFD && w.value >= 0xF8)
++            {
++                chip = (w.value & 1) ? 0 : 1;
++                fmEnabled = (w.value & 4) == 0;
++            }
++            else if (w.port == 0xFFFD)
++                pair.writeAddress(chip, w.value);
++            else
++                pair.writeData(chip, w.value);
++        }
++        pair.syncTo(base + kFrameTicks);
++        samplesAcc += kFrameTicks * 44100;
++        const size_t n = static_cast<size_t>(samplesAcc / 3500000);
++        samplesAcc %= 3500000;
++        Ym2203ChannelBlock block;
++        for (auto& s : streams)
++            s.assign(n, 0.0f);
++        for (int c = 0; c < 2; c++)
++        {
++            block.fm[c] = streams[c].data();
++            for (int ch = 0; ch < 3; ch++)
++                block.ssg[c][ch] = streams[2 + c * 3 + ch].data();
++        }
++        pair.beginChannelRender(n);
++        ASSERT_EQ(pair.renderChannels(n, block, fmEnabled), n);
++        std::vector<float> inter(n * 8);
++        for (size_t k = 0; k < n; k++)
++            for (int s = 0; s < 8; s++)
++                inter[k * 8 + s] = streams[s][k];
++        f.write(reinterpret_cast<const char*>(inter.data()), static_cast<std::streamsize>(inter.size() * sizeof(float)));
++    }
++}
++
++/// The board path: a standalone SoundChip_TurboSoundFM at 44.1 kHz HQ; per frame the stereo mix, then per chip
++/// the SSG and FM buffers (each stereo int16)
++void RenderTsfm(EmulatorContext* context, const std::vector<TraceWrite>& writes, uint32_t frames,
++                const std::filesystem::path& out)
++{
++    auto device = std::make_unique<SoundChip_TurboSoundFM>(context);
++    device->setCoreRate(44100);
++    device->setHQEnabled(true);
++    Z80* z80 = context->pCore->GetZ80();
++    auto setT = [&](uint32_t t) { z80->tt = t << 8; };
++    setT(0);
++    device->reset();
++
++    std::ofstream f(out, std::ios::binary);
++    size_t index = 0;
++    for (uint32_t frame = 0; frame < frames; frame++)
++    {
++        setT(0);
++        device->handleFrameStart();
++        for (; index < writes.size() && writes[index].frame == frame; index++)
++        {
++            const TraceWrite& w = writes[index];
++            setT(w.t);
++            device->portDeviceOutMethod(w.port, w.value);
++            if ((index & 15) == 0)
++                device->handleStep();
++        }
++        setT(static_cast<uint32_t>(kFrameTicks));
++        device->handleStep();
++        device->handleFrameEnd();
++        const size_t n = device->getRenderedSamplesThisFrame() * AUDIO_CHANNELS;
++        f.write(reinterpret_cast<const char*>(device->getAudioBuffer()), static_cast<std::streamsize>(n * 2));
++        for (int c = 0; c < 2; c++)
++        {
++            f.write(reinterpret_cast<const char*>(device->getChipBuffer(c)), static_cast<std::streamsize>(n * 2));
++            f.write(reinterpret_cast<const char*>(device->getFmBuffer(c)), static_cast<std::streamsize>(n * 2));
++        }
++    }
++}
++}  // namespace
++
++class Ym2203PairQuality_Test : public ::testing::Test
++{
++};
++
++TEST_F(Ym2203PairQuality_Test, DISABLED_CaptureTraces)
++{
++    constexpr uint32_t kFrames = 1500;   // 30 s
++    std::vector<TraceWrite> writes;
++    uint32_t frame = 0;
++
++    // tech_support.sna on a Pentagon with the TSFM in the AY socket
++    {
++        SoundCardScope turboSound(TestSound::TurboSound);
++        Emulator emulator(LoggerLevel::LogError);
++        emulator.SetCustomConfigPath(EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
++        ASSERT_TRUE(emulator.Init());
++        const auto sna = TestPathHelper::FindProjectRoot() / "testdata/sound/tsfm/tech_support.sna";
++        ASSERT_TRUE(emulator.LoadSnapshot(sna.string()));
++        Z80* z80 = emulator.GetContext()->pCore->GetZ80();
++        z80->busTraceHook = [&](char type, uint16_t port, uint8_t value)
++        {
++            uint16_t p = 0;
++            if (type == 'O' && TsPort(port, p))
++                writes.push_back({frame, static_cast<uint32_t>(z80->t), p, value});
++        };
++        for (frame = 0; frame < kFrames; frame++)
++            EmulatorTestHelper::RunFramesFast(&emulator, 1);
++        z80->busTraceHook = nullptr;
++        emulator.Stop();
++        emulator.Release();
++        EXPECT_GT(writes.size(), 10000u);
++        SaveTrace("tech-support", writes, kFrames);
++    }
++
++    // TFM Music Compiler tunes (TSFM-EL.TAP), 20 s each
++    for (size_t tune = 0; tune < 3; tune++)
++    {
++        constexpr uint32_t kTuneFrames = 1000;
++        Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("PENTAGON", TurboSoundKind::FM);
++        ASSERT_NE(emulator, nullptr);
++        TsfmPlayerHarness harness;
++        std::string error;
++        ASSERT_TRUE(harness.Setup(emulator, tune, &error)) << error;
++        Z80* z80 = emulator->GetContext()->pCore->GetZ80();
++        writes.clear();
++        auto previous = z80->busTraceHook;
++        z80->busTraceHook = [&, previous](char type, uint16_t port, uint8_t value)
++        {
++            if (previous)
++                previous(type, port, value);
++            uint16_t p = 0;
++            if (type == 'O' && TsPort(port, p))
++                writes.push_back({frame, static_cast<uint32_t>(z80->t), p, value});
++        };
++        for (frame = 0; frame < kTuneFrames; frame++)
++            harness.RunFrames(1);
++        z80->busTraceHook = previous;
++        harness.Detach();
++        EmulatorTestHelper::CleanupEmulator(emulator);
++        EXPECT_GT(writes.size(), 1000u);
++        SaveTrace("tfm-el-" + std::to_string(tune), writes, kTuneFrames);
++    }
++}
++
++TEST_F(Ym2203PairQuality_Test, DISABLED_RenderTraces)
++{
++    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
++    ASSERT_NE(emulator, nullptr);
++    EmulatorContext* context = emulator->GetContext();
++
++    struct Case
++    {
++        std::string name;
++        std::vector<TraceWrite> writes;
++        uint32_t frames;
++    };
++    std::vector<Case> cases;
++    for (const auto& entry : std::filesystem::directory_iterator(OutDir() / "traces"))
++    {
++        Case c;
++        c.name = entry.path().stem().string();
++        ASSERT_TRUE(LoadTrace(entry.path(), c.writes, c.frames));
++        cases.push_back(std::move(c));
++    }
++    cases.push_back({"synth-constant", SynthConstant(500), 500});
++    cases.push_back({"synth-fastvolume", SynthFastVolume(250), 250});
++    cases.push_back({"synth-noise", SynthNoise(250), 250});
++    cases.push_back({"synth-tonesweep", SynthToneSweep(250), 250});
++
++    const auto out = OutDir() / "out";
++    std::filesystem::create_directories(out);
++    for (const Case& c : cases)
++    {
++        RenderPair(context, c.writes, c.frames, out / (c.name + ".pair.f32"));
++        RenderTsfm(context, c.writes, c.frames, out / (c.name + ".tsfm.s16"));
++    }
++    EmulatorTestHelper::CleanupEmulator(emulator);
++}
+-- 
+2.56.0
+

@@ -2,7 +2,6 @@
 /// @date 08.01.2026
 /// @brief WebAPI Snapshot control endpoints
 
-#include <debugger/ttd/timetravelmanager.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/config.h>
@@ -103,18 +102,7 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         path = content.path;
     }
 
-    // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-    {
-        Json::Value error;
-        error["error"] = "Conflict";
-        error["message"] = refusal;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
+    // A snapshot load ENDS a TTD recording session (the one rule), it is never refused by it
 
     // A file that needs another model (an SPG: TS-Conf) switches the model
     // first unless switch_model is false (body field, query parameter)
@@ -255,10 +243,9 @@ void EmulatorAPI::getSnapshotInfo(const HttpRequestPtr& req, std::function<void(
         return;
     }
 
-    auto context = emulator->GetContext();
     Json::Value ret;
 
-    std::string snapshotPath = context->coreState.snapshotFilePath;
+    std::string snapshotPath = emulator->SnapshotFilePath();
     bool isLoaded = !snapshotPath.empty();
 
     ret["status"] = isLoaded ? "loaded" : "empty";
@@ -347,15 +334,59 @@ void EmulatorAPI::saveSnapshot(const HttpRequestPtr& req, std::function<void(con
         }
     }
     
-    bool success = emulator->SaveSnapshot(path);
+    const bool success = emulator->SaveSnapshot(path);
+    const snapshot::SaveResult& saved = emulator->LastSaveResult();
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Snapshot saved successfully" : "Failed to save snapshot (check logs for details)";
+    ret["message"] = success ? "Snapshot saved successfully" : saved.text;
     ret["path"] = path;
+    if (!saved.format.empty())
+        ret["format"] = saved.format;
+    if (!saved.machine.empty())
+        ret["machine"] = saved.machine;
+    if (!success)
+    {
+        ret["reason"] = saved.reason;
+        if (!saved.needs.empty())
+            ret["needs"] = saved.needs;
+        // What the machine can be saved as now: the way out of a refusal (e.g. "save as .szx")
+        ret["formats"] = StateNodeToJson(emulator->SnapshotSaveFormats().ToStateNode());
+    }
+    if (!saved.warnings.empty())
+    {
+        ret["warnings"] = Json::arrayValue;
+        for (const std::string& warning : saved.warnings)
+            ret["warnings"].append(warning);
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/snapshot/formats
+/// @brief Which snapshot formats this machine can be saved in right now, and why not
+void EmulatorAPI::getSnapshotFormats(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret = StateNodeToJson(emulator->SnapshotSaveFormats().ToStateNode());
+    ret["status"] = "success";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -492,8 +523,8 @@ void EmulatorAPI::transferState(const HttpRequestPtr& req, std::function<void(co
             return;
         }
 
-        // TTD refuses this while recording: answer why instead of a bare failure
-        if (const std::string refusal = target->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+        // The coordinator refuses this (TTD v1 while recording): answer why instead of a bare failure, logged
+        if (const std::string refusal = target->AskModelSwitch("state from " + id); !refusal.empty())
         {
             SendError(callback, HttpStatusCode::k409Conflict, "Conflict", refusal);
             return;

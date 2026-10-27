@@ -3,11 +3,16 @@
 #include "synthhelper.h"
 #include "testfw.h"
 
-#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 using namespace sam2695;
 using namespace sam2695test;
@@ -287,9 +292,16 @@ TEST(Bank, LoadFileMatchesMemory)
     // the streaming file loader (hash pass, lists in memory, samples read in place) builds the same
     // model and identity as the memory loader, and refuses the same way
     namespace fs = std::filesystem;
-    const fs::path path = fs::temp_directory_path() /
-                          ("sam2695tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                           ".sf2");
+    // <project root>/scratch/sam2695tests-<pid>.sf2 (no clock, never the OS temp directory): the root is five levels up
+    // from this file's folder (core/src/3rdparty/sam2695/tests)
+    const fs::path scratch = (fs::path(__FILE__).parent_path() / ".." / ".." / ".." / ".." / ".." / "scratch").lexically_normal();
+    fs::create_directories(scratch);
+#ifdef _WIN32
+    const long pid = static_cast<long>(_getpid());
+#else
+    const long pid = static_cast<long>(getpid());
+#endif
+    const fs::path path = scratch / ("sam2695tests-" + std::to_string(pid) + ".sf2");
     Sf2Builder b = TwoPresetBuilder();
     BSample s = DcSample("dc24", 300, 0);
     for (int32_t& v : s.frames)

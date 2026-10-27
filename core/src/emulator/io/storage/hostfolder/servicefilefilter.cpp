@@ -57,7 +57,7 @@ const std::vector<ServiceFileFilter::Collection>& ServiceFileFilter::DefaultColl
          /*osNoise=*/true},
         {"linux", {".directory", ".Trash-*", "lost+found", "*~"}, /*osNoise=*/true},
         {"vcs", {".git", ".gitignore", ".gitattributes", ".gitmodules", ".svn", ".hg", ".hgignore"}},
-        {"unreal", {".unreal-media.yaml", ".unreal-media.json"}},
+        {"unreal", {".unreal-media.yaml", ".unreal-media.json", ".unreal-staging-*"}},
     };
     return collections;
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <QByteArray>
 #include <QDialog>
 
@@ -17,7 +19,7 @@ class DiskSectorDialog : public QDialog
     Q_OBJECT
 
 public:
-    DiskSectorDialog(Emulator* emulator, QWidget* parent = nullptr);
+    DiskSectorDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
 
 public slots:
     void load();
@@ -26,7 +28,7 @@ private slots:
     void documentChanged();
 
 private:
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     QComboBox* _drive = nullptr;
     QSpinBox* _cylinder = nullptr;
     QSpinBox* _side = nullptr;

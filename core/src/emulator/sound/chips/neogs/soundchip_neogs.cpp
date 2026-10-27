@@ -87,18 +87,23 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         if (_context && _context->pMediaManager)
             _context->pMediaManager->NoteWrite(SD_SLOT_ID);
     });
-    _spi.attach(NeoGSSpi::SD, _sd.get());
+    _sdDevice.SetInner(_sd.get());
+    _spi.attach(NeoGSSpi::SD, &_sdDevice);
     if (_config.mp3Support != NGSMP3SupportKind::None)
     {
         _mp3 = std::make_unique<Vs10xxDecoder>(
             _config.mp3Chip == NeoGSConfig::Mp3Chip::VS1011 ? Vs10xxDecoder::Chip::VS1011 : Vs10xxDecoder::Chip::VS1001,
             _config.mp3Support == NGSMP3SupportKind::Software ? Vs10xxDecoder::Level::Software : Vs10xxDecoder::Level::Stub,
             TICKS_PER_SECOND);
-        _spi.attach(NeoGSSpi::MC, _mp3->sci());
-        _spi.attach(NeoGSSpi::MD, _mp3->sdi());
+        _sciDevice.SetInner(_mp3->sci());
+        _sdiDevice.SetInner(_mp3->sdi());
+        _spi.attach(NeoGSSpi::MC, &_sciDevice);
+        _spi.attach(NeoGSSpi::MD, &_sdiDevice);
         _dma.attachMp3(_mp3.get());
+        _dma.attachMp3Data(&_sdiDevice);
     }
-    _dma.attachSd(_sd.get());
+    _dma.attachSd(&_sdDevice);
+    wireBusTaps();
     _zx.setAvailable(_config.fpga == NeoGSConfig::Fpga::Current); // fpgaD has no DMA
     _zx.setWatchFrames(_config.zxDmaWatchFrames);
     _zx.setWatchAlways(_config.zxDmaWatch == NeoGSConfig::ZxDmaWatch::Always);
@@ -120,11 +125,6 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         openSdImage(_config.sdCardPath);
 }
 
-bool SoundChip_NeoGS::ttdRecording() const
-{
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording();
-}
-
 bool SoundChip_NeoGS::insertSdCard(const std::string& path)
 {
     if (MediaManager* manager = _sdSlotRegistered ? _context->pMediaManager : nullptr)
@@ -141,12 +141,7 @@ bool SoundChip_NeoGS::insertSdCard(const std::string& path)
             MLOGWARNING("NeoGS: SD card '%s' not inserted: %s", FileHelper::PrintablePath(path).c_str(), result.message.c_str());
         return result.Ok();
     }
-    // The machine's configuration is fixed while a TTD recording runs
-    if (ttdRecording())
-    {
-        MLOGWARNING("NeoGS: SD card insert refused - a TTD recording is running");
-        return false;
-    }
+    // No media manager (a bare card): no machine, no rules - the coordinator decides in the manager's slot
     return openSdImage(path);
 }
 
@@ -197,20 +192,15 @@ bool SoundChip_NeoGS::ejectSdCard()
             MLOGWARNING("NeoGS: SD card not ejected: %s", result.message.c_str());
         return result.Ok();
     }
-    if (ttdRecording())
-    {
-        MLOGWARNING("NeoGS: SD card eject refused - a TTD recording is running");
-        return false;
-    }
-    _sd->close();
+    _sd->close();   // no media manager (a bare card): no machine, no rules
     return true;
 }
 
 void SoundChip_NeoGS::markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason)
 {
     // No-op unless a TTD session is recording
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(kind, reason);
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(kind, reason);
 }
 
 /// region <SD slot>
@@ -260,6 +250,49 @@ void SoundChip_NeoGS::SdSlot::SourceChanged(Medium& medium)
 }
 
 /// endregion </SD slot>
+
+void SoundChip_NeoGS::wireBusTaps()
+{
+    // Time: the host frame, and the card's position in it in host T-states; the PC is the card CPU's
+    auto stamp = [this](BusStamp& st) {
+        if (!_context || _context->ttdReplayActive)
+        {
+            st.skip = _context != nullptr;
+            return;
+        }
+        st.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+        const double unitsPerT = zxUnitsPerHostT();
+        const int64_t offset = _runner.now() - _frameStartTicks;
+        st.t = unitsPerT > 0 && offset > 0 ? static_cast<uint32_t>(static_cast<double>(offset) / unitsPerT) : 0;
+        if (_cpu)
+        {
+            Z80CpuRegisters regs{};
+            Z80CpuGetRegisters(_cpu, &regs);
+            st.pc = regs.pc;
+        }
+    };
+    // Byte times at the 24 MHz card clock: SD and SDI at /2 (16 clocks), SCI at its reset divider /4 (8 x 4 + 2)
+    const double nsPerClock = 1000.0 / 24.0;
+    BusTap* taps[] = {&_sdTap, &_sciTap, &_sdiTap};
+    const double clocks[] = {16, 34, 16};
+    for (int i = 0; i < 3; i++)
+    {
+        taps[i]->SetStamp(stamp);
+        taps[i]->SetSource(BusSource::CardCpu);
+        taps[i]->SetByteTimeNs(clocks[i] * nsPerClock);
+    }
+    _sdTap.SetDevice(0, "sd");
+    _sdTap.Attach(_context);
+    if (_mp3)
+    {
+        _sciTap.SetDevice(0, "vs10xx");
+        _sdiTap.SetDevice(0, "vs10xx");
+        _sciTap.Attach(_context);
+        _sdiTap.Attach(_context);
+    }
+    _sd->SetBusTap(&_sdTap, 0);
+    _sd->SetClock([this]() { return static_cast<uint64_t>(static_cast<double>(_runner.now()) / (TICKS_PER_SECOND / 1e6)); });
+}
 
 SoundChip_NeoGS::~SoundChip_NeoGS()
 {
@@ -684,11 +717,72 @@ void SoundChip_NeoGS::runEvents(int64_t now)
     }
 
     if (now >= _dma.nextEvent())
+    {
+        // The bus analyzer sees the DMA's bytes as the card DMA's
+        const bool tap = _sdTap.Active() || _sdiTap.Active();
+        if (tap) [[unlikely]]
+        {
+            _sdTap.SetSource(BusSource::CardDma);
+            _sdiTap.SetSource(BusSource::CardDma);
+        }
         _dma.run(now);
+        if (tap) [[unlikely]]
+        {
+            _sdTap.SetSource(BusSource::CardCpu);
+            _sdiTap.SetSource(BusSource::CardCpu);
+        }
+    }
     if (now >= _zx.nextEvent())
         _zx.run(now);
 
     reschedule();
+}
+
+// Inside an idle-loop sleep (GSCardRunner): the timer ticks and mixer sides before `end` at once. Quiet only while
+// each mixer side recomputes the level it already holds and the output already carries it (the samples and volumes
+// cannot change while the CPU sleeps); the CPU cannot take the timer INT, so a tick only counts and keeps the
+// request raised. Anything else due before `end` (a reset, the TIM_FREQ edge, DMA, ZX-DMA): one by one
+bool SoundChip_NeoGS::sleepQuietEventsBefore(int64_t end)
+{
+    if (_resetRequest != ResetKind::None || _extraStrobeAt < end || _dma.nextEvent() < end || _zx.nextEvent() < end)
+        return false;
+    if (mixerLevel(false) != _outL || mixerLevel(true) != _outR)
+        return false;
+    if (_hostGainDirty || (!_hostGainUnity && (hostMixerLevel(false) != _hostOutL || hostMixerLevel(true) != _hostOutR)))
+        return false;
+    if (_frameTicks > 0)
+    {
+        int32_t left = 0;
+        int32_t right = 0;
+        listeningMix(left, right);
+        if (left != _audio.lastLeft() || right != _audio.lastRight())
+            return false;
+    }
+
+    constexpr int64_t dacSideTicks = CRYSTAL_PER_DAC_SIDE * TICKS_PER_CRYSTAL;
+    const int64_t firstDac = crystalToTicks(_nextDacCrystal);
+    if (firstDac < end)
+        _nextDacCrystal += ((end - 1 - firstDac) / dacSideTicks + 1) * CRYSTAL_PER_DAC_SIDE;
+
+    if (_timerStrobeAt < end)
+    {
+        // The first tick may follow a TIM_FREQ change off the period grid; the rest are on it
+        _activityCounters.interruptPeriods++;
+        if (_irq.readRequest() & NeoGSInterrupts::REQ_TIMER)
+            _activityCounters.interruptsCoalesced++;
+        _irq.raise(NeoGSInterrupts::REQ_TIMER);
+        scheduleTimer(NeoGSInterrupts::nextTickCrystal(_irq.timFreq(), _nextTimerCrystal));
+        if (_timerStrobeAt < end)
+        {
+            const int64_t periodCrystal = NeoGSInterrupts::tickPeriodCrystal(_irq.timFreq());
+            const int64_t ticks = (end - 1 - _timerStrobeAt) / (periodCrystal * TICKS_PER_CRYSTAL) + 1;
+            _activityCounters.interruptPeriods += static_cast<uint64_t>(ticks);
+            _activityCounters.interruptsCoalesced += static_cast<uint64_t>(ticks);
+            scheduleTimer(_nextTimerCrystal + ticks * periodCrystal);
+        }
+    }
+    reschedule();
+    return true;
 }
 
 void SoundChip_NeoGS::onNmiAccepted()
@@ -716,33 +810,44 @@ void SoundChip_NeoGS::dacSideEvent(int64_t crystal)
     // The mixer computes one side per 320 crystal clocks, alternately; the
     // side whose turn starts on a timer boundary (multiple of 640) is right
     const bool right = ((crystal / CRYSTAL_PER_DAC_SIDE) & 1) == 0;
-    const int32_t raw = _snd.mix(right, _gscfg0);
-    const int32_t level = raw * static_cast<int32_t>(_config.volume) / 16384;
+    const int32_t level = mixerLevel(right);
     if (right)
         _outR = level;
     else
         _outL = level;
+    if (!_hostGainUnity)
+        (right ? _hostOutR : _hostOutL) = hostMixerLevel(right);
 
     if (_frameTicks <= 0)
         return;
     const int64_t eventTicks = crystalToTicks(crystal);
     const int64_t position = eventTicks / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL;
+    int32_t left = 0;
+    int32_t right_ = 0;
+    listeningMix(left, right_);
+    if (_audio.set(position, blipFrameLength(), left, right_, !_synthesisSuppressed))
+        _frameHadActivity = true;
+}
+
+void SoundChip_NeoGS::listeningMix(int32_t& left, int32_t& right) const
+{
     // The listening choice: as on the board, the classic GS's 50% cross-feed
     // (the opposite side at half level, scaled so both sides full stays full)
     // or mono
-    int32_t left = _outL;
-    int32_t right_ = _outR;
+    // The mixer's channel volumes (host-side) replace the board's sides while any is not unity
+    const int32_t outL = _hostGainUnity ? _outL : _hostOutL;
+    const int32_t outR = _hostGainUnity ? _outR : _hostOutR;
+    left = outL;
+    right = outR;
     if (_stereoMode == NeoGSConfig::StereoMode::GS)
     {
-        left = (2 * _outL + _outR) / 3;
-        right_ = (2 * _outR + _outL) / 3;
+        left = (2 * outL + outR) / 3;
+        right = (2 * outR + outL) / 3;
     }
     else if (_stereoMode == NeoGSConfig::StereoMode::Mono)
     {
-        left = right_ = (_outL + _outR) / 2;
+        left = right = (outL + outR) / 2;
     }
-    if (_audio.set(position, blipFrameLength(), left, right_, !_synthesisSuppressed))
-        _frameHadActivity = true;
 }
 
 void SoundChip_NeoGS::dacCapture(uint16_t addr, uint8_t value)
@@ -843,6 +948,23 @@ void SoundChip_NeoGS::handleFrameStart()
                                                   GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND));
     _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
     _frameTicks = GSHostClock::frameUnits(_context, TICKS_PER_SECOND);
+
+    // A channel volume changed (the mixer's channel layer): both sides again from the latches, the level steps at the
+    // frame's start
+    if (_hostGainDirty)
+    {
+        _hostGainDirty = false;
+        _hostOutL = hostMixerLevel(false);
+        _hostOutR = hostMixerLevel(true);
+        if (_frameTicks > 0)
+        {
+            int32_t left = 0;
+            int32_t right = 0;
+            listeningMix(left, right);
+            if (_audio.set(std::max<int64_t>(0, blipPosition()), blipFrameLength(), left, right, !_synthesisSuppressed))
+                _frameHadActivity = true;
+        }
+    }
 }
 
 void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
@@ -1031,6 +1153,10 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
     const uint8_t p = low & 0x3F;
     const int64_t now = _runner.now();
     uint8_t value = 0xFF;
+    // The mailbox command and status (only the host changes them) and GSCFG0 are plain reads; the status read's
+    // one-time readiness latch is not, nor any other port
+    if (!(p == P_ZXCMD || p == P_GSCFG0 || (p == P_ZXSTAT && _ready)))
+        _busEffects++;
 
     switch (p)
     {
@@ -1222,6 +1348,7 @@ uint8_t SoundChip_NeoGS::memReadCb(Z80CPU* /*cpu*/, uint16_t addr, int /*m1State
 void SoundChip_NeoGS::memWriteCb(Z80CPU* /*cpu*/, uint16_t addr, uint8_t value, void* userData)
 {
     auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    self->_busEffects++;
     self->_mem.write(addr, value, self->_runner.now());
 }
 
@@ -1232,6 +1359,7 @@ uint8_t SoundChip_NeoGS::portReadCb(Z80CPU* /*cpu*/, uint16_t port, void* userDa
 
 void SoundChip_NeoGS::portWriteCb(Z80CPU* /*cpu*/, uint16_t port, uint8_t value, void* userData)
 {
+    static_cast<SoundChip_NeoGS*>(userData)->_busEffects++;
     static_cast<SoundChip_NeoGS*>(userData)->cardOut(port, value);
 }
 
@@ -1407,8 +1535,8 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
 size_t SoundChip_NeoGS::TTDStateSize() const
 {
     // Registers and device state only. The card RAM (2-4 MB) and the flash
-    // (512 KB) are not in TTD v1 checkpoints: large memories wait for TTD v2
-    // memory regions. A restore therefore keeps the live card memory
+    // (512 KB) are the engine's regions 4 and 5 (TTDRegions below); a v1
+    // session does not record them, so a v1 restore keeps the live card memory
     return TTD_DEVICE_STATE_END;
 }
 
@@ -1507,9 +1635,20 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     // re-selects the host memory interface
     _zx.loadState(src + TTD_ZX_OFFSET);
 
+    if (!_hostGainUnity)
+    {
+        _hostOutL = hostMixerLevel(false);
+        _hostOutR = hostMixerLevel(true);
+    }
     _audio.setLevels(_outL, _outR);
     _audio.clear();
     _frameHadActivity = false;
+    // The activity latches (telemetry, not machine state): the byte counts as they are now are the ones "seen", so
+    // the next frame end reports what that frame moves, not the difference to the counts before the restore (a
+    // false Transfer / DMA pulse after every seek)
+    _dmaBytesSeen = _dma.bytesMoved();
+    _zxDmaBytesSeen = _zx.bytesRead() + _zx.bytesWritten();
+    _dmaWasActive = _zxDmaWasActive = _mp3WasActive = _wasActive = false;
     reschedule();
 }
 

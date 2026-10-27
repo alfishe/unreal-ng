@@ -39,7 +39,7 @@ void ScorpionMemory::ApplyScorpionReadCycle(uint16_t addr, bool isExecution)
 
     if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000)
     {
-        _context->emulatorState.scorpionDosTrigger = 0;
+        _context->emulatorState.scorpion.dosTrigger = 0;
         UpdateZ80Banks();
     }
 }
@@ -78,11 +78,11 @@ bool ScorpionMemory::UpdateModelBanks()
 
     // ProfROM variant: resolve the four ROM role pointers from the current
     // quadrant FIRST (§4.2) — quadrant 0 equals the plain 64 KB bundle mapping.
-    // state.profrom_bank stays 0 until the ProfROM read-strobe hook (Task 7)
+    // state.scorpion.profromBank stays 0 until the ProfROM read-strobe hook (Task 7)
     // writes it; resolving here on every rebuild is what makes snapshot load
     // and TTD restore land in the right quadrant with no extra code
     if (config.mem_model == MM_PROFSCORP)
-        ResolveScorpionRomBases(state.profrom_bank);
+        ResolveScorpionRomBases(state.scorpion.profromBank);
 
     // TR-DOS session machinery requires both the DOS and service ROMs to be
     // present (models without them can never enter a TR-DOS session)
@@ -117,7 +117,7 @@ bool ScorpionMemory::UpdateModelBanks()
     // only suspends it for its pending-NMI window; overriding RAM0 for the
     // whole armed window is the hardware-faithful reading ("page 3 stands at
     // #0000") and keeps the entry chain intact
-    if (state.scorpionDosTrigger && dosAvailable)
+    if (state.scorpion.dosTrigger && dosAvailable)
     {
         if (state.p1FFD & 0x02)
             SetROMSystem();         // service latch wins - the #0033 trick
@@ -160,7 +160,7 @@ bool ScorpionMemory::UpdateModelBanks()
     {
         state.flags |= CF_DOSPORTS | CF_LEAVEDOSRAM;
     }
-    else if (state.scorpionDosTrigger && dosAvailable)
+    else if (state.scorpion.dosTrigger && dosAvailable)
     {
         // The armed button also puts the FDC ports on the bus (MAME selects its
         // DOS I/O shadow view on the same trigger) - but the software session's
@@ -182,7 +182,7 @@ bool ScorpionMemory::UpdateModelBanks()
         state.flags |= CF_PROFROM;
 
     // Magic-button release gate for the CPU read path (hardware-reference §9)
-    _scorpionDosTriggerActive = state.scorpionDosTrigger != 0;
+    _scorpionDosTriggerActive = state.scorpion.dosTrigger != 0;
 
     return true;
 }

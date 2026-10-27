@@ -3,7 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/networksettings.h"
+
+#include <algorithm>
 #include <cstring>
+#include <deque>
 #include <memory>
 
 #include "base/featuremanager.h"
@@ -11,7 +15,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "debugger/ttd/network/ttdmachineserialpeer.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 #include "emulator/cpu/z80.h"
@@ -295,7 +299,7 @@ TEST_F(Atm2Kbc_Test, TtdSeekReplaysTheControllerExactly)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     _context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2);
@@ -328,10 +332,14 @@ protected:
     {
         Create("ATM710", 1024);
         _emulator->RunNFrames(9);   // v4.x: 120 ms power-on delay
-        NetworkManager::Change change;
-        std::string error;
-        ASSERT_TRUE(NetworkManager::ParseChange(settings, change, error)) << error;
-        ASSERT_TRUE(_context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+        // As every surface applies them: a ZX-bus card restarts the machine (Q11), which boots the controller again.
+        // A ZX-bus card behind the ATM Turbo 2+ CPU-socket adapter is an unrealistic fit (Q5): the flag accepts it
+        const std::string before = _emulator->GetId();
+        const SlotControlReply reply = NetworkSettings::Apply(_emulator, settings, true);
+        ASSERT_TRUE(reply.Ok()) << reply.message;
+        _context = _emulator->GetContext();
+        if (_emulator->GetId() != before)
+            _emulator->RunNFrames(9);
     }
 
     /// An IN #FE as a driver loop issues it: ~40 T of its own code first. Back
@@ -457,6 +465,28 @@ TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsThePeer)
     serializer.TTDLoadState(blob.data());
     ASSERT_EQ(loop->Queue().size(), 1u);
     EXPECT_EQ(loop->Queue().front(), 0x77);
+}
+
+/// An echo queue longer than the blob's array (netstate::kMaxComBytes) comes back whole from the blob's tail
+TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsAnEchoQueueLongerThanTheFixedArray)
+{
+    CreateWith({{"com_port", "loopback"}});
+    auto* loop = dynamic_cast<LoopbackPeer*>(_context->pMachineSerialPeer);
+    ASSERT_NE(loop, nullptr);
+    std::vector<uint8_t> queue(netstate::kMaxComBytes + 700);
+    for (size_t i = 0; i < queue.size(); ++i)
+        queue[i] = static_cast<uint8_t>(i * 11 + 2);
+    loop->SetQueue(queue.data(), queue.size());
+
+    ttd::TTDMachineSerialPeer serializer(_context);
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    EXPECT_GT(blob.size(), sizeof(netstate::Com)) << "the rest of the queue in the tail";
+    EXPECT_LE(blob.size(), serializer.TTDStateSize());
+    loop->Reset();
+    serializer.TTDLoadState(blob.data());
+    const std::deque<uint8_t>& back = loop->Queue();
+    EXPECT_TRUE(std::equal(back.begin(), back.end(), queue.begin(), queue.end())) << back.size() << " bytes came back";
 }
 
 TEST_F(Atm2KbcSerial_Test, AnEspModuleRateCanBeGiven)

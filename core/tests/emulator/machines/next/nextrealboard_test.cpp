@@ -1,0 +1,173 @@
+// The real-board test programs of ZXSpectrumNextTests (https://github.com/MrKWatkins/ZXSpectrumNextTests, release/*.snx: 48K
+// snapshots whose results were checked on real boards - photographs in the repository) on the whole NEXT machine, with the
+// video drawn line by line. The machine is put in the state the programs expect (what NextZXOS leaves after loading a 48K
+// snapshot: #7FFD = #30, core id 0, the ULA palette of the 16 defaults) and a program runs for some frames.
+//
+// Provisioned: UNREAL_NEXT_TESTS names the folder of the clone (it needs release/); without it the tests skip.
+// Source: A (real boards: the programs' own pass / fail screens, readmes in release/*.txt)
+
+#include "stdafx.h"
+#include "pch.h"
+
+#include <gtest/gtest.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+
+#include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/z80n/z80nengine.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/ports/models/portdecoder_next.h"
+#include "loaders/nex/loadernex.h"
+
+namespace
+{
+std::filesystem::path Release()
+{
+    const char* folder = std::getenv("UNREAL_NEXT_TESTS");
+    return folder ? std::filesystem::path(folder) / "release" : std::filesystem::path();
+}
+}  // namespace
+
+class NextRealBoard_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    PortDecoder_Next* _ports = nullptr;
+    bool _zilogFlags = false;  ///< run with the T80N persona off: the Zilog NMOS die's undocumented flags
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    /// Loads release/<name> (.snx / .sna) and runs `frames`; keys = {key, frame} pairs pressed for 3 frames
+    bool Run(const std::string& name, int frames, const std::vector<std::pair<char, int>>& keys = {})
+    {
+        const std::filesystem::path source = Release() / name;
+        if (Release().empty() || !std::filesystem::exists(source))
+            return false;
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+        if (!_emulator)
+            return false;
+        _context = _emulator->GetContext();
+        _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+        _context->pFeatureManager->setFeature(Features::kScreenHQ, true);  // the borders and copper follow the beam
+        if (!_emulator->LoadSnapshot(source.string()))
+            return false;
+        _context->emulatorState.p7FFD = 0x30;
+        dynamic_cast<NextMemory*>(_context->pMemory)->ApplyClassicPaging(0x30, 0);
+        _ports->Board().SetCoreId(0);
+        LoaderNex::FillUlaPalette(_ports->Board());
+        if (_zilogFlags)
+            Z80nCpuSetT80Persona(_ports->Engine()->Cpu(), 0);
+        for (int i = 0; i < frames; i++)
+        {
+            for (const auto& key : keys)
+            {
+                if (i == key.second)
+                    _context->pKeyboard->PressKey(static_cast<ZXKeysEnum>(key.first));
+                if (i == key.second + 3)
+                    _context->pKeyboard->ReleaseKey(static_cast<ZXKeysEnum>(key.first));
+            }
+            _emulator->RunFrame(true);
+        }
+        return true;
+    }
+    uint32_t Pixel(unsigned x, unsigned y) const
+    {
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        return reinterpret_cast<const uint32_t*>(fb.memoryBuffer)[y * fb.width + x];
+    }
+};
+
+// NextReg_defaults: every register read and written, the 16 x 16 grid coloured by the result. Red (R/W/d ERROR) is a failure;
+// the real board of core 3.1.5 shows none. (Yellow = default differs, accepted: the board shows a few.)
+TEST_F(NextRealBoard_Test, NextRegDefaultsShowNoErrorCell)
+{
+    if (!Run("!NextReg.snx", 400))
+        GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/!NextReg.snx) is not set";
+    const uint32_t red = 0xFF0000FF;  // RGBA bytes R G B A: bright red (255, 0, 0)
+    unsigned redCells = 0;
+    std::string where;
+    for (unsigned row = 0; row < 16; row++)
+        for (unsigned col = 0; col < 16; col++)
+            if (Pixel(66 + col * 16 + 8, 64 + row * 16 + 8) == red)
+            {
+                redCells++;
+                char buffer[16];
+                std::snprintf(buffer, sizeof buffer, " %02X", row * 16 + col);
+                where += buffer;
+            }
+    // #0A: the program (core 3.1.5) writes #07 and expects it back; core 3.02.03 reads bit 2 as 0 (zxnext.vhd 5912:
+    // mf_type & sd_swap & automap_en & button_reverse & '0' & dpi), so its board shows this one cell red
+    EXPECT_EQ(where, " 0A") << "NextReg cells in error:" << where;
+    EXPECT_EQ(redCells, 1u);
+}
+
+// NextReg #69 and the ports it aliases (#123B bit 1, #7FFD bit 3, #FF): 10 checks both ways; the border turns green when all pass
+TEST_F(NextRealBoard_Test, NextReg69AndItsPortsAgree)
+{
+    if (!Run("NReg0x69.snx", 300))
+        GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/NReg0x69.snx) is not set";
+    EXPECT_EQ(_context->emulatorState.pFE & 7, 4) << "the border is green when all ten pass, red otherwise";
+}
+
+// Z80N: every new instruction against its expected result ("5" runs all, "2" sets 28 MHz); no row may say ERR
+TEST_F(NextRealBoard_Test, Z80NInstructionsAllPass)
+{
+    if (!Run("!Z80N.snx", 1200, {{'2', 10}, {'5', 40}}))
+        GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/!Z80N.snx) is not set";
+    // the result column of the 23 rows is at ULA attribute column 28 onwards; ERR rows are painted red (paper 2), OK green / bright
+    unsigned errRows = 0, okRows = 0;
+    const uint8_t* attributes = _context->pMemory->RAMPageAddress(5) + 0x1800;
+    for (unsigned row = 0; row < 24; row++)
+        for (unsigned col = 28; col < 32; col++)
+        {
+            const uint8_t paper = (attributes[row * 32 + col] >> 3) & 7;
+            errRows += paper == 2 ? 1 : 0;
+            okRows += paper == 4 || paper == 5 ? 1 : 0;
+        }
+    EXPECT_EQ(errRows, 0u);
+    EXPECT_GT(okRows, 0u);
+}
+
+// Z80 block instruction flags (F of INIR / INDR / OTxR / LDxR / CPxR interrupted by IM2): the program colours a mismatch with the
+// NMOS die red (its reference photos are of a 128K and a Spectrum+). It reads the Kempston port #1F, which the Next has built in (0
+// with nothing pressed); on a machine without one it skips itself. The Next's CPU is T80 v0247, which has no repeat-specific flag
+// logic (design-cpu.md section 1a): with the T80N persona the rows are red, as on the board; with the Zilog flags all are green
+TEST_F(NextRealBoard_Test, BlockInstructionFlagsInterruptedByImTwoAreTheT80sOnTheNext)
+{
+    auto count = [this](unsigned& red, unsigned& green) {
+        red = green = 0;
+        for (unsigned y = 64; y < 400; y++)
+            for (unsigned x = 64; x < 576; x++)
+            {
+                const uint32_t p = Pixel(x, y);
+                red += (p == 0xFF0000FF || p == 0xFF0000B6) ? 1 : 0;   // R G B A bytes: bright red (255,0,0) / red (182,0,0)
+                green += (p == 0xFF00B600) ? 1 : 0;                     // green (0,182,0)
+            }
+    };
+    if (!Run("z80bltst.sna", 500))
+        GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/z80bltst.sna) is not set";
+    unsigned red = 0, green = 0;
+    count(red, green);
+    EXPECT_GT(red, 0u) << "the T80 sets no PC-based F5 / F3 on an interrupted repeat";
+
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
+    _zilogFlags = true;
+    ASSERT_TRUE(Run("z80bltst.sna", 500));
+    count(red, green);
+    EXPECT_EQ(red, 0u) << "red = a flag byte differs from the one the NMOS board shows";
+    EXPECT_GT(green, 100u);
+}

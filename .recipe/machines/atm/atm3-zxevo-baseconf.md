@@ -19,7 +19,10 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     [input/joystick.md](../../input/joystick.md). The ROM service menu is outside shadow about 60 frames after reset.
   - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
     only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
-    `#EFF7` itself is ignored in shadow and cannot be read.
+    `#EFF7` itself is ignored in shadow and cannot be read. Every data-port
+    access holds the Z80 on /WAIT until the AVR answers (the same AVR wait as
+    the COM port `#xxEF`): a BCD time register 40-60 us, an NVRAM cell
+    over 400 us ([cmos-rtc.md](../../peripherals/cmos-rtc.md)).
   - **Evo registers**: read on `#xxBD` (index = A12..A8: pages, `#7FFD`,
     `#EFF7`, `#xx77` state, border, breakpoint, `#13BD` virtual-drive mask);
     `#xxBE` is a write-only exit strobe. `[EVO] Fpga=legacy` switches to the
@@ -32,6 +35,13 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     under the beam on `#0EBD`; the font survives a reset); bit 5 = **4:4:4
     palette** (a `#FF` write takes the low bit of each channel from A15..A8,
     `#0DBD` then reads the low bit pair instead of the high one).
+  - **`#BF` bit 1 = ROM write enable**: every window showing ROM takes writes as flash commands for the board's
+    29F040 (unless its `#xBF7` protection is on): NedoOS `evoflash.com` uses `#BF` = 3, unlocks at `#D555` /
+    `#EAAA` with window 3 on ROM pages 1 / 0, programs through window 1, then `#BF` = 1. ID `#01 / #A4`; status
+    reads (DQ6 toggle) while the chip works; saved to `zxevo-flash-atm3-<ROM image hash>.rom` in the settings
+    folder and loaded at the next start (never into the ROM file; `romflash [status|save|discard]`). Same chip model as
+    TS-Conf: [tsconf.md](../tsconf.md#flashing-the-rom-mem_configw0_we),
+    [tdd-evo-flash.md](../../../docs/inprogress/2026-09-27-tsconf/tdd-evo-flash.md).
   - **`#xBF7`** (shadow, window = A15:A14, D0): per-window **write protect**
     for the map `#7FFD` bit 4 selects; read back on `#12BD` (bit i = window i
     of map 0, bit 4+i = of map 1). Window 0 under RAM 0, the NMI page or the
@@ -39,6 +49,14 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
   - **TR-DOS entry stall**: with `contention` on, an opcode fetch from `#3Dxx`
     of a window that holds the DOS ROM in map 1 takes half a 3.5 MHz T longer
     (the chipset holds the clock 4 x 28 MHz so the ROM chip can answer).
+
+## Sound cards
+
+The shipped `[SLOTS]` fit a TurboSound (`ay-socket = ts`), a NeoGS, a MoonSound and a SounDrive on the ZX-bus
+(`inspect_state {"aspects":["slots"]}`, [slots.md](../slots.md)). The ZX-MultiSound card (TSFM, SAA1099, GS,
+SounDrive and MIDI on one card) is not shipped; it fits a ZX-bus slot, takes the socketed YM2149 out of its socket and
+replaces the TurboSound, NeoGS and SounDrive (`ay-socket = ay` next to it is refused):
+[multisound.md](../../peripherals/multisound.md), user guide [docs/features/multisound.md](../../../docs/features/multisound.md).
 
 ## Hard disk and CD
 

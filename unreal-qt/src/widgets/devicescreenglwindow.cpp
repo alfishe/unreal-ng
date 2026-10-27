@@ -1,8 +1,10 @@
 #include "devicescreenglwindow.h"
+#include "emulator/remotecontrolguard.h"
 #include "emulator/mousecapturecontroller.h"
 #include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
+#include <algorithm>
 #include <QPainter>
 #include <QDragEnterEvent>
 #include <QFocusEvent>
@@ -13,9 +15,13 @@
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QOpenGLContext>
+#include <QOffscreenSurface>
+#include <QOpenGLFramebufferObject>
 #include <QOpenGLPixelTransferOptions>
 #include <QSurfaceFormat>
 #include <QUrl>
+#include <QVector2D>
+#include <QVector4D>
 #include <cmath>
 #include <cstring>
 
@@ -25,152 +31,19 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
 
+// The vertex shader of every CRT program: the viewport-filling quad from its corners (0, 0) top left .. (1, 1), the
+// texture coordinate custom shaders read
 static const char* CRT_VERTEX_SHADER = R"(
-#version 120
-varying vec2 texCoord;
+#version 330
+layout(location = 0) in vec2 corner;
+uniform vec4 texRect;
+out vec2 texCoord;
 void main() {
-    gl_Position = gl_Vertex;
-    texCoord = gl_MultiTexCoord0.xy;
+    gl_Position = vec4(corner.x * 2.0 - 1.0, 1.0 - corner.y * 2.0, 0.0, 1.0);
+    texCoord = mix(texRect.xy, texRect.zw, corner);
 }
 )";
 
-static const char* CRT_FRAGMENT_SHADER = R"(
-#version 120
-varying vec2 texCoord;
-uniform sampler2D tex;
-uniform vec2 texSize;
-uniform vec2 outputSize;
-
-uniform int maskType;
-uniform float curvature;
-uniform float cornerRadius;
-uniform float scanlineWeight;
-uniform float maskStrength;
-uniform float maskDotPitch;
-uniform float bloomStrength;
-uniform float saturation;
-uniform float brightness;
-uniform float contrast;
-uniform float gamma;
-
-vec2 curve(vec2 uv) {
-    if (curvature < 0.001) return uv;
-    uv = (uv - 0.5) * 2.0;
-    uv *= 1.0 + pow(length(uv) * curvature, 2.0);
-    return uv * 0.5 + 0.5;
-}
-
-float cornerMask(vec2 uv) {
-    if (cornerRadius < 0.001) return 1.0;
-    vec2 d = abs(uv - 0.5) * 2.0;
-    float r = cornerRadius;
-    vec2 corner = max(d - (1.0 - r), 0.0);
-    return 1.0 - smoothstep(r - 0.01, r, length(corner));
-}
-
-vec3 apertureGrille(vec2 pos, float pitch) {
-    float x = mod(pos.x, pitch * 3.0);
-    vec3 mask = vec3(0.0);
-    if (x < pitch)          mask = vec3(1.0, 0.2, 0.2);
-    else if (x < pitch*2.0) mask = vec3(0.2, 1.0, 0.2);
-    else                    mask = vec3(0.2, 0.2, 1.0);
-    return mix(vec3(1.0), mask, maskStrength);
-}
-
-vec3 shadowMask(vec2 pos, float pitch) {
-    vec2 cell = floor(pos / pitch);
-    vec2 offset = mod(pos, pitch) / pitch;
-    float phase = mod(cell.y, 2.0) * 0.5;
-    float x = mod(offset.x + phase, 1.0);
-    vec3 mask = vec3(0.0);
-    if (x < 0.333)      mask = vec3(1.0, 0.1, 0.1);
-    else if (x < 0.666) mask = vec3(0.1, 1.0, 0.1);
-    else                mask = vec3(0.1, 0.1, 1.0);
-    float dist = length(offset - 0.5) * 2.0;
-    mask *= smoothstep(1.0, 0.5, dist);
-    return mix(vec3(1.0), mask + 0.3, maskStrength);
-}
-
-vec3 slotMask(vec2 pos, float pitch) {
-    float slotHeight = pitch * 1.5;
-    vec2 cell = floor(pos / vec2(pitch * 3.0, slotHeight));
-    vec2 offset = mod(pos, vec2(pitch * 3.0, slotHeight));
-    float phase = mod(cell.y, 2.0) * pitch * 1.5;
-    float x = mod(offset.x + phase, pitch * 3.0);
-    vec3 mask = vec3(0.0);
-    if (x < pitch)          mask = vec3(1.0, 0.15, 0.15);
-    else if (x < pitch*2.0) mask = vec3(0.15, 1.0, 0.15);
-    else                    mask = vec3(0.15, 0.15, 1.0);
-    float yGap = smoothstep(0.0, 0.15, offset.y / slotHeight) *
-                 smoothstep(1.0, 0.85, offset.y / slotHeight);
-    mask *= yGap;
-    return mix(vec3(1.0), mask + 0.2, maskStrength);
-}
-
-vec3 blur(vec2 uv, float radius) {
-    vec3 sum = vec3(0.0);
-    float total = 0.0;
-    vec2 texel = 1.0 / texSize;
-    for (float x = -2.0; x <= 2.0; x += 1.0) {
-        for (float y = -2.0; y <= 2.0; y += 1.0) {
-            float weight = 1.0 - length(vec2(x, y)) / 4.0;
-            sum += texture2D(tex, uv + vec2(x, y) * texel * radius).rgb * weight;
-            total += weight;
-        }
-    }
-    return sum / total;
-}
-
-void main() {
-    vec2 uv = curve(texCoord);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-
-    vec3 color = texture2D(tex, uv).rgb;
-
-    if (bloomStrength > 0.001) {
-        vec3 bloom = blur(uv, 2.0);
-        color += bloom * bloomStrength;
-    }
-
-    color = pow(color, vec3(gamma));
-
-    if (scanlineWeight > 0.001) {
-        float scanY = uv.y * outputSize.y;
-        float scanline = sin(scanY * 3.14159 / (outputSize.y / texSize.y)) * 0.5 + 0.5;
-        color *= mix(1.0, scanline, scanlineWeight);
-    }
-
-    vec2 pixelPos = uv * outputSize;
-    float pitch = maskDotPitch;
-    if (pitch < 1.0) pitch = max(1.0, outputSize.x / 640.0);
-
-    if (maskType == 1) {
-        color *= apertureGrille(pixelPos, pitch);
-    } else if (maskType == 2) {
-        color *= shadowMask(pixelPos, pitch);
-    } else if (maskType == 3) {
-        color *= slotMask(pixelPos, pitch);
-    }
-
-    float luma = dot(color, vec3(0.299, 0.587, 0.114));
-    color = mix(vec3(luma), color, saturation);
-    color = (color - 0.5) * contrast + 0.5;
-    color *= brightness;
-
-    color = pow(max(color, 0.0), vec3(1.0 / 2.2));
-
-    color *= cornerMask(uv);
-
-    float vignette = 1.0 - pow(length(texCoord - 0.5) * 1.1, 2.0) * 0.15;
-    color *= vignette;
-
-    gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
-}
-)";
 
 DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
     : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent)
@@ -180,24 +53,100 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
 
 void DeviceScreenGLWindow::setupVSync()
 {
+    setFormat(surfaceFormat());
+}
+
+QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
+{
+    // 3.3 core: the slang presets' passes need uint, textureSize, texelFetch and float framebuffers. macOS answers a
+    // 3.2+ core request with 4.1 core (its compatibility context stops at 2.1)
     QSurfaceFormat fmt;
+    fmt.setRenderableType(QSurfaceFormat::OpenGL);
+    fmt.setVersion(3, 3);
+    fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     fmt.setSwapInterval(1);  // Enable vsync: wait for vertical retrace before swap
-    setFormat(fmt);
+    return fmt;
+}
+
+bool DeviceScreenGLWindow::probeGPUAcceleration()
+{
+    QOpenGLContext ctx;
+    ctx.setFormat(surfaceFormat());
+    if (!ctx.create())
+    {
+        qInfo() << "DeviceScreenGLWindow: OpenGL context creation failed";
+        return false;
+    }
+    const QSurfaceFormat created = ctx.format();
+    if (ctx.isOpenGLES() || created.version() < qMakePair(3, 3) || created.profile() == QSurfaceFormat::CompatibilityProfile)
+    {
+        qInfo() << "DeviceScreenGLWindow: no OpenGL 3.3 core context (got" << created.majorVersion() << "."
+                 << created.minorVersion() << "), using the software screen";
+        return false;
+    }
+
+    QOffscreenSurface surface;
+    surface.create();
+    if (!ctx.makeCurrent(&surface))
+    {
+        qInfo() << "DeviceScreenGLWindow: Failed to make context current";
+        return false;
+    }
+
+    QOpenGLFunctions* gl = ctx.functions();
+    const char* renderer = reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER));
+    const char* vendor = reinterpret_cast<const char*>(gl->glGetString(GL_VENDOR));
+    const char* version = reinterpret_cast<const char*>(gl->glGetString(GL_VERSION));
+
+    qInfo() << "DeviceScreenGLWindow: GL Renderer:" << (renderer ? renderer : "unknown");
+    qInfo() << "DeviceScreenGLWindow: GL Vendor:" << (vendor ? vendor : "unknown");
+    qInfo() << "DeviceScreenGLWindow: GL Version:" << (version ? version : "unknown");
+
+    bool isSoftware = false;
+    if (renderer)
+    {
+        isSoftware = (std::strstr(renderer, "llvmpipe") != nullptr) || (std::strstr(renderer, "softpipe") != nullptr) ||
+                     (std::strstr(renderer, "swrast") != nullptr) || (std::strstr(renderer, "Software") != nullptr) ||
+                     (std::strstr(renderer, "Microsoft Basic") != nullptr) ||
+                     (std::strstr(renderer, "GDI Generic") != nullptr);
+    }
+
+    ctx.doneCurrent();
+
+    if (isSoftware)
+    {
+        qInfo() << "DeviceScreenGLWindow: Software renderer detected, using CPU path";
+        return false;
+    }
+
+    qInfo() << "DeviceScreenGLWindow: Hardware GPU acceleration available";
+    return true;
 }
 
 DeviceScreenGLWindow::~DeviceScreenGLWindow()
 {
     makeCurrent();
     delete _texture;
-    delete _crtShader;
+    delete _gradedTexture;
+    delete _indexTexture;
+    delete _factorTexture;
+    delete _composeShader;
+    _modelGpu.destroy();
+    delete _customShader;
+    if (_slangRunner)
+        _slangRunner->release();
+    _slangRunner.reset();
+    _quadBuffer.destroy();
+    _quadVao.destroy();
     doneCurrent();
     detach();
 }
 
-void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer)
+void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer, float aspect)
 {
     detach();
+    ratio = aspect > 0.0f ? aspect : kNativeRatio;
 
     _devicePixelsRect = QRectF(0.0, 0.0, width, height);
     _devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
@@ -317,13 +266,31 @@ void DeviceScreenGLWindow::initializeGL()
     _texture->setMagnificationFilter(QOpenGLTexture::Nearest);
     _texture->setWrapMode(QOpenGLTexture::ClampToEdge);
 
-    _crtShader = new QOpenGLShaderProgram(this);
-    if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER))
-        qWarning() << "CRT vertex shader compilation failed:" << _crtShader->log();
-    if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRT_FRAGMENT_SHADER))
-        qWarning() << "CRT fragment shader compilation failed:" << _crtShader->log();
-    if (!_crtShader->link())
-        qWarning() << "CRT shader linking failed:" << _crtShader->log();
+    // The quad: two triangles as a strip, its corners top left, top right, bottom left, bottom right
+    static const float kCorners[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    _quadVao.create();
+    _quadVao.bind();
+    _quadBuffer.create();
+    _quadBuffer.bind();
+    _quadBuffer.allocate(kCorners, static_cast<int>(sizeof(kCorners)));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    _quadBuffer.release();
+    _quadVao.release();
+
+    _composeShader = new QOpenGLShaderProgram(this);
+    if (!_composeShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) ||
+        !_composeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::kCompositionShader) ||
+        !_composeShader->link())
+        qWarning() << "CRT composition shader failed:" << _composeShader->log();
+    if (!_modelGpu.create())
+        qWarning() << "CRT model shader failed:" << _modelGpu.log();
+
+    // A custom shader or preset chosen before the context existed
+    if (!_customShaderSource.isEmpty())
+        compileCustomShader(_customShaderSource);
+    if (!_slangPresetName.isEmpty() && !applySlangPreset(_slangPresetName))
+        _slangPresetName.clear();
 }
 
 void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
@@ -334,6 +301,8 @@ void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
 
 void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 {
+    if (!customShader().isEmpty())
+        loadCustomShader(QString());  // a built-in profile replaces the custom shader
     _crtParams = CRTProfileParams::FromProfile(profile);
     _crtEnabled = (profile != CRTProfile::None);
     update();
@@ -341,42 +310,185 @@ void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 
 void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
 {
+    if (!customShader().isEmpty())
+        loadCustomShader(QString());
     _crtParams = params;
     _crtEnabled = (params.profile != CRTProfile::None);
     update();
 }
 
+void DeviceScreenGLWindow::setCRTParams(const CRTProfileParams& params)
+{
+    _crtParams = params;
+    update();
+}
+
+std::vector<SlangPresetRunner::Parameter> DeviceScreenGLWindow::presetParameters() const
+{
+    if (_slangPresetName.isEmpty())
+        return {};
+    if (_slangRunner)
+        return _slangRunner->parameters();
+    std::vector<SlangPresetRunner::Parameter> list =
+        SlangPresetRunner::readParameters(SlangPresetRunner::presetDirectory(_slangPresetName));
+    for (SlangPresetRunner::Parameter& parameter : list)
+    {
+        const auto kept = _slangOverrides.find(parameter.name);
+        if (kept != _slangOverrides.end())
+            parameter.value = std::clamp(kept->second, std::min(parameter.minimum, parameter.maximum),
+                                         std::max(parameter.minimum, parameter.maximum));
+    }
+    return list;
+}
+
+bool DeviceScreenGLWindow::setPresetParameter(const QString& name, float value)
+{
+    for (const SlangPresetRunner::Parameter& parameter : presetParameters())
+    {
+        if (parameter.name != name)
+            continue;
+        const float clamped = std::clamp(value, std::min(parameter.minimum, parameter.maximum),
+                                         std::max(parameter.minimum, parameter.maximum));
+        _slangOverrides[name] = clamped;
+        if (_slangRunner)
+            _slangRunner->setParameter(name, clamped);
+        update();
+        return true;
+    }
+    return false;
+}
+
+void DeviceScreenGLWindow::resetPresetParameters()
+{
+    _slangOverrides.clear();
+    if (_slangRunner)
+        for (const SlangPresetRunner::Parameter& parameter : _slangRunner->parameters())
+            _slangRunner->setParameter(parameter.name, parameter.initial);
+    update();
+}
+
+void DeviceScreenGLWindow::setPresetOverrides(const std::map<QString, float>& overrides)
+{
+    _slangOverrides = overrides;
+    if (_slangRunner)
+        for (const auto& [name, value] : _slangOverrides)
+            _slangRunner->setParameter(name, value);
+    update();
+}
+
 bool DeviceScreenGLWindow::loadCustomShader(const QString& name)
 {
-    QString source = CRTShaderManager::instance().loadShader(name);
-    if (source.isEmpty())
-        return false;
+    if (name != _slangPresetName)
+        _slangOverrides.clear();  // the values set belong to the preset they were set on
 
-    _customShaderSource = source;
-
-    makeCurrent();
-    if (_crtShader)
+    // A preset replaces a custom shader and the other way round; the empty name drops both
+    const bool preset = SlangPresetRunner::isPreset(name);
+    if (preset || name.isEmpty())
     {
-        delete _crtShader;
-        _crtShader = new QOpenGLShaderProgram(this);
-        _crtShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER);
-        if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, source))
+        bool ok = true;
+        if (context())
         {
-            qWarning() << "Custom shader compilation failed:" << _crtShader->log();
-            _crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRT_FRAGMENT_SHADER);
+            makeCurrent();
+            ok = applySlangPreset(name);
+            if (ok)
+                compileCustomShader(QString());
+            doneCurrent();
         }
-        _crtShader->link();
+        if (ok)
+        {
+            _slangPresetName = name;
+            _customShaderName.clear();
+            _customShaderSource.clear();
+        }
+        update();
+        return ok;
     }
-    doneCurrent();
 
+    QString source;
+    if (!name.isEmpty())
+    {
+        source = CRTShaderManager::instance().loadShader(name);
+        if (source.isEmpty())
+        {
+            CRTShaderManager::instance().scanShaderDirectory();  // a file added since the menu was built
+            source = CRTShaderManager::instance().loadShader(name);
+        }
+        if (source.isEmpty())
+            return false;
+    }
+
+    bool ok = true;
+    if (context())
+    {
+        makeCurrent();
+        ok = compileCustomShader(source);
+        doneCurrent();
+    }
+    if (ok && context())
+    {
+        makeCurrent();
+        applySlangPreset(QString());
+        doneCurrent();
+    }
+    if (ok)
+    {
+        _customShaderName = name;
+        _customShaderSource = source;
+        _slangPresetName.clear();
+    }
     update();
+    return ok;
+}
+
+bool DeviceScreenGLWindow::applySlangPreset(const QString& name)
+{
+    if (_slangRunner)
+        _slangRunner->release();
+    _slangRunner.reset();
+    if (name.isEmpty())
+        return true;
+    auto runner = std::make_unique<SlangPresetRunner>();
+    if (!runner->load(SlangPresetRunner::presetDirectory(name)))
+    {
+        qWarning() << "CRT preset" << name << "failed:" << runner->error();
+        return false;
+    }
+    for (const auto& [parameter, value] : _slangOverrides)
+        runner->setParameter(parameter, value);
+    _slangRunner = std::move(runner);
     return true;
+}
+
+bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
+{
+    delete _customShader;
+    _customShader = nullptr;
+    if (source.isEmpty())
+        return true;
+    _customShader = new QOpenGLShaderProgram(this);
+    if (_customShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) &&
+        _customShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::coreFragmentSource(source)) &&
+        _customShader->link())
+        return true;
+    qWarning() << "Custom CRT shader failed:" << _customShader->log();
+    delete _customShader;
+    _customShader = nullptr;
+    _customShaderName.clear();
+    _customShaderSource.clear();
+    return false;
 }
 
 std::vector<QString> DeviceScreenGLWindow::availableShaders()
 {
+    const QStringList presets = SlangPresetRunner::availablePresets();
+    std::vector<QString> names(presets.begin(), presets.end());
     CRTShaderManager::instance().scanShaderDirectory();
-    return CRTShaderManager::instance().availableShaders();
+    for (const QString& name : CRTShaderManager::instance().availableShaders())
+    {
+        if (!presets.contains(name))  // a preset's name chooses the preset
+            names.push_back(name);
+    }
+    return names;
 }
 
 void DeviceScreenGLWindow::setTemporalBlendingEnabled(bool enabled)
@@ -389,7 +501,7 @@ void DeviceScreenGLWindow::setTemporalBlendingEnabled(bool enabled)
 void DeviceScreenGLWindow::setTemporalHistorySize(int frames)
 {
     _frameHistory.setHistorySize(frames);
-    update();
+    setTemporalWeightMode(_temporalWeightMode);  // a new size starts with equal weights: the mode chosen stays
 }
 
 int DeviceScreenGLWindow::temporalHistorySize() const
@@ -403,13 +515,51 @@ void DeviceScreenGLWindow::setTemporalWeightMode(int mode)
     if (mode == 0)
         _frameHistory.setEqualWeights();
     else
-        _frameHistory.setExponentialWeights(0.5f);
+        _frameHistory.setExponentialWeights(_temporalDecay);
     update();
+}
+
+void DeviceScreenGLWindow::setTemporalDecay(float decay)
+{
+    _temporalDecay = std::clamp(decay, 0.1f, 0.9f);
+    setTemporalWeightMode(_temporalWeightMode);
 }
 
 void DeviceScreenGLWindow::resizeGL(int w, int h)
 {
     glViewport(0, 0, w, h);
+}
+
+QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
+{
+    if (!isValid())
+        return {};
+    makeCurrent();
+    const qreal ratio = devicePixelRatio();
+    if (pictureHeight > 0)
+        _renderPicture = QSize(static_cast<int>(pictureHeight * static_cast<double>(this->ratio)), pictureHeight);
+    const QSize pixels = _renderPicture.isEmpty() ? (QSizeF(size()) * ratio).toSize() : _renderPicture;
+    QImage image;
+    {
+        QOpenGLFramebufferObject fbo(pixels);
+        fbo.bind();
+        glViewport(0, 0, pixels.width(), pixels.height());
+        // The HUD's QPainter would paint into the window, not this FBO: it goes onto the image below
+        _renderingImage = true;
+        paintGL();
+        _renderingImage = false;
+        fbo.release();
+        image = fbo.toImage();
+    }
+    _renderPicture = {};
+    doneCurrent();
+    image.setDevicePixelRatio(ratio);
+    if (hud && _hudOverlay && _hudOverlay->isVisible())
+    {
+        QPainter painter(&image);
+        _hudOverlay->renderHUD(painter, width(), height(), ratio);
+    }
+    return image;
 }
 
 void DeviceScreenGLWindow::updateTexture()
@@ -420,7 +570,6 @@ void DeviceScreenGLWindow::updateTexture()
     // Selection under the frame-source mutex (see clearFrameSource): the
     // legacy fallback deep-copies so post-lock texture upload only touches
     // owned memory.
-    QImage legacyCopy;
     QImage* sourceImage = nullptr;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
@@ -434,8 +583,8 @@ void DeviceScreenGLWindow::updateTexture()
         // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
         else if (!_frameSource && _devicePixels != nullptr)
         {
-            legacyCopy = _devicePixels->copy();
-            sourceImage = &legacyCopy;
+            _legacyFrame = _devicePixels->copy();
+            sourceImage = &_legacyFrame;
         }
     }
 
@@ -485,122 +634,209 @@ void DeviceScreenGLWindow::updateTexture()
     transfer.setRowLength(static_cast<int>(uploadImage->bytesPerLine() / 4));
     _texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, uploadImage->constBits(), &transfer);
 
+    _shownFrame = uploadImage;
+    ++_frameSerial;
     _textureNeedsUpdate = false;
 }
 
+namespace
+{
+/// A tight RGBA8 image into a nearest-sampled texture, (re)allocated for its size
+void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* pixels)
+{
+    if (!texture)
+        texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
+    if (!texture->isCreated() || texture->width() != width || texture->height() != height)
+    {
+        if (texture->isCreated())
+            texture->destroy();
+        texture->create();
+        texture->setSize(width, height);
+        texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+        texture->setMipLevels(1);
+        texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+        texture->setMinificationFilter(QOpenGLTexture::Nearest);
+        texture->setMagnificationFilter(QOpenGLTexture::Nearest);
+        texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    }
+    QOpenGLPixelTransferOptions transfer;
+    transfer.setAlignment(1);
+    texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, pixels, &transfer);
+}
+
+}  // namespace
+
 void DeviceScreenGLWindow::paintGL()
 {
+    const qreal dpr = devicePixelRatio();
+    const int surfaceWidth = _renderPicture.isEmpty() ? qRound(width() * dpr) : _renderPicture.width();
+    const int surfaceHeight = _renderPicture.isEmpty() ? qRound(height() * dpr) : _renderPicture.height();
+    glViewport(0, 0, surfaceWidth, surfaceHeight);
+    glDisable(GL_DITHER);  // the composition writes exact values
+    // The HUD's QPainter of the previous frame may leave its state behind
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
     glClear(GL_COLOR_BUFFER_BIT);
 
     updateTexture();
 
-    if (!_texture || !_texture->isCreated())
-        return;
-
-    _texture->bind();
-
-    float srcX1 = 0.0f, srcY1 = 0.0f, srcX2 = 1.0f, srcY2 = 1.0f;
-    if (_hasViewport && !_devicePixelsRect.isEmpty())
+    const QRect picture = pictureDeviceRect();
+    if (_texture && _texture->isCreated() && !picture.isEmpty())
     {
-        float texW = _devicePixelsRect.width();
-        float texH = _devicePixelsRect.height();
-        srcX1 = _displayViewport.cropLeft / texW;
-        srcY1 = _displayViewport.cropTop / texH;
-        srcX2 = 1.0f - (_displayViewport.cropRight / texW);
-        srcY2 = 1.0f - (_displayViewport.cropBottom / texH);
+        // The viewport is the picture, to the device pixel: the quad covers it, the CRT composition reads its tables
+        // per pixel. GL counts rows from the bottom
+        const int glY = surfaceHeight - picture.y() - picture.height();
+        glViewport(picture.x(), glY, picture.width(), picture.height());
+
+        // With or without CRT effects the composition draws (CRTProfile::None: the plain nearest scale), the software
+        // screen's picture bit for bit
+        if (_crtEnabled && _slangRunner)
+            drawSlangPreset(picture, glY);
+        else if (_crtEnabled && _customShader && _customShader->isLinked())
+            drawCustomCrt(picture);
+        else if (_crtEnabled && CRTBeamModel::isModel(_crtParams.profile) && _modelGpu.isCreated() && _shownFrame)
+            drawModelCrt(picture);
+        else if (_composeShader && _composeShader->isLinked() && _shownFrame)
+            drawComposedCrt(picture);
+        glViewport(0, 0, surfaceWidth, surfaceHeight);
     }
 
-    // Calculate aspect-ratio-preserving quad coordinates
-    float windowW = static_cast<float>(width());
-    float windowH = static_cast<float>(height());
-    float windowRatio = windowW / windowH;
-
-    float quadW, quadH;
-    if (windowRatio > ratio)
-    {
-        // Window is wider than content - pillarbox
-        quadH = 1.0f;
-        quadW = ratio / windowRatio;
-    }
-    else
-    {
-        // Window is taller than content - letterbox
-        quadW = 1.0f;
-        quadH = windowRatio / ratio;
-    }
-
-    glEnable(GL_TEXTURE_2D);
-
-    if (_crtEnabled && _crtShader && _crtShader->isLinked())
-    {
-        _crtShader->bind();
-        _crtShader->setUniformValue("tex", 0);
-        _crtShader->setUniformValue("texSize", QVector2D(_devicePixelsRect.width(), _devicePixelsRect.height()));
-        _crtShader->setUniformValue("outputSize", QVector2D(windowW * quadW, windowH * quadH));
-
-        int maskType = 0;
-        switch (_crtParams.profile)
-        {
-            case CRTProfile::Aperture:
-            case CRTProfile::Megatron:
-                maskType = 1;
-                break;
-            case CRTProfile::ShadowMask:
-                maskType = 2;
-                break;
-            case CRTProfile::SlotMask:
-                maskType = 3;
-                break;
-            default:
-                maskType = 0;
-                break;
-        }
-
-        _crtShader->setUniformValue("maskType", maskType);
-        _crtShader->setUniformValue("curvature", _crtParams.curvature);
-        _crtShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
-        _crtShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
-        _crtShader->setUniformValue("maskStrength", _crtParams.maskStrength);
-        _crtShader->setUniformValue("maskDotPitch", _crtParams.maskDotPitch);
-        _crtShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
-        _crtShader->setUniformValue("saturation", _crtParams.saturation);
-        _crtShader->setUniformValue("brightness", _crtParams.brightness);
-        _crtShader->setUniformValue("contrast", _crtParams.contrast);
-        _crtShader->setUniformValue("gamma", _crtParams.gamma);
-
-        glBegin(GL_QUADS);
-        glTexCoord2f(srcX1, srcY1); glVertex2f(-quadW,  quadH);
-        glTexCoord2f(srcX2, srcY1); glVertex2f( quadW,  quadH);
-        glTexCoord2f(srcX2, srcY2); glVertex2f( quadW, -quadH);
-        glTexCoord2f(srcX1, srcY2); glVertex2f(-quadW, -quadH);
-        glEnd();
-
-        _crtShader->release();
-    }
-    else
-    {
-        glBegin(GL_QUADS);
-        glTexCoord2f(srcX1, srcY1); glVertex2f(-quadW,  quadH);
-        glTexCoord2f(srcX2, srcY1); glVertex2f( quadW,  quadH);
-        glTexCoord2f(srcX2, srcY2); glVertex2f( quadW, -quadH);
-        glTexCoord2f(srcX1, srcY2); glVertex2f(-quadW, -quadH);
-        glEnd();
-    }
-
-    glDisable(GL_TEXTURE_2D);
-    _texture->release();
-
-    if (_hudOverlay && _hudOverlay->isVisible())
+    if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)
     {
         QPainter painter(this);
         _hudOverlay->renderHUD(painter, width(), height(), devicePixelRatio());
     }
 }
 
+void DeviceScreenGLWindow::drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2)
+{
+    program->setUniformValue("texRect", QVector4D(srcX1, srcY1, srcX2, srcY2));
+    _quadVao.bind();
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    _quadVao.release();
+}
+
+void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture)
+{
+    CRTRenderer::Layout layout;
+    layout.outWidth = picture.width();
+    layout.outHeight = picture.height();
+    layout.frameWidth = _shownFrame->width();
+    layout.frameHeight = _shownFrame->height();
+    layout.source = displaySourceRect().toRect().intersected(_shownFrame->rect());
+    if (layout.source.isEmpty())
+        return;
+
+    // The tables again only for a new size or profile, the grading once per frame
+    static const CRTProfileParams kPlain = CRTProfileParams::None();
+    const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlain;
+    const bool rebuilt = _crtRenderer.setLayout(layout, params);
+    if (rebuilt || !_indexTexture || !_factorTexture)
+    {
+        UploadRgba(_indexTexture, layout.outWidth, layout.outHeight, _crtRenderer.indexTable().data());
+        UploadRgba(_factorTexture, layout.outWidth, layout.outHeight, _crtRenderer.factorTable().data());
+    }
+    if (rebuilt || !_gradedTexture || _gradedSerial != _frameSerial)
+    {
+        _crtRenderer.grade(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), params);
+        UploadRgba(_gradedTexture, layout.frameWidth, layout.frameHeight, _crtRenderer.graded().data());
+        _gradedSerial = _frameSerial;
+    }
+
+    _composeShader->bind();
+    _gradedTexture->bind(0);
+    _indexTexture->bind(1);
+    _factorTexture->bind(2);
+    _composeShader->setUniformValue("frame", 0);
+    _composeShader->setUniformValue("indexTable", 1);
+    _composeShader->setUniformValue("factorTable", 2);
+    _composeShader->setUniformValue("frameSize", QVector2D(static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight)));
+    drawQuad(_composeShader, 0.0f, 0.0f, 1.0f, 1.0f);
+    _factorTexture->release(2);
+    _indexTexture->release(1);
+    _gradedTexture->release(0);
+    glActiveTexture(GL_TEXTURE0);
+    _composeShader->release();
+}
+
+void DeviceScreenGLWindow::drawModelCrt(const QRect& picture)
+{
+    CRTBeamModel::Layout layout;
+    layout.outWidth = picture.width();
+    layout.outHeight = picture.height();
+    layout.frameWidth = _shownFrame->width();
+    layout.frameHeight = _shownFrame->height();
+    layout.source = displaySourceRect().toRect().intersected(_shownFrame->rect());
+    if (layout.source.isEmpty())
+        return;
+
+    // The tables again only for a new size or profile, the frame once per upload
+    const bool rebuilt = _crtModel.setLayout(layout, _crtParams.profile);
+    if (rebuilt || !_modelTablesUploaded)
+    {
+        _modelGpu.uploadTables(_crtModel);
+        _modelTablesUploaded = true;
+    }
+    if (rebuilt || _modelSerial != _frameSerial)
+    {
+        // Not the glow's columns: the shader sums them from the frame itself
+        _crtModel.prepare(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), false);
+        _modelGpu.uploadFrame(_crtModel);
+        _modelSerial = _frameSerial;
+    }
+    _modelGpu.draw(_crtModel);
+    glActiveTexture(GL_TEXTURE0);
+}
+
+void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture)
+{
+    const QRectF source = displaySourceRect();
+    const float texW = static_cast<float>(_texture->width());
+    const float texH = static_cast<float>(_texture->height());
+
+    _customShader->bind();
+    _texture->bind(0);
+    _customShader->setUniformValue("tex", 0);
+    _customShader->setUniformValue("texSize", QVector2D(texW, texH));
+    _customShader->setUniformValue("outputSize", QVector2D(static_cast<float>(picture.width()), static_cast<float>(picture.height())));
+    // The profiles have no phosphor mask: the mask uniforms of the documented interface stay, as "none"
+    _customShader->setUniformValue("maskType", 0);
+    _customShader->setUniformValue("curvature", _crtParams.curvature);
+    _customShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
+    _customShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
+    _customShader->setUniformValue("maskStrength", 0.0f);
+    _customShader->setUniformValue("maskDotPitch", 0.0f);
+    _customShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
+    _customShader->setUniformValue("saturation", _crtParams.saturation);
+    _customShader->setUniformValue("brightness", _crtParams.brightness);
+    _customShader->setUniformValue("contrast", _crtParams.contrast);
+    _customShader->setUniformValue("gamma", _crtParams.gamma);
+    drawQuad(_customShader, static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
+             static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
+    _texture->release(0);
+    _customShader->release();
+}
+
+void DeviceScreenGLWindow::drawSlangPreset(const QRect& picture, int glY)
+{
+    // The passes render into their own framebuffers; the last one is copied 1:1 into the picture of the target (the
+    // window or renderWindowImage's framebuffer object)
+    GLint target = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &target);
+    const QRect source = displaySourceRect().toRect().intersected(QRect(0, 0, _texture->width(), _texture->height()));
+    if (source.isEmpty())
+        return;
+    _slangRunner->render(_texture->textureId(), source, picture.size());
+    _slangRunner->drawTo(static_cast<GLuint>(target), QRect(picture.x(), glY, picture.width(), picture.height()));
+}
+
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 {
-    // Ignore shortcut combinations like Cmd+F / Ctrl+F so they bubble up to the application shortcut handler
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    // The full screen key (Cmd+F / Alt+Enter) bubbles up to the application shortcut
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;
@@ -610,6 +846,10 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
     // The mouse release key never reaches the machine
     if (_mouseCapture && _mouseCapture->handleKeyPress(event))
+        return;
+
+    // An automation session holds the machine: no keys from the GUI (releases still go: nothing stays held)
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
         return;
 
     if (!event->isAutoRepeat())
@@ -622,7 +862,7 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;
@@ -643,6 +883,12 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 {
+    // An automation session holds the machine: no capture, no clicks from the GUI
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
+    {
+        event->accept();
+        return;
+    }
     if (_mouseCapture && _mouseCapture->handleMousePress(event))
         event->accept();
     else
@@ -703,17 +949,30 @@ QSize DeviceScreenGLWindow::drawnPictureSize() const
     return QSize(static_cast<int>(windowW), static_cast<int>(windowW / ratio));
 }
 
+QRect DeviceScreenGLWindow::pictureDeviceRect() const
+{
+    if (!_renderPicture.isEmpty())
+        return QRect(QPoint(0, 0), _renderPicture);
+    const QSize drawn = drawnPictureSize();
+    if (drawn.isEmpty())
+        return QRect();
+    const qreal dpr = devicePixelRatio();
+    const int x = (width() - drawn.width()) / 2;
+    const int y = (height() - drawn.height()) / 2;
+    return QRect(qRound(x * dpr), qRound(y * dpr), qRound(drawn.width() * dpr), qRound(drawn.height() * dpr));
+}
+
 bool DeviceScreenGLWindow::event(QEvent* event)
 {
     if (event->type() == QEvent::ShortcutOverride)
     {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() == Qt::Key_F && (keyEvent->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+        if (KeyboardManager::isFullScreenKey(keyEvent))
         {
             event->ignore();
             return false;
         }
-        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here.
+        // The machine's keys (KeyboardManager::machineOwnsKey): no shortcut, the key press comes here.
         // Leased: automation may be removing the instance on another thread
         const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
         if (KeyboardManager::machineOwnsKey(keyEvent, lease ? lease->pKeyboard : nullptr))

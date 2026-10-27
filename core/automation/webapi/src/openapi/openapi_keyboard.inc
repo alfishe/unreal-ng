@@ -41,6 +41,11 @@
     paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["tokenized"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["responses"]["200"]["description"] = "Text queued";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["description"] =
+        "Without tokenized: the text's keys are queued (capitals with CAPS SHIFT, symbols with SYMBOL SHIFT; '\\n', "
+        "'\\r' and \"\\r\\n\" press ENTER once). A character no key types refuses the whole text.";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["responses"]["400"]["description"] =
+        "Missing text, or characters no key types (untypeable: their codes as #XX); nothing was typed";
 
     // POST /api/v1/emulator/{id}/keyboard/macro
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/macro", "post");

@@ -3,13 +3,17 @@
 /// `videorecord start` argument parsing for the CLI. Header-only, no socket or CLIProcessor dependencies, so
 /// core-tests can unit-test it. The codec rules are RecordingRequest's (shared with the WebAPI, Lua and Python).
 ///
-///   videorecord start [format] [file] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
-///                     [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
-///                     [--profile native|1080p|1440p|4k] [--acceleration auto|hardware|software]
+///   videorecord start [format] [file] [--preset NAME] [--mode single|multi|audio] [--container EXT] [--fps N]
+///                     [--scale N] [--region full|screen] [--audio-rate N|auto] [--audio CODEC]
+///                     [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native|1080p|1440p|4k]
+///                     [--acceleration auto|hardware|software]
+///
+/// `given` holds what the command line named, as capture::RecordingControl options: a preset fills the rest
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -33,6 +37,11 @@ struct StartOptions
     uint32_t audioBitrate = 0;
     std::string profile = "native";       ///< normalized output profile (a fixed frame takes h264 / h265 only)
     std::string acceleration = "auto";    ///< normalized encoder acceleration
+    std::string preset;                   ///< a capture::RecordingPresets() id or title ("" = none)
+    std::string mode;                     ///< single, multi, audio ("" = the preset's, else single)
+    std::string container;                ///< the file's extension when no file is given
+    /// The options the command line named (RecordingControl's names: format, filename, fps, ...)
+    std::map<std::string, std::string> given;
 };
 
 /// Whole-token base-10 unsigned value
@@ -77,6 +86,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 return false;
             }
             out.fps = std::clamp(out.fps, 1.0f, 100.0f);
+            out.given["fps"] = args[i];
         }
         else if (arg == "--scale" && hasValue)
         {
@@ -87,6 +97,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 return false;
             }
             out.scale = std::clamp<uint32_t>(scale, 1, 4);
+            out.given["scale"] = std::to_string(out.scale);
         }
         else if (arg == "--region" && hasValue)
         {
@@ -99,6 +110,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 return false;
             }
             out.screenRegion = region != "full";
+            out.given["region"] = region;
         }
         else if (arg == "--audio-rate" && hasValue)
         {
@@ -127,6 +139,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
         else if (arg == "--audio" && hasValue)
         {
             out.audio = RecordingRequest::NormalizeAudioCodec(args[++i]);
+            out.given["audio"] = out.audio.empty() ? std::string("none") : out.audio;
         }
         else if ((arg == "--video-bitrate" || arg == "--audio-bitrate") && hasValue)
         {
@@ -137,6 +150,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 return false;
             }
             (arg == "--video-bitrate" ? out.videoBitrate : out.audioBitrate) = value;
+            out.given[arg == "--video-bitrate" ? "video_bitrate" : "audio_bitrate"] = std::to_string(value);
         }
         else if (arg == "--profile" && hasValue)
         {
@@ -146,6 +160,7 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 error = "Unknown profile '" + args[i] + "': use native, 1080p, 1440p or 4k.";
                 return false;
             }
+            out.given["profile"] = out.profile;
         }
         else if (arg == "--acceleration" && hasValue)
         {
@@ -155,22 +170,35 @@ inline bool ParseStart(const std::vector<std::string>& args, StartOptions& out, 
                 error = "Unknown acceleration '" + args[i] + "': use auto, hardware or software.";
                 return false;
             }
+            out.given["acceleration"] = out.acceleration;
+        }
+        else if ((arg == "--preset" || arg == "--mode" || arg == "--container") && hasValue)
+        {
+            std::string value = args[++i];
+            if (arg != "--preset")
+                std::transform(value.begin(), value.end(), value.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            (arg == "--preset" ? out.preset : arg == "--mode" ? out.mode : out.container) = value;
+            out.given[arg.substr(2)] = value;
         }
         else if (arg.size() > 2 && arg.compare(0, 2, "--") == 0)
         {
             error = "Unknown or incomplete option '" + arg +
-                    "'. Options: --fps N, --scale N, --region full|screen, --audio-rate N|auto, --audio CODEC, --video-bitrate KBPS, "
-                    "--audio-bitrate KBPS, --profile native|1080p|1440p|4k, --acceleration auto|hardware|software.";
+                    "'. Options: --preset NAME, --mode single|multi|audio, --container EXT, --fps N, --scale N, --region full|screen, "
+                    "--audio-rate N|auto, --audio CODEC, --video-bitrate KBPS, --audio-bitrate KBPS, --profile native|1080p|1440p|4k, "
+                    "--acceleration auto|hardware|software.";
             return false;
         }
         else if (positional == 0)
         {
             out.format = arg;
+            out.given["format"] = arg;
             positional++;
         }
         else if (positional == 1)
         {
             out.filename = arg;
+            out.given["filename"] = arg;
             positional++;
         }
     }

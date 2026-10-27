@@ -568,49 +568,141 @@ void EspStack::RebindAll()
 
 namespace
 {
-/// Runs of consecutive bytes of one journal record
-template <typename It>
-bool SaveRuns(It begin, It end, netstate::Reference* runs, uint16_t max, uint16_t& count)
+using List = netstate::Tail::List;
+
+/// A datagram's bytes: one journaled run by reference, anything else inline in the tail (owner = slot, index = d)
+netstate::Reference SaveDatagram(const EspStack::Datagram& dg, netstate::Tail& tail, uint16_t slot, uint32_t d)
 {
-    count = 0;
-    for (It it = begin; it != end; ++it)
+    const std::vector<EspStack::RxByte>& data = dg.data;
+    bool oneRun = !data.empty() && data.front().source != 0;
+    for (size_t i = 1; oneRun && i < data.size(); ++i)
+        oneRun = data[i].source == data.front().source && data[i].offset == data.front().offset + i;
+    if (oneRun)
+        return {data.front().source, data.front().offset, static_cast<uint32_t>(data.size())};
+    std::vector<uint8_t> bytes(data.size());
+    for (size_t i = 0; i < data.size(); ++i)
+        bytes[i] = data[i].value;
+    if (!bytes.empty())
+        tail.AddBytes(List::EspDatagramBytes, slot, d, bytes.data(), bytes.size());
+    return {0, 0, static_cast<uint32_t>(bytes.size())};
+}
+
+void SaveSlot(const EspStack::Slot& s, netstate::EspSlot& o, netstate::Tail& tail, uint16_t slot)
+{
+    o.state = static_cast<uint8_t>(s.state);
+    o.connecting = s.connecting ? 1 : 0;
+    o.finSeen = s.finSeen ? 1 : 0;
+    o.vnetId = s.vnetId;
+    o.localPort = s.localPort;
+    o.remoteAddr = s.remote.addr;
+    o.remotePort = s.remote.port;
+    o.waitingId = s.waitingId;
+    o.rxRuns = static_cast<uint16_t>(std::min<uint32_t>(
+        netstate::SaveRuns(s.rx.begin(), s.rx.end(), o.rx, netstate::kEspRuns, tail, List::EspRun, List::EspRunBytes, slot),
+        0xFFFF));
+    o.datagramCount = static_cast<uint8_t>(std::min<size_t>(s.datagrams.size(), netstate::kEspDatagrams));
+    for (size_t d = 0; d < s.datagrams.size(); ++d)
     {
-        netstate::Reference* last = count ? &runs[count - 1] : nullptr;
-        if (last && it->source && last->source == it->source && last->sourceOffset + last->length == it->offset)
-        {
-            ++last->length;
-            continue;
-        }
-        if (count >= max || it->source == 0)
-            return false;
-        runs[count++] = {it->source, it->offset, 1};
+        const EspStack::Datagram& dg = s.datagrams[d];
+        netstate::EspDatagram item{};
+        item.fromAddr = dg.from.addr;
+        item.fromPort = dg.from.port;
+        item.data = SaveDatagram(dg, tail, slot, static_cast<uint32_t>(d));
+        if (d < static_cast<size_t>(netstate::kEspDatagrams))
+            o.datagrams[d] = item;
+        else
+            tail.Add(List::EspDatagram, slot, static_cast<uint32_t>(d), &item, sizeof(item));
     }
+    o.pendingCount = static_cast<uint8_t>(std::min<size_t>(s.pending.size(), netstate::kEspPending));
+    for (size_t p = 0; p < s.pending.size(); ++p)
+    {
+        const EspStack::Pending& pd = s.pending[p];
+        netstate::EspPending item{};
+        item.vnetId = pd.vnetId;
+        item.peerAddr = pd.peer.addr;
+        item.peerPort = pd.peer.port;
+        item.finSeen = pd.finSeen ? 1 : 0;
+        // A queued client's runs: index = client << 16 | run
+        item.rxRuns = static_cast<uint16_t>(std::min<uint32_t>(
+            netstate::SaveRuns(pd.rx.begin(), pd.rx.end(), item.rx, netstate::kEspPendingRuns, tail, List::EspPendingRun,
+                               List::EspPendingRunBytes, slot, static_cast<uint32_t>(p) << 16),
+            0xFFFF));
+        if (p < static_cast<size_t>(netstate::kEspPending))
+            o.pending[p] = item;
+        else
+            tail.Add(List::EspPending, slot, static_cast<uint32_t>(p), &item, sizeof(item));
+    }
+}
+
+template <typename T>
+bool TailItem(const uint8_t* data, uint32_t size, T& item)
+{
+    if (size != sizeof(T))
+        return false;
+    std::memcpy(&item, data, sizeof(T));
     return true;
 }
 
-template <typename Container>
-bool LoadRuns(const netstate::Reference* runs, uint16_t count, const EspStack::ByteSource& bytes, Container& out)
+bool LoadSlot(const netstate::EspSlot& o, EspStack::Slot& s, const netstate::Tail& tail, uint16_t slot,
+              const EspStack::ByteSource& bytes)
 {
-    std::vector<uint8_t> chunk;
     bool complete = true;
-    for (uint16_t r = 0; r < count; ++r)
-    {
-        if (!bytes || !bytes(runs[r].source, runs[r].sourceOffset, runs[r].length, chunk) || chunk.size() != runs[r].length)
+    s.state = o.state <= static_cast<uint8_t>(EspStack::State::Listen) ? static_cast<EspStack::State>(o.state)
+                                                                       : EspStack::State::Free;
+    s.connecting = o.connecting != 0;
+    s.finSeen = o.finSeen != 0;
+    s.vnetId = o.vnetId;
+    s.localPort = o.localPort;
+    s.remote = {o.remoteAddr, o.remotePort};
+    s.waitingId = o.waitingId;
+    complete = netstate::LoadRuns(o.rx, o.rxRuns, netstate::kEspRuns, tail, List::EspRun, List::EspRunBytes, slot, bytes,
+                                  s.rx) &&
+               complete;
+    std::vector<uint8_t> chunk;
+    auto datagram = [&](const netstate::EspDatagram& item, uint32_t d) {
+        EspStack::Datagram dg;
+        dg.from = {item.fromAddr, item.fromPort};
+        if (item.data.length)
         {
-            complete = false;
-            continue;
+            if (netstate::RunBytes(item.data, tail, List::EspDatagramBytes, slot, d, bytes, chunk))
+                for (uint32_t i = 0; i < item.data.length; ++i)
+                    dg.data.push_back({chunk[i], item.data.source, item.data.source ? item.data.sourceOffset + i : 0});
+            else
+                complete = false;
         }
-        for (uint32_t i = 0; i < runs[r].length; ++i)
-            out.push_back({chunk[i], runs[r].source, runs[r].sourceOffset + i});
-    }
+        s.datagrams.push_back(std::move(dg));
+    };
+    for (uint32_t d = 0; d < o.datagramCount && d < static_cast<uint32_t>(netstate::kEspDatagrams); ++d)
+        datagram(o.datagrams[d], d);
+    tail.ForEach(List::EspDatagram, slot, [&](uint32_t d, const uint8_t* data, uint32_t size) {
+        netstate::EspDatagram item;
+        if (TailItem(data, size, item))
+            datagram(item, d);
+    });
+    auto pending = [&](const netstate::EspPending& item, uint32_t p) {
+        EspStack::Pending pd;
+        pd.vnetId = item.vnetId;
+        pd.peer = {item.peerAddr, item.peerPort};
+        pd.finSeen = item.finSeen != 0;
+        complete = netstate::LoadRuns(item.rx, item.rxRuns, netstate::kEspPendingRuns, tail, List::EspPendingRun,
+                                      List::EspPendingRunBytes, slot, bytes, pd.rx, p << 16, 0xFFFF0000u) &&
+                   complete;
+        s.pending.push_back(std::move(pd));
+    };
+    for (uint32_t p = 0; p < o.pendingCount && p < static_cast<uint32_t>(netstate::kEspPending); ++p)
+        pending(o.pending[p], p);
+    tail.ForEach(List::EspPending, slot, [&](uint32_t p, const uint8_t* data, uint32_t size) {
+        netstate::EspPending item;
+        if (TailItem(data, size, item))
+            pending(item, p);
+    });
     return complete;
 }
 }  // namespace
 
-bool EspStack::SaveState(netstate::EspStackState& out) const
+void EspStack::SaveState(netstate::EspStackState& out, netstate::Tail& tail) const
 {
     std::memset(&out, 0, sizeof(out));
-    bool complete = true;
     out.slotCount = static_cast<uint8_t>(std::min(SlotCount(), netstate::kEspSlots));
     out.dnsSocket = _dnsSocket;
     out.pingSocket = _pingSocket;
@@ -620,89 +712,31 @@ bool EspStack::SaveState(netstate::EspStackState& out) const
     out.resolving = _resolving ? 1 : 0;
     std::strncpy(out.resolveName, _resolveName.c_str(), sizeof(out.resolveName) - 1);
     for (int i = 0; i < out.slotCount; ++i)
-    {
-        const Slot& s = _slots[static_cast<size_t>(i)];
-        netstate::EspSlot& o = out.slotStates[i];
-        o.state = static_cast<uint8_t>(s.state);
-        o.connecting = s.connecting ? 1 : 0;
-        o.finSeen = s.finSeen ? 1 : 0;
-        o.vnetId = s.vnetId;
-        o.localPort = s.localPort;
-        o.remoteAddr = s.remote.addr;
-        o.remotePort = s.remote.port;
-        o.waitingId = s.waitingId;
-        complete = SaveRuns(s.rx.begin(), s.rx.end(), o.rx, netstate::kEspRuns, o.rxRuns) && complete;
-        o.datagramCount = static_cast<uint8_t>(std::min<size_t>(s.datagrams.size(), netstate::kEspDatagrams));
-        complete = complete && s.datagrams.size() <= netstate::kEspDatagrams;
-        for (int d = 0; d < o.datagramCount; ++d)
-        {
-            const Datagram& dg = s.datagrams[static_cast<size_t>(d)];
-            o.datagrams[d].fromAddr = dg.from.addr;
-            o.datagrams[d].fromPort = dg.from.port;
-            uint16_t runs = 0;
-            complete = SaveRuns(dg.data.begin(), dg.data.end(), &o.datagrams[d].data, 1, runs) && complete;
-        }
-        o.pendingCount = static_cast<uint8_t>(std::min<size_t>(s.pending.size(), netstate::kEspPending));
-        complete = complete && s.pending.size() <= netstate::kEspPending;
-        for (int p = 0; p < o.pendingCount; ++p)
-        {
-            const Pending& pd = s.pending[static_cast<size_t>(p)];
-            netstate::EspPending& op = o.pending[p];
-            op.vnetId = pd.vnetId;
-            op.peerAddr = pd.peer.addr;
-            op.peerPort = pd.peer.port;
-            op.finSeen = pd.finSeen ? 1 : 0;
-            complete = SaveRuns(pd.rx.begin(), pd.rx.end(), op.rx, netstate::kEspPendingRuns, op.rxRuns) && complete;
-        }
-    }
+        SaveSlot(_slots[static_cast<size_t>(i)], out.slotStates[i], tail, static_cast<uint16_t>(i));
     out.closeCount = static_cast<uint8_t>(std::min<size_t>(_closeLater.size(), netstate::kEspClose));
-    for (int c = 0; c < out.closeCount; ++c)
-        out.closeLater[c] = _closeLater[static_cast<size_t>(c)];
+    for (size_t c = 0; c < _closeLater.size(); ++c)
+    {
+        if (c < static_cast<size_t>(netstate::kEspClose))
+            out.closeLater[c] = _closeLater[c];
+        else
+            tail.Add(List::EspClose, 0, static_cast<uint32_t>(c), &_closeLater[c], sizeof(uint16_t));
+    }
     out.rearmMask = 0;
     for (int slot : _rearm)
     {
         if (slot < netstate::kEspSlots)   // the slots beyond are their firmware's to save
             out.rearmMask = static_cast<uint8_t>(out.rearmMask | (1u << slot));
     }
-    return complete;
 }
 
-bool EspStack::LoadState(const netstate::EspStackState& in, const ByteSource& bytes)
+bool EspStack::LoadState(const netstate::EspStackState& in, const netstate::Tail& tail, const ByteSource& bytes)
 {
     bool complete = true;
     for (Slot& s : _slots)
         s = Slot();
     for (int i = 0; i < in.slotCount && i < SlotCount(); ++i)
-    {
-        const netstate::EspSlot& o = in.slotStates[i];
-        Slot& s = _slots[static_cast<size_t>(i)];
-        s.state = o.state <= static_cast<uint8_t>(State::Listen) ? static_cast<State>(o.state) : State::Free;
-        s.connecting = o.connecting != 0;
-        s.finSeen = o.finSeen != 0;
-        s.vnetId = o.vnetId;
-        s.localPort = o.localPort;
-        s.remote = {o.remoteAddr, o.remotePort};
-        s.waitingId = o.waitingId;
-        complete = LoadRuns(o.rx, std::min<uint16_t>(o.rxRuns, netstate::kEspRuns), bytes, s.rx) && complete;
-        for (int d = 0; d < o.datagramCount && d < netstate::kEspDatagrams; ++d)
-        {
-            Datagram dg;
-            dg.from = {o.datagrams[d].fromAddr, o.datagrams[d].fromPort};
-            if (o.datagrams[d].data.length)
-                complete = LoadRuns(&o.datagrams[d].data, 1, bytes, dg.data) && complete;
-            s.datagrams.push_back(std::move(dg));
-        }
-        for (int p = 0; p < o.pendingCount && p < netstate::kEspPending; ++p)
-        {
-            const netstate::EspPending& op = o.pending[p];
-            Pending pd;
-            pd.vnetId = op.vnetId;
-            pd.peer = {op.peerAddr, op.peerPort};
-            pd.finSeen = op.finSeen != 0;
-            complete = LoadRuns(op.rx, std::min<uint16_t>(op.rxRuns, netstate::kEspPendingRuns), bytes, pd.rx) && complete;
-            s.pending.push_back(std::move(pd));
-        }
-    }
+        complete = LoadSlot(in.slotStates[i], _slots[static_cast<size_t>(i)], tail, static_cast<uint16_t>(i), bytes) &&
+                   complete;
     _dnsSocket = in.dnsSocket;
     _pingSocket = in.pingSocket;
     _querySocket = in.querySocket;
@@ -711,6 +745,11 @@ bool EspStack::LoadState(const netstate::EspStackState& in, const ByteSource& by
     _resolving = in.resolving != 0;
     _resolveName.assign(in.resolveName, strnlen(in.resolveName, sizeof(in.resolveName)));
     _closeLater.assign(in.closeLater, in.closeLater + std::min<int>(in.closeCount, netstate::kEspClose));
+    tail.ForEach(List::EspClose, 0, [this](uint32_t, const uint8_t* data, uint32_t size) {
+        uint16_t id = 0;
+        if (TailItem(data, size, id))
+            _closeLater.push_back(id);
+    });
     _rearm.clear();
     for (int i = 0; i < 8; ++i)
     {

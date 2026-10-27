@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "pch.h"
+#include "_helpers/testwaithelper.h"
 
 #include "emulator/ports/models/scorpionfixture.h"
 #include "emulator/notifications.h"
@@ -48,13 +49,13 @@ TEST_F(ProfRomPlane_Test, ReadStrobeMovesAbsoluteRomPage)
 
     ArmStrobe();
 
-    const uint8_t planeBefore = _context->emulatorState.profrom_bank;
+    const uint8_t planeBefore = _context->emulatorState.scorpion.profromBank;
     const uint16_t pageBefore = _memory->GetROMPage();
 
     _memory->MemoryReadFast(0x0104, false);   // S=1 row: Q0 -> Q3
 
     EXPECT_EQ(planeBefore, 0);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 3) << "strobe must clock the GAL to plane 3";
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 3) << "strobe must clock the GAL to plane 3";
 
     // Service ROM of plane 3 is absolute page 3 * 4 + 2
     EXPECT_EQ(pageBefore, 2u);
@@ -103,9 +104,7 @@ TEST_F(ProfRomPlane_Test, PlaneSwitchReachesRomPageNotification)
     _memory->MemoryReadFast(0x0104, false);   // Q0 -> Q3
     _memory->handleFrameEnd();
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    while (g_romNotifications.load() == 0 && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    TestWait::For([] { return g_romNotifications.load() > 0; });
 
     mc.RemoveObserver(NC_ROM_PAGE_CHANGED, &onRomPageChanged);
 
@@ -132,15 +131,15 @@ TEST_F(ProfRomPlane_Test, StrobeIsInertOnInstructionFetchAndOffGridReads)
 
     // An M1 fetch of the grid must not clock the GAL
     _memory->MemoryReadFast(0x0104, true);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0) << "instruction fetch must not switch planes";
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0) << "instruction fetch must not switch planes";
 
     // #0101 is off-grid (A1:A0 != 0) - the monitor's plane-signature read
     _memory->MemoryReadFast(0x0101, false);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0) << "off-grid read must not switch planes";
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0) << "off-grid read must not switch planes";
 
     // The same address as a data read on the grid does switch
     _memory->MemoryReadFast(0x0104, false);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 3);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 3);
 }
 
 TEST_F(ProfRomPlane_Test, StrobeIsInertWhileServiceRomIsNotPaged)
@@ -154,6 +153,6 @@ TEST_F(ProfRomPlane_Test, StrobeIsInertWhileServiceRomIsNotPaged)
 
     _memory->MemoryReadFast(0x0104, false);
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0)
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0)
         << "strobe must be armed only while the service ROM window is paged";
 }

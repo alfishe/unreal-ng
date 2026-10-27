@@ -12,9 +12,9 @@ std::optional<ttd::TTDSessionInfo> Read(Emulator* emulator)
     if (!emulator)
         return std::nullopt;
     const Emulator::ContextLease lease = emulator->LeaseContext();
-    if (!lease || !lease->pTimeTravelManager)
+    if (!lease || !lease->pTimeTravelHooks)
         return std::nullopt;
-    return lease->pTimeTravelManager->GetPublishedSessionInfo();
+    return lease->pTimeTravelHooks->GetPublishedSessionInfo();
 }
 
 QString CaptureToolTip(const ttd::TTDSessionInfo& info)

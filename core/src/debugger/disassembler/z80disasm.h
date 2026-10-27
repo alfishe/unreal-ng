@@ -141,6 +141,7 @@ constexpr uint32_t OF_IO = (1UL << 17);             // I/O operations (IN, OUT)
 constexpr uint32_t OF_INTERRUPT = (1UL << 18);      // Interrupt-related (EI, DI, IM)
 constexpr uint32_t OF_DJNZ = (1UL << 19);           // DJNZ instruction
 constexpr uint32_t OF_INDIRECT = (1UL << 20);       // Command uses indirect addressing (via one register pairs)
+constexpr uint32_t OF_BIGENDIAN = (1UL << 21);      // Word operand is stored high byte first (Z80N PUSH nn)
 
 namespace OpFlags
 {
@@ -165,46 +166,49 @@ namespace OpFlags
     namespace Basic
     {
         constexpr Flag None{0, "None", "No flags set"};
-        constexpr Flag Prefix{1, "Prefix", "Current byte is opcode prefix"};
+        constexpr Flag Prefix{OF_PREFIX, "Prefix", "Current byte is opcode prefix"};
         constexpr Flag Ext = Prefix;  // Alias
     }
 
     // Memory-related flags
     namespace Memory
     {
-        constexpr Flag Byte{1UL << 1, "MByte", "Operand is byte from memory"};
-        constexpr Flag Word{1UL << 2, "MWord", "Operand is word from memory"};
-        constexpr Flag Disp{1UL << 3, "Disp", "Uses index register displacement"};
-        constexpr Flag Addr{1UL << 4, "MemAddr", "Contains memory address"};
+        constexpr Flag Byte{OF_MBYTE, "MByte", "Operand is byte from memory"};
+        constexpr Flag Word{OF_MWORD, "MWord", "Operand is word from memory"};
+        constexpr Flag Disp{OF_DISP, "Disp", "Uses index register displacement"};
+        constexpr Flag Addr{OF_MEMADR, "MemAddr", "Contains memory address"};
     }
 
     // Control flow flags
     namespace Flow
     {
-        constexpr Flag Condition{1UL << 5, "Condition", "Operation checks condition"};
-        constexpr Flag RelJump{1UL << 6, "RelJump", "Uses relative jump offset"};
-        constexpr Flag Jump{1UL << 8, "Jump", "Jump or call address"};
-        constexpr Flag Ret{1UL << 9, "Ret", "Takes next PC from stack"};
-        constexpr Flag Rst{1UL << 10, "Rst", "Jumps to pre-defined address"};
+        constexpr Flag Condition{OF_CONDITION, "Condition", "Operation checks condition"};
+        constexpr Flag RelJump{OF_RELJUMP, "RelJump", "Uses relative jump offset"};
+        constexpr Flag Jump{OF_JUMP, "Jump", "Jump address (JP, JR)"};
+        constexpr Flag Call{OF_CALL, "Call", "Call address (CALL)"};
+        constexpr Flag Ret{OF_RET, "Ret", "Takes next PC from stack"};
+        constexpr Flag Rst{OF_RST, "Rst", "Jumps to pre-defined address"};
     }
 
     // CPU flags
     namespace Flags
     {
-        constexpr Flag Affected{1UL << 11, "FlagsAffected", "Instruction modifies flags"};
-        constexpr Flag All{1UL << 12, "FlagsAll", "All flags affected"};
-        constexpr Flag SZ{1UL << 13, "FlagsSZ", "Only S and Z flags affected"};
+        constexpr Flag Affected{OF_FLAGS_AFFECTED, "FlagsAffected", "Instruction modifies flags"};
+        constexpr Flag All{OF_FLAGS_ALL, "FlagsAll", "All flags affected"};
+        constexpr Flag SZ{OF_FLAGS_SZ, "FlagsSZ", "Only S and Z flags affected"};
     }
 
     // Operation type flags
     namespace Operation
     {
-        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
-        constexpr Flag RegExchange{1UL << 14, "RegExchange", "Register exchange operations"};
-        constexpr Flag Block{1UL << 15, "Block", "Block operations (LDI, LDIR, etc.)"};
-        constexpr Flag IO{1UL << 16, "IO", "I/O operations (IN, OUT)"};
-        constexpr Flag Interrupt{1UL << 17, "Interrupt", "Interrupt-related (EI, DI, IM)"};
-        constexpr Flag Djnz{1UL << 18, "Djnz", "DJNZ instruction"};
+        constexpr Flag VarCycles{OF_VAR_T, "VarCycles", "Variable number of t-states"};
+        constexpr Flag RegExchange{OF_REG_EXCHANGE, "RegExchange", "Register exchange operations"};
+        constexpr Flag Block{OF_BLOCK, "Block", "Block operations (LDI, LDIR, etc.)"};
+        constexpr Flag IO{OF_IO, "IO", "I/O operations (IN, OUT)"};
+        constexpr Flag Interrupt{OF_INTERRUPT, "Interrupt", "Interrupt-related (EI, DI, IM)"};
+        constexpr Flag Djnz{OF_DJNZ, "Djnz", "DJNZ instruction"};
+        constexpr Flag Indirect{OF_INDIRECT, "Indirect", "Indirect addressing via a register pair"};
+        constexpr Flag BigEndian{OF_BIGENDIAN, "BigEndian", "Word operand stored high byte first (Z80N PUSH nn)"};
     }
 
     // Debug flags
@@ -291,6 +295,8 @@ protected:
     static OpCode cbOpcodes[256];
     static OpCode ddOpcodes[256];
     static OpCode edOpcodes[256];
+    static const std::pair<uint8_t, OpCode> z80nOpcodes[];   // Z80N ED-prefixed additions, used when _z80nMode is on
+    static const size_t z80nOpcodesCount;
     static OpCode fdOpcodes[256];
     static OpCode ddcbOpcodes[256];
     static OpCode fdcbOpcodes[256];
@@ -305,6 +311,8 @@ protected:
 protected:
     ModuleLogger* _logger;
     EmulatorContext* _context;
+    bool _z80nMode = false;     // decode the ZX Spectrum Next (Z80N) ED-prefixed extensions
+    static inline thread_local bool t_noLabels = false;  // NoLabelsScope
     /// endregion </Fields>
 
 public:
@@ -312,6 +320,25 @@ public:
     virtual ~Z80Disassembler() = default;
 
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
+
+    /// Enables the Z80N (ZX Spectrum Next) extended instructions; off by default so plain Z80 listings do not change
+    void SetZ80nMode(bool enabled) { _z80nMode = enabled; }
+    bool IsZ80nMode() const { return _z80nMode; }
+
+    /// Labels off on this thread while it lives (the Qt disassembly's labels toggle, dbg.labels_toggle): operands and
+    /// instructions show plain addresses. Thread-local, so the other surfaces' disassembly keeps its labels
+    class NoLabelsScope
+    {
+    public:
+        NoLabelsScope() : _previous(t_noLabels) { t_noLabels = true; }
+        ~NoLabelsScope() { t_noLabels = _previous; }
+        NoLabelsScope(const NoLabelsScope&) = delete;
+        NoLabelsScope& operator=(const NoLabelsScope&) = delete;
+
+    private:
+        bool _previous;
+    };
+    static bool LabelsOffOnThisThread() { return t_noLabels; }
     
     std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);

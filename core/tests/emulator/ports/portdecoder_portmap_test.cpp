@@ -331,7 +331,7 @@ TEST_F(PortDecoder_PortMap_Test, MouseRouting_ScorpionDosTriggerHides_ShadowMoni
 
     // Armed magic-button DOS trigger without CF_DOSPORTS: pure Scorpion session
     // gating, visible only through the IsPort_KempstonMouse override
-    _context->emulatorState.scorpionDosTrigger = 1;
+    _context->emulatorState.scorpion.dosTrigger = 1;
     decoder.GetMouseRoutingState(decoded, note);
     EXPECT_FALSE(decoded);
     EXPECT_NE(note.find("model-specific"), std::string::npos);
@@ -339,7 +339,7 @@ TEST_F(PortDecoder_PortMap_Test, MouseRouting_ScorpionDosTriggerHides_ShadowMoni
     // Shadow Monitor paged alone keeps the canonical #xxDF mouse ports: only
     // the five exact Beta low-byte mirrors move to the FDC (hardware-reference
     // 12.3) - the probe port #FADF is not one of them
-    _context->emulatorState.scorpionDosTrigger = 0;
+    _context->emulatorState.scorpion.dosTrigger = 0;
     _context->emulatorState.p1FFD = 0x02;
     decoder.GetMouseRoutingState(decoded, note);
     EXPECT_TRUE(decoded);

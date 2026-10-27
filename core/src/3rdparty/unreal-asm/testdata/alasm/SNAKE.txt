@@ -1,0 +1,73 @@
+;by RST7
+;turbo fix by ACi8
+ATRFREE EQU 7
+ATRSN   EQU 48
+ATRRABB EQU #C4
+        ORG #4000
+        DUP 3
+        DEFS 256,-1
+        DEFS #600,#81
+        DEFS 256,-1
+        EDUP
+        ORG #5800
+        DEFS 768,ATRFREE
+        ORG #7000
+        DEFS #1000
+HEAD    EQU 4
+LAST    EQU 0
+XPOS    EQU 0
+YPOS    EQU 0
+RABBIT  EQU 0
+FLAG    EQU 0
+        REPEAT
+        ORG 23672
+        REPEAT
+        UNTIL0 {$}&2
+        DW 2
+KEY=.{#5C08}
+        IF0 KEY-"q"
+YPOS=YPOS-1
+        ENDIF
+        IF0 KEY-"a"
+YPOS=YPOS+1
+        ENDIF
+        IF0 KEY-"o"
+XPOS=XPOS-1&31
+        ENDIF
+        IF0 KEY-"p"
+XPOS=XPOS+1&31
+        ENDIF
+        IF0 YPOS+1
+YPOS=23
+        ENDIF
+        IF0 YPOS-24
+YPOS=0
+        ENDIF
+        ORG YPOS<5+XPOS+#5800
+GAMEOVER=.{$}-ATRSN
+        IF0 .{$}-ATRRABB
+RABBIT=0
+        ENDIF
+        DEFB ATRSN
+l={LAST+#7000}
+        ORG 'l<5+.l+#5800
+        DEFB ATRFREE
+        ORG HEAD+#7000
+        DEFB XPOS,YPOS
+HEAD=$&#FFF
+        IF0 FLAG
+LAST=LAST+2&#FFF
+        ELSE
+FLAG=FLAG-1
+        ENDIF
+        IF0 RABBIT
+l={HEAD+LAST}
+        ORG l<8+.l&#2FF+#5800
+        IF0 .{$}-ATRFREE
+        DEFB ATRRABB
+RABBIT=1
+FLAG=4
+        ENDIF
+        ENDIF
+        UNTIL0 GAMEOVER
+        DISPLAY "TOTALSCORE=",HEAD-LAST&#FFF/2

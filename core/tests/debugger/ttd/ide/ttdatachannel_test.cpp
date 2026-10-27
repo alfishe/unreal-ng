@@ -13,11 +13,15 @@
 #include "_helpers/scratchfolder.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/ide/ttdatachannel.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/media/mediahistory.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 
 using namespace ata;
@@ -98,17 +102,17 @@ namespace
 
 TEST_F(TTDAtaChannel_Test, RegisteredOnMachinesWithABoard)
 {
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel));
     ttd->StopRecording();
 
     Emulator* spectrum = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(spectrum, nullptr);
     spectrum->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* other = spectrum->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* other = spectrum->GetContext()->pTimeTravelController;
     ASSERT_TRUE(other->StartRecording());
-    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel)) << "no IDE board";
+    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel)) << "no IDE board";
     other->StopRecording();
     EmulatorTestHelper::CleanupEmulator(spectrum);
 }
@@ -144,7 +148,7 @@ TEST_F(TTDAtaChannel_Test, BlobContinuesATransfer)
 /// per frame and keeps it running
 TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
 {
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     MediaManager& manager = *_context->pMediaManager;
     ASSERT_TRUE(ttd->StartRecording());
     const size_t before = ttd->GetExternalEvents().Size();
@@ -163,9 +167,114 @@ TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
     EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 2);
     EXPECT_TRUE(ttd->IsRecording()) << "a guest write never ends the recording";
 
-    // The media set is fixed while recording
-    EXPECT_EQ(manager.Eject("ide0.master", {Disposition::Discard}).error, MediaError::Recording);
+    // A media change while recording is an event of the recording at the next frame boundary (M3)
+    EXPECT_TRUE(manager.Eject("ide0.master", EjectOptions::Discarding()).Ok());
+    EXPECT_TRUE(manager.Info("ide0.master")->pending);
     ttd->StopRecording();
+}
+
+/// A seek sets the disk to its version there (TTD gap 11: the media manager's undo log): before the writes it holds
+/// what it held, after them what they wrote. A replay runs the guest's writes again and the version follows the
+/// history, so every seek lands exactly however many earlier seeks replayed writes
+TEST_F(TTDAtaChannel_Test, ASeekSetsTheDiskToItsVersionThere)
+{
+    // Three sectors (LBA 3, 2, 1) written about three frames apart through the Nemo ports (B = 0), then a loop
+    const std::vector<uint8_t> program = {
+        0xF3,              // 8000 di
+        0x31, 0x00, 0xC0,  // 8001 ld sp,#C000
+        0x1E, 0x03,        // 8004 ld e,3
+        0x06, 0x00,        // 8006 ld b,0
+        0x0E, 0xD0,        // 8008 next: ld c,#D0
+        0x3E, 0xE0,        //      ld a,#E0       master, LBA
+        0xED, 0x79,        //      out (c),a
+        0x0E, 0x50,        //      ld c,#50
+        0x3E, 0x01,        //      ld a,1         one sector
+        0xED, 0x79,        //      out (c),a
+        0x0E, 0x70,        //      ld c,#70
+        0x7B,              //      ld a,e         LBA
+        0xED, 0x79,        //      out (c),a
+        0x0E, 0x90,        //      ld c,#90
+        0xAF,              //      xor a
+        0xED, 0x79,        //      out (c),a
+        0x0E, 0xB0,        //      ld c,#B0
+        0xED, 0x79,        //      out (c),a
+        0x0E, 0xF0,        //      ld c,#F0
+        0x3E, 0x30,        //      ld a,#30       WRITE SECTORS
+        0xED, 0x79,        //      out (c),a
+        0x16, 0x00,        //      ld d,0         256 words
+        0x0E, 0x11,        // 802A word: ld c,#11
+        0x7B,              //      ld a,e
+        0xED, 0x79,        //      out (c),a      the high byte into the latch
+        0x0E, 0x10,        //      ld c,#10
+        0xED, 0x79,        //      out (c),a      the low byte: the word
+        0x15,              //      dec d
+        0x20, 0xF4,        //      jr nz,word
+        0x21, 0x00, 0x20,  //      ld hl,#2000    about three frames
+        0x2B,              // 8039 delay: dec hl
+        0x7C,              //      ld a,h
+        0xB5,              //      or l
+        0x20, 0xFB,        //      jr nz,delay
+        0x1D,              //      dec e
+        0x20, 0xC7,        //      jr nz,next
+        0x18, 0xFE,        // 8041 jr $
+    };
+    for (size_t i = 0; i < program.size(); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+    auto version = [this]() {
+        std::vector<MediaVersionInfo> versions;
+        _context->pMediaManager->CurrentVersions(versions);
+        for (const MediaVersionInfo& v : versions)
+            if (v.slot == "ide0.master")
+                return v.version;
+        return ~uint64_t(0);
+    };
+
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    const uint64_t before = version();
+    ASSERT_TRUE(ttd->StartRecording());
+    _emulator->RunNFrames(14, /*skipBreakpoints=*/true);
+    ttd->StopRecording();
+    const uint64_t recorded = version();
+    ASSERT_EQ(recorded - before, 3u) << "three frames wrote the disk";
+
+    // The second byte of a sector: n | 0x80 in the image, n once the program wrote it
+    auto marker = [this](uint64_t lba) {
+        Medium* medium = _context->pMediaManager->GetMedium("ide0.master");
+        uint8_t sector[512] = {};
+        if (!medium || !medium->ReadTap() || !medium->ReadTap()->Base().ReadSector(lba, sector))
+            return uint8_t(0xFF);
+        return sector[1];
+    };
+    ASSERT_EQ(marker(1), 0x01);
+    ASSERT_EQ(marker(3), 0x03);
+
+    const uint64_t first = ttd->GetCheckpoint(0)->time.frame;
+    // The first checkpoint is at the end of the recording's first frame, which wrote LBA 3: the other two not yet
+    ASSERT_TRUE(ttd->SeekTo({first, 0}));
+    EXPECT_EQ(version(), before + 1) << "after the first write";
+    EXPECT_EQ(marker(3), 0x03);
+    EXPECT_EQ(marker(2), 0x82);
+    EXPECT_EQ(marker(1), 0x81);
+
+    // Into the end of every frame of the writes: each replay runs the frame's write again
+    const uint32_t late = ttd->FrameSpan() - 1000;
+    uint64_t last = before;
+    for (uint64_t f = first; f < first + 12; f++)
+    {
+        ASSERT_TRUE(ttd->SeekTo({f, late})) << "frame " << f;
+        EXPECT_EQ(ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact)
+            << "frame " << f << ": " << ttd->LastEngineCheck().message;
+        EXPECT_GE(version(), last) << "frame " << f;
+        last = version();
+    }
+    EXPECT_EQ(last, recorded) << "the replayed writes are the recording's own";
+
+    ASSERT_TRUE(ttd->SeekTo({first + 12, late}));
+    EXPECT_EQ(ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact) << ttd->LastEngineCheck().message;
+    EXPECT_EQ(version(), recorded);
+    EXPECT_EQ(marker(1), 0x01);
+    EXPECT_EQ(marker(3), 0x03);
 }
 
 /// One-channel boards keep the v1 blob size; the Sprinter's two channels append the second one, and a blob taken

@@ -1,0 +1,359 @@
+;-----------------------------------------
+;---------------"DAINGY"------------------
+;------------------by---------------------
+;------------Cryss/Razzlers---------------
+;-----------------------------------------
+;---3rd-place-in-512-bytes-inrto-compo----
+;------------------on---------------------
+;--------------demo-party-----------------
+;-----------------------------------------
+;--------CHAOS-CONSTRUCTIONS'999----------
+;-----------------------------------------
+
+tenbuf  EQU   #fa00
+chunks  EQU   #7600
+sin     EQU   #7900
+        ORG   #6200
+
+decrun  LD    DE,line
+        LD    A,32
+d1      LD    HL,linep1
+        LD    BC,linep2-linep1
+        LDIR
+        DEC   A
+        JR    NZ,d1
+        LDI
+        LD    B,32
+        CALL  raspch
+        CALL  raspch
+        INC   HL
+        DJNZ  $-7
+        EX    DE,HL
+        XOR   A
+        CALL  fill2
+
+;-----CO3ДAHИE HEKOTOPOГO ПOДOБИЯ CИHУCA
+        LD    L,C
+        INC   A
+        LD    C,6
+msin2b  EX    AF,AF
+        LD    A,C
+        ADD   A,7
+        LD    B,A
+        EX    AF,AF
+msin2a  LD    (HL),A
+        LD    (DE),A
+        INC   L
+        DEC   E
+        ADD   A,C
+        BIT   6,L
+        JR    NZ,makstr
+        DJNZ  msin2a
+        DEC   C
+        JR    msin2b
+
+makstr  LD    IX,string
+        LD    DE,#8000
+ff1     LD    L,(IX)
+        INC   IX
+        LD    BC,#3d00
+        LD    H,C
+        ADD   HL,HL
+        ADD   HL,BC
+        EX    DE,HL
+        LD    B,8
+ff3     PUSH  BC
+        PUSH  HL
+        EX    DE,HL
+        LD    A,(HL)
+        RRCA
+        OR    (HL)
+        EX    DE,HL
+        INC   DE
+        LD    B,8
+ff2     RLCA
+        LD    C,0
+        JR    NC,$+4
+        LD    C,15
+        LD    (HL),C
+        INC   H
+        LD    (HL),C
+        INC   L
+        LD    (HL),C
+        DEC   H
+        LD    (HL),C
+        INC   L
+        DJNZ  ff2
+        POP   HL
+        INC   H
+        INC   H
+        POP   BC
+        DJNZ  ff3
+        LD    DE,#f010
+        ADD   HL,DE
+        EX    DE,HL
+        INC   E
+        DEC   E
+        JR    NZ,ff1
+
+        OUT   (#fe),A
+        CALL  fill
+
+start   PUSH  BC
+        CALL  wave
+ugol    LD    A,(kx+1)
+        ADD   A,#97-#f0
+        LD    E,A
+        CALL  takesin
+        LD    C,A
+        LD    A,E
+        RLCA
+        RLCA
+        AND   #7f
+        LD    L,A
+        LD    D,(HL)
+        LD    A,#f0
+        RLD
+        CPL
+        LD    (HL),D
+        LD    (plus+1),A
+        LD    A,E
+        RLCA
+        ADD   A,C
+        EXX
+        CALL  takesin
+        LD    C,A
+
+;------ПOBOPOT ПЛOCKOCTИ------------------
+
+kx      LD    A,#10;#f0
+        INC   A
+        LD    (kx+1),A
+        LD    H,A
+        JR    NZ,$+7
+        LD    A,#c6;  ADD A,N
+        LD    (zatemn),A
+        EXX
+        LD    DE,tenbuf
+w2      PUSH  BC
+        PUSH  BC
+        EXX
+        PUSH  HL
+        PUSH  BC
+        EXX
+        PUSH  HL
+        CALL  line
+        POP   HL
+        POP   BC
+        ADD   HL,BC
+        EXX
+        POP   HL
+        POP   DE
+        SBC   HL,DE
+        EXX
+        POP   BC
+        DEC   BC
+        DEC   BC
+        LD    A,D
+        OR    A
+        JR    NZ,w2
+
+;-----CO3ДAHИE БOKOBЫX ГPAHEЙ-------------
+
+        LD    C,15
+        LD    DE,32
+        LD    L,D
+m3d6    LD    H,tenbuf&h
+m3d4    LD    A,(HL)
+        LD    B,C
+        OR    A
+        JR    Z,m3d1
+m3d2    ADD   HL,DE
+        JR    NC,m3d4
+        JR    m3d5
+m3d3    LD    A,(HL)
+        OR    A
+        JR    NZ,m3d2
+m3d1    DEC   B
+        JP    M,$+4
+        LD    (HL),B
+        ADD   HL,DE
+        JR    NC,m3d3
+m3d5    INC   L
+        BIT   5,L
+        JR    Z,m3d6
+
+;----- 3ATEMHEHИE ------------------------
+
+        LD    HL,tenbuf
+        PUSH  HL
+        LD    C,15
+        LD    B,61
+de3a    LD    A,(HL)
+        SUB   C
+        JR    NC,$+3
+        XOR   A
+        LD    (HL),A
+        INC   HL
+        DJNZ  de3a
+        DEC   C
+        JR    NZ,de3a-2
+
+;------ПOЯBЛEHИE--------------------------
+
+        LD    HL,chunks
+        LD    D,H
+        INC   D
+swet    LD    A,64
+        LD    E,A
+        LD    C,64
+        LDIR
+zatemn  SUB   4
+        JR    C,$+5
+        LD    (swet+1),A
+
+;------BЫBOД------------------------------
+
+        HALT
+        LD    B,D
+        LD    A,#55+8
+        XOR   10
+        LD    ($-3),A
+        OUT   (#fd),A
+        LD    DE,#c000
+        POP   HL
+ch4     PUSH  DE
+        LD    A,32
+ch1     EX    AF,AF
+        LD    A,(HL)
+plus    ADD   A,0
+        CP    16
+        JR    C,$+5
+        CPL
+        AND   15
+        RLCA
+        RLCA
+        LD    C,A
+        PUSH  DE
+        LD    A,(BC)
+        INC   BC
+        LD    (DE),A
+        INC   D
+        LD    A,(BC)
+        INC   BC
+        LD    (DE),A
+        INC   D
+        LD    A,(BC)
+        INC   BC
+        LD    (DE),A
+        INC   D
+        LD    A,(BC)
+        LD    (DE),A
+        POP   DE
+        INC   E
+        INC   HL
+        EX    AF,AF
+        DEC   A
+        JR    NZ,ch1
+        POP   DE
+        LD    A,D
+        ADD   A,4
+        LD    D,A
+        AND   7
+        JR    NZ,ch4
+        LD    A,E
+        ADD   A,32
+        LD    E,A
+        JR    C,ch2
+        LD    A,D
+        SUB   8
+        LD    D,A
+ch2     LD    A,H
+        OR    A
+        JR    NZ,ch4
+st1     POP   BC
+        DEC   B
+        JP    NZ,start
+        LD    HL,10072
+        EXX
+        RET
+
+takesin LD    L,A
+        LD    H,sin&h
+        RES   7,L
+        RLCA
+        LD    A,(HL)
+        LD    B,0
+        RET   NC
+        NEG
+        DEC   B
+        RET
+
+string  DEFB  #28,#8C,#C8,#E4,#CC,#CC,#3C
+        DEFB  #C8,#E8,#B0,#28
+        DEFB  #8C,#8C,#64,#64,#64
+linep1  ADD   HL,BC
+        LD    A,H
+        EXX
+        AND   %00011110
+        RRCA
+        ADD   A,#80
+        LD    D,A
+        ADD   HL,BC
+        LD    E,H
+        LD    A,(DE)
+        EXX
+        LD    (DE),A
+        INC   DE
+linep2  RET
+        DEFB  0,0,#80,0,#80,#20,#A0,#20
+        DEFB  #A0,#A0,#A4,#A0,#A4,#A1
+        DEFB  #A5,#A1,#A5,#A5,#E5,#A5
+        DEFB  #E5,#B5,#F5,#B5,#F5,#F5
+        DEFB  #FD,#F5,#FD,#F7,#FF,#FF
+raspch  XOR   A
+        RLD
+        LD    C,A
+        RLCA
+        RLCA
+        RLCA
+        RLCA
+        OR    C
+        JR    linep2-2
+fill    LD    A,#55
+        CALL  fill1
+        LD    A,#57+8
+fill1   OUT   (#fd),A
+        LD    A,65
+        LD    HL,#d800
+fill2   LD    D,H
+        LD    E,L
+        INC   DE
+        LD    (HL),A
+        LD    BC,sin+#7e-chunks-64
+        LDIR
+        RET
+
+wave    LD    HL,#8000
+        PUSH  HL
+        LD    B,16
+wave1   LD    A,B
+        CP    9
+wave2   JR    C,klkl
+        LD    C,A
+        LD    A,17
+        SUB   C
+        INC   L
+        JR    $+3
+klkl    DEC   L
+        XOR   (HL)
+        LD    (HL),A
+        INC   H
+        DJNZ  wave1
+        POP   HL
+        INC   L
+        LD    (wave+1),HL
+        RET
+
+l1      EQU   linep2-linep1*32+1
+line    EQU   chunks-l1

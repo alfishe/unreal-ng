@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'
       - '.gitignore'
@@ -14,9 +15,15 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'
       - '.gitignore'
+
+# gh api in the throttle job reads this workflow's runs
+permissions:
+  contents: read
+  actions: read
 
 env:
   BUILD_TYPE: Release
@@ -24,8 +31,78 @@ env:
   # so we don't need to override it here.
 
 jobs:
+  # Pushes to master build at most once per CI_MIN_INTERVAL_MINUTES (repository variable, Settings -> Secrets and
+  # variables -> Actions -> Variables; default 60, 0 = no throttle). A push that comes too early waits here; a newer push
+  # cancels older waiting throttle jobs (concurrency on throttle), so only the newest commit of a burst waits. Builds
+  # that already started are never cancelled. Pull requests build at once (no wait, own concurrency group).
+  throttle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: ci-throttle-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MIN_INTERVAL: ${{ vars.CI_MIN_INTERVAL_MINUTES || '60' }}
+    steps:
+      - name: Wait for the build interval
+        if: github.event_name == 'push'
+        run: |
+          set -eu
+          interval=$(( MIN_INTERVAL * 60 ))
+          if [ "$interval" -le 0 ]; then echo "throttle off"; exit 0; fi
+          # At most 3 GitHub API requests: the newest 3 master push runs (this run is among them), then build-linux
+          # start times of at most 2 other runs, newest first; the first run whose build-linux started decides (any
+          # conclusion, a cancelled run counts if the build job began). Each request is retried twice. A GitHub API
+          # error is no reason to block the build: after the retries give up, build at once.
+          api() {
+            for attempt in 1 2 3; do
+              if gh api "$@"; then return 0; fi
+              [ "$attempt" -lt 3 ] && sleep $(( attempt * 5 ))
+            done
+            return 1
+          }
+          no_throttle() { echo "::warning::GitHub API unavailable ($1), building without the throttle"; exit 0; }
+
+          runs=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?branch=master&event=push&per_page=3" \
+                   --jq ".workflow_runs[] | select(.id != ($GITHUB_RUN_ID | tonumber)) | .id") || no_throttle "run list"
+          last=0
+          for run in $runs; do
+            started=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                        --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty') \
+              || no_throttle "jobs of run $run"
+            [ -n "$started" ] || continue
+            last=$(date -u -d "$started" +%s)
+            echo "Found build-linux in run $run started at $started (epoch $last)"
+            break
+          done
+          now=$(date -u +%s)
+          wait=$(( last + interval - now ))
+          if [ "$wait" -gt 0 ]; then
+            echo "Last build started $(( (now - last) / 60 )) min ago; waiting $(( wait / 60 )) min (CI_MIN_INTERVAL_MINUTES=$MIN_INTERVAL)"
+            sleep "$wait"
+          else
+            echo "No build in the last $MIN_INTERVAL min (last=$last, now=$now)"
+          fi
+
+  # Source checks that need no build: a job of their own, at once (no throttle) and failing alone, so a red check never
+  # keeps the Linux build and tests from running. tools/build/build.sh runs the same checks locally
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Qt frontend reads an instance only through EmulatorBinding (BUGS.md #11): no new raw reads
+      - name: GUI instance reads ratchet
+        run: tools/verification/gui-instance-reads.sh
+
   build-linux:
+    needs: throttle
     runs-on: ubuntu-latest # <--- The VM that runs Docker
+    concurrency:
+      group: ci-build-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
 
     # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
     container:             # <--- Custom environment inside the VM
@@ -77,14 +154,20 @@ jobs:
   # Linux packages run on Ubuntu 24.04; this job catches what the next compilers
   # reject and runs the whole core test suite. Core only - no Qt needed.
   build-gcc-latest:
+    needs: throttle
     runs-on: ubuntu-latest
     container: gcc:16
+    concurrency:
+      group: ci-build-gcc-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
 
     steps:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev
+          # libudev-dev and pkg-config: the Stream Deck companion's hidraw backend (steps at the end)
+          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev \
+            libudev-dev pkg-config
 
       - uses: actions/checkout@v7
         with:
@@ -101,4 +184,258 @@ jobs:
           cmake --build build --target core-tests --parallel
 
       - name: Run core-tests (all, sharded)
+        # The long tier too (core/tests/_helpers/testtier.h): the full variants of the shortened tests
+        env:
+          UNREAL_LONG_TESTS: 1
         run: cmake --build build --target test-parallel
+
+      # The companion's Qt-free targets with the newest gcc, in the same build directory (one more configure, the
+      # core is not rebuilt: the companion does not link it). After the core tests, so a companion failure never hides
+      # their result. The studio needs Qt and is built by the build-streamdeck-* jobs.
+      - name: Build Stream Deck companion (no Qt)
+        run: |
+          cmake -S . -B build -DUNREAL_STREAMDECK=ON
+          cmake --build build --target unreal-streamdeck sdctl streamdeck-tests --parallel
+
+      - name: Run streamdeck-tests
+        working-directory: build/bin
+        run: ./streamdeck-tests
+
+  # ========================================
+  # Stream Deck companion (companions/streamdeck): the daemon, sdctl, the studio and both test binaries (libsdb unit
+  # tests and the device wire v2 / daemon route conformance suite, docs/inprogress/2026-10-19-streamdeck-integration/
+  # testing.md; the studio's tests offscreen) on every platform. Jobs of their own, not a step of build-linux: the
+  # companion configures from the repository root with BUILD_QT_APPS=OFF and TESTS=OFF (no core build, it does not
+  # link the core; the studio takes the core's recording library only), so it shares nothing with build-linux's
+  # unreal-qt build directory, and a red companion never stops the core gates. A few minutes per job, in parallel.
+  # ========================================
+  build-streamdeck-linux:
+    needs: throttle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # hidapi's hidraw backend enumerates through libudev; an image built before it was added lacks the headers
+          if ! pkg-config --exists libudev; then
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends libudev-dev
+          fi
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      - name: Run streamdeck-tests
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests
+
+      - name: Scenario generator tests
+        run: |
+          python3 companions/streamdeck/tools/tests/test_make_deck_scenario.py
+          python3 companions/streamdeck/tools/tests/test_deckflow.py
+
+  build-streamdeck-macos:
+    needs: throttle
+    runs-on: macos-15
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-macos-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Qt Core, Gui, Widgets and Network only: no extra modules
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Install build dependencies
+        run: brew install ninja
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      - name: Run streamdeck-tests
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests
+
+  build-streamdeck-windows-msvc:
+    needs: throttle
+    runs-on: windows-2022
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-msvc-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Setup MSVC
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        shell: bash
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      # Qt's DLLs from the PATH and its plugins from QT_PLUGIN_PATH, both set by install-qt-action
+      - name: Run streamdeck-tests
+        shell: bash
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests.exe
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        shell: bash
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests.exe
+
+  build-streamdeck-windows-mingw:
+    needs: throttle
+    runs-on: windows-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-mingw-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          cache: true
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="$(cygpath -u "${{ env.QT_ROOT_DIR }}")" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        shell: msys2 {0}
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      # MSYS2's gcc runtime first: Qt's mingw_64\bin carries an older libstdc++ the binaries cannot use
+      - name: Run streamdeck-tests
+        shell: msys2 {0}
+        working-directory: build-sd/bin
+        run: |
+          export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
+          ./streamdeck-tests.exe
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        shell: msys2 {0}
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
+          ./streamdeck-studio-tests.exe

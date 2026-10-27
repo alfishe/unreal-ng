@@ -98,6 +98,8 @@ private:
         std::string emulatorId;
         QOpenGLTexture* texture = nullptr;
         QImage latchedFrame;
+        double aspect = 4.0 / 3.0;  // Width : height of the picture on the CRT (DisplayGeometry::WindowAspect), kept inside the 4:3 plate
+        QRectF source{0.0, 0.0, 1.0, 1.0};  // The working picture (paper) inside the texture, 0..1: where this machine puts it
         bool needsUpdate = true;
     };
 
@@ -119,7 +121,4 @@ private:
 
     std::atomic<bool> _isRepaintPending{false};
     uint64_t _videoFrameObserverId = 0;
-
-    static constexpr int FB_WIDTH = 352;
-    static constexpr int FB_HEIGHT = 288;
 };

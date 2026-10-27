@@ -4,6 +4,8 @@
 #include "cli-processor.h"
 
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
@@ -46,13 +48,12 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
         const bool hasValue = i + 1 < args.size();
         if (a == "--page")
         {
-            if (!hasValue || !BreakpointManager::ParsePageSpec(args[++i], spec.page, spec.pageType, error))
+            if (!hasValue || !BreakpointManager::ParsePageInto(args[++i], spec, error))
             {
                 if (error.empty())
-                    error = "--page needs a page: ramN, romN or cacheN (e.g. --page ram5)";
+                    error = "--page needs a page: ramN, romN, cacheN or vramN (e.g. --page ram5)";
                 return false;
             }
-            spec.hasPage = true;
         }
         else if (a == "--slot-only")
             spec.slotOnly = true;
@@ -65,6 +66,51 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
                 return false;
             }
             spec.portMask = mask;
+        }
+        else if (a == "--hc")
+        {
+            uint16_t hc = 0;
+            if (!hasValue || !ParseAddress(args[++i], hc) || hc > BRK_BEAM_MAX_HC)
+            {
+                error = "--hc needs a pixel clock (0..511)";
+                return false;
+            }
+            spec.beamHc = hc;
+        }
+        else if (a == "--via")
+        {
+            if (!hasValue || !BreakpointManager::ParseNextRegDoors(args[++i], spec.nrDoors, error))
+            {
+                if (error.empty())
+                    error = "--via needs doors: nextreg, port, copper (comma separated)";
+                return false;
+            }
+        }
+        else if (a == "--value" || a == "--vmask")
+        {
+            uint16_t number = 0;
+            if (!hasValue || !ParseAddress(args[++i], number) || number > 0xFF)
+            {
+                error = a + " needs a byte (0..255)";
+                return false;
+            }
+            if (a == "--value")
+            {
+                spec.nrValue = static_cast<uint8_t>(number);
+                if (spec.nrMask == 0)
+                    spec.nrMask = 0xFF;
+            }
+            else
+                spec.nrMask = static_cast<uint8_t>(number);
+        }
+        else if (a == "--group")
+        {
+            if (!hasValue)
+            {
+                error = "--group needs a group name";
+                return false;
+            }
+            spec.group = args[++i];
         }
         else if (a == "--hits")
         {
@@ -270,6 +316,171 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Port breakpoint"));
 }
 
+// HandleNextRegBreakpoint: bnextreg <reg>[-<end>] <r|w|rw> [--via doors] [--value V [--vmask M]] [--hits ..] [note]
+void CLIProcessor::HandleNextRegBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.size() < 2)
+    {
+        std::stringstream ss;
+        ss << "Usage: bnextreg <reg>[-<end>] <r|w|rw> [--via nextreg,port,copper] [--value V [--vmask M]] [--hits N|>=N|%N] [note]"
+           << NEWLINE << "Sets a ZX Next register breakpoint: a read of the register (through port #253B) or a write (by the"
+           << NEWLINE << "NEXTREG instructions, OUT #253B or a copper MOVE). It stops after the instruction that did it;"
+           << NEWLINE << "the copper's writes are caught up when the beam draws the line, so a copper stop is at the line's end." << NEWLINE
+           << "Examples:" << NEWLINE << "  bnextreg 0x07 w                  - any write of the CPU speed register" << NEWLINE
+           << "  bnextreg 0x40-0x44 w --via copper - the copper touching the palette registers" << NEWLINE
+           << "  bnextreg 0x15 w --value 0x01 --vmask 0x01 - a write that sets bit 0";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    const std::string& typeStr = args[1];
+    uint8_t access = BRK_IO_NONE;
+    if (typeStr.find('r') != std::string::npos)
+        access |= BRK_IO_IN;
+    if (typeStr.find('w') != std::string::npos)
+        access |= BRK_IO_OUT;
+    if (access == BRK_IO_NONE)
+    {
+        session.SendResponse("Invalid access. Use 'r', 'w' or 'rw'.");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_NEXTREG;
+    spec.access = access;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 2, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "NextREG breakpoint"));
+}
+
+// HandleBeamBreakpoint: bbeam <line> [--hc N] [--hits ..] [note]
+void CLIProcessor::HandleBeamBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage: bbeam <line> [--hc N] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops when the beam passes the place: <line> is the copper's line counter (NR #64 applied: 0 is the paper's first"
+           << NEWLINE << "line unless offset), --hc the pixel clock in the row (7 MHz, default 0). The machine stops at the end of the" << NEWLINE
+           << "instruction the beam passed it in. ZX Next only." << NEWLINE << "Examples:" << NEWLINE
+           << "  bbeam 100            - the start of line 100" << NEWLINE << "  bbeam 99 --hc 255    - where the line interrupt of line 100 fires";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_BEAM;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Beam breakpoint"));
+}
+
+// HandleCopperBreakpoint: bcopper <index>[-<end>] [--hits ..] [note]
+void CLIProcessor::HandleCopperBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage: bcopper <index>[-<end>] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops when the copper completes the instruction at that list index (0..1023): a WAIT that became true, or a MOVE." << NEWLINE
+           << "ZX Next only." << NEWLINE << "Examples:" << NEWLINE << "  bcopper 12        - the 13th instruction of the list" << NEWLINE
+           << "  bcopper 0-1023    - any instruction";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_COPPER;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Copper breakpoint"));
+}
+
+// HandleMagicBreakpoint: bmagic <edff|dd01> [--hits ..] [note]
+void CLIProcessor::HandleMagicBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty() || (args[0] != "edff" && args[0] != "dd01"))
+    {
+        std::stringstream ss;
+        ss << "Usage: bmagic <edff|dd01> [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops after the CPU ran the magic opcode other emulators use as a debug trap: ED FF (jnext, ZEsarUX) or DD 01 (CSpect)." << NEWLINE
+           << "The opcode executes as on the hardware (ED FF is a NOP, DD 01 is LD BC,nn). ZX Next only." << NEWLINE << "Examples:" << NEWLINE
+           << "  bmagic edff" << NEWLINE << "  bmagic dd01 --hits >=3";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    std::vector<std::string> rest = args;
+    rest[0] = args[0] == "edff" ? "0xEDFF" : "0xDD01";  // the opcode word is the breakpoint's address
+    BreakpointSpec spec;
+    spec.type = BRK_MAGIC;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(rest, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Magic breakpoint"));
+}
+
 // HandleBPHits: bphits reset [id]
 void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& args)
 {
@@ -336,7 +547,8 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
            << "  write     - Clear all memory write breakpoints" << NEWLINE
            << "  exec      - Clear all execution breakpoints" << NEWLINE
            << "  in        - Clear all port IN breakpoints" << NEWLINE << "  out       - Clear all port OUT breakpoints"
-           << NEWLINE << "  group <name> - Clear all breakpoints in a group";
+           << NEWLINE << "  group <name> - Clear all breakpoints in a group" << NEWLINE
+           << "  nextreg | nextreg_read | nextreg_write | beam | copper | magic | keyboard | group:<name>";
         session.SendResponse(ss.str());
 
         return;
@@ -346,7 +558,7 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
 
     if (option == "all")
     {
-        bpManager->ClearBreakpoints();
+        bpManager->ClearUserBreakpoints();
         session.SendResponse("All breakpoints cleared\n");
 
         // Notify UI components that breakpoints have changed
@@ -476,7 +688,8 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpclear' for help.");
+            if (!ApplyBreakpointSelection(session, *bpManager, option, "bpclear"))
+                session.SendResponse("Invalid option or breakpoint ID. Use 'bpclear' for help.");
         }
     }
 }
@@ -506,7 +719,10 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
            << "  list             - List all breakpoint groups" << NEWLINE
            << "  show <name>      - Show breakpoints in a specific group" << NEWLINE
            << "  set <id> <name>  - Assign a breakpoint to a group" << NEWLINE
-           << "  remove <id>      - Remove a breakpoint from its group (sets to 'default')";
+           << "  remove <id>      - Remove a breakpoint from its group (sets to 'default')" << NEWLINE
+           << "  on <name>        - Enable the breakpoints of a group" << NEWLINE
+           << "  off <name>       - Disable the breakpoints of a group" << NEWLINE
+           << "  toggle <name>    - All of the group on (when one is off), else all off";
         session.SendResponse(ss.str());
         return;
     }
@@ -580,6 +796,21 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
         else
             session.SendResponse("Failed to remove breakpoint from group. Check if the breakpoint ID is valid.");
     }
+    else if ((command == "on" || command == "off" || command == "toggle") && args.size() > 1)
+    {
+        const BreakpointSelection selection = BreakpointSelection::Group(args[1]);
+        bool active = command == "on";
+        const BreakpointSelection::Outcome outcome =
+            command == "toggle" ? selection.Toggle(*bpManager, active) : selection.SetActive(*bpManager, active);
+        if (outcome.selected == 0)
+        {
+            session.SendResponse("No breakpoint in group '" + args[1] + "'");
+            return;
+        }
+        onBreakpointsChanged();
+        session.SendResponse("Group '" + args[1] + "' " + (active ? "on" : "off") + " (" + std::to_string(outcome.selected) +
+                             " breakpoints)");
+    }
     else
     {
         session.SendResponse("Invalid command. Use 'bpgroup' for help.");
@@ -616,7 +847,8 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
            << "  exec      - Activate all execution breakpoints" << NEWLINE
            << "  in        - Activate all port IN breakpoints" << NEWLINE
            << "  out       - Activate all port OUT breakpoints" << NEWLINE
-           << "  group <name> - Activate all breakpoints in a group";
+           << "  group <name> - Activate all breakpoints in a group" << NEWLINE
+           << "  nextreg | nextreg_read | nextreg_write | beam | copper | magic | keyboard | group:<name>";
         session.SendResponse(ss.str());
         return;
     }
@@ -715,7 +947,8 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpon' for help.");
+            if (!ApplyBreakpointSelection(session, *bpManager, option, "bpon"))
+                session.SendResponse("Invalid option or breakpoint ID. Use 'bpon' for help.");
         }
     }
 }
@@ -750,7 +983,8 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
            << "  exec      - Deactivate all execution breakpoints" << NEWLINE
            << "  in        - Deactivate all port IN breakpoints" << NEWLINE
            << "  out       - Deactivate all port OUT breakpoints" << NEWLINE
-           << "  group <name> - Deactivate all breakpoints in a group";
+           << "  group <name> - Deactivate all breakpoints in a group" << NEWLINE
+           << "  nextreg | nextreg_read | nextreg_write | beam | copper | magic | keyboard | group:<name>";
         session.SendResponse(ss.str());
         return;
     }
@@ -849,8 +1083,175 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpoff' for help.");
+            if (!ApplyBreakpointSelection(session, *bpManager, option, "bpoff"))
+                session.SendResponse("Invalid option or breakpoint ID. Use 'bpoff' for help.");
         }
     }
 }
 
+
+bool CLIProcessor::ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
+                                            const char* verb)
+{
+    BreakpointSelection selection;
+    std::string error;
+    if (!BreakpointSelection::Parse(text, selection, error) || selection.GetKind() == BreakpointSelection::Kind::Id)
+        return false;
+    const std::string what = std::string(verb);
+    bool active = what == "bpon";
+    BreakpointSelection::Outcome outcome;
+    if (what == "bpclear")
+        outcome = selection.Remove(manager);
+    else if (what == "bptoggle")
+        outcome = selection.Toggle(manager, active);
+    else
+        outcome = selection.SetActive(manager, active);
+    if (outcome.changed > 0)
+        onBreakpointsChanged();
+    session.SendResponse(std::to_string(outcome.selected) + " breakpoint(s) in '" + selection.Name() + "' " +
+                         (what == "bpclear" ? "cleared" : active ? "activated" : "deactivated"));
+    return true;
+}
+
+// HandleBPToggle: bptoggle [all | <id> | <kind> | group:<name>]
+void CLIProcessor::HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    if (!args.empty() && (args[0] == "help" || args[0] == "-h"))
+    {
+        session.SendResponse(std::string("Usage: bptoggle [all | <id> | <kind> | group:<name>]") + NEWLINE +
+                             "All of the selection on when one of it is off, else all off. Kinds: " +
+                             BreakpointSelection::KindNames());
+        return;
+    }
+    BreakpointSelection selection;
+    std::string error;
+    if (!BreakpointSelection::Parse(args.empty() ? std::string("all") : args[0], selection, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    bool active = false;
+    const BreakpointSelection::Outcome outcome = selection.Toggle(*bpManager, active);
+    if (outcome.selected == 0)
+    {
+        session.SendResponse("No breakpoint in '" + selection.Name() + "'");
+        return;
+    }
+    onBreakpointsChanged();
+    session.SendResponse(std::to_string(outcome.selected) + " breakpoint(s) in '" + selection.Name() + "' " +
+                         (active ? "activated" : "deactivated"));
+}
+
+// HandleKeyBreakpoint: bkey <key|any> [press|release|both] [--hits N] [--group G] [note]
+void CLIProcessor::HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage: bkey <key|any> [press|release|both] [--hits N|>=N|%N] [--group G] [note]" << NEWLINE
+           << "Stops on the first keyboard read (IN #xxFE) that sees the key go down (press, default) or up (release):"
+           << NEWLINE << "the program's key handling, not the host's key event. Keys: space, enter, caps, symbol, a..z, 0..9"
+           << NEWLINE << "Examples:" << NEWLINE << "  bkey space          - when the program sees SPACE pressed" << NEWLINE
+           << "  bkey any release    - when it sees any key released";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_KEYBOARD;
+    spec.access = BRK_KEY_PRESS;
+    if (args[0] == "any")
+        spec.address = BRK_KEY_ANY;
+    else
+    {
+        const ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(args[0]);
+        if (key == ZXKEY_NONE)
+        {
+            session.SendResponse("Error: unknown key '" + args[0] + "' (key list shows the names)");
+            return;
+        }
+        spec.address = static_cast<uint16_t>(key);
+    }
+    size_t from = 1;
+    if (args.size() > 1 && (args[1] == "press" || args[1] == "release" || args[1] == "both"))
+    {
+        spec.access = args[1] == "press" ? BRK_KEY_PRESS : args[1] == "release" ? BRK_KEY_RELEASE
+                                                                                : (BRK_KEY_PRESS | BRK_KEY_RELEASE);
+        from = 2;
+    }
+    std::string note;
+    for (size_t i = from; i < args.size(); i++)
+    {
+        std::string error;
+        if (args[i] == "--hits" && i + 1 < args.size())
+        {
+            if (!BreakpointManager::ParseHitSpec(args[++i], spec.hitMode, spec.hitTarget, error))
+            {
+                session.SendResponse("Error: " + error);
+                return;
+            }
+        }
+        else if (args[i] == "--group" && i + 1 < args.size())
+            spec.group = args[++i];
+        else
+            note += (note.empty() ? "" : " ") + args[i];
+    }
+    spec.note = note;
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Keyboard breakpoint"));
+}
+
+// HandleBPNote: bpnote <id> [text] (no text: clear)
+void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    uint16_t id = 0;
+    if (args.empty() || !ParseAddress(args[0], id))
+    {
+        session.SendResponse("Usage: bpnote <id> [text]   (no text clears the note)");
+        return;
+    }
+    std::string note;
+    for (size_t i = 1; i < args.size(); i++)
+        note += (note.empty() ? "" : " ") + args[i];
+    if (!bpManager->SetBreakpointNote(id, note))
+    {
+        session.SendResponse("No breakpoint found with ID " + std::to_string(id));
+        return;
+    }
+    onBreakpointsChanged();
+    session.SendResponse("Breakpoint #" + std::to_string(id) + (note.empty() ? " note cleared" : " note set"));
+}

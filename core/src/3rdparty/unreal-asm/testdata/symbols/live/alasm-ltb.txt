@@ -1,0 +1,10 @@
+        ORG #7000
+alpha   LD B,2
+beta    EQU 1000
+gamma   DW alpha,beta
+ZZ      RET
+        ORG #C000,4
+PGL     NOP
+PGM     DB 7
+        ORG #C100,6
+PG6     NOP

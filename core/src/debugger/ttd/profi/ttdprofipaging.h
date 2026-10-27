@@ -27,7 +27,7 @@ namespace ttd {
 /// profiPalette comes first so the trailing uint8_t needs no alignment padding.
 struct ProfiPagingState
 {
-    uint16_t profiPalette[16];     ///< hi-res palette, 9-bit GGGRRRBBB per entry (see EmulatorState::profiPalette)
+    uint16_t profiPalette[16];     ///< hi-res palette, 9-bit GGGRRRBBB per entry (see ProfiState::palette)
     uint8_t pDFFD;                 ///< #DFFD latch
     uint8_t switches;              ///< front-panel switches: bit 0 TURBO, bit 1 CP/M (v5); was padding
 };

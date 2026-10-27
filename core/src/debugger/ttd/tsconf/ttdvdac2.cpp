@@ -101,11 +101,10 @@ void TTDVdac2Memory::TTDBeforeCapture() {}
 
 #endif  // ENABLE_VDAC2
 
-bool TTDVdac2Memory::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool TTDVdac2Memory::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
     if (_regionCount == 0)
         return false;   // no chip: the blob stays as it is
-    peripheralId = static_cast<uint8_t>(PeripheralId::Vdac2Memory);
     state.resize(8);
     _card.TtdSaveMemoryHeader(state.data());
     return true;
@@ -123,5 +122,12 @@ size_t TTDVdac2::TTDStateSize() const { return _card.TtdStateSize(); }
 void TTDVdac2::TTDSaveState(uint8_t* dst) const { _card.TtdSaveState(dst); }
 void TTDVdac2::TTDLoadState(const uint8_t* src) { _card.TtdLoadState(src); }
 uint64_t TTDVdac2::TTDHashState() const { return _card.TtdStateHash(); }
+
+TTDDeviceDescriptor TTDVdac2::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    d.timeFields = Vdac2Card::TtdTimeFields();   // the raster clocks at the blob's start
+    return d;
+}
 
 }  // namespace ttd

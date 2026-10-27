@@ -294,20 +294,22 @@ TEST_F(HayesModemPeer_Test, TheStateRoundTripsThroughTheComPortRecord)
     Connect();
     Send("ATS0=3");   // typed into the call: data, not a command (unsent until the frame boundary)
     netstate::Com saved{};
-    ASSERT_TRUE(ComPort::SavePeer(_modem.get(), saved));
+    netstate::Tail tail;
+    ComPort::SavePeer(_modem.get(), saved, tail);
     EXPECT_EQ(saved.unsentLength, 6u);
     EXPECT_EQ(saved.peerKind, 6);
     EXPECT_EQ(saved.modem.mode, static_cast<uint8_t>(HayesModemPeer::Mode::Online));
 
     HayesModemPeer other(_net.get(), Spec("MODEM"), "");
     other.SetClock([this]() { return _now; }, kHz);
-    ComPort::LoadPeer(&other, saved, nullptr);
+    ComPort::LoadPeer(&other, saved, tail, nullptr);
     EXPECT_EQ(other.GetMode(), HayesModemPeer::Mode::Online);
     EXPECT_TRUE(other.Dcd());
     EXPECT_EQ(other.Dialed(), "192.0.2.10:2323");
     EXPECT_EQ(other.LastResult(), "CONNECT 57600");
     netstate::Com again{};
-    ComPort::SavePeer(&other, again);
+    netstate::Tail againTail;
+    ComPort::SavePeer(&other, again, againTail);
     EXPECT_EQ(std::memcmp(&saved.modem, &again.modem, sizeof(saved.modem)), 0) << "the modem's record is the same";
     EXPECT_EQ(std::memcmp(&saved.link, &again.link, sizeof(saved.link)), 0);
 }

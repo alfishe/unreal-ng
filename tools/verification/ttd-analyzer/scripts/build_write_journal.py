@@ -79,8 +79,10 @@ def main() -> int:
         try:
             card = machine.get("general_sound")
             if card and card != "none":
-                api.post(f"{base}/control/audio/gs", {"action": "switch_personality", "personality": card})
-                run_frames(api, base, 1)   # the switch is applied at a frame boundary
+                # A slot change (owner decision Q10): the machine restarts with the card, under a new id
+                reply = api.post(f"{base}/control/audio/gs", {"action": "switch_personality", "personality": card})
+                emu_id = reply.get("restart", {}).get("emulatorId", emu_id)
+                base = f"/emulator/{emu_id}"
             api.post(f"{base}/ttd/load", {"path": str(source)})
 
             body: Dict[str, Any] = {}

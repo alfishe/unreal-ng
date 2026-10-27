@@ -79,11 +79,20 @@ std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
     { Qt::Key_Minus, ZXKEY_EXT_MINUS },
     { Qt::Key_multiply, ZXKEY_EXT_MULTIPLY },
     { Qt::Key_division, ZXKEY_EXT_DIVIDE },
+    { Qt::Key_Slash, ZXKEY_EXT_DIVIDE },
     { Qt::Key_Equal, ZXKEY_EXT_EQUAL },
-    // { Qt::Key_division, ZXKEY_EXT_BAR }, '|'
+    { Qt::Key_Bar, ZXKEY_EXT_BAR },
     { Qt::Key_Backslash, ZXKEY_EXT_BACKSLASH },
 
+    // The Symbol Shift symbols: Caps Shift is held back while one is down (Keyboard::HoldBackCapsShift)
     { Qt::Key_QuoteDbl, ZXKEY_EXT_DBLQUOTE },
+    { Qt::Key_Semicolon, ZXKEY_EXT_SEMICOLON },
+    { Qt::Key_Apostrophe, ZXKEY_EXT_APOSTROPHE },
+    { Qt::Key_Colon, ZXKEY_EXT_COLON },
+    { Qt::Key_Question, ZXKEY_EXT_QUESTION },
+    { Qt::Key_Less, ZXKEY_EXT_LESS },
+    { Qt::Key_Greater, ZXKEY_EXT_GREATER },
+    { Qt::Key_Underscore, ZXKEY_EXT_UNDERSCORE },
 };
 
 KeyboardManager::KeyboardManager()
@@ -204,8 +213,24 @@ quint8 KeyboardManager::mapPcKeyToEmulatorKey(PcKey pcKey)
         case PcKey::Backslash: return ZXKEY_EXT_BACKSLASH;
         case PcKey::Comma: return ZXKEY_EXT_COMMA;
         case PcKey::Period: return ZXKEY_EXT_DOT;
+        case PcKey::Semicolon: return ZXKEY_EXT_SEMICOLON;
+        case PcKey::Quote: return ZXKEY_EXT_APOSTROPHE;
+        case PcKey::Slash: return ZXKEY_EXT_DIVIDE;
+        case PcKey::KeypadDivide: return ZXKEY_EXT_DIVIDE;
+        case PcKey::KeypadMultiply: return ZXKEY_EXT_MULTIPLY;
+        case PcKey::KeypadMinus: return ZXKEY_EXT_MINUS;
+        case PcKey::KeypadPlus: return ZXKEY_EXT_PLUS;
         default: return ZXKEY_NONE;
     }
+}
+
+bool KeyboardManager::positionalKey(PcKey pcKey)
+{
+    const int code = static_cast<int>(pcKey);
+    if (code >= static_cast<int>(PcKey::Digit1) && code <= static_cast<int>(PcKey::Digit0))
+        return true;
+    return pcKey == PcKey::KeypadDivide || pcKey == PcKey::KeypadMultiply || pcKey == PcKey::KeypadMinus ||
+           pcKey == PcKey::KeypadPlus;
 }
 
 PcKey KeyboardManager::mapQtKeyToPcKey(int qtKey)
@@ -298,6 +323,11 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
     quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(physicalQtKey(event->key()), event->modifiers());
     PcKey pcKey = mapQtEventToPcKey(event);
 
+    // The digit row and the keypad operators go by position on every layout: Shift+2 is Caps Shift + 2 (CAPS LOCK)
+    // also where the layout puts '"' there (German, Russian), the AZERTY key of '"' and 3 is 3
+    if (positionalKey(pcKey))
+        zxKey = mapPcKeyToEmulatorKey(pcKey);
+
     // A layout without the Latin letters (Russian, Greek...) gives a Qt key the map does not know: the physical
     // key stands in, so the key of the K position is K under any layout. A Latin layout keeps its own symbols
     if (zxKey == ZXKEY_NONE)
@@ -364,6 +394,10 @@ void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, con
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     if (pcKey != PcKey::None)
     {
+        // Windows keeps Print Screen's press for itself (the snipping tool) and passes the release only: then the
+        // key is a tap
+        if (type == KEY_RELEASED && pcKey == PcKey::PrintScreen && !_heldPcKeys.count(static_cast<uint8_t>(pcKey)))
+            messageCenter.Post(MC_PCKEY_PRESSED, new PcKeyEvent(static_cast<uint8_t>(pcKey), KEY_PRESSED, targetId));
         if (type == KEY_PRESSED)
             _heldPcKeys.insert(static_cast<uint8_t>(pcKey));
         else
@@ -395,12 +429,40 @@ void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
 
 bool KeyboardManager::machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard)
 {
-    if (!event || !keyboard || !keyboard->RoutesToPs2())
+    if (!event || !keyboard || isFullScreenKey(event))
+        return false;
+    // In PC terms: Meta is the Win / Super key, or Command on a Mac - the host's and the app's
+    const Qt::KeyboardModifiers modifiers = physicalModifiers(event->modifiers());
+    if (modifiers.testFlag(Qt::MetaModifier))
+        return false;
+    const bool ctrl = modifiers.testFlag(Qt::ControlModifier);
+    const bool alt = modifiers.testFlag(Qt::AltModifier);
+    if (ctrl && !alt && (keyboard->RoutesToMatrix() || keyboard->RoutesToPs2()))
+        return true;
+    if (!keyboard->RoutesToPs2())
+        return false;
+    if (alt)
+        return true;
+    // Keypad and Shift do not make a GUI shortcut
+    const int key = event->key();
+    return !ctrl && key >= Qt::Key_F1 && key <= Qt::Key_F12;
+}
+
+QKeyCombination KeyboardManager::fullScreenKey()
+{
+    if (macKeyboard())
+        return QKeyCombination(Qt::ControlModifier, Qt::Key_F);  // Qt's Ctrl is Command on macOS
+    return QKeyCombination(Qt::AltModifier, Qt::Key_Return);
+}
+
+bool KeyboardManager::isFullScreenKey(const QKeyEvent* event)
+{
+    if (!event)
+        return false;
+    const QKeyCombination full = fullScreenKey();
+    const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
+    if (modifiers != full.keyboardModifiers())
         return false;
     const int key = event->key();
-    if (key < Qt::Key_F1 || key > Qt::Key_F12)
-        return false;
-    // Keypad and Shift do not make a GUI shortcut; Ctrl / Alt / Cmd (Meta) do
-    const Qt::KeyboardModifiers gui = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
-    return (event->modifiers() & gui) == 0;
+    return key == full.key() || (full.key() == Qt::Key_Return && key == Qt::Key_Enter);
 }

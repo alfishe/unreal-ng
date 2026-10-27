@@ -34,8 +34,14 @@ struct MachineStateTransferOptions
 ///
 ///          What it refuses (the report says why, per item): a state the target cannot express (pages the
 ///          target lacks, +2A/+3 all-RAM modes on a 128K, extended Pentagon / Scorpion paging on another
-///          family, model-specific machines such as ATM / Profi / TSConf on another model), and devices whose
-///          configuration differs (e.g. a 512 KB GS into a 128 KB GS).
+///          family, a TSConf state anywhere, an ATM / Profi / Sprinter in its own pager mode on another model),
+///          and devices whose configuration differs (e.g. a 512 KB GS into a 128 KB GS).
+///
+///          Machines with their own layout (machinestatetransferlayouts.h): a Spectrum state moves INTO an ATM or a
+///          Profi (the board is put in its plain 128K layout first) and into a Sprinter that runs a Spectrum mode (banks
+///          behind the PLD cells, no reset); an ATM / Profi / Sprinter in a plain 128K layout moves out as a 128K
+///          state; an ATM 7.10 in its own pager state moves to an ATM3 / ZX-Evo Base with its ROM selectors translated.
+///          The full matrix: docs/features/automation.md. This mechanism is NEVER merged with the snapshot pipeline.
 ///
 ///          Floppies and the tape follow into the same slots as the target's own in-memory copies: same
 ///          contents (unsaved writes included), clean, session access, standing for a postfixed file

@@ -20,7 +20,7 @@
 class EvoFontOverlay final : public HostBusOverlay
 {
 public:
-    /// @param fontRam 2048 bytes, addressed code * 8 + row (EmulatorState::atmFontRam)
+    /// @param fontRam 2048 bytes, addressed code * 8 + row (AtmState::fontRam)
     explicit EvoFontOverlay(uint8_t* fontRam) : _fontRam(fontRam) { observesReads = false; }
 
     uint8_t onRead([[maybe_unused]] uint16_t addr, uint8_t normal, [[maybe_unused]] bool isExecution,

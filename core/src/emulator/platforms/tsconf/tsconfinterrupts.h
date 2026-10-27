@@ -85,6 +85,10 @@ public:
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;
     uint8_t AcknowledgeInterrupt(uint32_t t) override;
+    /// The next frame or line event the mask lets latch (none: UINT32_MAX, the frame end bounds the caller). A DMA
+    /// completion needs a running DMA, which runs only in steps (TsConfEngine::IdleFetchesUntil); the wait-port
+    /// strobe (ZiFi's UART), vdos and the VDAC2 line source are not predicted: `t`
+    uint32_t NextAssertT(uint32_t t) override;
     /// The frame INT pulse counts only CPU clocks without /WAIT ([V] zint.v: intctr counts on
     /// `zpos && !wait_r`): a stretch of the clock freezes a running pulse, and a pulse that starts inside one
     /// begins when it ends. Without it a long wait (the AVR UART's 400-clock accesses, DRAM waits) swallowed the

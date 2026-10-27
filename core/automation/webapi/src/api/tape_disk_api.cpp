@@ -2,10 +2,10 @@
 // Generated: 2026-01-08
 
 #include "../emulator_api.h"
+#include <optional>
 #include "../common/upload_helper.h"
 
 #include <debugger/media/sectorwrite.h>
-#include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -20,6 +20,8 @@
 #include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/fdc/trdoscatalog.h>
+#include <emulator/io/storage/fs/diskfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <common/stringhelper.h>
 #include <json/json.h>
@@ -270,7 +272,7 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
     }
 
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";
@@ -298,7 +300,7 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/eject
-void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
+void EmulatorAPI::ejectTape(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -330,8 +332,8 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
         return;
     }
     
-    // The tape slot of the media manager (pauses the emulator itself);
-    // refused while a TTD recording runs
+    // The tape slot of the media manager (pauses the emulator itself); while
+    // a TTD recording runs, an event of the recording at the next frame boundary
     std::string reason;
     if (!emulator->EjectTape(&reason)) {
         Json::Value error;
@@ -355,7 +357,7 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/play
-void EmulatorAPI::playTape(const HttpRequestPtr& req,
+void EmulatorAPI::playTape(const HttpRequestPtr& /*req*/,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
@@ -388,11 +390,9 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe play
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
     // (FR-6), otherwise start at the consumption cursor
@@ -407,9 +407,7 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
         }
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = played ? "success" : "error";
@@ -424,7 +422,7 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/stop
-void EmulatorAPI::stopTape(const HttpRequestPtr& req,
+void EmulatorAPI::stopTape(const HttpRequestPtr& /*req*/,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
@@ -457,17 +455,13 @@ void EmulatorAPI::stopTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe stop
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     context->pTape->stopTape();
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = "success";
@@ -479,7 +473,7 @@ void EmulatorAPI::stopTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/rewind
-void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
+void EmulatorAPI::rewindTape(const HttpRequestPtr& /*req*/,
                              std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
@@ -512,19 +506,15 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe rewind
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     // Rewind keeps the image and catalog (FR-5) — unlike stop/eject
     context->pTape->EnsureImageLoaded();
     context->pTape->RewindToStart();
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = "success";
@@ -537,7 +527,7 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/:id/tape
 /// Full tape snapshot: state, position, cursor, fast-load plan, catalog (design §7.2)
-void EmulatorAPI::getTape(const HttpRequestPtr& req,
+void EmulatorAPI::getTape(const HttpRequestPtr& /*req*/,
                           std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
@@ -570,17 +560,13 @@ void EmulatorAPI::getTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe snapshot: the first EnsureImageLoaded() mutates tape state
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret = buildTapeSnapshot(context);
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -597,7 +583,7 @@ void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/:id/tape/blocks/:index
 /// One catalog descriptor plus a 64-byte hex preview of the raw payload
-void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
+void EmulatorAPI::getTapeBlock(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& index) const
@@ -645,11 +631,9 @@ void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -676,9 +660,7 @@ void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
         ret["preview_hex"] = hex;
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);
@@ -734,11 +716,9 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -757,9 +737,7 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
         ret["cursor"] = snapshot["cursor"];
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);
@@ -768,7 +746,7 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/pause — manual pause; play resumes in place
-void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
+void EmulatorAPI::pauseTape(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -800,11 +778,9 @@ void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -823,9 +799,7 @@ void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
         ret["message"] = "Tape paused (play resumes in place)";
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);
@@ -1231,7 +1205,7 @@ void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
     std::string insertRefusal;
     if (insertRequested)
     {
-        insertRefusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+        insertRefusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, outputPath);
         if (insertRefusal.empty())
             inserted = emulator->LoadTape(outputPath);
         else
@@ -1342,7 +1316,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
             autostart = (req->getHeader("X-Autostart") == "true");
     }
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, driveNum, path); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";
@@ -1449,7 +1423,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "format must be auto, unformatted or plus3";
+            error["message"] = "format must be auto, unformatted (raw), plus3 or trdos";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
@@ -1463,7 +1437,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
     }
 
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::CreateDisk, driveNum); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";
@@ -1505,7 +1479,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/disk/:drive/eject
-void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
+void EmulatorAPI::ejectDisk(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id,
                             const std::string& drive) const
@@ -1579,7 +1553,7 @@ void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/info
-void EmulatorAPI::getDiskInfo(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskInfo(const HttpRequestPtr& /*req*/,
                               std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id,
                               const std::string& drive) const
@@ -1643,7 +1617,7 @@ void EmulatorAPI::getDiskInfo(const HttpRequestPtr& req,
 // ============================================================================
 
 /// @brief GET /api/v1/emulator/:id/disk - List all drives
-void EmulatorAPI::getDiskDrives(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
@@ -1730,7 +1704,7 @@ void EmulatorAPI::getDiskDrive(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sector/:cyl/:side/:sec - Read logical sector
-void EmulatorAPI::getDiskSector(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSector(const HttpRequestPtr& /*req*/,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id,
                                 const std::string& drive,
@@ -1969,7 +1943,7 @@ void EmulatorAPI::putDiskSector(const HttpRequestPtr& req, std::function<void(co
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sector/:cyl/:side/:sec/raw - Read raw sector bytes
-void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& /*req*/,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id,
                                    const std::string& drive,
@@ -2083,7 +2057,7 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/track/:cyl/:side - Track summary
-void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskTrack(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& drive,
@@ -2191,7 +2165,7 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/track/:cyl/:side/raw - Raw track bytes
-void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& /*req*/,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id,
                                   const std::string& drive,
@@ -2283,7 +2257,7 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/image - Whole image dump
-void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskImage(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& drive) const
@@ -2378,7 +2352,7 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sysinfo - TR-DOS system sector
-void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& /*req*/,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id,
                                  const std::string& drive) const
@@ -2516,7 +2490,7 @@ void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/catalog - Disk catalog
-void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id,
                                  const std::string& drive) const
@@ -2575,73 +2549,48 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& req,
     
     Json::Value ret;
     ret["drive"] = drive;
-    ret["dos_type"] = "TR-DOS";
     ret["files"] = Json::arrayValue;
-    
-    // TR-DOS catalog is in Track 0, Side 0, Sectors 1-8 (16 entries per sector)
-    auto* track = diskImage->getTrackForCylinderAndSide(0, 0);
-    if (!track) {
-        ret["error"] = "Track 0 not found";
+
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
+    // TR-DOS entries keep their catalog fields (type, start, length, sectors, first track / sector)
+    DiskFs fs(*diskImage);
+    std::vector<DiskFsEntry> entries;
+    std::string catalogError;
+    if (!fs.List("", "", true, entries, catalogError)) {
+        ret["dos_type"] = "TR-DOS";
+        ret["error"] = catalogError;
+        ret["file_count"] = 0;
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
-    for (int sec = 0; sec < 8; sec++) {
-        auto* sector = track->getSector(sec);
-        if (!sector) continue;
-        
-        uint8_t* data = sector->data;
-        
-        // 16 entries per sector, 16 bytes each
-        for (int entry = 0; entry < 16; entry++) {
-            int offset = entry * 16;
-            
-            // First byte = 0x00 means end of catalog
-            if (data[offset] == 0x00) {
-                goto done;
-            }
-            
-            // First byte = 0x01 means deleted file
-            if (data[offset] == 0x01) continue;
-            
-            Json::Value file;
-            
-            // Filename: bytes 0-7
-            std::string name;
-            for (int i = 0; i < 8; i++) {
-                uint8_t c = data[offset + i];
-                if (c >= 32 && c < 128) name += (char)c;
-            }
-            file["name"] = name;
-            
-            // Type: byte 8
-            char type = data[offset + 8];
-            file["type"] = std::string(1, type);
-            
-            // Start address: bytes 9-10 (LE)
-            uint16_t start = data[offset + 9] | (data[offset + 10] << 8);
-            file["start"] = start;
-            
-            // Length: bytes 11-12 (LE)
-            uint16_t length = data[offset + 11] | (data[offset + 12] << 8);
-            file["length"] = length;
-            
-            // Sectors: byte 13
-            file["sectors"] = data[offset + 13];
-            
-            // Start sector: byte 14
-            file["first_sector"] = data[offset + 14];
-            
-            // Start track: byte 15
-            file["first_track"] = data[offset + 15];
-            
-            ret["files"].append(file);
+    const DiskFsVolume& volume = fs.Volumes().front();
+    ret["dos_type"] = volume.system;
+    ret["volume"] = volume.id;
+    ret["label"] = volume.label;
+    for (const DiskFsEntry& entry : entries) {
+        if (entry.directory)
+            continue;
+        Json::Value file;
+        file["path"] = entry.path;
+        file["start"] = entry.start;
+        file["length"] = static_cast<Json::UInt64>(entry.size);
+        if (volume.fs == "trdos") {
+            file["name"] = entry.name.substr(0, entry.name.rfind('.'));
+            file["type"] = entry.name.substr(entry.name.rfind('.') + 1);
+            file["sectors"] = static_cast<Json::Int64>(entry.Field("sectors"));
+            file["first_sector"] = static_cast<Json::Int64>(entry.Field("sector"));
+            file["first_track"] = static_cast<Json::Int64>(entry.Field("track"));
+        } else {
+            const size_t dot = entry.name.rfind('.');
+            file["name"] = entry.name;
+            file["type"] = dot == std::string::npos ? std::string() : entry.name.substr(dot + 1);  // the extension
+            file["attributes"] = entry.attributes;
         }
+        ret["files"].append(file);
     }
-    
-done:
+
     ret["file_count"] = ret["files"].size();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);

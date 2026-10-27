@@ -2,6 +2,9 @@
 
 #include "mediaformatregistry.h"
 
+#include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+
 #include "emulator/io/storage/hostwritehold.h"
 #include "emulator/io/storage/mediareadtap.h"
 
@@ -14,6 +17,7 @@
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/io/storage/cd/audiofolderdisc.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
+#include "emulator/io/storage/commitjournal.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/io/storage/rawimage.h"
@@ -290,6 +294,12 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
 {
     medium.reset();
 
+    // A composition descriptor (a file named *.ucompose.yaml / .json, or an inline body)
+    const MediaSource& candidate = request.source;
+    if (!candidate.inlineBody.empty() || candidate.type == MediaSourceType::Composite ||
+        (!candidate.path.empty() && ComposeDescriptor::IsDescriptorName(candidate.path) && !FileHelper::IsFolder(candidate.path)))
+        return CompositeMediumFactory::Open(request, medium);
+
     if (request.kind == MediaKind::Floppy)
         return OpenFloppy(request, medium);
     if (request.kind == MediaKind::Tape)
@@ -312,6 +322,10 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
 
     if (!FileHelper::FileExists(source.path))
         return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);
+
+    // An interrupted S3 commit into this image is undone before anything reads it (DT-14)
+    std::string recovered;
+    CommitJournal::Recover(FileHelper::ToFsPath(source.path), &recovered);
 
     // A raw image, a headered hard-disk format (HDF, HDI, fixed VHD) or a CHD
     std::string error;
@@ -338,6 +352,8 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     MediaSource resolved = source;
     resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
     medium = WrapBlock(resolved, access, format, std::move(image));
+    if (!recovered.empty())
+        result.report.push_back(recovered);
     medium->Report() = result.report;
     return result;
 }

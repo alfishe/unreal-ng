@@ -10,13 +10,17 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/mixerchannel.h"
 #include "emulator/platform.h"
 
 /// region <Constructors / destructors>
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
-    , _fitment(context->config.sound.sd ? Fitment::Quad : Fitment::Mono)
+    , _fitment(!context->config.sound.sd           ? Fitment::Mono
+               : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
+               : context->config.sound.sdMode == 2 ? Fitment::Mode2
+                                                   : Fitment::Quad)
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -87,6 +91,16 @@ void Covox::reset()
     memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
 }
 
+void Covox::followSamplePhase(uint64_t phase)
+{
+    if (!_phaseAlignPending)
+        return;
+    _phaseAlignPending = false;
+    const double fraction = static_cast<double>(phase) / static_cast<double>(CPU_CLOCK_RATE);
+    blip_align_phase(_blipL, fraction);
+    blip_align_phase(_blipR, fraction);
+}
+
 void Covox::handleFrameStart()
 {
     _frameHadSound = false;
@@ -110,6 +124,9 @@ void Covox::handleFrameStart()
         }
         _writtenThisFrame[i] = false;
     }
+    // A channel mute or volume changed since the last frame: the level steps at the frame's start
+    if (_levelsDirty)
+        emitLevelsAtFrameStart();
 }
 
 void Covox::handleFrameEnd(size_t expectedSamples)
@@ -142,9 +159,23 @@ void Covox::handleFrameEnd(size_t expectedSamples)
     }
     samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
 
+    if (_channelTap)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            FillChannelTap(i, static_cast<size_t>(samplesThisFrame));
+            _channelTapFilled[static_cast<size_t>(i)] = 0;
+        }
+    }
+
     // Read out band-limited samples into the interleaved stereo buffer
     int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
     int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
+
+    // A frame longer than the base frame (host speed multiplier) rendered more than the mixer reads: the rest is the
+    // excess the mixer drops knowingly, taken out at the next frame start together with the phase (followSamplePhase)
+    if (frameDuration != config.frame)
+        _phaseAlignPending = true;
 
     // Zero-fill any shortfall (defensive)
     for (int i = samplesL; i < samplesThisFrame; i++)
@@ -196,6 +227,13 @@ namespace
                        (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
             case Covox::Fitment::Mono:
                 return lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+            case Covox::Fitment::Mode1:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
+            case Covox::Fitment::Mode2:
+                return (lowByte & Covox::PORT_MASK) == Covox::PORT_MATCH;
+            case Covox::Fitment::Mode1Mono:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1 ||
+                       lowByte == (Covox::PORT_RIGHT_B & 0xFF);
         }
         return false;
     }
@@ -208,6 +246,24 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 
     portDeviceOutMethod(rawPort, value);
     return true;
+}
+
+std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
+{
+    switch (_fitment)
+    {
+        case Fitment::Quad:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mono:
+            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+        case Fitment::Mode1:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mode2:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+        case Fitment::Mode1Mono:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+    }
+    return {};
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
@@ -255,6 +311,9 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 
     // Update the DAC value for this channel
     Channel ch = portToChannel(port);
+    if (_channelTap)
+        FillChannelTap(static_cast<int>(ch), static_cast<size_t>(static_cast<uint64_t>(currentTState) * _sampleRate /
+                                                                  CPU_CLOCK_RATE));
     _dacValue[static_cast<int>(ch)] = value;
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
@@ -283,10 +342,30 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     _lastR = newR;
 }
 
+void Covox::SetChannelTap(bool on)
+{
+    _channelTap = on;
+    _channelTapFilled = {};
+}
+
+void Covox::FillChannelTap(int channel, size_t upTo)
+{
+    const auto index = static_cast<size_t>(channel);
+    upTo = std::min<size_t>(upTo, MAX_SAMPLES_PER_FRAME);
+    const auto level = static_cast<int16_t>((static_cast<int32_t>(_dacValue[index]) - 128) * 128);
+    for (size_t& k = _channelTapFilled[index]; k < upTo; k++)
+        _channelTapBuffer[index][k] = level;
+}
+
 void Covox::decayStaleChannel(Channel ch)
 {
     _dacValue[static_cast<int>(ch)] = 0x80;
+    emitLevelsAtFrameStart();
+}
 
+void Covox::emitLevelsAtFrameStart()
+{
+    _levelsDirty = false;
     int32_t newL, newR;
     computeStereoAmplitudes(newL, newR);
 
@@ -308,6 +387,22 @@ void Covox::decayStaleChannel(Channel ch)
     _lastR = newR;
 }
 
+void Covox::discardPending()
+{
+    if (!_blipL || !_blipR)
+        return;
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+    // The buffers' 0 is reset()'s level: the step to the one the DACs hold goes in at once
+    if (!_synthesisSuppressed)
+    {
+        if (_lastL != 0)
+            blip_add_delta(_blipL, 0, _lastL);
+        if (_lastR != 0)
+            blip_add_delta(_blipR, 0, _lastR);
+    }
+}
+
 void Covox::setSynthesisSuppressed(bool suppressed)
 {
     if (_synthesisSuppressed == suppressed)
@@ -315,8 +410,8 @@ void Covox::setSynthesisSuppressed(bool suppressed)
     _synthesisSuppressed = suppressed;
     if (!suppressed)
     {
-        if (_blipL) blip_clear(_blipL);
-        if (_blipR) blip_clear(_blipR);
+        discardPending();
+        _phaseAlignPending = true;  // the mixer kept counting through the gap
     }
 }
 
@@ -326,14 +421,18 @@ void Covox::setSynthesisSuppressed(bool suppressed)
 
 void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 {
-    // Each channel: (value - 128) gives signed range [-128, +127].
-    // Sum of two channels: [-256, +254].
-    // Multiply by 128 (half of 256): gives [-32768, +32512] — fits int16
-    // with no clipping when both channels are at full amplitude.
-    int32_t la = _channelMute[0] ? 0 : (static_cast<int32_t>(_dacValue[0]) - 128);
-    int32_t lb = _channelMute[1] ? 0 : (static_cast<int32_t>(_dacValue[1]) - 128);
-    int32_t ra = _channelMute[2] ? 0 : (static_cast<int32_t>(_dacValue[2]) - 128);
-    int32_t rb = _channelMute[3] ? 0 : (static_cast<int32_t>(_dacValue[3]) - 128);
+    // Each channel: (value - 128) gives signed range [-128, +127]; x 128 (half of 256): a sum of two channels is
+    // [-32768, +32512], int16 with no clipping when both are at full amplitude. Then the mixer's host gain (Q15: the
+    // value itself at unity)
+    auto level = [this](int i) -> int32_t {
+        if (_channelMute[i])
+            return 0;
+        return ApplyMixerGainQ15((static_cast<int32_t>(_dacValue[i]) - 128) * 128, _channelGain[i]);
+    };
+    const int32_t la = level(0);
+    const int32_t lb = level(1);
+    const int32_t ra = level(2);
+    const int32_t rb = level(3);
 
     // Mono COVOX compatibility: classic single-DAC covox software only ever
     // drives one of the four channels (traditionally #FB/RightB, but the
@@ -352,14 +451,14 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     if (activeChannels <= 1)
     {
         // Silence, or exactly one channel driven: center it on both speakers
-        outL = soleActive * 128;
-        outR = soleActive * 128;
+        outL = soleActive;
+        outR = soleActive;
     }
     else
     {
         // Stereo Soundrive: L = LeftA + LeftB, R = RightA + RightB
-        outL = (la + lb) * 128;
-        outR = (ra + rb) * 128;
+        outL = la + lb;
+        outR = ra + rb;
     }
 }
 

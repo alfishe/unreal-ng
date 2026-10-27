@@ -2,6 +2,8 @@
 
 #include "stdafx.h"
 
+#include <vector>
+
 class Z80;
 class Memory;
 class EmulatorContext;
@@ -99,6 +101,9 @@ class UlaContention
 public:
     UlaContention() = default;
     ~UlaContention() = default;
+    // _delayLut points into the object's own storage
+    UlaContention(const UlaContention&) = delete;
+    UlaContention& operator=(const UlaContention&) = delete;
 
     /// Wire up dependencies. Called once after Core::Init().
     void SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* context);
@@ -119,8 +124,20 @@ public:
     /// +2A/+3 Amstrad gate array instead of the Ferranti ULA: the 1,0,7,6,5,4,3,2 pattern, no I/O
     /// contention, RAM pages 4-7 contended in any slot, and a floating bus only on ports
     /// 0000 xxxx xxxx xx01 (see GetGateArrayFloatingBus)
-    void SetGateArray(bool gateArray) { _gateArray = gateArray; }
+    void SetGateArray(bool gateArray)
+    {
+        _gateArray = gateArray;
+        RebuildDelayLut();
+    }
     bool IsGateArray() const { return _gateArray; }
+
+    /// The Next's +3 timing: the video logic drives WAIT from the ULA's contention window (WindowedGateArrayWait) instead of the
+    /// Amstrad gate array's pattern
+    void SetWindowedWait(bool windowed)
+    {
+        _windowedWait = windowed;
+        RebuildDelayLut();
+    }
 
     /// The machine's rule, from the flags above (None while contention is disabled for the model)
     ContentionRule GetRule() const
@@ -181,7 +198,16 @@ public:
     /// Wait of a memory access to contended RAM that starts at T-state `t` (0 outside the fetch window).
     /// The contended memory interfaces call it for every access to a contended slot
     /// (Memory::MemoryReadContended); they are selected only while contention is enabled
-    uint8_t DelayAt(uint32_t t) const { return ComputeContentionDelay(t); }
+    /// From the table of the frame's waits (ComputeContentionDelay of each T of the screen area, rebuilt with the
+    /// raster and the gate array): no division per access
+    uint8_t DelayAt(uint32_t t) const
+    {
+        const uint32_t d = t - _raster.screenAreaStart;  // wraps above the table before the screen area
+        return d < _delayLutSize ? _delayLut[d] : 0;
+    }
+
+    /// DelayAt for a DMA cycle: the same but on the Next's +3 timing, where the DMA samples WAIT half a T before the CPU
+    uint8_t DmaDelayAt(uint32_t t) const;
 
     /// Is this Z80 address in contended memory on the current model?
     /// 48K/128K: the slots holding an odd RAM page (page 5 at 0x4000, and 0xC000 when page 1/3/5/7 is
@@ -194,14 +220,31 @@ public:
     /// (UpdateSlotContention) whenever a slot is mapped - a cold path hit only on paging port writes.
     inline bool IsAddressContended(uint16_t addr) const
     {
-        return _contentionEnabled && _slotContended[addr >> 14];
+        return _contentionEnabled && _slotContended[addr >> 13];
     }
 
     /// Cache update: Memory calls it whenever it maps a slot (cold path: paging port writes). ROM is never
     /// contended; a RAM page per IsRamPageContended. On the +2A/+3 the all-RAM layouts put contended pages
     /// into any slot, #0000 included
-    void SetSlotContended(uint8_t slot, bool contended) { _slotContended[slot & 0x03] = contended; }
-    bool IsSlotContended(uint8_t slot) const { return _slotContended[slot & 0x03]; }
+    void SetSlotContended(uint8_t slot, bool contended) { _slotContended[(slot & 0x03) * 2] = _slotContended[(slot & 0x03) * 2 + 1] = contended; }
+    /// One 8K half of a slot: the Next decides contention on the page at the accessed address (zxnext.vhd mem_contend), not per 16K
+    void SetHalfContended(uint8_t half, bool contended) { _slotContended[half & 0x07] = contended; }
+    bool IsSlotContended(uint8_t slot) const { return _slotContended[(slot & 0x03) * 2] || _slotContended[(slot & 0x03) * 2 + 1]; }
+    /// The hot-path test of the contended memory interfaces: is the 8K half holding this address contended
+    bool IsContendedAt(uint16_t addr) const { return _slotContended[addr >> 13]; }
+
+    /// The Next's odd ports that contend as a ULA port (zxnext.vhd port_contend: #7FFD, the ULA+ pair) besides the A0 = 0 ones. The
+    /// high byte in contended memory contends a port as on a Spectrum (mem_contend is decoded from the address alone: the wait before
+    /// IORQ, then C:1 x 3); POC 036 measured both on the RTL. Without a rule only A0 = 0 ports contend
+    void SetOddPortRule(bool (*rule)(const void* owner, uint16_t port), const void* owner)
+    {
+        _oddPortRule = rule;
+        _oddPortOwner = owner;
+    }
+    bool IsOddPortContended(uint16_t port) const
+    {
+        return (_oddPortRule && _oddPortRule(_oddPortOwner, port)) || _slotContended[port >> 13];
+    }
 
     /// +2A/+3: the gate array keeps the last byte of a contended memory access on its bus; the floating
     /// bus shows it between screen fetches. Called by the contended memory interfaces on contended accesses
@@ -210,6 +253,10 @@ public:
 
     /// Raster timing snapshot (test/diagnostic access)
     const ContentionRaster& GetRaster() const { return _raster; }
+
+    /// The first T from `t` on outside the 128 T contention window of its line (any line, paper or border): t itself when it is
+    /// outside. The Next's ULA counts the window as hc(8) = 0; NR #08 bit 6 is latched while hc(8) = 1 (zxnext.vhd 5822)
+    uint32_t LineWindowEndFrom(uint32_t t) const;
 
     /// I/O contention of the Ferranti ULA (48K / 128K / +2), the four patterns of the "Contended I/O" rules
     /// (faqwiki; FUSE, MAME):
@@ -283,6 +330,7 @@ public:
 private:
     /// Shared computation for both memory and IO contention.
     uint8_t ComputeContentionDelay(uint32_t t) const;
+    uint8_t WindowedGateArrayWait(uint32_t tInLine, bool dma = false) const;
 
     /// Shared floating-bus position math: resolves the VRAM cell being
     /// fetched at the current T-state (with the fetch pipeline offset, FetchLead).
@@ -323,7 +371,14 @@ private:
 
     bool _contentionEnabled = false;
     bool _gateArray = false;
-    bool _slotContended[4] = { false, true, false, false };  // 48K / 128K power-on layout: page 5 at #4000
+    bool _windowedWait = false;
+    std::vector<uint8_t> _delayLutStorage;  // DelayAt: the wait of each T from screenAreaStart to screenAreaEnd
+    const uint8_t* _delayLut = nullptr;
+    uint32_t _delayLutSize = 0;
+    void RebuildDelayLut();  // after any change of _raster or _gateArray (ComputeContentionDelay reads nothing else)
+    bool _slotContended[8] = { false, false, true, true, false, false, false, false };  // 48K / 128K power-on layout: page 5 at #4000
+    bool (*_oddPortRule)(const void*, uint16_t) = nullptr;
+    const void* _oddPortOwner = nullptr;
     uint8_t _lastContendedByte = 0xFF;
     UlaFetchType _fetchType = ULA_FERRANTI;
 

@@ -127,10 +127,8 @@ TEST_F(MessageCenterDisposal_Test, DisposesWhileWorkerThreadRunning)
         mc.Post("ASYNC_TOPIC", new SimpleNumberPayload(i), true);
     }
 
-    // Small delay to let some messages process
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-    // Dispose while worker might still be processing - should be safe
+    // Dispose while worker might still be processing - should be safe (no delay: whichever messages the worker has
+    // reached by now, the disposal must cope)
     MessageCenter::DisposeDefaultMessageCenter();
 }
 
@@ -152,8 +150,12 @@ TEST_F(MessageCenterDisposal_Test, DisposesWhileWorkerThreadRunning)
 
 namespace
 {
-void plainCallbackA(int, Message*) {}
-void plainCallbackB(int, Message*) {}
+// Different bodies: a linker folds identical functions into one address (MSVC /OPT:ICF), and these two are told
+// apart by address
+int plainCallsA = 0;
+int plainCallsB = 0;
+void plainCallbackA(int, Message*) { ++plainCallsA; }
+void plainCallbackB(int, Message*) { plainCallsB += 2; }
 
 size_t ObserverCount(EventQueueCUT& queue, const std::string& topic)
 {
@@ -317,12 +319,7 @@ TEST(MessageCenterVariants_Test, FastCenter_DeliversInlinePayloads)
     ASSERT_TRUE(mc->post("test_topic", &payload, sizeof(payload)));
 
     // Dispatch is asynchronous (dedicated thread)
-    auto start = std::chrono::steady_clock::now();
-    while (received.load() == 0 &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    ASSERT_TRUE(TestWait::ForAtLeast(received, 1));
 
     EXPECT_EQ(received.load(), 1);
     EXPECT_EQ(lastValue.load(), 0x12345678u);
@@ -368,59 +365,36 @@ TEST(MessageCenterVariants_Test, EmulatorQueue_CriticalBeforeBulk)
     EXPECT_EQ(order[2], bulk);
 }
 
-TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
+TEST(MessageCenterVariants_Test, FastCenter_DeliversEveryPostedMessageUnderBackPressure)
 {
-    // Performance smoke: upstream claims multi-M/s for the lock-free variant.
-    // Assert only a conservative floor (loaded CI machines) and report the
-    // measured figures for classic vs fast - the informational comparison is
-    // the evidence that opting into the fast variant is worthwhile.
-    constexpr int MESSAGES = 100000;
+    // The lock-free variant must lose nothing when the producer outruns the dispatcher: a full queue refuses the post
+    // (the producer yields and goes on) and every message that was accepted arrives. How many messages a second it
+    // moves is a speed of the host: core/benchmarks/common/messagecenter_benchmark.cpp
+    constexpr int MESSAGES = 20000;
 
-    // --- Fast variant ---
-    double fastRate = 0.0;
+    // Heap-allocated - see the FastCenter_DeliversInlinePayloads comment: MessageCenterFast is ~4MB (its MPMCQueue
+    // ring buffer is a direct member), too large for a stack-local on a default Windows thread stack.
+    auto mc = std::make_unique<MessageCenterFast>();
+    mc->start();
+
+    std::atomic<int> received{0};
+    const uint16_t topic = mc->registerTopic("bench");
+    mc->addObserver(topic, [&](uint16_t, const void*, size_t) { received.fetch_add(1, std::memory_order_relaxed); });
+
+    const uint32_t payload = 42;
+    int posted = 0;
+    for (int i = 0; i < MESSAGES; i++)
     {
-        // Heap-allocated - see the FastCenter_DeliversInlinePayloads comment:
-        // MessageCenterFast is ~4MB (its MPMCQueue ring buffer is a direct
-        // member), too large for a stack-local on a default Windows thread
-        // stack.
-        auto mc = std::make_unique<MessageCenterFast>();
-        mc->start();
-
-        std::atomic<int> received{0};
-        const uint16_t topic = mc->registerTopic("bench");
-        mc->addObserver(topic, [&](uint16_t, const void*, size_t) {
-            received.fetch_add(1, std::memory_order_relaxed);
-        });
-
-        const uint32_t payload = 42;
-        const auto t0 = std::chrono::steady_clock::now();
-        int posted = 0;
-        for (int i = 0; i < MESSAGES; i++)
-        {
-            if (mc->post(topic, &payload, sizeof(payload)))
-                posted++;
-            else
-                std::this_thread::yield();  // Queue full: let the dispatcher drain
-        }
-        while (received.load() < posted &&
-               std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10))
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        fastRate = received.load() / sec;
-
-        EXPECT_EQ(received.load(), posted) << "Fast center lost messages";
-        mc->stop();
+        if (mc->post(topic, &payload, sizeof(payload)))
+            posted++;
+        else
+            std::this_thread::yield();  // Queue full: let the dispatcher drain
     }
+    EXPECT_GT(posted, 0);
+    EXPECT_TRUE(TestWait::ForAtLeast(received, posted, std::chrono::seconds(10)));
 
-    std::cout << "[perf] MessageCenterFast end-to-end: " << static_cast<long>(fastRate)
-              << " msg/s (" << MESSAGES << " messages)" << std::endl;
-
-    // Conservative floor: even a heavily loaded machine should exceed this
-    // by an order of magnitude; a failure here means the vendored variant is
-    // functionally broken, not merely slow
-    EXPECT_GT(fastRate, 100000.0);
+    EXPECT_EQ(received.load(), posted) << "Fast center lost messages";
+    mc->stop();
 }
 
 /// endregion </From messagecenter_variants_test.cpp>

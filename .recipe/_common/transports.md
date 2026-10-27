@@ -32,6 +32,14 @@ Even on the MCP path, endpoints without a smart tool go through the
 | Best for | scripts, CI, curl/jq one-liners, full WebAPI surface | LLM agents, IDEs, intent-level calls, local-file upload |
 | Auth | none | none |
 | Sessions | none (state lives in emulator instances) | none (no `Mcp-Session-Id`, fully stateless) |
+| Run control | `POST .../control/session`, its id in `X-Unreal-Session`; without one a change opens an implicit session (15 s lease) | `control_execution take_control` / `release_control`; without it the same implicit session, the MCP server's own |
+
+**Both planes on one emulator** (a host script over the WebAPI and an agent over MCP): one session holds run
+control, and another client's change is refused `held_by_other`; its `message` and `holder` (`implicit`,
+`lease_seconds_left`) say who holds it and what to do. Take control explicitly once, on the MCP side
+(`take_control`; the MCP server cannot adopt a script's id): that takes over the script's implicit session. Then
+send its id (in the take's reply) from the script as `X-Unreal-Session`. `DELETE .../control/session` without the header ends a client's own
+implicit session; `GET .../control/session` shows its id (`session`) only to that client.
 
 ## WebAPI idioms
 
@@ -53,12 +61,13 @@ curl -s -X PUT "$BASE/emulator/$EMU_ID/feature/porttrace" \
 Error envelope (same everywhere):
 
 ```json
-{ "error": "Conflict", "message": "Cannot scrub while recording is active …" }
+{ "error": "Conflict", "message": "This action is not allowed while TTD is recording. Stop the recording first." }
 ```
 
 HTTP codes carry meaning: `400` bad body/state, `404` unknown instance,
-`409` lifecycle conflict (TTD scrub while recording, buffer reconfig while
-capturing), `501` build lacks the subsystem.
+`409` lifecycle conflict (TTD scrub while recording on `backend: v1` - the
+engine pauses the recording instead; buffer reconfig while capturing), `501`
+build lacks the subsystem.
 
 Interactive endpoint browser: `http://localhost:8090/api/v1/openapi.json`
 (generated from the live build — the source of truth when a
@@ -95,7 +104,7 @@ Tool catalog (16: 14 smart tools + the 2 router tools):
 | `joystick_input` | Kempston joystick press/release/set/tap/status |
 | `media` | media slots by slot name: list, info, insert, eject, swap, save, export and more (see [use-media-slots.md](../media/use-media-slots.md)) |
 | `rzx_playback` | RZX input recordings: play / stop / status |
-| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary, port_events, file_info, history_limit |
+| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary, port_events, file_info, history_limit, journal_on/off, journal_build, export_clip |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |
 | `analyze_performance` | coverage_*, frame_cost, profiler suites, porttrace |

@@ -48,8 +48,8 @@ entry, exactly like a large one, so the registry stays the single source of trut
 1. **Evidence over opinion.** Every claim in a bug entry (repro, root cause, "fixed")
    is backed by something another agent can re-run: a command, a test, a trace, a TTD session.
 2. **The registry is the single source of state.** Work that is not reflected in
-   [`BUGS.md`](../inprogress/BUGS.md) does not exist; work that is finished stays
-   recorded until the retention policy wipes it.
+   [`BUGS.md`](../inprogress/BUGS.md) does not exist; a finished bug is removed
+   (the retention policy), its history is in git.
 3. **Reproduce before analyzing, analyze before fixing.** No fix is written against a
    bug that has no confirmed reproduction procedure.
 4. **Root cause, not symptom.** A fix is acceptable only when the mechanism producing
@@ -292,9 +292,9 @@ built binary, plus the client's own checks where they exist.
 3. Update the related `docs/inprogress/*.md` folders and [`PLAN.md`](../inprogress/PLAN.md)
    rows (registry rule 3): a fixed defect that was tracked as a row or a folder note
    gets its resolution recorded there in the same change.
-4. Wiping: per the registry retention policy, closed entries are wiped no later than
-   a week after `Date Fixed`. Wiping fully-closed (🟢, commit recorded) entries past
-   that deadline is mechanical housekeeping; open entries are never wiped.
+4. Wiping: per the registry retention policy, a fixed and verified entry (🟢, commit
+   recorded) is removed; its history is in git. A fix still waiting for a verification
+   run is noted in [`PLAN.md`](../inprogress/PLAN.md) first. Open entries are never wiped.
 
 ## 13. Agent permissions
 
@@ -312,7 +312,7 @@ built binary, plus the client's own checks where they exist.
 - Run builds, filtered tests, `test-parallel`, and benchmarks — with the `-j` cap.
 - Fill `Date Fixed` / `Commit ID` and set 🟢 **after** the developer confirms the
   commit landed (including when the developer explicitly hands over the commit hash).
-- Wipe 🟢 entries older than the retention deadline (see [§12](#12-stage-8--closing)).
+- Wipe fixed and verified 🟢 entries (see [§12](#12-stage-8--closing)).
 
 ### The agent must never
 
@@ -358,6 +358,8 @@ Close:     developer commits → agent fills Date Fixed + Commit ID → 🟢 →
 - [`docs/inprogress/PLAN.md`](../inprogress/PLAN.md) — cumulative plan, T1–T4 priorities
 - [`AGENTS.md`](../../AGENTS.md) — project rules: commits, build caps, checks matrix, WebAPI test sequence
 - [`core/tests/README.md`](../../core/tests/README.md) — test patterns and non-negotiables
+- [`sanitizers.md`](sanitizers.md) — the instruments for memory / thread / lifetime bugs: ASan, UBSan, TSan, the WebAPI
+  stress, hang sampling, leaks, crash reports
 - [`docs/guidelines/performance-guidelines.md`](../guidelines/performance-guidelines.md) — hot paths and the A/B measurement procedure (§4)
 - [`docs/guidelines/cross-platform-compatibility.md`](../guidelines/cross-platform-compatibility.md) — zero-warning cross-platform constraints
 - [`.recipe/README.md`](../../.recipe/README.md) — MCP/WebAPI automation recipes (media, TTD, tracing, TR-DOS)

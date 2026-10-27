@@ -135,6 +135,10 @@ public:
     /// @param filter Function receiving category ID (e.g. "ram-page", "audio-beeper"), returns true if enabled
     void setCategoryFilter(std::function<bool(const char*)> filter);
 
+    /// Elements shown even with the HUD turned off: indicators keyed and toasts deduplicated under this prefix (the
+    /// automation session's "remote": the user always sees who controls the machine). Empty: none
+    void setAlwaysShownPrefix(std::string prefix);
+
 private:
     bool isCategoryEnabled(const char* categoryId) const;
     void subscribeFeatureObserver();
@@ -179,7 +183,7 @@ private:
     void publishLocked();
 
 private:
-    EmulatorContext* _context = nullptr;
+    EmulatorContext* _context = nullptr;  // lifetime-ok: cleared on the MessageCenter worker inside the removal's drain, before anything is retired or freed
     /// Copy of the bound instance id. Kept by value so message filtering never
     /// dereferences _context (which dangles between free and detach otherwise).
     unreal::UUID _emulatorId{};
@@ -211,6 +215,8 @@ private:
 
     std::function<void()> _changedCallback;
     std::function<bool(const char*)> _categoryFilter;
+    std::string _alwaysShownPrefix;
+    bool AlwaysShownLocked(const HudElement& element) const;
 
     uint64_t _featureObserverId = 0;
     std::vector<std::pair<std::string, uint64_t>> _eventObserverIds;

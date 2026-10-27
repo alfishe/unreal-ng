@@ -1,0 +1,18 @@
+# The Next's DB9 holds a Mega Drive 6-button pad (retro-devices.md §2): B C A START on #1F / #37, X Y Z MODE in
+# NR #B2. The buttons sit as RetroArch's Genesis core has them (owner 2026-10-18): south B (the Kempston fire),
+# east C, west A, north Y, lb X, rb Z, menu START, view MODE
+schema: 1
+kind: play
+id: builtin/play/next-md-pad
+label: Mega Drive pad (ZX Next)
+match: { machines: [NEXT] }
+layers:
+  play:
+    south: { retro: "auto:b" }
+    east:  { retro: "auto:c" }
+    west:  { retro: "auto:a" }
+    north: { retro: "auto:y" }
+    lb:    { retro: "auto:x" }
+    rb:    { retro: "auto:z" }
+    menu:  { retro: "auto:start" }
+    view:  { retro: "auto:mode" }

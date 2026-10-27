@@ -5,6 +5,11 @@ message(">> core/tests CMakeLists.txt")
 # Project named 'core-tests' on C++
 project(core-tests LANGUAGES CXX)
 
+# A standalone configure of the tests takes -DSANITIZE too (inside the tree the root applied it already)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Sanitize.cmake)
+endif ()
+
 # C++ standard - MUST match the rest of the project (C++20) to avoid ABI mismatch
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +51,12 @@ endif ()
 # (a standalone core/tests configure never builds core/automation)
 if (ENABLE_GDB_AUTOMATION AND NOT TARGET automation_gdb)
     set(ENABLE_GDB_AUTOMATION OFF)
+endif ()
+# Lua interpreter tests link the automation_lua library: only when it was built
+if (TARGET automation_lua)
+    set(LUA_AUTOMATION_TESTS ON)
+else ()
+    set(LUA_AUTOMATION_TESTS OFF)
 endif ()
 
 # Set paths
@@ -122,6 +133,16 @@ if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# The controllers library's tests follow its option (core/tests/emulator/io/controllers is the core's own)
+if (NOT ENABLE_CONTROLLERS)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/controllers/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
+# The signature library's tests follow its option
+if (NOT TARGET unrealng::swsignature)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/swsignature/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 # CLI tests (header-only CLI helpers) follow the CLI module
 if (NOT ENABLE_CLI_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/cli-" FALSE OUTVAR TEST_CPP_FILES)
@@ -130,6 +151,10 @@ endif()
 # Exclude GDB tests if GDB automation is disabled
 if (NOT ENABLE_GDB_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/gdb/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
+if (NOT LUA_AUTOMATION_TESTS)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/lua/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
 # DZRP (DeZog) unit tests: the suite files are globbed in via TEST_CPP_FILES.
@@ -190,6 +215,13 @@ if (NOT TARGET ${PROJECT_NAME})
     add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
     set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC OFF)
 
+    # gcc 15 (MinGW): googletest's ParameterizedTestFactory<T> holds a parameter of the test's own type, which tests keep
+    # in an anonymous namespace; the class template lives in a googletest header, so gcc says "has a field whose type uses
+    # the anonymous namespace" for every TEST_P. A test binary has one definition of each: nothing to fix
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-subobject-linkage)
+    endif ()
+
     # Declare _ALWAYS_USE_LOGGING for compiler
     target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
 
@@ -212,10 +244,20 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-signature.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-actions.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-streamdeck.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-audio.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/companion-event-hub.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/ws-hub.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/surface-hub.cpp
             ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
         )
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)
@@ -235,8 +277,9 @@ if (NOT TARGET ${PROJECT_NAME})
     endif (WIN32 AND MSVC)
 
     if (WIN32 AND MINGW)
-        # Link all as static
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+        # Link all as static. libiconv outside --whole-archive: libwinpthread and libiconv both carry a VERSION resource,
+        # and with both forced in ld reported ".rsrc merge failure: duplicate leaf: type: 10 (VERSION)"
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive -liconv")
 
         set(common_libraries shlwapi ws2_32)
     endif (WIN32 AND MINGW)
@@ -255,12 +298,15 @@ if (NOT TARGET ${PROJECT_NAME})
     # into this binary, not taken from the core archive — they need opl4's
     # include path and symbols here. The UNREALNG_HAVE_OPL4 gate arrives via
     # core's PUBLIC compile definition. sam2695 likewise: the MIDI line (core/src/emulator/sound/midi)
-    # and its tests include the library's public header.
+    # and its tests include the library's public header. The automation libraries come before core: automation_gdb
+    # links core itself, placed after core it repeats core and its libraries ("ld: warning: ignoring duplicate libraries").
     target_link_libraries(${PROJECT_NAME}
         ${common_libraries}
+        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
+        $<$<BOOL:${LUA_AUTOMATION_TESTS}>:automation_lua>
+        $<$<TARGET_EXISTS:swsignature>:swsignature>
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
-        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
         opl4
         sam2695
         $<$<BOOL:${ENABLE_VDAC2}>:eve::emu>
@@ -301,6 +347,23 @@ if (NOT TARGET ${PROJECT_NAME})
         set(QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-qt-tests>)
         set(QT_FRONTEND_TEST_TARGET unreal-qt-tests)
     endif()
+    # The unreal-asm library's own tests (core/src/3rdparty/unreal-asm) run first as well: milliseconds, no sharding.
+    # The library defines the target once gtest exists (created above in this file)
+    if(COMMAND unrealasm_add_tests)
+        unrealasm_add_tests()
+    endif()
+    if(TARGET unreal-asm-tests)
+        list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-asm-tests>)
+        list(APPEND QT_FRONTEND_TEST_TARGET unreal-asm-tests)
+    endif()
+    # The same for unreal-disk (core/src/3rdparty/unreal-disk): the disk model, format drivers, TR-DOS file system
+    if(COMMAND unrealdisk_add_tests)
+        unrealdisk_add_tests()
+    endif()
+    if(TARGET unreal-disk-tests)
+        list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-disk-tests>)
+        list(APPEND QT_FRONTEND_TEST_TARGET unreal-disk-tests)
+    endif()
     if(UNIX)
         add_custom_target(test-parallel
             ${QT_FRONTEND_TEST_COMMAND}
@@ -324,20 +387,10 @@ if (NOT TARGET ${PROJECT_NAME})
     # Define data paths
     set(DATA_PATH "${ROOT_DIR}/data")
 
-    # Copy resources using modern CMake syntax
-    # Configs are deployed ONLY under configs/<model>/ - never as a flat unreal.ini
+    # Configs, ROMs etc. come from the shared runtime-data target (root CMakeLists.txt)
+    add_dependencies(${PROJECT_NAME} runtime-data)
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${ROOT_DIR}/testdata" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/testdata"
         COMMENT "Copying runtime resource files to output directory"

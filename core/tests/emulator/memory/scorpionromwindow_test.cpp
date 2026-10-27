@@ -7,7 +7,7 @@
 /// @brief ProfROM quadrant window - pure policy tests (design §4.2, §4.3).
 ///
 /// The window object holds no quadrant state of its own: EmulatorState carries
-/// profrom_bank / p7EFD and TEMP carries the image-size masks. These tests
+/// scorpion.profromBank / scorpion.p7EFD and TEMP carries the image-size masks. These tests
 /// therefore work on plain structs - no machine, no ROM file.
 class ScorpionRomWindow_Test : public ::testing::Test
 {
@@ -40,7 +40,7 @@ TEST_F(ScorpionRomWindow_Test, TransitionTableFollowsVerifiedTable)
     {
         for (uint16_t addr = 0x0100; addr < 0x0110; addr++)
         {
-            _state.profrom_bank = from;
+            _state.scorpion.profromBank = from;
             bool changed = _window.OnRomRead(_state, _temp, addr);
 
             uint8_t expected = ExpectedSwitch[(addr >> 2) & 0b11][from];
@@ -59,7 +59,7 @@ TEST_F(ScorpionRomWindow_Test, HoldRowNeverSwitches)
 
     for (uint8_t from = 0; from < 4; from++)
     {
-        _state.profrom_bank = from;
+        _state.scorpion.profromBank = from;
         for (int i = 0; i < 100; i++)
             for (uint16_t addr = 0x0100; addr < 0x0104; addr++)
                 EXPECT_FALSE(_window.OnRomRead(_state, _temp, addr));
@@ -74,7 +74,7 @@ TEST_F(ScorpionRomWindow_Test, Mask128KImageWrapsQuadrants)
     _window.Configure(_temp, 8);  // 2 quadrants
     EXPECT_EQ(_temp.profrom_mask, 1);
 
-    _state.profrom_bank = 0;
+    _state.scorpion.profromBank = 0;
     _window.OnRomRead(_state, _temp, 0x0108);  // table says 2, single bit keeps 0
     EXPECT_EQ(_window.Quadrant(_state), 0);
 
@@ -90,7 +90,7 @@ TEST_F(ScorpionRomWindow_Test, Mask64KImageNeverSwitches)
 
     for (uint16_t addr = 0x0100; addr < 0x0110; addr++)
     {
-        _state.profrom_bank = 0;
+        _state.scorpion.profromBank = 0;
         EXPECT_FALSE(_window.OnRomRead(_state, _temp, addr));
     }
 }
@@ -106,7 +106,7 @@ TEST_F(ScorpionRomWindow_Test, WindowSelect512KImage)
 
     _window.OnWindowPortWrite(_state, _temp, 0x10);  // window 1, GAL keeps 3
     EXPECT_EQ(_window.Quadrant(_state), 7);
-    EXPECT_EQ(_state.p7EFD, 0x10);
+    EXPECT_EQ(_state.scorpion.p7EFD, 0x10);
 
     _window.OnWindowPortWrite(_state, _temp, 0x00);  // window 0 again
     EXPECT_EQ(_window.Quadrant(_state), 3);
@@ -122,7 +122,7 @@ TEST_F(ScorpionRomWindow_Test, WindowSelect1MAnd2MExtension)
     EXPECT_EQ(_window.Quadrant(_state), 8);
 
     _window.Configure(_temp, 128);  // 32 quadrants (2 MB)
-    _state.profrom_bank = 0;
+    _state.scorpion.profromBank = 0;
     _window.OnWindowPortWrite(_state, _temp, 0x40);  // extension bit only
     EXPECT_EQ(_window.Quadrant(_state), 16);
 
@@ -137,7 +137,7 @@ TEST_F(ScorpionRomWindow_Test, WindowInertBelow512KImage)
 
     _window.OnWindowPortWrite(_state, _temp, 0x30);
     EXPECT_EQ(_window.Quadrant(_state), 0);
-    EXPECT_EQ(_state.p7EFD, 0x30);
+    EXPECT_EQ(_state.scorpion.p7EFD, 0x30);
 }
 
 /// The window must never name a quadrant the image does not carry, and Reset()
@@ -162,13 +162,13 @@ TEST_F(ScorpionRomWindow_Test, StateResidencyBoundsAndReset)
                 break;
         }
 
-        EXPECT_EQ(_window.Quadrant(_state), _state.profrom_bank);
+        EXPECT_EQ(_window.Quadrant(_state), _state.scorpion.profromBank);
         EXPECT_LE(_window.Quadrant(_state), 31);
     }
 
     _window.Reset(_state);
     EXPECT_EQ(_window.Quadrant(_state), 0);
-    EXPECT_EQ(_state.p7EFD, 0);
+    EXPECT_EQ(_state.scorpion.p7EFD, 0);
 }
 
 /// @brief ProfROM quadrant machine driven through the real Memory read path.
@@ -201,7 +201,7 @@ protected:
         WritePort(0x1FFD, 0x02);
 
         // Power-on: quadrant 0, service page visible at #0000
-        EXPECT_EQ(_context->emulatorState.profrom_bank, 0);
+        EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0);
         ASSERT_EQ(BankTag(0x0000), ServiceTag(0));
     }
 };
@@ -213,7 +213,7 @@ TEST_F(ScorpionRomWindowMachine_Test, OutsideBlockDoesNotAdvance)
 {
     SetUpProf(4);
     FastRead(0x0104);              // S=1: Q0 -> Q3
-    ASSERT_EQ(_context->emulatorState.profrom_bank, 3);
+    ASSERT_EQ(_context->emulatorState.scorpion.profromBank, 3);
 
     // #0000-#00FF and #0110-#01FF must stay inert, including the reset fetch
     for (uint16_t addr = 0; addr < 0x0100; addr += 7)
@@ -221,7 +221,7 @@ TEST_F(ScorpionRomWindowMachine_Test, OutsideBlockDoesNotAdvance)
     for (uint16_t addr = 0x0110; addr < 0x0200; addr += 7)
         FastRead(addr);
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 3);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 3);
     EXPECT_EQ(BankTag(0x0000), ServiceTag(3));
 }
 
@@ -276,13 +276,13 @@ TEST_F(ScorpionRomWindowMachine_Test, OffGridAndFetchReadsDoNotStrobe)
         if ((addr & 0x0003) == 0)
             continue;  // #0104/#0108/#010C sit on the grid
         FastRead(addr);  // data read one byte off the grid
-        ASSERT_EQ(_context->emulatorState.profrom_bank, 0) << "off-grid read #" << addr;
+        ASSERT_EQ(_context->emulatorState.scorpion.profromBank, 0) << "off-grid read #" << addr;
     }
 
     // An opcode fetch never clocks the GAL even on the grid: /M1 masks the
     // strobe (Xpeccy gates on !m1)
     _memory->MemoryReadFast(0x0104, true);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0) << "instruction fetches never strobe";
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0) << "instruction fetches never strobe";
 
     // The grid itself still clocks on a data read: S=1 moves Q0 -> Q3
     FastRead(0x0104);
@@ -298,7 +298,7 @@ TEST_F(ScorpionRomWindowMachine_Test, DebuggerReadsDoNotStrobe)
     for (int i = 0; i < 100; i++)
         BankTag(0x0101);  // DirectReadFromZ80Memory path
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0);
     EXPECT_EQ(BankTag(0x0000), ServiceTag(0));
 }
 
@@ -312,7 +312,7 @@ TEST_F(ScorpionRomWindowMachine_Test, BaseModelNeverSwitches)
         for (uint16_t addr = 0x0100; addr < 0x0110; addr++)
             FastRead(addr);
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0);
     EXPECT_EQ(BankTag(0x0000), ServiceTag(0));
 }
 
@@ -322,7 +322,7 @@ TEST_F(ScorpionRomWindowMachine_Test, WindowSelectRemapsRomDiskQuadrant)
     SetUpProf(8);  // 512 KB synthetic image
 
     WritePort(0x7EFD, 0x10);       // window bit 4
-    EXPECT_EQ(_context->emulatorState.p7EFD, 0x10);
+    EXPECT_EQ(_context->emulatorState.scorpion.p7EFD, 0x10);
     EXPECT_EQ(BankTag(0x0000), ServiceTag(4));
 
     // The GAL state machine keeps working inside the selected window

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Research done; checked on MAME 0.289 with BIOS 3.06 and the owner's MAME-pack hard disk (§9). Design: [tdd-zx-mode.md](tdd-zx-mode.md). **Corrections of 2026-10-02 (Z1-Z3 build)**: §5.5 (the turbo after a reset), §7.2 (the Scorpion INT), §7.3 (the CT5 period is 4 T, the window-3 condition is `#7FFD` bit 2), §10 (what is built) |
+| **Status** | Research done; checked on MAME 0.289 with BIOS 3.06 and the owner's MAME-pack hard disk (§9). Design: [tdd-zx-mode.md](tdd-zx-mode.md). **Corrections of 2026-10-02 (Z1-Z3 build)**: §5.5 (the turbo after a reset), §7.2 (the Scorpion INT), §7.3 (the CT5 period is 4 T, the window-3 condition is `#7FFD` bit 2), §10 (what is built). **Added 2026-10-06**: §4.1 (the CPU clock in ZX mode: 3.5 or 21 MHz only, the SYS byte each launcher mode writes, how the PLD takes it) |
 | **Branch** | `sprinter-zxmode-design` (documents, the MAME session tool, the reference captures and one disassembly) |
 | **Related** | [hardware-reference.md](hardware-reference.md) §3.3 (vROM), §5 (ALL_MODE), §10 (floppy); [bios-versions.md](bios-versions.md); [mame-gap-analysis.md](mame-gap-analysis.md); [peripherals-survey.md](peripherals-survey.md); the ISA design [2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/research.md) |
 
@@ -142,6 +142,97 @@ The modes shipped on the MAME-pack disk: `SPECTRUM.CFG` and `SP.ZX` "Sprinter ZX
 **Consequence for TR-DOS:** only `SP_TRD.ROM` (TR-DOS 7.0x) knows RAM disks. `ORIGIN.ZX` and `SC256.ZX`
 use plain TR-DOS 5.04Em / Scorpion 5.04, which drive the WD1793 directly: an image given on the command
 line goes into the RAM disk, but those TR-DOS versions never look there and read the real floppy.
+
+### 4.1 The CPU clock in ZX mode: what the launcher writes, how the PLD picks it (2026-10-06)
+
+**There are two CPU clocks, 3.5 and 21 MHz, and nothing in between.** A ZX mode does not cap the clock at
+7 MHz: a mode with `/turbo` runs at 21 MHz, one without at 3.5 MHz. The claim "3.5-7.0 MHz in the ZX
+Spectrum configuration" (seen in secondary descriptions of the Sprinter) has no support in the PLD source or
+in the manual: the manual gives "21MHz/3.5MHz" (`sp2000_man.pdf` p. 4), and its only 7 MHz is the pixel clock
+of the 320-dot mode (p. 15: "42MHz … делится на 3, а затем на 2, получая 14 и 7 MHz для вывода пикселей").
+The clock derivation from the 42 MHz counter is in [research-cpu-z84c15.md](research-cpu-z84c15.md) §1.1.
+
+**The PLD does not detect a mode.** The frequency follows one register bit, `TB_SW`, which only software
+(and /RESET) writes. A write to the SYS port (`#3C` / `#7C`; DCP code `1100 x110`, `SYS_ENA`) latches four
+registers at once from the data byte (`DCP.TDF:642-663`):
+
+```
+CNF[]  .d = (DI[] & DI2) or (CNF[] & !DI2);   -- bit 2 = 1: the whole byte goes into CNF
+AROM16 .d = (DI0 & !DI1) or (AROM16 & DI1);   -- bit 1 = 0: bit 0 = BIOS ROM half
+TB_SW  .d = (DI0 &  DI1) or (TB_SW & !DI1);   -- bit 1 = 1: bit 0 = turbo request
+SYS    .d = !A6;                              -- #7C: system ROM in window 0; #3C: removed
+TB_SW.prn = /RESET;                           -- a reset brings the turbo request back on
+```
+
+The clock then follows (`DCP.TDF:262`, `:275`; `SP2_1K30.TDF:521-523`):
+
+```
+TURBO   = DFF(DFFE(TB_SW & TURBO_HAND, CLK_Z80, ena = !/RF), CLK42);
+CLK_Z80 = TURBO ? CLK21 (21 MHz) : 42 MHz / 12 (3.5 MHz)
+```
+
+- `TURBO_HAND` is the F12 switch (`TEST_SWITCH`, toggled by F12 without Shift / Ctrl / Alt, preset by
+  /RESET). It can only veto the turbo; it cannot turn it on against `TB_SW = 0`.
+- The new value is taken during a refresh cycle (`/RF`), i.e. at the M1 of the next instruction, then
+  resynchronised to 42 MHz: the clock changes without a short pulse.
+
+**What the Peters Plus launcher writes** (disassembly:
+[docs/disasm/software/sprinter/spectrum-launcher-pp/](../../disasm/software/sprinter/spectrum-launcher-pp/README.md)).
+Each option in its table has a default value and a value used when the option is given; the SYS byte `E` is
+the sum of four of them (`#8834-#8843`):
+
+| Option | Absent | Given | Goes to |
+|---|---|---|---|
+| `/turbo` | `#02` | `#03` | `E`: bit 1 = 1 (write the turbo bit), bit 0 = turbo |
+| `/sprinter` | `#0C` | `#04` | `E`: bit 2 = 1 (write CNF), bit 3 = port map 1 / map 0 |
+| `/1FFD` | `#40` | `#00` | `E`: CNF bit 6 holds the Scorpion port `#1FFD` cleared |
+| `/mem512` | `#00` | `#80` | `E`: CNF bit 7, Pentagon 512 (`#7FFD` bits 6-7 kept) |
+| `/7FFD` | `#30` | `#00` | **not** `E`: the first `#7FFD` value; `#30` = 48K lock + ROM 1 |
+
+The order of writes:
+
+1. `EnterZxMode` (`#876E`): `OUT (#7C),#04`, later `OUT (#7C),#1C`. Bit 1 = 0 in both, so the turbo bit
+   is untouched: the whole preparation (ROM pages, Spectrum pages, `FN_SYNC`, ALL_MODE, the screen) runs at
+   the 21 MHz DSS left behind.
+2. `StartStub`, copied to `#FF00`: `LD A,E : OUT (#3C),A` (turbo, CNF and the system ROM out of window 0 in
+   one write), `OUT (#C2),2`, `JP 0` (or `#3D29` for a TR-DOS start).
+
+The resulting SYS byte for the modes on the MAME-pack disk, as the Peters Plus launcher computes it:
+
+| Mode | Options (clock-relevant) | `E` | CPU | CNF meaning |
+|---|---|---|---|---|
+| `SP.ZX` | `/sprinter /turbo /7FFD /1FFD` | `#07` | 21 MHz | map 0 (Sprinter ports visible), `#1FFD` on, 512 off |
+| `P128.ZX` | `/7FFD` | `#4E` | 3.5 MHz | map 1 (Spectrum ports only), `#1FFD` held cleared, 512 off |
+| `P512.ZX` | `/turbo /7FFD /mem512` | `#CF` | 21 MHz | map 1, `#1FFD` held cleared, 512 on |
+| `SC256.ZX` | `/turbo /7FFD /1FFD` | `#0F` | 21 MHz | map 1, `#1FFD` on, 512 off |
+| `ORIGIN.ZX` | `/7FFD /origin` | `#4E` | 3.5 MHz | as `P128.ZX`; ALL_MODE `#FA` (original waits) |
+
+The `SP.ZX` value equals what MAME showed for the community launcher v2.03 (§9.2: "CNF `#07`"). The
+community launcher hands the same byte to the BIOS in `E` of `GOTO_SPECTRUM` (§5.2), whose `RES128_PROG`
+stub writes it to the SYS port; its per-option values were not re-read for this section (zxgit.org was not
+reachable that day), so the other rows are checked for the Peters Plus launcher only. One difference to keep
+in mind: in the Peters Plus launcher `/7FFD` is the first `#7FFD` value, not the CNF bit 5 that the option
+table above (§4) names. In the same table the words `int-sc` and `to-trdos` point at each other's values
+(read from the bytes, not run): `/int-sc` would start TR-DOS and `/to-trdos` would ask for the Scorpion INT
+(disassembly README).
+
+**The BIOS's own ZX entries start in turbo** (read from `sp2k-3.06-hf2.rom`, 2026-10-06). `GOTO_SPECTRUM` (ROM
+page 0 `#02BE`) stores `DE` at `#C13A` of the system page; the stub it copies to `#5B00` (from `#03BA`) ends with
+`LD DE,(#C13A)` ... `LD A,E : OUT (#3C),A` (`#0415`), the same single write as the launcher. The machine choices of
+the BIOS's ZX menu (`#06E6-#075C`: Pentagon 512 / 128 / 48, Spectrum 128 ...) pass `E` = `#07`, `#0F`, `#17`, `#57`
+or `#D7`: bits 1-0 = `11`, **turbo on** in every one. 3.5 MHz comes only from the menu's separate "Turbo OFF" item
+(`#0643`: `A = 2`, BIOS function `#8F`; "Turbo ON" passes `A = 3`), which (page 8 `#1A4F`) keeps bits 1-0 in `#C13A`
+and writes them to `#7C` at once. So a Spectrum entered from the BIOS (ESC, the menu) running at 21 MHz is the
+firmware's choice, not an emulator fault; the launcher's `P128.ZX` / `ORIGIN.ZX` are the 3.5 MHz paths. The ESC
+caller's own `E` (whether it follows CMOS `#1B`) was not traced.
+
+**Back to DSS.** Ctrl+Alt+Del presets `TB_SW` (`DCP.TDF:663`), so the BIOS and the launcher's `ResetHook`
+run at 21 MHz whatever the mode ran at (§5.5). With `/ret-zx` the launcher re-enters through `EnterZxMode`
+and `StartStub` with the same `E`, which brings back the mode's clock.
+
+**unreal-ng** follows the PLD: `PortDecoder_Sprinter` handles the SYS code (`portdecoder_sprinter.cpp`, the
+`SprinterCode::SysCnf` case: bit 1 -> `_pld.turbo = value & 1`, bit 2 -> CNF), `ApplyTurbo` sets the clock
+ratio 6 or 1 from `turbo && turboHard` (F12), and `ResetPld` presets the turbo bit on a CPU reset.
 
 ## 5. The BIOS side
 

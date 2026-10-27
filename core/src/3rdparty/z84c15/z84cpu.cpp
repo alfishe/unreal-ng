@@ -189,6 +189,15 @@ uint32_t Z84CpuTstates(const Z84CPU* cpu)
     return cpu->t;
 }
 
+int Z84CpuIdleM1Repeats(const Z84CPU* cpu, uint8_t opcode)
+{
+    // Z84WaitM1's state: the power-on countdown and the RETI rule's "after ED"
+    const Z84CPU::Z84WaitGen& w = cpu->wait;
+    if (w.powerOnM1Left != 0 || w.afterEd != 0)
+        return 0;
+    return (opcode == 0xED && (w.wcr >> 6) != 0) ? 0 : 1;
+}
+
 void Z84CpuSetTstates(Z84CPU* cpu, uint32_t tstates)
 {
     cpu->t = tstates;

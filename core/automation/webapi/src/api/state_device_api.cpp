@@ -13,9 +13,17 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/io/network/networkmanager.h>
+#include <emulator/slots/slotcontrol.h>
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/state/devicestate.h>
+#include <debugger/ports/nextregwrite.h>
+#include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
+#include <emulator/io/z80n/nextsdjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include <json/json.h>
 
 #include <cstdio>
@@ -23,6 +31,7 @@
 
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
+#include "common/stringhelper.h"
 
 using namespace drogon;
 
@@ -39,7 +48,11 @@ void ReplyNotFound(const std::string& message, std::function<void(const HttpResp
                    HttpStatusCode code = HttpStatusCode::k404NotFound)
 {
     Json::Value error;
-    error["error"] = code == HttpStatusCode::k404NotFound ? "Not Found" : "Bad Request";
+    error["error"] = code == HttpStatusCode::k404NotFound            ? "Not Found"
+                     : code == HttpStatusCode::k409Conflict          ? "Conflict"
+                     : code == HttpStatusCode::k500InternalServerError ? "Internal Server Error"
+                     : code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable"
+                                                                      : "Bad Request";
     error["message"] = message;
     auto resp = HttpResponse::newHttpJsonResponse(error);
     resp->setStatusCode(code);
@@ -124,6 +137,48 @@ void EmulatorAPI::getStateAudioMoonSound(const HttpRequestPtr& req,
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
     ReplyState(DeviceState::MoonSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/multisound
+void EmulatorAPI::getStateAudioMultiSound(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::MultiSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/midi
+void EmulatorAPI::getStateAudioMidi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Midi(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/midi  {"action": "panic"}
+/// panic: every voice of the MIDI synthesizer stops (MidiControl), at the next instruction boundary as a TTD live
+/// input; 404 without a synthesizer, 409 while a TTD replay owns the input
+void EmulatorAPI::postControlAudioMidi(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto json = req->getJsonObject();
+    const std::string action = json ? json->get("action", "").asString() : req->getParameter("action");
+    const MidiControlReply reply = MidiControl::Execute(emulator->GetContext(), action);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/moonsound/{fm|pcm}
@@ -301,6 +356,471 @@ void EmulatorAPI::getStateTsConfTsu(const HttpRequestPtr& req, std::function<voi
     ReplyState(DeviceState::TsConfTsu(emulator->GetContext()), callback);
 }
 
+
+/// region <Next>
+
+/// @brief GET /api/v1/emulator/{id}/state/next - the ZX Spectrum Next (DeviceState::Next); "available": false elsewhere
+void EmulatorAPI::getStateNext(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Next(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateNextActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/next"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateNext(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/reg-journal?regs=&sources=&since=&from=&to=&limit= - who wrote which NextREG, when and
+/// through which door (DeviceState::NextRegJournalReport)
+void EmulatorAPI::getStateNextRegJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextRegJournalQuery query;
+    std::string error;
+    if (!NextRegJournalQueryFromStrings(req->getParameter("regs"), req->getParameter("sources"), req->getParameter("since"),
+                                        req->getParameter("from"), req->getParameter("to"), req->getParameter("limit"), query,
+                                        error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextRegJournalReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/reg-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or
+/// resize the NextREG write journal (DeviceState::NextRegJournalControl)
+void EmulatorAPI::postNextRegJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/sd?kinds=&card=&since=&from=&to=&limit= - the SD cards as the program sees them, the SPI
+/// engine and the SD journal (DeviceState::NextSdReport)
+void EmulatorAPI::getStateNextSd(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextSdJournalQuery query;
+    std::string error;
+    if (!NextSdJournalQueryFromStrings(req->getParameter("kinds"), req->getParameter("card"), req->getParameter("since"),
+                                       req->getParameter("from"), req->getParameter("to"), req->getParameter("limit"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextSdReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/sd-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
+/// SD journal (DeviceState::NextSdJournalControl)
+void EmulatorAPI::postNextSdJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/divmmc?kinds=&since=&from=&to=&limit= - the DivMMC, its automap entries and the DivMMC journal (DeviceState::NextDivMmcReport)
+void EmulatorAPI::getStateNextDivMmc(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextDivMmcJournalQuery query;
+    std::string error;
+    if (!NextDivMmcJournalQueryFromStrings(req->getParameter("kinds"), req->getParameter("since"),
+                                       req->getParameter("from"), req->getParameter("to"), req->getParameter("limit"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextDivMmcReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
+/// DivMMC journal (DeviceState::NextDivMmcJournalControl)
+void EmulatorAPI::postNextDivMmcJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/nmi?kinds=&since=&from=&to=&limit= - the NMI sources, the Multiface, interrupts, reset and the
+/// interrupt / NMI / reset journal (DeviceState::NextNmiReport)
+void EmulatorAPI::getStateNextNmi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextIntJournalQuery query;
+    std::string error;
+    if (!NextIntJournalQueryFromStrings(req->getParameter("kinds"), req->getParameter("since"), req->getParameter("from"),
+                                        req->getParameter("to"), req->getParameter("limit"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextNmiReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/audio - the Next's sound as configured (DeviceState::NextAudioReport)
+void EmulatorAPI::getStateNextAudio(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextAudioReport(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/input - the Next's joystick modes and the Kempston port (DeviceState::NextInputReport)
+void EmulatorAPI::getStateNextInput(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextInputReport(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/uart - the Next's two UARTs (DeviceState::NextUartReport)
+void EmulatorAPI::getStateNextUart(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextUartReport(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
+/// interrupt / NMI / reset journal (DeviceState::NextNmiJournalControl)
+void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/magic-port?since=&limit= - the magic debug port (DeviceState::NextMagicPortReport)
+void EmulatorAPI::getStateNextMagicPort(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    uint64_t since = 0;
+    size_t limit = 200;
+    try
+    {
+        if (!req->getParameter("since").empty())
+            since = std::stoull(req->getParameter("since"));
+        if (!req->getParameter("limit").empty())
+            limit = static_cast<size_t>(std::stoull(req->getParameter("limit")));
+    }
+    catch (const std::exception&)
+    {
+        return ReplyNotFound("since and limit are numbers", callback, HttpStatusCode::k400BadRequest);
+    }
+    ReplyState(DeviceState::NextMagicPortReport(emulator->GetContext(), since, limit), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/magic-port {"enabled": true|false, "port": N, "mode": "hex|dec|ascii|line", "clear": true} - switch the
+/// magic port, choose its port and mode, clear its output (DeviceState::NextMagicPortControl)
+void EmulatorAPI::postNextMagicPort(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    int port = -1;
+    bool clear = false;
+    std::string mode;
+    constexpr Json::UInt64 kMaxPort = 0xFFFF;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("port"))
+    {
+        if (!(*body)["port"].isIntegral() || (*body)["port"].asInt64() < 0 || static_cast<Json::UInt64>((*body)["port"].asInt64()) > kMaxPort)
+            return ReplyNotFound("port is 0..65535", callback, HttpStatusCode::k400BadRequest);
+        port = (*body)["port"].asInt();
+    }
+    if (body && body->isMember("mode"))
+        mode = (*body)["mode"].asString();
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    StateNode result = DeviceState::NextMagicPortControl(emulator->GetContext(), enable, port, mode, clear);
+    if (const StateNode* refused = result.find("error"))
+        return ReplyNotFound(refused->s, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(result, callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= - the pixel inspector (DeviceState::NextPixel; design-layer-capture.md): which layer
+/// won the pixel (x 0-319, y 0-255, sub-pixel sx 0 / 1) of the last captured frame, its colour, per layer whether it painted and why not / why
+/// it lost, and the source addresses. 400 bad query, 409 not a Next, the layer capture off or no frame yet
+void EmulatorAPI::getStateNextPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPixelQuery query;
+    std::string error;
+    if (!NextPixelQueryFromStrings(req->getParameter("x"), req->getParameter("y"), req->getParameter("sx"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+    const StateNode* available = report.find("available");
+    if (available && available->kind == StateNode::Kind::Bool && !available->b)
+        return ReplyNotFound("This machine is not a ZX Spectrum Next", callback, HttpStatusCode::k409Conflict);
+    const StateNode* ok = report.find("ok");
+    if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+    {
+        const StateNode* message = report.find("message");
+        const StateNode* status = report.find("status");
+        return ReplyNotFound((status ? status->s + ": " : std::string()) + (message ? message->s : std::string("no frame")), callback,
+                             status && status->s == "bad-parameter" ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict);
+    }
+    ReplyState(report, callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} - switch the per-layer record of the Next screen
+/// (DeviceState::NextLayerCaptureControl; takes effect at the next frame start). An empty body or {} only reports. 409 on another machine
+void EmulatorAPI::postNextLayerCapture(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    int enable = -1;
+    if (auto body = req->getJsonObject())
+    {
+        if (body->isMember("enabled"))
+        {
+            if (!(*body)["enabled"].isBool())
+                return ReplyNotFound("'enabled' must be true or false", callback, HttpStatusCode::k400BadRequest);
+            enable = (*body)["enabled"].asBool() ? 1 : 0;
+        }
+    }
+    const StateNode result = DeviceState::NextLayerCaptureControl(emulator->GetContext(), enable);
+    const StateNode* available = result.find("available");
+    if (available && available->kind == StateNode::Kind::Bool && !available->b)
+        return ReplyNotFound("This machine is not a ZX Spectrum Next", callback, HttpStatusCode::k409Conflict);
+    ReplyState(result, callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/dma - the DMA programmed and running (DeviceState::NextDma; no side effect on the read sequence)
+void EmulatorAPI::getStateNextDma(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextDma(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/video - layers, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster
+/// (DeviceState::NextVideo)
+void EmulatorAPI::getStateNextVideo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextVideo(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/palette?palette=&range= - the 9-bit palettes (DeviceState::NextPalette)
+void EmulatorAPI::getStateNextPalette(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPaletteQuery query;
+    std::string error;
+    if (!NextPaletteQueryFromStrings(req->getParameter("palette"), req->getParameter("range"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextPalette(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/ports?port=&access= - the internal port enable word and, with `port`, which device
+/// answers a read / write (DeviceState::NextPorts)
+void EmulatorAPI::getStateNextPorts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPortsQuery query;
+    std::string error;
+    if (!NextPortsQueryFromStrings(req->getParameter("port"), req->getParameter("access"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextPorts(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/copper?from=&count=&raw= - the copper list as a disassembly, the control mode, the pc
+/// (DeviceState::NextCopper)
+void EmulatorAPI::getStateNextCopper(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextCopperQuery query;
+    std::string error;
+    if (!NextCopperQueryFromStrings(req->getParameter("from"), req->getParameter("count"), req->getParameter("raw"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextCopper(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/sprites?from=&count=&all= - the sprite attributes decoded, the switches, the pattern memory
+/// summary (DeviceState::NextSprites)
+void EmulatorAPI::getStateNextSprites(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextSpritesQuery query;
+    std::string error;
+    if (!NextSpritesQueryFromStrings(req->getParameter("from"), req->getParameter("count"), req->getParameter("all"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextSprites(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/nextreg?reg=&changed= - one NextREG with its decoded bits, or all (DeviceState::NextRegRead)
+void EmulatorAPI::getStateNextNextReg(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextRegReadQuery query;
+    std::string error;
+    if (!NextRegReadQueryFromStrings(req->getParameter("reg"), req->getParameter("changed"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextRegRead(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/nextreg {"reg": 7, "value": 3, "door": "nextreg"|"port"|"internal"} - write a NextREG through
+/// the board's single write choke point, where nothing else drives the machine (NextRegWriteControl): 400 bad body, 409 not a Next,
+/// 503 no coherent moment
+void EmulatorAPI::postNextNextReg(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("reg") || !body->isMember("value"))
+        return ReplyNotFound("Request must contain 'reg' and 'value'", callback, HttpStatusCode::k400BadRequest);
+    // a JSON number is the value itself, a string is hex text ("07", "0x07", "#07")
+    auto text = [](const Json::Value& v) { return v.isString() ? v.asString() : (v.isIntegral() ? StringHelper::Format("%x", v.asUInt()) : std::string()); };
+    uint8_t reg = 0, value = 0;
+    std::string error;
+    if (!NextRegWriteControl::Parse(text((*body)["reg"]), text((*body)["value"]), reg, value, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    NextRegWriteControl::Door door = NextRegWriteControl::Door::NextReg;
+    if (body->isMember("door") && !NextRegWriteControl::ParseDoor((*body)["door"].asString(), door))
+        return ReplyNotFound("door must be nextreg, port or internal", callback, HttpStatusCode::k400BadRequest);
+    const NextRegWriteControl::Result result = NextRegWriteControl::Write(emulator.get(), reg, value, door, "webapi");
+    if (result.notNext)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k409Conflict);
+    if (result.busy)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k503ServiceUnavailable);
+    if (!result.ok)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k500InternalServerError);
+    ReplyState(NextRegWriteControl::ToState(result), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/regs - every NextREG with access, value and reset (the next_regs report)
+void EmulatorAPI::getStateNextRegs(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextRegs(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/mmu - the eight 8K slots (the next_mmu report)
+void EmulatorAPI::getStateNextMmu(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextMmu(emulator->GetContext()), callback);
+}
+
+/// endregion </Next>
 
 /// region <Sprinter>
 
@@ -578,6 +1098,30 @@ Json::Value CellsJson(unsigned start, const std::vector<uint8_t>& bytes)
 }
 }  // namespace
 
+/// @brief GET /api/v1/emulator/{id}/state/execution - the execution arbiter (DeviceState::Execution)
+void EmulatorAPI::getStateExecution(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Execution(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateExecutionActive(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/execution"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateExecution(req, std::move(callback), emulator->GetId());
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/rtc - the CMOS clock (DeviceState::Rtc); 404 without one
 void EmulatorAPI::getStateRtc(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
@@ -649,26 +1193,42 @@ void EmulatorAPI::getStateNetworkActive(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/{id}/network/config - change the [NETWORK] settings at runtime
-/// (NetworkManager::ParseChange: the same keys as CLI `network set` and Lua / Python network_configure)
+/// (NetworkManager::ParseChange: the same keys as CLI `network set` and Lua / Python network_configure) through
+/// SlotControl verb network: a change of the ZX-bus cards (`card`) is a slot change applied by a restart (owner decision
+/// Q11; `replaceIfIncompatible`, `dryRun`, `mediaDisposition` as for /slots), the other keys go to the restarted
+/// machine; without a card change they apply in place (status "accepted")
 void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
-    EmulatorContext* context = emulator->GetContext();
-    NetworkManager* manager = context->pCore ? context->pCore->GetNetworkManager() : nullptr;
-    if (!manager)
-        return ReplyNotFound("no network support in this machine", callback);
 
     auto body = req->getJsonObject();
     if (!body || !body->isObject())
         return ReplyNotFound("Body must be a JSON object, e.g. {\"card\": \"zxnetusb\", \"host_access\": true}", callback,
                              HttpStatusCode::k400BadRequest);
-    std::vector<std::pair<std::string, std::string>> settings;
+    SlotControlRequest request;
+    request.verb = "network";
+    request.emulatorId = emulator->GetId();
     for (const std::string& key : body->getMemberNames())
     {
         const Json::Value& v = (*body)[key];
+        if (key == "replaceIfIncompatible" || key == "replace_if_incompatible")
+        {
+            request.replaceIfIncompatible = v.asBool();
+            continue;
+        }
+        if (key == "dryRun" || key == "dry_run")
+        {
+            request.dryRun = v.asBool();
+            continue;
+        }
+        if (key == "mediaDisposition" || key == "media_disposition")
+        {
+            request.media = v.asString();
+            continue;
+        }
         std::string text;
         if (v.isBool())
             text = v.asBool() ? "on" : "off";
@@ -678,22 +1238,21 @@ void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<voi
             text = std::to_string(v.asInt64());
         else
             return ReplyNotFound(key + ": a string, number or boolean", callback, HttpStatusCode::k400BadRequest);
-        settings.emplace_back(key, text);
+        request.settings.emplace_back(key, text);
     }
+    emulator.reset();   // nothing here may keep the old machine alive across a restart
 
-    NetworkManager::Change change;
-    std::string error;
-    if (!NetworkManager::ParseChange(settings, change, error))
-        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
-    if (!manager->RequestChange(change, error))
-        return ReplyNotFound(error, callback, HttpStatusCode::k409Conflict);
-
-    Json::Value ret;
-    ret["status"] = "accepted";
-    ret["note"] = "applied at the next frame boundary (at once while paused); the card is fitted again, so every "
-                  "connection closes (remote_access alone only moves the host listeners: connections stay). "
-                  "GET /state/network shows the result";
+    const SlotControlReply reply = SlotControl::Execute(request);
+    Json::Value ret = StateNodeToJson(reply.ToValue());
+    if (reply.status == "accepted")
+        ret["note"] = "applied at the next frame boundary (at once while paused); the devices are fitted again, so every "
+                      "connection closes (remote_access alone only moves the host listeners: connections stay). "
+                      "GET /state/network shows the result";
+    else if (reply.status == "applied")
+        ret["note"] = "the ZX-bus network cards changed: the machine was restarted with the new slot set (a new emulator "
+                      "id, restart.emulatorId), the other settings were applied to it";
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
     addCorsHeaders(resp);
     callback(resp);
 }

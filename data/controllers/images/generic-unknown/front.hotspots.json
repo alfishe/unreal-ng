@@ -1,0 +1,370 @@
+{
+  "schema": 1,
+  "family": "generic-unknown",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "lt",
+      "label": "LT",
+      "shape": {
+        "rect": [
+          413,
+          329,
+          284,
+          62
+        ]
+      },
+      "anchor": [
+        555,
+        360
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 0
+    },
+    {
+      "control": "lb",
+      "label": "LB",
+      "shape": {
+        "rect": [
+          379,
+          366,
+          404,
+          46
+        ]
+      },
+      "anchor": [
+        581,
+        389
+      ],
+      "callout": "left",
+      "order": 1
+    },
+    {
+      "control": "rt",
+      "label": "RT",
+      "shape": {
+        "rect": [
+          1351,
+          329,
+          284,
+          62
+        ]
+      },
+      "anchor": [
+        1493,
+        360
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "trigger",
+        "fill": "down"
+      },
+      "order": 2
+    },
+    {
+      "control": "rb",
+      "label": "RB",
+      "shape": {
+        "rect": [
+          1265,
+          366,
+          404,
+          46
+        ]
+      },
+      "anchor": [
+        1467,
+        389
+      ],
+      "callout": "right",
+      "order": 3
+    },
+    {
+      "control": "lstick.x",
+      "label": "LS",
+      "shape": {
+        "circle": [
+          671,
+          605,
+          86
+        ]
+      },
+      "anchor": [
+        671,
+        605
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "stick",
+        "pair": "lstick.y",
+        "radius": 52
+      },
+      "group": "lstick",
+      "order": 4
+    },
+    {
+      "control": "lstick.click",
+      "label": "LS",
+      "shape": {
+        "circle": [
+          671,
+          605,
+          52
+        ]
+      },
+      "anchor": [
+        671,
+        605
+      ],
+      "callout": "left",
+      "group": "lstick",
+      "order": 5
+    },
+    {
+      "control": "rstick.x",
+      "label": "RS",
+      "shape": {
+        "circle": [
+          1209,
+          802,
+          86
+        ]
+      },
+      "anchor": [
+        1209,
+        802
+      ],
+      "callout": "right",
+      "analog": {
+        "kind": "stick",
+        "pair": "rstick.y",
+        "radius": 52
+      },
+      "group": "rstick",
+      "order": 6
+    },
+    {
+      "control": "rstick.click",
+      "label": "RS",
+      "shape": {
+        "circle": [
+          1209,
+          802,
+          52
+        ]
+      },
+      "anchor": [
+        1209,
+        802
+      ],
+      "callout": "right",
+      "group": "rstick",
+      "order": 7
+    },
+    {
+      "control": "dpad.up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          803,
+          697,
+          72,
+          69
+        ]
+      },
+      "anchor": [
+        839,
+        732
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 8
+    },
+    {
+      "control": "dpad.down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          803,
+          839,
+          72,
+          69
+        ]
+      },
+      "anchor": [
+        839,
+        873
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 9
+    },
+    {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          734,
+          766,
+          69,
+          72
+        ]
+      },
+      "anchor": [
+        768,
+        802
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 10
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          875,
+          766,
+          69,
+          72
+        ]
+      },
+      "anchor": [
+        910,
+        802
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 11
+    },
+    {
+      "control": "north",
+      "label": "4",
+      "shape": {
+        "circle": [
+          1377,
+          519,
+          48
+        ]
+      },
+      "anchor": [
+        1377,
+        519
+      ],
+      "callout": "right",
+      "order": 12
+    },
+    {
+      "control": "west",
+      "label": "3",
+      "shape": {
+        "circle": [
+          1291,
+          605,
+          48
+        ]
+      },
+      "anchor": [
+        1291,
+        605
+      ],
+      "callout": "right",
+      "order": 13
+    },
+    {
+      "control": "east",
+      "label": "2",
+      "shape": {
+        "circle": [
+          1463,
+          605,
+          48
+        ]
+      },
+      "anchor": [
+        1463,
+        605
+      ],
+      "callout": "right",
+      "order": 14
+    },
+    {
+      "control": "south",
+      "label": "1",
+      "shape": {
+        "circle": [
+          1377,
+          691,
+          48
+        ]
+      },
+      "anchor": [
+        1377,
+        691
+      ],
+      "callout": "right",
+      "order": 15
+    },
+    {
+      "control": "view",
+      "label": "9",
+      "shape": {
+        "rect": [
+          894,
+          526,
+          62,
+          36
+        ]
+      },
+      "anchor": [
+        925,
+        544
+      ],
+      "callout": "left",
+      "order": 16
+    },
+    {
+      "control": "menu",
+      "label": "10",
+      "shape": {
+        "rect": [
+          1092,
+          526,
+          62,
+          36
+        ]
+      },
+      "anchor": [
+        1123,
+        544
+      ],
+      "callout": "right",
+      "order": 17
+    },
+    {
+      "control": "guide",
+      "label": "13",
+      "shape": {
+        "circle": [
+          1024,
+          458,
+          52
+        ]
+      },
+      "anchor": [
+        1024,
+        458
+      ],
+      "callout": "right",
+      "order": 18
+    }
+  ]
+}

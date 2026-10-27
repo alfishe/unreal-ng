@@ -28,6 +28,9 @@ public:
     bool Bypass() const { return _bypass; }
     int Taps() const { return _taps; }
 
+    /// Off: the FIR runs on a window of zeros too (comparisons)
+    void SetSilentWindowsSkipped(bool skipped) { _skipSilent = skipped; }
+
 private:
     static constexpr int kPhases = 256;
     uint32_t _inRate = 0, _outRate = 0;
@@ -38,6 +41,9 @@ private:
     uint32_t _write = 0;         // next history slot
     uint64_t _num = 0;           // output phase numerator over _outRate
     uint32_t _pending = 0;       // input frames to take before the next output
+    bool _skipSilent = true;
+    uint32_t _zeroRun = 0;       // newest input frames in a row that are 0 (both sides): the window is all zeros once it
+                                 // reaches the taps, and every output is +0.0 (a zero sample adds +0.0 to a sum)
 };
 
 } // namespace sam2695

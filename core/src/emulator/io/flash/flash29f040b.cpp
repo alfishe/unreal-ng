@@ -21,18 +21,32 @@ constexpr double kEraseWindowSeconds = 50e-6;
 using statebytes::get64;
 using statebytes::put64;
 
-Flash29F040B::Flash29F040B(double unitsPerSecond, Vendor vendor)
-    : _data(SIZE, 0xFF)
-    , _unitsPerSecond(unitsPerSecond)
+Flash29F040B::Flash29F040B(double unitsPerSecond, Vendor vendor, uint8_t* external)
+    : _unitsPerSecond(unitsPerSecond)
     , _vendor(vendor)
 {
+    bindArray(external);
+}
+
+void Flash29F040B::bindArray(uint8_t* external)
+{
+    if (external)
+    {
+        _own.clear();
+        _own.shrink_to_fit();
+        _data = external;
+        return;
+    }
+    if (_own.size() != SIZE)
+        _own.assign(SIZE, 0xFF);
+    _data = _own.data();
 }
 
 void Flash29F040B::load(const uint8_t* data, size_t size)
 {
-    std::fill(_data.begin(), _data.end(), 0xFF);
+    std::fill_n(_data, SIZE, 0xFF);
     if (data && size)
-        memcpy(_data.data(), data, std::min(size, SIZE));
+        memcpy(_data, data, std::min(size, SIZE));
     if (_tracker)
         _tracker->MarkAll();
     _modified = false;
@@ -81,12 +95,13 @@ void Flash29F040B::finishIfDone(int64_t now)
             {
                 if ((_eraseSectors >> s) & 1)
                 {
-                    std::fill_n(_data.begin() + static_cast<std::ptrdiff_t>(s * SECTOR_SIZE), SECTOR_SIZE, 0xFF);
+                    std::fill_n(_data + s * SECTOR_SIZE, SECTOR_SIZE, 0xFF);
                     if (_tracker)
                         _tracker->MarkRange(s * SECTOR_SIZE, SECTOR_SIZE);
                 }
             }
             _modified = true;
+            _changes++;
             _erasing = false;
             _eraseSectors = 0;
             _mode = Mode::Read;
@@ -99,6 +114,7 @@ void Flash29F040B::finishIfDone(int64_t now)
             if (_tracker)
                 _tracker->Mark(_programOffset);
             _modified = true;
+            _changes++;
             _mode = ((old & _programValue) != _programValue) ? Mode::Failed : Mode::Read;
         }
     }

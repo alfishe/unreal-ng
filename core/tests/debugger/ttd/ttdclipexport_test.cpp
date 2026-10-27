@@ -1,5 +1,5 @@
 /// @file ttdclipexport_test.cpp
-/// @brief TimeTravelManager::ExportClip: a TTD range on disk equals the live
+/// @brief TimeTravelController::ExportClip: a TTD range on disk equals the live
 /// frames it was recorded from (final picture + plane B), with one meta line
 /// per frame. The guest changes the border every 34 T-states, so every frame
 /// differs and a static decode could not pass.
@@ -16,8 +16,9 @@
 #include <vector>
 
 #include "base/featuremanager.h"
+#include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcompression.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -30,7 +31,7 @@ class TTD_ClipExport_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Screen* _screen = nullptr;
     std::filesystem::path _dir;
 
@@ -39,7 +40,7 @@ protected:
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _screen = _context->pScreen;
 
         FeatureManager* fm = _emulator->GetFeatureManager();
@@ -57,8 +58,7 @@ protected:
         z80->pc = 0x8000;
         z80->sp = 0xBFF0;
 
-        _dir = std::filesystem::temp_directory_path() /
-               ("unreal-ng-clip-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        _dir = std::filesystem::path(TestPathHelper::GetUniqueTestScratchPath("ttd-clip"));
     }
 
     void TearDown() override
@@ -101,7 +101,7 @@ TEST_F(TTD_ClipExport_Test, ExportedFramesEqualLiveFrames)
     _ttd->StopRecording();
 
     // Chunks of 4 over 9 frames: two full chunks and a partial one
-    ttd::TimeTravelManager::TTDClipExportOptions options;
+    ttd::TimeTravelController::TTDClipExportOptions options;
     options.fromFrame = liveRgba.begin()->first + 1;
     options.toFrame = options.fromFrame + 8;
     options.directory = _dir.string();
@@ -195,13 +195,15 @@ TEST_F(TTD_ClipExport_Test, VisitComposedFramesDeliversLiveFramesAndStops)
 
     const uint64_t from = liveRgba.begin()->first + 1, to = from + 6;
     std::vector<uint64_t> visited;
-    const std::string error = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelManager::TTDComposedFrame& f) {
+    const std::string error = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelController::TTDComposedFrame& f) {
         visited.push_back(f.frame);
         EXPECT_TRUE(std::equal(liveRgba.at(f.frame).begin(), liveRgba.at(f.frame).end(), f.rgba)) << "RGBA of frame " << f.frame;
         EXPECT_NE(f.planeB, nullptr);
         if (f.planeB)
+        {
             EXPECT_TRUE(std::equal(livePlaneB.at(f.frame).begin(), livePlaneB.at(f.frame).end(), f.planeB))
                 << "plane B of frame " << f.frame;
+        }
         return true;
     });
     EXPECT_TRUE(error.empty()) << error;
@@ -210,7 +212,7 @@ TEST_F(TTD_ClipExport_Test, VisitComposedFramesDeliversLiveFramesAndStops)
         EXPECT_EQ(visited[k], from + k);
 
     size_t calls = 0;
-    const std::string stopped = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelManager::TTDComposedFrame&) {
+    const std::string stopped = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelController::TTDComposedFrame&) {
         return ++calls < 3;
     });
     EXPECT_TRUE(stopped.empty()) << stopped;
@@ -225,7 +227,7 @@ TEST_F(TTD_ClipExport_Test, RefusedWhileRecordingAndOutsideSession)
     ASSERT_TRUE(_ttd->StartRecording());
     _emulator->RunNFrames(3, true);
 
-    ttd::TimeTravelManager::TTDClipExportOptions options;
+    ttd::TimeTravelController::TTDClipExportOptions options;
     options.directory = _dir.string();
     options.fromFrame = _context->emulatorState.frame_counter - 2;
     options.toFrame = options.fromFrame;

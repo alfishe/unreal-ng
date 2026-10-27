@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "emulator/io/storage/iblockdevice.h"
 
@@ -41,6 +42,8 @@ public:
         return true;
     }
     bool IsWritable() const override { return _base->IsWritable(); }
+    /// Held writes make a run unknown (they are few and short-lived: replay only)
+    uint64_t ZeroRun(uint64_t lba) override { return _held.empty() ? _base->ZeroRun(lba) : 0; }
     std::optional<BlockGeometry> NativeGeometry() const override { return _base->NativeGeometry(); }
     std::string Describe() const override { return _base->Describe(); }
     uint64_t ContentId() const override { return _base->ContentId(); }
@@ -62,6 +65,8 @@ public:
     }
     bool Holding() const { return _holding; }
     size_t HeldSectors() const { return _held.size(); }
+    /// The held sectors, given up: they never reach the file (a session layer on top takes them, F13)
+    std::unordered_map<uint64_t, std::array<uint8_t, kSectorSize>> TakeHeld() { return std::exchange(_held, {}); }
 
 private:
     std::unique_ptr<IBlockDevice> _base;

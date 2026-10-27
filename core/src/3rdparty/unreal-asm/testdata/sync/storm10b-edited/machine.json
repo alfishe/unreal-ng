@@ -1,0 +1,17 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    6
+  ],
+  "pages": [
+    2,
+    6
+  ],
+  "expected": "ST1BETA.C",
+  "state": {
+    "editor": true,
+    "typing": false
+  }
+}

@@ -55,6 +55,8 @@ public:
     }
 
     bool Reached() const { return _elapsed >= _target; }
+    /// T-states left to run (0 when reached)
+    uint64_t Remaining() const { return _elapsed >= _target ? 0 : _target - _elapsed; }
     uint64_t Elapsed() const { return _elapsed; }
     uint64_t Target() const { return _target; }
 

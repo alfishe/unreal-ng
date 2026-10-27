@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <optional>
+
 #include "cdaudiocontrol.h"
 
 #include <algorithm>
@@ -8,6 +10,7 @@
 
 #include "common/stringhelper.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
@@ -102,16 +105,12 @@ namespace
     template <typename F>
     void Parked(EmulatorContext* context, F&& change)
     {
+        // The CPU held for the change (Emulator::CpuHold); the pause is left as it was
         Emulator* emulator = context ? context->pEmulator : nullptr;
-        const bool park = emulator && emulator->IsRunning() && !emulator->IsPaused();
-        if (park)
-        {
-            emulator->Pause(false);
-            emulator->WaitForPauseConfirmation(1000);
-        }
+        std::optional<Emulator::CpuHold> hold;
+        if (emulator)
+            hold.emplace(*emulator, "cd audio");
         change();
-        if (park)
-            emulator->Resume(false);
     }
 }  // namespace
 
@@ -333,11 +332,15 @@ CdAudioReply CdAudioControl::Execute(const CdAudioRequest& request)
         return Mixer(unit, request.options);
 
     // The machine-side verbs: the guest's own commands would do the same, but from outside a replay cannot repeat them
-    if (_context->pTimeTravelManager)
+    // (the coordinator's rules: refused while a recording the user started runs; the refusal is logged)
+    if (_context->pMachineOps)
     {
-        const std::string guard = _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::CdFrontPanel);
-        if (!guard.empty())
-            return Fail("recording", guard);
+        coordinator::MachineOp op;
+        op.kind = coordinator::OpKind::CdFrontPanel;
+        op.summary = verb + " " + request.drive;
+        const coordinator::OpResult asked = _context->pMachineOps->Ask(std::move(op));
+        if (!asked.Ok())
+            return Fail("recording", asked.reason);
     }
     AtapiCdrom* cd = CdOf(_context, unit);
     if (verb == "volume")

@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,8 @@
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/media/modelswitch.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace
 {
@@ -230,6 +233,43 @@ TEST_F(ModelSwitch_Test, NewMachineKeepsThePowerOnRamModeUnlessTold)
     ASSERT_NE(told.emulator, nullptr);
     _newId = told.emulator->GetId();
     EXPECT_EQ(told.emulator->GetContext()->config.ramPowerOn, RamPowerOn::Random);
+}
+
+/// ZX-bus slots R-OP-9: the cards go along. Pentagon -> ZX-Evo keeps the ZX-MultiSound in zxbus.1 (built on the new
+/// machine, the YM2149 taken out of its socket for it); ZX-Evo -> 128K reports it as not carried (the edge has no
+/// IORQGE), in the result and its report lines
+TEST_F(ModelSwitch_Test, CarriesTheSlotSet)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto old = manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, nullptr, [](CONFIG& config) {
+        SlotConfig slots;
+        ParseSlotsSection({{"zxbus.1", "multisound"}}, slots);
+        SlotManager::UseSlots(slots, config);
+    });
+    ASSERT_NE(old, nullptr);
+
+    ModelSwitchResult evo = Switch(old.get(), "ATM3");
+    old.reset();
+    ASSERT_TRUE(evo.result.Ok()) << evo.result.message;
+    ASSERT_NE(evo.emulator, nullptr);
+    EXPECT_TRUE(evo.slotCarry.carried);
+    EXPECT_EQ(evo.slotCarry.kept, std::vector<std::string>{"zxbus.1 = multisound"});
+    EXPECT_TRUE(evo.slotCarry.dropped.empty()) << evo.slotCarry.DroppedText();
+    const SlotManager* slots = evo.emulator->GetContext()->pSlotManager;
+    ASSERT_NE(slots, nullptr);
+    EXPECT_NE(slots->FindCard("zxbus.1"), nullptr) << "the card is built on the new machine";
+
+    std::shared_ptr<Emulator> evoMachine = evo.emulator;
+    evo.emulator.reset();
+    const ModelSwitchResult spectrum = Switch(evoMachine.get(), "128k");
+    evoMachine.reset();
+    ASSERT_TRUE(spectrum.result.Ok()) << spectrum.result.message;
+    ASSERT_EQ(spectrum.slotCarry.dropped.size(), 1u) << spectrum.slotCarry.DroppedText();
+    EXPECT_EQ(spectrum.slotCarry.dropped[0].card, "multisound");
+    EXPECT_EQ(spectrum.emulator->GetContext()->pSlotManager->FindCard("zxbus.1"), nullptr);
+    EXPECT_TRUE(std::any_of(spectrum.result.report.begin(), spectrum.result.report.end(), [](const std::string& line) {
+        return line.find("zxbus.1 = multisound not carried to") != std::string::npos;
+    })) << "the switch's report names it";
 }
 
 TEST(ModelSwitch_Names_Test, StrandedPolicyNames)

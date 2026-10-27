@@ -44,6 +44,13 @@
 # This file previously declared schema-version 2 while the C++ writer emitted 1.
 # They are both 1 now.
 #
+# Schema 3 (this file): the header's peripheral_mask and not_recorded_mask
+# are word lists (u1 count, u8 words; id N is bit N % 64 of word N / 64) so
+# any u1 peripheral id can be named - id 63 was the last a single u8 could.
+# Everything else is schema 1's layout. A reader takes schema 1 and 3 (2 is
+# the engine's container format, not described here). Files of schema 1 are
+# still valid input: their masks are one u8 each (the `*_v1` fields below).
+#
 # License: MIT — re-publishable, vendorable, forkable.
 
 meta:
@@ -54,7 +61,7 @@ meta:
   application: unreal-ng
   license: MIT
   ks-version: 0.10
-  schema-version: 1
+  schema-version: 3
   doc: |
     A binary serialization of an Unreal-NG Time-Travel Debugging recording
     session: the complete timeline of per-frame checkpoints plus the
@@ -116,8 +123,9 @@ types:
       - id: schema_version
         type: u2
         doc: |
-          Schema version. MUST be 1. Readers refuse unknown versions with a
-          clear error.
+          Schema version: 3 (written); 1 (older files, read). Readers
+          refuse other versions with a clear error. From 3 the header's
+          masks are word lists (`wide_mask`).
       - id: flags
         type: u2
         doc: |
@@ -151,7 +159,7 @@ types:
           gone; their network fields live in the bit-10 section, 14 Joystick - a
           Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
           Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
-          section like a NetEvent's), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields, 18 NextPad - the whole state of one joystick connector of the ZX Next: key = connector 0 left / 1 right, s2 dx = the 12 buttons R L D U B C A START Y Z X MODE from bit 0), 19 ConnectorState - the retro controls held on one controller-manager connector whose device has no kind of its own (Sinclair, Cursor, keys joystick): key = connector index, s2 dx = the control mask (bit 0 right, 1 left, 2 down, 3 up, 4 fire, 5-7 fire 2-4), 20 HostKeys - the ZX keys host controllers hold on one half-row (the controller manager's host key overlay): key = half-row 0..7 (A8..A15), s2 dx = the held bits (bit n = D n, active high), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -271,21 +279,49 @@ types:
       - id: checkpoint_count
         type: u4
         doc: Number of checkpoint records following the page store.
+      - id: peripheral_mask_v1
+        type: u8
+        if: schema_version < 3
+        doc: |
+          Schema 1. With flags bit 9: bit N set = TTD peripheral id N
+          (TurboSound 0, Beta Disk 1, ..., General Sound 5, GS LW 11,
+          NeoGS 12, ...) has a state blob in the first checkpoint - the
+          recorded machine's device set, readable without walking to the
+          checkpoints. Without bit 9: zero (formerly reserved). Ids above
+          63 cannot be named here.
       - id: peripheral_mask
-        type: u8
+        type: wide_mask
+        if: schema_version >= 3
         doc: |
-          With flags bit 9: bit N set = TTD peripheral id N (TurboSound 0,
-          Beta Disk 1, ..., General Sound 5, GS LW 11, NeoGS 12, ...) has a
-          state blob in the first checkpoint - the recorded machine's device
-          set, readable without walking to the checkpoints. Without bit 9:
-          zero (formerly reserved).
+          Schema 3: the same set as a word list; id N is bit N % 64 of
+          words[N / 64]. Only the words up to the highest non-zero one are
+          stored (at least one).
+      - id: not_recorded_mask_v1
+        type: u8
+        if: schema_version < 3 and (flags & 0x0800) != 0
+        doc: |
+          Schema 1. Bit N set = peripheral id N was fitted but time travel
+          does not record it (no blob in any checkpoint; it runs live
+          through seeks): the lightweight General Sound (11). A loader
+          fits the same card.
       - id: not_recorded_mask
+        type: wide_mask
+        if: schema_version >= 3 and (flags & 0x0800) != 0
+        doc: Schema 3: the not-recorded set as a word list, as peripheral_mask.
+  wide_mask:
+    doc: |
+      A set of peripheral ids (PeripheralId is a u1: 0..255) as 64-bit
+      words, word w holding ids 64*w .. 64*w+63.
+    seq:
+      - id: word_count
+        type: u1
+        valid:
+          min: 1
+          max: 4
+      - id: words
         type: u8
-        if: (flags & 0x0800) != 0
-        doc: |
-          Bit N set = peripheral id N was fitted but time travel does not
-          record it (no blob in any checkpoint; it runs live through seeks):
-          the lightweight General Sound (11). A loader fits the same card.
+        repeat: expr
+        repeat-expr: word_count
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:
@@ -554,31 +590,39 @@ types:
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
           8 AtmPaging, 9 ProfiPaging (Profi: 16-entry palette, pDFFD latch, front-panel switches),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card registers and device state only: a v1 session does
+          not record the card RAM or the flash; the engine's session records them as regions 4 neogs.ram and
+          5 neogs.flash, engine/ttdsession.ksy),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
           16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches; a second channel appended on the Sprinter),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
-          mask and the held keys), 20 ZxNetUsb (ZXNETUSB card ports, W5300
+          mask, the held keys and the F12 hold: down flag and its press time in
+          emulated microseconds - 56 bytes since 2026-10-07), 20 ZxNetUsb (ZXNETUSB card ports, W5300
           registers and socket states, unsent bytes, and journal references
           for the received bytes; the virtual network's guest-side tables -
-          netstate.h),
+          netstate.h; since 2026-10-08 a netstate::Tail follows when reserved[0] = 1: what the fixed
+          arrays do not hold and bytes received before the recording, netstatetail.h),
           21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
           22 EvoFontRam (ZX-Evo text-mode font RAM, 2 KB, and the glyph byte #0EBD reads: 2050 bytes),
           23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
-          machines whose decoder answers #1F - ATM3, Scorpion, TS-Conf),
+          machines whose decoder answers #1F - Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next - and any
+          machine with a Kempston interface card (69) fitted),
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
-          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs),
+          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs; with a
+          peer a netstate::Tail follows when flags bit 1 is set, since 2026-10-08),
           25 SprinterPld (Sprinter Sp2000 PLD and decoder, sprinter_pld_blob below),
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only),
+          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only; a
+          netstate::Tail follows when reserved[0] bit 1 is set, since 2026-10-08),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
-          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
+          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM: v1's whole-array blob; the engine records
+          the fast RAM as region 7 sprinter.fastram and the blob as the version byte only),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
           32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
           the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,
@@ -639,22 +683,70 @@ types:
           board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
           on the v5 board; its peer is MachineSerialPeer),
           53 Saa1099 (a Philips
-          SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
+          SAA1099, 157 bytes: u1 layout version 2, 32 registers, address latch, sound enable, sync, clock gate, per tone
           generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
-          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip),
+          chip clocks, s4 left and s4 right output level (held while the clock gate is stopped); layout in
+          saa1099.cpp; only inside a card that carries the chip),
           54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
           then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
           u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
-          55 EvoAvrVolatile (the ZX-Evo AVR's volatile registers on TS-Conf, 4 bytes: u1 version 1, u1 extType,
-          u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode); the ATM3 carries them in 8),
+          55 EvoAvrVolatile (the ZX-Evo AVR's volatile state on TS-Conf and the ATM3, 20 bytes: u1 version 2,
+          u1 extType, u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode), then the /WAIT
+          ports' timing shared by #xxEF and #BFF7 (EvoAvrWait): u8 AVR cycle the main loop resumed its pass, u8 AVR
+          cycle the EEPROM's last write ends; on the ATM3 the first bytes repeat what 8 carries),
           56 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
           then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events),
           57 RzxPlayback (an RZX recording played while TTD records, 84 bytes: u1 version 1 (0: nothing played),
           u1 player state (0 playing, 1 finished, 2 desynced, 3 stopped), u1 last IN value, u1 first desync kind,
           u8 recording fingerprint (FNV-1a over the frames and IN values), u8 frames done, u4 fetches, u4 IN position,
           u8 interrupts, u8 desyncs, u8 snapshots applied, s4 drift, s4 max drift, then the first desync: u4 block,
-          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session).
+          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session),
+          58 MultiSound (a ZX-MultiSound card, slot-built, instance <slot>.multisound: u1 version 1, u8 adapter
+          origin, u8 adapter last time, then the card: u1 version 1, u8 now, u8 frame base, u8 frame ticks,
+          u8 rendered-to, u8 sample accumulator, u1 FM muted, u2 FM mute changes + 256 x (u8 time, u1 muted), 11 CPLD
+          latches, 4 x (u1 DAC sample, u1 volume), u8 YM2203 pair synced time + the pair's blob, the MIDI line
+          (18 bytes), the shared DACs; layout in multisoundcard.h),
+          59 Sam2695 (a Dream SAM2695 synthesizer, instance <slot>.multisound.sam2695: sam2695::Synth::SaveState, magic
+          "SAM2", version, the bank's SHA-256, UART, parser, queue, channels, voices; a load refuses another bank),
+          60 MultiSoundGs (the ZX-MultiSound's General Sound, instance <slot>.multisound.gs: the GeneralSound (5)
+          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)),
+          61 EvoFlash (the ZX-Evo's ROM chip as a 29F040 flash, TS-Conf and ATM3, 33 bytes: u1 version 1, then the
+          chip's command state - u1 mode (0 read array, 1-2 unlock steps, 3 autoselect, 4 program set-up, 5 erase
+          set-up, 6-7 erase unlock steps, 8 sector-erase window, 9 busy, 10 failed), u1 reserved, u1 flags (bit 0
+          erasing, 1 writable, 2 contents modified, 3 AMD IDs), u1 DQ6 toggle, u1 DQ7 source byte, u1 sectors to
+          erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
+          u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
+          pages 0-31),
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version (8 now; the reader takes its own only), then the board (selected
+          register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
+          Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
+          attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
+          the interrupt controller, the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI
+          and timing latches, the extended keys (u2), the left pad's extra buttons (u1) and the right pad (u2, 12 buttons); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
+          cards' protocol state are in it; the system area (ROMs, DivMMC RAM) is blob 63),
+          63 NextSystemArea (the Next's system area, 262144 bytes, no version byte: the 16 pages of 16 KB from page 0 -
+          the ROMs the firmware loads in config mode (pages 0-7) and the DivMMC RAM (pages 8-15, 16 banks of 8 KB)),
+          64 MachineSerialPeer2 (the peer on a machine's second serial port, the Next's UART 1 / the Pi's line: the
+          blob of MachineSerialPeer (27), a netstate::Com with its tail; needs the wide peripheral mask of schema 3),
+          65 JoystickSerialPeer (the peer plugged into the Next's joystick connector while NR #0B selects the UART
+          mode: the same blob),
+          66 Controllers (controllers::ControllerManager, a machine peripheral: u1 version 2, u1 the count of
+          journaled connectors (the keyboard joysticks and the card-brought ones such as the Fuller Box's), then per
+          connector in connector order: u1 device (RetroDeviceKind), u1 Sinclair port, u1 cursor shift, 8 x u1 the
+          keys of right, left, down, up, fire 1-4 (PcKey), u2 the held controls (Kempston bit order); a blob of
+          another connector count restores nothing),
+          67 FullerBox (a Fuller Box card, slot-built, instance <slot>.fuller-box: u1 version 1, u8 card-axis origin,
+          u8 last card time, f8 next generator tick (IEEE bits, u8), u8 the mixer's frame-start sample phase, then the
+          AY (SoundChip_AY8910's 73 bytes); the stick's controls are in Controllers (66)),
+          68 AmxMouse (an AMX mouse card, slot-built, instance <slot>.amx-mouse: u1 version 1, then the Z80 PIO as
+          2 x 10 bytes, port A then B: u1 mode, u1 next control word (0 any, 1 the mode 3 direction, 2 the mask), u1
+          input register, u1 output register, u1 direction, u1 mask, u1 interrupt control word, u1 vector, u1 the
+          peripheral's line levels, u1 flags (bit 0 IE, 1 IP, 2 IUS, 3 RDY, 4 /STB high, 5 the mode 3 match); then s2
+          the pending X mickeys (+ right), s2 the pending Y mickeys (+ up), u1 the buttons (D0 left, D1 right, D2
+          middle, active low), per axis u8 frame and u4 T-state of the next strobe's earliest time; 50 bytes),
+          69 KempstonInterface (a Kempston joystick interface card, slot-built, instance <slot>.kempston: u1 version 1;
+          the interface has no state, the stick byte is KempstonJoystick (23), carried while the card is fitted).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

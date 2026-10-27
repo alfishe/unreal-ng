@@ -1,0 +1,37 @@
+{
+  "family": "gamecube",
+  "images": [
+    {
+      "view": "front",
+      "title": "Nintendo GameCube controller, indigo",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 140 mm (dimensions.com, 140 x 100 x 65 mm); the traced view at that width gives 106 mm front to back with the grips",
+          "source": "https://www.dimensions.com/element/gamecube-controller",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "top view (a cut-out of Evan-Amos's photo): the outline, the control positions and sizes",
+          "source": "https://commons.wikimedia.org/wiki/File:GameCube_controller.png",
+          "author": "Evan-Amos (photo), cut-out by a Commons user",
+          "licence": "CC BY-SA 3.0",
+          "use": "measured geometry only (trace.py outline, positions on a grid and by colour); no pixels shipped",
+          "retrieved": "2026-10-24"
+        },
+        {
+          "what": "the controls in black: the Z key on the right shoulder, the triggers",
+          "source": "https://commons.wikimedia.org/wiki/File:GameCube_Controller_in_Jet_Black_(Transparent).png",
+          "author": "Monathephantom",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-24"
+        }
+      ]
+    }
+  ]
+}

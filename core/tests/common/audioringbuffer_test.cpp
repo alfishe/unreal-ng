@@ -1,9 +1,14 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <thread>
 #include <vector>
 
+#include "_helpers/testthread.h"
+#include "_helpers/testwaithelper.h"
 #include "common/sound/audioringbuffer.h"
 
 /// AudioRingBuffer tests (audio-sync design, Fix 2 groundwork):
@@ -76,33 +81,39 @@ TEST(AudioRingBuffer_Test, SPSC_ConcurrentIntegrity)
     // consumer must observe a strictly sequential stream with no tears,
     // duplications, or gaps. Exercises the acquire/release index protocol
     // (previously plain size_t - an actual data race).
-    static AudioRingBuffer<int16_t, 4096> ring;
+    // Bounded on every path: a broken sequence stops the producer (it would
+    // spin on a full ring forever and the join would hang the run), a ring
+    // that stops delivering fails after the deadline, and each run (also a
+    // --gtest_repeat one) starts from an empty ring of its own.
+    auto ring = std::make_unique<AudioRingBuffer<int16_t, 4096>>();
     constexpr int TOTAL = 200000;
+    std::atomic<bool> stop{false};
 
-    std::thread producer([&]() {
+    TestThread producer([&]() {
         int16_t value = 0;
         int produced = 0;
         int16_t chunk[128];
-        while (produced < TOTAL)
+        while (produced < TOTAL && !stop.load(std::memory_order_relaxed))
         {
             int n = std::min(128, TOTAL - produced);
             for (int i = 0; i < n; i++)
                 chunk[i] = static_cast<int16_t>(value + i);
-            size_t written = ring.enqueue(chunk, n);
+            size_t written = ring->enqueue(chunk, n);
             value = static_cast<int16_t>(value + written);
             produced += static_cast<int>(written);
             if (written == 0)
                 std::this_thread::yield();
         }
-    });
+    }, [&] { stop = true; });
 
     int consumed = 0;
     int16_t expected = 0;
     bool sequenceOk = true;
     int16_t chunk[128];
-    while (consumed < TOTAL)
+    const auto deadline = std::chrono::steady_clock::now() + TestWait::Scaled(std::chrono::seconds(10));
+    while (consumed < TOTAL && std::chrono::steady_clock::now() < deadline)
     {
-        size_t got = ring.dequeue(chunk, 128);
+        size_t got = ring->dequeue(chunk, 128);
         for (size_t i = 0; i < got; i++)
         {
             if (chunk[i] != expected)
@@ -119,8 +130,8 @@ TEST(AudioRingBuffer_Test, SPSC_ConcurrentIntegrity)
             std::this_thread::yield();
     }
 
-    producer.join();
-    EXPECT_TRUE(sequenceOk) << "SPSC stream must be strictly sequential (no tears/gaps)";
+    producer.Join();
+    EXPECT_TRUE(sequenceOk) << "SPSC stream must be strictly sequential (no tears/gaps), broke after " << consumed;
     EXPECT_EQ(consumed, TOTAL);
 }
 

@@ -1,0 +1,114 @@
+;------------- Z+X=N+A+V+I+G+A+T+O+R ---------------
+;TOЧKИ BXOДA KEPHAЛИ И CИCTEMHЫE ПEPEMEHHЫE
+;(c) LYNX/><P10s!\/e team 2000.
+;---------------------------------------------------
+; Kernel v 1.0
+setwin         EQU     #6000;УCTAHOBИTЬ OKHO. OПИCATEЛЬ B IX
+checkw         EQU     #6003;ПPOBEPKA OKHA
+animal         EQU     #6006;BЫ3OB KУPCOPA
+read           EQU     #6009;ПEPEЧИTATЬ ДИCK
+multy          EQU     #600c;УMHOЖEHИE: HL=B*C
+page           EQU     #600f;BKЛ. CTAHИЦУ A... ПO ПEHT. CT.
+cpblok         EQU     #6012;CPABHИTЬ БЛOKИ HL И DE, ДЛИHA=B
+gtadr          EQU     #6015;У3HATЬ AДPEC FD BЫБPAHHOГO ФAЙЛA
+viewf          EQU     #6018;ПOCMOTPETЬ ФAЙЛ (HOMEP B FNM)
+xyatr          EQU     #601b;KOOPД. B AДPEC B ATPИБУTAX
+xyscr          EQU     #601e;AДPEC B ЭKPAHE И3 BC
+prstr          EQU     #6021;HAПEЧATATЬ CTPOKУ, BC=CRD, HL=ADDR
+remw           EQU     #6024;УБPATЬ OKHO
+shutay         EQU     #6027;3ATKHУTЬ AY
+paused         EQU     #602a;ПAУ3A 20 MИЛИCEK.
+press          EQU     #602d;BИ3УAЛЬHO 'BДABИTЬ' 3HAKOMECTO..
+;BC - KOOPДИHATЫ
+putspr         EQU     #6030;HAПEЧATATЬ CПPAЙT HL-ADR,
+;DE - ШИPИHA BЫCOTA, BC - KOOPДИHATЫ
+prsum          EQU     #6033;3AHECTИ ЧИCЛO HL B CTPOKУ DATA
+uph            EQU     #6036;ПOДHЯTЬ H B ЭKPAHE
+downh          EQU     #6039;OПУCTИTЬ H B ЭKPAHE
+dos            EQU     #603c;BЫ3OB ДИCK. OПEPAЦИOHHOЙ CИCTEMЫ
+getfil         EQU     #603f;BЫ3BATЬ ФAЙЛOBOE MEHЮ
+ankey          EQU     #6042;BЫ3BATЬ 3AДEPЖKУ ДO HAЖATИЯ
+rpkey          EQU     #6045;BЫ3BATЬ 3AДEPЖKУ OT ДPEБE3ГA KЛABЫ
+getarc         EQU     #6048;BЫДATЬ B A APK. ATPИБУT И3 KOOP. BC
+mscrd          EQU     #604b;У3HATЬ KOOP. MЫШKИ B 3HAKOMECTAX
+kilarc         EQU     #604e;CДEЛATЬ OKHO HEПEPEMEЩAEMЫM
+sssr           EQU     #6051;COXPAHИTЬ ЭKPAH
+ussr           EQU     #6054;BOCCTAHOBИTЬ ЭKPAH
+idmus          EQU     #6057;OПPEДEЛИTЬ TИП ПЛEEPA MУ3ЫKИ
+im1            EQU     #605a;BKЛЮЧИTЬ PEЖИM IM 1
+rfsh           EQU     #605d;ПEPEПEЧATATЬ ЭЛEMEHTЫ TEK. OKHA
+frfsh          EQU     #6060;ПEPEПEЧATAЬ BCE TEK. OKHO
+rfback         EQU     #6063;ПEPEПEЧATATЬ OБOИ C ИKOHKAMИ
+stdev          EQU     #6066;УCTAHOBИTЬ HOBOE У-BO...
+;HL - AДPEC ДPAЙBEPA;
+;A - EГO ИДEHT. HOMEP (ЧEPE3 KOTOPЫЙ K HEMУ БУДET OБP. ПPOГA);
+sticon         EQU     #6069
+normnm         EQU     #606c;ИMЯ C TOЧKOИ B FILE DESC. (CONVERTOR)
+;AДPECA B HL - OTKУДA, B DE - KУДA...
+svsys          EQU     #606f;COXPAHИTЬ CИCTEMУ
+;CИCTEMA COXPAHЯETCЯ B CAMУЮ BЫCOKУЮ CTPAHИЦУ ПAMЯTИ...
+;ДЛЯ BOCCTAHOBЛEHИЯ HAДO BKЛЮЧИTЬ EE:
+;LD    A,#D7
+;LD    BC,#7FFD
+;OUT   (C),A
+;И BЫ3BATЬ BOCCTAHOBЛEHИE:
+;CALL  #C000
+;------------------- ПEPEMEHHЫE ------------------------
+               ORG     #6100
+devtab         EQU     #6100;KOCBEHHЫЙ УK. HA TAБЛИЦУ У-B.
+restbl         !ASSM   15; TAБЛИЦA PE3ИДEHTOB
+               DW      #7c
+               !CONT
+;-------- ABTO3AГPУ3KA
+font           DB      "FONT64a C"
+skin           DB      "ELEM2   C"
+back           DB      "FIRE    C"
+music          DB      "SANNIKOVC"
+icons          DB      "Micons  C"
+atplug         DB      "Macro   o"
+fnm            DB      0;HOMEP OПИCATEЛЯ ФAЙЛA
+mmask          DB      "*.*         ",0;MACKA BЫBOДA ФAЙЛOB
+keypr          DB      0
+tim            DW      0
+bt             DB      0
+mst            DW      2
+csrsym         DB      "_"
+xorsym         DB      220
+crds           DW      #6464;KOOPДИHATЫ MЫШKИ
+flsflg         DB      0
+sum            DB      0;
+adrbuf         DW      0
+stk            DW      0
+spbuf          DB      "       ",0;CПEЦ. БУФФEP (CИCTEMHЫЙ)
+regiy          DW      0;COXPAHEHHЫЙ ИHД. PEГИCTP
+crds_1         DW      0
+lst_pg         DB      #10;TEK. CTPAHИЦA ПAMЯTИ
+duatr          DB      #21;ATPИБУT KHOПOK ПPOKPУTKИ
+border         DB      0;ЦBET БOPДЮPA
+winatr         DW      #30;ATPИБУT OKHA
+butatr         DW      32;ATPИБУT УГЛOBЫX KHOПOK
+nameatr        DW      5;ATPИБУT ИMEHИ
+chbxatr        DW      #20;ATPИБУT CHECK BOX'OB
+dwatr          DW      #38
+koncol         DW      7;ЦBET KOHCOЛИ
+xlen           DB      10
+fn             DB      0
+pnosn          DB      10;OCHOBAHИE ЧИCEЛ ПPИ ПEЧATИ
+flgs           DW      0
+step           DB      2;ШAГ CTPEЛKИ
+flg            DB      0
+data           DB      "        ",0;БУФФEP ДЛЯ ПEЧATИ ЧИCEЛ
+cursym         DB      "_";CИMBOЛ KУPCOPA B KOHCOЛИ
+ictbl          EQU     #61a0;KOCB УKA3ATEЛЬ TAБЛИЦЫ ИKOHOK
+;-------------------------------------------------------
+;CAMA CИCTEMA
+;-------------------------------------------------------
+               ORG     #6200
+               ENT
+               ORG     #6000
+               LCODE   "ZxN-deb"
+;-------------------------------------------------------
+;ПPOГPAMMA
+;-------------------------------------------------------
+               ORG     #9c40
+

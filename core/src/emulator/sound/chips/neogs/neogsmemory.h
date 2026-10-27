@@ -55,6 +55,9 @@ public:
     uint8_t config() const { return _cfg; }
 
     // CPU access (`now` in card units, for the flash chip's timing)
+    /// A read of `addr` comes from a RAM / ROM page, not the timed flash path
+    bool plainRead(uint16_t addr) const { return _readPtr[addr >> 14] != nullptr; }
+
     uint8_t read(uint16_t addr, int64_t now)
     {
         const int window = addr >> 14;

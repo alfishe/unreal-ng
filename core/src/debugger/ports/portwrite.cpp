@@ -19,9 +19,10 @@ Result Write(Emulator* emulator, uint16_t port, uint8_t value, const char* sourc
         return result;
     }
 
+    std::string refused;
     const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
         [&]() {
-            emulator->EditMemoryFromTool(source, [&]() {
+            refused = emulator->EditMemoryFromTool(source, [&]() {
                 Z80::OutOfTimeScope outOfTime(*context->pCore->GetZ80());
                 context->toolAccessActive = true;
                 context->pPortDecoder->DecodePortOut(port, value, context->pCore->GetZ80()->m1_pc);
@@ -33,6 +34,11 @@ Result Write(Emulator* emulator, uint16_t port, uint8_t value, const char* sourc
     {
         result.busy = true;
         result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
+        return result;
+    }
+    if (!refused.empty())
+    {
+        result.error = refused;   // the recorded past
         return result;
     }
     result.ok = true;

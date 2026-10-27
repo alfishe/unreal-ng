@@ -7,16 +7,24 @@
 #include <QOpenGLWindow>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
+#include <QOpenGLBuffer>
+#include <QOpenGLVertexArrayObject>
 #include <QOpenGLShaderProgram>
 #include <QImage>
+#include <QSurfaceFormat>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <atomic>
 
 #include "emulator/video/screen.h"
+#include "crtbeammodel.h"
+#include "crtbeammodelgpu.h"
 #include "crtprofiles.h"
+#include "crtrenderer.h"
 #include "framehistory.h"
+#include "slangpresetrunner.h"
 
 class Emulator;
 
@@ -31,7 +39,15 @@ public:
     explicit DeviceScreenGLWindow(QWindow* parent = nullptr);
     ~DeviceScreenGLWindow() override;
 
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// A hardware OpenGL 3.3 core context (4.1 on macOS) can be created, not llvmpipe, GDI Generic, ...: otherwise
+    /// the software screen
+    static bool probeGPUAcceleration();
+    /// The window's surface format: 3.3 core, double buffered, vsync
+    static QSurfaceFormat surfaceFormat();
+
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
     void detach();
 
     using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
@@ -71,9 +87,17 @@ public:
     QRectF displaySourceRect() const;
     /// Size of the drawn picture inside the window (the quad paintGL letterboxes), logical pixels
     QSize drawnPictureSize() const;
+    /// Where paintGL draws the picture: centered, device pixels, rows top first. The CRT composition is made for
+    /// exactly this size
+    QRect pictureDeviceRect() const;
     void setDisplayViewport(const DisplayViewport& viewport);
     void clearDisplayViewport();
     QImage grabFramebuffer();
+    /// The window as it draws now (picture, letterbox, CRT shader, HUD), rendered afresh into an image in device
+    /// pixels. QOpenGLWindow::grabFramebuffer only reads the back buffer, which after a swap may hold an older frame
+    /// @p pictureHeight > 0: the picture alone, drawn that many device pixels high (the window recording's own
+    /// resolution); else the window as it is
+    QImage renderWindowImage(bool hud = true, int pictureHeight = 0);
 
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
@@ -82,8 +106,27 @@ public:
     void setCRTProfile(const CRTProfileParams& params);
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
+    /// New values of the profile's parameters (curvature, scanlines, ...), the custom shader kept (its uniforms)
+    void setCRTParams(const CRTProfileParams& params);
 
+    /// The active libretro preset's parameters with their values (none without a preset). Before the context
+    /// exists they come from its preset.json, the values set kept
+    std::vector<SlangPresetRunner::Parameter> presetParameters() const;
+    /// One parameter of the active preset, clamped to its range; kept across a reload of the same preset. False: no
+    /// such parameter
+    bool setPresetParameter(const QString& name, float value);
+    /// Every parameter of the active preset back to its initial value
+    void resetPresetParameters();
+    /// The values set on the active preset (name -> value), carried across a backend switch and kept in the settings
+    const std::map<QString, float>& presetOverrides() const { return _slangOverrides; }
+    void setPresetOverrides(const std::map<QString, float>& overrides);
+
+    /// A libretro preset built in (SlangPresetRunner::availablePresets, multi-pass on SlangPresetRunner) or a fragment
+    /// shader from CRTShaderManager (legacy uniforms: tex, texSize, outputSize, maskType, curvature, ...) in place of
+    /// the built-in CRT. An empty name goes back to the built-in one. @return false: not found or not compiled
     bool loadCustomShader(const QString& name);
+    QString customShader() const { return _slangPresetName.isEmpty() ? _customShaderName : _slangPresetName; }
+    /// The presets, then the custom shaders
     static std::vector<QString> availableShaders();
 
     void setTemporalBlendingEnabled(bool enabled);
@@ -92,6 +135,9 @@ public:
     int temporalHistorySize() const;
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
+    /// Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const { return _temporalDecay; }
 
 protected:
     void initializeGL() override;
@@ -110,6 +156,14 @@ protected:
 private:
     void updateTexture();
     void setupVSync();
+    bool compileCustomShader(const QString& source);  ///< the context current; empty: none
+    bool applySlangPreset(const QString& name);       ///< the context current; empty: none
+    /// The viewport-filling quad with the bound program, the texture coordinates from (x1, y1) top left to (x2, y2)
+    void drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2);
+    void drawComposedCrt(const QRect& picture);
+    void drawModelCrt(const QRect& picture);
+    void drawCustomCrt(const QRect& picture);
+    void drawSlangPreset(const QRect& picture, int glY);
 
     QRectF _devicePixelsRect;
     QImage* _devicePixels = nullptr;
@@ -120,17 +174,41 @@ private:
     QOpenGLTexture* _texture = nullptr;
     std::atomic<bool> _textureNeedsUpdate{true};
 
-    QOpenGLShaderProgram* _crtShader = nullptr;
+    const QImage* _shownFrame = nullptr;  ///< the frame in _texture: _latchedFrame, _blendedFrame or _legacyFrame
+    QImage _legacyFrame;
+    uint64_t _frameSerial = 0;           ///< counts uploads into _texture
+    uint64_t _gradedSerial = ~0ull;      ///< the upload _gradedTexture was graded from
+
+    // CRT: the composition of CRTRenderer (the software screen's picture, bit for bit), or a custom shader
+    QOpenGLShaderProgram* _composeShader = nullptr;
+    QOpenGLShaderProgram* _customShader = nullptr;
+    QOpenGLTexture* _gradedTexture = nullptr;
+    QOpenGLTexture* _indexTexture = nullptr;
+    QOpenGLTexture* _factorTexture = nullptr;
+    QOpenGLVertexArrayObject _quadVao;
+    QOpenGLBuffer _quadBuffer{QOpenGLBuffer::VertexBuffer};
+    CRTRenderer _crtRenderer;
+    // The shader models (crt-lottes, ...): CRTBeamModel's tables as integer textures, its kShader
+    CRTBeamModel _crtModel;
+    CRTBeamModelGPU _modelGpu;
+    bool _modelTablesUploaded = false;
+    uint64_t _modelSerial = ~0ull;  ///< the upload the model's frame was prepared from
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
+    QString _customShaderName;
     QString _customShaderSource;
+    std::unique_ptr<SlangPresetRunner> _slangRunner;  ///< the chosen preset, loaded (its GL objects need the context)
+    QString _slangPresetName;
+    std::map<QString, float> _slangOverrides;  ///< the values set on _slangPresetName, applied after every load
 
     FrameHistory _frameHistory;
     QImage _blendedFrame;
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
+    float _temporalDecay = 0.5f;
 
-    static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    float ratio = kNativeRatio;  // the shape the picture is drawn in (init)
 
     std::shared_ptr<Emulator> _emulator = nullptr;
     class MouseCaptureController* _mouseCapture = nullptr;  // owned by DeviceScreenWrapper
@@ -140,6 +218,8 @@ private:
     bool _hasViewport = false;
 
     class HudOverlay* _hudOverlay = nullptr;
+    QSize _renderPicture;  ///< renderWindowImage's picture size in device pixels, while it draws (empty: the window's)
+    bool _renderingImage = false;  ///< paintGL draws for renderWindowImage(): no HUD into the window
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }
     class HudOverlay* hudOverlay() const { return _hudOverlay; }

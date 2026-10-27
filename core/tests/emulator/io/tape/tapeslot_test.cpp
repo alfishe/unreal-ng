@@ -13,7 +13,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/tape/tape.h"
@@ -132,23 +132,28 @@ TEST_F(TapeSlot_Test, EjectEmptiesTheDeck)
 }
 
 /// The media set is fixed while TTD records: a tape insert or eject is refused
-TEST_F(TapeSlot_Test, RecordingRefusesTapeChanges)
+/// M3 (Q4): while TTD records, a tape change is an event of the recording at the next frame boundary
+TEST_F(TapeSlot_Test, RecordingTakesTapeChangesAtTheFrameBoundary)
 {
     ASSERT_TRUE(_emulator->LoadTape(TapFile()));
     _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ASSERT_TRUE(_context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(_context->pTimeTravelController->StartRecording());
 
     std::string error;
-    EXPECT_FALSE(_emulator->EjectTape(&error));
-    EXPECT_FALSE(error.empty());
-    EXPECT_NE(Manager().GetMedium("tape"), nullptr);
-    EXPECT_FALSE(_emulator->LoadTape(TzxFile(), &error));
-    EXPECT_EQ(_context->coreState.tapeFilePath, TapFile());
+    ASSERT_TRUE(_emulator->LoadTape(TzxFile(), &error)) << error;
+    EXPECT_EQ(_context->coreState.tapeFilePath, TapFile()) << "never inside a frame";
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_EQ(_context->coreState.tapeFilePath, TzxFile());
+    ASSERT_TRUE(_emulator->EjectTape(&error)) << error;
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_EQ(Manager().GetMedium("tape"), nullptr);
+    EXPECT_TRUE(_context->pTimeTravelController->IsRecording());
+    ASSERT_TRUE(_emulator->LoadTape(TapFile(), &error)) << error;
 
     EjectOptions end;
     end.endRecording = true;
     ASSERT_TRUE(Manager().Eject("tape", end).Ok());
-    EXPECT_FALSE(_context->pTimeTravelManager->IsRecording());
+    EXPECT_FALSE(_context->pTimeTravelController->IsRecording());
 }
 
 /// Any registry format loads; content decides, and a non-tape answers why

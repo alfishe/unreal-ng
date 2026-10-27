@@ -1,0 +1,5 @@
+DEFC main = $8000
+DEFC buffer = $C000 ; (DATA)
+defc lower = $1234
+DEFC noeq $1
+DEFC top = $FFFF

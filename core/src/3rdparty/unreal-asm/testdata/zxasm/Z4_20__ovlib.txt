@@ -1,0 +1,174 @@
+;*0,0,0,0,0,2723,2723,01
+       ░░░▌ Overlays IFUSED Lib ▐░░░
+
+    Подпрограммы сохранения регистров
+       с восстановлением по RET.
+
+            IFUSED PUSH_all
+несохраняет af' 
+PUSH_all: ex (sp),hl:ld (_JpA1),hl 
+          pop hl:push iy,ix,hl,de,bc,af 
+            exx:push hl,de,bc:exx 
+               call 0
+_JpA1 equ $-2:exx:pop bc,de,hl:exx 
+            pop af,bc,de,hl,ix,iy:ret 
+         ENDIF
+
+              Экран
+
+         IFUSED Addr_D
+; в дисплее
+Addr_D:   push af:ld a,d:and 7:rrca:rrca 
+          rrca:add a,e:ld l,a:ld a,d 
+          and #18:or #40:ld h,a 
+          pop af:ret 
+          ENDIF
+
+          IFUSED Addr_A
+; в атрибутах
+Addr_A:   push af:ld a,d:and 24:srl a 
+          srl a:srl a:or 88:ld h,a 
+          ld a,d:and 7:rra:rra:rra:rra
+          add a,e:ld l,a:pop af:ret 
+          ENDIF 
+
+выход: hl-адрес знакоместа h-y,l-x
+          IFUSED SymblAdr
+SymblAdr: ld a,h:and 7:rrca:rrca:rrca 
+          add a,l:ld l,a:ld a,h:and #18
+          or #40:ld h,a:ret 
+                         endif
+
+       IFUSED PixelAdr
+выход: hl-адрес пиксела h-y, l-x
+; 04000H and scf and 
+PixelAdr: ld a,l:rlca:rlca:rlca:xor h 
+          and #c7:xor h:rlca:rlca:ld l,a 
+          ld a,h:and a:rra:scf:rra:and a 
+          rra:xor h:and #f8:xor h 
+          ld h,a:ret 
+                      endif
+
+         IFUSED AttrHL
+вход:    hl-адрес знакоместа;
+выход:   hl-адрес атрибута;
+AttrHL:   ld a,h:rra:rra:rra:and 003h
+          or 058h:ld h,a:ret 
+                      ENDIF
+
+          IFUSED Inc_H
+Inc_H:    inc h:ld a,h:and 7:retnz 
+          ld a,l:add a,32:ld l,a:retc 
+          ld a,h:sub 8:ld h,a:ret 
+          ENDIF
+
+          IFUSED Dec_H
+Dec_H:    dec h:ld a,h:cpl:and 7:retnz 
+          ld a,l:add a,224:ld l,a:retnc 
+          ld a,h:add a,8:ld h,a:ret 
+          ENDIF
+
+          IFUSED Inc_D
+Inc_D:    inc d:ld a,d:and 7:retnz 
+          ld a,e:add a,32:ld e,a:retc 
+          ld a,d:sub 8:ld d,a:ret 
+          ENDIF
+
+          IFUSED Dec_D
+Dec_D:    dec d:ld a,d:cpl:and 7:retnz 
+          ld a,e:add a,224:ld e,a:retnc 
+          ld a,d:add a,8:ld d,a:ret 
+          ENDIF
+
+          IFUSED _NSymbDE
+
+_NSymbDE: ld a,e:add a,32:ld e,a:retnc 
+          ld a,d:add a,8:ld d,a:ret 
+                                ENDIF
+
+          ifused _NSymbHL
+_NSymbHL: ld a,l:add a,32:ld l,a:retnc 
+          ld a,h:add a,8:ld h,a:ret
+                                ENDIF
+
+          ifused _NAttrDE
+_NAttrDE: ld a,e:add a,32:ld e,a:retnc 
+          inc d:ret 
+                                endif 
+
+          ifused _NAttrHL
+_NAttrHL: ld a,l:add a,32:ld l,a:retnc 
+          inc h:ret 
+                                endif 
+
+          IFUSED InvByte
+
+InvByte   push bc:ld b,8
+          rr a:rl c:djnz $-4
+          ld a,c:pop bc:ret
+             ENDIF
+
+        IFUSED InvAttr
+;
+InvAttr push bc:ld b,a
+           and 7:rlca:rlca:rlca:ld c,a 
+             ld a,b:and #38:rrca:rrca:rrca
+                or c:ld c,a:ld a,b 
+                   and #c0:or c:pop bc:ret 
+                       ENDIF 
+
+          IFUSED Pix2Byte
+;in: a-size in pixels
+;out:a-size in byte
+Pix2Byte  or a:jr nz,$+3:scf 
+            rra:srl a:srl a:ret 
+                         ENDIF
+
+          ifused SwithFlag
+
+SwithFlag inc a:ld b,a:xor a:scf 
+          rla:djnz $-1
+          xor (hl):ld (hl),a:ret
+                        endif 
+
+          ifused SwapMem
+;+-------------------------------------+
+;           обмен участов памяти
+;+-------------------------------------+
+SwapMem
+вход:hl,de адреса обмениваемых участков
+;    bc-длинна
+          ld a,(de):ldi:dec hl:ld (hl),a 
+          inc hl:retpo 
+          jr SwapMem
+                       endif 
+
+          ░░░▌ Dos Routines ▐░░░
+
+             IFUSED CalcSecs
+CalcSecs   ld a,e:or a:ld a,d:retz 
+          inc a:ret
+        ENDIF
+
+             IFUSED _NSecs
+_NSecs    call NextSec:djnz $-3:ret
+       ENDIF 
+
+             IFUSED NextSec
+NextSec     inc e:ld a,e:cp 16:retc 
+         ld e,0:inc d:ret 
+       ENDIF
+
+          IFUSED _To_Log
+выход: hl-номер логического сектора
+_To_Log   xor a:REPL 4:srl h:rr a 
+          or l:ld l,a:ret 
+                                ENDIF
+
+          IFUSED _To_Phs
+выход:h-дорожка,l-сектор
+_To_Phs   ld a,l:REPL 4:sla a:rl h 
+          ld a,#F:and l:ld l,a:ret 
+                                ENDIF
+
+

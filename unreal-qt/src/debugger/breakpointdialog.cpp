@@ -1,4 +1,5 @@
 #include "breakpointdialog.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -26,7 +27,7 @@
 #include "breakpointgroupdialog.h"
 #include "emulator/emulator.h"
 
-BreakpointDialog::BreakpointDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+BreakpointDialog::BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("Breakpoint Manager");
     resize(800, 500);
@@ -311,13 +312,17 @@ void BreakpointDialog::populateBreakpointTable()
     if (!bpManager)
         return;
 
-    const BreakpointMapByID& breakpoints = bpManager->GetAllBreakpoints();
+    const BreakpointListByID breakpoints = bpManager->GetAllBreakpoints();
 
     int row = 0;
     for (const auto& pair : breakpoints)
     {
         uint16_t id = pair.first;
-        const BreakpointDescriptor* bp = pair.second;
+        const BreakpointDescriptor* bp = pair.second.get();
+        // The user's breakpoints: the step traps, the BASIC typer's control points and the debugger adapters' belong
+        // to their owners (as GET /breakpoints lists them)
+        if (bp == nullptr || !BreakpointManager::IsUserBreakpoint(*bp))
+            continue;
 
         _breakpointTable->insertRow(row);
 
@@ -340,6 +345,18 @@ void BreakpointDialog::populateBreakpointTable()
             case BRK_KEYBOARD:
                 typeStr = "Keyboard";
                 break;
+            case BRK_NEXTREG:
+                typeStr = "NextREG";
+                break;
+            case BRK_BEAM:
+                typeStr = "Beam";
+                break;
+            case BRK_COPPER:
+                typeStr = "Copper";
+                break;
+            case BRK_MAGIC:
+                typeStr = "Magic";
+                break;
             default:
                 typeStr = "Unknown";
                 break;
@@ -349,9 +366,38 @@ void BreakpointDialog::populateBreakpointTable()
         _breakpointTable->setItem(row, 1, typeItem);
 
         // Address column
-        QString addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
-        if (bp->isRange)
-            addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+        QString addrStr;
+        switch (bp->type)
+        {
+            case BRK_NEXTREG:  // a register or a range, the value it must have
+                addrStr = QString("NR $%1").arg(bp->z80address, 2, 16, QChar('0')).toUpper();
+                if (bp->isRange)
+                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 2, 16, QChar('0')).toUpper();
+                if (bp->nrMask != 0)
+                    addrStr += bp->nrMask == 0xFF
+                                   ? QString(" =$%1").arg(bp->nrValue, 2, 16, QChar('0')).toUpper()
+                                   : QString(" =$%1&$%2")
+                                         .arg(bp->nrValue, 2, 16, QChar('0'))
+                                         .arg(bp->nrMask, 2, 16, QChar('0'))
+                                         .toUpper();
+                break;
+            case BRK_BEAM:
+                addrStr = QString("line %1 hc %2").arg(bp->z80address).arg(bp->beamHc);
+                break;
+            case BRK_COPPER:
+                addrStr = QString("copper %1").arg(bp->z80address);
+                if (bp->isRange)
+                    addrStr += QString("-%1").arg(bp->z80addressEnd);
+                break;
+            case BRK_MAGIC:
+                addrStr = bp->z80address == BRK_MAGIC_ED_FF ? QString("ED FF") : QString("DD 01");
+                break;
+            default:
+                addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
+                if (bp->isRange)
+                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+                break;
+        }
         if (bp->matchType == BRK_MATCH_BANK_ADDR)  // physical: that page in any slot (or one slot)
             addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
         if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
@@ -383,6 +429,22 @@ void BreakpointDialog::populateBreakpointTable()
                 accessStr += "I";
             if (bp->ioType & BRK_IO_OUT)
                 accessStr += "O";
+        }
+        else if (bp->type == BRK_NEXTREG)
+        {
+            if (bp->ioType & BRK_IO_IN)
+                accessStr += "R";
+            if (bp->ioType & BRK_IO_OUT)
+                accessStr += "W";
+            if (bp->nrDoors != BRK_NR_DOOR_ALL)
+                accessStr += " " + QString::fromStdString(BreakpointManager::NextRegDoorsName(bp->nrDoors));
+        }
+        else if (bp->type == BRK_KEYBOARD)
+        {
+            if (bp->keyType & BRK_KEY_PRESS)
+                accessStr += "P";
+            if (bp->keyType & BRK_KEY_RELEASE)
+                accessStr += "R";
         }
         QTableWidgetItem* accessItem = new QTableWidgetItem(accessStr);
         accessItem->setTextAlignment(Qt::AlignCenter);
@@ -515,6 +577,8 @@ void BreakpointDialog::editBreakpoint()
 
 void BreakpointDialog::deleteBreakpoint()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
     if (selectedItems.isEmpty())
         return;
@@ -545,6 +609,8 @@ void BreakpointDialog::deleteBreakpoint()
 
 void BreakpointDialog::toggleBreakpoint()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
     if (selectedItems.isEmpty())
         return;
@@ -623,6 +689,30 @@ void BreakpointDialog::showContextMenu(const QPoint& pos)
 
     QAction* toggleAction = contextMenu.addAction(isActive ? "Disable" : "Enable");
     connect(toggleAction, &QAction::triggered, this, &BreakpointDialog::toggleBreakpoint);
+
+    // A breakpoint as a game's haptic source: the probe hits without stopping (haptics.md §5, §7)
+    BreakpointSnapshot breakpoint = _emulator->GetBreakpointManager()->GetBreakpointById(id);
+    if (breakpoint && isSignalConnected(QMetaMethod::fromSignal(&BreakpointDialog::hapticProbeRequested)))
+    {
+        int kind = -1;
+        if (breakpoint->type == BRK_MEMORY)
+            kind = (breakpoint->memoryType & BRK_MEM_EXECUTE) ? 0 : (breakpoint->memoryType & BRK_MEM_WRITE) ? 2 : 1;
+        else if (breakpoint->type == BRK_IO)
+            kind = (breakpoint->ioType & BRK_IO_OUT) ? 4 : 3;
+        const int page = breakpoint->matchType == BRK_MATCH_BANK_ADDR && breakpoint->pageType == BANK_RAM
+                             ? static_cast<int>(breakpoint->page)
+                             : -1;
+        if (kind >= 0)
+        {
+            contextMenu.addSeparator();
+            QAction* probeAction = contextMenu.addAction("Add as Haptic Probe");
+            probeAction->setToolTip("A source of this game's haptics profile that fires without stopping");
+            const int address = breakpoint->z80address;
+            const int portMask = breakpoint->portMask;
+            connect(probeAction, &QAction::triggered, this,
+                    [this, kind, address, page, portMask]() { emit hapticProbeRequested(kind, address, page, portMask); });
+        }
+    }
 
     contextMenu.addSeparator();
 

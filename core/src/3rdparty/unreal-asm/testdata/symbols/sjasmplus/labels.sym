@@ -1,0 +1,11 @@
+LINES: EQU 0x00000018
+SCREEN: EQU 0x00004000
+data_tab: EQU 0x00008009
+paged1: EQU 0x0000C000
+paged1.inner: EQU 0x0000C001
+paged3: EQU 0x0000C000
+player.play: EQU 0x0000800E
+player.play.frame: EQU 0x00008010
+q?mark: EQU 0x0000800C
+start: EQU 0x00008000
+start.loop: EQU 0x00008003

@@ -9,6 +9,10 @@
 //   -> soft or hard clipping (3713h) -> codec output gain / DAC mute (codec port 12h)
 // The dry render mode (SynthConfig::effects = false) keeps every gain and skips the reverb, chorus,
 // spatial effect, equalizer and clipping: a linear voice mix for analysis.
+// Idle effects: an effect whose whole state is +0.0 and whose input block is all +0.0 is skipped (only
+// its write positions and LFO phase move); output and state are bit-identical to processing it
+// (SynthConfig::skipIdleEffects = false processes every block, for tests and A/B). Tails end at the tail
+// floor (dsp.h, README "Tail floor") either way: the floor is the model, the skip an optimization.
 #pragma once
 
 #include "fx/chorus.h"
@@ -54,6 +58,16 @@ public:
     void EffectsWordChanged(uint8_t before, uint8_t now); // an effect switched off loses its state
 
     void Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, float outputGain, float* outL, float* outR);
+    bool skipIdle = true;     // SynthConfig::skipIdleEffects
+    uint64_t skippedBlocks = 0; // effect blocks skipped since Configure (Describe; diagnostics, not state)
+    uint64_t eqTailsOut = 0;    // equalizer tails ended by the floor since Configure (diagnostics)
+    uint64_t TailsOut() const { return _reverb.tailsOut + _chorus.tailsOut + eqTailsOut; }
+
+    // The effect's state is all +0.0: a block without input skips it (Describe, tests)
+    bool ReverbIdle() const { return _reverb.Idle(); }
+    bool ChorusIdle() const { return _chorus.Idle(); }
+    bool SpatialIdle() const { return _spatial.Idle(); }
+    bool EqualizerIdle(bool fourBand) const { return _eq.Idle(fourBand); }
 
     static double CodecGainDb(uint16_t codec0); // OUTG[5:0], datasheet p.37
     static bool CodecMuted(uint16_t codec0);    // DACSEL = 0 or DACMUTE = 1

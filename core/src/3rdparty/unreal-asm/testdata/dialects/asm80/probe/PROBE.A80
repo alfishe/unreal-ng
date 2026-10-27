@@ -1,0 +1,63 @@
+; ASM80 constructs probe (unreal-asm)
+*L-
+        ORG #6000
+Start   ld a,1
+        LD HL,Start+2
+N$1     EQU 10
+N#2     EQU N$1*3
+NEG1    EQU -1
+VeryLongLabelName01 EQU 5
+        DEFB VeryLongLabelName01,VeryLongLabelNameXYZ
+        DEFB 2+3*4,20/3,20%3,7&3|8^1
+        DEFW -2*3/2,NEG1/2,-7/2,0-7%3
+        DEFB N#2,"A","z"+1
+        DEFW NEG1,$,#1234
+        DEFW 70000,-1
+        DEFS 3,#AA
+        DEFS 2
+        DEFM "Text;not a comment" ; a comment
+        DEFB ?,?
+Fill$   MAC
+        LD BC,=0*16
+        LD HL,=1
+        DEFB =2+1
+        ENDM
+        Fill$ 3,#C000,N$1
+        Fill$ 1,$,0
+        IF N$1-10
+        DEFB #11
+        ELSE
+        DEFB #22
+        ENDIF
+        IF N$1=11
+        DEFB #33
+        ELSE
+        DEFB #44
+        ENDIF
+        IF 65536
+        DEFB #55
+        ENDIF
+Here    DISP #9000
+InDisp  JR InDisp
+        LD HL,$
+        ENDD
+        LD HL,InDisp
+        JR Here+#FFFF
+        LD (IX+N$1),"c"
+        LD A,(IY-"A")
+        LD (IX),A
+        INF
+        SLI B
+        EX AF,AF
+        IN A,(#FE)
+        OUT (C),A
+        RST #38
+        IM 2
+        JP (IX)
+        CALL NZ,Start
+        RET PE
+*B bin.dat,2,3
+*B bin.dat
+        DJNZ $
+        sub hl,de
+        cp de

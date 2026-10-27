@@ -136,7 +136,7 @@ void Protocol::writeNulString(std::vector<uint8_t>& out, const std::string& str)
     out.push_back(0);
 }
 
-std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield()
+std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield(bool next)
 {
     std::vector<uint8_t> bitfield(32, 0);
 
@@ -154,6 +154,7 @@ std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield()
     setBit(static_cast<uint8_t>(CommandId::CMD_READ_MEM));
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_MEM));
     setBit(static_cast<uint8_t>(CommandId::CMD_GET_SUPPORTED_COMMANDS));
+    setBit(static_cast<uint8_t>(CommandId::CMD_READ_MEM_BLOCKS));
 
     // Tier 2: Debugging
     setBit(static_cast<uint8_t>(CommandId::CMD_ADD_BREAKPOINT));
@@ -169,6 +170,18 @@ std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield()
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_PORT));
     setBit(static_cast<uint8_t>(CommandId::CMD_READ_STATE));
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_STATE));
+
+    if (next)
+    {
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_TBBLUE_REG));
+        setBit(static_cast<uint8_t>(CommandId::CMD_READ_BANK_MEM));
+        setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_BANK_MEM));
+        setBit(static_cast<uint8_t>(CommandId::CMD_SET_NEXTREGS));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES_PALETTE));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITE_PATTERNS));
+    }
 
     // Unreal-NG extensions: TTD-backed instruction history (reverse debugging)
     setBit(static_cast<uint8_t>(CommandId::CMD_GET_HISTORY_INFO));

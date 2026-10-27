@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -70,6 +71,14 @@ protected:
     std::unique_ptr<Core> _core;
     ScreenZX* _screen = nullptr;
 
+    void TearDown() override
+    {
+        // The drives Core::Init created go before the core, as in Emulator::Release
+        EmulatorTestHelper::ReleaseDiskDrives(_context.get());
+        _core.reset();
+        _context.reset();
+    }
+
     void SetUp() override
     {
         const ModeCase& c = GetParam();
@@ -88,7 +97,7 @@ protected:
         if (c.ff77 >= 0)
         {
             state.pFF77 = static_cast<uint8_t>((c.ff77 & 0x07) | 0x20);
-            state.aFF77 = 0x0100;
+            state.atm.aFF77 = 0x0100;
         }
         state.pDFFD = c.dffd;
         _screen->InitRaster();
@@ -106,8 +115,8 @@ protected:
         }
         for (uint32_t i = 0; i < 16; ++i)
         {
-            state.atmPalette[i] = 0xFF000000u | (rng.Next() & 0x00FFFFFFu);
-            state.profiPalette[i] = static_cast<uint16_t>(rng.Next() & 0x1FF);
+            state.atm.palette[i] = 0xFF000000u | (rng.Next() & 0x00FFFFFFu);
+            state.profi.palette[i] = static_cast<uint16_t>(rng.Next() & 0x1FF);
         }
     }
 
@@ -278,9 +287,10 @@ TEST(VideoMapServiceText_Test, AtmTextGridMatchesTheSources)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     context.emulatorState.pFF77 = FF77_TX | 0x20;
-    context.emulatorState.aFF77 = 0x0100;
+    context.emulatorState.atm.aFF77 = 0x0100;
     context.pScreen->InitRaster();
     ASSERT_EQ(context.pScreen->GetVideoMode(), M_ATMTX);
 
@@ -311,6 +321,7 @@ TEST(VideoMapServiceZ80_Test, Spectrum48ScreenAddresses)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     context.pScreen->InitRaster();
 
@@ -363,11 +374,12 @@ TEST(VideoMapServiceHistory_Test, MidFrameModeSwitchAnswersEachMomentInItsMode)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     Z80* cpu = core.GetZ80();
 
     context.emulatorState.pFF77 = FF77_16 | 0x20;
-    context.emulatorState.aFF77 = 0x0100;
+    context.emulatorState.atm.aFF77 = 0x0100;
     context.pScreen->InitRaster();
     ASSERT_EQ(context.pScreen->GetVideoMode(), M_ATM16);
 
@@ -405,6 +417,7 @@ TEST(VideoMapServiceHistory_Test, BorderColourFollowsTheWriteLog)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     Z80* cpu = core.GetZ80();
     context.pScreen->InitRaster();

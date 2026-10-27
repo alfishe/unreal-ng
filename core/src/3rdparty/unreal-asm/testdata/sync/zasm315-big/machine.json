@@ -1,0 +1,18 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    3
+  ],
+  "pages": [
+    2,
+    5,
+    6
+  ],
+  "expected": "service.a",
+  "state": {
+    "editor": true,
+    "typing": false
+  }
+}

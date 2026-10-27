@@ -4,7 +4,7 @@
 // zlib) against TWO classes of input:
 //
 //   1. REAL buffers extracted from an actual .ttd recording
-//      (tools/poc/01-ttd-compression/cpp/real_buffers.bin — produced by
+//      (tools/poc/010-ttd-compression/cpp/real_buffers.bin — produced by
 //      extract_real_buffers.py from testdata/ttd/active_demo.ttd, which is a
 //      real recording made through the emulator API).
 //      These are the exact 4 KB buffers the TTD codec hands to the
@@ -74,11 +74,11 @@ constexpr size_t kWorkloadBuffers = 1000;
 // Overridable at runtime via the TTD_REAL_BUFFERS env var so the same
 // binary can be pointed at different .ttd extractions without rebuilding.
 // NOTE: this said "tools/poc/cpp/..." until the PoC moved into
-// 01-ttd-compression. A stale path here is silent: load_real_buffers() prints
+// 010-ttd-compression. A stale path here is silent: load_real_buffers() prints
 // one line and every REAL_ workload is skipped, so the run still "succeeds"
 // while measuring synthetic data only.
 constexpr const char* kDefaultRealBuffersPath =
-    "tools/poc/01-ttd-compression/cpp/real_buffers.bin";
+    "tools/poc/010-ttd-compression/cpp/real_buffers.bin";
 
 // Shannon entropy of a byte buffer in bits-per-byte (0..8).
 // The theoretical minimum size any lossless codec can achieve for the
@@ -341,7 +341,7 @@ bool load_real_buffers(std::vector<std::vector<uint8_t>>& full_out,
     if (!f) {
         std::fprintf(stderr,
                      "poc_codec_latency: could not open '%s' — "
-                     "run tools/poc/01-ttd-compression/cpp/extract_real_buffers.py first.\n",
+                     "run tools/poc/010-ttd-compression/cpp/extract_real_buffers.py first.\n",
                      path);
         return false;
     }

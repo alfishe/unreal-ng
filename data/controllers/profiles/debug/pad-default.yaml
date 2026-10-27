@@ -1,0 +1,31 @@
+# The debugger on any pad (debug-and-ttd.md §4.2): the layer key on the view+menu chord, bookmarks on lb / rb with
+# the d-pad
+schema: 1
+kind: debug
+id: builtin/debug/pad-default
+label: Debugger on a pad
+layer_key: { control: view+menu, mode: hold }
+layers:
+  debug:
+    lt:              { action: ttd.scrub_back, curve: scrub }
+    rt:              { action: ttd.scrub_forward, curve: scrub }
+    south:           { action: run.step_in }
+    rb:              { action: run.step_over }
+    lb:              { action: run.step_out }
+    lb+dpad.left:    { action: ttd.bookmark_prev }
+    rb+dpad.right:   { action: ttd.bookmark_next }
+    dpad.left:       { action: ttd.step_back_instruction, repeat: { delay: 15, rate: 4 } }
+    dpad.right:      { action: run.step_in, repeat: { delay: 15, rate: 4 } }
+    dpad.up:         { action: run.frame_step }
+    dpad.down:       { action: ttd.step_back_frame }
+    north:           { action: ttd.reverse_continue }
+    west:            { action: ttd.bookmark_add }
+    east:            { action: ttd.resume_live }
+    menu:            { action: run.pause_toggle }
+    view:            { action: dbg.focus_next_pane }
+    lstick.up:       { action: dbg.cursor_up }
+    lstick.down:     { action: dbg.cursor_down }
+    lstick.left:     { action: dbg.cursor_left }
+    lstick.right:    { action: dbg.cursor_right }
+    rstick.click:    { action: dbg.breakpoint_toggle_pc }
+    lstick.click:    { action: dbg.memory_follow }

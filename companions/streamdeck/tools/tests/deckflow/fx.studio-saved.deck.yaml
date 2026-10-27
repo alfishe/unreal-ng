@@ -1,0 +1,194 @@
+format: streamdeck-scenario
+model: plusxl
+name: fx
+root:
+  context: play
+  dials:
+    -
+      index: 0
+      label: TTD
+      press:
+        id: run.pause_toggle
+        kind: action
+      turn:
+        id: ttd.seek_by
+        kind: action
+        value:
+          d: $ticks
+          rate: $rate
+          unit: seconds
+  face:
+    glyph: nav.folder
+  id: home
+  items:
+    -
+      at:
+        - 0
+        - 0
+      do:
+        id: run.pause_toggle
+        kind: action
+      face:
+        glyph: run.pause
+      face_on:
+        glyph: run.play
+      id: pause
+      state: run.state.paused
+      tags:
+        - uc:C1.1
+      title: "Pause / continue"
+      type: action
+    -
+      at:
+        - 0
+        - 2
+      do:
+        hold: true
+        id: mach.reset
+        kind: action
+      face:
+        glyph: mach.reset
+      id: reset
+      tags:
+        - uc:C1.2
+      title: "Reset (hold 1 s)"
+      type: action
+    -
+      at:
+        - 0
+        - 1
+      do:
+        id: mach.nmi
+        kind: action
+      face:
+        glyph: mach.nmi
+      id: nmi
+      tags:
+        - uc:C1.3
+      title: NMI
+      type: action
+    -
+      at:
+        - 1
+        - 0
+      do:
+        id: set.speed
+        kind: action
+        value:
+          value: 4
+      face:
+        glyph: set.speed
+        label: X4
+      id: x4
+      tags:
+        - uc:C2.1
+      title: Speed
+      type: action
+    -
+      at:
+        - 1
+        - 1
+      do:
+        kind: multi
+        steps:
+          -
+            id: mach.start
+            kind: action
+            value:
+              model: PENTAGON
+              ram_kb: 128
+              replace: true
+          -
+            id: media.open
+            kind: action
+            value:
+              path: $data/testsnapshots/z80/newbench.z80
+      face:
+        glyph: mach.start
+      id: bench
+      then: home
+      title: Bench
+      type: action
+    -
+      at:
+        - 1
+        - 3
+      file: shared/fxspeed.deck.yaml
+      id: speed
+      tags:
+        - open:fxspeed
+      type: include
+    -
+      at:
+        - 2
+        - 0
+      face:
+        glyph: nav.folder
+      id: tools
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 1
+          face:
+            glyph: snapshot.quick_save
+            label: S1
+          id: qs
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 1
+          face:
+            glyph: snapshot.quick_load
+            label: L1
+          id: ql
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            kind: nav
+            to: back
+          face:
+            glyph: nav.back
+          id: back
+          title: Back
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C6
+      title: "Tools and saves"
+      type: menu
+  nav:
+    dials: own
+  tags:
+    - dial.0.uc:U2.1
+  title: Home
+  type: menu
+settings:
+  brightness: 50
+  pack: magicwb
+version: 2

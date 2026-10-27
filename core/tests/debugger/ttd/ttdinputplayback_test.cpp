@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "_helpers/testwaithelper.h"
 
 #include <chrono>
 #include <cstring>
@@ -12,7 +13,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -78,7 +79,7 @@ class TTD_InputPlayback_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     DebugKeyboardManager* _keys = nullptr;
     DebugMouseManager* _mouse = nullptr;
 
@@ -87,7 +88,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -270,17 +271,13 @@ TEST_F(TTD_InputPlayback_Test, HostInputFromAnotherThreadReplaysExactly)
     // keystrokes land mid-frame at arbitrary instruction boundaries
     _emulator->EnableTurboMode(false);
     _emulator->StartAsync();
-    const auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (_emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_EQ(_emulator->GetState(), StateRun);
+    ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }, std::chrono::seconds(5)));
 
     const auto waitFrames = [this](uint64_t frames)
     {
         const uint64_t target = _context->emulatorState.frame_counter + frames;
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-        while (_context->emulatorState.frame_counter < target && std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        TestWait::For([this, target] { return _context->emulatorState.frame_counter >= target; },
+                      std::chrono::seconds(30));
     };
     waitFrames(kBootFrames);
 
@@ -303,9 +300,7 @@ TEST_F(TTD_InputPlayback_Test, HostInputFromAnotherThreadReplaysExactly)
         messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(key, KEY_RELEASED, id));
         waitFrames(2);
     }
-    const auto journalDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (_ttd->GetInputJournal().Size() < 8 && std::chrono::steady_clock::now() < journalDeadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    TestWait::For([this] { return _ttd->GetInputJournal().Size() >= 8; }, std::chrono::seconds(10));
     ASSERT_GE(_ttd->GetInputJournal().Size(), 8u) << "host keystrokes were not applied by the emulator thread";
     waitFrames(3);
 

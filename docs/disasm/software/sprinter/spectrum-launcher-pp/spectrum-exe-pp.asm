@@ -1429,6 +1429,9 @@ StartStub:
 tail_start:
 
 ; option flags, option words, file names, buffers
+; #8865-#8894: option table, 4 bytes per entry: word pointer, value, value when given (ParseOptions copies byte 3 to byte 2)
+; turbo #02/#03, lines312 #41/#61, sprinter #0C/#04, 7FFD #30/#00, 1FFD #40/#00, mem512 #00/#80, int-sc #00/#01,
+; to-trdos #02/#01, no-run #FF/#00, origin #00/#03, ret-zx #00/#41, ret-fn #00/#41; SYS byte E = turbo+sprinter+1FFD+mem512 (README)
 Variables:
 	defb 099h		;8865	99		.
 	defb 088h		;8866	88		.

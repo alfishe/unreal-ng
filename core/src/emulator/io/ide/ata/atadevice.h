@@ -149,8 +149,14 @@ public:
     /// Any thread (the API thread flips it while the machine runs)
     void SetWriteProtectSwitch(bool on) { _protectSwitch.store(on, std::memory_order_relaxed); }
     /// Where to count the blocks moved through the data register (activity
-    /// LEDs; host-side, not machine state). nullptr: not counted
-    void SetActivityCounter(std::atomic<uint64_t>* counter) { _activity = counter; }
+    /// LEDs; host-side, not machine state). nullptr: not counted. `replaying`:
+    /// while it is true (a time-travel replay re-runs recorded history) the
+    /// blocks are not counted - the LED shows what the machine does now
+    void SetActivityCounter(std::atomic<uint64_t>* counter, const bool* replaying = nullptr)
+    {
+        _activity = counter;
+        _replaying = replaying;
+    }
 
 protected:
     /// region <Command set hooks>
@@ -195,6 +201,7 @@ private:
     AtaDeviceKind _kind;
     std::function<void()> _onWrite;
     std::atomic<uint64_t>* _activity = nullptr;
+    const bool* _replaying = nullptr;
 
 protected:
     std::atomic<bool> _protectSwitch{false};

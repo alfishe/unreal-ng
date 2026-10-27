@@ -28,11 +28,24 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-tool-utils.h
     src/mcp-symbols.h
     src/mcp-symbols.cpp
+    src/mcp-asm.h
+    src/mcp-asm.cpp
+    src/mcp-signature.h
+    src/mcp-signature.cpp
     src/mcp-analysis.h
     src/mcp-analysis.cpp
     src/mcp-media.h
     src/mcp-media.cpp
     src/mcp-slots.cpp
+    src/mcp-controllers.h
+    src/mcp-controllers.cpp
+    src/mcp-actions.h
+    src/mcp-actions.cpp
+    src/mcp-streamdeck.h
+    src/mcp-streamdeck.cpp
+    src/mcp-bus.cpp
+    src/mcp-audio.h
+    src/mcp-audio.cpp
     src/target-resolver.h
     src/target-resolver.cpp
     src/webapi-client.h

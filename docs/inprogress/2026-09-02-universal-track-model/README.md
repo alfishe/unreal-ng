@@ -108,7 +108,7 @@ Additional findings from the code audit (not in the review):
 ## 6. Regression gates
 
 * All existing suites: `DiskImage_Test`, `LoaderTRD_Test`, `LoaderSCL_Test`, `WD1793_*`, `FDD*`, `TRDOSIntegration_test`,
-  `TTD_FDD_*`, `TTD_WD1793_*`, `Emulator_Test` must pass (baseline: all pass except two `Scroller_Boot_Test` cases
+  `TTD_FDD_*`, `TTD_WD1793_*`, `Emulator_Test` must pass (baseline: all pass except two `Scroller_Boot_Functional` cases
   that already fail for a missing fixture `testdata/sound/covox/scroller_by_demarche.trd`).
 * TRD written from a loaded TRD must be byte-identical to the input (`EyeAche.trd`, `Satisfaction.trd`, `atarin.trd`,
   `zx-format8.trd`).

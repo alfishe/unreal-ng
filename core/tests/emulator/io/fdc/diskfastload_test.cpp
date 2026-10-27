@@ -4,7 +4,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -103,7 +103,7 @@ TEST_F(DiskFastLoad_Test, IsArmed_DisabledDuringTTDRecordingAndRestoredOnStop)
 {
     EnableTRDOSMode();
     FeatureManager* fm = _context->pFeatureManager;
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_NE(fm, nullptr);
     ASSERT_NE(ttd, nullptr);
 

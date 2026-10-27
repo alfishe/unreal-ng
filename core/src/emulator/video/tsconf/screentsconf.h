@@ -48,7 +48,7 @@ public:
     ~ScreenTSConf() override = default;
 
     /// Mode and window from TsConfState (V_CONFIG)
-    void InitRaster() override;
+    void DetectRaster() override;
     /// The graphics window (V_CONFIG geometry) in frame pixels: a TS frame stores 2 px per raster dot
     /// and one pixel per raster line, so the 256x192 window is 512x192 pixels at (104, 48)
     PictureRect WorkingWindow() const override;
@@ -58,6 +58,17 @@ public:
     /// Draw the beam's dots up to frame tact `raster` (not beyond what the CPU
     /// reached): a DMA CRAM write draws what came before it first (TIM-5)
     void DrawTo(uint32_t raster);
+    /// The picture is drawn when one of its inputs is about to change (a CPU write to RAM, a DMA transfer, a video
+    /// register, CRAM, the border: each draws what the old value showed first) and on the frame's last step,
+    /// instead of after every instruction. The frame is the same pixel for pixel: between two changes the later
+    /// draw sees what the per-instruction draws saw
+    bool CatchesUpOnEvents() const override { return _catchUpOnEvents; }
+    /// Off: drawn after every instruction as the classic screens (the comparison tests); on by default
+    void SetCatchUpOnEvents(bool on) { _catchUpOnEvents = on; }
+    /// Before an input changes inside an instruction, when no exact moment is modelled for it: draw up to the end of
+    /// the instruction before, which is where the per-instruction draw stood
+    void CatchUpToStepEnd();
+    void InitFrame() override;
     /// The TS state the video debug mapper reads (TsConfVideoMapper)
     const void* VideoFamilyView() const override;
     void SetVideoMode(VideoModeEnum mode) override;
@@ -134,6 +145,7 @@ private:
     uint8_t _paletteVdac = 0;         ///< the DAC _palette was built for
     uint32_t _paletteVersion = 0;     ///< the decoder's CRAM version _palette was built at
     bool _paletteValid = false;
+    bool _catchUpOnEvents = true;
     bool _paletteVerify = false;      ///< compare every cell (whole-frame renders: direct CRAM writes)
     const PortDecoder_TSConf* _decoder = nullptr;
 };

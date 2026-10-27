@@ -14,6 +14,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
 
 #include <QElapsedTimer>
 #include <QMutex>
@@ -84,7 +86,7 @@ public:
      *   - After bind(): isBound() returns true
      *   - After bind(): isReady() depends on emulator state
      */
-    void bind(Emulator* emulator);
+    void bind(std::shared_ptr<Emulator> emulator);
 
     /**
      * @brief Unbinds from current emulator, clears cached state.
@@ -140,10 +142,16 @@ public:
     /**
      * @brief Returns bound emulator pointer.
      *
-     * @what May return nullptr if not bound. Use for lifecycle operations only.
-     *       For state access, use cached accessors below.
+     * @what May return nullptr if not bound. Valid for the current Qt handler: the binding owns a reference, and
+     *       a removed instance stays readable (retired) until the queued unbind drops it. Never store it.
      */
     Emulator* emulator() const;
+
+    /// The bound instance's context, for the current Qt handler only (never stored); nullptr when not bound
+    EmulatorContext* context() const;
+
+    /// A reference of its own, for a window that keeps one instance (a dialog showing one machine's disk)
+    std::shared_ptr<Emulator> emulatorShared() const;
 
     /**
      * @brief Returns cached Z80 state (registers, flags, etc).
@@ -274,7 +282,10 @@ private:
     TapePlaybackState m_lastTapeState = TapePlaybackState::Idle;
     std::chrono::steady_clock::time_point m_lastTapeSnapshotTime{};
 
-    Emulator* m_emulator = nullptr;
+    /// The binding is the GUI's owner of the instance (BUGS.md #11): it keeps a removed one readable until unbind()
+    std::shared_ptr<Emulator> m_emulator;
+    /// Guards m_emulator against the MessageCenter / frame-end threads, which take a copy (emulatorShared)
+    mutable std::mutex m_emulatorMutex;
     EmulatorStateEnum m_state = StateUnknown;
     bool m_isReady = false;
     bool m_isSubscribed = false;

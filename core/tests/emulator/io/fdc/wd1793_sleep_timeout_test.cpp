@@ -19,6 +19,7 @@
 #define _CODE_UNDER_TEST 1
 
 #include "emulator/io/fdc/diskimage.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/io/fdc/wd1793.h"
 
 #include <gtest/gtest.h>
@@ -97,16 +98,10 @@ namespace
         return g_motorStoppedNotifications;
     }
 
-    bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 200)
+    bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 2000)
     {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (condition())
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return condition();
+        // The timeout only bounds a failure: the wait ends the moment the condition holds
+        return TestWait::For(condition, std::chrono::milliseconds(timeoutMs));
     }
 }  // namespace
 
@@ -336,6 +331,8 @@ TEST_F(WD1793_SleepTimeout_Test, Beta128ResetStopsSpinningMotorOnce)
     _fdc->prolongFDDMotorRotation();
     ASSERT_TRUE(_fdc->getDrive()->getMotor());
 
+    // A stop posted by an earlier test may still be on its way through the center's queue: deliver it before counting
+    ASSERT_TRUE(TestWait::DrainMessageCenter(MessageCenter::DefaultMessageCenter()));
     const size_t initialStoppedNotifications = motorStoppedCount();
 
     // Beta128 reset: bit 2 low
@@ -346,6 +343,8 @@ TEST_F(WD1793_SleepTimeout_Test, Beta128ResetStopsSpinningMotorOnce)
     // Exactly one stop notification for this reset (no duplicates)
     ASSERT_TRUE(WaitForCondition([initialStoppedNotifications]()
                                  { return motorStoppedCount() > initialStoppedNotifications; }));
+    // Everything posted by the reset has been delivered: a duplicate would be counted now
+    ASSERT_TRUE(TestWait::DrainMessageCenter(MessageCenter::DefaultMessageCenter()));
     EXPECT_EQ(motorStoppedCount() - initialStoppedNotifications, 1u)
         << "Duplicate NC_FDD_MOTOR_STOPPED posted for a single motor stop";
 }

@@ -9,7 +9,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcoverageindex.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -23,7 +23,7 @@ class TTDCoverageQuery_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
 
     void SetUp() override
@@ -33,7 +33,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(_memory, nullptr);

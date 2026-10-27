@@ -1,5 +1,6 @@
 #define GL_SILENCE_DEPRECATION
 #include "TileGridGL.h"
+#include <emulator/video/displaygeometry.h>
 
 #include <QDebug>
 #include <QDragEnterEvent>
@@ -72,8 +73,6 @@ void TileGridGL::addEmulator(std::shared_ptr<Emulator> emulator)
     TileState state;
     state.emulator = emulator;
     state.emulatorId = emulator->GetId();  // Must match what mainloop.cpp posts
-    state.latchedFrame = QImage(FB_WIDTH, FB_HEIGHT, QImage::Format_RGBA8888);
-    state.latchedFrame.fill(Qt::black);
 
     bool wasEmpty = _emulators.empty();
     _emulators.push_back(std::move(state));
@@ -349,10 +348,33 @@ void TileGridGL::updateTextures()
             tile.latchedFrame = QImage(desc.width, desc.height, QImage::Format_RGBA8888);
         }
 
+        PictureGeometry geometry;
         if (!screen->CopyPresentedFramebuffer(tile.latchedFrame.bits(),
-                                               static_cast<size_t>(tile.latchedFrame.sizeInBytes())))
+                                               static_cast<size_t>(tile.latchedFrame.sizeInBytes()), &geometry))
         {
             continue;
+        }
+
+        // The tile shows the working picture the frame was latched with (a Spectrum's paper, a TS-Conf's whole
+        // frame, an ATM's 640x200): the machine says where it is
+        tile.source = QRectF(0.0, 0.0, 1.0, 1.0);
+        tile.aspect = 4.0 / 3.0;
+        if (geometry.width > 0 && geometry.height > 0 && geometry.screenWindow.width > 0 && geometry.screenWindow.height > 0)
+        {
+            tile.source = QRectF(static_cast<double>(geometry.screenWindow.x) / geometry.width,
+                                 static_cast<double>(geometry.screenWindow.y) / geometry.height,
+                                 static_cast<double>(geometry.screenWindow.width) / geometry.width,
+                                 static_cast<double>(geometry.screenWindow.height) / geometry.height);
+            tile.aspect = DisplayGeometry::WindowAspect(geometry.width, geometry.height, geometry.screenWindow.width,
+                                                        geometry.screenWindow.height);
+        }
+
+        // A video mode with another frame size needs a texture of that size
+        if (tile.texture && (tile.texture->width() != static_cast<int>(desc.width) ||
+                             tile.texture->height() != static_cast<int>(desc.height)))
+        {
+            delete tile.texture;
+            tile.texture = nullptr;
         }
 
         if (!tile.texture)
@@ -427,12 +449,6 @@ void TileGridGL::paintGL()
         float quadHalfW = (cellNDC_W * 0.5f) * scaleX;
         float quadHalfH = (cellNDC_H * 0.5f) * scaleY;
 
-        // Extract 256x192 active screen area from 352x288 framebuffer
-        float srcX0 = 48.0f / FB_WIDTH;
-        float srcY0 = 48.0f / FB_HEIGHT;
-        float srcX1 = (48.0f + 256.0f) / FB_WIDTH;
-        float srcY1 = (48.0f + 192.0f) / FB_HEIGHT;
-
         int index = 0;
         for (int row = 0; row < _currentRows && index < static_cast<int>(_emulators.size()); ++row)
         {
@@ -442,13 +458,30 @@ void TileGridGL::paintGL()
                 if (!tile.texture || !tile.texture->isCreated())
                     continue;
 
+                // The tile's working picture, as its machine placed it in the frame
+                const float srcX0 = static_cast<float>(tile.source.left());
+                const float srcY0 = static_cast<float>(tile.source.top());
+                const float srcX1 = static_cast<float>(tile.source.right());
+                const float srcY1 = static_cast<float>(tile.source.bottom());
+
                 float cellCenterX = -1.0f + (col + 0.5f) * cellNDC_W;
                 float cellCenterY = 1.0f - (row + 0.5f) * cellNDC_H;
 
-                float x0 = cellCenterX - quadHalfW;
-                float x1 = cellCenterX + quadHalfW;
-                float y0 = cellCenterY + quadHalfH; // Top in NDC
-                float y1 = cellCenterY - quadHalfH; // Bottom in NDC
+                // The picture keeps the raster's own shape inside the 4:3 plate: bars, not a stretch
+                float halfW = quadHalfW;
+                float halfH = quadHalfH;
+                if (tile.aspect > 0.0)
+                {
+                    if (tile.aspect > targetRatio)
+                        halfH *= targetRatio / static_cast<float>(tile.aspect);  // wider than the plate: bars above and below
+                    else
+                        halfW *= static_cast<float>(tile.aspect) / targetRatio;  // narrower: bars at the sides
+                }
+
+                float x0 = cellCenterX - halfW;
+                float x1 = cellCenterX + halfW;
+                float y0 = cellCenterY + halfH; // Top in NDC
+                float y1 = cellCenterY - halfH; // Bottom in NDC
 
                 GLfloat vertices[] = {
                     x0, y0,

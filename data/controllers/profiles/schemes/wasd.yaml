@@ -1,0 +1,18 @@
+# W up, S down, A left, D right; no fire (the game names it).
+# The d-pad and the left stick move; a game that extends it binds the rest (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/wasd
+label: W A S D
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.up:      { key: W }
+    dpad.down:    { key: S }
+    dpad.left:    { key: A }
+    dpad.right:   { key: D }
+    lstick.up:    { key: W }
+    lstick.down:  { key: S }
+    lstick.left:  { key: A }
+    lstick.right: { key: D }

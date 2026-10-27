@@ -1,4 +1,9 @@
 #pragma once
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
@@ -21,16 +26,21 @@ class DebuggerWindow;
 QT_END_NAMESPACE
 
 class Emulator;
+class PaneFocus;
 class SpeedControlWidget;
 
 class DebuggerWindow : public QWidget, public Observer
 {
     Q_OBJECT
 public:
-    explicit DebuggerWindow(Emulator* emulator = nullptr, QWidget* parent = nullptr);
+    explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
+
+    /// The panes as control surface contexts (control surfaces architecture.md §6): disassembly `debug.disasm`,
+    /// registers `debug.registers`, memory `debug.memory`, stack `debug.stack`
+    std::vector<std::pair<QWidget*, std::string>> contextPanes() const;
     virtual ~DebuggerWindow() override;
 
-    void setEmulator(Emulator* emulator);  // Legacy - will be removed
+    void setEmulator(std::shared_ptr<Emulator> emulator);  // Legacy - will be removed
     Emulator* getEmulator();
 
     // Set the EmulatorBinding this window receives state from
@@ -40,6 +50,18 @@ public:
 
     /// @brief Prepare for application shutdown - blocks all refreshes
     void prepareForShutdown();
+
+public slots:
+    /// Toggle an execution breakpoint at the disassembly cursor (the Debug menu, the dbg.breakpoint_toggle_cursor
+    /// action); refused while an automation session holds the machine
+    void toggleBreakpointAtCursor();
+    /// The breakpoint list and editor (the Debug menu's Show Breakpoints...)
+    void openBreakpoints();
+    /// Focus the registers / memory pane (the Debug menu's Show Registers / Show Memory)
+    void focusRegistersPane();
+    void focusMemoryPane();
+
+public:
 
     /// region <Helper methods>
 protected:
@@ -54,6 +76,8 @@ protected:
     /// region <QT Helper methods>
 protected:
     void dispatchToMainThread(std::function<void()> callback);
+    /// The children that keep the machine (speed control, live source, visualization) follow _emulator
+    void propagateEmulator();
     /// endregion <QT Helper methods>
 
     /// region <Event handlers / Slots>
@@ -90,10 +114,26 @@ private slots:
     void portOut();
     void showDeviceMemory();
     void showDiskSector();
+    void showDiskFiles();
+    void showLiveSource();
     void showPcHistory();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
+
+    // Pane focus for controllers: disassembly, registers, memory, stack
+    void focusNextPane();
+    void focusPrevPane();
+    void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
+
+    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.labels_toggle,
+    // dbg.scroll_mode_toggle, dbg.goto)
+    void followPc();
+    void toggleLabels();
+    void toggleScrollMode();
+    void goToDisassemblyAddress(int address);
+    /// The memory view's cursor as a Z80 address: the debugger's "memory" cursor (ttd.find_last_write)
+    void publishMemoryCursor();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -117,6 +157,10 @@ signals:
     /// emulator's debug instrumentation on only while the window is visible.
     void visibilityChanged(bool visible);
 
+    /// The breakpoint list's "Add as Haptic Probe" (BreakpointDialog::hapticProbeRequested); MainWindow hands it to
+    /// the host controllers
+    void hapticProbeRequested(int kind, int address, int page, int portMask);
+
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
@@ -131,7 +175,7 @@ protected:
         "_im2_interrupt_handler";  // Group for IM2 interrupt handler breakpoints
 
     // Fields
-    Emulator* _emulator = nullptr;         // Legacy - use m_binding->emulator() instead
+    std::shared_ptr<Emulator> _emulator;         // Legacy - use m_binding->emulator() instead
     EmulatorBinding* m_binding = nullptr;  // Central state binding
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
@@ -161,6 +205,8 @@ private:
     QAction* portOutAction;
     QAction* deviceMemoryAction;
     QAction* diskSectorAction;
+    QAction* diskFilesAction;
+    QAction* liveSourceAction;
     QAction* pcHistoryAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
@@ -177,9 +223,11 @@ private:
     
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
+    class LiveSourceWindow* _liveSourceWindow = nullptr;
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;
+    PaneFocus* _paneFocus = nullptr;
 };
 
 #endif  // DEBUGGERWINDOW_H

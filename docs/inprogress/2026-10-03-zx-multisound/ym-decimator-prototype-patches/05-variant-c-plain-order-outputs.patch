@@ -1,0 +1,96 @@
+From bf80d53a525a1cf75cbe12f5d441410f446ddf15 Mon Sep 17 00:00:00 2001
+From: Ilia Sharin <isharin@gmail.com>
+Date: Wed, 7 Oct 2026 09:45:07 -0400
+Subject: [PATCH 5/5] proto(sound): renderChannels evaluates the eight outputs
+ in plain order
+
+The order of the slaves and the master does not change the output instant;
+one loop over the six SSG channels, the constant-level shortcut and the
+silent-FM skip in one place. Quality harness A/B: identical.
+---
+ .../emulator/sound/chips/tsfm/ym2203pair.cpp  | 52 ++++++++-----------
+ 1 file changed, 22 insertions(+), 30 deletions(-)
+
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+index 724f12848..deb37faff 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+@@ -365,53 +365,45 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+             _renderT += 16;
+         }
+ 
+-        // All eight at one output instant in one pass per design (FilterDecimator::getOutputs: the six SSG
+-        // decimators share their rows, the two FM ones theirs). Slaves first, the master last (a slave takes the
+-        // output instant from the master's phase, before or after the master consumed it alike)
++        // All eight at one output instant; the order does not matter (a slave takes the instant from the master's
++        // phase, before or after the master consumed it alike). A channel that held one level for its whole window
++        // outputs that level - the FIR of a constant is the level to within 1.2e-15, the same float
++        // (DecimatorDot_Test.ConstantWindowOfAnSsgLevelGivesThatLevelAsFloat) - and a silent FM part outputs +0.0;
++        // the others share one pass per design (FilterDecimator::getOutputs: the SSG decimators their rows, the
++        // FM ones theirs)
+         FilterDecimator* decimators[8];
+         float* targets[8];
+         size_t count = 0;
++        auto evaluate = [&](FilterDecimator& d, float* row)
++        {
++            decimators[count] = &d;
++            targets[count++] = row ? &row[n] : nullptr;
++        };
+         for (int i = 0; i < 2; i++)
+         {
+             for (int ch = 0; ch < 3; ch++)
+             {
+-                if (i == 0 && ch == 0)
+-                    continue;
+-                if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window())
++                FilterDecimator& d = _channels->ssg[i][ch];
++                float* row = block.ssg[i][ch];
++                if (_channels->ssgRun[i][ch] < d.window())
+                 {
+-                    if (block.ssg[i][ch])
+-                        block.ssg[i][ch][n] = static_cast<float>(_channels->ssgLast[i][ch]);
++                    evaluate(d, row);
+                     continue;
+                 }
+-                decimators[count] = &_channels->ssg[i][ch];
+-                targets[count++] = block.ssg[i][ch] ? &block.ssg[i][ch][n] : nullptr;
+-            }
+-        }
+-        {
+-            const int i = 0;
+-            const int ch = 0;
+-            if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window())
+-            {
+-                master.skipOutput();
+-                if (block.ssg[0][0])
+-                    block.ssg[0][0][n] = static_cast<float>(_channels->ssgLast[0][0]);
+-            }
+-            else
+-            {
+-                decimators[count] = &master;
+-                targets[count++] = block.ssg[0][0] ? &block.ssg[0][0][n] : nullptr;
++                d.skipOutput();   // the master's phase moves as getOutput moves it
++                if (row)
++                    row[n] = static_cast<float>(_channels->ssgLast[i][ch]);
+             }
+         }
+         for (int i = 0; i < 2; i++)
+         {
+-            if (fmZeroRun[i] >= fmDec[i].window())
++            if (fmZeroRun[i] < fmDec[i].window())
+             {
+-                if (block.fm[i])
+-                    block.fm[i][n] = 0.0f;
++                evaluate(fmDec[i], block.fm[i]);
+                 continue;
+             }
+-            decimators[count] = &fmDec[i];
+-            targets[count++] = block.fm[i] ? &block.fm[i][n] : nullptr;
++            if (block.fm[i])
++                block.fm[i][n] = 0.0f;
+         }
+         double values[8];
+         FilterDecimator::getOutputs(decimators, count, values);
+-- 
+2.56.0
+

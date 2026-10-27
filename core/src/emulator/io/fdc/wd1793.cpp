@@ -15,7 +15,6 @@
 #include "diskfastload.h"
 #include "flakysectoremulator.h"
 #include "floppydriveslot.h"
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
 
@@ -877,85 +876,26 @@ uint8_t WD1793::getStatusRegister()
         // - Bits 3 to 6 are specific for each command
         // - Bit 7 means NOT READY (FDC is not ready to accept commands)
 
-        // Reset bits according each command requirements from the datasheet
+        // Reset bits according each command requirements from the datasheet.
+        // The error bits of a Type II / III command are set in the register by the command itself (the FIFO
+        // actions, the CRC check, the write protect check) and cleared when the next command starts
+        // (startType2Command / startType3Command): a status read only adds the error flags, it never clears
+        // a bit. Clearing on a false flag erased RECORD NOT FOUND and CRC ERROR (the FSM sets the bits, not the
+        // flags), so TR-DOS and programs saw status #00 after a failed READ / WRITE SECTOR
         switch (_lastDecodedCmd)
         {
             case WD_CMD_READ_ADDRESS:
                 _statusRegister &= 0b1001'1111;  // Reset bit5 and bit6 as stated in the datasheet
-
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_READ_SECTOR:
                 _statusRegister &= 0b1011'1111;  // Reset bit 6 as stated in the datasheet
-
-                // TODO: set WDS_RECORDTYPE
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_WRITE_SECTOR:
                 // No bits reset => All bits are used for the Write Sector command
-
-                if (_write_protect)
-                {
-                    _statusRegister |= WDS_WRITEPROTECTED;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEPROTECTED;
-                };
-                if (_write_fault)
-                {
-                    _statusRegister |= WDS_WRITEFAULT;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEFAULT;
-                };
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_write_protect ? WDS_WRITEPROTECTED : 0) | (_write_fault ? WDS_WRITEFAULT : 0) |
+                                   (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_READ_TRACK:
                 _statusRegister &= 0b1000'0111;  // Reset bits 3 to 6 as stated in the datasheet
@@ -964,23 +904,7 @@ uint8_t WD1793::getStatusRegister()
                 break;
             case WD_CMD_WRITE_TRACK:
                 _statusRegister &= 0b1110'0111;  // Reset bit3 and bit4 as stated in the datasheet
-
-                if (_write_protect)
-                {
-                    _statusRegister |= WDS_WRITEPROTECTED;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEPROTECTED;
-                };
-                if (_write_fault)
-                {
-                    _statusRegister |= WDS_WRITEFAULT;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEFAULT;
-                };
+                _statusRegister |= (_write_protect ? WDS_WRITEPROTECTED : 0) | (_write_fault ? WDS_WRITEFAULT : 0);
                 break;
             default:
                 throw std::logic_error("Unknown FDC command");
@@ -1236,33 +1160,41 @@ void WD1793::processWD93Command(uint8_t value)
     WD1793::WD_COMMANDS command = decodeWD93Command(value);
     uint8_t commandValue = getWD93CommandValue(command, value);
 
-    // Persist information about command
-    _commandRegister = value;
-    _lastDecodedCmd = command;
-    _lastCmdValue = commandValue;
-
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
+        const CommandHandler& handler = commandTable[command];
+        bool isBusy = _statusRegister & WDS_BUSY;
+
+        // All commands except Force Interrupt are ignored while busy. An ignored write must not touch the
+        // running command's context: status format and the Type I FSM read it (a loader writing READ SECTOR
+        // during a SEEK must still see the SEEK's Type I status, as TR-DOS #2F1B retries on it)
+        if (command != WD_CMD_FORCE_INTERRUPT && isBusy)
+        {
+            notifyFdcStateChanged();
+            return;
+        }
+
+        // Persist information about command
+        _commandRegister = value;
+        _lastDecodedCmd = command;
+        _lastCmdValue = commandValue;
+
         // Register call in a collection
         _collector->recordCommandStart(*this, value);
-        
+
         // Notify observers
         for (auto* obs : _observers)
         {
             obs->onFDCCommand(value, *this);
         }
 
-        const CommandHandler& handler = commandTable[command];
-        bool isBusy = _statusRegister & WDS_BUSY;
-
         if (command == WD_CMD_FORCE_INTERRUPT)  // Force interrupt command executes in any state
         {
             // Call the corresponding command method
             (this->*handler)(commandValue);
         }
-        else if (!isBusy)  // All other commands are ignored if controller is busy
+        else
         {
-            _commandRegister = value;
             _statusRegister |= WDS_BUSY;
             _beta128status = 0;
             _indexPulseCounter = 0;
@@ -1646,6 +1578,8 @@ void WD1793::cmdWriteSector(uint8_t value)
                       static_cast<unsigned>(_sectorRegister),
                       static_cast<unsigned>(_sideUp));
         FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        // The track under the head is the one the command writes: kept as it is now
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, _selectedDrive->trackUnderHead(_sideUp ? 1 : 0));
     }
 
     // Decode command bits:
@@ -1746,6 +1680,7 @@ void WD1793::cmdReadTrack(uint8_t value)
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sideUp));
         FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
     }
 
     if (!track->rawData() || track->rawSize() == 0)
@@ -3539,13 +3474,9 @@ void WD1793::handleFrameStart()
     // Nothing to do here
 }
 
-void WD1793::handleStep()
+void WD1793::handleStepAwake()
 {
-    // Skip processing if sleeping - major CPU optimization when FDD is idle
-    if (_sleeping)
-    {
-        return;
-    }
+    // Asleep: handleStep returned already - major CPU optimization when FDD is idle
 
     // Idle with the motor off: nothing the FSM could advance on. Commands
     // arrive through the port handlers (which run process() themselves),
@@ -3613,22 +3544,27 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             {
-                std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
-                // Replace newlines with spaces for cleaner log output
-                std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
-                // Remove any double spaces that might have been created
-                std::string::size_type pos;
-                while ((pos = statusInfo.find("  ")) != std::string::npos)
-                {
-                    statusInfo.replace(pos, 2, " ");
-                }
-                // Trim trailing space
-                if (!statusInfo.empty() && statusInfo.back() == ' ')
-                {
-                    statusInfo.pop_back();
-                }
-                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result, statusInfo.c_str(),
-                          pc, memBankName().c_str());
+                // Lazy as memBankName: built only when the debug level logs (a macro argument) - TR-DOS polls the
+                // status register, and the text (stringstream, snprintf per flag) cost on every read
+                [[maybe_unused]] auto statusText = [this]() {
+                    std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
+                    // Replace newlines with spaces for cleaner log output
+                    std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
+                    // Remove any double spaces that might have been created
+                    std::string::size_type pos;
+                    while ((pos = statusInfo.find("  ")) != std::string::npos)
+                    {
+                        statusInfo.replace(pos, 2, " ");
+                    }
+                    // Trim trailing space
+                    if (!statusInfo.empty() && statusInfo.back() == ' ')
+                    {
+                        statusInfo.pop_back();
+                    }
+                    return statusInfo;
+                };
+                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result,
+                          statusText().c_str(), pc, memBankName().c_str());
             }
 
             // Reset INTRQ (Interrupt request) flag - status register is read
@@ -4409,6 +4345,9 @@ void WD1793::TTDLoadState(const uint8_t* src)
     // Registers were replaced wholesale — force a post so observers resync
     _fdcNotifyCacheValid = false;
     notifyFdcStateChanged();
+    // The drive, its motor and track came back too: the status bar and the HUD follow them (deduplicated against
+    // what was last posted, so the restores inside a search post nothing new)
+    notifyFDDStateChanged();
 }
 
 /// endregion </TTDSerializable>

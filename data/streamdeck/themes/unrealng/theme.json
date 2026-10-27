@@ -1,0 +1,124 @@
+{
+  "name": "UnrealNG icons + banner strip",
+  "brightness": 60,
+  "fit": "contain",
+  "keys": [
+    {
+      "key": 0,
+      "image": "keys/play.png"
+    },
+    {
+      "key": 1,
+      "image": "keys/pause.png"
+    },
+    {
+      "key": 2,
+      "image": "keys/stop.png"
+    },
+    {
+      "key": 3,
+      "image": "keys/reset.png"
+    },
+    {
+      "key": 4,
+      "image": "keys/rewind.png"
+    },
+    {
+      "key": 5,
+      "image": "keys/forward.png"
+    },
+    {
+      "key": 6,
+      "image": "keys/stepback.png"
+    },
+    {
+      "key": 7,
+      "image": "keys/camera.png"
+    },
+    {
+      "key": 8,
+      "image": "keys/gear.png"
+    },
+    {
+      "key": 9,
+      "image": "keys/bug.png"
+    },
+    {
+      "key": 10,
+      "image": "keys/stepinto.png"
+    },
+    {
+      "key": 11,
+      "image": "keys/stepover.png"
+    },
+    {
+      "key": 12,
+      "image": "keys/stepout.png"
+    },
+    {
+      "key": 13,
+      "image": "keys/eye.png"
+    },
+    {
+      "key": 14,
+      "image": "keys/regs.png"
+    },
+    {
+      "key": 15,
+      "image": "keys/memory.png"
+    },
+    {
+      "key": 16,
+      "image": "keys/disasm.png"
+    },
+    {
+      "key": 17,
+      "image": "keys/stack.png"
+    },
+    {
+      "key": 18,
+      "image": "keys/tape.png"
+    },
+    {
+      "key": 19,
+      "image": "keys/disk.png"
+    },
+    {
+      "key": 20,
+      "image": "keys/speaker.png"
+    },
+    {
+      "key": 21,
+      "image": "keys/mute.png"
+    },
+    {
+      "key": 22,
+      "image": "keys/flag.png"
+    },
+    {
+      "key": 23,
+      "image": "keys/chip.png"
+    },
+    {
+      "key": 24,
+      "image": "keys/check.png"
+    },
+    {
+      "key": 25,
+      "image": "keys/warn.png"
+    },
+    {
+      "key": 26,
+      "image": "keys/cross.png"
+    }
+  ],
+  "lcd": {
+    "image": "strip.png"
+  },
+  "lcd_ttd": {
+    "image": "ttd_strip.png"
+  },
+  "logo": {
+    "image": "logo.png"
+  }
+}

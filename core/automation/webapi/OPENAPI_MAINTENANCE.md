@@ -15,15 +15,15 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 
 ## Current Status
 
-✅ **Coverage** - 239 of 239 registered paths documented (100%, verification script)  
-✅ **Modular Organization** - 26 domain-specific `.inc` files  
+✅ **Coverage** - 375 of 375 registered paths documented (100%, verification script)  
+✅ **Modular Organization** - 53 domain-specific `.inc` files  
 ✅ **Complete Schemas** - 30+ response schemas defined  
 ✅ **Organized Tags** - 23 feature-based categories  
 ✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-09-28  
-**Registered Routes:** 261 `ADD_METHOD_TO` registrations, 239 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
-**OpenAPI Paths:** 244 (includes 5 planned profiler endpoints, marked `[Planned]` and `x-planned: true`)
+**Last Updated:** 2026-10-10  
+**Registered Routes:** 410 `ADD_METHOD_TO` registrations, 375 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 384 (includes 5 planned profiler endpoints, marked `[Planned]` and `x-planned: true`)
 
 ## Code Organization
 
@@ -35,11 +35,15 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 |------|--------|---------|
 | `openapi_interpreter.inc` | Interpreter Control | Python/Lua exec, status, stop |
 | `openapi_lifecycle.inc` | Emulator Management | Create, start, stop, pause, resume, reset |
+| `openapi_operations.inc` | Emulator Control | Operation log `/operations` (machine state coordinator); schemas in `openapi_operations_schemas.inc` |
 | `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
 | `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}` (also `formats`, `targets?path=`), `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
 | `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
+| `openapi_monitoring.inc` | Monitoring | `/monitor`, `/monitor/{name}` (host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, ...: the /api/v1/ws topics of the same names), `/emulator/{id}/breakpoints/groups` (monitoring::Call) |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
+| `openapi_window.inc` | Screen State | The GUI window's display settings `/video/window`, the CRT profile's parameters `/video/window/crt_params` (+ `/reset`), the overscan viewport `/video/viewport`; schemas `WindowDisplay`, `CrtParameters`, `VideoViewport` in `openapi_window_schemas.inc` |
+| `openapi_machine.inc` | Media, Capture | `/recent` (the files opened lately), `/recording/presets`, the `preset` / `mode` / `container` / `toggle` options of `/video/record`, the video path of `/ttd/export-clip` |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
 | `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
 | `openapi_mouse.inc` | Mouse Injection | Kempston mouse move, press, release, click, buttons, wheel, counters, status |
@@ -51,6 +55,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_gsporttrace.inc` | Audio State | General Sound activity counters and port trace |
 | `openapi_analyzers.inc` | Analyzer Management | Analyzer control, events, sessions |
 | `openapi_debug.inc` | Debug Commands | Stepping, breakpoints, registers, disassembly |
+| `openapi_pace.inc` | Debug Commands | The paced run `/run_pace` (GET the pace and its ladder, POST set / next / prev / by / start / stop / toggle / step; core `RunPacer`) |
 | `openapi_profiler.inc` | Profilers | Memory, call trace, opcode, unified profiler |
 | `openapi_schemas.inc` | Component Schemas | Reusable response/request schemas |
 
@@ -59,6 +64,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | File | Domain |
 |------|--------|
 | `lifecycle_api.cpp` | Emulator lifecycle |
+| `operations_api.cpp` | Operation log (thin over `core/automation/operationsstatus.h`) |
 | `tape_disk_api.cpp` | Tape and disk control |
 | `snapshot_api.cpp` | Snapshot management |
 | `capture_api.cpp` | Screen capture and OCR |
@@ -70,6 +76,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `features_api.cpp` | Feature management |
 | `state_memory_api.cpp` | Memory state inspection |
 | `state_screen_api.cpp` | Screen state inspection |
+| `video_window_api.cpp` | The GUI window's display settings, CRT parameters, the overscan viewport (thin over `emulator/video/windowdisplay.h`, `viewportcontrol.h`) |
 | `state_audio_api.cpp` | Audio state inspection |
 | `analyzers_api.cpp` | Analyzer management |
 | `debug_api.cpp` | Debug commands |

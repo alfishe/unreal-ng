@@ -7,12 +7,16 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
+#include "_helpers/ttdmultisoundsessions.h"
+#include "_helpers/ttdslotcards.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
@@ -22,6 +26,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -43,15 +48,20 @@
 /// sprites.ttd: DMA every frame, TS-Conf blob 16) run the same checks on a
 /// fresh machine of their recorded model (no TSFM history there).
 /// A format change that is not followed by a re-recording fails here first.
-/// Over the 50 ms budget (~1 s): five multi-megabyte sessions, each loaded,
-/// restored at four points and replayed; this is the corpus's only C++ gate.
+/// The ZX-MultiSound sessions are not stored: the test records them in its own
+/// process first (ttdmultisoundsessions.h) and loads them like the stored ones,
+/// on a machine with the card in ZX-bus slot 1 (ttdslotcards.h).
+/// Over the 50 ms budget (~5 s): nine multi-megabyte sessions (two of them
+/// recorded here first), each loaded, restored at four points and replayed;
+/// this is the corpus's only C++ gate.
 
 namespace
 {
 namespace fs = std::filesystem;
 
-/// The corpus: testdata/ttd (Pentagon) and the per-machine fixtures in
-/// testdata/machines/<machine>/ttd; each runs on the model it was recorded on
+/// The corpus: testdata/ttd (Pentagon), the per-machine fixtures in
+/// testdata/machines/<machine>/ttd and the ZX-MultiSound sessions recorded in
+/// this process; each runs on the model it was recorded on
 std::vector<fs::path> CorpusFiles()
 {
     std::vector<fs::path> files;
@@ -66,6 +76,8 @@ std::vector<fs::path> CorpusFiles()
                 if (entry.path().extension() == ".ttd")
                     files.push_back(entry.path());
     std::sort(files.begin(), files.end());
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
+        files.push_back(recorded);
     return files;
 }
 
@@ -90,16 +102,31 @@ protected:
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelManager* _ttd = nullptr;
 
-    void SetUp() override { StartMachine("PENTAGON", GSTypeKind::Z80); }
+    void SetUp() override { StartMachine(Pentagon()); }
 
-    /// A fresh machine of the fixture's model, fitted with its General Sound card
-    void StartMachine(const std::string& model, GSTypeKind generalSound)
+    /// The Pentagon corpus's machine: the shipped config with the classic GS card
+    static ttd::TTDRecordedMachine Pentagon()
+    {
+        ttd::TTDRecordedMachine machine;
+        machine.model = "PENTAGON";
+        machine.generalSound = GSTypeKind::Z80;
+        return machine;
+    }
+
+    /// A fresh machine of the fixture's recorded machine: its General Sound card and its slot-built cards
+    /// (ttdslotcards.h)
+    void StartMachine(const ttd::TTDRecordedMachine& machine)
     {
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
-        ASSERT_NE(_emulator, nullptr);
+        std::string why;
+        _emulator = ttdtest::CreateRecordedMachine(machine, why);
+        ASSERT_NE(_emulator, nullptr) << why;
         _context = _emulator->GetContext();
+        // The TS-Conf fixture was recorded with an empty Z-Controller slot; the shipped ts-conf config now carries a
+        // card (wc-zifi.img, 2026-10-05), and a session loads into the machine it was recorded on
+        if (_context->pMediaManager)
+            _context->pMediaManager->Eject("sd.zc");
         _ttd = _context->pTimeTravelManager;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
@@ -117,7 +144,7 @@ protected:
         // The corpus was recorded while the shipped PENTAGON config fitted the
         // classic GS card; the shipped configs now fit NeoGS, and a session
         // loads only into the card it was recorded with
-        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, generalSound));
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, machine.generalSound));
     }
 
     void TearDown() override
@@ -260,8 +287,11 @@ protected:
 
 TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
 {
-    const auto files = CorpusFiles();
-    ASSERT_GE(files.size(), 5u) << "testdata/ttd/ should hold the recorded corpus";
+    const auto corpus = CorpusFiles();
+    ASSERT_GE(corpus.size(), 5u) << "testdata/ttd/ should hold the recorded corpus";
+    // A 48K demo, the TurboSound FM on the Pentagon, a TS-Conf machine of its own; every fixture in the long tier
+    const auto files = TestTier::Sample(corpus, {"active_demo.ttd", "tsfm_tech_support.ttd", "sprites.ttd"});
+    ASSERT_EQ(files.size(), TestTier::Long() ? corpus.size() : 3u);
 
     for (const fs::path& file : files)
     {
@@ -270,9 +300,13 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         ttd::TTDFileInfo info;
         std::string err;
         ASSERT_TRUE(ttd::ReadTTDFileInfo(file.string(), info, err)) << err;
-        const bool pentagon = info.machine.model == "PENTAGON";
+        // The Pentagon corpus loads into the TSFM Pentagon of SetUp; a fixture with a slot-built card (the
+        // ZX-MultiSound ones) into a fresh machine of its own, with the card
+        const bool pentagon = info.machine.model == "PENTAGON" && ttdtest::SlotCardsOf(info.machine).empty();
         if (!pentagon)
-            ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound));
+        {
+            ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine));
+        }
 
         // A machine with its own TSFM history (Pentagon), then the user's load
         if (pentagon)
@@ -282,8 +316,10 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         const size_t count = _ttd->GetCheckpointCount();
         ASSERT_GE(count, 60u);
         if (pentagon)
+        {
             EXPECT_NE(_ttd->GetCheckpoint(0)->peripheralBlobs.count(uint8_t(ttd::PeripheralId::TSFM)), 0u)
                 << "the Pentagon TurboSound slot is TSFM: its blob must be in every checkpoint";
+        }
 
         // Restore: first, a keyframe, a delta frame, the last
         for (const size_t idx : {size_t(0), size_t(50), size_t(51), count - 1})
@@ -301,7 +337,7 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         // new checkpoints - captured at the same point of the frame as the
         // original ones - with the recorded 25 that followed it
         const size_t from = 37;
-        constexpr size_t kReplay = 25;
+        const size_t kReplay = TestTier::Pick<size_t>(8, 25);
         std::vector<MachineState> expected;
         std::vector<RamImage> expectedRam;  // decoded now: resuming drops these checkpoints
         for (size_t step = 1; step <= kReplay; step++)
@@ -327,6 +363,8 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         if (HasFailure())
             return;
         if (!pentagon)
-            ASSERT_NO_FATAL_FAILURE(StartMachine("PENTAGON", GSTypeKind::Z80));
+        {
+            ASSERT_NO_FATAL_FAILURE(StartMachine(Pentagon()));
+        }
     }
 }

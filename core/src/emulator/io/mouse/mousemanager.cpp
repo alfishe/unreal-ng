@@ -37,6 +37,15 @@ MouseManager::MouseManager(EmulatorContext* context) : _context(context)
 
 MouseManager::~MouseManager()
 {
+    DetachHostInput();
+}
+
+void MouseManager::DetachHostInput()
+{
+    if (_hostInputDetached)
+        return;
+    _hostInputDetached = true;
+
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observer = static_cast<Observer*>(this);
     messageCenter.RemoveObserver(MC_MOUSE_MOVE, observer, static_cast<ObserverCallbackMethod>(&MouseManager::OnMouseMove));
@@ -186,14 +195,35 @@ void MouseManager::ApplyCounters(uint8_t x, uint8_t y)
 uint8_t MouseManager::ComposeButtons(ButtonSource source, uint8_t pressedBits)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    (source == ButtonSource::Host ? _hostPressed : _automationPressed) = static_cast<uint8_t>(pressedBits & kAllButtons);
-    return static_cast<uint8_t>(0xFF & ~(_hostPressed | _automationPressed));
+    const uint8_t bits = static_cast<uint8_t>(pressedBits & kAllButtons);
+    switch (source)
+    {
+        case ButtonSource::Host:
+            _hostPressed = bits;
+            break;
+        case ButtonSource::Automation:
+            _automationPressed = bits;
+            break;
+        case ButtonSource::Controllers:
+            _controllersPressed = bits;
+            break;
+    }
+    return static_cast<uint8_t>(0xFF & ~(_hostPressed | _automationPressed | _controllersPressed));
 }
 
 uint8_t MouseManager::PressedBits(ButtonSource source) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return source == ButtonSource::Host ? _hostPressed : _automationPressed;
+    switch (source)
+    {
+        case ButtonSource::Host:
+            return _hostPressed;
+        case ButtonSource::Automation:
+            return _automationPressed;
+        case ButtonSource::Controllers:
+            return _controllersPressed;
+    }
+    return 0;
 }
 
 void MouseManager::ClearButtonSources()
@@ -201,6 +231,7 @@ void MouseManager::ClearButtonSources()
     std::lock_guard<std::mutex> lock(_mutex);
     _hostPressed = 0;
     _automationPressed = 0;
+    _controllersPressed = 0;
 }
 
 /// endregion </Buttons>

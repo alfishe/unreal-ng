@@ -62,7 +62,8 @@ public:
     static void writeNulString(std::vector<uint8_t>& out, const std::string& str);
 
     // Build supported commands bitfield (32 bytes)
-    static std::vector<uint8_t> buildSupportedCommandsBitfield();
+    // `next`: the ZX Next commands too (bank memory, NextREG access)
+    static std::vector<uint8_t> buildSupportedCommandsBitfield(bool next = false);
 };
 
 } // namespace dzrp

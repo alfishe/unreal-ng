@@ -25,6 +25,8 @@ public:
     static bool IsHex(uint8_t val);
     static int Compare(std::wstring& wstr1, std::wstring& wstr2);
     static int Compare(std::string& str1, std::string& wstr2);
+    /// Case-insensitive compare of up to len + 1 characters: with len == strlen(str2) the terminator is compared too,
+    /// so it is an exact match, not a prefix test (callers rely on that). 0 when equal; -1 for a null or len 0
     static int CompareCaseInsensitive(const char* str1, const char* str2, size_t len);
 
     static std::wstring StringToWideString(const std::string& str);

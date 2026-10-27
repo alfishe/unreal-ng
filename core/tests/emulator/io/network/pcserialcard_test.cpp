@@ -479,6 +479,8 @@ TEST_F(PcSerialCardPresets_Test, Modem_AnswerPortIsNotTakenByTheEthernetGateway)
     for (const StateNode& s : servers->items)
     {
         if (s.find("guest_port")->i == 2323)
+        {
             EXPECT_EQ(s.find("waiting_sockets")->i, 1) << "only the modem waits on 2323";
+        }
     }
 }

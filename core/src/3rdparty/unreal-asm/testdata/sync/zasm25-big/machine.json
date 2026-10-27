@@ -1,0 +1,18 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    0
+  ],
+  "pages": [
+    0,
+    2,
+    5
+  ],
+  "expected": "a2.5_3.C",
+  "state": {
+    "editor": true,
+    "typing": false
+  }
+}

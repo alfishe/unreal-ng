@@ -127,14 +127,7 @@ EmulatorState MakeCanonicalState(uint16_t seed)
     s.pFDFD = static_cast<uint8_t>(seed + 0x07);
     s.p1FFD = static_cast<uint8_t>(seed + 0x08);
     s.pFF77 = static_cast<uint8_t>(seed + 0x09);
-    s.p7EFD = static_cast<uint8_t>(seed + 0x0A);
-    s.p78FD = static_cast<uint8_t>(seed + 0x0B);
-    s.p7AFD = static_cast<uint8_t>(seed + 0x0C);
-    s.p7CFD = static_cast<uint8_t>(seed + 0x0D);
-    s.gmx_config = static_cast<uint8_t>(seed + 0x0E);
-    s.gmx_magic_shift = static_cast<uint8_t>(seed + 0x0F);
-    s.p00 = static_cast<uint8_t>(seed + 0x10);
-    s.p80FD = static_cast<uint8_t>(seed + 0x11);
+    s.scorpion.p7EFD = static_cast<uint8_t>(seed + 0x0A);
     s.border_attr = static_cast<uint8_t>(seed + 0x12);
     s.t_states = seed * 0x1000ULL;
     s.frame_counter = seed;
@@ -264,9 +257,9 @@ TEST(MachineStateHash_Test, Snapshot_HostSideFieldsExcluded)
     Z80State z2 = z1;
 
     // Mutate everything host-side. These should be invisible to CaptureSnapshot.
-    z2.FastMemIf = reinterpret_cast<const MemoryInterface*>(0xDEADBEEF);
-    z2.DbgMemIf  = reinterpret_cast<const MemoryInterface*>(0xCAFEBABE);
-    z2.MemIf     = reinterpret_cast<const MemoryInterface*>(0x0000BEEF);
+    z2.FastMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xDEADBEEF));
+    z2.DbgMemIf  = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFEBABE));
+    z2.MemIf     = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0x0000BEEF));
     z2.trace_curs = 99999;
     z2.trace_top = 88888;
     z2.trace_mode = 7;

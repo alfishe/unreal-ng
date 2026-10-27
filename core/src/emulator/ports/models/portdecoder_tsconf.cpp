@@ -3,12 +3,15 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/platforms/tsconf/tsconfprogramsnapshot.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include "emulator/io/mouse/mousemanager.h"
 
 #include <cstring>
 
 #include "debugger/ttd/atm/ttdevoavrvolatile.h"
+#include "debugger/ttd/atm/ttdevoflash.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
@@ -33,19 +36,37 @@
 
 PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(context)
 {
-    _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
+    // A TS-Conf SDK program (an SPG) commits through the machine's own policy; its snapshot view exists while the window map is a Spectrum 128K
+    SetSnapshotPolicy(&TsConfProgramSnapshot::Instance());
+    SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
+
+    BindRtc(_evoAvr);
 
     // SD card: the Z-Controller registers and the DMA share the board's SPI
     // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the
     // media manager's rule)
     _zc.SetDevice(&_sdCard);
     _dma.SetSpi([this](bool read, uint8_t out) -> uint8_t {
+        // The bus analyzer sees the DMA's bytes as the DMA's
+        const bool tap = _spiTap.Active();
+        if (tap) [[unlikely]]
+            _spiTap.SetSource(BusSource::Dma);
+        uint8_t result = 0xFF;
         if (read)
-            return _zc.ReadData();
-        _zc.WriteData(out);
-        return 0xFF;
+            result = _zc.ReadData();
+        else
+            _zc.WriteData(out);
+        if (tap) [[unlikely]]
+            _spiTap.SetSource(BusSource::Cpu);
+        return result;
     });
+    // Bus analyzer: one byte is 17 fclk at 28 MHz ([V] spi.v: the start clock + a 16-clock shift)
+    _spiTap.SetDevice(0, "sd");
+    _spiTap.SetByteTimeNs(17.0 * 1000.0 / 28.0);
+    _spiTap.Attach(_context);
+    _zc.SetTap(&_spiTap);
+    _sdCard.SetBusTap(&_spiTap, 0);
+    _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
     // The VDAC2 card keeps time in raster tacts; it closes a frame once the
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {
@@ -69,7 +90,11 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // Core creates TsConfMemory for this model; the windows are mapped from our state
     _tsMemory = dynamic_cast<TsConfMemory*>(_memory);
     if (_tsMemory)
+    {
         _tsMemory->AttachState(&_ts);
+        _tsMemory->AttachFlash(&_flash);
+        _engine.AttachMemory(_tsMemory);
+    }
     else
         MLOGWARNING("PortDecoder_TSConf: the memory subsystem is not TsConfMemory - windows stay at the reset layout");
 
@@ -118,8 +143,8 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
     if (core)
     {
         core->RemoveBusOverlay(&_fmWindow);
-        core->RemoveBusOverlay(&_cacheSnoop);
         core->RemoveBusOverlay(&_dramWriteWait);
+        core->RemoveBusOverlay(&_flash);
         Z80* z80 = core->GetZ80();
         if (z80 && z80->machineM1Hook == this)
             z80->machineM1Hook = nullptr;
@@ -129,11 +154,13 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
             z80->SetMachineStepHook(nullptr);
     }
 
-    if (_tsMemory)
+    // Core::Release deletes the memory before the decoder (and clears pMemory first): then there is nothing to detach
+    if (_tsMemory && _context->pMemory == _tsMemory)
     {
-        _tsMemory->SetCacheActive(false);
         _tsMemory->AttachState(nullptr);
+        _tsMemory->AttachFlash(nullptr);
     }
+    _engine.AttachMemory(nullptr);
 
     // Battery-backed state outlives the machine ([EVO] NvramFile, shared with ATM3)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
@@ -189,12 +216,14 @@ void PortDecoder_TSConf::RefreshVdac2Card()
         _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
         _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
                          Vdac2Card::kSpiSelectActiveHigh);
+        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "ft812");
         _interrupts.SetLineSource(&_vdac2Lines);
     }
     else if (!wanted && _vdac2)
     {
         _interrupts.SetLineSource(nullptr);
         _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "");
         _vdac2.reset();
     }
 #endif
@@ -218,12 +247,19 @@ size_t PortDecoder_TSConf::Vdac2LineSource::TakeLineEdges(uint32_t raster, uint3
 }
 
 /// Warm reset (hardware-spec §10). Not reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE,
-/// SG_PAGE, the T0/T1 offsets, CRAM, SFILE, the cache contents, the FM
-/// window address nibble
+/// SG_PAGE, the T0/T1 offsets, CRAM, SFILE, the cache contents (only
+/// CACHE_CONFIG goes to 0; the entries live until the power is cut, [V]
+/// zmem.v:231,267 no clear), the FM window address nibble
 void PortDecoder_TSConf::reset()
 {
     if (!_poweredOn)
         PowerOn();
+
+    // The AVR keeps running through a Z80 reset, but the emulator's time base (t_states) starts again from 0: its
+    // main-loop phase and EEPROM write are re-anchored there (EvoAvrWait counts in that time base)
+    _evoAvr.Wait().Reset();
+    // The flash chip has no reset pin; the time base restarts, so a running program / erase completes here
+    _flash.OnMachineReset();
 
     // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
     // registers themselves outlive a Z80 reset (the AVR keeps running)
@@ -307,10 +343,10 @@ void PortDecoder_TSConf::ApplyState()
     _dma.SetBlt2Built(TsConfDma::kBuildHasBlt2 || _context->config.ts_vdac != 0);
     InstallInterrupts();
     _engine.RebuildLineTable();
+    _engine.NoteStateApplied();
     UpdateBanks();
     RefreshM1Hook();
     RefreshFmWindow();
-    RefreshCache();
     ApplyClock();
     ApplyVideoPage();
 }
@@ -546,6 +582,8 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             break;
         case PortArm::SdData:
             CatchUpEngine();  // a running SPI DMA owns the master up to now
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(false, 0xFF);
             result = _zc.ReadData();
             break;
         case PortArm::ComPort:
@@ -620,11 +658,15 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             break;
         case PortArm::SdData:
             CatchUpEngine();
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(true, value);
             _zc.WriteData(value);
             break;
         case PortArm::SdConfig:
             // [1] SD /CS; [2] FT812, [3] SD2, [4] ESP chip selects are not fitted
             CatchUpEngine();
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(true, value);
             _zc.WriteConfig(value);
             break;
         case PortArm::Joystick:
@@ -718,7 +760,6 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         case TsConfReg::SysConfig:
             // Bit 2 is copied into all four CACHE_CONFIG bits (§2.5); the clock switches now (§11)
             _ts.regs[TsConfReg::CacheConfig] = (value & 0x04) ? 0x0F : 0x00;
-            RefreshCache();
             ApplyClock();
             break;
         case TsConfReg::MemConfig:
@@ -729,8 +770,7 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
             UpdateBanks();  // CF_DOSPORTS follows VG_OPEN
             break;
         case TsConfReg::CacheConfig:
-            RefreshCache();
-            break;
+            break;  // read live by every CPU RAM read (TsConfMemory::CacheRead)
         case TsConfReg::IntMask:
             _interrupts.OnMaskWrite(value);
             break;
@@ -748,6 +788,15 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         default:
             break;
     }
+}
+
+void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
+{
+    // Mapped mode (W0NoMap = 0), ROM128 as #7FFD bit 4 now has it (the snapshot's own #7FFD write follows), 128K decode
+    const uint8_t rom128 = static_cast<uint8_t>((_state->p7FFD >> 4) & 0x01);
+    WriteRegister(TsConfReg::MemConfig,
+                  static_cast<uint8_t>((static_cast<uint8_t>(TsConfLck128::Mode128K) << 6) | rom128));
+    RefreshM1Hook();   // the DOS trap is armed in mapped mode with ROM128 = 1
 }
 
 /// #7FFD (hardware-spec §2.3): ROM128 = D4, V_PAGE = D3 ? 7 : 5 immediately,
@@ -869,6 +918,10 @@ uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
     // is always in DOS - the CPU reads #FF
     if ((port & 0x0100) && (port & 0x4000) == 0 && CmosReachable())  // portf7_rd needs A8 = 1 (zports.v:721)
     {
+        // wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd || portf7_wr) ([V] zports.v:763): the Z80
+        // waits on /WAIT until the AVR answers (zwait.v:39-43), inside vdos too
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, true, 0xFF);
         const uint8_t value = _evoAvr.ReadData();
         return _ts.dos ? 0xFF : value;
     }
@@ -890,7 +943,29 @@ void PortDecoder_TSConf::DecodeF7Out(uint16_t port, uint8_t value)
     if (cmos && (port & 0x2000) == 0)
         _evoAvr.WriteAddress(value);
     if (cmos && (port & 0x4000) == 0)
+    {
+        // The data write waits for the AVR like a read ([V] zports.v:763); an OUT with A13 = A14 = 0 hands it the
+        // new address too (wait_addr and wait_write latch the same din, :743-749)
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, false, value);
         _evoAvr.WriteData(value);
+    }
+}
+
+Uart16550::AvrFirmware PortDecoder_TSConf::ConfigureAvrWait()
+{
+    // The TS-Conf FPGA needs a TS-Labs AVR firmware: 2016-02 or the current line (2016-04 on), the default. The
+    // current one serves the wait ports with zx_wait_task (since 2021-04-28: cells #F0-#FF in the status byte), the
+    // 2016-02 one with the BaseConf-style path (SPI #41 for the cell)
+    const auto configured = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    const Uart16550::AvrFirmware firmware = configured == Uart16550::AvrFirmware::Ts2016Feb
+                                                ? Uart16550::AvrFirmware::Ts2016Feb
+                                                : Uart16550::AvrFirmware::Ts2016Apr;
+    const Uart16550::Params p = Uart16550::EvoAvrParams(firmware);
+    _evoAvr.SetWaitFirmware(firmware == Uart16550::AvrFirmware::Ts2016Feb ? EvoAvr::WaitHandler::TsOld
+                                                                          : EvoAvr::WaitHandler::TsShort,
+                            EvoAvrWait::Timing{p.avrClockHz, p.isrCycles, p.loopCycles, p.waitChecksPerLoop});
+    return firmware;
 }
 
 PortDecoder::RtcBinding PortDecoder_TSConf::GetRtcBinding()
@@ -910,6 +985,11 @@ void PortDecoder_TSConf::UpdateBanks()
 {
     if (_memory)
         _memory->UpdateZ80Banks();
+}
+
+void PortDecoder_TSConf::OnFrameEnd()
+{
+    _flash.OnFrameEnd();
 }
 
 /// The M1 hook runs only while it has work: the auto-LCK128 opcode latch, an
@@ -970,6 +1050,18 @@ void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
     }
 }
 
+/// Another idle fetch at `address` changes nothing: no 14 MHz wait, no vdos to enter, no DOS switch at it (the auto
+/// LCK128 latch takes the same byte again)
+bool PortDecoder_TSConf::RepeatM1IsInert(uint16_t address) const
+{
+    if ((_ts.regs[TsConfReg::SysConfig] & 0x02) || _ts.preVdos)
+        return false;
+    if (_ts.dos)
+        return address < 0x4000 || _ts.vdos;
+    const uint8_t memConfig = _ts.MemConfig();
+    return (address & 0xFF00) != 0x3D00 || (memConfig & TsConfMemConfig::W0NoMap) || !(memConfig & TsConfMemConfig::Rom128);
+}
+
 /// Auto LCK128: every M1 latches !(D7 ^ D6) of the fetched byte (§2.3)
 void PortDecoder_TSConf::OnMachineM1(uint16_t address)
 {
@@ -985,6 +1077,12 @@ bool PortDecoder_TSConf::IsVideoRegister(uint8_t reg)
     return reg <= TsConfReg::PalSel || reg == TsConfReg::Border ||
            (reg >= TsConfReg::TMapPage && reg <= TsConfReg::SGPage) ||
            (reg >= TsConfReg::T0XOffsL && reg <= TsConfReg::T1YOffsH);
+}
+
+void PortDecoder_TSConf::CheckSpiDmaCollision(bool write, uint8_t value)
+{
+    if (_dma.SpiBusy())
+        _spiTap.DmaCollision(write, value);
 }
 
 void PortDecoder_TSConf::CatchUpEngine()
@@ -1023,6 +1121,7 @@ void PortDecoder_TSConf::InstallInterrupts()
         if (auto* screen = dynamic_cast<ScreenTSConf*>(_context->pScreen))
             screen->DrawTo(raster);
     });
+    _engine.SetVideoCatchUp([this]() { VideoCatchUpToStepEnd(); });
 }
 
 void PortDecoder_TSConf::RefreshFmWindow()
@@ -1093,24 +1192,22 @@ void PortDecoder_TSConf::CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>&
     out.push_back(_sfileRegion.get());
 }
 
-void PortDecoder_TSConf::RefreshCache()
+void PortDecoder_TSConf::DramWriteWait::onBeforeWrite([[maybe_unused]] uint16_t addr)
 {
-    const bool active = _ts.regs[TsConfReg::CacheConfig] & 0x0F;
-    Core* core = _context->pCore;
+    _owner.VideoCatchUpToStepEnd();
+}
 
-    if (_tsMemory)
+void PortDecoder_TSConf::VideoCatchUpToStepEnd()
+{
+    // The screen is created with the machine and replaced with it: looked up again only when the pointer changed
+    Screen* screen = _context->pScreen;
+    if (screen != _catchUpScreenBase) [[unlikely]]
     {
-        if (!active)
-            _tsMemory->CacheClear();
-        _tsMemory->SetCacheActive(active);
+        _catchUpScreenBase = screen;
+        _catchUpScreen = dynamic_cast<ScreenTSConf*>(screen);
     }
-
-    if (!core)
-        return;
-    if (active)
-        core->AddBusOverlay(&_cacheSnoop);
-    else
-        core->RemoveBusOverlay(&_cacheSnoop);
+    if (_catchUpScreen)
+        _catchUpScreen->CatchUpToStepEnd();
 }
 
 void PortDecoder_TSConf::DramWriteWait::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
@@ -1118,13 +1215,6 @@ void PortDecoder_TSConf::DramWriteWait::onWrite(uint16_t addr, [[maybe_unused]] 
 {
     if (_owner._tsMemory)
         _owner._tsMemory->AfterWrite(addr);
-}
-
-void PortDecoder_TSConf::CacheWriteSnoop::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
-                                                  [[maybe_unused]] bool romPaged)
-{
-    if (_owner._tsMemory)
-        _owner._tsMemory->CacheInvalidate(addr);
 }
 
 /// SYS_CONFIG[1:0]: 3.5, 7, 14, 14 MHz, switched right after the OUT (§11).
@@ -1174,12 +1264,9 @@ PortDecoder::NetworkCapabilities PortDecoder_TSConf::DescribeNetwork()
 {
     NetworkCapabilities caps;
     caps.serialPort = NetworkCapabilities::SerialPort::ZiFi;
-    // The TS-Conf FPGA needs a TS-Labs AVR firmware: 2016-02 or the current line (2016-04 on), the default
-    const auto configured = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
-    const Uart16550::AvrFirmware firmware = configured == Uart16550::AvrFirmware::Ts2016Feb
-                                                ? Uart16550::AvrFirmware::Ts2016Feb
-                                                : Uart16550::AvrFirmware::Ts2016Apr;
+    const Uart16550::AvrFirmware firmware = ConfigureAvrWait();
     caps.uart = Uart16550::EvoAvrParams(firmware);
+    caps.avrWait = &_evoAvr.Wait();   // #xxEF and #BFF7 share the AVR's main loop (zwait.v)
     caps.firmware = Uart16550::AvrFirmwareName(firmware);
     caps.zifi = true;
     // The FPGA packs the high byte into 5 bits (slavespi.v: ~&a[7:6] ? 10h : {&a[7:4], a[3:0]}), the AVR
@@ -1197,16 +1284,17 @@ PortDecoder::NetworkCapabilities PortDecoder_TSConf::DescribeNetwork()
     return caps;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() const
 {
-    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard,
-                                          ttd::PeripheralId::Ds12887, ttd::PeripheralId::EvoPs2,
-                                          ttd::PeripheralId::EvoMouse, ttd::PeripheralId::EvoAvrVolatile};
+    std::vector<ttd::TTDDeviceType> ids = {ttd::TTDDeviceType::TsConfPaging, ttd::TTDDeviceType::EvoSdCard,
+                                          ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::EvoPs2,
+                                          ttd::TTDDeviceType::EvoMouse, ttd::TTDDeviceType::EvoAvrVolatile,
+                                          ttd::TTDDeviceType::EvoFlash};
     // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order)
     if (_vdac2 && _vdac2->IsReady())
     {
-        ids.push_back(ttd::PeripheralId::Vdac2Memory);
-        ids.push_back(ttd::PeripheralId::Vdac2);
+        ids.push_back(ttd::TTDDeviceType::Vdac2Memory);
+        ids.push_back(ttd::TTDDeviceType::Vdac2);
     }
     return ids;
 }
@@ -1221,6 +1309,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
     serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(self->_evoAvr));
+    serializers.push_back(std::make_unique<ttd::TTDEvoFlash>(self->_flash));
     if (self->_vdac2 && self->_vdac2->IsReady())
     {
         serializers.push_back(std::make_unique<ttd::TTDVdac2Memory>(*self->_vdac2));

@@ -1,4 +1,6 @@
 #include "debuggerwindow.h"
+#include "emulator/actions/steppingactions.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QBoxLayout>
 #include <QColor>
@@ -20,6 +22,9 @@
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
 #include "debugger/disksectordialog.h"
+#include "debugger/diskfilesdialog.h"
+#include "debugger/livesourcewindow.h"
+#include "debugger/panefocus.h"
 #include "debugger/pchistorydialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
@@ -30,7 +35,7 @@
 
 /// region <Constructor / destructors>
 
-DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
+DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
     _curPageOffset = 0;  // Initialize to 0 to prevent uninitialized memory access
@@ -88,24 +93,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     pauseAction = toolBar->addAction("Pause");
     stepInAction = new QAction("Step In", this);
     stepInAction->setIcon(QIcon::fromTheme("debug-step-into"));
-    stepInAction->setShortcut(QKeySequence(Qt::Key_F11));
     connect(stepInAction, &QAction::triggered, this, &DebuggerWindow::stepIn);
     toolBar->addAction(stepInAction);
 
     stepOverAction = new QAction("Step Over", this);
     stepOverAction->setIcon(QIcon::fromTheme("debug-step-over"));
-    stepOverAction->setShortcut(QKeySequence(Qt::Key_F10));
     connect(stepOverAction, &QAction::triggered, this, &DebuggerWindow::stepOver);
     toolBar->addAction(stepOverAction);
 
     stepOutAction = new QAction("Step Out", this);
     stepOutAction->setIcon(QIcon::fromTheme("debug-step-out"));
-    stepOutAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F11));
     connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
     toolBar->addAction(stepOutAction);
 
     frameStepAction = new QAction("Frame step", this);
-    frameStepAction->setShortcut(QKeySequence(Qt::Key_F9));
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     toolBar->addAction(frameStepAction);
 
@@ -137,6 +138,12 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     diskSectorAction = new QAction("Disk sector", this);
     diskSectorAction->setToolTip("View and edit a floppy sector's data field (CRC recalculated, the image counts as modified)");
     toolBar->addAction(diskSectorAction);
+    diskFilesAction = new QAction("Disk files", this);
+    diskFilesAction->setToolTip("The files on a disk with their source formats: open an assembler source as text, export it, convert it");
+    toolBar->addAction(diskFilesAction);
+    liveSourceAction = new QAction("Live source", this);
+    liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
+    toolBar->addAction(liveSourceAction);
     pcHistoryAction = new QAction("PC history", this);
     pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
     toolBar->addAction(pcHistoryAction);
@@ -166,6 +173,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
     connect(deviceMemoryAction, &QAction::triggered, this, &DebuggerWindow::showDeviceMemory);
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
+    connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
+    connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
     connect(pcHistoryAction, &QAction::triggered, this, &DebuggerWindow::showPcHistory);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
@@ -185,6 +194,14 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
             SLOT(goToAddress(uint16_t)));
     connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
             SLOT(goToAddress(uint16_t)));
+
+    // A register set from the registers pane: the disassembly (a new PC) and the stack follow
+    connect(ui->registersWidget, &RegistersWidget::registerEdited, this, [this](const QString&) { updateState(); });
+
+    _paneFocus = new PaneFocus(this, {{tr("Disassembly"), ui->disassemblerWidget, {}},
+                                      {tr("Registers"), ui->registersWidget, ui->registersWidget->cursorCells()},
+                                      {tr("Memory"), ui->hexView, {}},
+                                      {tr("Stack"), ui->stackWidget, ui->stackWidget->cursorCells()}});
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
@@ -226,6 +243,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
 
     // Set hex memory viewer to readonly mode
     ui->hexView->setReadOnly(true);
+    // The memory view's cursor is the debugger's "memory" cursor (ttd.find_last_write without an address)
+    connect(ui->hexView, &QHexView::positionChanged, this, &DebuggerWindow::publishMemoryCursor);
 
     // Set up hex viewer
     QHexOptions options = ui->hexView->options();
@@ -277,16 +296,14 @@ DebuggerWindow::~DebuggerWindow()
 
 /// endregion </Constructor / destructors>
 
-void DebuggerWindow::setEmulator(Emulator* emulator)
+void DebuggerWindow::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     qDebug() << "DebuggerWindow::setEmulator() - Setting emulator to"
              << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
 
     _emulator = emulator;
 
-    // Propagate to speed control widget
-    if (m_speedControl)
-        m_speedControl->setEmulator(_emulator);
+    propagateEmulator();
 
     if (_emulator)
     {
@@ -340,7 +357,7 @@ Emulator* DebuggerWindow::getEmulator()
     {
         return m_binding->emulator();
     }
-    return _emulator;
+    return _emulator.get();
 }
 
 void DebuggerWindow::setBinding(EmulatorBinding* binding)
@@ -381,12 +398,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         // If binding already has an emulator, sync state
         if (m_binding->isBound())
         {
-            _emulator = m_binding->emulator();
+            _emulator = m_binding->emulatorShared();
             _emulatorState = m_binding->state();
 
-            // Propagate to speed control widget
-            if (m_speedControl)
-                m_speedControl->setEmulator(_emulator);
+            propagateEmulator();
             if (m_binding->isReady())
             {
                 onBindingReady();
@@ -397,12 +412,21 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
     {
         _emulator = nullptr;
 
-        // Propagate to speed control widget
-        if (m_speedControl)
-            m_speedControl->setEmulator(nullptr);
+        propagateEmulator();
 
         reset();
     }
+}
+
+void DebuggerWindow::propagateEmulator()
+{
+    // Every child that keeps the machine follows the debugger's: a removed one is let go here (BUGS.md #11)
+    if (m_speedControl)
+        m_speedControl->setEmulator(_emulator);
+    if (_liveSourceWindow)
+        _liveSourceWindow->setEmulator(_emulator);
+    if (_visualizationWindow)
+        _visualizationWindow->setEmulator(_emulator);
 }
 
 void DebuggerWindow::onBindingBound()
@@ -410,12 +434,10 @@ void DebuggerWindow::onBindingBound()
     qDebug() << "DebuggerWindow::onBindingBound()";
     if (m_binding)
     {
-        _emulator = m_binding->emulator();
+        _emulator = m_binding->emulatorShared();
         _emulatorState = m_binding->state();
 
-        // Propagate to speed control widget
-        if (m_speedControl)
-            m_speedControl->setEmulator(_emulator);
+        propagateEmulator();
         // Delegate to state handler - toolbar enabled based on actual state
         onBindingStateChanged(_emulatorState);
     }
@@ -426,9 +448,7 @@ void DebuggerWindow::onBindingUnbound()
     qDebug() << "DebuggerWindow::onBindingUnbound()";
     _emulator = nullptr;
 
-    // Propagate to speed control widget
-    if (m_speedControl)
-        m_speedControl->setEmulator(nullptr);
+    propagateEmulator();
 
     reset();
     emit notReadyForChildren();
@@ -565,6 +585,18 @@ void DebuggerWindow::updateState()
     if (_isClosing)
     {
         return;
+    }
+
+    // A refresh queued by a step's end (cpuStepComplete) or a frame can run while the machine is being removed (an
+    // automation 'destroy' right after a 'run_frames'): its memory is freed under the disassembler (seen as a SIGSEGV
+    // in Z80Disassembler with a null Memory). The lease keeps the removal from freeing anything until this refresh
+    // ends, and is refused once the removal has begun
+    Emulator::ContextLease lease;
+    if (_emulator)
+    {
+        lease = _emulator->LeaseContext();
+        if (!lease)
+            return;
     }
 
     // Skip heavy UI updates while emulator is running to avoid race conditions
@@ -812,9 +844,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
 
-                // Propagate to speed control widget
-                if (m_speedControl)
-                    m_speedControl->setEmulator(nullptr);
+                propagateEmulator();
 
                 // Don't call reset() here since emulator is now null
                 // Just clear the UI manually without trying to read emulator state
@@ -882,14 +912,12 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
         return;
     }
 
-    // Get all breakpoints and find the one with matching ID
-    const auto& allBreakpoints = bpManager->GetAllBreakpoints();
-    auto it = allBreakpoints.find(breakpointID);
-    if (it == allBreakpoints.end())
+    // A copy of the breakpoint with that ID
+    const BreakpointSnapshot breakpoint = bpManager->GetBreakpointById(breakpointID);
+    if (!breakpoint)
     {
         return;
     }
-    BreakpointDescriptor* breakpoint = it->second;
 
     // Handle interrupt breakpoints if we're waiting for an interrupt
     if (_waitingForInterrupt)
@@ -931,7 +959,7 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
             // Pause the emulator
             _breakpointTriggered = true;
-            _emulator->Pause();
+            _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
 
             // Update the UI
             updateState();
@@ -996,7 +1024,7 @@ void DebuggerWindow::continueExecution()
 
     if (_emulator && _emulator->IsPaused())
     {
-        _emulator->Resume();
+        _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // When emulator is running:
         // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
@@ -1019,7 +1047,7 @@ void DebuggerWindow::pauseExecution()
 
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
         _emulator->DebugOn();
 
         // When emulator is paused:
@@ -1222,6 +1250,8 @@ void DebuggerWindow::waitInterrupt()
 
 void DebuggerWindow::portOut()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_emulator) return;
 
     bool ok;
@@ -1239,7 +1269,7 @@ void DebuggerWindow::portOut()
         QMessageBox::warning(this, "Port OUT", QString::fromStdString(error));
         return;
     }
-    const PortWrite::Result result = PortWrite::Write(_emulator, port, value, "qt");
+    const PortWrite::Result result = PortWrite::Write(_emulator.get(), port, value, "qt");
     if (!result.ok)
     {
         QMessageBox::warning(this, "Port OUT", QString::fromStdString(result.error));
@@ -1264,6 +1294,29 @@ void DebuggerWindow::showDiskSector()
     DiskSectorDialog dialog(_emulator, this);
     dialog.exec();
     updateState();
+}
+
+void DebuggerWindow::showDiskFiles()
+{
+    if (!_emulator) return;
+
+    DiskFilesDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showLiveSource()
+{
+    if (!_emulator)
+        return;
+    if (!_liveSourceWindow)
+    {
+        _liveSourceWindow = new LiveSourceWindow(_emulator, this);
+        connect(_liveSourceWindow, &QObject::destroyed, this, [this]() { _liveSourceWindow = nullptr; });
+    }
+    _liveSourceWindow->show();
+    _liveSourceWindow->raise();
+    _liveSourceWindow->activateWindow();
 }
 
 void DebuggerWindow::showPcHistory()
@@ -1355,10 +1408,94 @@ void DebuggerWindow::showBreakpointManager()
     }
 
     BreakpointDialog dialog(_emulator, this);
+    connect(&dialog, &BreakpointDialog::hapticProbeRequested, this, &DebuggerWindow::hapticProbeRequested);
     dialog.exec();
 
     // Update debugger state after dialog closes
     updateState();
+}
+
+std::vector<std::pair<QWidget*, std::string>> DebuggerWindow::contextPanes() const
+{
+    return {{ui->disassemblerWidget, "debug.disasm"},
+            {ui->registersWidget, "debug.registers"},
+            {ui->hexView, "debug.memory"},
+            {ui->stackWidget, "debug.stack"}};
+}
+
+void DebuggerWindow::toggleBreakpointAtCursor()
+{
+    // The widget refuses while an automation session holds the machine (RemoteControlGuard) and repaints its marks
+    ui->disassemblerWidget->toggleBreakpointAtCursor();
+}
+
+void DebuggerWindow::openBreakpoints()
+{
+    showBreakpointManager();
+}
+
+void DebuggerWindow::focusRegistersPane()
+{
+    _paneFocus->Focus(1);
+}
+
+void DebuggerWindow::focusMemoryPane()
+{
+    _paneFocus->Focus(2);
+}
+
+void DebuggerWindow::focusNextPane()
+{
+    _paneFocus->Move(1);
+}
+
+void DebuggerWindow::focusPrevPane()
+{
+    _paneFocus->Move(-1);
+}
+
+void DebuggerWindow::paneKey(int key)
+{
+    _paneFocus->Key(key);
+}
+
+void DebuggerWindow::followPc()
+{
+    ui->disassemblerWidget->followPc();
+}
+
+void DebuggerWindow::toggleLabels()
+{
+    ui->disassemblerWidget->setShowLabels(!DisassemblerWidget::LabelsShown().load());
+}
+
+void DebuggerWindow::toggleScrollMode()
+{
+    ui->disassemblerWidget->switchScrollMode();
+}
+
+void DebuggerWindow::goToDisassemblyAddress(int address)
+{
+    ui->disassemblerWidget->goToAddress(static_cast<uint16_t>(address & 0xFFFF));
+}
+
+void DebuggerWindow::publishMemoryCursor()
+{
+    if (!_emulator || !ui->hexView->getDocument())
+        return;
+    // The view shows one 16 KB page: the Z80 window that maps it now names the address
+    Memory* memory = _emulator->GetMemory();
+    if (memory == nullptr)
+        return;
+    const uint16_t offset = static_cast<uint16_t>(ui->hexView->offset() & 0x3FFF);
+    for (uint8_t bank = 0; bank < 4; bank++)
+        if (memory->GetPhysicalOffsetForZ80Bank(bank) == _curPageOffset)
+        {
+            actions::DebuggerCursors::Instance().Set(_emulator->GetId(), "memory",
+                                                     static_cast<uint16_t>(bank * 0x4000 + offset));
+            return;
+        }
+    actions::DebuggerCursors::Instance().Set(_emulator->GetId(), "memory", std::nullopt);  // not mapped now
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

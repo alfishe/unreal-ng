@@ -8,6 +8,8 @@
 
 #include "webapi-client.h"
 
+#include "mcp-tool-utils.h"
+
 #include <drogon/HttpClient.h>
 #include <drogon/HttpAppFramework.h>
 
@@ -17,6 +19,21 @@
 
 namespace mcp
 {
+
+/// region <Helpers>
+
+namespace
+{
+    /// The tools build the path with its query already percent-encoded: drogon must not encode it
+    /// again (PrepareRequestPath)
+    void SetRequestPath(const drogon::HttpRequestPtr& req, const std::string& path)
+    {
+        req->setPathEncode(false);
+        req->setPath(PrepareRequestPath(path));
+    }
+}
+
+/// endregion </Helpers>
 
 /// region <WebApiClient>
 
@@ -68,7 +85,7 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     {
         req = drogon::HttpRequest::newHttpRequest();
     }
-    req->setPath(path);
+    SetRequestPath(req, path);
 
     drogon::HttpMethod httpMethod;
     if (method == "GET")
@@ -94,9 +111,12 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
         return;
     }
     req->setMethod(httpMethod);
+    if (const std::string session = Session(); !session.empty())
+        req->addHeader("X-Unreal-Session", session);
+    req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
-    // 120s timeout: long run_frames requests may take a while
-    (*holder)->sendRequest(req, [callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    // No timeout (0): a long call (run_frames, record/frames, the window recording's stop) answers when it is done
+    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());
@@ -109,8 +129,9 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
         {
             parsed = *json;
         }
+        NoteResponse(static_cast<int>(resp->statusCode()), parsed);
         callback(static_cast<int>(resp->statusCode()), std::move(parsed));
-    }, 120.0);
+    }, 0.0);
 }
 
 void WebApiClient::CallRaw(const std::string& method, const std::string& path,
@@ -129,7 +150,7 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
     }
 
     auto req = drogon::HttpRequest::newHttpRequest();
-    req->setPath(path);
+    SetRequestPath(req, path);
     req->setBody(std::string(reinterpret_cast<const char*>(body.data()), body.size()));
     req->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
 
@@ -143,8 +164,11 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
         httpMethod = drogon::Put;
 
     req->setMethod(httpMethod);
+    if (const std::string session = Session(); !session.empty())
+        req->addHeader("X-Unreal-Session", session);
+    req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
-    (*holder)->sendRequest(req, [callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());
@@ -157,10 +181,60 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
         {
             parsed = *json;
         }
+        NoteResponse(static_cast<int>(resp->statusCode()), parsed);
         callback(static_cast<int>(resp->statusCode()), std::move(parsed));
-    }, 120.0);
+    }, 0.0);
 }
 
 /// endregion </WebApiClient>
 
+void WebApiClient::SetSession(const std::string& sessionId)
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    _session = sessionId;
+}
+
+std::string WebApiClient::Session() const
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    return _session;
+}
+
+bool WebApiClient::TakeRevoked()
+{
+    return _revoked.exchange(false);
+}
+
+std::string WebApiClient::TakeImplicitAdvice()
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    std::string advice;
+    advice.swap(_implicitAdvice);
+    return advice;
+}
+
+void WebApiClient::NoteResponse(int status, const Json::Value& body)
+{
+    if (!body.isObject())
+        return;
+    // The gate opened a session for this agent's call: tell the agent once per session
+    const Json::Value& implicit = body["automation_session"];
+    if (implicit.isObject() && implicit.get("implicit", false).asBool())
+    {
+        std::lock_guard<std::mutex> lock(_sessionMutex);
+        const std::string id = implicit.get("id", "").asString();
+        if (id != _advisedSession)
+        {
+            _advisedSession = id;
+            _implicitAdvice = "Note: session opened implicitly (you changed the emulator without take_control). For a "
+                              "job: control_execution take_control first, release_control when done.";
+        }
+    }
+    if (status != 409 || body.get("error", "").asString() != "revoked_by_user")
+        return;
+    SetSession({});
+    _revoked = true;
+}
+
 } // namespace mcp
+

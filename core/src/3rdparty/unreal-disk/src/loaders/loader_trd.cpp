@@ -1,0 +1,696 @@
+#include "unrealdisk/loaders/loader_trd.h"
+
+#include <algorithm>
+
+#include "unrealdisk/detail/helpers.h"
+#include "unrealdisk/detail/helpers.h"
+// (emulator include dropped: emulator/emulator.h)
+// (emulator include dropped: emulator/emulatorcontext.h)
+// (emulator include dropped: emulator/notifications.h)
+
+namespace unrealdisk
+{
+
+/// region <Properties>
+DiskImage* LoaderTRD::getImage()
+{
+    return _diskImage;
+}
+
+void LoaderTRD::setImage(DiskImage* diskImage)
+{
+    // Note: Does not take ownership - caller must manage diskImage lifetime
+    _diskImage = diskImage;
+}
+/// endregion </Properties>
+
+ /// region <Methods>
+bool LoaderTRD::loadImage()
+{
+    if (!FileHelper::FileExists(_filepath))
+        return false;
+    std::vector<uint8_t> buffer;
+    if (!FileHelper::ReadFile(_filepath, buffer) || buffer.empty())
+        return false;
+    _diskImage = parse(buffer.data(), buffer.size(), _warnings);
+    return _diskImage != nullptr;
+}
+
+DiskImage* LoaderTRD::parse(const uint8_t* data, size_t len, std::vector<std::string>& warnings)
+{
+    if (!data || len == 0)
+    {
+        warnings.push_back("TRD image is empty");
+        return nullptr;
+    }
+    uint8_t cylinders = 0;
+    uint8_t sides = 0;
+    geometryForFile(data, len, cylinders, sides);
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS)
+    {
+        warnings.push_back(StringHelper::Format("TRD image of %zu bytes needs %d cylinders, more than the supported %d", len, cylinders, MAX_CYLINDERS));
+        return nullptr;
+    }
+    // Low level format first: .TRD files keep no low-level information (gaps, sync marks), then the sector data
+    DiskImage* image = new DiskImage(cylinders, sides);
+    format(image);
+    std::vector<uint8_t> buffer(data, data + len);
+    transferSectorData(image, buffer.data(), len);
+    image->setLoaded(true);
+    return image;
+}
+
+bool LoaderTRD::writeImage()
+{
+    return writeImage(_filepath);
+}
+
+bool LoaderTRD::isTrdosGeometry(DiskImage* diskImage, std::string* reason)
+{
+    if (!diskImage)
+    {
+        if (reason) *reason = "Disk image is not set";
+        return false;
+    }
+
+    const size_t trackCount = static_cast<size_t>(diskImage->getCylinders()) * diskImage->getSides();
+    for (size_t trackNo = 0; trackNo < trackCount; trackNo++)
+    {
+        DiskImage::Track* track = diskImage->getTrack(static_cast<uint8_t>(trackNo));
+        if (!track)
+        {
+            if (reason) *reason = StringHelper::Format("Track %zu is missing", trackNo);
+            return false;
+        }
+
+        if (track->sectorCount() != TRD_SECTORS_PER_TRACK)
+        {
+            if (reason)
+                *reason = StringHelper::Format("Track %zu (cylinder %d side %d) has %zu sectors, TRD requires exactly %zu",
+                                               trackNo, track->cylinder(), track->side(), track->sectorCount(),
+                                               (size_t)TRD_SECTORS_PER_TRACK);
+            return false;
+        }
+
+        for (uint8_t sectorNo = 1; sectorNo <= TRD_SECTORS_PER_TRACK; sectorNo++)
+        {
+            DiskImage::Sector* sector = track->findSector(sectorNo);
+            if (!sector || !sector->hasData)
+            {
+                if (reason)
+                    *reason = StringHelper::Format("Track %zu (cylinder %d side %d): sector %d is missing or has no data field",
+                                                   trackNo, track->cylinder(), track->side(), sectorNo);
+                return false;
+            }
+
+            if (sector->dataSize != TRD_SECTORS_SIZE_BYTES)
+            {
+                if (reason)
+                    *reason = StringHelper::Format("Track %zu (cylinder %d side %d): sector %d is %d bytes, TRD holds only 256-byte sectors",
+                                                   trackNo, track->cylinder(), track->side(), sectorNo, sector->dataSize);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool LoaderTRD::writeImage(const std::string& path)
+{
+    bool result = false;
+    _warnings.clear();
+
+    if (_diskImage && !path.empty())
+    {
+        // TRD is a dump of 16 x 256-byte sectors per track - refuse anything else instead of truncating / padding.
+        // The caller re-targets the save to a lossless format (UDI) in that case.
+        std::string reason;
+        if (!isTrdosGeometry(_diskImage, &reason))
+        {
+            _warnings.push_back("TRD save refused: " + reason);
+            return false;
+        }
+
+        FILE* file = FileHelper::OpenFile(path, "wb");
+
+        if (file)
+        {
+            size_t trackCount = _diskImage->getCylinders() * _diskImage->getSides();
+            for (size_t tracks = 0; tracks < trackCount; tracks++)
+            {
+                DiskImage::Track *track = _diskImage->getTrack(static_cast<uint8_t>(tracks));
+
+                for (uint8_t sectors = 0; sectors < TRD_SECTORS_PER_TRACK; sectors++)
+                {
+                    uint8_t *sectorData = track->getDataForSector(sectors);  // By sector number (sectors + 1)
+                    [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, TRD_SECTORS_SIZE_BYTES);
+                }
+            }
+            
+            FileHelper::CloseFile(file);
+            
+            // Mark disk as clean after successful save
+            _diskImage->markClean();
+            
+            
+            // Update stored file path
+            _diskImage->setFilePath(path);
+            
+            result = true;
+        }
+    }
+
+    return result;
+}
+
+ bool LoaderTRD::format(DiskImage* diskImage)
+ {
+     static constexpr uint8_t const INTERLEAVE_PATTERNS[3][16] =
+     {
+         { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 },     // Default TR-DOS 5.03 - slow on real drives
+         { 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16 },     // Default TR-DOS 5.04T - fast on real drives
+         { 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 16, 11, 6 }      // Something in between for slower drives
+     };
+
+     bool result = false;
+
+     /// region <Sanity checks>
+    if (diskImage == nullptr)
+    {
+        return result;
+    }
+
+    uint8_t cylinders = diskImage->getCylinders();
+    uint8_t sides = diskImage->getSides();
+
+    // Any geometry the drive reaches: 1..MAX_CYLINDERS cylinders (TR-DOS formatters write 80-86 tracks on 80-track
+    // drives), one or two sides. TR-DOS knows only the 40 / 80-track step in its disk type byte; a disk of at most
+    // 42 cylinders is a 40-track (48 tpi) medium, as FloppyFormats marks it
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS || (sides != 1 && sides != 2))
+    {
+        return false;
+    }
+    const bool fortyTrack = cylinders <= 42;
+    const TRDDiskType diskType = sides == 2 ? (fortyTrack ? DS_40 : DS_80) : (fortyTrack ? SS_40 : SS_80);
+
+    /// endregion </Sanity checks>
+
+    /// region <Get preferred interleave pattern from config>
+    uint8_t interleavePatternIndex = _options.trdosInterleave;
+    if (interleavePatternIndex >= 3)
+    {
+        interleavePatternIndex = 1;    // Turbo pattern from TR-DOS 5.04T by default
+    }
+    /// endregion </Get preferred interleave pattern from config>
+
+    // Initialize all tracks: low-level format with the selected interleave (physical sector order),
+    // valid ID / data CRCs, zero-filled data, clock marks on every A1 sync byte
+    for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            DiskImage::Track& track = *diskImage->getTrackForCylinderAndSide(cylinder, side);
+
+            track.formatTrack(cylinder, side,
+                              DiskImage::TrackFormatSpec::trdos(INTERLEAVE_PATTERNS[interleavePatternIndex], TRD_SECTORS_PER_TRACK));
+
+            result = true;
+        }
+    }
+
+    // Step 4: write volume information with correct disk type
+    populateEmptyVolumeInfo(diskImage, diskType);
+
+    return result;
+ }
+
+ bool LoaderTRD::validateTRDOSImage(DiskImage* diskImage)
+ {
+     TRDValidationReport report;
+
+     return validateTRDOSImage(diskImage, report);
+ }
+
+ bool LoaderTRD::validateTRDOSImage(DiskImage* diskImage, TRDValidationReport& report)
+ {
+     // Check disk image data
+     if (!diskImage)
+     {
+         TRDValidationRecord record =
+         {
+             .message = "Disk image is not set",
+             .type = DISK_IMAGE_NULL
+         };
+         report.errors.push_back(record);
+
+         report.isValid = false;
+         return false;
+     }
+
+     // Get track 0
+     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+     if (!track0)
+     {
+         TRDValidationRecord record =
+         {
+             .message = "Track 0 data unavailable",
+             .type = TRACK_DATA_NULL
+         };
+         report.errors.push_back(record);
+
+         report.isValid = false;
+         return false;
+     }
+
+     // Get volume sector (track 0, sector 8)
+     uint8_t* volumeSectorData = track0->getDataForSector(TRD_VOLUME_SECTOR);
+     if (!volumeSectorData)
+     {
+         TRDValidationRecord record =
+         {
+             .message = "Sector 8 (TRD_VOLUME_SECTOR) data unavailable",
+             .type = SECTOR_DATA_NULL
+         };
+         report.errors.push_back(record);
+
+         report.isValid = false;
+         return false;
+     }
+
+     TRDVolumeInfo* volumeSector = (TRDVolumeInfo*)volumeSectorData;
+
+     // Check for TR-DOS volume sector signature and format
+     uint8_t diskType = volumeSector->diskType;
+
+     // Valid disk type
+     if (!(diskType == DS_80 || diskType == DS_40 || diskType == SS_80 || diskType == SS_40))
+     {
+         TRDValidationRecord record =
+         {
+             .message = StringHelper::Format("Invalid disk type: %d", diskType),
+             .type = INVALID_DISK_TYPE
+         };
+         report.errors.push_back(record);
+
+         report.isValid = false;
+     }
+
+     // Check TR-DOS signature
+     uint8_t signature = volumeSector->trDOSSignature;
+     if (signature != TRD_SIGNATURE)
+     {
+         TRDValidationRecord record =
+         {
+             .message = StringHelper::Format("Invalid TR-DOS disk signature: 0x%02X", signature),
+             .type = INVALID_TRDOS_SIGNATURE
+         };
+         report.errors.push_back(record);
+
+         report.isValid = false;
+     }
+
+     // Get the number of expected sectors
+     [[maybe_unused]] uint16_t expectedFreeSectors = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
+     uint8_t expectedTracks = TRD_80_TRACKS;
+     switch (volumeSector->diskType)
+     {
+         case DS_80:
+             expectedFreeSectors = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
+             expectedTracks = TRD_80_TRACKS;
+             break;
+         case DS_40:
+             expectedFreeSectors = TRD_40_TRACKS * MAX_SIDES - 1;
+             expectedTracks = TRD_40_TRACKS;
+             break;
+         case SS_80:
+             expectedFreeSectors = TRD_80_TRACKS - 1;
+             expectedTracks = TRD_80_TRACKS;
+             break;
+         case SS_40:
+             expectedFreeSectors = TRD_40_TRACKS - 1;
+             expectedTracks = TRD_40_TRACKS;
+             break;
+         default:
+             break;
+     }
+
+     // Now check catalog sectors (first 8 sectors excluding volume sector)
+     // Each sector can contain 16 file descriptors (16 bytes each), max 128 files
+
+     // We'll validate that file descriptors have valid formats
+     // Even empty catalog entries should have a valid format
+
+     const uint8_t maxFileCount = std::min(TRD_MAX_FILES, volumeSector->fileCount);
+     uint8_t descriptorsChecked = 0;
+
+     for (uint8_t sectorIdx = 0; sectorIdx < 8 && descriptorsChecked < maxFileCount; sectorIdx++)
+     {
+         uint8_t* catalogSector = track0->getDataForSector(sectorIdx);
+         if (!catalogSector)
+             continue;
+
+         // Check each file descriptor in this sector
+         for (int entryIdx = 0; entryIdx < 16 && descriptorsChecked < maxFileCount; entryIdx++)
+         {
+             uint8_t* descriptorData = catalogSector + (entryIdx * sizeof(TRDFile));
+             TRDFile* descriptor = (TRDFile*)descriptorData;
+
+             // Filename byte 0 can be any (Bit 7 set for deleted file)
+             // Filename (bytes 1-7) should contain printable chars (32-127)
+             // or be padded with spaces (32)
+             for (int i = 1; i < 8; i++)
+             {
+                 uint8_t chr = descriptor->name[i];
+                 if (chr != 32 && (chr < 32 || chr > 127))
+                 {
+                     std::string filename((char*)descriptor->name, 8);
+                     TRDValidationRecord record =
+                     {
+                         .message = StringHelper::Format("Invalid file name: %s at index <%d>", filename, descriptorsChecked),
+                         .type = INVALID_FILE_NAME,
+                         .track = 0,
+                         .sector = sectorIdx,
+                         .fileIndex = descriptorsChecked
+                     };
+                     report.errors.push_back(record);
+
+                     report.isValid = false;
+                     break;
+                 }
+             }
+
+             // Start track should be reasonable
+             uint8_t startTrack = descriptor->startTrack;
+             if (startTrack >= expectedTracks)
+             {
+                 std::string filename((char*)descriptor->name, 8);
+                 TRDValidationRecord record =
+                 {
+                     .message = StringHelper::Format("Invalid start track %d for the file: %s at index <%d>", startTrack, filename, descriptorsChecked),
+                     .type = INVALID_START_TRACK,
+                     .track = 0,
+                     .sector = sectorIdx,
+                     .fileIndex = descriptorsChecked
+                 };
+                 report.errors.push_back(record);
+
+                 report.isValid = false;
+             }
+
+             // Start sector should be reasonable
+             uint16_t startSector = descriptor->startSector;
+             if (startSector >= TRD_SECTORS_PER_TRACK)
+             {
+                 std::string filename((char*)descriptor->name, 8);
+                 TRDValidationRecord record =
+                 {
+                     .message = StringHelper::Format("Invalid start sector %d for the file: %s at index <%d>", startSector, filename, descriptorsChecked),
+                     .type = INVALID_START_SECTOR,
+                     .track = 0,
+                     .sector = sectorIdx,
+                     .fileIndex = descriptorsChecked
+                 };
+                 report.errors.push_back(record);
+
+                 report.isValid = false;
+             }
+
+             descriptorsChecked++;
+         }
+     }
+
+     if (report.errors.size() == 0)
+         report.isValid = true;
+
+     return report.isValid;
+ }
+
+
+ bool LoaderTRD::validateEmptyTRDOSImage(DiskImage* diskImage)
+ {
+     TRDValidationReport report;
+
+     return validateEmptyTRDOSImage(diskImage, report);
+ }
+
+ bool LoaderTRD::validateEmptyTRDOSImage(DiskImage* diskImage, TRDValidationReport& report)
+ {
+     bool result = validateTRDOSImage(diskImage, report);
+    if (!result)
+    {
+        report.isValid = false;
+        return false;
+    }
+
+    // Get track 0
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    if (!track0)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "Track 0 data unavailable",
+            .type = TRACK_DATA_NULL
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+        
+        return false;
+    }
+
+    // Get volume sector (track 0, sector 8)
+    uint8_t* volumeSectorData = track0->getDataForSector(TRD_VOLUME_SECTOR);
+    if (!volumeSectorData)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "Volume sector data unavailable",
+            .type = SECTOR_DATA_NULL,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    TRDVolumeInfo* volumeSector = (TRDVolumeInfo*)volumeSectorData;
+
+    // Check files count. Should 0 for empty disk
+    uint8_t fileCount = volumeSector->fileCount;
+    if (fileCount != 0)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "File count is not zero for empty disk",
+            .type = INVALID_FILE_COUNT,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    // Check deleted files count
+    uint8_t deletedFiles = volumeSector->deletedFileCount;
+    if (deletedFiles != 0)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "Deleted files count is not zero for empty disk",
+            .type = INVALID_DELETED_FILE_COUNT,
+            .track = 0,
+             .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    // Check free sectors counter (should be reasonable for a disk)
+    uint16_t freeSectors = volumeSector->freeSectorCount;
+
+    // Check disk type
+    uint8_t diskType = volumeSector->diskType;
+    if (diskType != DS_80 && diskType != DS_40 && diskType != SS_80 && diskType != SS_40)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "Invalid disk type",
+            .type = INVALID_DISK_TYPE,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    uint16_t expectedFreeSectors = getFreeSectorCountForDiskType( volumeSector->diskType );
+
+    if (freeSectors != expectedFreeSectors)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "Free sectors count does not match expected value",
+            .type = INVALID_FREE_SECTORS_COUNT,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    // Check the first free track and sector
+    uint8_t firstFreeTrack = volumeSector->firstFreeTrack;
+    if (firstFreeTrack != 1)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "First free track is not 1",
+            .type = INVALID_FIRST_FREE_TRACK,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    uint8_t firstFreeSector = volumeSector->firstFreeSector;
+    if (firstFreeSector != 0)
+    {
+        TRDValidationRecord record =
+        {
+            .message = "First free sector is not 0",
+            .type = INVALID_FIRST_FREE_SECTOR,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
+    }
+
+    if (report.errors.size() == 0)
+        report.isValid = true;
+
+     return report.isValid;
+ }
+ /// endregion </Methods>
+
+/// region <Helper methods>
+uint8_t LoaderTRD::getTrackNoFromImageSize(size_t filesize)
+{
+    uint8_t result = static_cast<uint8_t>(filesize / TRD_FULL_TRACK_SIZE);     // Full cylinders (both sides)
+    result += filesize % (TRD_FULL_TRACK_SIZE) ? 1 : 0;  // Partially filled cylinders
+
+    return result;
+}
+
+void LoaderTRD::geometryForFile(const uint8_t* buffer, size_t fileSize, uint8_t& cylinders, uint8_t& sides)
+{
+    constexpr size_t kDiskTypeOffset = TRD_VOLUME_SECTOR * TRD_SECTOR_SIZE + 0xE3;
+    if (buffer && fileSize > kDiskTypeOffset)
+    {
+        switch (buffer[kDiskTypeOffset])
+        {
+            case DS_80: cylinders = 80; sides = 2; break;
+            case DS_40: cylinders = 40; sides = 2; break;
+            case SS_80: cylinders = 80; sides = 1; break;
+            case SS_40: cylinders = 40; sides = 1; break;
+            default: cylinders = 0; sides = 0; break;
+        }
+        if (cylinders && fileSize <= static_cast<size_t>(cylinders) * sides * TRD_TRACK_SIZE)
+            return;
+    }
+
+    // No TR-DOS type the file fits: the classic double-sided layout
+    sides = 2;
+    const size_t full = (fileSize + TRD_FULL_TRACK_SIZE - 1) / TRD_FULL_TRACK_SIZE;
+    cylinders = static_cast<uint8_t>(std::min<size_t>(full, 255));
+    if (fileSize != 40 * TRD_FULL_TRACK_SIZE && cylinders < 80)
+        cylinders = 80;
+}
+
+bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize)
+{
+    bool result = false;
+    const uint8_t cylinders = diskImage ? diskImage->getCylinders() : 0;
+    // TRD stores logical tracks in order (cylinder-major, side-minor), the
+    // same order as DiskImage::getTrack; a short file fills the first tracks
+    const size_t fileTracks = (fileSize + TRD_TRACK_SIZE - 1) / TRD_TRACK_SIZE;
+    const uint8_t tracks = static_cast<uint8_t>(
+        std::min<size_t>(fileTracks, diskImage ? static_cast<size_t>(cylinders) * diskImage->getSides() : 0));
+
+    /// region <Sanity checks>
+    if (diskImage == nullptr || buffer == nullptr || fileSize == 0)
+    {
+        return result;
+    }
+
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS)
+    {
+        return result;
+    }
+
+    /// endregion </Sanity checks>
+
+    for (uint8_t trackNo = 0; trackNo < tracks; trackNo++)
+    {
+        DiskImage::Track& track = *diskImage->getTrack(trackNo);
+
+        for (uint8_t sectorNo = 0; sectorNo < TRD_SECTORS_PER_TRACK; sectorNo++)
+        {
+            size_t offset = trackNo * TRD_TRACK_SIZE + sectorNo * TRD_SECTOR_SIZE;
+            if (offset + TRD_SECTOR_SIZE > fileSize)
+                break;  // the file ends inside this track
+            uint8_t* srcSector = buffer + offset;
+
+            // Sectors are addressed by their ID number (sectorNo + 1), independent of the physical interleave
+            DiskImage::Sector* dstSectorObj = track.getSector(sectorNo);
+            if (!dstSectorObj || !dstSectorObj->hasData || dstSectorObj->dataSize != TRD_SECTOR_SIZE)
+            {
+                continue;
+            }
+            uint8_t* dstSector = dstSectorObj->data;
+
+            // Transfer sector data
+            std::copy(srcSector, srcSector + TRD_SECTOR_SIZE, dstSector);
+
+            // Recalculate CRC for sector data block
+            dstSectorObj->recalculateDataCRC();
+        }
+    }
+
+    result = true;
+
+    return result;
+}
+
+void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType)
+{
+    DiskImage::Track* track = diskImage->getTrack(0);
+    DiskImage::Sector* sector = track->getSector(TRD_VOLUME_SECTOR);
+    if (!sector || !sector->hasData)
+    {
+        return;
+    }
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
+
+    // Every track but track 0 (the catalogue) is free: the standard 40 / 80-track counts, and more on 81-86
+    const uint16_t freeSectorCount = static_cast<uint16_t>(
+        (static_cast<unsigned>(diskImage->getCylinders()) * diskImage->getSides() - 1) * TRD_SECTORS_PER_TRACK);
+
+    volumeInfo->trDOSSignature = TRD_SIGNATURE;
+    volumeInfo->diskType = diskType;
+    volumeInfo->freeSectorCount = freeSectorCount;
+    volumeInfo->firstFreeTrack = 1;
+    volumeInfo->firstFreeSector = 0;
+    volumeInfo->deletedFileCount = 0;
+
+    // Similar to: volumeInfo->label = "        ";
+    std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), uint8_t{0x20});
+    std::fill(std::begin(volumeInfo->reserved2), std::end(volumeInfo->reserved2), uint8_t{0x20});
+
+    // Update sector data CRC
+    sector->recalculateDataCRC();
+}
+
+/// endregion </Helper methods>
+}  // namespace unrealdisk

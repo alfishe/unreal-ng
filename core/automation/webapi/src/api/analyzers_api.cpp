@@ -1,6 +1,7 @@
 // WebAPI Analyzer Management Implementation
 // Implements /analyzers endpoints - 2026-01-21
 
+#include <optional>
 #include <emulator/sound/audiomixer.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
@@ -11,6 +12,8 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/coverage/coverageexport.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <emulator/sound/soundmanager.h>
 #include <json/json.h>
@@ -421,6 +424,133 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
             ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
         }
     }
+    else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(analyzerManager->getAnalyzer(name)))
+    {
+        // OS-aware analyzers (nedoos, dss): one branch for every OS
+        auto events = osAnalyzer->getOsEvents();
+        Json::Value eventsJson(Json::arrayValue);
+
+        size_t start = (events.size() > limit) ? events.size() - limit : 0;
+        for (size_t i = start; i < events.size(); i++)
+        {
+            Json::Value ev;
+            ev["timestamp"] = static_cast<Json::UInt64>(events[i].timestamp);
+            ev["frame_number"] = static_cast<Json::UInt64>(events[i].frameNumber);
+            ev["kind"] = OsEventKindName(events[i].kind);
+            ev["severity"] = OsSeverityName(events[i].severity);
+            ev["formatted"] = events[i].format();
+            ev["pc"] = events[i].pc;
+            if (events[i].caller != 0)
+            {
+                ev["caller"] = events[i].caller;
+            }
+            if (events[i].taskId != 0)
+            {
+                ev["task_id"] = events[i].taskId;
+            }
+            if (events[i].syscall != 0)
+            {
+                ev["syscall"] = events[i].syscall;
+            }
+            if (events[i].arg16 != 0)
+            {
+                ev["arg16"] = events[i].arg16;
+            }
+            if (!events[i].message.empty())
+            {
+                ev["message"] = events[i].message;
+            }
+            if (!events[i].detail.empty())
+            {
+                ev["detail"] = events[i].detail;
+            }
+            eventsJson.append(ev);
+        }
+
+        ret["events"] = eventsJson;
+        ret["total_events"] = static_cast<Json::UInt64>(events.size());
+        ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
+
+        OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+        ret["os"] = snapshot.os;
+        ret["detected"] = snapshot.detected;
+        ret["profile"] = snapshot.profile;
+
+        if (req->getParameter("include") == "snapshot")
+        {
+            Json::Value snapJson;
+            snapJson["os"] = snapshot.os;
+            snapJson["detected"] = snapshot.detected;
+            snapJson["profile"] = snapshot.profile;
+
+            Json::Value tasksJson(Json::arrayValue);
+            for (const auto& task : snapshot.tasks)
+            {
+                Json::Value t;
+                t["id"] = task.id;
+                t["parent"] = task.parent;
+                t["flags"] = task.flags;
+                t["mainpg"] = task.mainpg;
+                if (!task.name.empty())
+                {
+                    t["name"] = task.name;
+                }
+                if (task.stdinFd != 0)
+                {
+                    t["stdin"] = task.stdinFd;
+                    t["stdout"] = task.stdoutFd;
+                    t["stderr"] = task.stderrFd;
+                }
+                t["last_time"] = task.lastTime;
+                tasksJson.append(t);
+            }
+            snapJson["tasks"] = tasksJson;
+
+            Json::Value blocksJson(Json::arrayValue);
+            for (const auto& block : snapshot.blocks)
+            {
+                Json::Value b;
+                b["index"] = block.index;
+                b["owner"] = block.owner;
+                blocksJson.append(b);
+            }
+            snapJson["blocks"] = blocksJson;
+
+            Json::Value handlesJson(Json::arrayValue);
+            for (const auto& handle : snapshot.handles)
+            {
+                Json::Value h;
+                h["index"] = handle.index;
+                h["owner"] = handle.owner;
+                if (!handle.name.empty())
+                {
+                    h["name"] = handle.name;
+                }
+                if (handle.size != 0)
+                {
+                    h["position"] = static_cast<Json::UInt64>(handle.position);
+                    h["size"] = static_cast<Json::UInt64>(handle.size);
+                }
+                handlesJson.append(h);
+            }
+            snapJson["handles"] = handlesJson;
+
+            Json::Value pipesJson(Json::arrayValue);
+            for (const auto& pipe : snapshot.pipes)
+            {
+                Json::Value p;
+                p["handle"] = pipe.handle;
+                p["open_sides"] = pipe.openSides;
+                p["reader"] = pipe.reader;
+                p["lines"] = pipe.lines;
+                p["queued"] = pipe.queued;
+                pipesJson.append(p);
+            }
+            snapJson["pipes"] = pipesJson;
+
+            ret["snapshot"] = snapJson;
+        }
+    }
     else
     {
         ret["events"] = Json::Value(Json::arrayValue);
@@ -478,6 +608,10 @@ void EmulatorAPI::clearAnalyzerEvents(const HttpRequestPtr& req, std::function<v
         {
             trdos->clear();
         }
+    }
+    else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(analyzerManager->getAnalyzer(name)))
+    {
+        osAnalyzer->clearOsEvents();
     }
 
     Json::Value ret;
@@ -932,26 +1066,17 @@ bool parseAddressParam(const std::string& value, uint16_t& out)
     }
 }
 
-/// Pause the emulator around subscription mutations (race-free activation)
+/// Hold the CPU around subscription mutations (race-free activation)
 struct ScopedPause
 {
     Emulator* emulator;
-    bool wasRunning;
+    std::optional<Emulator::CpuHold> hold;
 
-    explicit ScopedPause(Emulator* emu)
-        : emulator(emu), wasRunning(emu && emu->IsRunning() && !emu->IsPaused())
+    // The CPU held for the analyzer change (Emulator::CpuHold); the pause is left as it was
+    explicit ScopedPause(Emulator* emu) : emulator(emu)
     {
-        if (wasRunning)
-        {
-            emulator->Pause(false);
-            emulator->WaitForPauseConfirmation(1000);
-        }
-    }
-
-    ~ScopedPause()
-    {
-        if (wasRunning)
-            emulator->Resume(false);
+        if (emulator)
+            hold.emplace(*emulator, "analyzer");
     }
 };
 }  // namespace
@@ -1337,6 +1462,82 @@ void EmulatorAPI::getCoverageGaps(const HttpRequestPtr& req, std::function<void(
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/coverage/export
+/// @brief The coverage as a file another tool reads (coverageexport.h): body {"format": "skoolkit-map", "start",
+/// "end" (integer or "0x..." string), "path" (write the file; else the map comes back in "map"), "merge" (add the
+/// addresses of the file at path)}
+void EmulatorAPI::exportCoverage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    const auto reply = [&](HttpStatusCode status, const Json::Value& body) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(status);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        reply(HttpStatusCode::k404NotFound, error);
+        return;
+    }
+
+    // The body's members as the options of coverageexport::Export (numbers and booleans as their text)
+    coverageexport::Options options;
+    auto json = req->getJsonObject();
+    if (json && json->isObject())
+    {
+        for (const std::string& name : json->getMemberNames())
+        {
+            const Json::Value& value = (*json)[name];
+            if (value.isBool())
+                options[name] = value.asBool() ? "true" : "false";
+            else if (value.isIntegral())
+                options[name] = std::to_string(value.asInt64());
+            else if (value.isString())
+                options[name] = value.asString();
+            else if (!value.isNull())
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = name + " is no string, number or boolean";
+                reply(HttpStatusCode::k400BadRequest, error);
+                return;
+            }
+        }
+    }
+
+    const coverageexport::Result result = coverageexport::Export(findCoverageAnalyzer(emulator.get()), options);
+    if (!result.Ok())
+    {
+        Json::Value error;
+        const bool missing = result.error == coverageexport::Error::NotAvailable;
+        error["error"] = missing ? "Internal Error" : "Bad Request";
+        error["message"] = result.message;
+        reply(missing ? HttpStatusCode::k500InternalServerError : HttpStatusCode::k400BadRequest, error);
+        return;
+    }
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["success"] = true;
+    ret["format"] = result.format;
+    ret["start"] = StringHelper::Format("0x%04X", result.start);
+    ret["end"] = StringHelper::Format("0x%04X", result.end);
+    ret["count"] = static_cast<Json::UInt64>(result.count);
+    if (result.path.empty())
+        ret["map"] = result.text;
+    else
+    {
+        ret["path"] = result.path;
+        ret["merged"] = static_cast<Json::UInt64>(result.merged);
+    }
+    ret["message"] = result.message;
+    reply(HttpStatusCode::k200OK, ret);
 }
 
 /// endregion </Coverage analyzer endpoints>

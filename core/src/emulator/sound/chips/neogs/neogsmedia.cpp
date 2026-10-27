@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -29,11 +30,6 @@ bool neogsFitted(EmulatorContext* context)
     return context && context->pSoundManager && context->pSoundManager->fittedGeneralSoundKind() == GSTypeKind::NGS;
 }
 
-bool recording(EmulatorContext* context)
-{
-    return context->pTimeTravelManager && context->pTimeTravelManager->IsRecording();
-}
-
 /// Carry `action` out on the machine's thread, on the card fitted by then
 NeoGSMediaResult onMachineThread(EmulatorContext* context, std::function<bool(GeneralSoundCard*)> action)
 {
@@ -45,16 +41,16 @@ NeoGSMediaResult onMachineThread(EmulatorContext* context, std::function<bool(Ge
         if (context->pSoundManager)
             context->pSoundManager->publishGeneralSoundSlot(); // the SD image may have changed
     };
-    if (!context->pTimeTravelManager)
+    if (!context->pTimeTravelHooks)
     {
         task(); // no manager (bare contexts): the caller is the only thread
         return *result ? NeoGSMediaResult::Done : NeoGSMediaResult::Failed;
     }
-    switch (context->pTimeTravelManager->SubmitMachineTask(task))
+    switch (context->pTimeTravelHooks->SubmitMachineTask(task))
     {
-        case ttd::TimeTravelManager::MachineTaskResult::RanNow:
+        case ttd::TTDMachineTaskResult::RanNow:
             return *result ? NeoGSMediaResult::Done : NeoGSMediaResult::Failed;
-        case ttd::TimeTravelManager::MachineTaskResult::Queued:
+        case ttd::TTDMachineTaskResult::Queued:
             return NeoGSMediaResult::Queued;
         default:
             return NeoGSMediaResult::ReplayOwnsInput;
@@ -69,23 +65,25 @@ bool machineRunning(EmulatorContext* context)
     return emulator && emulator->IsRunning() && !emulator->IsPaused();
 }
 
-NeoGSMediaResult viaMediaManager(bool running, const MediaResult& result)
+NeoGSMediaResult viaMediaManager(MediaManager& manager, bool running, const MediaResult& result)
 {
     if (!result.Ok())
     {
         LOGWARNING("NeoGS: SD card request refused: %s", result.message.c_str());
-        return NeoGSMediaResult::Failed;
+        return result.error == MediaError::Recording ? NeoGSMediaResult::TtdRecording : NeoGSMediaResult::Failed;
     }
-    return running ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
+    // Still waiting: the loop runs, or a recording takes the change at the next frame boundary (M3)
+    const std::optional<SlotInfo> info = manager.Info(SoundChip_NeoGS::SD_SLOT_ID);
+    return running || (info && info->pending) ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
 }
 } // namespace
 
 NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::string& path)
 {
+    // The SD card is a medium: the coordinator's media rules decide in the media manager (D43). A TTD re-execution
+    // owns the machine meanwhile (an input guard, not a rule)
     if (!neogsFitted(context))
         return NeoGSMediaResult::NoNeoGS;
-    if (recording(context))
-        return NeoGSMediaResult::TtdRecording;
     if (context->ttdReplayActive)
         return NeoGSMediaResult::ReplayOwnsInput;
     if (path.empty())
@@ -103,7 +101,7 @@ NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::strin
         options.access = SoundChip_NeoGS::configuredSdAccess(context->config.ngs);
         options.disposition = Disposition::Discard; // automation's sd_insert always replaced the card
         const bool running = machineRunning(context);
-        return viaMediaManager(running, manager->Insert(SoundChip_NeoGS::SD_SLOT_ID, source, options));
+        return viaMediaManager(*manager, running, manager->Insert(SoundChip_NeoGS::SD_SLOT_ID, source, options));
     }
     return onMachineThread(context, [resolved](GeneralSoundCard* gs) { return gs->insertSdCard(resolved); });
 }
@@ -112,8 +110,6 @@ NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
 {
     if (!neogsFitted(context))
         return NeoGSMediaResult::NoNeoGS;
-    if (recording(context))
-        return NeoGSMediaResult::TtdRecording;
     if (context->ttdReplayActive)
         return NeoGSMediaResult::ReplayOwnsInput;
     if (MediaManager* manager = context->pMediaManager; manager && manager->HasSlot(SoundChip_NeoGS::SD_SLOT_ID))
@@ -121,7 +117,7 @@ NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
         EjectOptions options;
         options.disposition = Disposition::Discard;
         const bool running = machineRunning(context);
-        return viaMediaManager(running, manager->Eject(SoundChip_NeoGS::SD_SLOT_ID, options));
+        return viaMediaManager(*manager, running, manager->Eject(SoundChip_NeoGS::SD_SLOT_ID, options));
     }
     return onMachineThread(context, [](GeneralSoundCard* gs) { return gs->ejectSdCard(); });
 }
@@ -139,7 +135,7 @@ const char* NeoGSMediaResultText(NeoGSMediaResult r)
     {
         case NeoGSMediaResult::Done: return "done";
         case NeoGSMediaResult::Queued: return "queued: carried out at the next instruction boundary (while paused: when execution continues)";
-        case NeoGSMediaResult::NoNeoGS: return "only the NeoGS card (GSType=NGS) has an SD slot and a flash chip";
+        case NeoGSMediaResult::NoNeoGS: return "only the NeoGS card (a neogs slot card) has an SD slot and a flash chip";
         case NeoGSMediaResult::TtdRecording: return "refused: a TTD recording is running - the machine's configuration is fixed while recording";
         case NeoGSMediaResult::ReplayOwnsInput: return "refused: a TTD replay owns the machine";
         case NeoGSMediaResult::NoPath: return "needs an SD image path";

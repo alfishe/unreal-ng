@@ -347,6 +347,45 @@ TEST_F(DebugKeyboardManager_test, OnFrame_TypeTextCompletes)
     EXPECT_FALSE(_keyboardManager->IsSequenceRunning());
 }
 
+namespace
+{
+    // Runs the queued sequence to its end; counts the frames ENTER goes down
+    int CountEnterPresses(DebugKeyboardManager* keys)
+    {
+        int presses = 0;
+        bool wasDown = false;
+        for (int i = 0; i < 200 && keys->IsSequenceRunning(); i++)
+        {
+            keys->OnFrame();
+            const bool down = keys->IsKeyPressed(ZXKEY_ENTER);
+            if (down && !wasDown)
+                presses++;
+            wasDown = down;
+        }
+        return presses;
+    }
+}
+
+TEST_F(DebugKeyboardManager_test, TypeText_LineEndPressesEnter)
+{
+    EXPECT_TRUE(_keyboardManager->TypeText("G,,1:TEST\n", 1).empty());
+    EXPECT_EQ(CountEnterPresses(_keyboardManager), 1);
+}
+
+TEST_F(DebugKeyboardManager_test, TypeText_CrLfIsOneEnter)
+{
+    EXPECT_TRUE(_keyboardManager->TypeText("A\r\nB\rC\n", 1).empty());
+    EXPECT_EQ(CountEnterPresses(_keyboardManager), 3);
+}
+
+TEST_F(DebugKeyboardManager_test, TypeText_UntypeableCharacterRefusesTheWholeText)
+{
+    const std::string untypeable = _keyboardManager->TypeText("A\tB~", 1);
+
+    EXPECT_EQ(untypeable, std::string("\t~"));
+    EXPECT_FALSE(_keyboardManager->IsSequenceRunning());
+}
+
 // ========================================================================
 // TR-DOS Command Tests
 // ========================================================================

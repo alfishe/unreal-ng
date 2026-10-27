@@ -38,6 +38,9 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     # portdecoder.cpp); clang, MSVC and CI's gcc 15 compile the same code clean
     if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
         add_compile_options(-Wno-free-nonheap-object -Wno-stringop-overflow)
+        # Same family at -O2 (RelWithDebInfo; Release's -O3 is clean): -Warray-bounds on
+        # std::string concatenation and std::copy inside libstdc++ (char_traits::copy, __copy_move)
+        add_compile_options(-Wno-error=array-bounds)
     endif ()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Clang-specific flags
@@ -50,6 +53,7 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
+include(${ROOT_DIR}/cmake/RuntimeData.cmake)
 
 # liblzma
 add_subdirectory(3rdparty/liblzma)
@@ -88,6 +92,11 @@ if (NOT TARGET miniz)
     add_subdirectory(3rdparty/miniz)
 endif()
 
+# rapidyaml — YAML / JSON parser of the core and of core/controllers (see its CMakeLists.txt)
+if (NOT TARGET rapidyaml)
+    add_subdirectory(3rdparty/rapidyaml)
+endif()
+
 # libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
 # 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
 # root file — so every entry point that builds core (root, unreal-qt,
@@ -107,6 +116,45 @@ if (NOT TARGET sam2695)
     add_subdirectory(3rdparty/sam2695 EXCLUDE_FROM_ALL)
 endif()
 
+# eve-emu - the FT812 of the TS-Conf VDAC2 card. A separate static library (docs/inprogress/2026-10-01-tsconf-vdac2/
+# eve-emu-architecture.md), developed in its own repository and vendored at 3rdparty/eve-emu (VENDORED.md there);
+# EVE_EMU_DIR points at another checkout (a developer working on both). Declared here, like opl4, so every entry point
+# that builds core (root, unreal-qt, unreal-videowall, the automation libraries) has the card: the option used to live
+# in the root file, and the builds configured from unreal-qt/ (docker/linux/build.sh, the CI test job) had no VDAC2.
+# With ENABLE_VDAC2=OFF a configuration asking for the card ([MISC] TS_VDAC2=1, the TSL-VDAC2 machine) fails to load.
+option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
+set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/eve-emu" CACHE PATH "eve-emu checkout")
+if (ENABLE_VDAC2 AND NOT TARGET eve::emu)
+    if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
+                "Set EVE_EMU_DIR to an eve-emu checkout, or set ENABLE_VDAC2=OFF")
+    endif()
+    # Built-in decoders for CMD_INFLATE / CMD_LOADIMAGE (architecture decision A3)
+    set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
+    set(EVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(EVE_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(EVE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    message(STATUS ">>> VDAC2: eve-emu from ${EVE_EMU_DIR}")
+    add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
+endif()
+
+# unreal-disk - floppy disk images (track / sector model, format drivers, TR-DOS file system), in-house at
+# 3rdparty/unreal-disk, std-lib only, own CMakeLists.txt (with TESTS: unreal-disk-tests); before unreal-asm, whose tools use it.
+# Design: docs/inprogress/2026-10-10-unreal-disk/
+if (NOT TARGET unreal-disk)
+    add_subdirectory(3rdparty/unreal-disk)
+endif()
+
+# unreal-asm - cross-assembler source library (codecs, conversion, symbols), in-house at 3rdparty/unreal-asm, std-lib
+# only, own CMakeLists.txt: the library, the zxasm CLI, the examples and (with TESTS) unreal-asm-tests, which the
+# emulator's test-parallel runs. Design: docs/inprogress/2026-10-05-unreal-asm/
+if (NOT TARGET unreal-asm)
+    add_subdirectory(3rdparty/unreal-asm)
+endif()
+
+
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
@@ -114,9 +162,13 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-asm/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-disk/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/rapidyaml/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (ENABLE_VDAC2 below)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/emulator/coordinator/" FALSE OUTVAR CPP_FILES) # Own library, own include path
 # OS-specific implementations (src/platform/<os>/): only the host's own.
 # posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them
 if (WIN32)
@@ -165,16 +217,12 @@ set_source_files_properties(${UNREAL_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADE
 file (GLOB Z84C15_FILES ${SOURCE_DIR}/3rdparty/z84c15/*.cpp)
 set_source_files_properties(${Z84C15_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
-# rapidyaml (single-header YAML / JSON parser): its definitions compile in one
-# translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
-# -Wall -Wextra -Werror and must not be force-fed stdafx.h
-set(RYML_IMPL_CPP ${SOURCE_DIR}/3rdparty/rapidyaml/ryml_impl.cpp)
-set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-if (MSVC)
-    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "/w")
-else()
-    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "-w")
-endif()
+# unreal-next-z80 (the ZX Spectrum Next's Z80N CPU library: a fork of the z84c15 core without the chip, plus the
+# Z80N instructions): the same treatment; namespace Z80nLib, C API prefix Z80nCpu
+# (see 3rdparty/unreal-next-z80/README.md)
+file (GLOB UNREAL_NEXT_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-next-z80/*.cpp)
+set_source_files_properties(${UNREAL_NEXT_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
@@ -213,6 +261,15 @@ if (ENABLE_RECORDING)
     target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::recording)
 endif()
 
+# Host game controllers (core/controllers, controller manager C2): the same pattern as recording
+option(ENABLE_CONTROLLERS "Enable host game controllers" ON)
+if (ENABLE_CONTROLLERS)
+    if (NOT TARGET unrealng::controllers)
+        add_subdirectory("${ROOT_DIR}/core/controllers" "${CMAKE_CURRENT_BINARY_DIR}/controllers")
+    endif()
+    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::controllers)
+endif()
+
 # Set include paths for compiler
 
 # Set include paths for compiler.
@@ -247,6 +304,10 @@ target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${SOURCE_DIR}/3rdparty/
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 
 
+# The machine state coordinator: its own library, so its include path holds only its own directory
+add_subdirectory(emulator/coordinator)
+target_link_libraries(${PROJECT_NAME} PUBLIC core-coordinator)
+
 # Link lzma library
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 
@@ -257,9 +318,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
+target_link_libraries(${PROJECT_NAME} PUBLIC rapidyaml)
 
 # Host-side TLS for emulated devices whose firmware speaks TLS itself (the ZiFi ESP32-S3's HTTPS):
-# common/network/hosttls.cpp with OpenSSL, the library the WebAPI already uses. Without OpenSSL (or with
+# common/network/hosttls.cpp with OpenSSL, the project's only TLS user (the WebAPI is plain HTTP). Without OpenSSL (or with
 # UNREAL_HOST_TLS=OFF, e.g. release packages that drop the dependency) the device's TLS connect fails as on a
 # module whose server is unreachable. PRIVATE: only hosttls.cpp includes OpenSSL
 option(UNREAL_HOST_TLS "Host-side TLS for emulated TLS clients (needs OpenSSL)" ON)
@@ -272,6 +334,13 @@ if (UNREAL_HOST_TLS)
     if (OpenSSL_FOUND)
         target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
         target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_HOST_TLS=1)
+        # The platform's trust store (hosttls.cpp: the host's root certificates)
+        if (APPLE)
+            find_library(SECURITY_LIB Security REQUIRED)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${SECURITY_LIB})
+        elseif (WIN32)
+            target_link_libraries(${PROJECT_NAME} PRIVATE crypt32)
+        endif()
         message(STATUS "[core] host TLS: OpenSSL ${OPENSSL_VERSION}")
     else()
         message(STATUS "[core] host TLS: off (OpenSSL not found)")
@@ -280,6 +349,11 @@ endif()
 
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
+# The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade); public, as the
+# facade hands out its symbol sets
+target_link_libraries(${PROJECT_NAME} PUBLIC unreal-asm unreal-disk)
+# The disk files of the assembler surfaces: the code zxasm uses (unreal-asm tools/common/diskfiles.h)
+target_link_libraries(${PROJECT_NAME} PRIVATE unreal-asm-tools-common)
 
 # Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
 # include opl4 headers or call the library — public headers such as
@@ -300,7 +374,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE sam2695)
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_SAM2695=1)
 
 
-# TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The
+# TS-Conf VDAC2 card: the FT812 library (eve-emu above, ENABLE_VDAC2). The
 # gate is PUBLIC for the same reason as UNREALNG_HAVE_OPL4: core-tests compiles core
 # sources itself and must see the same class layouts
 if (ENABLE_VDAC2)
@@ -332,10 +406,18 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 # Note: Recording-specific Windows libs (d3d11, dxgi, mfplat, mfuuid, mf, ole32)
 # are now linked via the recording library (core/recording/CMakeLists.txt)
 if (WIN32 AND MINGW)
-    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32 iphlpapi)
+    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ shlwapi shell32 ws2_32 iphlpapi psapi)
 endif()
 
 if (WIN32 AND MSVC)
-    # ws2_32: sockets (host network bridge); iphlpapi: IcmpSendEcho (ping through the host)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32 iphlpapi)
+    # ws2_32: sockets (host network bridge); iphlpapi: IcmpSendEcho (ping through the host); shell32: the Recycle Bin (HostTrash);
+    # psapi: GetProcessMemoryInfo (common/processstats.cpp, the monitoring planes)
+    target_link_libraries(${PROJECT_NAME} PRIVATE shlwapi shell32 ws2_32 iphlpapi psapi)
+endif()
+
+# Media signatures (core/swsignature, controller manager D16): a library on top of the core (it uses the core's
+# loaders), so core does not link it; automation, unreal-qt and core-tests do. Added here for the warning flags above
+option(ENABLE_SWSIGNATURE "Enable the media signature library" ON)
+if (ENABLE_SWSIGNATURE AND NOT TARGET unrealng::swsignature)
+    add_subdirectory("${ROOT_DIR}/core/swsignature" "${CMAKE_CURRENT_BINARY_DIR}/swsignature")
 endif()

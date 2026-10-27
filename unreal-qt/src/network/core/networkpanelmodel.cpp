@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "emulator/io/keyboard/atm2kbc.h"
+#include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/uart16550.h"
 
 namespace
@@ -469,4 +470,19 @@ std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network, const Stat
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+NetworkFormApply NetworkFormSplitCards(const NetworkForm& before, const NetworkForm& after)
+{
+    NetworkFormApply out;
+    out.cardChange = before.zxNetUsb != after.zxNetUsb || before.zxWifi != after.zxWifi;
+    out.zxBusCards = static_cast<uint8_t>((after.zxNetUsb ? networkspec::kCardZxNetUsb : 0) |
+                                          (after.zxWifi ? networkspec::kCardZxWifi : 0));
+    for (const auto& change : NetworkFormChanges(before, after))
+    {
+        if (change.first == "card" && before.atm2IoEsp == after.atm2IoEsp)
+            continue;   // the ZX-bus cards go through the slots; the value is in force after the restart
+        out.rest.push_back(change);
+    }
+    return out;
 }

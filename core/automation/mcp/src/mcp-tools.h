@@ -27,6 +27,8 @@ struct ToolResult
     std::string text;             // Human/LLM-readable summary (content[0].text)
     Json::Value structured = Json::Value(); // Machine-readable payload (structuredContent), null if none
     bool isError = false;
+    std::string imageData;        // Base64 picture: sent as an MCP image content block (the model sees the image)
+    std::string imageMimeType;    // e.g. "image/png"; required with imageData
 
     static ToolResult Ok(const std::string& text, Json::Value structured = Json::Value())
     {
@@ -48,6 +50,11 @@ struct ToolResult
 /// endregion </ToolResult>
 
 /// region <ToolRegistry>
+
+/// Argument every tool takes (added to each schema by Register, read and removed by the dispatcher): who the reply is
+/// for. "text" (default): content[] holds the human-readable text only. "json": content[] also carries the
+/// structuredContent serialized as JSON, for clients that hand the model only content[]
+inline constexpr const char* kResponseFormatArg = "response_format";
 
 using ToolCallback = std::function<void(ToolResult result)>;
 
@@ -81,7 +88,7 @@ struct ToolDefinition
 class ToolRegistry
 {
 public:
-    /// Registers a tool; schema must be a JSON Schema object for the tool input
+    /// Registers a tool; schema must be a JSON Schema object for the tool input. Adds the response_format property
     void Register(const std::string& name, const std::string& description, Json::Value inputSchema, ToolHandler handler);
 
     const ToolDefinition* Find(const std::string& name) const;

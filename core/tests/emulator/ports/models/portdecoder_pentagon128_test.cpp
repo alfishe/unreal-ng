@@ -57,6 +57,9 @@ void PortDecoder_Pentagon128_Test::TearDown()
         delete _portDecoder;
         _portDecoder = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>

@@ -1,0 +1,2 @@
+DEFC start                           = $8000
+DEFC play                            = $8009

@@ -1,0 +1,569 @@
+{
+ "key": "megatron-v2-sdr",
+ "preset": "hdr/crt-sony-megatron-v2-default-sdr.slangp",
+ "passes": [
+  {
+   "source": "hdr/shaders/crt-sony-megatron-source-pass-v2.slang",
+   "alias": "SourceSDR",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": true,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "HDRMode": "uint",
+    "hcrt_colour_space": "float",
+    "hcrt_lcd_resolution": "float",
+    "hcrt_lcd_subpixel": "float",
+    "hcrt_colour_system": "float",
+    "hcrt_phosphor_set": "float",
+    "hcrt_white_temperature_D65": "float",
+    "hcrt_white_temperature_D93": "float",
+    "hcrt_brightness": "float",
+    "hcrt_contrast": "float",
+    "hcrt_saturation": "float",
+    "hcrt_gamma_in": "float",
+    "hcrt_gamma_cutoff": "float",
+    "hcrt_colour_boost_factor": "float"
+   }
+  },
+  {
+   "source": "hdr/shaders/crt-sony-megatron-v2.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": true,
+   "format": "R16G16B16A16Sfloat",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "HDRMode": "uint",
+    "BrightnessNits": "float",
+    "hcrt_r709_gamma_out": "float",
+    "hcrt_srgb_gamma_out": "float",
+    "hcrt_p3_gamma_out": "float",
+    "hcrt_adobe_gamma_out": "float",
+    "hcrt_r709_gamma_cutoff": "float",
+    "hcrt_srgb_gamma_cutoff": "float",
+    "hcrt_h_size": "float",
+    "hcrt_v_size": "float",
+    "hcrt_h_cent": "float",
+    "hcrt_v_cent": "float",
+    "hcrt_colour_space": "float",
+    "hcrt_max_nits": "float",
+    "hcrt_lcd_resolution": "float",
+    "hcrt_lcd_subpixel": "float",
+    "hcrt_red_vertical_convergence": "float",
+    "hcrt_green_vertical_convergence": "float",
+    "hcrt_blue_vertical_convergence": "float",
+    "hcrt_red_horizontal_convergence": "float",
+    "hcrt_green_horizontal_convergence": "float",
+    "hcrt_blue_horizontal_convergence": "float",
+    "hcrt_bloom_strength": "float",
+    "hcrt_crt_screen_type": "float",
+    "hcrt_crt_resolution": "float",
+    "hcrt_red_scanline_min": "float",
+    "hcrt_red_scanline_max": "float",
+    "hcrt_red_scanline_attack": "float",
+    "hcrt_green_scanline_min": "float",
+    "hcrt_green_scanline_max": "float",
+    "hcrt_green_scanline_attack": "float",
+    "hcrt_blue_scanline_min": "float",
+    "hcrt_blue_scanline_max": "float",
+    "hcrt_blue_scanline_attack": "float",
+    "hcrt_red_beam_sharpness": "float",
+    "hcrt_red_beam_attack": "float",
+    "hcrt_green_beam_sharpness": "float",
+    "hcrt_green_beam_attack": "float",
+    "hcrt_blue_beam_sharpness": "float",
+    "hcrt_blue_beam_attack": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "hcrt_title": {
+   "description": "SONY MEGATRON COLOUR VIDEO MONITOR",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_red_beam_sharpness": {
+   "description": "        Red Beam Sharpness",
+   "initial": 1.3,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.05
+  },
+  "hcrt_blue_scanline_min": {
+   "description": "        Blue Scanline Min",
+   "initial": 0.45,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_crt_physicals": {
+   "description": "CRT SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_green_scanline_max": {
+   "description": "        Green Scanline Max",
+   "initial": 0.9,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_developer_settings0": {
+   "description": "    VERTICAL SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_user_settings": {
+   "description": "YOUR DISPLAY'S SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_r709_gamma_out": {
+   "description": "    r709 Gamma",
+   "initial": 2.22,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_saturation": {
+   "description": "    Saturation",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_red_vertical_convergence": {
+   "description": "        Red Vertical Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_green_scanline_min": {
+   "description": "        Green Scanline Min",
+   "initial": 0.45,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_colour_system": {
+   "description": "    Colour System: r709 | PAL | NTSC-U | NTSC-J",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 3.0,
+   "step": 1.0
+  },
+  "hcrt_green_horizontal_convergence": {
+   "description": "        Green Horizontal Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_space6": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_brightness": {
+   "description": "    Brightness",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_gamma_in": {
+   "description": "    Gamma",
+   "initial": 2.22,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_colour_space": {
+   "description": "    Colour Space: r709 | sRGB | Adobe | DCI-P3 | r2020",
+   "initial": 2.0,
+   "minimum": 0.0,
+   "maximum": 4.0,
+   "step": 1.0
+  },
+  "hcrt_white_temperature_D65": {
+   "description": "    D65 White Temperature (Kelvin)",
+   "initial": 6504.0,
+   "minimum": 0.0,
+   "maximum": 18500.0,
+   "step": 100.0
+  },
+  "hcrt_blue_beam_attack": {
+   "description": "        Blue Beam Attack",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_blue_scanline_attack": {
+   "description": "        Blue Scanline Attack",
+   "initial": 0.6,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_h_cent": {
+   "description": "        Horizontal Center",
+   "initial": 0.0,
+   "minimum": -200.0,
+   "maximum": 200.0,
+   "step": 1.0
+  },
+  "hcrt_red_scanline_min": {
+   "description": "        Red Scanline Min",
+   "initial": 0.45,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_srgb_gamma_cutoff": {
+   "description": "    sRGB Gamma Cutoff (x1000)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "hcrt_colour_boost_factor": {
+   "description": "    Colour Boost",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_sdr_mode_settings": {
+   "description": "SDR MODE SETTINGS",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_blue_horizontal_convergence": {
+   "description": "        Blue Horizontal Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_max_nits": {
+   "description": "    Display's Peak Luminance",
+   "initial": 1000.0,
+   "minimum": 0.0,
+   "maximum": 10000.0,
+   "step": 10.0
+  },
+  "hcrt_adobe_gamma_out": {
+   "description": "    Adobe Gamma",
+   "initial": 2.2,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_lcd_subpixel": {
+   "description": "    Display's Subpixel Layout: RGB | RWBG (OLED) | BGR",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "hcrt_space2": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_srgb_gamma_out": {
+   "description": "    sRGB Gamma",
+   "initial": 2.4,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_r709_gamma_cutoff": {
+   "description": "    r709 Gamma Cutoff (x1000)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "hcrt_white_temperature_D93": {
+   "description": "    D93 White Temperature (Kelvin)",
+   "initial": 9305.0,
+   "minimum": 0.0,
+   "maximum": 18500.0,
+   "step": 100.0
+  },
+  "hcrt_image_controls": {
+   "description": "IMAGE ADJUSTMENT SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_lcd_resolution": {
+   "description": "    Display's Resolution: 1080p | 4K | 8K",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "hcrt_contrast": {
+   "description": "    Contrast",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_space1": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_p3_gamma_out": {
+   "description": "    DCI-P3 Gamma",
+   "initial": 2.6,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "hcrt_green_scanline_attack": {
+   "description": "        Green Scanline Attack",
+   "initial": 0.6,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_space5": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_space3": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_v_cent": {
+   "description": "        Vertical Center",
+   "initial": 0.0,
+   "minimum": -200.0,
+   "maximum": 200.0,
+   "step": 1.0
+  },
+  "hcrt_blue_vertical_convergence": {
+   "description": "        Blue Vertical Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_space7": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_crt_screen_type": {
+   "description": "    Screen Type: APERTURE GRILLE | SHADOW MASK | SLOT MASK",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "hcrt_blue_beam_sharpness": {
+   "description": "        Blue Beam Sharpness",
+   "initial": 1.3,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.05
+  },
+  "hcrt_space9": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_red_scanline_max": {
+   "description": "        Red Scanline Max",
+   "initial": 0.9,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_red_horizontal_convergence": {
+   "description": "        Red Horizontal Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_red_scanline_attack": {
+   "description": "        Red Scanline Attack",
+   "initial": 0.6,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_developer_settings1": {
+   "description": "    HORIZONTAL SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_red_beam_attack": {
+   "description": "        Red Beam Attack",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_green_vertical_convergence": {
+   "description": "        Green Vertical Deconvergence",
+   "initial": 0.0,
+   "minimum": -10.0,
+   "maximum": 10.0,
+   "step": 0.01
+  },
+  "hcrt_support3": {
+   "description": "    Default white points for the different colour systems:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_support4": {
+   "description": "    709: D65, PAL: D65, NTSC-U: D65, NTSC-J: D93",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0001,
+   "step": 0.0001
+  },
+  "hcrt_blue_scanline_max": {
+   "description": "        Blue Scanline Max",
+   "initial": 0.9,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "hcrt_phosphor_set": {
+   "description": "    Phosphors: NONE | P22-J | P22-80 | P22-90 | RPTV | 1953",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 1.0
+  },
+  "hcrt_gamma_cutoff": {
+   "description": "    Inverse Gamma Cutoff (x1000)",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "hcrt_bloom_strength": {
+   "description": "    Bloom Strength",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "hcrt_v_size": {
+   "description": "        Vertical Size",
+   "initial": 1.0,
+   "minimum": 0.8,
+   "maximum": 1.2,
+   "step": 0.01
+  },
+  "hcrt_h_size": {
+   "description": "        Horizontal Size",
+   "initial": 1.0,
+   "minimum": 0.8,
+   "maximum": 1.2,
+   "step": 0.01
+  },
+  "hcrt_green_beam_sharpness": {
+   "description": "        Green Beam Sharpness",
+   "initial": 1.3,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.05
+  },
+  "hcrt_crt_resolution": {
+   "description": "    Resolution: 300TVL | 600TVL | 800TVL | 1000TVL",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 3.0,
+   "step": 1.0
+  },
+  "hcrt_green_beam_attack": {
+   "description": "        Green Beam Attack",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.01
+  }
+ }
+}

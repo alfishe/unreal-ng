@@ -296,18 +296,6 @@ public:
         return GetScratchDir();
     }
 
-    /// @brief Get absolute path for a test scratch artifact.
-    static std::string GetTestScratchPath(const std::string& relativePath)
-    {
-        fs::path fullPath = GetScratchDir() / relativePath;
-        if (fullPath.has_parent_path())
-        {
-            std::error_code ec;
-            fs::create_directories(fullPath.parent_path(), ec);
-        }
-        return fullPath.string();
-    }
-
     /// @brief Per-process scratch directory (<project_root>/scratch/<pid>).
     ///
     /// Created on first use and removed again when the process ends, so
@@ -344,5 +332,16 @@ public:
             fs::create_directories(fullPath.parent_path(), ec);
         }
         return fullPath.string();
+    }
+
+    /// @brief Get absolute path for a test scratch artifact.
+    ///
+    /// The same as GetUniqueTestScratchPath(): the path lies in the per-process scratch directory. It used to be
+    /// <scratch>/<relativePath>, one path for every copy of the test binary - and parallel GTest shards are copies, so
+    /// two tests of a suite that run in different shards wrote, deleted and read the same file (EmulatorSaveDisk_Test
+    /// failed 21 of 24 runs of parallel copies). A test must not depend on what another process does to its files.
+    static std::string GetTestScratchPath(const std::string& relativePath)
+    {
+        return GetUniqueTestScratchPath(relativePath);
     }
 };

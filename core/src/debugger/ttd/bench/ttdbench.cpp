@@ -15,6 +15,7 @@
 #include "common/filehelper.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
@@ -41,6 +42,7 @@ bool V1Lacks(TTDRegionId id)
         case TTDRegionId::NeoGSFlash:
         case TTDRegionId::EvoAvrEeprom:
         case TTDRegionId::SmucEeprom:
+        case TTDRegionId::EvoFlash:
             return true;
         default:
             return false;
@@ -111,9 +113,8 @@ public:
         // config hook (core-tests' sound-card policy) is set aside while the
         // machine is created, and the peripheral set goes on top of the
         // model's config as this instance's override. The override also
-        // zeroes power-on RAM ([MISC] RAMPowerOn): the default noise comes
-        // from the process-global rand(), so the machine would depend on
-        // every case that ran before it in the process
+        // zeroes power-on RAM ([MISC] RAMPowerOn): the default noise is
+        // random, so the machine would differ from run to run
         const Config::ConfigLoadedHook previous = Config::GetConfigLoadedHook();
         Config::SetConfigLoadedHook({});
         const PeripheralSet set = config.peripherals;
@@ -146,6 +147,8 @@ public:
                 c.input.mouse = set.mouse ? MOUSE_TYPE_KEMPSTON : MOUSE_TYPE_NONE;
         };
 
+        // The harness measures v1 with the engine in shadow: v1 must be the recorder
+        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
         EmulatorManager* manager = EmulatorManager::GetInstance();
         _emulator = config.ramKB ? manager->CreateEmulatorWithModelAndRAM("ttd-bench", config.model, config.ramKB,
                                                                           LoggerLevel::LogError, &error, configOverride)
@@ -226,7 +229,7 @@ emulator.Reset();
                 ports->DecodePortOut(a.port, a.value, 0);
                 break;
             case SetupAction::Kind::AtmTurbo:
-                ports->DecodePortOut(static_cast<uint16_t>((state.aFF77 & 0xFF00) | 0x77),
+                ports->DecodePortOut(static_cast<uint16_t>((state.atm.aFF77 & 0xFF00) | 0x77),
                                      static_cast<uint8_t>(state.pFF77 | 0x08), 0);
                 break;
         }
@@ -242,9 +245,10 @@ uint32_t MeasuredFrames(const Case& c, const Options& options)
 /// Run the measured frames; per-frame wall time (and capture time when an
 /// engine records) in microseconds
 void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine* engine,
-               std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr)
+               std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr,
+               std::vector<RegionStat>* afterFirstFrame = nullptr)
 {
-    TimeTravelManager* ttd = emulator.GetContext()->pTimeTravelManager;
+    ITimeTravelHooks* ttd = emulator.GetContext()->pTimeTravelHooks;   // whichever records
     const uint32_t frames = MeasuredFrames(c, options);
     size_t nextInput = 0;
     frameUs.reserve(frames);
@@ -278,6 +282,10 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
             captureUs->push_back(static_cast<double>(engine->LastCaptureNs()) / 1000.0);
         if (engine && work)
             *work += engine->LastCaptureWork();
+        // The regions as the first frame left them: the first capture stores every piece once, the steady
+        // rate (BM-9) is what comes after
+        if (engine && afterFirstFrame && f == 0)
+            *afterFirstFrame = engine->RegionStats();
         if (engine && slowFrames)
         {
             const CaptureWork w = engine->LastCaptureWork();
@@ -468,6 +476,199 @@ private:
 
 /// endregion </Engine v1>
 
+/// region <Engine: the controller>
+
+/// The engine as the application runs it since the Phase 5 switch: the
+/// TimeTravelController records, seeks and saves on its own, with no v1 in the
+/// frame (PR-1 on the engine alone). Wired onto the machine the way
+/// Emulator::Init wires it (hooks, write sink, pTimeTravelController); the
+/// machine owns it
+namespace
+{
+std::vector<RegionStat> RegionStatsOf(const TimeTravelEngine& engine)
+{
+    std::vector<RegionStat> out;
+    for (uint32_t r = 0; r < engine.Regions().size(); ++r)
+    {
+        const TTDRegionDesc& d = engine.Regions()[r];
+        RegionStat s;
+        s.name = d.name;
+        s.bytes = d.bytes;
+        s.pieces = d.pieces;
+        s.payload = engine.RegionPayloadBytes(r);
+        s.versions = engine.RegionVersionCount(r);
+        out.push_back(s);
+    }
+    return out;
+}
+}  // namespace
+
+class EngineController final : public Engine
+{
+public:
+    std::string Name() const override { return "controller"; }
+
+    bool Start(Emulator& emulator, Mode mode, std::string& error) override
+    {
+        if (!Wire(emulator, error))
+            return false;
+        _ctl->SetEnableWriteJournal(mode != Mode::NoJournal);
+        _ctl->SetEnableCoverageIndex(mode == Mode::JournalCoverage);
+        if (!_ctl->StartRecording())
+        {
+            error = "StartRecording refused";
+            return false;
+        }
+        return true;
+    }
+
+    void Stop() override
+    {
+        if (_ctl)
+            _ctl->StopRecording();
+    }
+
+    uint64_t LastCaptureNs() const override { return _ctl ? _ctl->GetPerfCounters().lastCaptureNs : 0; }
+
+    CaptureWork LastCaptureWork() const override
+    {
+        CaptureWork w;
+        if (!_ctl)
+            return w;
+        const TTDEngineCaptureWork& e = _ctl->GetEngine().LastCaptureWork();
+        w.deltaBaseBytes = e.deltaBaseBytes;
+        w.deviceBlobBytes = e.deviceBlobBytes;
+        w.deviceStateBytes = e.deviceStateBytes;
+        w.compressCalls = e.compressCalls;
+        w.compressInputBytes = e.compressInputBytes;
+        w.bytesScanned = e.piecesOffered * kTTDPieceSize;
+        return w;
+    }
+    size_t Checkpoints() const override { return _ctl ? _ctl->GetCheckpointCount() : 0; }
+
+    uint64_t FirstFrame() const override
+    {
+        const TTDCheckpoint* cp = _ctl ? _ctl->GetCheckpoint(0) : nullptr;
+        return cp ? cp->time.frame : 0;
+    }
+
+    uint64_t LastFrame() const override
+    {
+        const size_t n = Checkpoints();
+        const TTDCheckpoint* cp = n ? _ctl->GetCheckpoint(n - 1) : nullptr;
+        return cp ? cp->time.frame : 0;
+    }
+
+    uint32_t FrameSpan() const override { return _ctl ? _ctl->FrameSpan() : 0; }
+
+    std::vector<RegionStat> RegionStats() const override { return RegionStatsOf(_ctl->GetEngine()); }
+
+    StreamBytes Bytes() const override
+    {
+        StreamBytes b;
+        if (!_ctl)
+            return b;
+        const TTDEngineHeapBreakdown h = _ctl->GetEngine().HeapBreakdown();
+        b.ramPayload = h.piecePayload;
+        b.pageRefs = h.referenceTables + h.pieceVersions;
+        b.deviceBlobs = h.deviceBlobs;
+        b.checkpointCore = h.checkpoints;
+        b.writeJournal = h.writeJournal;
+        b.inputJournal = h.eventLog;
+        b.coverage = _ctl->GetCoverageIndex().HeapBytes();
+        b.versions = _ctl->GetEngine().PieceStore().LiveVersions();
+        return b;
+    }
+
+    uint64_t ResidentBytes() const override { return _ctl ? _ctl->GetSessionInfo().sessionHeapBytes : 0; }
+
+    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
+    {
+        if (!_ctl)
+            return {};
+        const TTDHeapBreakdown h = _ctl->GetHeapBreakdown();
+        return {
+            {"page_store_table", h.pageStoreTable}, {"ram_payload", h.ramPayload},
+            {"ram_payload_slack", h.ramPayloadSlack}, {"checkpoints", h.checkpoints},
+            {"page_refs", h.pageRefs}, {"device_blobs", h.deviceBlobs},
+            {"input_journals", h.inputJournals}, {"write_journal", h.writeJournal},
+            {"write_journal_slack", h.writeJournalSlack}, {"coverage", h.coverage},
+            {"coverage_slack", h.coverageSlack}, {"port_reads", h.portReads},
+            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
+            {"frame_cache", h.frameCache},
+        };
+    }
+
+    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
+    {
+        const Clock::time_point start = Clock::now();
+        TTDSeekResult result;
+        const bool ok = _ctl->SeekTo(TTDTimePoint{frame, tInFrame}, &result);
+        out.totalUs = ElapsedUs(start, Clock::now());
+        const TTDPerfCounters& perf = _ctl->GetPerfCounters();
+        out.cpuChipsetUs = static_cast<double>(perf.lastRestoreCpuChipsetNs) / 1000.0;
+        out.devicesUs = static_cast<double>(perf.lastRestoreDevicesNs) / 1000.0;
+        out.memoryUs = static_cast<double>(perf.lastRestoreMemoryNs) / 1000.0;
+        out.screenUs = static_cast<double>(perf.lastRestoreScreenNs) / 1000.0;
+        out.restoreUs = static_cast<double>(perf.lastRestoreTotalNs()) / 1000.0;
+        out.replayUs = static_cast<double>(perf.lastReplayNs) / 1000.0;
+        out.presentUs = static_cast<double>(perf.lastPresentNs) / 1000.0;
+        out.otherUs = std::max(0.0, out.totalUs - out.restoreUs - out.replayUs - out.presentUs);
+        return ok;
+    }
+
+    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
+    {
+        std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
+        if (!file || !_ctl->SerializeSession(file, error))
+            return false;
+        file.flush();
+        bytes = static_cast<uint64_t>(file.tellp());
+        return static_cast<bool>(file);
+    }
+
+    bool Load(Emulator& emulator, const std::string& path, std::string& error) override
+    {
+        if (!Wire(emulator, error))
+            return false;
+        std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
+        return file && _ctl->DeserializeSession(file, error);
+    }
+
+    uint64_t CaptureNow() override
+    {
+        _ctl->OnFrameBoundary();
+        return _ctl->GetPerfCounters().lastCaptureNs;
+    }
+
+private:
+    /// The machine owns the controller (Emulator::Release deletes it), as it owns v1's
+    /// manager: this engine only points at the one of the machine it works on
+    bool Wire(Emulator& emulator, std::string& error)
+    {
+        _context = emulator.GetContext();
+        if (!_context || !_context->pTimeTravelManager)
+        {
+            error = "no time travel on this machine";
+            return false;
+        }
+        _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        if (!_context->pTimeTravelController)
+        {
+            _context->pTimeTravelController = new TimeTravelController(_context);
+            _context->pTimeTravelHooks = _context->pTimeTravelController;
+            _context->ttdWriteSink = _context->pTimeTravelController;
+        }
+        _ctl = _context->pTimeTravelController;
+        return true;
+    }
+
+    EmulatorContext* _context = nullptr;
+    TimeTravelController* _ctl = nullptr;
+};
+
+/// endregion </Engine: the controller>
+
 /// region <Engine: TimeTravelEngine>
 
 /// The time-travel engine (docs/inprogress/2026-09-25-ttd-v2-migration/).
@@ -535,6 +736,8 @@ public:
     uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
     uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
     uint32_t FrameSpan() const override { return _recorder.FrameSpan(); }
+
+    std::vector<RegionStat> RegionStats() const override { return RegionStatsOf(_engine); }
 
     StreamBytes Bytes() const override
     {
@@ -806,7 +1009,7 @@ std::string PeripheralSet::Name() const
 
 std::vector<std::string> EngineNames()
 {
-    return {"v1", "engine"};
+    return {"v1", "engine", "controller"};
 }
 
 std::unique_ptr<Engine> CreateEngine(const std::string& name)
@@ -815,6 +1018,8 @@ std::unique_ptr<Engine> CreateEngine(const std::string& name)
         return std::make_unique<EngineV1>();
     if (name == "engine")
         return std::make_unique<EngineTimeTravel>();
+    if (name == "controller")
+        return std::make_unique<EngineController>();
     return nullptr;
 }
 
@@ -950,7 +1155,8 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         std::vector<double> frameUs;
         std::vector<double> captureUs;
         CaptureWork work;
-        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work);
+        std::vector<RegionStat> afterFirstFrame;
+        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work, &afterFirstFrame);
         engine.Stop();
         if (!engine.LastError().empty() || engine.Checkpoints() == 0)
         {
@@ -1012,6 +1218,21 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         // BM-4 split: where the session heap goes, per recorded frame
         for (const auto& [part, bytes] : engine.HeapParts())
             m["bm4_heap_" + part + "_bpf"] = static_cast<double>(bytes) / n;
+        // BM-9: every region of the engine - its size, stored bytes and versions per recorded frame
+        // (the steady rate: after the first frame, which stores every piece once)
+        for (const RegionStat& r : engine.RegionStats())
+        {
+            m["bm9_" + r.name + "_bytes"] = static_cast<double>(r.bytes);
+            m["bm9_" + r.name + "_bpf"] = static_cast<double>(r.payload) / n;
+            m["bm9_" + r.name + "_vpf"] = static_cast<double>(r.versions) / n;
+            for (const RegionStat& first : afterFirstFrame)
+                if (first.name == r.name && n > 1)
+                {
+                    m["bm9_" + r.name + "_first_bytes"] = static_cast<double>(first.payload);
+                    m["bm9_" + r.name + "_steady_bpf"] = static_cast<double>(r.payload - first.payload) / (n - 1);
+                    m["bm9_" + r.name + "_steady_vpf"] = static_cast<double>(r.versions - first.versions) / (n - 1);
+                }
+        }
         // Proof the configuration ran as named: the hardware turbo in effect at the end
         m["turbo_ratio"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_ratio);
 

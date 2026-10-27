@@ -63,6 +63,9 @@ public:
     /// Index of @p frame in the table (counted from the session's first frame,
     /// dropped ones included), or -1 when it is not recorded or was dropped
     int64_t IndexOf(uint64_t frame) const;
+    /// Index of the last recorded frame at or before @p frame, or -1 when the
+    /// table starts after it (or is empty)
+    int64_t IndexAtOrBefore(uint64_t frame) const;
 
     /// Forget the oldest @p count frames (a ring releasing history); indices stay as they were
     void DropFront(size_t count)
@@ -70,6 +73,13 @@ public:
         count = count < _entries.size() ? count : _entries.size();
         _entries.erase(_entries.begin(), _entries.begin() + static_cast<std::ptrdiff_t>(count));
         _base += count;
+    }
+
+    /// Forget the newest @p count frames (a recording resumed from the past)
+    void DropBack(size_t count)
+    {
+        count = count < _entries.size() ? count : _entries.size();
+        _entries.resize(_entries.size() - count);
     }
 
     /// Start of @p frame; false when the frame is not recorded

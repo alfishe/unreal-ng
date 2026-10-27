@@ -68,7 +68,7 @@ TrafficStream=auto`, CLI `network traffic stream`) serves the traffic as a pcapn
 packet as it passes. The extcap script [tools/wireshark/](../../tools/wireshark/README.md) lists running emulators in
 Wireshark's interface list instead. `{"action":"stream-stop"}` ends it.
 
-**In the Qt UI**: Tools > Network traffic (Ctrl+6). The newest records (up to 20000) with their frame and the time
+**In the Qt UI**: Tools > Network traffic. The newest records (up to 20000) with their frame and the time
 since the record above; a filter (every word must appear in the adapter, direction, operation or summary, e.g.
 `isa2 dns`) and a kind (frames / socket operations); below, a decode of the selected record (Ethernet, ARP, IPv4,
 ICMP, UDP, TCP, DHCP, DNS, or the socket operation's fields) and its hex dump. **Seek here** (or a double click)
@@ -87,11 +87,15 @@ adapter) are made up - each packet's comment says what really happened (`#41 fra
 ## Fitting the card
 
 Machine config (`configs/<model>/unreal.ini`; shipped for ATM3, ATM710,
-Pentagon, Scorpion, Profi):
+Pentagon, Scorpion, Profi). The card is a slot card (`[SLOTS]`, the
+[slots recipe](../machines/slots.md)); the legacy `[NETWORK] Card=ZXNETUSB` still
+works in an INI without `[SLOTS]`:
 
 ```ini
+[SLOTS]
+zxbus.4 = zxnetusb             ; or zx-wifi (zxbus.N.port = ef | ee); no entry = no card: the ports read #FF
+
 [NETWORK]
-Card=ZXNETUSB                  ; NONE = no card: the ports read #FF (default)
 HostAccess=1                   ; 0 = internal services only (DHCP, hosts table, gateway ping)
 DnsMode=HOST                   ; HOST | PASS
 Hosts=next.zxart.ee=127.0.0.1  ; name=a.b.c.d,name=a.b.c.d
@@ -101,18 +105,38 @@ ConnectTimeoutMs=10000
 ```
 
 The runtime feature `network` (alias `net`, on by default) unplugs a fitted
-card and plugs it back: `PUT /api/v1/emulator/{id}/feature/network`.
+card and plugs it back: `PUT /api/v1/emulator/{id}/feature/network`. It is a
+power switch, not a slot change: the slot report keeps the card in its slot,
+with `state` = `feature network off` while the feature is off.
 
-The same settings change at runtime (the card is fitted again, every
-connection closes; refused while a TTD recording runs):
+The same settings change at runtime (refused while a TTD recording runs). The
+ZX-bus cards are slots: a `card` value that adds or removes ZXNETUSB or
+ZX-WiFi is a slot change applied by a **restart** of the machine (like
+`slots plug` / `remove`, `.recipe/machines/slots.md`): a new emulator id
+(`restart.emulatorId` in the reply), the machine state is lost, the media
+follow, and the other keys of the same request are applied to the restarted
+machine. Settings without a card change apply in place (status `accepted`: the
+devices are fitted again, every connection closes). Every slot restart (also a
+`slots plug` of an unrelated card) keeps the network settings the machine runs
+with, those changed at run time included; the request's own keys win.
 
 ```json
-{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
-  "body": {"card": "zxnetusb", "host_access": true, "hosts": "next.zxart.ee=127.0.0.1"}}}
+{"tool": "emulator_manage", "arguments": {"action": "network_configure",
+  "settings": {"card": "zxnetusb", "host_access": true, "hosts": "next.zxart.ee=127.0.0.1"}}}
 ```
 
-CLI `network set card=zxnetusb host_access=on`, Lua
-`network_configure{card="zxnetusb"}`, Python `emu.network_configure(card="zxnetusb")`.
+The reply: `network: applied`, the plan (`plug zxnetusb -> zxbus.1: allowed, fit real`), `restarted: emulator <old> ->
+<new>` and `network: the other settings were applied to the restarted machine`. A card that would remove another card
+or fits only unrealistically (a ZX-bus card behind the ATM Turbo 2+ CPU-socket adapter) is refused with the plan until
+the request says `replace_if_incompatible: true`; `dry_run: true` shows the plan only; a ZX-WiFi on a ZX-Evo or TS-Conf
+(`#xxEF` is the board's) is refused and nothing changes. WebAPI: `POST /api/v1/emulator/{id}/network/config` with the
+same body (`replaceIfIncompatible`, `dryRun`, `mediaDisposition` beside the settings).
+
+CLI `network set card=zxnetusb host_access=on [--replace] [--dry-run]`, Lua
+`network_configure({card="zxnetusb"}, {replace=true})` (the reply table, or `nil, err, reply`), Python
+`emu.network_configure(card="zxnetusb", replace=True)` (the reply dict; the restarted machine is
+`emu_get_selected()`), Qt: Network window, ZXNETUSB / ZX-WiFi boxes then Apply (the slot change's confirmation, the
+removed cards named with Undo).
 
 Guest servers (a NedoOS program in `LISTEN`) are reachable on the host:
 guest ports 1024 and up on the same host port, lower ones only through a
@@ -369,7 +393,7 @@ line: if a screenshot shows only the bottom bar, read the text page instead (`GE
   "body": {"com_port": "tcp:127.0.0.1:2323"}}}
 ```
 
-CLI `network set com_port=loopback` (or `network set card=zxwifi zx_wifi=espnet` on a Pentagon), Lua `network_configure{com_port="serial:COM3"}`,
+CLI `network set com_port=loopback` (or `network set card=zxwifi zx_wifi=espnet` on a Pentagon: a restart with the card), Lua `network_configure{com_port="serial:COM3"}`,
 Python `emu.network_configure(com_port="tcp:127.0.0.1:2323")`. The state is
 `com_port` in `inspect_state network` (registers, FIFO levels, peer, link
 `phase` and `error`, bytes). A machine reset keeps the link. `settings` there

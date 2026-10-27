@@ -188,6 +188,13 @@ public:
 
     const MultiSoundLatches& Latches() const { return _latches; }
 
+    /// Time travel: the CPLD's latches and DAC registers as a restore puts them back (the options are configuration)
+    void Restore(const MultiSoundLatches& latches, const std::array<MultiSoundDacState, 4>& dac)
+    {
+        _latches = latches;
+        _dac = dac;
+    }
+
 private:
     bool IsYmRegisterPort(uint16_t port) const { return _options.ym && (port & 0xC00Fu) == 0xC00Du; }
     bool IsYmDataPort(uint16_t port) const { return _options.ym && (port & 0xC00Fu) == 0x800Du; }

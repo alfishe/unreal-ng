@@ -153,6 +153,112 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
 
+    {
+        struct NextRoute
+        {
+            const char* path;
+            const char* summary;
+            const char* description;
+            bool withId;
+        };
+        const NextRoute routes[] = {
+            {"/api/v1/emulator/{id}/state/next", "Get ZX Spectrum Next machine state",
+             "The ZX Spectrum Next (model NEXT): machine (machine type and frame family, CPU clock and speed ratio, config mode "
+             "and boot ROM, contention), mmu (the eight 8K slots), divmmc (#E3, automap and its NextREGs), interrupts (pulse or "
+             "hardware IM2, enables, pending, in service), ctc (four channels), spi (the SD cards), rtc. "
+             "\"available\": false on other machines.", true},
+            {"/api/v1/emulator/state/next", "Get ZX Spectrum Next machine state (active emulator)",
+             "Same as /api/v1/emulator/{id}/state/next for the only or selected emulator.", false},
+            {"/api/v1/emulator/{id}/state/next/regs", "Get the NextREG table",
+             "Every NextREG of the distribution's register table (registers.txt v2.4): number, name, access, value and the "
+             "reset value where the document gives one for the whole byte.", true},
+            {"/api/v1/emulator/{id}/state/next/mmu", "Get the Next MMU slots",
+             "The eight 8K slots: MMU value, address range, what they show (ram, rom, boot rom, config bank, divmmc rom/ram), "
+             "the ROM select, the config mode / bank and the paging latches.", true},
+            {"/api/v1/emulator/{id}/state/next/reg-journal", "Get the NextREG write journal",
+             "Who wrote which NextREG, when and through which door (core DeviceState::NextRegJournalReport; CLI `next regjournal`, "
+             "Lua next_reg_journal(), Python next_reg_journal(), MCP inspect_state aspect next_reg_journal). The NEXTREG "
+             "instruction and the copper make no port cycle, so the port trace and the TTD I/O journal never see them. Each "
+             "event: seq, frame, t (T in the frame), pc, source (nextreg = the NEXTREG instruction, port = OUT #253B, copper, "
+             "internal = the board or a loader), reg, name, value, previous, decoded (registers #02, #03, #07). Query: regs "
+             "(comma hex, 07,02), sources (comma: nextreg, port, copper, internal), since (seq), from / to (frame), limit (newest N, "
+             "default 200, 0 = all). Off by default: switch it on with POST /next/reg-journal first. 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/sd", "Get the Next SD cards, the SPI engine and the SD journal",
+             "What the program asked the cards (core DeviceState::NextSdReport; CLI `state next sd`, Lua next_sd(), Python next_sd(), "
+             "MCP inspect_state aspect next_sd). cards: per card present, type (SDSC | SDHC), protocol state (power_on | idle | ready), "
+             "size, in_transfer, last_command and last_argument, blocks_read / blocks_written. spi: the selected line, whether a byte is "
+             "in flight, the last received byte and too_fast_accesses. events (the journal, off by default: POST /next/sd-journal): seq, "
+             "frame, t, pc, card, kind (command | read | write); a command has command (CMD17, ACMD41), argument, r1 (the response byte, "
+             "none when the card ignored it) and crc_valid; read / write have block (write: ok). Query: kinds (comma: command, read, "
+             "write), card (0 | 1), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/audio", "Get the Next sound as configured",
+             "The Next's chips and DAC (core DeviceState::NextAudioReport; CLI `state next audio`, Lua next_audio(), Python next_audio(), MCP "
+             "inspect_state aspect next_audio). config: nr_06 / nr_08 / nr_09, chip_model (ym2149 | ay8910), stereo_mode (abc | acb), turbosound, "
+             "dac, beeper_excluded. selected_chip. chips (3): index, selected, pan (stereo | left | right | muted), mono (NR #09), registers "
+             "(16), tone_periods, noise_period, mixer (R7), volumes (bit 4: the envelope drives the channel), envelope_period, envelope_shape. "
+             "dac: enabled, a / b / c / d, left_sum (A + B), right_sum (C + D), silence (#80).", true},
+            {"/api/v1/emulator/{id}/state/next/input", "Get the Next joystick modes and the Kempston port",
+             "The Next's input as the program configured it (core DeviceState::NextInputReport; CLI `state next input`, Lua next_input(), Python "
+             "next_input(), MCP inspect_state aspect next_input). joystick_modes: nr_05, left and right {code, name (kempston1 | kempston2 | md1 | "
+             "md2 | sinclair1 | sinclair2 | cursor | io_mode), port (1F | 37 | keyboard | user port)}. io_mode: nr_0b, enabled, mode, bit_0, "
+             "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
+             "(false: the port idles at #FF; it also needs NR #82 bit 6), note. kempston_37: value, answers_here (Kempston 2 / MD 2, NR #82 bit 7). "
+             "The host joystick is the left connector. extended_keys: nr_b0, nr_b1, pressed (names: extend up caps_lock graph true_video inv_video break edit ; \" , . delete right left down; from the host's physical PC keys). md_pad_extra: nr_b2, left / right {mode x y z}, host_keys (the host's pad is the left connector; keypad 7 9 1 3 by default).", true},
+            {"/api/v1/emulator/{id}/state/next/uart", "Get the Next UARTs (ESP and Pi): baud, frame, FIFOs, status, interrupts and the peers",
+             "The Next's two UARTs at #133B-#163B (core DeviceState::NextUartReport; CLI `state next uart`, Lua next_uart(), Python next_uart(), "
+             "MCP inspect_state aspect next_uart). selected (0 ESP | 1 Pi), ports: decode, enabled (NR #83 bit 4). channels (2): index, name, "
+             "selected, prescaler (28 MHz clocks per bit), baud, frame {value, data_bits, parity, stop_bits, hardware_flow, break, fifo_reset, "
+             "clocks_per_byte}, rts, rx {count, capacity (512), near_full (3/4), busy, preview_hex (the next 16 bytes), preview_has_error}, "
+             "tx {count, capacity (64), busy, empty, preview_hex}, status (the byte a read of #133B gives, without clearing the sticky bits: "
+             "rx_available, tx_full, overflow, rx_near_full, tx_empty, byte_error, framing_error, break (held while a peer's line is low), rx_line_low), bytes {sent, received, lost}, "
+             "interrupts {nr_c6_bits, rx_enabled, rx_on_near_full_only, tx_enabled, rx_pending, tx_pending, vector_rx, vector_tx}, peer "
+             "{attached, via_joystick_connector, kind, target, connected, pending_bytes}. routing: nr_a0 bits (the Pi's GPIO routing: a register "
+             "only) and nr_0b (uart_on_joystick_port, joystick_port_uart = the UART the connector carries or -1, joystick_port_peer). The ESP's "
+             "line is [NETWORK] ComPort=, the Pi's ComPort2=, the joystick connector's ComPortJoy=.", true},
+            {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
+             "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
+             "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (+3 FDC ports #2FFD / #3FFD with NR #D8 bit 0: cause NR #DA, write NR #D9). "
+             "in_service: any, multiface_session, divmmc_handler, divmmc_button_pending. multiface: enabled, type, type_name, enable_port, "
+             "disable_port, memory_in, nmi_active, invisible, active. nr_02: value, bus_reset, m1_nmi_generated, drive_nmi_generated. "
+             "stackless_nmi: enabled, return_address. reset: bits (NR #02 bits 1:0), last (power_on | first_reset_after_power_on | "
+             "later_reset). interrupts: mode, pending and in_service (source names), vector_base. events (the journal, off by default: POST "
+             "/next/nmi-journal): seq, frame, t, pc, kind (int_ack | reti | nmi_request | retn | reset), source; int_ack has the vector in "
+             "hardware IM2 mode; nmi_request has accepted and, if refused, reason; reset has reset_bits and reset_last. Query: kinds (comma), "
+             "since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/magic-port", "Get the magic debug port: its setting and what a program wrote to it",
+             "The program's debug console (core DeviceState::NextMagicPortReport; CLI `state next magicport`, Lua next_magic_port(), Python "
+             "next_magic_port(), MCP inspect_state aspect next_magic_port). Off by default: POST /next/magic-port {enabled: true, port: N, mode}. "
+             "enabled, port, mode (hex | dec | ascii | line), bytes (written since the last clear), size, evicted, last_seq, partial (line mode: a "
+             "line not ended yet), items: seq, frame, t, pc, text (hex/dec/ascii: one item per byte; line: one per CR/LF-ended line). The port is an "
+             "exact 16-bit address (jnext --magic-port). Query: since (seq), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/divmmc", "Get the Next DivMMC, its automap entries and the DivMMC journal",
+             "Why the DivMMC is in (core DeviceState::NextDivMmcReport; CLI `state next divmmc`, Lua next_divmmc(), Python next_divmmc(), "
+             "MCP inspect_state aspect next_divmmc). state: port_enabled, automap_armed (NR #0A bit 4), control (#E3), conmem, mapram, bank, "
+             "automap_latch, mapped, button_pending, nmi_hold. entries: NR #B8-#BB decoded (address, enabled, when = always | rom3_only, "
+             "map = instant | delayed). events (the journal, off by default: POST /next/divmmc-journal): seq, frame, t, pc, kind "
+             "(map_in | map_out | retn | disabled | reset | program_start | port | mapram_clear | button | esx_call); map_in / map_out "
+             "have the fetch address (map_in: entry rst | nmi | 3dxx | rom3_routine, map instant | delayed); esx_call (an entry at #0008) has "
+             "call, name (F_OPEN, F_READ ...), return_address, basic_rom (true: RST 8 is a BASIC error report and call an error code) and "
+             "af / bc / de / hl. Query: kinds (comma), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad "
+             "parameter.", true},
+        };
+        for (const NextRoute& r : routes)
+        {
+            paths[r.path]["get"]["summary"] = r.summary;
+            paths[r.path]["get"]["tags"].append("Machine State");
+            paths[r.path]["get"]["description"] = r.description;
+            if (r.withId)
+            {
+                paths[r.path]["get"]["parameters"][0]["name"] = "id";
+                paths[r.path]["get"]["parameters"][0]["in"] = "path";
+                paths[r.path]["get"]["parameters"][0]["required"] = true;
+                paths[r.path]["get"]["parameters"][0]["schema"]["type"] = "string";
+            }
+            paths[r.path]["get"]["responses"]["200"]["description"] = "Next report";
+            paths[r.path]["get"]["responses"]["404"]["description"] = "Emulator not found";
+        }
+    }
+
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =
@@ -210,6 +316,26 @@
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["200"]["description"] = "TSU objects and CRAM";
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
+
+    // Active emulator forms of /state/ide and /state/tsconf (no ID: the only or the selected emulator)
+    paths["/api/v1/emulator/state/ide"]["get"]["summary"] = "Get IDE board state (active emulator)";
+    paths["/api/v1/emulator/state/ide"]["get"]["tags"].append("Disk State (Active)");
+    paths["/api/v1/emulator/state/ide"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/ide for the only or selected emulator.";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["200"]["description"] = "IDE board state";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["400"]["description"] =
+        "Several emulators running: use the {id} form";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["404"]["description"] = "No emulator, or no IDE board";
+
+    paths["/api/v1/emulator/state/tsconf"]["get"]["summary"] = "Get TS-Conf machine state (active emulator)";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["tags"].append("Machine State");
+    paths["/api/v1/emulator/state/tsconf"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/tsconf for the only or selected emulator.";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["200"]["description"] = "TS-Conf machine state";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["400"]["description"] =
+        "Several emulators running: use the {id} form";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["404"]["description"] =
+        "No emulator, or not a TS-Conf machine";
 
     // Sprinter Sp2000 (core DeviceState::Sprinter / SprinterPortTable / SprinterPortLookup: the same reports
     // CLI `state sprinter`, Lua / Python sprinter_state() / sprinter_ports() / sprinter_port_lookup() and the
@@ -513,6 +639,161 @@
         paths[kJournalCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
     }
 
+    {
+        const char* kNrQuery[][2] = {{"regs", "comma list of register numbers, hex (07,02); empty = all"},
+                                     {"sources", "comma list: nextreg, port, copper, internal; empty = all"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kNr = "/api/v1/emulator/{id}/state/next/reg-journal";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kNr]["get"]["parameters"][i + 1];
+            qp["name"] = kNrQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kNrQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kNr]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNrCtl = "/api/v1/emulator/{id}/next/reg-journal";
+        paths[kNrCtl]["post"]["summary"] = "Switch, clear or resize the NextREG write journal";
+        paths[kNrCtl]["post"]["tags"].append("Machine State");
+        paths[kNrCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 65536 by "
+            "default, and drops its content). Off by default; off costs one branch per register write. Answers enabled, size, "
+            "capacity, evicted, last_seq.";
+        paths[kNrCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kNrCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kNrCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kNrCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kNrCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kNrCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kNrCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kSdQuery[][2] = {{"kinds", "comma list: command, read, write; empty = all"},
+                                     {"card", "0 or 1; empty = both"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kSd = "/api/v1/emulator/{id}/state/next/sd";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kSd]["get"]["parameters"][i + 1];
+            qp["name"] = kSdQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kSdQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kSd]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kSdCtl = "/api/v1/emulator/{id}/next/sd-journal";
+        paths[kSdCtl]["post"]["summary"] = "Switch, clear or resize the SD journal";
+        paths[kSdCtl]["post"]["tags"].append("Machine State");
+        paths[kSdCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per SD event. Answers enabled, size, capacity, "
+            "evicted, last_seq.";
+        paths[kSdCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kSdCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kSdCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kSdCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kSdCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kSdCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kSdCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kDmQuery[][2] = {{"kinds", "comma list: map_in, map_out, retn, disabled, reset, program_start, port, mapram_clear, button, esx_call; empty = all"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kDm = "/api/v1/emulator/{id}/state/next/divmmc";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kDm]["get"]["parameters"][i + 1];
+            qp["name"] = kDmQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kDmQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kDm]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNmiQuery[][2] = {{"kinds", "comma list: int_ack, reti, nmi_request, retn, reset; empty = all"},
+                                      {"since", "events after this seq"},
+                                      {"from", "first frame"},
+                                      {"to", "last frame"},
+                                      {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kNmi = "/api/v1/emulator/{id}/state/next/nmi";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kNmi]["get"]["parameters"][i + 1];
+            qp["name"] = kNmiQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kNmiQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kNmi]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicQuery[][2] = {{"since", "items after this seq"}, {"limit", "the newest N items (default 200, 0 = all)"}};
+        const char* kMagic = "/api/v1/emulator/{id}/state/next/magic-port";
+        for (Json::ArrayIndex i = 0; i < 2; i++)
+        {
+            Json::Value& qp = paths[kMagic]["get"]["parameters"][i + 1];
+            qp["name"] = kMagicQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kMagicQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kMagic]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicCtl = "/api/v1/emulator/{id}/next/magic-port";
+        paths[kMagicCtl]["post"]["summary"] = "Switch the magic debug port, choose its port and mode, clear its output";
+        paths[kMagicCtl]["post"]["tags"].append("Machine State");
+        paths[kMagicCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"port\": 0..65535, \"mode\": \"hex|dec|ascii|line\", \"clear\": true}, all optional. Off by default; "
+            "off costs one branch per OUT. A write by a tool never counts, only the program's OUT. Answers the report's setting fields.";
+        paths[kMagicCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kMagicCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kMagicCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kMagicCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kMagicCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kMagicCtl]["post"]["responses"]["200"]["description"] = "The setting";
+        paths[kMagicCtl]["post"]["responses"]["400"]["description"] = "Bad port or mode";
+        paths[kMagicCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kNmiCtl = "/api/v1/emulator/{id}/next/nmi-journal";
+        paths[kNmiCtl]["post"]["summary"] = "Switch, clear or resize the interrupt / NMI / reset journal";
+        paths[kNmiCtl]["post"]["tags"].append("Machine State");
+        paths[kNmiCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per interrupt, NMI request, RETN or reset. Answers "
+            "enabled, size, capacity, evicted, last_seq.";
+        paths[kNmiCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kNmiCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kNmiCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kNmiCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kNmiCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kNmiCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kNmiCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kDmCtl = "/api/v1/emulator/{id}/next/divmmc-journal";
+        paths[kDmCtl]["post"]["summary"] = "Switch, clear or resize the DivMMC journal";
+        paths[kDmCtl]["post"]["tags"].append("Machine State");
+        paths[kDmCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per DivMMC event. Answers enabled, size, capacity, "
+            "evicted, last_seq.";
+        paths[kDmCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kDmCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kDmCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kDmCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kDmCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kDmCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kDmCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+    }
+
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["description"] =
@@ -588,14 +869,17 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
-        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
-        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (the card in the "
+        "GS slot - classic GS, lightweight player or NeoGS - replaced as a slot change, applied by a restart of the "
+        "machine (owner decision Q10): the reply is SlotControl's (status applied / dry-run / refused / recording, "
+        "plan, restart.emulatorId = the new id, media); 'replaceIfIncompatible', 'dryRun' and 'mediaDisposition' as "
+        "for POST slots/{slot}/plug), dump_module "
         "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
-        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording). "
+        "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary "
+        "(TTD v1: refused). "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
         "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
@@ -653,15 +937,16 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
-        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
-        "target and the current personality; dump_module carries 'path', 'bytes' and 'playing')";
+        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the slot "
+        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing')";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
-        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
-        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD v1 records, "
+        "switch_personality refused by the slot plan (it would remove another card without replaceIfIncompatible) "
+        "or while a TTD recording runs (the message names the session), "
         "or any of them while a TTD replay owns the machine";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
@@ -843,7 +1128,7 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["description"] = "Memory type: 'ram', 'rom' or a device memory region ('vram')";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["description"] = "Memory type: 'ram', 'rom', 'cache' (the CPU's fast RAM pages) or a device memory region by name or alias (GET /memory/regions: 'sprinter.vram' / 'vram', 'neogs.ram', ...)";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["name"] = "page";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["required"] = true;
@@ -895,9 +1180,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
-        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
-        "instances.";
+        "Get whether ROM write protection is enabled for this emulator instance (each instance has its own; a new "
+        "one starts protected). The flag guards writes to ROM pages through /memory/page/rom/{page} only; "
+        "/memory/write ignores it.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;
@@ -908,7 +1193,7 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["summary"] = "Set ROM write protection";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["description"] =
-        "Enable or disable ROM write protection.";
+        "Enable or disable ROM write protection of this emulator instance only.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["required"] = true;
@@ -917,4 +1202,43 @@
          ["properties"]["protected"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["200"]["description"] = "Protection state updated";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["404"]["description"] = "Emulator not found";
+
+    // GET/POST /api/v1/emulator/{id}/memory/rom/flash - the ZX-Evo's saved flash ROM
+    {
+        const char* flashPath = "/api/v1/emulator/{id}/memory/rom/flash";
+        paths[flashPath]["get"]["summary"] = "ZX-Evo flash ROM: the saved flash";
+        paths[flashPath]["get"]["tags"].append("Memory State");
+        paths[flashPath]["get"]["description"] =
+            "TS-Conf and ATM3 only: the ROM is the board's 29F040 flash, and what programs flash is saved to "
+            "zxevo-flash-<machine>-<SHA-256 of the ROM image>.rom in the settings folder (never to the shipped "
+            "image). Reports the file for the loaded ROM image (file, file_exists, base_rom_sha256), whether the "
+            "array came from it (loaded_from_file), unsaved changes (unsaved, changes) and files flashed over "
+            "other ROM images, which are not used (other_image_files). 400 on other machines.";
+        paths[flashPath]["get"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["get"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["get"]["parameters"][0]["required"] = true;
+        paths[flashPath]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["get"]["responses"]["200"]["description"] = "Saved-flash status";
+        paths[flashPath]["get"]["responses"]["400"]["description"] = "The machine's ROM is not a flash";
+        paths[flashPath]["get"]["responses"]["404"]["description"] = "Emulator not found";
+
+        paths[flashPath]["post"]["summary"] = "ZX-Evo flash ROM: save now or discard the saved flash";
+        paths[flashPath]["post"]["tags"].append("Memory State");
+        paths[flashPath]["post"]["description"] =
+            "action 'save' writes the flash file now (it is also written about a second after the last program / "
+            "erase, and when the instance closes); 'discard' deletes it - the shipped ROM image comes back at the "
+            "next reset. Both run on the machine's thread; refused (409) while a TTD replay owns the machine.";
+        paths[flashPath]["post"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["post"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["post"]["parameters"][0]["required"] = true;
+        paths[flashPath]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("save");
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("discard");
+        paths[flashPath]["post"]["responses"]["200"]["description"] = "Done or queued (result, flash status)";
+        paths[flashPath]["post"]["responses"]["400"]["description"] = "Bad action, or the machine's ROM is not a flash";
+        paths[flashPath]["post"]["responses"]["404"]["description"] = "Emulator not found";
+        paths[flashPath]["post"]["responses"]["409"]["description"] = "A TTD replay owns the machine";
+        paths[flashPath]["post"]["responses"]["500"]["description"] = "Failed (no ROM loaded, persistence off, file error)";
+    }
 

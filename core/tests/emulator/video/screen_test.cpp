@@ -35,8 +35,7 @@ protected:
     void TearDown() override
     {
         delete _screen;
-        delete _cpu;
-        delete _context;
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     void Use(MEM_MODEL model, VideoModeEnum mode, uint32_t frame = 69888)

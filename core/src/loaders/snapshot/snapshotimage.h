@@ -43,6 +43,12 @@ struct Cpu
     std::optional<uint8_t> q;
     std::optional<bool> halted;
     std::optional<bool> eiShadow;   ///< the instruction before the snapshot was EI (INT is not accepted yet)
+    /// SZX: T-states left in which the frame INT is still accepted (Z80R chHoldIntReqCycles)
+    std::optional<uint8_t> holdIntCycles;
+    /// A 48K SNA keeps the PC on the stack. The image reads it off the stack when the stack is in the file's RAM (pc is then
+    /// the popped word and sp is past it); when it is not (SP in the ROM or at the top of memory) the commit pops it from
+    /// the machine's memory at `sp`, as it always has: pcOnMachineStack is set and pc / sp are the raw header values
+    bool pcOnMachineStack = false;
 };
 
 /// The paging / system latches a file carries; absent = the format cannot say
@@ -96,11 +102,19 @@ struct Image
     Cpu cpu;
     std::optional<uint32_t> framePosition;   ///< T-state in the frame, when the format stores it
     uint8_t border = 0;
+    /// The whole ULA latch (#FE) when the format stores it apart from the border colour (SZX 1.1+: EAR, MIC, bit 3)
+    std::optional<uint8_t> portFE;
     std::vector<Ay> ay;
     std::string timingHint;           ///< "48k", "128k", "pentagon", "" when unknown
 
+    /// The last #FFFD write (the selected AY register) when the format stores it apart from the AY registers (Z80 on a 48K)
+    std::optional<uint8_t> ayAddressLatch;
+
     std::vector<Extension> extensions;
     std::vector<std::string> warnings;
+    /// Why no machine can take this snapshot, whatever it is ("a SAM Coupe snapshot", "a ROM block"); empty = it can. The plan
+    /// refuses it before anything is written
+    std::string unsupported;
 
     /// Number of bytes of RAM the file carries
     size_t RamBytes() const;

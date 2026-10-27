@@ -158,6 +158,17 @@ struct StreamBytes
     }
 };
 
+/// One region of the engine (memory, or a device's state): its size and what the session stored for it -
+/// the state registry's Size and Variability columns come from these (BM-9)
+struct RegionStat
+{
+    std::string name;          ///< "ram", "neogs.ram", "device.zxbus.1.neogs", ...
+    uint64_t bytes = 0;        ///< the region's size (a device state: the size it reached)
+    uint64_t payload = 0;      ///< stored bytes, every version
+    uint64_t versions = 0;     ///< versions stored (pieces that changed, summed over checkpoints)
+    uint64_t pieces = 0;       ///< 4 KB pieces
+};
+
 /// Restore split of one seek (BM-5 / BM-6), microseconds
 struct SeekTiming
 {
@@ -257,6 +268,8 @@ public:
     /// except the "*_slack" ones other than "ram_payload_slack": those are the
     /// unused allocation inside another part (TTDHeapBreakdown)
     virtual std::vector<std::pair<std::string, uint64_t>> HeapParts() const = 0;
+    /// Per region of the engine (BM-9); empty for v1
+    virtual std::vector<RegionStat> RegionStats() const { return {}; }
     /// Seek to (frame, tInFrame); false when the engine refused
     virtual bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) = 0;
     /// Write the session to @p path; bytes written

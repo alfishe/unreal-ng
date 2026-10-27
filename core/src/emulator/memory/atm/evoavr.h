@@ -7,7 +7,6 @@
 #include "stdafx.h"
 
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -16,6 +15,9 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/atm/evoavrmouse.h"
+#include "emulator/memory/atm/evoavrwait.h"
+
+class EmulatorContext;
 
 /// ZX-Evo BaseConf AVR as the Z80 sees it through the Gluk clock ports
 /// (#DFF7 address / #BFF7 data, #DEF7 / #BEF7 in shadow).
@@ -112,11 +114,17 @@ public:
         uint8_t skipBytes;         ///< parser: bytes of a Pause sequence still to skip
         uint8_t modifiers;         ///< kb_ctrl_status (register D bits 6..0)
         uint8_t held[16];          ///< host side: PcKey bitmap of the keys held down
+        uint8_t f12Down;           ///< atx.c: F12 is held - its release decides between a reset and power-off
+        uint8_t reserved[7];
+        uint64_t f12PressMicros;   ///< when F12 went down, emulated time (PortDecoder::EmulatedMicroseconds)
     };
-    static_assert(sizeof(Ps2State) == 40, "EvoAvr::Ps2State layout changed");
+    static_assert(sizeof(Ps2State) == 56, "EvoAvr::Ps2State layout changed");
 
 public:
     EvoAvr();
+    /// Defined in the .cpp: with the destructor implicit, every file that destroys one emits it and its thunks (two bases),
+    /// and MinGW's linker rejects those copies under -flto ("multiple definition of non-virtual thunk")
+    ~EvoAvr() override;
 
     /// region <Host side>
     void SetSdStatus(bool present, bool writeProtected);
@@ -152,6 +160,32 @@ public:
     void SetResetHandler(ResetHandler handler) { _resetHandler = std::move(handler); }
     /// endregion </PS/2 keyboard>
 
+    /// region <WAIT ports>
+    /// Which zx_wait_task serves a Gluk access: the firmware and the FPGA decide (reference-evo-com-port.md §3)
+    enum class WaitHandler : uint8_t
+    {
+        BaseConf,   ///< NedoPC BaseConf firmware: status byte, SPI #41 (the cell), SPI #40 (the data)
+        TsOld,      ///< TS-Labs firmware on the BaseConf FPGA, or before 2021-04-28 (zx_wait_task_old): the same path
+        TsShort,    ///< TS-Labs firmware on the TS-Conf FPGA since 2021-04-28: a cell #F0-#FF rides in the status
+                    ///< byte, any other costs an extra SPI #41 exchange
+    };
+
+    /// The firmware the AVR runs: its wait handler and main-loop timing (the decoder sets it from [EVO] Avr=)
+    void SetWaitFirmware(WaitHandler handler, const EvoAvrWait::Timing& timing);
+    WaitHandler GetWaitHandler() const { return _waitHandler; }
+
+    /// The AVR's /WAIT time, shared by the COM port (#xxEF) and the Gluk clock data port
+    EvoAvrWait& Wait() { return _wait; }
+    const EvoAvrWait& Wait() const { return _wait; }
+
+    /// A Gluk clock data access (#BFF7 / #BEF7): the AVR cycles the Z80 waits. Call it after the address write of the
+    /// same OUT and before ReadData / WriteData: the firmware's work depends on the cell and the state it meets.
+    /// `now` in base-clock T-states
+    uint32_t GlukAccessCycles(bool read, uint8_t value, uint64_t now, uint32_t baseClockHz);
+    /// The same, holding the context's Z80 on /WAIT for it
+    void HoldForGlukAccess(EmulatorContext* context, bool read, uint8_t value);
+    /// endregion </WAIT ports>
+
     /// The PS/2 mouse on the AVR and the Kempston-address registers it keeps
     /// (evoavrmouse.h); a sink of the emulator's MouseManager
     EvoAvrMouse& Ps2Mouse() { return _mouse; }
@@ -163,6 +197,10 @@ public:
     /// only when it saves a PS/2 keymap)
     void GetVolatileState(uint8_t& extType, uint8_t& eepromPage, uint8_t& flags) const;
     void SetVolatileState(uint8_t extType, uint8_t eepromPage, uint8_t flags);
+    /// The /WAIT ports' main-loop phase and EEPROM write (EvoAvrWait::State): on TS-Conf in EvoAvrVolatile, on the
+    /// ATM3 in AtmPaging
+    EvoAvrWait::State GetWaitState() const { return _wait.GetState(); }
+    void SetWaitState(const EvoAvrWait::State& state) { _wait.SetState(state); }
     const Ps2State& GetPs2State() const { return _ps2; }
     void SetPs2State(const Ps2State& state) { _ps2 = state; }
     /// The 4 KiB EEPROM, battery-backed: the time-travel engine's region
@@ -194,7 +232,9 @@ protected:
     {
     public:
         explicit EepromRegion(std::array<uint8_t, kEepromSize>& eeprom) : _eeprom(eeprom) {}
-        const char* Name() const override { return "eeprom"; }
+        const char* Name() const override { return "evo-avr.eeprom"; }
+        const char* Aliases() const override { return "eeprom"; }
+        const char* TtdRegion() const override { return "evo-avr.eeprom"; }
         const char* Description() const override
         {
             return "ZX-Evo AVR EEPROM, 4 KiB, battery-backed (the guest sees 16 bytes of it at a time through the "
@@ -219,9 +259,9 @@ protected:
     bool _sdPresent = false;
     bool _sdWriteProtected = false;
     Ps2State _ps2{};
+    EvoAvrWait _wait;
+    WaitHandler _waitHandler = WaitHandler::BaseConf;
     ResetHandler _resetHandler;
-    std::chrono::steady_clock::time_point _f12Press{};
-    bool _f12Down = false;
     // Its resolution lives in the AVR's battery-backed RTC cell #FD, which the Z80 cannot reach
     EvoAvrMouse _mouse{[this] { return GetCell(EvoAvrMouse::kResolutionCell); },
                        [this](uint8_t value) { SetCell(EvoAvrMouse::kResolutionCell, value); }};

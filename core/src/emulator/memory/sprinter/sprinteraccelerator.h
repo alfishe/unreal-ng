@@ -35,6 +35,20 @@ struct SprinterAccelState
 
 static_assert(sizeof(SprinterAccelState) == 256 + 16 + 8, "SprinterAccelState must stay padding-free (TTD blob)");
 
+/// The TMK accelerator's additions (SprinterPldTmk, tmk-accelerator.md; the author's ACCELER.TDF / SP2_ACEX.TDF).
+/// Owned by the TMK module (its state blob), attached to the accelerator while that module runs. Plain fields, no
+/// padding
+struct SprinterAccelTmkState
+{
+    uint8_t bufferHigh[768];  ///< cells #100-#3FF of the 1 024-byte buffer; cells #000-#0FF are SprinterAccelState::buffer
+    uint8_t ctrl;             ///< ACC_CTRL (code #80): bits 0-3 clip, 4 rectangle, 5 length x 4, 6 address down
+    uint8_t rectWidth;        ///< ACC_RECT_W (code #81): bytes per rectangle row - 1
+    uint8_t rectCounter;      ///< RECT_COUNTER: steps left in the row (0: the next step starts the next row)
+    uint8_t reserved;
+};
+
+static_assert(sizeof(SprinterAccelTmkState) == 768 + 4, "SprinterAccelTmkState must stay padding-free (TTD blob)");
+
 /// The Sprinter's block accelerator, the Standard PLD configuration's
 /// (Sprinter tdd-accel-sound-input §1; hardware-reference §7; MAN §6; PLD
 /// ACCELER.TDF; MAME sprinter.cpp accel_control_r / acc_tick / check_accel).
@@ -64,6 +78,9 @@ static_assert(sizeof(SprinterAccelState) == 256 + 16 + 8, "SprinterAccelState mu
 /// INT acknowledge blocks new operations; the first opcode fetch after RETI
 /// (ED 4D) unblocks; the mode is kept; RETN does not unblock; NMI does not block.
 ///
+/// The TMK configuration attaches SprinterAccelTmkState (AttachTmk): a 1 024-byte buffer, ACC_CTRL and the
+/// rectangle (tmk-accelerator.md). Without it every rule above is the standard one.
+///
 /// Worked example: `LD D,D : LD A,(HL)` with (HL) = 4 sets the length 4;
 /// `LD C,C : LD (IX+0),A` with A = #AA stores #AA at IX, IX+1, IX+2, IX+3 and
 /// adds 9 CPU clocks at 21 MHz (3 extra accesses x 6 / 2).
@@ -77,6 +94,15 @@ public:
     static constexpr uint8_t kDirVertical = 0x10;
     static constexpr uint8_t kDirDouble = 0x40;
 
+    /// ACC_CTRL bits (TMK)
+    static constexpr uint8_t kCtrlClipY = 0x01;       ///< clip by PORT_Y bit 7 ...
+    static constexpr uint8_t kCtrlClipYValue = 0x02;  ///< ... when it equals this bit
+    static constexpr uint8_t kCtrlClipX = 0x04;       ///< clip by address bit 7 ...
+    static constexpr uint8_t kCtrlClipXValue = 0x08;  ///< ... when it equals this bit
+    static constexpr uint8_t kCtrlRect = 0x10;        ///< copy stores in rows of ACC_RECT_W + 1 bytes, PORT_Y + 1 per row
+    static constexpr uint8_t kCtrlLength4 = 0x20;     ///< accesses = RGACC x 4 (0 = 1 024)
+    static constexpr uint8_t kCtrlAddressDown = 0x40; ///< horizontal modes: address - 1 per access
+
     /// ACC_DIR per mode (ACCELER.TDF, MAME accel_control_r)
     static constexpr uint8_t kDir[8] = {0x00, 0x25, 0x09, 0x15, 0x41, 0x27, 0x00, 0x17};
 
@@ -86,6 +112,9 @@ public:
     SprinterAccelerator(EmulatorContext* context, SprinterPldState& pld);
 
     void AttachMemory(SprinterMemory* memory) { _memory = memory; }
+    /// The TMK additions while the TMK module runs; null = the standard accelerator
+    void AttachTmk(SprinterAccelTmkState* tmk) { _tmk = tmk; }
+    const SprinterAccelTmkState* Tmk() const { return _tmk; }
 
     /// The PLD's /RESET: mode off, unblocked, alternate addressing off; the buffer and the length stay
     void Reset();
@@ -93,7 +122,18 @@ public:
     /// A write to code #C7 / #CF: the alternate buffer addressing (AAGR = A9 A8 D7..D0, XCNT = A15..A10)
     void OnScaleWrite(uint16_t port, uint8_t value);
 
-    SprinterAccelState& State() { return _state; }
+    /// Mutable access (a state restore, tests): the engine calls every opcode fetch again until the next one settles
+    SprinterAccelState& State()
+    {
+        fetchQuiet = false;
+        return _state;
+    }
+    /// No latch an opcode fetch reads is set (no mode, no FN, no prefix / ED / RETI): a fetch of an opcode outside
+    /// kFetchMatters changes nothing (IZ84BusAgent::fetchQuiet)
+    void RefreshFetchQuiet()
+    {
+        fetchQuiet = (_state.mode | _state.dir | _state.fn | _state.prefix | _state.edSeen | _state.reti) == 0;
+    }
     const SprinterAccelState& State() const { return _state; }
 
     /// Whether ALL_MODE bit 0 enables the accelerator
@@ -101,6 +141,11 @@ public:
 
     /// Accesses per operation for a length register value (0 = 256)
     static uint32_t Accesses(uint8_t length) { return length ? length : 256u; }
+    /// Accesses of the next operation: Accesses(length), or with TMK's ACC_CTRL bit 5 length x 4 (0 = 1 024)
+    uint32_t OperationAccesses() const;
+    /// Whether a store at `addr` into a graphics page is clipped (TMK GFX_CLIP: PORT_Y bit 7 or address bit 7 against
+    /// ACC_CTRL; the PLD blocks the RAM and the video RAM store, the CPU's as well as the accelerator's)
+    bool ClipsGraphicsWrite(uint16_t addr) const { return _tmk && _tmk->ctrl && TmkClips(addr); }
     /// CPU clocks the accesses after the CPU's own take, at the CPU clock ratio (1 = 3.5 MHz, 6 = 21 MHz)
     static uint32_t ExtraClocks(uint32_t accesses, uint32_t ratio);
     /// Names for the debugger and automation
@@ -109,6 +154,8 @@ public:
 
     /// region <IZ84BusAgent>
     void OnOpcodeFetch(uint16_t addr, uint8_t opcode) override;
+    /// OnOpcodeFetch(opcode) would leave every latch as it is
+    bool RepeatFetchIsInert(uint16_t addr, uint8_t opcode) const override;
     uint8_t OnRead(uint16_t addr, uint8_t value) override;
     uint8_t BeforeWrite(uint16_t addr, uint8_t value) override;
     void AfterWrite(uint16_t addr, uint8_t value) override;
@@ -122,16 +169,22 @@ private:
     bool CanStart() const { return (_state.dir & kDirOn) && !_state.blocked; }
     void RefreshWatch() { watchData = _state.dir != 0; }
     /// The buffer cell of this access (the down-counter, or XCNT in the alternate addressing, which advances)
-    uint8_t& BufferCell(uint8_t counter);
+    uint8_t& BufferCell(uint16_t counter);
+    /// The down-counter at the operation's first access (ACC_CNT from RGACC) and its width
+    uint16_t StartCounter() const;
+    uint16_t CounterMask() const { return _tmk ? 0x3FF : 0xFF; }
+    bool TmkClips(uint16_t addr) const;
     static uint8_t Combine(uint8_t fn, uint8_t buffer, uint8_t data);
-    /// Next access: address +1, or PORT_Y +1 in the vertical modes
-    void Advance(uint16_t& addr);
+    /// Next access: address +1 (TMK: -1), or PORT_Y +1 in the vertical modes; a TMK rectangle store goes back to
+    /// `start` with PORT_Y +1 at the end of a row
+    void Advance(uint16_t& addr, uint16_t start, bool store);
     void Charge(uint32_t accesses);
 
     EmulatorContext* _context = nullptr;
     SprinterPldState& _pld;
     SprinterMemory* _memory = nullptr;
     SprinterAccelState _state{};
+    SprinterAccelTmkState* _tmk = nullptr;
 
     /// A block write in progress between BeforeWrite and AfterWrite: the down-counter after the CPU's own store
     bool _writePending = false;

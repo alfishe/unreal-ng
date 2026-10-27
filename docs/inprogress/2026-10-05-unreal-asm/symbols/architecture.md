@@ -396,6 +396,19 @@ core/src/debugger/labels/labelmanager.*     # facade (kept)
 data/symbols/manifest.json                  # bundles
 ```
 
+**As built (review round A0, 2026-10-09).** The library part is as drawn, without `fromsource/`'s optional assembling
+(the values come from `layout.h`, formats.md §4.1). The emulator side has no `core/src/debugger/symbols/` folder; each
+designed adapter went where its caller was:
+
+| Designed | Built |
+|---|---|
+| `emulatormemoryview.cpp` | `SymbolControl::CopyRam` copies every RAM page at a coherent moment; the live scanners read that copy (`scan`, `import-live`) |
+| `diskfilesource.cpp` | `core/src/debugger/asm/diskfiles.h` (`ReadDiskFiles` / `ReadDiskFile`), shared with the source verbs; `disk:A/NAME.T` for `import` and `import-source` |
+| `pagingresolver.cpp` | `LabelManager`'s view: where labels of several pages share a CPU address, the page mapped at the window wins |
+| `bundlemanager.cpp` | `LabelManager::ApplyBundles`, called by `Emulator::ApplySymbolBundles` at start and after a ROM reload; the GUI keeps the switched-off bundles (`unreal-qt/src/debugger/symbolbundlepreferences.h`) |
+| the surfaces | `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`): one verb set for WebAPI, CLI, MCP, Lua, Python and Qt |
+| `tools/symbols/symconv` | `core/src/3rdparty/unreal-asm/tools/symconv/` |
+
 Tokenized ZX formats are **not** in this module any more: they are the library's **source codecs**
 ([../source-formats.md](../source-formats.md)). The symbol module takes labels from any decoded source
 (`fromsource/`), so every assembler the library can read gives symbols without a symbol-specific decoder.

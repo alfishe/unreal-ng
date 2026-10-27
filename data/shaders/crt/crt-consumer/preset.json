@@ -1,0 +1,389 @@
+{
+ "key": "crt-consumer",
+ "preset": "crt/crt-consumer.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-consumer.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "blurx": "float",
+    "blury": "float",
+    "warpx": "float",
+    "warpy": "float",
+    "corner": "float",
+    "smoothness": "float",
+    "scanlow": "float",
+    "scanhigh": "float",
+    "beamlow": "float",
+    "beamhigh": "float",
+    "brightboost1": "float",
+    "brightboost2": "float",
+    "Shadowmask": "float",
+    "masksize": "float",
+    "MaskDark": "float",
+    "MaskLight": "float",
+    "slotmask": "float",
+    "slotwidth": "float",
+    "double_slot": "float",
+    "slotms": "float",
+    "GAMMA_OUT": "float",
+    "glow": "float",
+    "glow_str": "float",
+    "sat": "float",
+    "contrast": "float",
+    "nois": "float",
+    "WP": "float",
+    "inter": "float",
+    "vignette": "float",
+    "vpower": "float",
+    "vstr": "float",
+    "alloff": "float",
+    "postbr": "float",
+    "PRE_SCALE": "float",
+    "preserve": "float",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "rg": "float",
+    "rb": "float",
+    "gr": "float",
+    "gb": "float",
+    "br": "float",
+    "bg": "float",
+    "Downscale": "float",
+    "quality": "float",
+    "palette_fix": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "blurx": {
+   "description": "Convergence X",
+   "initial": 0.25,
+   "minimum": -4.0,
+   "maximum": 4.0,
+   "step": 0.05
+  },
+  "smoothness": {
+   "description": "  Border Smoothness",
+   "initial": 400.0,
+   "minimum": 100.0,
+   "maximum": 600.0,
+   "step": 5.0
+  },
+  "quality": {
+   "description": "  Glow quality",
+   "initial": 1.0,
+   "minimum": 0.25,
+   "maximum": 4.0,
+   "step": 0.05
+  },
+  "glow_str": {
+   "description": "  Glow intensity",
+   "initial": 0.3,
+   "minimum": 0.0001,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "palette_fix": {
+   "description": "Palette Fixes. Sega, PUAE Atari ST dark colors ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "br": {
+   "description": "  Blue-Red Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "Downscale": {
+   "description": "Interlacing Downscale Scanlines",
+   "initial": 2.0,
+   "minimum": 1.0,
+   "maximum": 8.0,
+   "step": 1.0
+  },
+  "GAMMA_OUT": {
+   "description": "  Gamma Out",
+   "initial": 2.25,
+   "minimum": 0.0,
+   "maximum": 4.0,
+   "step": 0.05
+  },
+  "warpx": {
+   "description": "  Curvature X",
+   "initial": 0.03,
+   "minimum": 0.0,
+   "maximum": 0.12,
+   "step": 0.01
+  },
+  "rb": {
+   "description": "  Red-Blue Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "nois": {
+   "description": "  Add Noise",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 32.0,
+   "step": 1.0
+  },
+  "postbr": {
+   "description": "  Post Brightness",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.5,
+   "step": 0.02
+  },
+  "masksize": {
+   "description": "Mask Size",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "scanhigh": {
+   "description": "Beam high",
+   "initial": 8.0,
+   "minimum": 1.0,
+   "maximum": 15.0,
+   "step": 1.0
+  },
+  "blury": {
+   "description": "Convergence Y",
+   "initial": -0.1,
+   "minimum": -4.0,
+   "maximum": 4.0,
+   "step": 0.05
+  },
+  "slotwidth": {
+   "description": "Slot Mask Width",
+   "initial": 2.0,
+   "minimum": 1.0,
+   "maximum": 6.0,
+   "step": 0.5
+  },
+  "bg": {
+   "description": "  Blue-Green Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "gb": {
+   "description": "  Green-Blue Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "vstr": {
+   "description": "Vignette strength",
+   "initial": 40.0,
+   "minimum": 0.0,
+   "maximum": 50.0,
+   "step": 1.0
+  },
+  "MaskLight": {
+   "description": "Mask light",
+   "initial": 1.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "WP": {
+   "description": "  Color Temperature %",
+   "initial": 0.0,
+   "minimum": -100.0,
+   "maximum": 100.0,
+   "step": 5.0
+  },
+  "MaskDark": {
+   "description": "Mask dark",
+   "initial": 0.2,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "Shadowmask": {
+   "description": "Mask Type",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 8.0,
+   "step": 1.0
+  },
+  "preserve": {
+   "description": "  Protect White On Masks",
+   "initial": 0.98,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "brightboost2": {
+   "description": "  Bright boost bright pixels",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "warpy": {
+   "description": "  Curvature Y",
+   "initial": 0.04,
+   "minimum": 0.0,
+   "maximum": 0.12,
+   "step": 0.01
+  },
+  "slotms": {
+   "description": "Slot Mask Size",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "slotmask": {
+   "description": "Slot Mask Strength",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "corner": {
+   "description": "  Corner size",
+   "initial": 0.03,
+   "minimum": 0.0,
+   "maximum": 0.1,
+   "step": 0.01
+  },
+  "brightboost1": {
+   "description": "  Bright boost dark pixels",
+   "initial": 1.25,
+   "minimum": 0.0,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "double_slot": {
+   "description": "Slot Mask Height: 2x1 or 4x1",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "alloff": {
+   "description": "Switch off shader",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "rg": {
+   "description": "  Red-Green Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "sat": {
+   "description": "  Saturation",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "inter": {
+   "description": "Interlacing Toggle",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "glow": {
+   "description": "  Glow pixels per axis",
+   "initial": 3.0,
+   "minimum": 1.0,
+   "maximum": 6.0,
+   "step": 1.0
+  },
+  "beamlow": {
+   "description": "Scanlines dark",
+   "initial": 1.45,
+   "minimum": 0.5,
+   "maximum": 2.5,
+   "step": 0.05
+  },
+  "beamhigh": {
+   "description": "Scanlines bright",
+   "initial": 1.05,
+   "minimum": 0.5,
+   "maximum": 2.5,
+   "step": 0.05
+  },
+  "contrast": {
+   "description": "  Contrast, 1.0:Off",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "scanlow": {
+   "description": "Beam low",
+   "initial": 6.0,
+   "minimum": 1.0,
+   "maximum": 15.0,
+   "step": 1.0
+  },
+  "vignette": {
+   "description": "Vignette On/Off",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "vpower": {
+   "description": "Vignette Power",
+   "initial": 0.15,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "PRE_SCALE": {
+   "description": "Pre-Scale Sharpening",
+   "initial": 1.5,
+   "minimum": 1.0,
+   "maximum": 4.0,
+   "step": 0.1
+  },
+  "gr": {
+   "description": "  Green-Red Tint",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 1.0,
+   "step": 0.005
+  }
+ }
+}

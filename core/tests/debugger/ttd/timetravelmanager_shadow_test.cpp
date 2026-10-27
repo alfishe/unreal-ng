@@ -85,7 +85,7 @@ protected:
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
                 std::vector<uint8_t> state;
-                ASSERT_TRUE(_engine.DeviceState(i, id, state)) << "device " << int(id) << ", frame " << got->position.frame;
+                ASSERT_TRUE(_engine.DeviceStateOfV1Id(i, id, state)) << "device " << int(id) << ", frame " << got->position.frame;
                 EXPECT_TRUE(state == ttd::TTDPeripheralRegistry::DecodeBlob(id, blob))
                     << "device " << int(id) << ", frame " << got->position.frame;
             }
@@ -181,10 +181,12 @@ TEST_F(TimeTravelManager_Shadow_Test, RestoreToMemoryWritesOnlyWhatDiffers_AndMa
         ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, static_cast<size_t>(v), ram, present, err)) << err;
         for (uint32_t p = 0; p < pieces; ++p)
             if (present[p])
+            {
                 ASSERT_EQ(std::memcmp(live + size_t(p) * ttd::kTTDPieceSize, ram.data() + size_t(p) * ttd::kTTDPieceSize,
                                       ttd::kTTDPieceSize),
                           0)
                     << "piece " << p << " after restoring checkpoint " << index;
+            }
     };
 
     // Live memory holds the last frame: one frame back decodes what that frame changed
@@ -341,13 +343,13 @@ TEST(TimeTravelManager_FrameTable_Test, EmulatedMicrosecondsFollowEveryFrameLeng
         ASSERT_NO_FATAL_FAILURE(frame());
     // A frame ends at an instruction boundary, a few T-states past its end:
     // each step is its frame's duration within a few microseconds
-    const auto near = [](uint64_t step, uint64_t us) { return step + 8 >= us && step <= us + 8; };
+    const auto within = [](uint64_t step, uint64_t us) { return step + 8 >= us && step <= us + 8; };
     ASSERT_EQ(steps.size(), 11u);
     for (size_t i = 0; i < steps.size(); ++i)
     {
         // The line count is latched at the next frame start: frames 4-7 are 312 lines
         const uint64_t want = (i >= 4 && i < 8) ? 19968 : 20480;
-        EXPECT_TRUE(near(steps[i], want)) << "frame " << i << ": " << steps[i] << " us, want " << want;
+        EXPECT_TRUE(within(steps[i], want)) << "frame " << i << ": " << steps[i] << " us, want " << want;
     }
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

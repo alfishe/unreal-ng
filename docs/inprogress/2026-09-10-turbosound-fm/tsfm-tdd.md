@@ -435,9 +435,9 @@ Worked example:
 |---|---|
 | One carrier operator at TL=0 (word ±8168, §5.2 of the hardware reference) | ±8168/32768 × 0.30 = **±0.075**, half an SSG channel |
 | One four-carrier channel | ≈ ±0.30, twice an SSG channel |
-| Worst case, all four sources flat out | exceeds int16 in the current saturating mixer |
+| Worst case, all four sources flat out | exceeds full scale; the wide mix bus and master limiter take it (ISSUES.md #6) |
 
-The worst case is the known prerequisite for the wide-mix + limiter work (§14). FM1/FM2 registry volumes default to 1.0.
+The worst case is why a TSFM machine mixes on the wide bus with the master limiter (ISSUES.md #6). FM1/FM2 registry volumes default to 1.0.
 
 Pan: FM goes centre on both channels (hardware). Stereo split is not offered, because it is not a board property.
 
@@ -473,7 +473,7 @@ Fixed size, computed in the constructor. Little-endian and packed, like the othe
 
 ```
 u8   version = 1
-u8   board: chip | statusRead<<1 | fmEnabled<<2
+u8   board: chip | statusRead<<1 | fmEnabled<<2 | renderReanchor<<3 (a cursor re-anchor pending for the next frame start; set only in a capture inside a frame; 0 in older blobs)
 per chip × 2:
   u8   address
   i32  fmClockPhase
@@ -783,7 +783,7 @@ THIRD_PARTY_NOTICES.md                                          ymfm
 
 1. **SSG prescaler** (×2 / ×4 SSG clock at /3 and /2) is not modelled. It warns when a frame ends on a non-default prescaler. FM is exact.
 2. **Gain** is derived from the MiSTer ratio and part values, not measured (H1). Adjust with `TSFM_FmTrimDb`.
-3. **Mixer headroom:** loud TFM material can saturate the current int16 mixer. Addressed by the wide-mix + limiter work.
+3. **Mixer headroom:** loud TFM material exceeds full scale. A TSFM machine mixes on the wide bus with the master soft limiter (ISSUES.md #6): no hard clipping, peaks compressed above 0.75 FS.
 4. **Output-stage write timing:** the core is exact to the T-state. The audio hold resolves writes to 8 T-states (437.5 kHz), which is finer than any audible effect.
 5. **Output-stage state is not in TTD:** filters restart after a restore, so up to about 0.4 ms of audio differs from the original. This is the same policy as TurboSound.
 6. **Snapshots** (.z80/.sna) do not carry FM state. They do not carry full TurboSound state today either.

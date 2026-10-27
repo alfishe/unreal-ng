@@ -19,6 +19,8 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterzxsnapshot.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/snapshot/machinestatetransfer.h"
+#include "loaders/snapshot/snapshotcapture.h"
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/snapshotpolicy.h"
 
@@ -321,4 +323,263 @@ TEST(SprinterZxSnapshotName_Test, TheCommitNameIsKnownAndRefusesOtherMachines)
     EXPECT_TRUE(pentagon->LastSnapshotReport().refused);
     EXPECT_EQ(pentagon->LastSnapshotReport().needs, "model:SPRINTER");
     EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The save side (snapshot pipeline P6): the Sprinter shows a snapshot the Spectrum machine its mode made it, banks read
+// through the PLD cells in Spectrum order
+// ---------------------------------------------------------------------------------------------------------------------
+
+// At the BIOS prompt there is no Spectrum memory: every format is refused with the way out, nothing is written
+TEST_F(SprinterZxSnapshot_Test, SaveIsRefusedWhereThereIsNoZxMode)
+{
+    ToThePrompt();
+    const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    EXPECT_FALSE(formats.viewAvailable);
+    for (const snapshot::FormatStatus& status : formats.formats)
+    {
+        EXPECT_FALSE(status.available) << snapshot::ToText(status.format);
+        EXPECT_EQ(status.needs, "zx_mode");
+        EXPECT_NE(status.reason.find("ESC"), std::string::npos) << "it says how to get into a mode: " << status.reason;
+    }
+    for (const char* extension : {"sna", "z80", "szx"})
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(std::string("sprinter-save.") + extension);
+        EXPECT_FALSE(_emulator->SaveSnapshot(path)) << extension;
+        EXPECT_FALSE(std::ifstream(path).good()) << "a refusal writes nothing";
+        EXPECT_EQ(_emulator->LastSaveResult().needs, "zx_mode");
+    }
+}
+
+// In a ZX mode the saved file holds the Spectrum banks in the Spectrum's order: a .sna written right after loading a .sna
+// has the same bank sections, #7FFD and PC; the other formats restore on a plain 128K machine, and back on the Sprinter
+TEST_F(SprinterZxSnapshot_Test, ASavedSnapshotRestoresOnAnotherMachineAndBack)
+{
+    ToTheZxMenu();
+    Memory& memory = *_context->pMemory;
+    const SprinterPldState& pld = _decoder->GetPldState();
+    ASSERT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(kAction)));
+
+    const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    ASSERT_TRUE(formats.viewAvailable) << formats.view;
+    EXPECT_NE(formats.view.find("PLD cell table"), std::string::npos) << formats.view;
+    for (const snapshot::FormatStatus& status : formats.formats)
+        EXPECT_TRUE(status.available) << snapshot::ToText(status.format) << ": " << status.reason;
+
+    // The same file, banks in the order the format keeps them (5, 2, the paged one, then ascending)
+    const std::string sna = TestPathHelper::GetUniqueTestScratchPath("sprinter-save.sna");
+    ASSERT_TRUE(_emulator->SaveSnapshot(sna)) << _emulator->LastSaveResult().text;
+    const std::vector<uint8_t> saved = ReadFile(sna);
+    const std::vector<uint8_t> source = ReadFile(TestPathHelper::GetTestDataPath(kAction));
+    ASSERT_EQ(saved.size(), source.size());
+    EXPECT_TRUE(std::equal(saved.begin() + 27, saved.begin() + 49179, source.begin() + 27)) << "banks 5, 2 and the paged one";
+    EXPECT_EQ(saved[49181], source[49181]) << "#7FFD";
+    EXPECT_EQ(saved[49179], source[49179]) << "PC low";
+    EXPECT_EQ(saved[49180], source[49180]) << "PC high";
+    EXPECT_TRUE(std::equal(saved.begin() + 49183, saved.end(), source.begin() + 49183)) << "the other five banks, ascending";
+
+    // The other formats: onto a plain machine of the kind the file names, and back
+    const bool pentagon = formats.machine == "Pentagon 128";
+    for (const char* extension : {"z80", "szx"})
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(std::string("sprinter-save.") + extension);
+        ASSERT_TRUE(_emulator->SaveSnapshot(path)) << extension << ": " << _emulator->LastSaveResult().text;
+
+        Emulator* plain = EmulatorTestHelper::CreateStandardEmulator(pentagon ? "PENTAGON" : "128k", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(plain, nullptr);
+        ASSERT_TRUE(plain->LoadSnapshot(path)) << extension;
+        for (uint16_t bank = 0; bank < 8; bank++)
+        {
+            const uint8_t page = pld.Cell(static_cast<uint8_t>(0xF0 + bank));
+            EXPECT_EQ(0, std::memcmp(memory.RAMPageAddress(page), plain->GetContext()->pMemory->RAMPageAddress(bank), PAGE_SIZE))
+                << extension << " bank " << bank << " (physical page #" << std::hex << int(page) << ")";
+        }
+        EXPECT_EQ(plain->GetContext()->emulatorState.p7FFD, pld.pn & 0x3F) << extension;
+        EmulatorTestHelper::CleanupEmulator(plain);
+
+        // Back: scribble over the banks, load the file, the banks are as saved
+        std::vector<std::vector<uint8_t>> before;
+        for (uint16_t bank = 0; bank < 8; bank++)
+        {
+            uint8_t* bytes = memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(0xF0 + bank)));
+            before.emplace_back(bytes, bytes + PAGE_SIZE);
+            std::memset(bytes, 0xA5, PAGE_SIZE);
+        }
+        ASSERT_TRUE(_emulator->LoadSnapshot(path)) << extension << " back onto the Sprinter";
+        for (uint16_t bank = 0; bank < 8; bank++)
+            EXPECT_EQ(0, std::memcmp(memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(0xF0 + bank))), before[bank].data(), PAGE_SIZE))
+                << extension << " bank " << bank;
+        std::remove(path.c_str());
+    }
+    std::remove(sna.c_str());
+}
+
+// The mode's name decides what the file says the machine is
+TEST(SprinterZxCaptureIdentity_Test, TheLauncherModeNamesTheMachine)
+{
+    using Capture = SprinterZxCapture;
+    EXPECT_EQ(Capture::IdentityOf("Sprinter ZX", true).machineHint, "128k");
+    EXPECT_EQ(Capture::IdentityOf("Default (Sprinter ZX)", true).machineHint, "128k");
+    EXPECT_EQ(Capture::IdentityOf("Original ZX Spectrum", true).machineHint, "128k") << "ORIGIN.ZX keeps #7FFD: a 128K";
+    EXPECT_EQ(Capture::IdentityOf("", true).machineHint, "128k") << "no name: a 128K";
+
+    const Capture::Identity pentagon = Capture::IdentityOf("Pentagon 128", true);
+    EXPECT_EQ(pentagon.machineHint, "pentagon128");
+    EXPECT_EQ(pentagon.model, MM_PENTAGON);
+    EXPECT_EQ(pentagon.timingHint, "pentagon");
+
+    const Capture::Identity scorpion = Capture::IdentityOf("Scorpion 256", true);
+    EXPECT_EQ(scorpion.machineHint, "scorpion256");
+    EXPECT_EQ(scorpion.bankCount, 16);
+    EXPECT_TRUE(scorpion.scorpion);
+
+    const Capture::Identity none = Capture::IdentityOf("Pentagon 128", false);
+    EXPECT_TRUE(none.layout48) << "a mode without #7FFD paging is a 48K";
+    EXPECT_EQ(none.machineHint, "48k");
+    EXPECT_EQ(none.bankCount, 3);
+}
+
+// A 512 KB mode (CNF bit 7: P512.ZX, PENT512.ZX) is a Pentagon 512: banks 0-31, the banks 16-31 behind the cells #D0-#DF. Only an
+// .szx holds 32 banks; the file restores on a Pentagon 512 and keeps every bank
+TEST_F(SprinterZxSnapshot_Test, A512kModeIsAPentagon512SavedAsSzx)
+{
+    ToTheZxMenu();
+    Memory& memory = *_context->pMemory;
+    SprinterPldState& pld = _decoder->GetPldState();
+    pld.cnf = static_cast<uint8_t>(pld.cnf | 0x80);   // the 512 KB paging
+    // Give banks 16-31 their own pages (the launcher of a real mode allocates them), a pattern in every bank
+    for (uint16_t bank = 0; bank < 32; bank++)
+    {
+        const uint8_t cell = bank < 8 ? 0xF0 + bank : (bank < 16 ? 0xF8 + (bank - 8) : (bank < 24 ? 0xD0 + (bank - 16) : 0xD8 + (bank - 24)));
+        if (bank >= 16)
+            pld.Cell(static_cast<uint8_t>(cell)) = static_cast<uint8_t>(0xE0 + (bank - 16));
+        uint8_t* bytes = memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(cell)));
+        for (uint32_t i = 0; i < PAGE_SIZE; i++)
+            bytes[i] = static_cast<uint8_t>((i * 5 + bank * 29) & 0xFF);
+    }
+    pld.pn = 0xD5;   // bank 5 | bit 6 -> +8 | bit 7 -> +16 = bank 29, screen normal
+
+    const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    ASSERT_TRUE(formats.viewAvailable) << formats.view;
+    EXPECT_EQ(formats.machine, "Pentagon 512");
+    EXPECT_FALSE(formats.For(snapshot::SaveFormat::Sna).available);
+    EXPECT_FALSE(formats.For(snapshot::SaveFormat::Z80).available);
+    EXPECT_EQ(formats.For(snapshot::SaveFormat::Sna).needs, "format:szx");
+    ASSERT_TRUE(formats.For(snapshot::SaveFormat::Szx).available);
+
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("sprinter-p512.szx");
+    ASSERT_TRUE(_emulator->SaveSnapshot(path)) << _emulator->LastSaveResult().text;
+    Emulator* pentagon = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM("p512-target", "PENTAGON", 512, LoggerLevel::LogError).get();
+    ASSERT_NE(pentagon, nullptr);
+    ASSERT_TRUE(pentagon->LoadSnapshot(path)) << pentagon->LastSnapshotReport().ToText();
+    for (uint16_t bank = 0; bank < 32; bank++)
+    {
+        const uint8_t cell = bank < 8 ? 0xF0 + bank : (bank < 16 ? 0xF8 + (bank - 8) : (bank < 24 ? 0xD0 + (bank - 16) : 0xD8 + (bank - 24)));
+        EXPECT_EQ(0, std::memcmp(memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(cell))),
+                                 pentagon->GetContext()->pMemory->RAMPageAddress(bank), PAGE_SIZE))
+            << "bank " << bank << " (cell #" << std::hex << int(cell) << ")";
+    }
+    EXPECT_EQ(pentagon->GetContext()->emulatorState.p7FFD, 0xD5);
+    EXPECT_EQ(pentagon->GetContext()->pMemory->GetRAMPageForBank3(), 29) << "bank 29 at #C000";
+    std::remove(path.c_str());
+}
+
+TEST(SprinterZxCaptureIdentity_Test, A512kModeIsAPentagon512)
+{
+    using Capture = SprinterZxCapture;
+    const Capture::Identity identity = Capture::IdentityOf("Pentagon 512", true, true);
+    EXPECT_EQ(identity.machineHint, "pentagon512");
+    EXPECT_EQ(identity.model, MM_PENTAGON);
+    EXPECT_EQ(identity.ramKb, 512u);
+    EXPECT_EQ(identity.bankCount, 32);
+    EXPECT_EQ(Capture::IdentityOf("Pentagon 128", true, false).machineHint, "pentagon128") << "no CNF bit 7: a 128";
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The state transfer (MachineStateTransfer, an instance's own mechanism, not the snapshot pipeline): a 128K state moves into a
+// Sprinter that runs a Spectrum mode, and a Sprinter's Spectrum mode moves out to a 128K. Banks go behind the PLD cells; the machine
+// is not reset (a reset would leave the mode)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+void FillBank(uint8_t* bytes, uint8_t seed)
+{
+    for (uint32_t i = 0; i < PAGE_SIZE; i++)
+        bytes[i] = static_cast<uint8_t>(seed * 29 + i * 7 + (i >> 8));
+}
+}  // namespace
+
+TEST_F(SprinterZxSnapshot_Test, A128kStateMovesIntoASprinterZxMode)
+{
+    ToTheZxMenu();
+    const SprinterPldState& pld = _decoder->GetPldState();
+    ASSERT_FALSE((pld.cnf & 0x20) != 0) << "the BIOS 128 mode has #7FFD paging";
+
+    auto source = EmulatorManager::GetInstance()->CreateEmulatorWithModel("transfer-128k", "128k", LoggerLevel::LogError);
+    ASSERT_NE(source, nullptr);
+    EmulatorContext* from = source->GetContext();
+    for (uint16_t bank = 0; bank < 8; bank++)
+        FillBank(from->pMemory->RAMPageAddress(bank), static_cast<uint8_t>(bank + 1));
+    from->pPortDecoder->UnlockPaging();
+    from->pPortDecoder->DecodePortOut(0x7FFD, 0x16, 0x8000);   // bank 6 on top, 48 BASIC
+    from->pCore->GetZ80()->pc = 0x8123;
+    from->pCore->GetZ80()->sp = 0xBEEF;
+
+    const auto report = MachineStateTransfer::Transfer(*source, *_emulator);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    for (uint16_t bank = 0; bank < 8; bank++)
+        EXPECT_EQ(0, std::memcmp(from->pMemory->RAMPageAddress(bank), _context->pMemory->RAMPageAddress(pld.Cell(static_cast<uint8_t>(0xF0 + bank))), PAGE_SIZE))
+            << "bank " << bank << " behind cell #F" << bank;
+    EXPECT_EQ(pld.pn & 0x37, 0x16 & 0x37) << "#7FFD reached the PLD latch";
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, 0x8123);
+    EXPECT_TRUE(_decoder->GetPldState().configState == SprinterConfigState::Configured) << "the machine stayed in its ZX mode";
+    EXPECT_EQ(_context->pMemory->GetRAMPageForBank3(), pld.Cell(static_cast<uint8_t>(0xF0 + 6))) << "bank 6 at #C000";
+    EmulatorManager::GetInstance()->RemoveEmulator(source->GetId());
+}
+
+TEST_F(SprinterZxSnapshot_Test, ASprinterThatRunsNoZxModeIsNoTarget)
+{
+    ToThePrompt();
+    auto source = EmulatorManager::GetInstance()->CreateEmulatorWithModel("transfer-128k", "128k", LoggerLevel::LogError);
+    ASSERT_NE(source, nullptr);
+    const uint64_t before = RamHashExcept(*_context->pMemory, {});
+    const auto report = MachineStateTransfer::Transfer(*source, *_emulator);
+    EXPECT_FALSE(report.ok);
+    EXPECT_NE(report.reason.find("not in a Spectrum (ZX) mode"), std::string::npos) << report.reason;
+    EXPECT_EQ(RamHashExcept(*_context->pMemory, {}), before) << "nothing was written";
+    EmulatorManager::GetInstance()->RemoveEmulator(source->GetId());
+}
+
+TEST_F(SprinterZxSnapshot_Test, ASprinterZxModeMovesOutToA128k)
+{
+    ToTheZxMenu();
+    const SprinterPldState& pld = _decoder->GetPldState();
+    for (uint16_t bank = 0; bank < 8; bank++)
+        FillBank(_context->pMemory->RAMPageAddress(pld.Cell(static_cast<uint8_t>(0xF0 + bank))), static_cast<uint8_t>(bank + 40));
+    _context->pCore->GetZ80()->pc = 0x8222;
+
+    auto target = EmulatorManager::GetInstance()->CreateEmulatorWithModel("transfer-target", "128k", LoggerLevel::LogError);
+    ASSERT_NE(target, nullptr);
+    const auto report = MachineStateTransfer::Transfer(*_emulator, *target);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    for (uint16_t bank = 0; bank < 8; bank++)
+        EXPECT_EQ(0, std::memcmp(target->GetContext()->pMemory->RAMPageAddress(bank),
+                                 _context->pMemory->RAMPageAddress(pld.Cell(static_cast<uint8_t>(0xF0 + bank))), PAGE_SIZE))
+            << "bank " << bank;
+    EXPECT_EQ(target->GetContext()->emulatorState.p7FFD & 0x37, pld.pn & 0x37);
+    EXPECT_EQ(target->GetContext()->pCore->GetZ80()->pc, 0x8222);
+    EmulatorManager::GetInstance()->RemoveEmulator(target->GetId());
+}
+
+// A Sprinter in the DSS / BIOS runs its own software: its state moves nowhere but into another Sprinter
+TEST_F(SprinterZxSnapshot_Test, ASprinterAtThePromptMovesNowhere)
+{
+    ToThePrompt();
+    auto target = EmulatorManager::GetInstance()->CreateEmulatorWithModel("transfer-target", "128k", LoggerLevel::LogError);
+    ASSERT_NE(target, nullptr);
+    const auto report = MachineStateTransfer::Check(*_context, *target->GetContext());
+    EXPECT_FALSE(report.ok);
+    EXPECT_NE(report.reason.find("not in a Spectrum (ZX) mode"), std::string::npos) << report.reason;
+    EmulatorManager::GetInstance()->RemoveEmulator(target->GetId());
 }

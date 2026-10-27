@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include "cli-next-format.h"
 #include "cli-sprinter-format.h"
 #include <emulator/state/devicestate.h>
 
@@ -64,6 +65,18 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  cdaudio        - CD drives' audio: disc, tracks, status, head, volume, mixer row" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
+        ss << "  next           - ZX Spectrum Next: machine, CPU clock, DivMMC, interrupts, CTC, SPI" << NEWLINE;
+        ss << "  next regs      - the NextREG table: value and reset of every register" << NEWLINE;
+        ss << "  next mmu       - the eight 8K MMU slots and the paging latches" << NEWLINE;
+        ss << "  next dma       - the DMA as programmed and running (no side effect on its read sequence)" << NEWLINE;
+        ss << "  next video     - layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster" << NEWLINE;
+        ss << "  next palette [palette=selected|0-7|name|all] [range=0-255] - the 9-bit palettes" << NEWLINE;
+        ss << "  next ports [port=6B] [access=r|w] - the internal port enable word; which device answers a port" << NEWLINE;
+        ss << "  next nextreg [reg=07] [changed=true] - one NextREG with decoded bits, or all (no side effect)" << NEWLINE;
+        ss << "  next copper [from=0] [count=64] [raw=true] - the copper list as a disassembly, control mode, write address, pc" << NEWLINE;
+        ss << "  next sprites [from=0] [count=128] [all=true] - the sprite attributes decoded, switches, collision flags, pattern memory" << NEWLINE;
+        ss << "  next journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | on | off | clear" << NEWLINE;
+        ss << "                 - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper" << NEWLINE;
         ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;
         ss << "  sprinter ports [map=0-3] [dos=0|1] [pn5=0|1] [rw=r|w|rw] - the decoded port table (page #40)" << NEWLINE;
         ss << "  sprinter port <hex> [rw=r|w] [map=..] [dos=..] [pn5=..]  - one port: index, code, name" << NEWLINE;
@@ -100,6 +113,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state cdaudio        - Show the CD drives' audio state" << NEWLINE;
         ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
         ss << "  state tsconf tsu     - Show the TSU objects and the palette (debug views)" << NEWLINE;
+        ss << "  state next           - Show the ZX Spectrum Next machine state (also: zxn)" << NEWLINE;
+        ss << "  state next journal on - Record NextREG writes; then `state next journal regs=02` shows who reset the machine" << NEWLINE;
         ss << "  state sprinter       - Show the Sprinter machine state (also: sp)" << NEWLINE;
         ss << "  state sprinter ports map=0 dos=0 rw=w - Show the OUT half of map 0 with TR-DOS off" << NEWLINE;
         ss << "  state sprinter port 21BC rw=w         - Which device answers OUT (#21BC)" << NEWLINE;
@@ -238,9 +253,23 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         session.SendResponse(ts.str());
         return;
     }
+    else if (subsystem == "next" || subsystem == "zxn")
+    {
+        session.SendResponse(CliNext::StateText(context, args, NEWLINE));
+        return;
+    }
     else if (subsystem == "sprinter" || subsystem == "sp")
     {
         session.SendResponse(CliSprinter::StateText(context, args, NEWLINE));
+        return;
+    }
+    else if (subsystem == "execution" || subsystem == "exec")
+    {
+        // The execution arbiter: who decides whether the Z80 runs (DeviceState::Execution)
+        std::stringstream report;
+        report << "Execution arbiter" << NEWLINE << "=================" << NEWLINE
+               << DeviceState::ToText(DeviceState::Execution(context));
+        session.SendResponse(report.str());
         return;
     }
     else if (subsystem == "rtc" || subsystem == "cmos")
@@ -920,16 +949,16 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
     ss << "  Channel A Noise: " << ((mixer & 0x08) ? "OFF" : "ON") << NEWLINE;
     ss << "  Channel B Noise: " << ((mixer & 0x10) ? "OFF" : "ON") << NEWLINE;
     ss << "  Channel C Noise: " << ((mixer & 0x20) ? "OFF" : "ON") << NEWLINE;
-    ss << "  I/O Port A: " << ((mixer & 0x40) ? "Input" : "Output") << NEWLINE;
-    ss << "  I/O Port B: " << ((mixer & 0x80) ? "Input" : "Output") << NEWLINE;
+    ss << "  I/O Port A: " << ((mixer & 0x40) ? "Output" : "Input") << NEWLINE;
+    ss << "  I/O Port B: " << ((mixer & 0x80) ? "Output" : "Input") << NEWLINE;
     ss << NEWLINE;
 
     // Show I/O ports
     ss << "I/O Ports:" << NEWLINE;
     ss << "  Port A: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)registers[14] << std::dec;
-    ss << " (" << ((mixer & 0x40) ? "Input" : "Output") << ")" << NEWLINE;
+    ss << " (" << ((mixer & 0x40) ? "Output" : "Input") << ")" << NEWLINE;
     ss << "  Port B: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)registers[15] << std::dec;
-    ss << " (" << ((mixer & 0x80) ? "Input" : "Output") << ")" << NEWLINE;
+    ss << " (" << ((mixer & 0x80) ? "Output" : "Input") << ")" << NEWLINE;
     ss << NEWLINE;
 
     ss << "Sound Played Since Reset: No (tracking not implemented)"
@@ -1059,8 +1088,8 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             ss << "  Bit 3: Channel A Noise - " << ((regValue & 0x08) ? "Disabled" : "Enabled") << NEWLINE;
             ss << "  Bit 4: Channel B Noise - " << ((regValue & 0x10) ? "Disabled" : "Enabled") << NEWLINE;
             ss << "  Bit 5: Channel C Noise - " << ((regValue & 0x20) ? "Disabled" : "Enabled") << NEWLINE;
-            ss << "  Bit 6: Port A Direction - " << ((regValue & 0x40) ? "Input" : "Output") << NEWLINE;
-            ss << "  Bit 7: Port B Direction - " << ((regValue & 0x80) ? "Input" : "Output") << NEWLINE;
+            ss << "  Bit 6: Port A Direction - " << ((regValue & 0x40) ? "Output" : "Input") << NEWLINE;
+            ss << "  Bit 7: Port B Direction - " << ((regValue & 0x80) ? "Output" : "Input") << NEWLINE;
             break;
 
         case 8:
@@ -1117,13 +1146,13 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
 
         case 14:  // I/O Port A
             ss << "I/O Port A:" << NEWLINE;
-            ss << "  Direction: " << ((registers[7] & 0x40) ? "Input" : "Output") << NEWLINE;
+            ss << "  Direction: " << ((registers[7] & 0x40) ? "Output" : "Input") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
             break;
 
         case 15:  // I/O Port B
             ss << "I/O Port B:" << NEWLINE;
-            ss << "  Direction: " << ((registers[7] & 0x80) ? "Input" : "Output") << NEWLINE;
+            ss << "  Direction: " << ((registers[7] & 0x80) ? "Output" : "Input") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
             break;
     }
@@ -1222,3 +1251,16 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
 /// endregion </Audio State Commands>
 
 /// endregion </State Inspection Commands>
+
+// HandleNext - next nextreg <reg> <value> [nextreg|port|internal]: write a NextREG through the board's write choke point (core
+// NextRegWriteControl, the WebAPI POST /next/nextreg); any other word is a `state next` subcommand (`next dma`, `next video` ...)
+void CLIProcessor::HandleNext(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    session.SendResponse(CliNext::NextCommand(emulator.get(), args, NEWLINE));
+}

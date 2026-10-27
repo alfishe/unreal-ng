@@ -13,7 +13,11 @@
 /// (§3.3 selectors, §3.4 verbs and options, §3.5 auto, §3.8 this layer).
 ///
 /// Verbs: list, info, formats, insert, eject, swap, save, export, discard,
-/// rescan, create, protect.
+/// rescan, create, protect, compose (build a composition descriptor without
+/// inserting it: report and layout), layers (a slot's composite medium),
+/// volumes / files / read (the file systems on a slot's disk: TR-DOS, +3DOS,
+/// iS-DOS / TASiS, FAT of DSS and NedoOS; DiskFs), write (a file onto a TR-DOS
+/// or +3DOS floppy in a slot).
 ///
 /// Example (what a surface does):
 /// @code
@@ -107,11 +111,19 @@ private:
     MediaReply Insert(const MediaRequest& request, bool swap);
     MediaReply Eject(const MediaRequest& request);
     MediaReply Save(const MediaRequest& request);
+    MediaReply Flatten(const MediaRequest& request);
     MediaReply Export(const MediaRequest& request);
     MediaReply Discard(const MediaRequest& request);
     MediaReply Rescan(const MediaRequest& request);
     MediaReply Create(const MediaRequest& request);
     MediaReply Protect(const MediaRequest& request);
+    MediaReply Compose(const MediaRequest& request);
+    MediaReply Layers(const MediaRequest& request);
+    MediaReply Changes(const MediaRequest& request);
+    /// volumes, files, read: the file systems on a slot's disk (DiskFs)
+    MediaReply Files(const MediaRequest& request, const std::string& verb);
+    /// write: a file onto a slot's TR-DOS / +3DOS floppy (DiskFs::Write), a tool's edit at a coherent moment
+    MediaReply WriteFile(const MediaRequest& request);
 
     /// The slot `insert auto` picks for `path` (§3.5)
     MediaResult ChooseSlot(const std::string& path, const std::map<std::string, std::string>& options, std::string& slotId);

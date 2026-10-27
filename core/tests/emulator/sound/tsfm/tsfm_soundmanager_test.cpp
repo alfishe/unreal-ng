@@ -40,9 +40,12 @@ Emulator* CreateFmEmulator(LoggerLevel level)
     }
     // The shipped slot kind flips between releases (FM ships enabled now);
     // force FM from whichever value the ini carries
+    // (Since ZX-bus slots SL-4 the shipped ini names the board in [SLOTS] as `ay-socket = tsfm` and has no
+    // TurboSound= key: that form counts as FM too)
     const std::string to = "TurboSound=FM";
     const size_t atAy = ini.find("TurboSound=AY");
-    if (ini.empty() || (atAy == std::string::npos && ini.find(to) == std::string::npos))
+    if (ini.empty() ||
+        (atAy == std::string::npos && ini.find(to) == std::string::npos && ini.find("\nay-socket = tsfm") == std::string::npos))
         return nullptr;
     if (atAy != std::string::npos)
         ini.replace(atAy, to.size(), to);  // both slot literals are the same length
@@ -119,8 +122,10 @@ TEST_F(TsfmMixer_Test, FmConfigRegistersFmSources)
     const AudioDeviceInfo* fm2 = FindDevice(*soundManager, AudioSourceType::FM2);
     ASSERT_NE(fm1, nullptr) << "FM 1 not registered";
     ASSERT_NE(fm2, nullptr) << "FM 2 not registered";
-    EXPECT_EQ(fm1->name, "FM 1");
-    EXPECT_EQ(fm2->name, "FM 2");
+    EXPECT_EQ(fm1->name, "TSFM FM 1");
+    EXPECT_EQ(fm2->name, "TSFM FM 2");
+    EXPECT_EQ(FindDevice(*soundManager, AudioSourceType::AY1_All)->name, "TSFM SSG 1") << "not the board AY (MS-7)";
+    EXPECT_EQ(FindDevice(*soundManager, AudioSourceType::AY2_All)->name, "TSFM SSG 2");
 
     // Fresh registry entries: audible at unity volume
     EXPECT_FALSE(fm1->mute);

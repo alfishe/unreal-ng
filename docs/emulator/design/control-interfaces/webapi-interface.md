@@ -169,6 +169,18 @@ Content-Type: application/json
 }
 ```
 
+Behind a command another client runs (`run_frames`, a step), the pause is **queued**: it applies when that
+command ends (a pause never aborts one). The answer says so at once, `202`:
+```json
+{
+  "status": "queued",
+  "message": "The pause is queued behind 'run_frames' (webapi): the pause applies when it ends. Add ?wait=true to wait for it",
+  "waiting_for": "queued behind 'run_frames' (webapi): the pause applies when it ends"
+}
+```
+The machine still runs then: registers read now are not the paused ones. `?wait=true` (30 s) or `?wait=<ms>`
+(up to 60 s) waits for the pause: `200 success` when it applied, `202 busy` when the wait ran out (still queued).
+
 #### Resume Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/resume`  
 
@@ -177,6 +189,34 @@ Content-Type: application/json
 
 #### Stop Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/stop`  
+
+#### Operation Log
+**Endpoint**: `GET /api/v1/emulator/{id}/operations[?since=<seq>&limit=<n>]`  
+**Description**: The machine's operation log (the machine state coordinator's, always on, the last 1024): reset,
+disk autostart, snapshot load, media insert / eject / discard, blank disk - with refusals. `since`: only entries
+after that seq (pass the previous answer's `last_seq` to poll); `limit`: only the newest N (absent or 0: all kept).
+400 when either is not a non-negative integer, 404 for an unknown emulator. Fields: [command-interface.md, Operation
+log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operations()`, MCP `emulator_manage`
+`operations`. An operation asked for over the WebAPI is logged with source `webapi`; a request with the header
+`X-Unreal-Source: mcp` (the MCP server sends it) with `mcp`. A tape / disk load or blank disk while TTD records is
+logged `done`, mode `recording`, effect `none` (an event of the recording at the next frame boundary).
+
+**Response**:
+```json
+{
+  "mode": "live",
+  "last_seq": 3,
+  "capacity": 1024,
+  "entries": [
+    {"seq": 2, "frame": 950, "t_in_frame": 41210, "wall_ms": 1791612034211, "kind": "media-insert",
+     "source": "webapi", "mode": "recording", "status": "done", "effect": "none",
+     "summary": "tape /games/elite.tzx", "detail": ""},
+    {"seq": 3, "frame": 1130, "t_in_frame": 7, "wall_ms": 1791612040873, "kind": "media-insert",
+     "source": "qt", "mode": "live", "status": "done", "effect": "media-changed",
+     "summary": "tape /games/elite.tzx", "detail": ""}
+  ]
+}
+```
 
 ### 5. Create Emulator
 **Endpoint**: `POST /api/v1/emulator/create` (also `POST /api/v1/emulator/start` = create + start)  
@@ -198,6 +238,10 @@ Content-Type: application/json
 - `zero`: every RAM page of the configuration reads 0, so the machine depends on nothing outside it (tests, benchmarks, scripted analysis that must give the same result on every run).
 
 Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
+
+`slots` (optional) gives the new machine its slot set in the `[SLOTS]` key form, replacing the INI's
+([ZX-bus Slots](#zx-bus-slots)): `{"ay-socket": "none", "zxbus.1": "multisound", "zxbus.1.dip": ["ym", "saa"]}`.
+Entries that conflict (two cards with one job) refuse the machine with a `400` naming every pair and its rule.
 
 **Response 201**:
 ```json
@@ -308,6 +352,8 @@ not a ZX-Poly machine.
 **Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
 
+The cards go along ([slots.md → Model switch](../../../features/slots.md#model-switch)): `slots` in the reply lists the cards `kept` (in their slot, or moved behind an adapter: `zxbus.2 -> edge.2 = soundrive`) and `dropped` (slot, card, reason) and `report` the same lines for people.
+
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
 ### 6. Remove Emulator
@@ -332,7 +378,7 @@ POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
-POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop)
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -340,7 +386,13 @@ POST /api/v1/emulator/{id}/run_to_pixel      Run until next screen pixel boundar
 POST /api/v1/emulator/{id}/run_to_interrupt  Run until Z80 accepts INT
 POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
 POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
+GET  /api/v1/emulator/{id}/run_pace          The paced run: {emulator_id, pace: {preset, label, index, unit, count, interval_ms, effective_ms, adjustable, running, ticks, stop_reason, breakpoint?, presets}}
+POST /api/v1/emulator/{id}/run_pace          {op: set|next|prev|by|start|stop|toggle|step, preset?, interval_ms?, delta?} -> {status, message, pace, state} (scope run; 409 "Run-control held", 400 for a bad preset / interval)
 ```
+
+The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)):
+presets `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; it steps on its own thread
+and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws` carries it as `pace`.
 
 > [!NOTE]
 > **Host audio during direct runs.** These commands run at full host speed, not real time. For the run, the
@@ -402,7 +454,7 @@ POST /api/v1/emulator/{id}/stepout | skip_until | steps | stepover | run_*   Run
 GET  /api/v1/emulator/{id}/debug/pchist        PC history, newest first (?depth=, default 32, at most 1024): {armed, started_now, total, capacity, entries [{address, kind rom|ram|cache, page}]} - one entry per instruction the CPU starts with its window's page; the first read starts recording (it costs nothing until then); POST {"enabled": false|true} stops / restarts it empty; also GET /debug/snapshot?pchist=N
 GET  /api/v1/emulator/{id}/debug/wait          Long-poll (?since=seq, default the current one; ?timeout_ms=0..60000, default 10000): answers when the debugger snapshot's seq moves past since (a stop, a run start, a tool edit) or at the timeout -> {seq, changed, state, pause}; no server thread waits
 POST /api/v1/emulator/{id}/ports/out          A debugger's port write through the machine's decoder (body: {"port": "0x13AF", "value": "0x20"}, numbers or text 0x13AF / #13AF / 13AFh / decimal): every side effect of a CPU OUT (paging, TS-Conf registers, AY, border, a card's port), but no port or memory breakpoint fires, device waits are dropped and TTD keeps it as a tool edit; runs paused, stopped or between two frames of a running machine -> {port, value, moment: paused | stopped | frame}; 503 when no coherent moment came within 500 ms
-POST /api/v1/emulator/{id}/memory/find        Search memory for a byte pattern (body: {"pattern_hex": "CD ?? 00" (?? any byte, A? any nibble) | "pattern": [..], "mask_hex": "FF 00 FF", "space": "cpu|ram|ram5|rom2|cache0", "start", "end", "max", "alignment"}); matches: address or page {kind, page} + offset, context_start, context (4 before, the match, 4 after)
+POST /api/v1/emulator/{id}/memory/find        Search memory for a byte pattern (body: {"pattern_hex": "CD ?? 00" (?? any byte, A? any nibble) | "pattern": [..], "mask_hex": "FF 00 FF", "space": "cpu|ram|ram5|rom2|cache0|<region>" (a device memory by name or alias, GET /memory/regions), "start", "end", "max", "alignment"}); matches: address, page {kind, page} + offset, or region + offset, context_start, context (4 before, the match, 4 after)
 GET  /api/v1/emulator/{id}/state/screen        Screen state: video mode, resolution, border, shadow screen, active screen + RAM pages, contention, flash (?verbose=true adds per-screen RAM page + Z80 mapping and decoded #7FFD)
 GET  /api/v1/emulator/{id}/state/screen/mode   Video mode: picture format, memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77
 GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
@@ -416,11 +468,42 @@ GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] 
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL, TS-Conf text, the Sprinter's text squares): lines[] text/codes/attrs; unavailable in bitmap modes
 GET  /api/v1/emulator/{id}/video/changes      [?frames=1|2] - video change log, every machine: per frame the latches at its start, writes[] (t, line, t_in_line, pc, changes {latch: "old -> new"}), tables (palette / mode_table write counts with first / last T)
 GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binary|base64 - the picture as raw pixels (R,G,B,A; the Sprinter's u16 pens with index); X-Width / X-Height headers
-GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"; TS-Conf palette "cram" and sprite table "sfile", 512 bytes each, word n at offset 2n, low byte first; "cmos" on every machine with a CMOS clock, a write is a guest write; ZX-Evo "eeprom", 4 KiB): name, size, pages, write path
+GET  /api/v1/emulator/{id}/memory/regions      Device memory regions: declared ones (the Sprinter's 256 KB video RAM "sprinter.vram" / "vram"; TS-Conf palette "tsconf.cram" / "cram" and sprite table "tsconf.sfile" / "sfile", 512 bytes each, word n at offset 2n, low byte first; "rtc.cmos" / "cmos" on every machine with a CMOS clock, a write is a guest write; ZX-Evo "evo-avr.eeprom" / "eeprom", 4 KiB) and every memory time travel records by its engine name ("sprinter.fastram", "gs.ram", "neogs.ram", "neogs.flash", "moonsound.wave", "vdac2.*" read-only, "smuc.eeprom", "evo.flash"): name, aliases, ttd_region, size, pages, writable, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
-PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable, channels[] {key, channel, name, muted, solo, audible, volume, gain_db, peak?})
+PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted) or channel (ay1.a, gs.3, moonsound_fm.7, ms_midi.10, next_dac.c; solo within its row; applied at the next frame start); POST too
+GET  /api/v1/emulator/{id}/audio/mixer/{source} One row (source, name, muted, solo, audible, volume, gain_db, peak, active, channels[]) or channel; 404 when absent
+GET  /api/v1/emulator/{id}/audio/levels        Every row's and channel's peak, active, mute, solo, audible, volume (compact; the WebSocket topic audio.mixer pushes the same)
+GET  /api/v1/emulator/{id}/state/next         ZX Spectrum Next (also /state/next/regs, /state/next/mmu): machine type and timing, CPU clock, DivMMC, interrupts, CTC, SPI, the NextREG table, the 8K MMU slots
+GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,port,copper,internal&since=&from=&to=&limit= - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper; value, previous, name, decoded (NR #02 / #03 / #07)
+POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
+GET  /api/v1/emulator/{id}/state/next/sd     ?kinds=command,read,write&card=0|1&since=&from=&to=&limit= - the Next SD cards (SDSC/SDHC, protocol state, blocks), the SPI engine and the SD journal: every command with argument and R1, every block read / written, with frame, T and PC
+POST /api/v1/emulator/{id}/next/sd-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the SD journal
+GET  /api/v1/emulator/{id}/bus               the bus analyzer's buses (zc.spi, next.spi, divmmc.spi, neogs.*, ATA ide0 / ide1): devices (an SD card's type, state, timing profile), trace and checks state
+GET  /api/v1/emulator/{id}/bus/{bus}/events  ?kinds=select,deselect,byte,early,truncated,command,read,write,reg_read,reg_write,ata_command,data|spi|sd|ata&slot=&since=&from=&to=&limit= - the bus trace, each event with seq, frame, t, pc, source, slot
+GET  /api/v1/emulator/{id}/bus/{bus}/findings ?rules=&since=&limit= - the checks' findings (early_access, select_mid_byte, deselect_mid_command, command_while_busy, command_drops_answer, crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy) with severity, pc, detail
+POST /api/v1/emulator/{id}/bus/{bus}/trace-journal {"enabled", "checks", "clear", "capacity", "protocol_only"} - trace / checks on, off (off by default; protocol_only: no single bytes, data words or status reads); bus "all" for every bus; does not change the machine
+GET|POST /api/v1/emulator/{id}/bus/{bus}/sd-timing {"slot", "profile": "ideal|realistic|slow", "seed"} - an SD card's timing profile (POST changes the machine)
+GET  /api/v1/emulator/{id}/bus/{bus}/export  ?format=vcd|jsonl&path=&kinds=&since=&limit= - the trace as VCD (SPI wires) or JSON lines; with path written on the emulator host
+GET  /api/v1/emulator/{id}/state/next/divmmc ?kinds=map_in,esx_call&since=&from=&to=&limit= - the Next DivMMC (#E3, the automap latch, the DRIVE button), NR #B8-#BB decoded entry by entry and the DivMMC journal: what paged it in and out (fetch address, instant or delayed, #1FF8, RETN, NR #0A / #83, reset) and, for an entry at #0008, the esxDOS call (F_OPEN, F_READ ...) with the registers
+POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the DivMMC journal
+GET  /api/v1/emulator/{id}/state/next/audio  the Next's sound as configured: config, selected_chip, chips (pan, mono, registers, periods, volumes), dac (a-d, left_sum, right_sum)
+GET  /api/v1/emulator/{id}/state/next/input  the Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded (selected_by_nr_05 / answers_here), #37, the extended keys held (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2)
+GET  /api/v1/emulator/{id}/state/next/magic-port ?since=&limit= - the magic debug port: enabled, port, mode, bytes, items (the text a program wrote to it)
+POST /api/v1/emulator/{id}/next/magic-port {"enabled": true, "port": 255, "mode": "hex|dec|ascii|line", "clear": true} - switch it, choose port and mode, clear the output (off by default)
+GET  /api/v1/emulator/{id}/state/next/nmi ?kinds=int_ack,nmi_request&since=&from=&to=&limit= - the Next NMI sources (m1_button, drive_button: would_fire / blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits, the stackless NMI, the reset bits, the interrupts pending / in service by name, and the interrupt / NMI / reset journal
+POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the interrupt / NMI / reset journal
+GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence
+GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sprites switches, clip windows, transparency, raster, timing
+GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
+GET  /api/v1/emulator/{id}/state/next/ports  ?port=6B&access=r|w - the internal port enable word (NR #82-#85) and which device answers the port
+GET  /api/v1/emulator/{id}/state/next/nextreg ?reg=07&changed=true - one NextREG with decoded bits, or all; no side effect
+GET  /api/v1/emulator/{id}/state/next/copper ?from=0&count=64&raw=true - the copper list as a disassembly, control mode, write address (not stepped), pc, around_pc
+GET  /api/v1/emulator/{id}/state/next/sprites ?from=0&count=128&all=true - the sprite attributes decoded (visible ones unless all), switches, collision flags (not cleared), pattern memory summary
+GET  /api/v1/emulator/{id}/state/next/pixel ?x=105&y=87&sx=0 - the pixel inspector of the last captured frame: winner, colour, per layer why it painted or not and where its byte came from (400 bad query, 409 not a Next / layer capture off / no frame yet)
+POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} - switch the per-layer record of the Next screen (on by default); empty body = report: enabled, frames, last_frame, bytes (409 not a Next)
+POST /api/v1/emulator/{id}/next/nextreg      {"reg": "07", "value": "03", "door": "nextreg|port|internal"} - write a NextREG through the board's write choke point where nothing else drives the machine (400 bad body, 409 not a Next, 503 no coherent moment in 500 ms)
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
@@ -441,6 +524,9 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
+GET  /api/v1/emulator/{id}/state/audio/multisound ZX-MultiSound: slot, options, fit, shadowed built-ins, CPLD latches, ym.chips[2] {ssg: the AY chip report, fm: the TSFM chip report}, saa, gs (the GS report), dac[4], midi summary; 404 without the card
+GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (program, preset, volume, pan, voices, keys / notes sounding), polyphony, effects, counters, bank; 404 without a synthesizer
+POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
@@ -450,9 +536,29 @@ GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vda
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
+GET  /api/v1/emulator/{id}/state/execution     Execution arbiter: phase, intent and who set it, main loop, the command holding the CPU, queue, claim, counters, driver_violations
+POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); takes over another client's implicit session (took_over names it), never an explicit one; 409 held_by_other {holder} / revoked_cooldown (retry: false)
+GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from, implicit, lease_seconds_left, holder), since when, clients in a re-take cooldown; yours, and session (the id) only for the asker's own implicit session
+DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session; without it (or with one that holds nothing) the asker's own implicit session; released: false + message (who holds it) otherwise
+     (a change refused by the automation gate: 409 held_by_other {message: who holds it and how to resolve it, holder: {surface, client, peer, implicit, lease_seconds_left}}; an implicit holder is taken over by an explicit take; a session header that does not hold the instance is no pass, the gate applies)
+     (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
+     Companion clients (a paired device acting as the user's hands, docs/inprogress/2026-10-16-companion-client/protocol.md):
+     with Authorization: Bearer <token> a change opens no session (no remote control at the GUI, no lock); any action
+     within the companion's scopes (run, input, media, machine, rewind, debug, takeback); 403 companion_forbidden
+     {required_scope} out of them, 409 held_by_session {holder, take_back} while a session holds the machine, 409
+     not_now for a step / direct run / register write while it runs, 401 companion_unknown for an unknown token
+POST /api/v1/emulator/{id}/control/take-back   A companion with the takeback scope ends the session holding the machine (as the GUI's Take back control); 409 nothing_held
+POST /api/v1/emulator/{id}/control/allow-again A companion with the takeback scope lifts the re-take cooldowns (as the GUI's Allow again)
+GET  /api/v1/companions                        Companions (id, name, device, scopes, source, paired_ms, last_seen_ms) and pending pairings; never a token or a code
+DELETE /api/v1/companions                      Revoke every companion
+POST /api/v1/companions/pairings               A device asks to pair {name, device, scopes}: 202 {pairing_id, code, expires_in}; the user allows it at the GUI; 503 pairing_unavailable without a GUI
+GET  /api/v1/companions/pairings/{pid}         Poll: pending | approved (token, once) | denied | expired; DELETE cancels
+GET  /api/v1/companions/me                     The companion (with its token): scopes, per instance state, who holds control (can_act, can_take_back) and actions {name: {available, scope, reason}} - what it may do now; DELETE unpairs itself
+GET  /api/v1/companions/events                 WebSocket: the token on the handshake or {"op":"auth"}; then hello (= me), and each changed instance entry (op emulator / emulator_gone), revoked; instead of polling me
+GET  /api/v1/companions/{cid}                  One companion by id or name; DELETE revokes it
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550; replaceIfIncompatible / dryRun / mediaDisposition as for /slots) - change [NETWORK] settings: a card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11; the reply is the slot change envelope with plan, restart.emulatorId and network {cardChange, settingsApplied, note}; 409 refused with the plan without replaceIfIncompatible), the other keys go to the restarted machine; without a card change they apply in place (status accepted); 409 while a TTD recording you started runs or the machine is in recorded history (status recording); a background (black box) session ends instead; remote_access alone is always accepted
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
@@ -471,6 +577,25 @@ algorithm's look-ahead and the sound is delayed by the same extra amount:
 Pentagon) with the default A/V delay of 2, and `audio_extra_delay_frames` 5.
 Emulation itself is not delayed. The same status is CLI `video temporal`,
 Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
+
+```
+GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, blending_decay, emulator (the instance the window shows), fullscreen, scale (1..4; 0 resized by hand / maximized / full screen), toolbar, status_bar, hud, hud_theme, hud_themes[], hud_notices {id: bool}, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures[], osd_keyboard_style, osd_keyboard_styles[], next_layers, next_layers_mode, next_layers_shown {ula, layer2, tilemap, sprites}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential", "blending_decay": 0.1..0.9, "fullscreen": bool, "scale": 1..4, "toolbar": bool, "status_bar": bool, "hud": bool, "hud_theme": "retro_zx", "hud_notices": {"ram-page": false} (or "hud_notice.<id>": bool), "osd_keyboard": bool, "osd_keyboard_picture": "pentagon2plus", "osd_keyboard_style": "photo"|"schematic"|"hybrid", "next_layers": bool, "next_layers_mode": "layers"|"composed"|"winner", "next_layers_shown": {"sprites": false} (or "next_layer.<name>": bool)} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL, a keyboard picture on a machine without one), {error, kind}
+GET  /api/v1/emulator/{id}/video/window/crt_params        the active CRT profile's parameters: {profile, kind (preset | profile | none), parameters [{name, description, value, initial, minimum, maximum, step}]}
+PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number}, steps: {name: steps}, reset: true | name | [names]} (POST too): reset, then set (clamped), then move by a dial's steps; answers the parameters; 400 an unknown name (lists them), 409 no-window / unavailable (a profile without parameters)
+POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
+GET  /api/v1/emulator/{id}/video/viewport                 the overscan frame and its crop: {overscan, overscan_available, viewport (full | symmetric | standard | screen_only | custom), viewports[], framebuffer, display, video_mode}; the machine's, answers headless too
+PUT  /api/v1/emulator/{id}/video/viewport                 {"viewport": "standard" | "next" | "prev" | ...} (POST too); a crop other than full needs overscan on (409 unavailable); answers the report + changed; changes the picture, not the machine: no control session
+POST /api/v1/emulator/{id}/video/window/record         GUI window recording (the picture as drawn, CRT and all, + the on-screen keyboard) through ffmpeg: {"path", "keyboard": "default"|<picture id>, "codec": "prores"|"h264", "audio": true (the machine's sound, frame for frame), "fps" (left out = the machine's rate; only with audio false), "scale": 1..4, "picture_height": 0..4320 (GPU), "width", "height", "layout": "below"|"side"}; answers {recording, path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples}; 409 no-window / unavailable, 400 bad-parameter
+GET  /api/v1/emulator/{id}/video/window/record         its status, the same fields
+POST /api/v1/emulator/{id}/video/window/record/frames  {"frames": N}: a paused machine runs N frames, each one recorded before the next (every frame whatever the load); adds "ran"; 409 not-paused / unavailable / run-control-held
+POST /api/v1/emulator/{id}/video/window/record/stop    closes the file (waits for ffmpeg, muxes the sound in). Recipe: .recipe/media/window-recording.md
+```
+
+The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The
+same settings are CLI `video window`, Lua / Python `window_display()` / `window_display_set()`, MCP `capture_media`
+`window_display` / `window_display_set` (and the `crt_params` / `viewport` verbs beside them); screenshot
+`source=window` shows their effect. `PUT /state/screen/overscan` answers the `viewport` it set too.
 
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
@@ -509,11 +634,13 @@ POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line 
 ### Screenshots
 
 ```
-GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live&path=<file>
+GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live|window&path=<file>
 GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64   (raw pixels of the same frame)
 ```
 
 `capture/screen` is a screenshot of the **presented frame** (the finished, tear-free frame the window shows, a couple of frames behind the machine, more with ZX DLSS). `area=full` (default) is the whole frame with its border (352x288 on a Spectrum, 736x288 on the Sprinter, the whole picture of an FT812 card, e.g. 1024x768); `area=screen` is the working picture the frame's own geometry names (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture; on a hires mode it can be the whole frame, then both give the same image). `format=png` (default, lossless) or `gif` (256 colors). `path=` (alias `filename=`) writes the image on the server (folders are created) instead of returning it. `mode=full|screen` is a deprecated alias of `area`; the pair must not disagree. `source=presented` (default) is the frame above; `source=live` is the frame as drawn right now (no present delay, no ZX DLSS): a running machine's emulation thread copies it at the end of its next frame (409 `no-frame` if none arrives within 1 s), a paused machine is read directly and the answer adds `frame.beam {line, tstate}` and `frame.partial` (the beam stopped inside a frame drawn per T-state). The master of a ZX-Poly group answers with the group's composed display frame (`frame.source: composed`, 2x, the working picture 512x384).
+
+`source=window` is the picture as the unreal-qt window draws it: the shape it gives the frame (its own 4:3 for the VDAC2's FT812 picture), the CRT shader and the HUD, in display pixels, letterbox excluded; the answer adds `window` (`viewport`, `picture`, `device_pixel_ratio`, `backend`). Only for the instance the GUI shows and `area=full`; headless or another instance is 409 `no-window`. The core only declares the interface (`IWindowViewProvider`); the GUI registers the grab.
 
 ```bash
 curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen" | jq 'del(.data)'
@@ -527,6 +654,8 @@ curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?area=screen&p
 
 The answer always says what it is: `frame` (size, video mode, `source` `native` or `external` for a video card's picture, the emulated `frame_number`), `screen_window` (the working picture inside the frame) and `crop` (the returned image's rectangle inside the frame). Errors are JSON `{error, message, kind}`: 400 `bad-parameter` (an unknown `area`, `mode` or `format`: the message lists the allowed words; or `area` and `mode` disagree), 404 `not-found`, 409 `no-frame` (no frame presented yet), 500 `bad-geometry` / `encode-failed` / `io-failed`, 503 while the emulator shuts down. The same screenshot is on every surface: CLI `capture screen`, Lua `screenshot{}`, Python `capture_screen()`, MCP `capture_media` screenshot, Qt Tools > Save Screenshot As. See [command-interface.md](./command-interface.md).
 
+**One layer of a Next frame** - `GET /capture/screen?layer=ula|layer2|tilemap|sprites|ids` (`composed` is the ordinary screenshot above) answers with the layer of the LAST COMPLETED frame of a ZX Spectrum Next, exactly as it was drawn: the screen records the layers while it draws, per line segment, so copper bars, split screens and palette tricks are right (a re-render from the registers of the request would not be). `ula` includes the border and LoRes; the PNG has alpha 0 where the layer does not paint (`alpha=false` flattens those pixels onto the fallback colour NR #4A and makes the image opaque); `format=rgba` returns the raw R G B A bytes (640 x 512 x 4) instead of a PNG; `ids` colours every pixel by the layer that won it and the answer carries the `legend` (`id`, `name`, `colour`). The geometry is the screenshot's (640 x 512), so a layer image overlays the composed screenshot pixel for pixel. The answer adds `layer`, `alpha`, `frame {sequence, frame_number}` (the n-th frame recorded; the emulator frame it was) and no `crop` / `screen_window`. 400 `bad-parameter` (unknown layer, format or alpha; `area` other than full), 409 `not-next`, `layer-capture-off` (POST `next/layer-capture {"enabled":true}`) or `no-frame` (on, but no frame completed yet; a paused machine answers from its last frame). `GET /capture/next-layers` returns `ula layer2 tilemap sprites ids` of the same frame in one JSON (`layers.<name> {size, data}`, `legend`). The record is on by default (ini `[NEXT] LayerCapture=on|off`, cost about 4 % of a frame, 3.1 MB); `POST /next/layer-capture` switches it. CLI `capture screen --layer=`, Lua `capture_screen_layer()`, Python `capture_screen_layer()`, MCP `capture_media` screenshot with `layer`.
+
 ### Analysis & Capture
 ```
 POST /api/v1/emulator/{id}/coverage/start      Activate coverage analyzer (body: {"keep": false})
@@ -534,18 +663,22 @@ POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
 POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
 GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
 GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/coverage/export     SkoolKit code execution map (body: {"format": "skoolkit-map", "start", "end", "path", "merge"})
 POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
 GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
-POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume|toggle|status", "preset", "mode": "single|multi|audio", "container",
                                                "format", "filename", "fps", "scale", "region",
                                                "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate",
                                                "profile": "native|1080p|1440p|4k" (a fixed frame, h264/h265 only),
                                                "acceleration": "auto|hardware|software"})
 GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
                                                audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration; profile, acceleration)
+GET  /api/v1/recording/presets                  The core's recording presets (id, title, mode, format, container, audio, bitrates, fps, scale)
+GET  /api/v1/recent[?kind=]                     The files opened lately (snapshot, tape, disk, rzx, image, cd), newest first
+DELETE /api/v1/recent[?kind=]                   Forget them (open one: POST /api/v1/controllers/actions/media.open_recent)
 ```
 
 #### Disassembly Response
@@ -673,12 +806,27 @@ PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
 GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
 POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
+GET    /api/v1/emulator/{id}/breakpoints/active?select=    Is a selection on (all, an id, a kind, group:<name>)
+PUT    /api/v1/emulator/{id}/breakpoints/active            {select, active: true | false | "toggle"}: switch a selection
+POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a selection
+GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: {groups: [{name, total, active, ids}]}
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/group     {group}: move to a group ("" / "default": back)
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/note      {note}: the annotation ("" clears)
+```
+
+A selection names the user's breakpoints only: `all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`,
+`out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`) or `group:<name>`; the body
+may give `id`, `kind` or `group` on its own instead. A keyboard breakpoint is `POST /breakpoints {"type": "keyboard",
+"key": "space", "on": "press" | "release" | "both"}` (`key` "any" or none: any key): it stops on the first keyboard
+read that sees the key change. Each route is a WebSocket `call` too; a change is pushed as `breakpoints_changed`.
+
+```
 ```
 
 #### Add Breakpoint Request
 ```json
 {
-  "type": "execution|read|write|rw|port_in|port_out|port",
+  "type": "execution|read|write|rw|port_in|port_out|port|nextreg_write|nextreg_read|nextreg|beam|copper",
   "address": 32768,
   "address_end": 33023,
   "page": {"kind": "ram", "page": 32},
@@ -698,6 +846,8 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `page` | `{kind: ram \| rom \| cache, page}` (or the text `"ram32"`): a **physical** breakpoint on that page at offset `address & #3FFF`. It fires through whatever slot shows the page: TS-Conf code paged into `#C000` or `#8000`, the 128K's RAM 5 at `#4000` and `#C000`. With a range, the range stays inside the page. 400 for a page the machine does not have. |
 | `slot_only` | With `page`: only through the slot of `address` (the old "while page X is at this address"). |
 | `port_mask` | Ports: matches when `(port & port_mask) == (address & port_mask)`; `255` catches `#FE` on any high byte. |
+| `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
+| `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
@@ -1295,7 +1445,7 @@ own (unchanged JSON); `ports` are what the machine's ports return; the machine's
 | `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 | `mouse_fitted` | Some mouse the machine's ports read is fitted. `false`: input is refused with 409. |
-| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`). |
+| `device` | The machine's mouse (the first fitted device, or the one `?device=` names), `null` when none is fitted: `id` (`kempston`, `sprinter`, `evo-ps2`, `amx`), `name`, `kind` (`kempston`, `serial-microsoft`, `ps2-avr`, `amx-pio`), `fitted`, `in_use` (a program read it within 50 frames), `wheel`, `buttons` (2 or 3), `x`, `y`, `button_mask`, `ports`; a serial mouse adds `serial` (`baud`, `receiver_baud`, `receiver_in_tune`, `receiver_enabled`, `packet_in_flight`, `packet` (hex bytes), `packet_bytes_sent`, `pending` {`dx`,`dy`}, `packets_sent`, `bytes_received`, `framing_errors`, `receiver_fifo`, `receiver_overrun`), the AVR mouse adds `ps2` (`connected`, `resolution`, `counts_per_mm`), the AMX mouse `pio` (`a` / `b`: `mode`, `vector`, `data`, `interrupt_enabled`, `interrupt_pending`, `under_service`; `pending` {`dx`,`dy`} mickeys not yet strobed, `buttons_port` = `IN #DF`, `strobes`). |
 | `devices` | Every mouse device the machine's ports read, same objects (one per machine today). |
 | `queue` | `{"ops": n, "glide_remaining": {"dx":..,"dy":..}}`: input waiting behind a glide. |
 
@@ -1355,7 +1505,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | Method | Endpoint | Body | Description |
 |:-------|:---------|:-----|:------------|
 | `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
-| `POST` | `/tape/eject` | — | The tape leaves the tape slot; 409 while a TTD recording runs |
+| `POST` | `/tape/eject` | — | The tape leaves the tape slot; while a TTD recording runs it is an event of the recording: it lands at the next frame boundary |
 | `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
@@ -1471,7 +1621,8 @@ inject, `run_frames N`, then `GET /joystick`.
 `button` is accepted as an alias of `buttons`. A successful POST returns `success`, `message`,
 an echo of the input (`buttons`, `frames`, `requested_state`), the resulting `state` object and,
 when the guest cannot see the buttons, a `warning`. The state object (also the body of the GET, plus
-`emulator_id`): `available`, `present`, `wired` (this machine's port decoder answers the joystick),
+`emulator_id`): `available`, `present`, `wired` (this machine answers the joystick: its board, or the slot card
+`kempston`), `fit` (when not wired: the plug command that fits the `kempston` card here; `""` when wired or nothing fits),
 `state` (the byte), `port_value` (what `IN #1F` returns now), `buttons` (a boolean per name),
 `pressed` (the names), `button_names`, `keys` (host key bindings), `pending_tap`
 (`{mask, frames_left}` or `null`).
@@ -1503,6 +1654,186 @@ POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a sector's data field ({"offset": 245, "hex": "4D59..."} | "data": [..] | "base64"): sector by its ID, data CRC recalculated, image modified, TTD tool edit; 400 with the reason when refused (empty drive, write-protected, no such sector, past the data field), 503 when busy
 ```
+
+### ZX-bus Slots
+
+```
+GET  /api/v1/emulator/{id}/slots                         the slot report: buses, slots, fitted cards, built-ins, plan log
+GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine
+GET  /api/v1/emulator/{id}/slots/matrix[?table=cards]    the compatibility tables (markdown)
+POST /api/v1/emulator/{id}/slots/{slot}/plug             {card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition}
+POST /api/v1/emulator/{id}/slots/{slot}/remove           {replaceIfIncompatible, dryRun, mediaDisposition}
+PUT  /api/v1/emulator/{id}/slots/{slot}/options          {options, replaceIfIncompatible, dryRun, mediaDisposition}
+```
+
+Every route is SlotControl ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots); OpenAPI tag
+`Slots`). `{slot}`: `zxbus.2`, `zxbus.next`, `ay-socket`, or `auto` for a plug (where the planner puts the card).
+`options`: `"dip=ym,saa gsRam=2m"` or `{"dip": ["ym", "saa"], "gsRam": "2m"}`. A change is planned first; a refusal is
+`409` with the plan as the body (`status` `refused` or `recording`; `message` `needs replaceIfIncompatible: ...`;
+`plan.removed[]` names every card it would remove with the options that put it back, `undo`). Applied, the machine
+restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
+one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
+card in the GS slot (owner decision Q10).
+
+### Game Controllers
+
+```
+GET  /api/v1/emulator/{id}/controllers                   the machine's connectors and the retro devices in them
+GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
+POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
+GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+                                                         | probe | database | reports | aliases | match
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
+                                                         | light | haptics_probe | role | pin | identify | player
+                                                         | database_save | database_delete | database_import | learn
+                                                         | unalias
+POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
+POST /api/v1/controllers/host/{device}/{verb}            role | pin | identify | learn, the device from the path
+GET  /api/v1/signature?path=&details=&external=          the signatures of a host file (SignatureControl)
+GET  /api/v1/signature/compare?path=&with=               a known title against a candidate
+GET  /api/v1/emulator/{id}/signature?details=            the signatures of the loaded tapes and disks
+```
+
+`GET /api/v1/controllers/match?path=game.trd` (or `signatures=a,b`, `file_sha256=`, `file_set=` comma lists,
+`machine=`; none: the loaded program) answers the game profiles the signatures choose, `matches` [{`id`, `how`}]
+strongest first, `profile` and `next` (`game-profile` or `port-reads`), `haptics_reason`; `context` carries the loaded
+program's `signatures`, `file_set`, `game_matches` and `haptics_reason`. The signature routes
+([command-interface.md section 18](./command-interface.md#18-media-signatures); OpenAPI tag `Signatures`) answer
+`{ok, path, signature: {...}}`, `{ok, media: [...]}` and `{ok, path, with, match: {level, matches, score, reason}}`;
+`404` for a file that is missing, `503` for a build without the library.
+
+The machine routes are ControllerControl, the host routes HostInputControl
+([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
+called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?device=]` lists per device `available`,
+`reason` (why the emulator cannot drive its motors), `actuators` and `effects` (`id`, `label`, `ms`);
+`POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
+`message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
+reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/haptics_probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
+a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
+game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
+`unavailable` without a program loaded from a file.
+
+`POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
+"tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
+layers change; `{"device", "marks": ["ten_seconds", "second"]}` plays what its top layer's feel names for a seek's
+marks (`played`, `mark`, `pattern`, else `reason`, e.g. the marks' rate limit). `GET /api/v1/controllers/devices`
+gives each device's `role` (`role_set`), `layers`, `context`, `outputs` and `feel`, its `battery` (`{known, text}`;
+when known also `level` (absent without one), `coarse`, `charging`, `wired`), `light` (`{available}`, else with the
+`reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
+`POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
+query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
+reason where the OS does not let the emulator set it.
+
+`POST /api/v1/controllers/role {"device", "role": "player|debugger-remote|disabled"}` and `POST
+/api/v1/controllers/pin {"device", "pin": "follow-focus|all|pinned:<emulator id>"}` set what a host device is for and
+which instance it drives (`devices` shows both: `role`, `pin`). `POST /api/v1/controllers/identify {"device"}` rumbles
+it for 300 ms and blinks its light where it has them (`rumble`, `light`, `ms`; `503` when it has neither).
+`GET /api/v1/controllers/probe` lists the backends (`running`, else `reason`) with the devices each found (`match`
+`{step, score}`, `notice`) and `user_devices`. `GET /api/v1/controllers/database?vidpid=045e:0b00` (or `guid=<SDL
+GUID>`, `device=<id>`; `name=`, `version=`) answers what the device database says (`query`, `match`).
+`POST /api/v1/controllers/database/import {"text": "<gamecontrollerdb line or RetroArch .cfg>", "save": true}` imports
+a mapping (`source`, `name`, `device`, `map`, `skipped`, `gamecontrollerdb`; saved as the user family `family` in
+`path`, and a connected device of that VID / PID takes it at once). `POST /api/v1/controllers/learn {"device", "step":
+"start|status|sample|skip|back|finish|cancel", ...}` runs the learn wizard of an unknown device: `start` (`controls`: a
+comma list) takes the device, whose presses then answer the prompts (`control`, `prompt`, `index`, `count`,
+`waiting_for_release`, `map`); `sample {control, value}` feeds a raw control from a script; `finish` (`name`, `save`)
+saves the map. `GET /api/v1/controllers/aliases` lists the device aliases (`{aliases: [{from, to, connected, name}]}`:
+a pad first seen through GameController alone, `gc:...`, and later matched to its HID device keeps its profiles under
+the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}` forgets one (`200` with `from`, `to`; `404`
+`unknown-alias`). On the WebSocket `/api/v1/ws` all of them are `call`s, as every route.
+
+### Host Actions
+
+```
+GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, gui, scope,
+                                                          needs_pause, available (+ error, reason)
+POST /api/v1/controllers/actions/{id}                     {instance?, value?, params?}: run it, answer when done
+```
+
+The core `ActionRegistry` ([command-interface.md section 16](./command-interface.md#16-host-actions); OpenAPI tag
+`Controllers`). `instance` defaults to the followed instance (below: the focused window's), else the selected one, else
+the only one. The catalogue rows carry `description` and `toggle` too, the list `rev`. `value` by the action's kind: press -
+omitted / `true` / `false` / `{pressed}`; delta - steps or `{delta, rate}`; level - 0..1; text - a string. The routes
+are outside `/api/v1/emulator/`, so the registry applies the caller's gate itself, with the same answers: a changing
+action without a session opens the implicit run-control session (`automation_session` in the reply and the
+`X-Unreal-Session*` headers), `X-Unreal-Session` runs as that session, a companion token is checked against its
+scopes. The reply: `{ok, action, instance, message, result}`; errors `404` Not Found, `400` Bad Request, `403`
+companion_forbidden, `409` not_now / Run-control held / held_by_other / held_by_session / revoked_by_user, `501` Not
+Implemented (a stub). Every route is also a WebSocket call on `/api/v1/ws` ([websocket-interface.md](./websocket-interface.md)).
+
+```
+GET  /api/v1/surfaces/context[?instance=<id|index>]       the surface context: {ok, instance, context, set, by,
+                                                          default}; set it with POST …/actions/ctx.set {"value":"ttd"}
+```
+
+The control-surface actions ([command-interface.md section 16](./command-interface.md#16-host-actions)):
+`POST /api/v1/controllers/actions/ttd.seek_by` `{"value": {"delta": -3, "rate": 18.5}, "params": {"unit": "frames",
+"min": 1, "max": 100}}` answers the seek's body plus `from`, `frame`, `frames`, `fps`, `marks`;
+`POST …/run.step_by` `{"value": -4}` steps back through the history (forward: step in); `POST …/ctx.set`
+`{"value": "ttd.timecode"}`. `/api/v1/controllers/context` stays the host controllers' own verb (the router's
+focused instance), not this context.
+
+```
+GET    /api/v1/surfaces/views                            the views (windows) in focus order + the followed instance
+POST   /api/v1/surfaces/views                            {name, active?, activate?}: a view of the automation plane
+PUT    /api/v1/surfaces/views/{view}                     {active?, activate?}
+DELETE /api/v1/surfaces/views/{view}
+GET    /api/v1/surfaces/target[?session=]                the followed instance's target object, or a session's
+GET    /api/v1/surfaces/sessions                         every surface session and its target
+POST   /api/v1/surfaces/sessions                         {name, kind?, serial?, target?}: a REST surface's session
+GET    /api/v1/surfaces/sessions/{session}
+DELETE /api/v1/surfaces/sessions/{session}
+PUT    /api/v1/surfaces/sessions/{session}/pin           {target: follow | view:<id> | instance:<id|index> | {view} | {instance}}
+GET    /api/v1/surfaces/readouts[?instance=&names=]      the readout vocabulary now: {values, unknown}
+GET    /api/v1/surfaces/activity[?since=&instance=&limit=] the activity feed: {entries, last, dropped}
+```
+
+```
+GET    /api/v1/streamdeck                                the Stream Deck daemon and its supervisor (= /status)
+POST   /api/v1/streamdeck/start | stop | restart         start (or adopt), stop (quit, then terminate), both
+GET    /api/v1/streamdeck/settings                       {mode, activity, api_port, viewers_port, binary, brightness, pack}
+PUT    /api/v1/streamdeck/settings                       {mode?: off|deck|always, activity?: off|flash|line, api_port?, viewers_port?, binary?}
+GET    /api/v1/streamdeck/pair                           the daemon's pairing: idle | requesting | pending (code) | paired | ...
+POST   /api/v1/streamdeck/pair                           the daemon asks for a pairing (the user approves it at the GUI)
+DELETE /api/v1/streamdeck/pair                           cancel a pending one
+POST   /api/v1/streamdeck/revoke                         {id?}: revoke the daemon's companion (default its own)
+GET    /api/v1/streamdeck/decks/{deck}/brightness        a deck's brightness (deck: serial or first); PUT {value: 0..100}
+GET    /api/v1/streamdeck/packs                          the daemon's icon packs: {packs: [{name, title, style, ...}], default}
+GET    /api/v1/streamdeck/decks/{deck}/pack              a deck's icon pack {serial, pack, setting, scenario_pack}; PUT {pack: name | scenario}
+GET    /api/v1/streamdeck/udev                           the Linux udev rule text
+```
+
+The Stream Deck daemon ([command-interface.md section 16.2](./command-interface.md#162-the-stream-deck-daemon)):
+unreal-qt supervises `unreal-streamdeck`; without unreal-qt (headless, the video wall) every route but `GET
+/api/v1/streamdeck` and `/udev` answers `503 supervisor_unavailable`. `pair`, `pair` (GET), `brightness`, `packs` and `pack` forward to
+the daemon's automation (`409 not_running` without one, `502 daemon_refused` with its answer in `daemon`); they run off
+the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
+
+```
+GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
+GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
+                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         controllers.state, game.events, breakpoint_groups
+GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
+```
+
+Monitoring ([command-interface.md section 17](./command-interface.md#17-monitoring)): the host process, the clients,
+each instance's measured pace and its summaries; read-only, published state only (the I/O thread answers, no
+emulation thread waits). `instance=` takes an id or an index (default the followed instance); `404` no such name or
+instance. Each name but `breakpoint_groups` is a topic of the same name on `/api/v1/ws` and a surface readout. The
+host's counts: `rest` counts every HTTP request but `/mcp` (that is `mcp`), the WebSocket `call`s (those are `ws`) and
+an MCP tool's own calls back (`X-Unreal-Source: mcp`).
+
+Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
+Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
+(T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,
+the `/audio` and device routes without an id) acts on the followed instance - the active instance of the window the
+user focused last - when the host has views (unreal-qt, the video wall); headless it stays the selected instance, else
+the only one. A target object: `{instance, index, model, ram_kb, view: {id, name} | null, mode, pin, source}`.
+Errors: `404` no such view, session or instance; `400` a target that does not parse, a session without a name; `409`
+`not_now` (a view pin on a headless host), `Conflict` (a client's window, a surface's own session).
 
 ### Snapshots (Implemented Separately)
 ```
@@ -1577,39 +1908,44 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 **Read the session rules first:** [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules) (states, 409 while recording, what wipes a session, reset keeps history, markers vs. bookmarks, the acceleration lock). The short version:
 
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
-- `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
+- `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` while recording pause the recording (`backend: engine`, D8): state `detached`, `recording_paused: true`; `POST /ttd/resume` at the paused point continues it, running into it continues it too, `POST /ttd/stop` ends it. On `backend: v1` they return **409 Conflict** — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate`, switching `timetravel`/`debugmode` off and a GS `switch_personality` return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
+- While recording (also while it is paused for browsing), `invalidate` returns **409 Conflict** whose `message` says why and to stop the recording first. Tape / disk load and eject (and disk autostart's insert), disk create and `/media` insert / eject / discard are accepted (on v1: 409): the change is an event of the recording and lands at the next frame boundary (on a paused machine: the next frame it runs; the slot shows `pending` meanwhile); the recording goes on. A seek to before the frame a medium came in shows that slot empty; from that frame on (and back live) the medium is there. `end_recording` still ends the recording and changes the medium at once. A reset, a snapshot load and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) are not refused: they END the session (one rule, see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); a new session starts only with the `ttdrestart` feature or a black box). On a stopped session the tape / disk loads, ROM reload, a host speed change and `invalidate` drop the history; a reset and a snapshot load stop the recording and keep it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).
 
+**A seek to a frame without `tinframe`** lands at that frame's **end** on the engine (`backend: engine`, D13): the machine state and the picture are the frame's final ones, the same as `{frame N+1, tinframe 0}`; `arrived_at` names it `{N, <length of frame N>}`. When the history ends inside frame N (a recording paused at the present) it lands at that end. `POST /ttd/step-forward` / `step-back` from there count counts from `{N+1, 0}`. With `tinframe` (also 0) it lands exactly there and shows what the beam drew up to that point - at a frame's start, the previous frame's final picture. v1 lands at the frame's start without `tinframe` and shows the frame's final picture there. Scripts that seek a frame and read memory see one frame later on the engine; ask for `tinframe 0` to keep the frame's start.
+
 | Method | Path | Body / Query | Response fields | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |
-| `POST` | `/ttd/start` | Optional `{"journal": bool, "history_limit_frames": N, "history_limit_bytes": N}`. `journal` also records the write journal (default false; see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules)); ignored when already recording. The history limits are as `/ttd/history-limit`. | `started`, `already_active`, `state`, `write_journal_enabled`, `history_limit_frames`, `history_limit_bytes` | ✅ Implemented |
-| `GET` / `POST` | `/ttd/journal` | `POST {"enabled": bool}`: switch the write journal at any moment, also while recording (a segment starts or ends at the instruction the machine is on; a running machine is paused for the switch and resumed). 400 without a boolean `enabled`. | `write_journal_enabled`, `write_journal_complete`, `write_journal_segments`, `write_journal_build`, `write_journal_records` | ✅ Implemented |
+| `POST` | `/ttd/start` | Optional `{"journal": bool, "history_limit_frames": N, "history_limit_bytes": N, "black_box": bool, "minutes": N}`. `journal` also records the write journal (default false; see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules)); ignored when already recording. The history limits are as `/ttd/history-limit`. `black_box` records as the black box (the engine): the last `minutes` (default 5, 1..1440), turbo and host speed stay free (the recording steps aside for them); absent or false is an explicit recording, which holds real speed; v1 answers 400 for `black_box: true`. | `started`, `already_active`, `state`, `write_journal_enabled`, `history_limit_frames`, `history_limit_bytes`, `black_box` | ✅ Implemented |
+| `GET` / `POST` | `/ttd/journal` | `POST {"enabled": bool}`: switch the write journal at any moment, also while recording (a segment starts or ends at the instruction the machine is on; a running machine is paused for the switch and resumed). 400 without a boolean `enabled`. | `write_journal_enabled` (a journal is recorded now), `write_journal_setting` (the choice for recordings, also without a session), `write_journal_complete`, `write_journal_segments`, `write_journal_build`, `write_journal_records` | ✅ Implemented |
 | `POST` | `/ttd/journal/build` | Optional `{"from_frame": N, "to_frame": N}` (default: the whole session). Replays those frames and adds their memory writes to the journal; covered frames are left as they are, the last frame and frames with a marker without its data are not built. About 2-4 ms per frame; answers when done (`GET /ttd/journal` shows the progress meanwhile). 409 while recording. | `ok`, `error` (when refused), `cancelled`, `frames_built`, `frames_covered`, `frames_refused`, `records`, and the journal fields above | ✅ Implemented |
 | `POST` | `/ttd/journal/build/cancel` | — | `cancelled` (false when no build was running). The build stops after its current frame and keeps what it built | ✅ Implemented |
 | `POST` | `/ttd/history-limit` | Optional `{"frames": N, "bytes": N}`: each optional, a missing one is kept, 0 = no limit (default); an empty body only reports. While recording the oldest checkpoints are released beyond either limit and the journals are cut at the new start, so a file saved afterwards replays its remaining frames exactly; two checkpoints always stay. 400 for a value that is not a non-negative integer. | `history_limit_frames`, `history_limit_bytes`, `history_bytes`, `evicted_checkpoints`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` | ✅ Implemented |
 | `POST` | `/ttd/stop` | — | `stopped` (false if it was not recording), `state` | ✅ Implemented |
 | `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state`. 409 while recording (stop first). | ✅ Implemented |
-| `POST` | `/ttd/seek` | `{"frame": N, "tinframe"?: T}` *or* `{"bookmark": "label"}` | `reached`, `arrived_at {frame, tinframe}`, `halt_reason`, `blocking_marker {frame, tinframe, kind, reason}` (only when `halt_reason` is `external_event`), `state`, `bookmark` (bookmark seeks). 400 without `frame`/`bookmark` or with an empty label; 404 for an unknown bookmark. | ✅ Implemented |
+| `POST` | `/ttd/seek` | `{"frame": N, "tinframe"?: T}` *or* `{"bookmark": "label"}` | `reached`, `arrived_at {frame, tinframe}`, `halt_reason`, `blocking_marker {frame, tinframe, kind, reason}` (only when `halt_reason` is `external_event`), `state`, `bookmark` (bookmark seeks), `check {status, message, issues}` (how exactly the position came back: [Position check](./command-interface.md#ttd-position-check), also in `step-back` / `step-forward` / `step-instruction` / `reverse-step` / `reverse-continue` and in `status` while detached). 400 without `frame`/`bookmark` or with an empty label; 404 for an unknown bookmark. | ✅ Implemented |
 | `POST` | `/ttd/step-back` | — | `stepped`, `frame`, `tinframe` (one frame back, same position inside the frame) | ✅ Implemented |
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
 | `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
-| `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
+| `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions), `{"tstates": T}` or `{"scanlines": L}` (L lines of the machine's `t_line`; the t-state forms land on the nearest instruction start at or before the target). 400 for more than one or none. | `reached`, `mode` (`count`/`tstates`/`scanlines`), `tstates` (scanlines), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)) | ✅ Implemented |
-| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
+| `POST` | `/ttd/memory-at` | `{space, frame, tinframe?, offset?, length?}` (`tinframe`: a point inside the frame - its writes up to there are applied from the write journal, built for that frame by replay when missing; `ram` / `vram` / `cache` only, 400 for other memories): space `ram`, `ramN` or a memory the session records by name or alias (`sprinter.vram` / `vram`, `cache`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `evo.flash` ...) | `space` (the engine's region), `offset`, `length`, `frame`, `at_frame` (the checkpoint read: the newest at or before `frame`), `exact`, `hex`. The machine does not move. 400 for a memory not recorded or a frame before the first checkpoint; 501 on backend v1 | ✅ Implemented |
+| `POST` | `/ttd/memory-diff` | `{space, from_frame, to_frame, limit?}` | `space`, `at_from`, `at_to`, `changed_bytes`, `ranges` [{`offset`, `length`}] (default limit 100), `truncated`; `ramN` compares that page only | ✅ Implemented |
+| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page / another space), `access`, `space`, and `addr` (space `ram`) or `offset` (space `vram` / `cache`); when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
 | `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
-| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
+| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state`, `history`, `first_frame`, `paused`, `fps` (the machine's unscaled frame rate). The bounds come from the TTD's published cursor: the read never parks the machine (companions poll it at 50 Hz) | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
 | `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
 | `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
-| `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error`. 400 without `path`, 500 if the file cannot be opened. | ✅ Implemented |
-| `POST` | `/ttd/load` | `{"path": "..."}` | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
+| `POST` | `/ttd/export-clip` | `{"from": F, "to": T, "path": "<dir>", "chunk": N}` (`chunk` optional, default 500) | Frames F..T as a lossless clip in `path` (created if missing): final picture, plane B when `zxdlss` is on, frame meta. Answer: `ok`, `frames`, `bytes`, `planeb`, `width`, `height`, `seconds`, `path`; `error` when it fails (400). 400 for missing or non-numeric fields; 409 while recording. See [command-interface.md → Exporting a clip](./command-interface.md). | ✅ Implemented |
+| `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error` and `message`. 400 without `path`; 409 if the file cannot be opened or the session cannot be written (it was 500 / 200 before Phase 5). | ✅ Implemented |
+| `POST` | `/ttd/load` | `{"path": "..."}` - a `.ttd` file, or a recording's folder (or one of its `segment-NNNN.ttd` files): its segments are joined and loaded | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
 | `GET` | `/api/v1/ttd/file-info` (no `{id}`) | `?path=<file.ttd>` | A `.ttd` file read without loading it: `ok`, `path`, `file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`, `session_state`, `session_start_frame`, `session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections{...}`, `machine{model_id, model, ram_page_bound, rom_signature, peripheral_mask, peripherals, not_recorded, general_sound, turbo_sound}` (`not_recorded`: devices fitted but deliberately not recorded, e.g. `gs-lw`), `peripherals_from_header`. 400 without `path` or for a file that is no readable `.ttd` (`ok: false`, `error`); 404 if it cannot be opened. Keys: [command-interface.md → Reading a file before loading it](./command-interface.md). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
 | `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L` (default limit 200) | `kind`, `addr_from`, `addr_to`, `phys_page`, `frames[]`, `first_match`, `last_match`, `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
@@ -1660,12 +1996,14 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "port_journal_bytes": 9234,
   "port_replay_value_mismatches": 0,
   "port_replay_divergences": 0,
+  "recording_folder": null,
   "last_drop_reason": null,
+  "last_stop_reason": null,
   "unavailable_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `recording_folder` is the folder the session's segment files are written to as it records (`~/.unreal-ng/ttd/<date-time>-<name>/`, the engine in unreal-qt and the automation app; deleted with its session; kept after a crash and when a black box restarts after an acceleration or a machine change, removed by the startup cleanup 7 days after its process ended), null when none. `POST /ttd/load` takes such a folder (or one of its segment files) as `path`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 
@@ -1679,7 +2017,7 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
 }
 ```
 
-`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
+`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it. A target before the earliest position kept (`earliest` in `GET /ttd/status`) fails with `out_of_range`; on the engine the reply also carries `earliest` and a `message` naming it, and the machine has not moved. A target past the history's end fails with `out_of_range` before anything moves (the machine is not paused either): `arrived_at` is the position the machine still stands on, `session_end` and a `message` name where the history ends.
 
 **port-events request:** searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
 
@@ -1719,6 +2057,7 @@ Other options: `newest` (true: the last hits), `to`, `port`, `port_mask`, `value
 | `value` | Exact byte value, 0..255. |
 | `pc_from`, `pc_to` | Only accesses made by an instruction whose PC is in this range. |
 | `phys_page` | 0..255 (JSON number only). Pins the search to one physical RAM page, so a banked address does not answer with another page's write. |
+| `space` | `space` picks the memory: `ram` (default; Z80 addresses), `vram` (the Sprinter's 256 KB video RAM) or `cache` (its 64 KB fast RAM). For `vram` / `cache` the address fields are offsets in that memory (`0x12345`), a single offset or a range inside one 16 KB page, and the answer names the byte by `space` and `offset` (the writes through a graphics window, the accelerator's stores and the reads through a graphics window land there; `phys_page` is `null`). |
 | `before_frame`, `before_tin` | Search at or before this point instead of the current position. `before_tin` is only read together with `before_frame`. |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is required (400 otherwise). `addr`, `addr_from`, `addr_to`, `value`, `pc_from` and `pc_to` may be JSON numbers or strings: decimal, `"0x.."`, `"#.."` or `"$.."`; an out-of-range value is a 400.
@@ -1736,29 +2075,13 @@ At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is r
 
 Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `resumed: false`, `found: false`, `matched: false`.
 
-## WebSocket Support (Future)
+## WebSocket
 
-Real-time streaming for live updates without polling.
-
-**Endpoint**: `WS /api/v1/emulators/{id}/stream`  
-
-**Use Cases**:
-- Live screen updates (video streaming)
-- Real-time register monitoring
-- Event notifications (breakpoint hit, state change)
-- Audio streaming
-
-**Message Format**:
-```json
-{
-  "type": "register_update",
-  "timestamp": "2026-01-03T10:35:22.123Z",
-  "data": {
-    "pc": "0x0605",
-    "af": "0x44C4"
-  }
-}
-```
+Implemented today: `/api/v1/websocket` (debugger events) and `/api/v1/companions/events` (a companion's live view).
+Planned: one socket `/api/v1/ws` for every client. It can call every REST route (`call`, the same handler) and pushes
+state and events by topic. It adds to REST and replaces nothing; the two older sockets stay as adapters. See
+[websocket-interface.md](./websocket-interface.md) and the
+[automation planes guidelines](../../../guidelines/automation-planes-guidelines.md).
 
 ## HTTP Headers & CORS
 

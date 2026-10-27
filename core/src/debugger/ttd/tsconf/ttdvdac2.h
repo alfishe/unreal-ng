@@ -46,7 +46,7 @@ public:
     void TTDBeforeCapture() override;
     /// The engine keeps the whole blob in its regions: the state left is the
     /// blob's header with no tokens (magic, 0 bytes)
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
@@ -68,6 +68,7 @@ public:
     std::string TTDDeviceName() const override { return "Vdac2"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::Vdac2; }
     uint64_t TTDHashState() const override;
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     Vdac2Card& _card;

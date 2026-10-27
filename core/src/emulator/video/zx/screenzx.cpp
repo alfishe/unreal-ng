@@ -1,12 +1,15 @@
 #include "screenzx.h"
 #include "emulator/video/videofamily.h"
+#include "emulator/video/zx/cellexpand.h"
 #include "emulator/video/zx/zxgeometry.h"
 
 #include <algorithm>
 #include <cassert>
 
 #include "common/stringhelper.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 
 /// region <Constructors / Destructors>
 
@@ -16,7 +19,66 @@ ScreenZX::ScreenZX(EmulatorContext* context) : Screen(context)
     CreateTables();
 }
 
+ScreenZX::~ScreenZX()
+{
+    // The memory and the CPU outlive the screen (Core::Release)
+    HookCatchUp(nullptr);
+}
+
 /// endregion </Constructors / Destructors>
+
+/// region <The event rule>
+
+void ScreenZX::InitFrame()
+{
+    Screen::InitFrame();
+
+    Z80* cpu = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    const bool on = _eventsEnabled && cpu && _memory && FamilyOf(_mode) == VideoFamily::Zx && !cpu->portInterceptor;
+    HookCatchUp(on ? cpu : nullptr);
+    _eventsThisFrame = on;
+    _drawEveryStep = false;
+    _drawAtStepEnd = false;
+    // The first step of the frame starts here; the draw cursor stays where the frame before left it, as the
+    // per-step draw has it (DrawPeriod takes the wrap)
+    if (cpu)
+        _stepEndCpuT = cpu->t;
+}
+
+void ScreenZX::SetCatchUpOnEvents(bool on)
+{
+    _eventsEnabled = on;
+    if (on || !_eventsThisFrame)
+        return;
+    HookCatchUp(nullptr);
+    _drawEveryStep = _drawAtStepEnd = true;
+}
+
+void ScreenZX::HookCatchUp(Z80* cpu)
+{
+    if (_hookedCpu && _hookedCpu != cpu)
+        _hookedCpu->videoCatchUp = nullptr;
+    if (_hookedMemory && (!cpu || _hookedMemory != _memory))
+        _hookedMemory->SetVideoWatch(nullptr);
+    _hookedCpu = cpu;
+    _hookedMemory = cpu ? _memory : nullptr;
+    if (_hookedCpu)
+        _hookedCpu->videoCatchUp = this;
+    if (_hookedMemory)
+        _hookedMemory->SetVideoWatch(this);
+}
+
+void ScreenZX::CatchUpToStepStart()
+{
+    // UpdateScreen at the end of the step before; a cursor already there has nothing to draw
+    const uint32_t stepStart = _state->CpuToBaseT(_stepEndCpuT);
+    if (stepStart == _prevTstate)
+        return;
+    DrawPeriod(_prevTstate, stepStart);
+    _prevTstate = stepStart;
+}
+
+/// endregion </The event rule>
 
 /// @brief Override SetVideoMode to regenerate LUT when mode changes
 /// This ensures the TstateCoordLUT is always in sync with the current video mode
@@ -25,6 +87,10 @@ void ScreenZX::SetVideoMode(VideoModeEnum mode)
     Screen::SetVideoMode(mode);  // Call base class to update _mode and _rasterState
     CreateTimingTable();         // Regenerate timing tables including LUT
     SelectRangeRenderer();
+
+    // In the middle of a frame on the event rule (a port switched the mode): the per-step draw for the rest of it
+    if (_eventsThisFrame)
+        _drawEveryStep = _drawAtStepEnd = true;
 }
 
 void ScreenZX::SelectRangeRenderer()
@@ -215,57 +281,73 @@ void ScreenZX::CreateTstateLUT()
     const int overscanExtraLines = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
     const int overscanExtraPixels = (_mode == M_P384) ? ZxGeometry::kP384ExtraPixels : 0;
 
-    // Clear LUT first
-    memset(_tstateLUT, 0, sizeof(_tstateLUT));
+    const uint32_t tstatesPerLine = _rasterState.tstatesPerLine;
+    const uint32_t lutEnd = tstatesPerLine ? std::min<uint32_t>(maxFrameTiming, MAX_FRAME_TSTATES) : 0;
 
-    for (uint32_t t = 0; t < maxFrameTiming && t < MAX_FRAME_TSTATES; t++)
+    // The T past the frame stay clear; each T of the frame is written whole below (one pass over the 1.4 MB table)
+    memset(_tstateLUT + lutEnd, 0, sizeof(TstateCoordLUT) * (MAX_FRAME_TSTATES - lutEnd));
+    if (lutEnd == 0)
+        return;
+
+    // For standard mode: visible starts at line 32 (after vSync+vBlank)
+    // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
+    const int visibleStartLine = FirstStoredRasterLine();
+
+    // Check if within visible framebuffer area (use actual framebuffer dimensions)
+    // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
+    const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
+    const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
+
+    // Line by line (line 0 = start of vSync), T by T within the line: no division per T
+    uint32_t t = 0;
+    for (uint32_t lineInFrame = 0; t < lutEnd; lineInFrame++)
     {
-        TstateCoordLUT& entry = _tstateLUT[t];
-
-        // Calculate line number within frame (0 = start of vSync)
-        const int lineInFrame = t / _rasterState.tstatesPerLine;
-        const int pixelInLine = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-
-        // For standard mode: visible starts at line 32 (after vSync+vBlank)
-        // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
-        const int visibleStartLine = FirstStoredRasterLine();
-        const int framebufferY = lineInFrame - visibleStartLine;
-
-        // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
-        // No horizontal offset - just extend the visible width
-        const int framebufferX = pixelInLine;
-
-        // Check if within visible framebuffer area (use actual framebuffer dimensions)
-        const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
-        const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
-        if (framebufferY >= 0 && framebufferY < visibleHeight && framebufferX < visibleWidth)
+        const int framebufferY = static_cast<int>(lineInFrame) - visibleStartLine;
+        const bool lineVisible = framebufferY >= 0 && framebufferY < visibleHeight;
+        for (uint32_t tInLine = 0; tInLine < tstatesPerLine && t < lutEnd; tInLine++, t++)
         {
-            entry.framebufferX = static_cast<uint16_t>(framebufferX);
-            entry.framebufferY = static_cast<uint16_t>(framebufferY);
+            TstateCoordLUT entry{};
 
-            // Check if within ZX screen area (using timing boundaries)
-            if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
+            // No horizontal offset - just extend the visible width
+            const int pixelInLine = static_cast<int>(tInLine * _rasterState.pixelsPerTState);
+            const int framebufferX = pixelInLine;
+
+            if (lineVisible && framebufferX < visibleWidth)
             {
-                const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
+                entry.framebufferX = static_cast<uint16_t>(framebufferX);
+                entry.framebufferY = static_cast<uint16_t>(framebufferY);
 
-                if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
+                // Check if within ZX screen area (using timing boundaries)
+                if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
                 {
-                    const uint16_t zxX = pixelX - timing.screenOffsetLeft;
-                    const uint16_t zxY = (t - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
+                    const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
 
-                    if (zxX <= 255 && zxY < 192)
+                    if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
                     {
-                        entry.zxX = zxX;
-                        entry.zxY = static_cast<uint8_t>(zxY);
-                        entry.symbolX = static_cast<uint8_t>(zxX / 8);
-                        entry.pixelXBit = static_cast<uint8_t>(zxX % 8);
-                        entry.renderType = RT_SCREEN;
-                        entry.screenOffset = _screenLineOffsets[zxY];
-                        entry.attrOffset = _attrLineOffsets[zxY];
+                        const uint16_t zxX = pixelX - timing.screenOffsetLeft;
+                        const uint16_t zxY = (t - _rasterState.screenAreaStart) / tstatesPerLine;
+
+                        if (zxX <= 255 && zxY < 192)
+                        {
+                            entry.zxX = zxX;
+                            entry.zxY = static_cast<uint8_t>(zxY);
+                            entry.symbolX = static_cast<uint8_t>(zxX / 8);
+                            entry.pixelXBit = static_cast<uint8_t>(zxX % 8);
+                            entry.renderType = RT_SCREEN;
+                            entry.screenOffset = _screenLineOffsets[zxY];
+                            entry.attrOffset = _attrLineOffsets[zxY];
+                        }
+                        else
+                        {
+                            // Should not happen for valid t-states
+                            entry.renderType = RT_BORDER;
+                            entry.zxX = UINT16_MAX;
+                            entry.zxY = 255;
+                        }
                     }
                     else
                     {
-                        // Should not happen for valid t-states
+                        // Left/right border within screen lines
                         entry.renderType = RT_BORDER;
                         entry.zxX = UINT16_MAX;
                         entry.zxY = 255;
@@ -273,7 +355,7 @@ void ScreenZX::CreateTstateLUT()
                 }
                 else
                 {
-                    // Left/right border within screen lines
+                    // Top/bottom border
                     entry.renderType = RT_BORDER;
                     entry.zxX = UINT16_MAX;
                     entry.zxY = 255;
@@ -281,21 +363,33 @@ void ScreenZX::CreateTstateLUT()
             }
             else
             {
-                // Top/bottom border
-                entry.renderType = RT_BORDER;
+                // Invisible area (VSync, VBlank, HSync, HBlank)
+                entry.framebufferX = UINT16_MAX;
+                entry.framebufferY = 0;
+                entry.renderType = RT_BLANK;
                 entry.zxX = UINT16_MAX;
                 entry.zxY = 255;
             }
+            _tstateLUT[t] = entry;
         }
-        else
-        {
-            // Invisible area (VSync, VBlank, HSync, HBlank)
-            entry.framebufferX = UINT16_MAX;
-            entry.framebufferY = 0;
-            entry.renderType = RT_BLANK;
-            entry.zxX = UINT16_MAX;
-            entry.zxY = 255;
-        }
+    }
+
+    // The runs, from the end: a T continues the run of the next one when both are blank, or both are of one visible
+    // kind and the next one draws the following pixels of the same row
+    for (uint32_t t = lutEnd; t-- > 0;)
+    {
+        TstateCoordLUT& entry = _tstateLUT[t];
+        entry.run = 1;
+        if (t + 1 >= lutEnd)
+            continue;
+        const TstateCoordLUT& next = _tstateLUT[t + 1];
+        if (next.renderType != entry.renderType || next.run == 255)
+            continue;
+        const bool continues = entry.renderType == RT_BLANK ||
+                               (next.framebufferY == entry.framebufferY &&
+                                next.framebufferX == entry.framebufferX + _rasterState.pixelsPerTState);
+        if (continues)
+            entry.run = static_cast<uint8_t>(next.run + 1);
     }
 }
 
@@ -719,6 +813,10 @@ void ScreenZX::SetBorderColor(uint8_t color)
 
     _borderColor = color & 0b0000'0111;
     NoteVideoWrite();
+
+    // The event rule: this step is drawn at its end as well, as the per-step draw would (Screen::NoteStepEnd)
+    if (_eventsThisFrame)
+        _drawAtStepEnd = true;
 }
 
 /// Emulate ULA video signal generator
@@ -734,6 +832,7 @@ void ScreenZX::UpdateScreen()
 
     // Store t-state position for next call
     _prevTstate = tstate;
+    _drawAtStepEnd = _drawEveryStep;
 }
 
 /// Render for single t-state (ULA draws 2 pixels per each t-state)
@@ -802,6 +901,12 @@ void ScreenZX::DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate)
 /// PlaneB = false is the plain renderer; PlaneB = true also writes what it drew
 /// into plane B, in the same pass (ZX DLSS). Two instantiations, chosen by
 /// SelectRangeRenderer, so the disabled path carries no extra check.
+///
+/// Multicolor stays exact: video RAM and the border cannot change inside one call (Screen::DrawRange's contract),
+/// so a cell's bytes read at its first T are what the T-by-T path reads there. A program rewriting attributes
+/// behind the beam cuts the frame into calls at its writes (CatchUpToStepStart); the blocks below (a whole cell,
+/// the whole cells of a run) only group T of one call. Each cell still latches at its first T; a range ending
+/// inside a cell draws its tail T by T and leaves the latch for the next call; snow takes the T-by-T path.
 template <bool PlaneB>
 void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
 {
@@ -840,12 +945,45 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
     {
         const TstateCoordLUT& e = lut[t];
         if (e.renderType == RT_BLANK)
+        {
+            t += e.run - 1u;  // the rest of the blank run in one step
             continue;
+        }
 
         const size_t pixel = e.framebufferY * fbWidth + e.framebufferX;
         uint32_t* const out = fb + pixel;
         if (e.renderType == RT_SCREEN)
         {
+            // The whole cells of the run in the range, without the LUT: a run is the next pixels of one row, so its
+            // cells follow each other on one ZX line. Each is latched at its first T, as the T-by-T path does
+            const uint32_t cells = (e.pixelXBit == 0 && !snow) ? std::min<uint32_t>(e.run, toTstate - t + 1u) / 4u : 0;
+            if (cells != 0)
+            {
+                for (uint32_t c = 0; c < cells; c++)
+                {
+                    const uint8_t symbolX = static_cast<uint8_t>(e.symbolX + c);
+                    if (symbolX != lastSymbolX || e.zxY != lastZxY)
+                    {
+                        pixels = zxScreen[e.screenOffset + symbolX];
+                        attributes = zxScreen[e.attrOffset + symbolX];
+                        lastSymbolX = symbolX;
+                        lastZxY = e.zxY;
+                        if constexpr (PlaneB)
+                        {
+                            inkB = _planeBInk[attributes];
+                            paperB = _planeBPaper[attributes];
+                        }
+                    }
+                    const uint32_t ink = inkColors[attributes];
+                    const uint32_t paper = paperColors[attributes];
+                    cellexpand::Expand8(pixels, ink, paper, out + 8u * c);
+                    if constexpr (PlaneB)
+                        cellexpand::Expand8(pixels, inkB, paperB, planeB + pixel + 8u * c);
+                }
+                t += 4u * cells - 1u;
+                continue;
+            }
+
             if (e.symbolX != lastSymbolX || e.zxY != lastZxY)
             {
                 pixels = zxScreen[e.screenOffset + e.symbolX];
@@ -871,6 +1009,28 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
 
             const uint32_t ink = inkColors[attributes];
             const uint32_t paper = paperColors[attributes];
+
+            // A whole cell in the range (its first T, and the T three on is its last, two pixels on each): the eight
+            // pixels at once, as the four T would draw them from the one latch
+            if (e.pixelXBit == 0 && toTstate - t >= 3)
+            {
+                const TstateCoordLUT& last = lut[t + 3];
+                if (last.renderType == RT_SCREEN && last.pixelXBit == 6 && last.symbolX == e.symbolX &&
+                    last.zxY == e.zxY && last.framebufferY == e.framebufferY &&
+                    last.framebufferX == e.framebufferX + 6)
+                {
+                    for (uint32_t i = 0; i < 8; i++)
+                    {
+                        const uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>((pixels >> (7 - i)) & 1));
+                        out[i] = (ink & mask) | (paper & ~mask);
+                        if constexpr (PlaneB)
+                            planeB[pixel + i] = static_cast<uint16_t>((inkB & mask) | (paperB & ~mask));
+                    }
+                    t += 3;
+                    continue;
+                }
+            }
+
             // Branch-free: the pixel bit becomes an all-ones / all-zeros mask
             const uint32_t bit0 = (pixels << e.pixelXBit) & 0x80;
             const uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
@@ -898,14 +1058,15 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
             latchedBorderRGBA = borderColorRGBA;
             latchedBorderIndex = borderColor;
         }
-        out[0] = latchedBorderRGBA;
-        out[1] = latchedBorderRGBA;
+        // The latch holds the colour of the range: it cannot change any more, so the rest of the run is one fill
+        const uint32_t count = (latchedBorderIndex == borderColor) ? std::min<uint32_t>(e.run, toTstate - t + 1u) : 1u;
+        std::fill_n(out, 2u * count, latchedBorderRGBA);
         if constexpr (PlaneB)
         {
             const uint16_t border = static_cast<uint16_t>(kPlaneBRoleBorder | (latchedBorderIndex << 8));
-            planeB[pixel] = border;
-            planeB[pixel + 1] = border;
+            std::fill_n(planeB + pixel, 2u * count, border);
         }
+        t += count - 1u;
     }
 
     _latchedPixels = pixels;

@@ -1,5 +1,25 @@
 # TTD fixture corpus
 
+Two corpora of the same sessions:
+
+- **`engine/`**: recorded by the engine, the application's recorder since the
+  Phase 5 switch, in the engine's session file format (schema 2). Read by
+  `TimeTravelControllerCorpus_Test`
+  (`core/tests/debugger/ttd/timetravelcontroller_corpus_test.cpp`): each file
+  loads into an instance of its model with the engine as its recorder, every
+  visited checkpoint restores with no issue reported, and the session continues
+  from checkpoint 37 - the 25 checkpoints recorded live restore the machine
+  (CPU, chipset, every device, all of RAM) exactly as the recorded ones did.
+  The per-machine fixtures (TS-Conf, Sprinter) are in this folder too.
+- **this folder and `testdata/machines/*/ttd/`**: recorded by v1, in v1's
+  format (schema 1), the reference for v1's own tests until v1 leaves the
+  application (Phase 5, Step 4). The rest of this file is about them unless it
+  says otherwise.
+
+`record_fixtures.py` asks the instance which recorder it runs (`backend` in
+`/ttd/status`): an engine recording goes to `engine/`. To re-record v1's corpus,
+start the application with `UNREAL_TTD_BACKEND=v1`.
+
 Recorded `.ttd` sessions from real emulator runs. They are read by:
 
 - the C++ test `TTD_Corpus_Test` (`core/tests/debugger/ttd/ttdcorpus_test.cpp`).
@@ -8,8 +28,8 @@ Recorded `.ttd` sessions from real emulator runs. They are read by:
   device matches the recording byte for byte, and replays 25 frames to check
   the replay matches the recording exactly;
 - the analyzer (`tools/verification/ttd-analyzer/`);
-- the codec PoC (`tools/poc/01-ttd-compression/`) and the PoC GUI
-  (`tools/poc/010-ttd-gui/`).
+- the codec PoC (`tools/poc/010-ttd-compression/`) and the PoC GUI
+  (`tools/poc/027-ttd-gui/`).
 
 The fixtures are written by the production writer, so they are tied to the
 on-disk format: **a format change makes them stale, and `TTD_Corpus_Test`
@@ -35,6 +55,26 @@ add or change a fixture, edit that list and this table together. A fixture of
 another machine lives in `testdata/machines/<machine>/ttd/` (the script's
 `FIXTURE_OPTIONS`); `TTD_Corpus_Test` runs it on a fresh machine of its
 recorded model.
+
+## ZX-MultiSound sessions (recorded by the tests, not stored)
+
+Two more sessions belong to the corpus but are not in the repository (owner decision 2026-10-07: about 19 MB of
+fixtures for the two recorders): the tests record them in their own process on first use
+([`core/tests/_helpers/ttdmultisoundsessions.h`](../../core/tests/_helpers/ttdmultisoundsessions.h)), save them to the
+process's scratch folder, load them like the stored files and delete them when the process ends.
+
+| Session | Model | Starting point | Settle frames | Frames |
+|---|---|---|---|---|
+| `multisound-pentagon` | Pentagon 128K, ZX-MultiSound in `zxbus.1` (the slot set replaces the shipped one, so the socket keeps its plain AY) | [`../sound/multisound/ttd/allsources.sna`](../sound/multisound/ttd/allsources.sna): every source of the card - both YM2203 (FM + SSG), the SAA1099, the SounDrive DACs, a General Sound command, MIDI notes bit-banged into the SAM2695 (written by [`make-program.py`](../../tools/verification/multisound/ttd-fixture/make-program.py)) | 10 | 70 |
+| `multisound-zxevo` | ZX-Evo (`ATM3`), ZX-MultiSound in `zxbus.1` (the YM2149 leaves its socket) | the same program (it measures the CPU clock - the ZX-Evo starts at 7 MHz - and times its MIDI bits to it) | 10 | 70 |
+
+Recorded as `record_fixtures.py` records a fixture: a fresh machine, 44.1 kHz core rate, Sound HQ and Screen HQ on,
+the snapshot, the settle frames, then a recording with the write journal. Each is recorded twice per test process at
+most: by v1 for `TTD_Corpus_Test`, `TTDSessionFile_Test` and `TTDV1Feeder_Test`, by the engine for
+`TimeTravelControllerCorpus_Test`. 70 frames (71 checkpoints) instead of 300: the SAM2695's state (292 KB raw) changes
+in every checkpoint, and the corpus tests need 63 checkpoints. The tests build the replay machine from the session's
+header with the card in `zxbus.1` and the shipped default MIDI bank, which the sessions name
+(`core/tests/_helpers/ttdslotcards.h`). A change of the card or of the program needs no re-recording.
 
 ## Port-journal fixtures (`port-journals/`)
 
@@ -92,9 +132,12 @@ with it.
 3. Validate the files and run the C++ gate:
 
    ```bash
-   for f in testdata/ttd/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
-   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*'
+   for f in testdata/ttd/*.ttd testdata/ttd/engine/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
+   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*:TimeTravelControllerCorpus_Test.*'
    ```
+
+   An engine recording's file is not byte-identical to the previous one (its
+   header carries a fresh session id and the creation time); its content is.
 
 The script can run from any directory. It resolves relative paths from the
 project root and passes absolute paths to the emulator, so the emulator must
@@ -171,6 +214,30 @@ write journal has no checksum of its own, so a corrupt zstd frame is caught
 but a flipped byte that still decodes is not.
 
 ## Status
+
+2026-10-08: the Pentagon fixtures of both corpora (`*.ttd`, `engine/` but `tsconf_sprites` and `sprinter_boot`) and
+the port-journal fixtures re-recorded: with no tape image, #FE bit 6 now reads 0 on the Pentagon and follows the EAR
+output on the 128K (idle EAR per board, `docs/inprogress/2026-10-08-z80test-in-ear/`). In `expected.json`, Dizzy X's
+`key` / `in` answers changed only in the value read (bit 6); Green Beret's answers all moved, because the 128K reads
+the EAR level before playback starts and the load runs on a slightly different timeline. The TS-Conf and Sprinter
+fixtures replay unchanged and were left alone.
+
+2026-10-05: the engine corpus re-recorded after master's ZX-bus slots (the slot set is in the engine's configuration
+fingerprint). `record_fixtures.py` plugs the General Sound card into a ZX-bus slot when the shipped config fits none;
+`sprinter_boot` has no ZX-bus and is recorded without a GS card, as the Sprinter now ships.
+
+2026-10-05: the engine corpus re-recorded: the controller's own streams moved to the ids the Phase 4 stream table
+names (8 coverage, 12 bookmarks, 17 facts; 0x02xx is reserved for branches).
+
+2026-10-05: the engine corpus (`engine/`, all seven fixtures) recorded for the first time, by the application on the
+engine after the Phase 5 switch; 3 to 7 times smaller than the v1 files of the same sessions.
+
+2026-10-04 (zx-bus-slots, owner decision): the shipped 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs fit no
+General Sound any more. No fixture was re-recorded: `sprinter_boot` (Sprinter) and `greenberet-load` (128K) were
+recorded with the classic GS, and the tests that load them now fit the recorded card at creation
+(`GeneralSoundFitScope`, `core/tests/_helpers/soundcardscope.h`) instead of switching the shipped card. A re-record
+from the stock app needs the card in the instance's `[SLOTS]` first: the recorders' `switch_personality` changes a
+fitted card but cannot fill an empty slot (until SL-6).
 
 2026-10-04: the whole corpus (all seven fixtures) re-recorded after `ttd-engine` landed on master: the engine's
 peripheral ids moved to 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback; master kept 44-53), and master's

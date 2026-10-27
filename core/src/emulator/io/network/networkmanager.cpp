@@ -1,3 +1,4 @@
+#include "emulator/io/serial/nextpipeer.h"
 #include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
@@ -8,7 +9,7 @@
 
 #include "base/featuremanager.h"
 #include "common/network/hostnetbridge.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -61,7 +62,11 @@ NetworkManager::Plan NetworkManager::MakePlan() const
             ComPortSpec::Parse(fallback, spec, error);
         return spec.kind == ComPortSpec::Kind::None ? std::string() : spec.ToString();
     };
-    const std::string comPeer = peerOf(net.comPort, "NONE");
+    // The Next ships with its ESP module on UART 0 (the AT firmware); every other machine's port is empty until configured
+    const char* comDefault = caps.serialPort == SerialPort::NextUart ? "AT" : "NONE";
+    const std::string comPeer = peerOf(net.comPort, comDefault);
+    const std::string comPeer2 = peerOf(net.comPort2, "NONE");
+    const std::string comPeerJoy = peerOf(net.comPortJoy, "NONE");
 
     // The machine's own serial port: mainboard hardware, there with the network off
     const std::string zifiPeer = peerOf(net.zifi, "NONE");
@@ -76,12 +81,18 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (caps.zifi && networkOn)
             plan.zifiPeer = zifiPeer;
     }
-    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251)
+    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251 || caps.serialPort == SerialPort::NextUart)
     {
         // Not on #xxEF: a ZX-WiFi card fits beside it
         plan.machineSerial = true;
         if (networkOn)
+        {
             plan.machinePeer = comPeer;
+            if (caps.attachSecondSerialPeer)
+                plan.machinePeer2 = comPeer2;
+            if (caps.attachJoystickSerialPeer)
+                plan.machinePeerJoy = comPeerJoy;
+        }
     }
     else if (caps.serialPort == SerialPort::None && !comPeer.empty())
     {
@@ -209,6 +220,8 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
             return std::make_unique<LoopbackPeer>();
         case ComPortSpec::Kind::Plug:
             return std::make_unique<LoopbackPeer>(true);
+        case ComPortSpec::Kind::NextPi:
+            return std::make_unique<NextPiPeer>();
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
@@ -246,11 +259,41 @@ void NetworkManager::FitMachineSerial(const Plan& plan)
     const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
     if (!caps.attachSerialPeer)
         return;
-    _machinePeer = MakePeer(plan.machinePeer, caps.espBaud);
+    // The Next's module is an ESP-12 (ESP8266): an ESP8266 build from [NETWORK] EspChip, else NonOS AT 1.7.4 as on the ZiFi board
+    std::optional<EspModule::Firmware> firmware;
+    if (caps.serialPort == PortDecoder::NetworkCapabilities::SerialPort::NextUart)
+    {
+        const auto chipBuild = static_cast<EspModule::Firmware>(_context->config.network.espChip);
+        firmware = EspModule::ChipOf(chipBuild) == EspModule::Chip::Esp8266 ? chipBuild : EspModule::Firmware::Esp8266NonOs174;
+    }
+    _machinePeer = MakePeer(plan.machinePeer, caps.espBaud, firmware);
     if (!_machinePeer)
         return;   // nothing on the line: the firmware's UART still runs
     caps.attachSerialPeer(_machinePeer.get());
     _context->pMachineSerialPeer = _machinePeer.get();
+}
+
+void NetworkManager::FitMachineSerial2(const Plan& plan)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    if (!caps.attachSecondSerialPeer)
+        return;
+    _machinePeer2 = MakePeer(plan.machinePeer2, caps.espBaud);
+    caps.attachSecondSerialPeer(_machinePeer2.get());   // nullptr: nothing on the line
+    _context->pMachineSerialPeer2 = _machinePeer2.get();   // its state is its own TTD blob (MachineSerialPeer2)
+}
+
+void NetworkManager::FitMachineSerialJoy(const Plan& plan)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    if (!caps.attachJoystickSerialPeer)
+        return;
+    // The Next's ESP-12 build does not apply to a device on the connector: ESP specs there use [NETWORK] EspChip
+    _machinePeerJoy = MakePeer(plan.machinePeerJoy, caps.espBaud);
+    caps.attachJoystickSerialPeer(_machinePeerJoy.get());   // nullptr: nothing plugged in
+    _context->pJoystickSerialPeer = _machinePeerJoy.get();
 }
 
 void NetworkManager::FitAtm2IoEsp(const Plan& plan)
@@ -272,14 +315,17 @@ void NetworkManager::FitCom(const Plan& plan, const AvrKeep* keep)
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
     std::function<void()> waitPortInterrupt;
+    EvoAvrWait* avrWait = nullptr;
     if (plan.serial == Plan::Serial::EvoAvr && decoder)
     {
         PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
         params = caps.uart;
         registerOf = std::move(caps.serialRegister);
         waitPortInterrupt = std::move(caps.waitPortInterrupt);
+        avrWait = caps.avrWait;
     }
     _com = std::make_unique<ComPort>(_context, params, std::move(peer), std::move(registerOf));
+    _com->SetAvrWait(avrWait);
     if (keep && keep->com)
         _com->Uart().LoadState(*keep->com);   // the same chip, a new cable: its registers stay
     if (plan.zifi)
@@ -363,6 +409,10 @@ void NetworkManager::Refit()
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
             copy(net.comPort, sizeof(net.comPort), *change->comPort);
+        if (change->comPort2)
+            copy(net.comPort2, sizeof(net.comPort2), *change->comPort2);
+        if (change->comPortJoy)
+            copy(net.comPortJoy, sizeof(net.comPortJoy), *change->comPortJoy);
         if (change->zxWifi)
             copy(net.zxWifi, sizeof(net.zxWifi), *change->zxWifi);
         if (change->comModemLines)
@@ -521,7 +571,11 @@ void NetworkManager::Refit()
     if (plan.serial != Plan::Serial::None)
         FitCom(plan, keep ? &*keep : nullptr);
     if (plan.machineSerial)
+    {
         FitMachineSerial(plan);
+        FitMachineSerial2(plan);
+        FitMachineSerialJoy(plan);
+    }
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
     FitSlotCards(plan);
@@ -549,6 +603,8 @@ void NetworkManager::NameTrafficGuests()
     if (_com)
         name(_com->Peer(), "com");
     name(_machinePeer.get(), "machine");
+    name(_machinePeer2.get(), "machine2");
+    name(_machinePeerJoy.get(), "joystick");
     if (_atm2IoEsp)
         name(_atm2IoEsp->Com().Peer(), "atm2ioesp");
     if (_zifi)
@@ -739,11 +795,15 @@ void NetworkManager::Unplug(bool keepSlotCards)
 {
     if (_context)
     {
-        if ((_machinePeer || _atm2IoEsp) && _context->pPortDecoder)
+        if ((_machinePeer || _machinePeer2 || _machinePeerJoy || _atm2IoEsp) && _context->pPortDecoder)
         {
             const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
             if (_machinePeer && caps.attachSerialPeer)
                 caps.attachSerialPeer(nullptr);
+            if (_machinePeer2 && caps.attachSecondSerialPeer)
+                caps.attachSecondSerialPeer(nullptr);
+            if (_machinePeerJoy && caps.attachJoystickSerialPeer)
+                caps.attachJoystickSerialPeer(nullptr);
             if (_atm2IoEsp && caps.internalIo)
                 caps.internalIo(_atm2IoEsp.get(), false);
         }
@@ -752,6 +812,8 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _context->pZxNetUsb = nullptr;
         _context->pComPort = nullptr;
         _context->pMachineSerialPeer = nullptr;
+        _context->pMachineSerialPeer2 = nullptr;
+        _context->pJoystickSerialPeer = nullptr;
         _context->pVirtualNetwork = nullptr;
     }
     // The adapters first: their sockets close through the virtual network
@@ -801,6 +863,8 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _slotCards = std::move(kept);
     }
     _machinePeer.reset();
+    _machinePeer2.reset();
+    _machinePeerJoy.reset();
     _atm2IoEsp.reset();
     if (_com)
         _com->SetZiFi(nullptr);
@@ -813,7 +877,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
 
 bool NetworkManager::Change::Empty() const
 {
-    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort &&
+    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort && !comPort2 && !comPortJoy &&
            !zxWifi && !comModemLines && !espChip && !avrFirmware && !kbcFirmware && !atm2IoEsp && !atm2IoEspAddress &&
            !zifi && !modemPhonebook && !ethernetMode && !bridgeAdapter && slotPeers.empty();
 }
@@ -829,17 +893,51 @@ bool NetworkManager::Change::OnlyRemoteAccess() const
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
 {
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    // The ZX-bus cards are slots (owner decision Q11): a card change is a slot change applied by a restart
+    // (SlotControl verb network, which applies the other settings to the restarted machine); here only the cards that
+    // are fitted already may be named again. ATM2IOESP (the INTERNAL connector, not a bus slot) still changes here
+    if (change.card && _context && ((*change.card ^ _context->config.network.card) & kZxBusCards) != 0)
     {
-        error = "a TTD recording is running: the network settings are fixed until it stops";
+        error = "card: the ZX-bus network cards are slots, a change restarts the machine (the network settings of "
+                "every surface do that; or slots plug / remove)";
         return false;
     }
-    if (change.hosts && change.hosts->size() >= sizeof(_context->config.network.hosts))
+    if (!ValidateChange(change, error))
+        return false;
+    // A host-side setting alone (RemoteAccess: the address the listeners take) changes nothing the machine sees: no
+    // machine operation, allowed in every mode (owner 2026-10-10)
+    if (change.OnlyRemoteAccess())
+    {
+        Submit(change);
+        return true;
+    }
+    // A machine operation (the coordinator's rules, D43): refused while a recording the user started runs and in the
+    // recorded past; the black box's session ends at the change
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::NetworkChange;
+    op.summary = "network settings";
+    op.sessionReason = "network-change";
+    auto apply = [&](coordinator::OpStage& stage) {
+        stage.CommitPoint();
+        Submit(change);
+        return true;
+    };
+    const coordinator::OpResult result =
+        coordinator::RunCommit(_context ? _context->pMachineOps : nullptr, std::move(op), apply);
+    if (!result.Ok())
+        error = result.reason;
+    return result.Ok();
+}
+
+bool NetworkManager::ValidateChange(const Change& change, std::string& error)
+{
+    using Net = decltype(CONFIG::network);   // the field sizes of [NETWORK]
+    if (change.hosts && change.hosts->size() >= sizeof(Net::hosts))
     {
         error = "hosts: too long";
         return false;
     }
-    if (change.forwards && change.forwards->size() >= sizeof(_context->config.network.forwards))
+    if (change.forwards && change.forwards->size() >= sizeof(Net::forwards))
     {
         error = "forwards: too long";
         return false;
@@ -857,9 +955,37 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "com_port: " + error;
             return false;
         }
-        if (change.comPort->size() >= sizeof(_context->config.network.comPort))
+        if (change.comPort->size() >= sizeof(Net::comPort))
         {
             error = "com_port: too long";
+            return false;
+        }
+    }
+    if (change.comPort2)
+    {
+        ComPortSpec spec;
+        if (!ComPortSpec::Parse(*change.comPort2, spec, error))
+        {
+            error = "com_port2: " + error;
+            return false;
+        }
+        if (change.comPort2->size() >= sizeof(Net::comPort2))
+        {
+            error = "com_port2: too long";
+            return false;
+        }
+    }
+    if (change.comPortJoy)
+    {
+        ComPortSpec spec;
+        if (!ComPortSpec::Parse(*change.comPortJoy, spec, error))
+        {
+            error = "com_port_joy: " + error;
+            return false;
+        }
+        if (change.comPortJoy->size() >= sizeof(Net::comPortJoy))
+        {
+            error = "com_port_joy: too long";
             return false;
         }
     }
@@ -871,7 +997,7 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "zifi: " + error;
             return false;
         }
-        if (change.zifi->size() >= sizeof(_context->config.network.zifi))
+        if (change.zifi->size() >= sizeof(Net::zifi))
         {
             error = "zifi: too long";
             return false;
@@ -885,13 +1011,13 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "zx_wifi: " + error;
             return false;
         }
-        if (change.zxWifi->size() >= sizeof(_context->config.network.zxWifi))
+        if (change.zxWifi->size() >= sizeof(Net::zxWifi))
         {
             error = "zx_wifi: too long";
             return false;
         }
     }
-    if (change.bridgeAdapter && change.bridgeAdapter->size() >= sizeof(_context->config.network.bridgeAdapter))
+    if (change.bridgeAdapter && change.bridgeAdapter->size() >= sizeof(Net::bridgeAdapter))
     {
         error = "bridge_adapter: too long";
         return false;
@@ -904,7 +1030,7 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "modem_phonebook: " + error;
             return false;
         }
-        if (change.modemPhonebook->size() >= sizeof(_context->config.network.modemPhonebook))
+        if (change.modemPhonebook->size() >= sizeof(Net::modemPhonebook))
         {
             error = "modem_phonebook: too long";
             return false;
@@ -918,12 +1044,16 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             return false;
         }
     }
-        {
+    return true;
+}
+
+void NetworkManager::Submit(const Change& change)
+{
+    {
         std::lock_guard<std::mutex> lock(_changeMutex);
         _pendingChange = change;
     }
     ApplyConfiguration();
-    return true;
 }
 
 void NetworkManager::Reset()
@@ -968,6 +1098,10 @@ void NetworkManager::OnFrameDevices()
             _com->OnFrame();
         if (_machinePeer)
             _machinePeer->OnFrame();
+        if (_machinePeer2)
+            _machinePeer2->OnFrame();
+        if (_machinePeerJoy)
+            _machinePeerJoy->OnFrame();
         if (_atm2IoEsp)
             _atm2IoEsp->OnFrame();
         if (_zifi)
@@ -1041,7 +1175,13 @@ void NetworkManager::UpdateStatus()
         const auto& net = _context->config.network;
         auto& s = st.settings;
         s.card = networkspec::CardsToString(net.card);
-        s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string("NONE");
+        {
+            const bool nextEsp = _context->pPortDecoder && _context->pPortDecoder->DescribeNetwork().serialPort ==
+                                                               PortDecoder::NetworkCapabilities::SerialPort::NextUart;
+            s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string(nextEsp ? "AT" : "NONE");
+        }
+        s.comPort2 = net.comPort2[0] ? std::string(net.comPort2) : std::string("NONE");
+        s.comPortJoy = net.comPortJoy[0] ? std::string(net.comPortJoy) : std::string("NONE");
         s.zxWifi = net.zxWifi[0] ? std::string(net.zxWifi) : std::string("AT");
         s.atm2IoEsp = net.atm2IoEsp[0] ? std::string(net.atm2IoEsp) : std::string("AT");
         s.atm2IoEspAddress = net.atm2IoEspAddress;
@@ -1080,7 +1220,19 @@ void NetworkManager::UpdateStatus()
                         : caps.serialPort == SerialPort::ZiFi      ? "zifi"
                         : caps.serialPort == SerialPort::Atm2Kbc   ? "atm2-kbc"
                         : caps.serialPort == SerialPort::Profi8251 ? "profi-8251"
+                        : caps.serialPort == SerialPort::NextUart  ? "next-uart"
                                                                    : "none";
+        if (caps.serialPort == SerialPort::NextUart)
+        {
+            // The Next's UART 0 (the ESP's line); UART 1's peer is listed by the next_uart report
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "nextuart";
+            m.baud = caps.serialBaud ? caps.serialBaud() : 0;
+            m.frameBits = 10;
+            m.modemLines = false;
+            FillPeerStatus(_machinePeer.get(), m);
+        }
         if (caps.serialPort == SerialPort::Atm2Kbc)
         {
             auto& m = st.machineSerial;
@@ -1380,6 +1532,28 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
                 return false;
             }
             out.comPort = spec.ToString();
+        }
+        else if (key == "com_port2" || key == "comport2" || key == "com2")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = "com_port2: " + why;
+                return false;
+            }
+            out.comPort2 = spec.ToString();
+        }
+        else if (key == "com_port_joy" || key == "comportjoy" || key == "joystick_port")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = "com_port_joy: " + why;
+                return false;
+            }
+            out.comPortJoy = spec.ToString();
         }
         else if (key == "esp_chip" || key == "espchip")
         {

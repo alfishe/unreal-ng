@@ -42,7 +42,7 @@ size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, cons
             const TTDInputEvent& in = inputs[cursor.input++];
             at = in.time;
             ev = TTDEventLog::FromInput(0, in);
-            if (in.kind == TTDInputKind::NetEvent)
+            if (HasNetRecord(in.kind))   // a host event or an Ethernet frame: its bytes are the payload
                 if (const TTDNetInput* net = input.NetOf(in))
                 {
                     TTDEventLog::PackNet(*net, ev);

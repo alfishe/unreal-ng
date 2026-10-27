@@ -14,9 +14,10 @@
 #include <cstring>
 #include <vector>
 
+#include "_helpers/ttdrecordedstate.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -161,26 +162,23 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     // Covox is created by SoundManager during Init on models that have one.
     // The covoxState blob is 4 bytes when Covox is present, empty otherwise.
     SoundManager* sm = context->pSoundManager;
     ASSERT_NE(sm, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     if (sm->hasCovox())
     {
-        const auto covoxBlob = cp->peripheralBlobs.find(
-            static_cast<uint8_t>(ttd::PeripheralId::Covox));
-        ASSERT_NE(covoxBlob, cp->peripheralBlobs.end());
-        const auto covoxState = ttd::TTDPeripheralRegistry::DecodeBlob(
-            static_cast<uint8_t>(ttd::PeripheralId::Covox), covoxBlob->second);
+        const auto covoxState = ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::Covox);
+        ASSERT_FALSE(covoxState.empty());
         EXPECT_EQ(covoxState.size(), 9u)
             << "covoxState blob must contain the 9-byte DAC + idle-countdown payload when Covox is present";
     }

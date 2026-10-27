@@ -8,6 +8,10 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
 
 project(unreal-qt LANGUAGES CXX)
 
+# -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Sanitize.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Lto.cmake)
+
 # Automation options follow the root CMakeLists.txt (single source of truth).
 # option() never overrides an existing cache entry: in a root-level build the values
 # chosen there (including -D overrides) are inherited unchanged; in a standalone
@@ -210,7 +214,6 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 if (NOT ENABLE_RECORDING)
     list(FILTER CPP_FILES EXCLUDE REGEX ".*videorecordingwidget\\.cpp$")
     list(FILTER CPP_FILES EXCLUDE REGEX ".*multitrackdialog\\.cpp$")
-    list(FILTER CPP_FILES EXCLUDE REGEX ".*recordingpresets\\.cpp$")
 endif()
 
 set (SOURCES ${CPP_FILES})
@@ -234,6 +237,11 @@ if (APPLE)
     set_source_files_properties(${APP_ICON_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif ()
 
+# The CRT tables are built in floats and must be the same bits on every compiler (src/widgets/crtmath.h): no
+# contraction of a multiply and an add into one fused instruction (clang and gcc do it by default on arm64)
+set_source_files_properties(src/widgets/crtrenderer.cpp src/widgets/crtbeammodel.cpp src/widgets/crtbeamshapes.cpp
+    PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
+
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
 
 # Application icon as a Qt resource (window / taskbar icon on Windows and Linux).
@@ -244,6 +252,11 @@ target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 # Toolbar / status bar icons (monochrome SVGs, tinted at runtime to follow the platform theme)
 qt6_add_resources(UI_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 target_sources(${PROJECT_NAME} PRIVATE ${UI_ICON_RESOURCES})
+
+# The libretro CRT presets (tools/crt-shaders/import.py) as :/crt/<key>/: SlangPresetRunner, View > CRT Profile
+file(GLOB_RECURSE CRT_PRESET_FILES CONFIGURE_DEPENDS RELATIVE "${ROOT_DIR}/data/shaders/crt" "${ROOT_DIR}/data/shaders/crt/*/*")
+list(TRANSFORM CRT_PRESET_FILES PREPEND "${ROOT_DIR}/data/shaders/crt/")
+qt6_add_resources(${PROJECT_NAME} "crtpresets" PREFIX "/crt" BASE "${ROOT_DIR}/data/shaders/crt" FILES ${CRT_PRESET_FILES})
 
 
 # Set common target properties
@@ -359,25 +372,17 @@ else ()
     )
 endif ()
 
+# The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
+if (TARGET unrealng::swsignature)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
+endif ()
+
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 set(CONFIGS_DIR "${DATA_PATH}/configs")
 
-# Copy resources using modern CMake syntax
-add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CONFIGS_DIR}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
-    COMMENT "Copying runtime resource files to output directory"
-)
+# Runtime resources are copied once by the shared runtime-data target (root CMakeLists.txt)
+add_dependencies(${PROJECT_NAME} runtime-data)
 
 # These install rules are already covered by the common install rules above
 
@@ -426,9 +431,13 @@ if(APPLE)
         # 3. Inject Resources before signing
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/symbols" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/symbols"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/midi" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/controllers" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/controllers"
+        COMMAND ${CMAKE_COMMAND} "-DDEST=${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
 
         # 4. Deploy Qt frameworks
@@ -461,9 +470,13 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/symbols" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/symbols"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/midi" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/controllers" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/controllers"
+        COMMAND ${CMAKE_COMMAND} "-DDEST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
         # Bump the bundle mtime so Finder/Dock drop their cached icon for this path
@@ -490,8 +503,11 @@ if(WIN32)
         # Copy only necessary resources
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/symbols" "${CMAKE_BINARY_DIR}/packages/UnrealNG/symbols"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/UnrealNG/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/UnrealNG/controllers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/UnrealNG/resources/html"
         # Create the final zip package
         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG"
@@ -513,8 +529,11 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/symbols" "${CMAKE_BINARY_DIR}/packages/symbols"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/controllers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"
         # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng.desktop" "${CMAKE_BINARY_DIR}/packages/share/applications/unrealng.desktop"
@@ -566,6 +585,8 @@ if (TESTS)
     target_link_libraries(hud-core-tests PRIVATE
         unrealng::core
         gtest_main
+        # MinGW has no gtest targets (core/tests compiles the sources in): -lgtest_main needs -lgtest after it
+        gtest
     )
 
     # unreal-qt-tests: front-end classes that need Qt (offscreen platform, real Qt events).
@@ -575,6 +596,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/cursortravel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/cursortravel_test.cpp"
         # The Machine menu's host keyboard state against an instance automation removes
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/hostkeyboardmenu_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.cpp"
@@ -592,6 +617,57 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/journalspanslider_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.h"
+        # The TTD panel: the Advanced row's recording options, Build Journal only where it is missing
+        # Automation sessions in the GUI: the lock, take back, allow again (execution arbiter X7c)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/remotecontrolguard_test.cpp"
+        # The remote control bar's line sits on the bar's axis, level with the buttons' text
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/remotecontrolrow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/remotecontrolrow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/inkcentre.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
+        # Companion clients in the GUI: the pairing prompt, the Companions dialog (companion client design)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/companioncontroller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
+        # The window as a view of TargetState, the surface icon and the surfaces table (Stream Deck targeting.md)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/surfacetargets_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.h"
+        # The controllers dialog's pieces: connector LED, patch cords, test panel, toasts, hotspot editor (ui-ux.md)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/controllersui_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorview.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/connectorcard.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/patchcordoverlay.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/devicetestpanel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/devicetestpanel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllertoast.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllertoast.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/hotspoteditor.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/hotspoteditor.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/controllerpicture.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/learnwizard.h"
+        # Tools > Stream Deck...: the daemon's supervision, settings, the pairing approved here (Stream Deck daemon.md §7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/streamdeckdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
@@ -603,6 +679,25 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdsessionobserver_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.h"
+        # The Slots window: plan preview, plug with the confirmation, removed cards named with Undo (ZX-bus slots)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slotswindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextlayerswindow_test.cpp"
+        # The on-screen keyboard: the machines' own keyboards (POC 031 pictures), what a click posts
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/osdkeyboardwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotconfigdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotconfigdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.h"
         # The debugger's Device memory dialog (debugger additions TODO A2q)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/devicememorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/devicememorydialog.cpp"
@@ -611,15 +706,53 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
+        # The debugger's Disk files dialog (unreal-asm A7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/diskfilesdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/livesourcewindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/livesourcewindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/livesourcewindow.h"
+        # The label editor's Sets tab (symbols S5)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolsetspanel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolbundlepreferences_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
+        # Windows against an instance automation removes while they show it (BUGS.md #11)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/removalrace_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/trafficpanelmodel.cpp"
+        # File > Save Snapshot: the formats the machine can be saved in now (snapshot pipeline P6)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/savesnapshotchoices_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.h"
+        # The CRT model both screen backends share: the GPU picture is the software one bit for bit
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtrenderer_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrows.h"
+        # The integer models of the libretro shaders: the GPU picture is the software one bit for bit
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtbeammodel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.h"
+        # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
@@ -643,12 +776,27 @@ if (TESTS)
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
         Qt6::Widgets
+        Qt6::OpenGL
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
+        Qt6::Svg
         QHexView
         gtest
     )
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
     endif()
+
+    # The CRT picture of still frames for the gallery and the comparison with librashader (tools/crt-shaders)
+    add_executable(crt-render
+        "${ROOT_DIR}/tools/crt-shaders/crt-render.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+    )
+    set_target_properties(crt-render PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(crt-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(crt-render PRIVATE Qt6::Gui)
 endif()
 
 # <Diagnostics>

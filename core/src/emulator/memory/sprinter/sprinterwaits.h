@@ -47,6 +47,8 @@ public:
     {
         return Rule(startClock, kMemoryTaken);
     }
+    /// The 6-clock slot
+    uint32_t PhasePeriod() const override { return 6; }
 };
 
 /// The Sprinter's "original waits" (PLD WAIT_ORIG, SP2_ACEX.TDF:558-559; research-zx-mode.md §7.3,
@@ -108,4 +110,6 @@ public:
     {
         return Rule(startClock);
     }
+    /// The CT5 period
+    uint32_t PhasePeriod() const override { return kPeriod; }
 };

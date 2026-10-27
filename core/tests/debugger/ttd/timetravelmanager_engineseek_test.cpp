@@ -33,6 +33,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
 #include "_helpers/zcsdtesthelper.h"
@@ -64,16 +65,27 @@ protected:
 
     void StartMachine(const std::string& model, GSTypeKind generalSound, bool fitGs)
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3, Profi
+        // and Sprinter configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
+        {
+            GeneralSoundFitScope fit(fitGs ? generalSound : GSTypeKind::NONE);
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        }
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
+        // The shipped ts-conf config carries a Z-Controller card (wc-zifi.img, 2026-10-05): these seeks are about the
+        // CPU and the journals, not the SD card, so the slot is left empty
+        if (_context->pMediaManager)
+            _context->pMediaManager->Eject("sd.zc");
         _v1 = _context->pTimeTravelManager;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
         if (fitGs)
+        {
             ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, generalSound));
+        }
     }
 
     void TearDown() override
@@ -96,9 +108,9 @@ protected:
         s.t = z80->t;
         const size_t pages = _v1->GetModelRamPages();
         s.ram.assign(_context->pMemory->RAMPageAddress(0), _context->pMemory->RAMPageAddress(0) + pages * 0x4000);
-        for (const auto& [id, device] : _v1->GetPeripheralRegistry().Devices())
-            if (device && device->TTDStateSize() != 0)
-                device->TTDSaveStateTo(s.devices[id]);
+        for (const ttd::TTDRegistryEntry& e : _v1->GetPeripheralRegistry().Entries())
+            if (e.device && e.device->TTDStateSize() != 0)
+                e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
         return s;
     }
 
@@ -190,8 +202,10 @@ TEST_F(TimeTravelManager_EngineSeek_Test, LiveRecordingWithKeys_EngineSeeksLandO
     for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
         for (int32_t d : {-500, 1, 900})
             if (int64_t(e.time.tInFrame) + d > 0 && int64_t(e.time.tInFrame) + d < span)
+            {
                 ASSERT_NO_FATAL_FAILURE(
                     ExpectSameSeek({e.time.frame, static_cast<uint32_t>(int64_t(e.time.tInFrame) + d)}));
+            }
     ASSERT_GT(_v1->GetPortReadJournal().Size(), 1000u) << "port journals on";
     EXPECT_GT(_busPlayed, 0u) << "the replays read the engine's IN journal";
     EXPECT_EQ(_engine.BusReads().ValueMismatches(), 0u) << "the devices answered as recorded";
@@ -214,8 +228,10 @@ TEST_F(TimeTravelManager_EngineSeek_Test, RecordedFixtures_EngineSeeksLandOnV1sM
         ASSERT_TRUE(ttd::ReadTTDFileInfo((root / name).string(), info, err)) << err;
         ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound, true));
         if (fixture.tape)
+        {
             ASSERT_TRUE(_emulator->LoadTape(
                 (TestPathHelper::FindProjectRoot() / "testdata/loaders/tap" / fixture.tape).string()));
+        }
         std::ifstream in(root / name, std::ios::binary);
         ASSERT_TRUE(_v1->DeserializeSession(in, err)) << err;
         ASSERT_TRUE(ttd::bench::FeedV1Session(*_v1, _engine, err)) << err;
@@ -296,9 +312,9 @@ TEST_F(TimeTravelManager_EngineSeek_Test, SectorReadsComeFromTheSessionNotTheIma
             out.put(static_cast<char>(i / 512 + i % 7));
     }
     ASSERT_TRUE(decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session, false));
-    _context->emulatorState.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    _context->emulatorState.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
     _context->emulatorState.flags &= ~CF_TRDOS;
-    _context->emulatorState.pBF = 0x00;
+    _context->emulatorState.evo.pBF = 0x00;
     _context->pMemory->UpdateZ80Banks();
     decoder->DecodePortOut(0x0077, 0x00, 0);
     ASSERT_TRUE(zcsdtest::SdInit(decoder, 0x0057));
@@ -368,7 +384,14 @@ TEST_F(TimeTravelManager_EngineSeek_Test, SectorReadsComeFromTheSessionNotTheIma
             same = same && fromV1.devices.at(id) == bytes;
         v1Differs += same ? 0 : 1;
     }
+#ifdef _WIN32
+    // The Windows C runtime answers a seek inside the buffer of a stream opened for reading from that buffer: the
+    // image the card holds open does not show a change made behind its back, so v1 cannot read the wrong sector
+    // here. What the engine restores is checked above on every platform
+    (void)v1Differs;
+#else
     EXPECT_GT(v1Differs, 0u) << "v1 reads the changed image: the test can see a wrong sector";
+#endif
     std::remove(image.c_str());
 }
 

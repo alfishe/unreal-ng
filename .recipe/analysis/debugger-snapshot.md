@@ -29,7 +29,7 @@ emulator was never started).
 ```text
 # Registers, previous registers, pages, stack, time, 21 lines of code from PC, two memory windows
 inspect_state {"aspects":["snapshot"],"count":21,"windows":["cpu:0x8000:256","ram5:0x1800:768"]}
-# -> [snapshot] seq 42, paused (read paused), last stop breakpoint, PC=8000, frame 100 t 1234, 21 code line(s), 2 memory window(s)
+# -> [snapshot] seq 42, paused (read paused), last stop breakpoint, PC=8000, frame 100 t 1234 of 69888 (global t 6990034), 21 code line(s), 2 memory window(s)
 ```
 
 The structured answer is the WebAPI object below; memory windows carry `base64`.

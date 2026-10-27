@@ -2,11 +2,13 @@
 
 #include "emulator/ports/models/sprinter/sprinterpldgame.h"
 #include "emulator/ports/models/sprinter/sprinterpldstandard.h"
+#include "emulator/ports/models/sprinter/sprinterpldtmk.h"
 
 SprinterPldConfigurationRegistry::SprinterPldConfigurationRegistry()
 {
     _modules.push_back(std::make_unique<SprinterPldStandard>());
     _modules.push_back(std::make_unique<SprinterPldGame>());
+    _modules.push_back(std::make_unique<SprinterPldTmk>());
 }
 
 size_t SprinterPldConfigurationRegistry::Register(std::unique_ptr<SprinterPldConfiguration> module)

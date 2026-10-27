@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/io/ide/ata/atachannel.h"
 #include "emulator/io/ide/ideunitslot.h"
 #include "emulator/platform.h"
@@ -106,6 +107,10 @@ private:
 
     EmulatorContext* _context = nullptr;
     IDE_SCHEME _scheme = IDE_NONE;
+    // The bus analyzer's view of the channels (docs/inprogress/2026-10-11-bus-analyzer): registered while the board has IDE;
+    // declared before the channels, which point at them
+    BusTap _taps[kMaxChannels] = {{"ide0", BusProtocol::Ata, "IDE channel 0 (ATA task file): master, slave"},
+                                  {"ide1", BusProtocol::Ata, "IDE channel 1 (ATA task file): master, slave"}};
     std::array<AtaChannel, kMaxChannels> _channels;
     std::array<std::unique_ptr<IdeUnitSlot>, kMaxUnits> _slots;
     bool _registered = false;

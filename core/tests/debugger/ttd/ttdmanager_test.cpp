@@ -638,15 +638,15 @@ TEST_F(TimeTravelManager_Test, StartRecording_RegistersConnectedCoreDevices)
     // Registration mirrors what the machine actually has: a device the model
     // does not provide must leave no entry at all, which is the whole point of
     // a registry over fixed per-device slots.
-    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Tape),
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Tape),
               ctx->pTape != nullptr);
-    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::BetaDisk),
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::BetaDisk),
               ctx->pBetaDisk != nullptr);
     if (ctx->pSoundManager)
     {
-        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::TurboSound),
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::TurboSound),
                   ctx->pSoundManager->getTurboSound() != nullptr);
-        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Covox),
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Covox),
                   ctx->pSoundManager->getCovox() != nullptr);
     }
 }
@@ -668,14 +668,14 @@ TEST_F(TimeTravelManager_Test, Checkpoints_CarryABlobPerRegisteredDevice)
     for (uint8_t id = 0; id < static_cast<uint8_t>(ttd::PeripheralId::Count); ++id)
     {
         const auto pid = static_cast<ttd::PeripheralId>(id);
-        if (!registry.IsRegistered(pid))
+        if (registry.FindLegacy(pid) == nullptr)
         {
             EXPECT_EQ(cp->peripheralBlobs.count(id), 0u)
                 << "unregistered device " << +id << " must not occupy a blob";
             continue;
         }
 
-        ttd::TTDSerializable* device = registry.GetDevice(pid);
+        ttd::TTDSerializable* device = registry.FindLegacy(pid);
         ASSERT_NE(device, nullptr);
         if (device->TTDStateSize() == 0)
             continue;   // stateless device contributes nothing by design
@@ -686,8 +686,10 @@ TEST_F(TimeTravelManager_Test, Checkpoints_CarryABlobPerRegisteredDevice)
         const auto decoded =
             ttd::TTDPeripheralRegistry::DecodeBlob(id, cp->peripheralBlobs.at(id));
         if (device->TTDVariableSize())
+        {
             EXPECT_TRUE(!decoded.empty() && decoded.size() <= device->TTDStateSize())
                 << "blob for '" << device->TTDDeviceName() << "' is empty or larger than its worst case";
+        }
         else
             EXPECT_EQ(decoded.size(), device->TTDStateSize())
                 << "blob for '" << device->TTDDeviceName() << "' does not decode to its state size";
@@ -1291,3 +1293,15 @@ TEST_F(TimeTravelManagerSearchWindow_Test, RefusedSearchHasNoWindow)
 }
 
 // Write-journal segments and their status: timetravelmanager_journalsegments_test.cpp (D40)
+
+/// Phase 5 Step 4: this file is one of v1's own (ttdv1tests.h), so the
+/// machines its tests create record with v1, not with the engine
+TEST(TimeTravelManager_Backend_Test, MachinesOfV1TestsRecordWithV1)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EXPECT_EQ(static_cast<void*>(context->pTimeTravelHooks), static_cast<void*>(context->pTimeTravelManager))
+        << "the core calls v1's manager";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

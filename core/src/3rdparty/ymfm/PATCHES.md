@@ -7,10 +7,11 @@ headers `a/<file>` → apply with `-p1` from this directory):
 * `ymfm-ttd.patch` — patches 1–3 below (time-travel debugging invariants),
 * `ymfm-furnace-csm.patch` — patch 4 below (CSM key-on pulse, from Furnace).
 
-Patch 5 (reset clears the running counters) is small and documented inline
-below; it has no separate patch file.
+Patches 5 (reset clears the running counters) and 6 (idle fast path) are
+documented inline below; they have no separate patch file.
 
-Together they change three files; everything else is byte-identical to the
+Together they change five files (`ymfm_fm.h`, `ymfm_fm.ipp`, `ymfm_opn.h`,
+`ymfm_opn.cpp`, `ymfm_ssg.h`); everything else is byte-identical to the
 commit in VERSION.txt.
 
 The emulator's time-travel debugging (TTD) serializes devices at
@@ -150,6 +151,59 @@ stays 494 bytes.
 **Test:** `TsfmCore_Test.ResetClearsEngineCounters`
 (`core/tests/emulator/sound/tsfm/tsfm_core_test.cpp`): two devices, one run
 for a while first, give byte-identical ymfm state after a reset.
+
+## 6. `ymfm_fm.h` / `ymfm_fm.ipp` / `ymfm_opn.*` — idle fast path
+
+**What:** `fm_engine_base::idle()` / `clock_idle(count)`, with the same pair
+on `fm_channel` and `fm_operator`, and `ym2203::fm_idle()` /
+`clock_fm_idle(count)` around them (non-template, defined in
+`ymfm_opn.cpp`, where the engine's members are instantiated).
+`idle()` holds when no channel is active or modified and every operator is
+in release at full attenuation (`0x3ff`) with no key, no SSG-EG and a cached
+phase step (never dynamic on OPN), and the envelope sub-counter is on its
+cycle. `clock_idle(count)` then stands for `count` `clock()` calls:
+`m_total_clocks += count`, the envelope counter advanced on its divide-by-3
+cycle, the periodic `prepare()` counter (every 4097th clock) advanced, each
+operator's phase `+= phase_step * count` (mod 2^32), the feedback taps
+shifted with the unchanged input, `m_ssg_inverted` cleared, and
+`clock_noise_and_lfo()` once (a constant on OPN). `clock_fm_idle` leaves
+`m_last_fm` at 0, as `output()` of no active channel does.
+
+**Why:** a fitted TSFM whose FM half is silent clocked both engines every
+FM sample (~996 per chip per frame at /6) at 1x - about 13 % of a Pentagon
+frame - only to produce zero words. Every step of `clock()` on an idle
+engine is either a counter or a no-op: the release clamps back to `0x3ff`,
+the key state stays off, `prepare()` rebuilds the caches the live ones
+already equal (patch 1) and finds every channel quiet. So the state after
+`clock_idle(count)` is the state after `count` clocks, bit for bit.
+
+**Caller:** `Ym2203Pair::advanceChip` clocks an idle chip in one go up to
+the clock before the next timer expiry (the expiry's own clock goes the
+normal way: the expiry comes first there and may key on through CSM),
+pushing one zero word per sample clock at its own time.
+
+**Test:** `Ym2203Pair_Test.IdleFmFastPathMatchesTheClockedPair`
+(`core/tests/emulator/sound/tsfm/ym2203pair_test.cpp`): two pairs in
+lockstep, one clocking every sample, random FM traffic with timers and CSM;
+TTD blobs and words equal after every action.
+
+## 7. `ymfm_opn.*` — `ym2203::clock_fm_gained` (the mixer's FM channel volumes)
+
+**What:** `ym2203::clock_fm_gained(const int32_t *gain_q15)`: `clock_fm()` with one Q15 gain per FM channel (32768 =
+unity, 0 = silent). The engine clocks as in `clock_fm()`; the output is built channel by channel
+(`m_fm.output(one, 0, 32767, 1 << ch)`), each channel's clamped word multiplied by its gain (truncated toward zero),
+summed, then `roundtrip_fp()` as before. Defined in `ymfm_opn.cpp`, where the engine's members are instantiated (a
+caller outside could not link `output()`).
+
+**Why:** the host mixer's per-channel mute / volume of the YM2203 FM (`fm1.1`..`fm1.3`, `ms_fm1.2`;
+docs/emulator/design/audio/mixer-channels-and-settings.md). `output()` clamps every channel into the sum on its own,
+so the channels taken one at a time sum exactly as one `output()` of all of them. Never chip state: TTD never sees
+the gains. The caller (`Ym2203Engine::clockFmOnce`) keeps `clock_fm()` while every gain is unity, so the default path
+is upstream's, bit for bit.
+
+**Test:** `MixerChannelChips_Test.Ym2203FmChannelGainIsExactAtUnityAndScalesOneChannel`
+(`core/tests/emulator/sound/mixerchannels_test.cpp`): a silent channel at gain 0 leaves the stream identical; the
+sounding channel at 0 is silent, at one half about half.
 
 ## Furnace changes reviewed and NOT ported (2026-09-13)
 

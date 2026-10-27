@@ -150,16 +150,20 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
         # Peripheral blob size sanity (peripheral blobs are tiny). Sizes here
         # are the encoded blob — a 12-byte header plus a payload that may be
         # compressed — so the bound is generous rather than exact.
+        # The SAM2695 synthesizer is no tiny device: its state is 292 KB raw (80 voice slots, the effects' delay
+        # lines; libsam2695 README "State"), about 117 KB compressed while it plays
         MAX_REASONABLE_BLOB = 8192
+        MAX_BLOB_BY_NAME = {"Sam2695": 320 * 1024}
         for peripheral_id, blob in cp.peripheral_blobs.items():
-            if len(blob) > MAX_REASONABLE_BLOB:
-                name = PERIPHERAL_ID_NAMES.get(peripheral_id, f"id {peripheral_id}")
+            name = PERIPHERAL_ID_NAMES.get(peripheral_id, f"id {peripheral_id}")
+            limit = MAX_BLOB_BY_NAME.get(name, MAX_REASONABLE_BLOB)
+            if len(blob) > limit:
                 rep.issues.append(Issue(
                     severity="warning",
                     code="oversize_peripheral_blob",
                     message=(
                         f"checkpoint {cp.index} {name} blob is "
-                        f"{len(blob)} bytes (>{MAX_REASONABLE_BLOB} expected)"
+                        f"{len(blob)} bytes (>{limit} expected)"
                     ),
                     checkpoint_index=cp.index,
                 ))

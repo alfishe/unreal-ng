@@ -222,6 +222,61 @@ Cross-check: Moon Rabbit Fusion 1.7.6 downloads at 4.52 KB/s over the Evo COM po
 needs 2 accesses per byte when the FIFO has data and 4-5 with the RTS pulse: 4-5 x 45 us matches, and anything
 at or above 110 us per access would not.
 
+### 3.1 The Gluk clock port waits on the same AVR
+
+The COM port is not the only /WAIT port. On both FPGAs a Gluk clock **data** access (`#BFF7`, `#BEF7` in shadow on
+BaseConf) holds the Z80 the same way and raises the same AVR interrupt:
+
+| | TS-Conf (`fpga/current`) | BaseConf (`fpga/base`) |
+|---|---|---|
+| Start | `wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd \|\| portf7_wr)` (`z80/zports.v:763`) | the same expression (`z80/zports.v:754`) |
+| Gating | `portf7_rd/wr` need A8 = 1 and `!dos \|\| vdos` (`:720-721`); `gluclock_on = peff7[7] \|\| dos` (`:732`): after `#EFF7` bit 7 outside DOS, inside vdos too | `portf7_rd/wr`: A8 = 1 outside shadow, A8 = 0 in shadow (`:476-479`); `gluclock_on = peff7[7] \|\| shadow` (`:714`) |
+| Wait flag | `wait_status_glu` beside `wait_status_com`, one `wait_n` (`z80/zwait.v:31-49`) | `waits[0]` beside `waits[1]`, one `wait_n` (`z80/zwait.v:57-79`) |
+| AVR side | status byte `{wr_n, addr5, glu/com}`: a cell `#F0-#FF` rides in it (`common/slavespi.v:95-99`) | status byte, cell over SPI `#41` (`gluclock_addr`) |
+
+The address port `#DFF7` is a plain FPGA latch: it does not wait. The firmware serves both ports with one routine,
+`zx_wait_task`, from one main loop, so a CMOS access and a COM access share the AVR's time: a CMOS read right behind a
+COM access finds the loop at the start of its pass, exactly as a second COM access would.
+
+Gluk service up to the release, counted on the released firmware images (no `.lss` is published for either; the
+images were disassembled with rizin, AVR / ATmega128, the 128-byte `ZXEVO` header stripped). SPI byte 20 cycles
+(`out`, 16 shift cycles at F_CPU / 2, the SPIF poll, `in`); an I2C bit 112 cycles (TWBR 48: 98.7 kHz, `rtc.c:191`):
+
+- **BaseConf**: `cfgs/standalone_base_trdemu/trunk/zxevo_fw.bin` of the pentevo tree ("ZXEvo 4M", 07.01.2026, the
+  image whose version tag `EvoAvr::kFirmwareVersion` carries). Main loop flag test at flash `#C28C`, `zx_wait_task`
+  `#A02A`, `zx_spi_send` `#A0E4`, `gluk_get_reg` `#BAC0`, `gluk_set_reg` `#BB60`, `rtc_read` `#B886`, INT6 `#A9BE`.
+- **TS-Labs**: [`tslabs/zx-evo` 07bfd3e9 `pentevo/avr/current/default/zxevo_fw.bin`](https://github.com/tslabs/zx-evo/blob/07bfd3e9/pentevo/avr/current/default/zxevo_fw.bin)
+  (2026-04-01; `zx.c` as at 167199ba). `waittask` `#1870A`, `zx_wait_task` `#1AD74` (TS-Conf FPGA), `zx_wait_task_old`
+  `#1B500` (BaseConf FPGA), `gluk_get_reg` `#1A4F6`, `gluk_set_reg` `#1A820`, `rtc_read` `#1A4AA`, INT6 `#1AFFE`.
+
+| AVR cycles to the release | BaseConf | TS, TS-Conf FPGA (since 2021-04-28) | TS, BaseConf FPGA or 2016-02 (`_old`) |
+|---|---|---|---|
+| Path, write | 281 | 147 (`#F0-#FF`: 86) | 159 |
+| Path, read (+ the cell below) | 295 | 151 (`#F0-#FF`: 90) | 169 |
+| Cell: time register, BCD / binary | 98 / 20 | 122 / 36 | 122 / 36 |
+| Cell: A, B / C / D / E | 22 / 38 / 26 / - | 34 / 50 / 76 / 54 | as TS |
+| Cell: version window / PS/2 log | 41 / 62 | 39 / 56 | as TS |
+| Cell: EEPROM window | 42 + the busy wait | 44 + the busy wait | as TS |
+| Cell: NVRAM (`rtc_read` over I2C: START, SLA+W, cell, repeated START, SLA+R, byte) | 4427 | 4419 | 4419 |
+| After the release (writes), the tail before `gluk_set_reg` | 44 | 14 | 20 |
+
+So a BCD seconds read waits ISR 37 + phase + 393 AVR cycles on BaseConf (39 us plus the phase, up to a 23.5 us
+pass), ISR + phase + 273 on TS-Conf (the phase there at most an eighth of a pass); an NVRAM cell over 400 us on either. The service counts are exact for the straight-line code; the SPI and TWI polls
+add up to a few cycles each, the I2C START timing about one bit (±5% on the I2C paths).
+
+Work after the release delays the main loop, not the Z80: `gluk_set_reg` writes a time register (sec / min / hour
+in range, day, month, day of week) to the PCF8583 with one `rtc_write` (about 3400 cycles), the year with two (about
+6800), an NVRAM cell with one (about 3280); a register, an alarm or the extension type costs about 25. An EEPROM
+window write starts the ATmega128's 8.5 ms EEPROM write (8448 cycles of its 1 MHz RC oscillator, independent of the
+crystal); the next EEPROM read or write busy-waits for it (`eeprom_busy_wait` in `read_eeprom` / `write_eeprom`).
+The next access, CMOS or COM, waits for that work and then a whole pass. The model counts AVR cycles in the
+emulator's time base, which starts again at a machine reset: the phase is re-anchored there (the AVR itself runs on). The COM port's own tail (`rs232_zx_write`,
+the routine's return, 30-60 cycles) stays out of its model as before (inside its ±10%).
+
+Cross-check of the COM numbers on the real BaseConf image: write 283 (the model keeps 258 from the scorpevo
+listing), INT6 28 (model 37); TS on the TS-Conf FPGA: COM write 86, read 90 + `rs232_zx_read` (the model keeps the
+BaseConf numbers for every firmware). Not changed here: the COM model's numbers are measured behavior its tests pin.
+
 ### Fast path
 
 - **None on BaseConf.** The FPGA caches no status register, and every #xxEF read (including LSR polling) goes through the AVR round trip (`zports.v:431-433`).
@@ -339,7 +394,8 @@ AVR firmware's parameters, `Chip16550` for a ZX-WiFi card), `comport.{h,cpp}`
 | Fact | Model |
 |---|---|
 | Low byte #EF, register = A10..A8 | `ComPort` claims low byte #EF; `reg = (port >> 8) & 7` (TS firmwares on BaseConf: §9.3) |
-| Every access waits for the AVR | `Uart16550::AccessCycles`: ISR 37 + phase (P = 260 minus the AVR cycles since the previous release, mod P) + S (write 258, read 278, RBR 308) AVR cycles at 11.0592 MHz, turned into CPU clocks at the current speed (§3) |
+| Every access waits for the AVR | `EvoAvrWait::Access` (the board's `EvoAvr` owns it, `ComPort::AddAccessWait` calls it): ISR 37 + phase (P = 260 minus the AVR cycles since the main loop resumed, mod P) + S (`Uart16550::ServiceCycles`: write 258, read 278, RBR 308) AVR cycles at 11.0592 MHz, turned into CPU clocks at the current speed (§3) |
+| The Gluk data port waits on the same AVR | `EvoAvr::GlukAccessCycles` through the same `EvoAvrWait` (one main-loop phase for both ports), services from §3.1 by cell and firmware; `PortDecoder_TSConf` / `PortDecoder_ATM3` hold the Z80 on `#BFF7` / `#BEF7` with the RTL's gating |
 | IIR #01, IER without effect | `interrupts = false`: IIR constant, IER stored `& #0F` |
 | OE sticky until FCR RX reset, LSR bit 7 = RX half full | as the firmware |
 | THRE = TEMT = TX FIFO empty; RBR empty = #00 | as the firmware (ZX-WiFi: TEMT waits for the shifter, RBR keeps the last byte) |
@@ -352,7 +408,8 @@ AVR firmware's parameters, `Chip16550` for a ZX-WiFi card), `comport.{h,cpp}`
 Not modeled: PE / FE / BI (a virtual line has no line errors; a host serial
 device's errors are not passed through yet), the write taking effect after
 the wait ends (the Z80 cannot see the difference: it is held until then;
-the next access is not lengthened by it), the rare outliers of §3 (PS/2,
+the next access is not lengthened by the UART's write; a Gluk write's I2C /
+EEPROM work is, §3.1), the rare outliers of §3 (PS/2,
 TIMER2, I2C: host-input driven, so not deterministic on hardware either). The peer starts a byte only while RTS is asserted and
 finishes it whatever RTS does afterwards, so the NedoOS type 0 RTS pulse
 (`MCR 2`, `MCR 0`) gets one byte per pulse.

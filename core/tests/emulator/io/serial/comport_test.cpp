@@ -7,10 +7,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <deque>
 #include <memory>
 #include <vector>
 
 #include "_helpers/fakehostnet.h"
+#include "_helpers/networksettings.h"
 #include "common/serial/hostserialport.h"
 #include "debugger/ttd/network/ttdserialport.h"
 #include "emulator/cpu/core.h"
@@ -47,16 +49,17 @@ protected:
         _context = _emulator->GetContext();
     }
 
+    /// The settings as every surface applies them: a ZX-bus card change restarts the machine (Q11), the fixture
+    /// follows it; `_lastReply` keeps the reply (a refusal's reason)
     bool Apply(const std::vector<std::pair<std::string, std::string>>& settings)
     {
-        NetworkManager::Change change;
-        std::string error;
         std::vector<std::pair<std::string, std::string>> all = settings;
         all.emplace_back("host_access", "off");
-        if (!NetworkManager::ParseChange(all, change, error))
-            return false;
-        return _context->pCore->GetNetworkManager()->RequestChange(change, error);
+        _lastReply = NetworkSettings::Apply(_emulator, all);
+        _context = _emulator ? _emulator->GetContext() : nullptr;
+        return _lastReply.Ok();
     }
+    SlotControlReply _lastReply;
 
     bool Fit(const std::string& comPort) { return Apply({{"com_port", comPort}}); }
 
@@ -222,12 +225,20 @@ TEST_F(ComPort_Test, TheZxWifiCardRunsAtByDefault)
 
 TEST_F(ComPort_Test, AZxWifiCardClashesWithTheEvoAvr)
 {
+    // The card change is a slot change (Q11): the plan refuses the ZX-WiFi (#xxEF and its serial function are the
+    // AVR COM port's, a fixed built-in), so nothing changes - not even the ZXNETUSB of the same request
     Create("ATM3", 4096);
-    ASSERT_TRUE(Apply({{"card", "zxnetusb,zxwifi"}}));
-    EXPECT_NE(_context->pZxNetUsb, nullptr) << "the other card still fits";
+    const std::string before = _emulator->GetId();
+    EXPECT_FALSE(Apply({{"card", "zxnetusb,zxwifi"}}));
+    EXPECT_EQ(_lastReply.status, "refused") << _lastReply.message;
+    EXPECT_NE(_lastReply.message.find("com"), std::string::npos) << _lastReply.message;
+    EXPECT_EQ(_emulator->GetId(), before) << "no restart";
+    EXPECT_EQ(_context->pZxNetUsb, nullptr);
     ASSERT_NE(_context->pComPort, nullptr);
     EXPECT_EQ(_context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::EvoAvr) << "#xxEF stays the AVR's";
-    EXPECT_TRUE(HasNote(Notes(), "ZXWIFI: not fitted"));
+
+    ASSERT_TRUE(Apply({{"card", "zxnetusb"}})) << _lastReply.message;
+    EXPECT_NE(_context->pZxNetUsb, nullptr) << "the other card fits";
 }
 
 TEST_F(ComPort_Test, StatusShowsTheUartAndThePeer)
@@ -256,9 +267,10 @@ TEST_F(ComPort_Test, TtdStateRestoresTheUartAndTheEchoQueue)
     ASSERT_EQ(_context->pComPort->Peer()->Pending(), 1u);
 
     ttd::TTDSerialPort serializer(_context);
-    ASSERT_EQ(serializer.TTDStateSize(), sizeof(netstate::SerialPort)) << "a peer: the full blob";
-    std::vector<uint8_t> blob(serializer.TTDStateSize());
-    serializer.TTDSaveState(blob.data());
+    EXPECT_TRUE(serializer.TTDVariableSize()) << "a peer: the full blob and a tail when one is needed";
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    ASSERT_EQ(blob.size(), sizeof(netstate::SerialPort)) << "a short echo queue fits: no tail";
 
     z80->out(0xFFEF, 0x99);
     z80->out(0xFCEF, 0x02);
@@ -269,6 +281,30 @@ TEST_F(ComPort_Test, TtdStateRestoresTheUartAndTheEchoQueue)
     EXPECT_EQ(_context->pComPort->Uart().GetView().scr, 0x33);
     EXPECT_EQ(_context->pComPort->Uart().GetView().mcr, 0x00);
     EXPECT_EQ(_context->pComPort->Peer()->Pending(), 1u) << "the echo queue came back";
+}
+
+/// An echo queue longer than the blob's array (netstate::kMaxComBytes) comes back whole from the tail
+TEST_F(ComPort_Test, TtdStateRestoresAnEchoQueueLongerThanTheFixedArray)
+{
+    Create("ATM3", 4096);
+    ASSERT_TRUE(Fit("loopback"));
+    auto* loop = dynamic_cast<LoopbackPeer*>(_context->pComPort->Peer());
+    ASSERT_NE(loop, nullptr);
+    std::vector<uint8_t> queue(netstate::kMaxComBytes + 1904);
+    for (size_t i = 0; i < queue.size(); ++i)
+        queue[i] = static_cast<uint8_t>(i * 7 + 1);
+    loop->SetQueue(queue.data(), queue.size());
+
+    ttd::TTDSerialPort serializer(_context);
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    EXPECT_GT(blob.size(), sizeof(netstate::SerialPort)) << "the rest of the queue in the tail";
+    EXPECT_LE(blob.size(), serializer.TTDStateSize());
+    loop->SetQueue(nullptr, 0);
+
+    serializer.TTDLoadState(blob.data());
+    const std::deque<uint8_t>& back = loop->Queue();
+    EXPECT_TRUE(std::equal(back.begin(), back.end(), queue.begin(), queue.end())) << back.size() << " bytes came back";
 }
 
 TEST_F(ComPort_Test, TtdKeepsAnUnconnectedEvoUartInAShortBlob)
@@ -293,9 +329,9 @@ TEST_F(ComPort_Test, TsConfHasTheTsAvrPort)
     ASSERT_TRUE(Fit("loopback"));
     ASSERT_NE(_context->pComPort, nullptr);
     EXPECT_EQ(_context->pComPort->Uart().GetParams().avr, Uart16550::AvrFirmware::Ts2016Apr);
-    ASSERT_TRUE(Apply({{"card", "zxwifi"}}));
+    EXPECT_FALSE(Apply({{"card", "zxwifi"}})) << "the slot plan refuses it (Q11): #EF is a board port";
+    EXPECT_EQ(_lastReply.status, "refused") << _lastReply.message;
     EXPECT_EQ(_context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::EvoAvr);
-    EXPECT_TRUE(HasNote(Notes(), "ZXWIFI: not fitted"));
 }
 
 TEST_F(ComPort_Test, TheAvrFirmwareSetsTheUart)

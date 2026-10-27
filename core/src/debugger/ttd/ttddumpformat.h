@@ -45,7 +45,24 @@ constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 /// blobs gained their frame timeline in bytes 77..88) - a semantic change
 /// older files would parse but restore one frame start off. Sessions recorded
 /// before an amendment must be re-recorded.
-constexpr uint16_t kSchemaVersion = 1;
+///
+/// Schema 3 (the format's second shape; 2 is the engine's container, see
+/// ttdfileinfo.cpp): the header's peripheral mask and not-recorded mask are no
+/// longer one u64 each (id 63 was the last id they could name) but a u8 word
+/// count (1..4) and that many u64 words, word w holding ids 64*w .. 64*w+63.
+/// Everything else is schema 1's layout. A reader takes both; older readers
+/// refuse a schema 3 file by its version. The writer emits 3.
+constexpr uint16_t kSchemaVersion = 3;
+
+/// The oldest schema a reader still takes (u64 masks)
+constexpr uint16_t kSchemaVersionFirst = 1;
+
+/// The schema from which the header's masks are word lists
+constexpr uint16_t kSchemaVersionWideMask = 3;
+
+/// A schema number this build's .ttd reader takes: 1 (older files) and 3
+/// (2 is the engine container, read by another path)
+constexpr bool IsReadableSchema(uint16_t version) { return version == kSchemaVersionFirst || version == kSchemaVersion; }
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1
 /// in v2+; we static_assert against little-endian in the writer).
@@ -142,7 +159,8 @@ constexpr uint16_t kFlagsHasExternalEvents = 0x0080;
 /// each at most record_count.
 constexpr uint16_t kFlagsHasPortJournals = 0x0100;
 
-/// Bit 9 of header.flags — the header's last 8 bytes (formerly reserved) hold
+/// Bit 9 of header.flags — the header's last 8 bytes (formerly reserved; a word
+/// list from schema 3) hold
 /// the peripheral mask: bit i set when peripheral id i (PeripheralId) has a
 /// blob in the checkpoints - the devices fitted when the session was recorded.
 /// A reader learns the recorded machine from the header alone (model, ROM
@@ -163,7 +181,7 @@ constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 constexpr uint16_t kFlagsHasNetInputs = 0x0400;
 
 /// Bit 11 of header.flags - the header continues, right after the peripheral
-/// mask, with a u64 not-recorded mask: bit i set when peripheral id i was
+/// mask, with a not-recorded mask (u64; a word list from schema 3): bit i set when peripheral id i was
 /// fitted but is deliberately not recorded (state registry, class "not
 /// recorded": the lightweight General Sound). Its state runs live through
 /// seeks. Written only when the mask is not zero, so every other session keeps
@@ -227,13 +245,13 @@ constexpr uint8_t kFrameKindDeltaFrame = 1;
 /// Upper bound on registry blobs stored per checkpoint. A machine registers one
 /// serializer per model-specific subsystem, so the real count is 0-2 today; the
 /// cap only exists so a corrupt length cannot drive an unbounded read loop.
-constexpr uint16_t kMaxPeripheralBlobsPerCheckpoint = 64;
+constexpr uint16_t kMaxPeripheralBlobsPerCheckpoint = 256;
 
 /// Upper bound on one stored device blob (after its compression). Most blobs
 /// are tens of bytes; the largest today are the classic General Sound card and
 /// the lightweight player, which still carry their memory (the classic card up
 /// to 512 KB of RAM, which does not compress when it holds module data). NeoGS keeps its RAM and flash
-/// out of v1 blobs - large memories wait for TTD v2 memory regions. The writer
+/// out of v1 blobs (the engine records them as regions 4 and 5). The writer
 /// refuses a larger blob and the reader treats one as corruption, so a file
 /// that saves also loads.
 constexpr uint32_t kMaxPeripheralBlobBytes = 16u << 20;

@@ -38,7 +38,7 @@ void BorderTimingWidget::createUI()
     setLayout(layout);
 }
 
-void BorderTimingWidget::setEmulator(Emulator* emulator)
+void BorderTimingWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     reset();

@@ -56,7 +56,7 @@ public:
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
     /// #FF1F answers Joystick::Read()
-    bool HasKempstonJoystick() const override { return true; }
+    bool BoardHasKempstonJoystick() const override { return true; }
 
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
@@ -90,8 +90,8 @@ public:
     /// #1FFD, the DD50.1 trigger and (PROFSCORP) the ProfROM plane / #7EFD latch:
     /// paging inputs the model-agnostic TTDChipsetState does not carry, on both
     /// Scorpion variants. Declared here because this decoder owns
-    /// those latches (see PortDecoder::GetTTDModelStateIds).
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    /// those latches (see PortDecoder::GetTTDModelStateTypes).
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
 
     /// Turbo+ runs the CPU at 3.5 or 7 MHz
     uint8_t TtdClockUnits() const override { return 2; }

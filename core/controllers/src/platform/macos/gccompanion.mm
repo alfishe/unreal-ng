@@ -1,0 +1,557 @@
+#include "platform/macos/gccompanion.h"
+
+#import <CoreHaptics/CoreHaptics.h>
+#import <Foundation/Foundation.h>
+#import <GameController/GameController.h>
+
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <set>
+#include <vector>
+
+#include "devicestatus.h"
+#include "gcpad.h"
+
+#if !__has_feature(objc_arc)
+#error "gccompanion.mm is built with -fobjc-arc"
+#endif
+
+namespace controllers
+{
+
+namespace
+{
+uint64_t SteadyNowMs()
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+/// Which levels a motor plays: one engine per locality the pad has
+enum class Source : uint8_t
+{
+    Low,           ///< the left handle
+    High,          ///< the right handle
+    Handles,       ///< both handles in one engine (no separate localities): the louder of the two
+    LeftTrigger,
+    RightTrigger,
+};
+
+/// The HD frequency a motor plays at (0: none asked)
+uint32_t HzFor(Source source, const RumbleLevels& levels)
+{
+    switch (source)
+    {
+        case Source::Low: return levels.lowHz;
+        case Source::High: return levels.highHz;
+        case Source::Handles: return levels.low > levels.high ? levels.lowHz : levels.highHz;
+        case Source::LeftTrigger:
+        case Source::RightTrigger: return 0;
+    }
+    return 0;
+}
+
+/// The continuous event's own sharpness: the sharpness control adds to it (-1..1)
+constexpr float kBaseSharpness = GcPad::kDefaultSharpness;
+
+float LevelFor(Source source, const RumbleLevels& levels)
+{
+    switch (source)
+    {
+        case Source::Low: return levels.low;
+        case Source::High: return levels.high;
+        case Source::Handles: return levels.low > levels.high ? levels.low : levels.high;
+        case Source::LeftTrigger: return levels.leftTrigger;
+        case Source::RightTrigger: return levels.rightTrigger;
+    }
+    return 0;
+}
+
+/// One CoreHaptics engine on one locality, a continuous event of full intensity scaled by the dynamic intensity
+struct Motor
+{
+    Source source = Source::Low;
+    GCHapticsLocality locality = nil;
+    CHHapticEngine* engine = nil;
+    id<CHHapticPatternPlayer> player = nil;
+    bool playing = false;
+    bool failed = false;  ///< the engine did not start: not tried again for this connection
+    float level = 0;
+    float sharpness = kBaseSharpness;
+};
+
+struct Entry
+{
+    GCController* controller = nil;
+    std::string key;
+    std::vector<Motor> motors;
+    bool input = false;  ///< SetInput: its controls are reported
+    GcPad pad;           ///< the last reported state
+};
+
+/// GCExtendedGamepad's elements, read on the handler queue
+GcPadSnapshot SnapshotOf(GCExtendedGamepad* gamepad)
+{
+    GcPadSnapshot snapshot;
+    auto button = [&snapshot](GcPadSnapshot::Element element, GCControllerButtonInput* input) {
+        if (input == nil)
+            return;
+        snapshot.present[element] = true;
+        snapshot.values[element] = input.value;
+    };
+    auto axis = [&snapshot](GcPadSnapshot::Element element, GCControllerAxisInput* input) {
+        if (input == nil)
+            return;
+        snapshot.present[element] = true;
+        snapshot.values[element] = input.value;
+    };
+    button(GcPadSnapshot::kButtonA, gamepad.buttonA);
+    button(GcPadSnapshot::kButtonB, gamepad.buttonB);
+    button(GcPadSnapshot::kButtonX, gamepad.buttonX);
+    button(GcPadSnapshot::kButtonY, gamepad.buttonY);
+    button(GcPadSnapshot::kDpadUp, gamepad.dpad.up);
+    button(GcPadSnapshot::kDpadDown, gamepad.dpad.down);
+    button(GcPadSnapshot::kDpadLeft, gamepad.dpad.left);
+    button(GcPadSnapshot::kDpadRight, gamepad.dpad.right);
+    button(GcPadSnapshot::kLeftShoulder, gamepad.leftShoulder);
+    button(GcPadSnapshot::kRightShoulder, gamepad.rightShoulder);
+    button(GcPadSnapshot::kButtonOptions, gamepad.buttonOptions);
+    button(GcPadSnapshot::kButtonMenu, gamepad.buttonMenu);
+    button(GcPadSnapshot::kLeftThumbstickButton, gamepad.leftThumbstickButton);
+    button(GcPadSnapshot::kRightThumbstickButton, gamepad.rightThumbstickButton);
+    button(GcPadSnapshot::kButtonHome, gamepad.buttonHome);
+    button(GcPadSnapshot::kLeftTrigger, gamepad.leftTrigger);
+    button(GcPadSnapshot::kRightTrigger, gamepad.rightTrigger);
+    axis(GcPadSnapshot::kLeftX, gamepad.leftThumbstick.xAxis);
+    axis(GcPadSnapshot::kLeftY, gamepad.leftThumbstick.yAxis);
+    axis(GcPadSnapshot::kRightX, gamepad.rightThumbstick.xAxis);
+    axis(GcPadSnapshot::kRightY, gamepad.rightThumbstick.yAxis);
+    return snapshot;
+}
+
+void Release(Motor& motor)
+{
+    if (motor.player != nil && motor.playing)
+        [motor.player stopAtTime:0 error:nil];
+    motor.player = nil;
+    if (motor.engine != nil)
+        [motor.engine stopWithCompletionHandler:nil];
+    motor.engine = nil;
+    motor.playing = false;
+}
+
+/// The engine and its player, on first use (an engine holds audio resources while it runs)
+bool Prepare(GCController* controller, Motor& motor)
+{
+    if (motor.failed)
+        return false;
+    if (motor.player != nil)
+        return true;
+    NSError* error = nil;
+    motor.engine = [controller.haptics createEngineWithLocality:motor.locality];
+    if (motor.engine == nil || ![motor.engine startAndReturnError:&error])
+    {
+        motor.engine = nil;
+        motor.failed = true;
+        return false;
+    }
+    motor.engine.playsHapticsOnly = YES;
+    CHHapticEventParameter* intensity =
+        [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:1.0f];
+    CHHapticEventParameter* sharpness =
+        [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness
+                                                      value:kBaseSharpness];
+    CHHapticEvent* event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+                                                         parameters:@[ intensity, sharpness ]
+                                                       relativeTime:0
+                                                           duration:GCHapticDurationInfinite];
+    CHHapticPattern* pattern = [[CHHapticPattern alloc] initWithEvents:@[ event ] parameters:@[] error:&error];
+    if (pattern != nil)
+        motor.player = [motor.engine createPlayerWithPattern:pattern error:&error];
+    if (motor.player == nil)
+    {
+        [motor.engine stopWithCompletionHandler:nil];
+        motor.engine = nil;
+        motor.failed = true;
+        return false;
+    }
+    return true;
+}
+
+void Apply(GCController* controller, Motor& motor, float level, float sharpness)
+{
+    level = level < 0 ? 0 : level > 1 ? 1 : level;
+    if (level == motor.level && sharpness == motor.sharpness && (motor.playing || level == 0))
+        return;
+    motor.level = level;
+    motor.sharpness = sharpness;
+    if (level == 0)
+    {
+        if (motor.playing)
+            [motor.player stopAtTime:0 error:nil];
+        motor.playing = false;
+        return;
+    }
+    if (!Prepare(controller, motor))
+        return;
+    NSError* error = nil;
+    CHHapticDynamicParameter* parameter =
+        [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl
+                                                        value:level
+                                                 relativeTime:0];
+    // The sharpness control adds to the event's own sharpness
+    CHHapticDynamicParameter* sharp =
+        [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticSharpnessControl
+                                                        value:sharpness - kBaseSharpness
+                                                 relativeTime:0];
+    if (!motor.playing)
+        motor.playing = [motor.player startAtTime:0 error:&error];
+    if (motor.playing && ![motor.player sendParameters:@[ parameter, sharp ] atTime:0 error:&error])
+    {
+        // The engine was reset under us: next time from scratch
+        Release(motor);
+        motor.level = 0;
+    }
+}
+
+/// The motors a pad's localities give: separate handles when it has them, else one engine for both
+std::vector<Motor> MotorsOf(GCController* controller)
+{
+    std::vector<Motor> motors;
+    GCDeviceHaptics* haptics = controller.haptics;
+    if (haptics == nil)
+        return motors;
+    NSSet<GCHapticsLocality>* localities = haptics.supportedLocalities;
+    auto add = [&motors](Source source, GCHapticsLocality locality) {
+        Motor motor;
+        motor.source = source;
+        motor.locality = locality;
+        motors.push_back(motor);
+    };
+    if ([localities containsObject:GCHapticsLocalityLeftHandle] && [localities containsObject:GCHapticsLocalityRightHandle])
+    {
+        add(Source::Low, GCHapticsLocalityLeftHandle);
+        add(Source::High, GCHapticsLocalityRightHandle);
+    }
+    else if ([localities containsObject:GCHapticsLocalityHandles])
+        add(Source::Handles, GCHapticsLocalityHandles);
+    else if ([localities containsObject:GCHapticsLocalityDefault])
+        add(Source::Handles, GCHapticsLocalityDefault);
+    if ([localities containsObject:GCHapticsLocalityLeftTrigger])
+        add(Source::LeftTrigger, GCHapticsLocalityLeftTrigger);
+    if ([localities containsObject:GCHapticsLocalityRightTrigger])
+        add(Source::RightTrigger, GCHapticsLocalityRightTrigger);
+    return motors;
+}
+
+uint8_t ActuatorsOf(const std::vector<Motor>& motors)
+{
+    uint8_t bits = 0;
+    for (const Motor& motor : motors)
+        switch (motor.source)
+        {
+            case Source::Low: bits |= kRumbleLow; break;
+            case Source::High: bits |= kRumbleHigh; break;
+            case Source::Handles: bits |= kRumbleLow | kRumbleHigh; break;
+            case Source::LeftTrigger: bits |= kRumbleLeftTrigger; break;
+            case Source::RightTrigger: bits |= kRumbleRightTrigger; break;
+        }
+    return bits;
+}
+
+/// The buttons a press is matched by (EndpointMerge): the ones every pad has on both endpoints
+NSArray<GCControllerButtonInput*>* MatchButtons(GCExtendedGamepad* gamepad)
+{
+    NSMutableArray<GCControllerButtonInput*>* buttons = [NSMutableArray array];
+    for (GCControllerButtonInput* button : {gamepad.buttonA, gamepad.buttonB, gamepad.buttonX, gamepad.buttonY,
+                                            gamepad.leftShoulder, gamepad.rightShoulder})
+        if (button != nil)
+            [buttons addObject:button];
+    return buttons;
+}
+
+BatteryState BatteryOf(GCController* controller)
+{
+    GCDeviceBattery* battery = controller.battery;
+    if (battery == nil)
+        return {};
+    return BatteryFromGameController(battery.batteryLevel, static_cast<int>(battery.batteryState));
+}
+
+/// The battery is read again this often: it changes slowly, and the read stays on the queue
+constexpr int64_t kBatteryRefreshNs = 30LL * 1000 * 1000 * 1000;
+
+std::string StringOf(NSString* text)
+{
+    return text != nil ? std::string([text UTF8String]) : std::string();
+}
+}  // namespace
+
+struct GcCompanion::State
+{
+    dispatch_queue_t queue = nil;
+    NSMutableArray* observers = nil;
+    Callbacks callbacks;
+    std::map<void*, Entry> pads;  ///< on the queue only; keyed by the controller
+    std::mutex mutex;
+    std::map<std::string, uint8_t> actuators;  ///< under mutex: the pads with haptics, for SetRumble without waiting
+    std::map<std::string, BatteryState> batteries;  ///< under mutex: every pad's, as last read on the queue
+    std::set<std::string> lights;                    ///< under mutex: the pads with a light
+    dispatch_source_t batteryTimer = nil;            ///< on the queue: reads the batteries again
+    int next = 1;
+    bool running = false;  ///< on the queue only
+};
+
+GcCompanion::GcCompanion() = default;
+
+GcCompanion::~GcCompanion()
+{
+    Stop();
+}
+
+bool GcCompanion::Start(Callbacks callbacks, std::string& reason)
+{
+    if (_state)
+        return true;
+    if (NSClassFromString(@"GCController") == nil)
+    {
+        reason = "GameController.framework is not available";
+        return false;
+    }
+    auto state = std::make_shared<State>();
+    state->queue = dispatch_queue_create("controllers-gc", DISPATCH_QUEUE_SERIAL);
+    state->observers = [NSMutableArray array];
+    state->callbacks = std::move(callbacks);
+
+    // The work on the queue: a block keeps the state alive while it waits
+    auto connect = [](const std::shared_ptr<State>& s, GCController* controller) {
+        if (!s->running || controller == nil || controller.extendedGamepad == nil)
+            return;  // a remote or a micro pad: no buttons to match, no handles
+        void* handle = (__bridge void*)controller;
+        if (s->pads.count(handle) != 0)
+            return;
+        Entry& entry = s->pads[handle];
+        entry.controller = controller;
+        entry.key = "gc#" + std::to_string(s->next++);
+        entry.motors = MotorsOf(controller);
+        Pad pad;
+        pad.key = entry.key;
+        pad.vendorName = StringOf(controller.vendorName);
+        pad.actuators = ActuatorsOf(entry.motors);
+        pad.light = controller.light != nil;
+        pad.productCategory = StringOf(controller.productCategory);
+        // The presses reach the queue directly, not through the main thread: their times stay close to IOHID's
+        controller.handlerQueue = s->queue;
+        GCExtendedGamepad* gamepad = controller.extendedGamepad;
+        const std::string key = entry.key;
+        std::weak_ptr<State> weak = s;
+        GCControllerButtonValueChangedHandler handler = ^(GCControllerButtonInput*, float, BOOL pressed) {
+          const std::shared_ptr<State> live = weak.lock();
+          if (pressed && live && live->running && live->callbacks.pressed)
+              live->callbacks.pressed(key, SteadyNowMs());
+        };
+        for (GCControllerButtonInput* button in MatchButtons(gamepad))
+            button.pressedChangedHandler = handler;
+        // The input of a pad IOHID does not see: on the queue, only while SetInput has it on
+        void* entryHandle = handle;
+        gamepad.valueChangedHandler = ^(GCExtendedGamepad* changed, GCControllerElement*) {
+          const std::shared_ptr<State> live = weak.lock();
+          if (!live || !live->running)
+              return;
+          const auto found = live->pads.find(entryHandle);
+          if (found == live->pads.end() || !found->second.input || !live->callbacks.control)
+              return;
+          found->second.pad.Update(SnapshotOf(changed), [&live, &key](const std::string& control, float value) {
+              live->callbacks.control(key, control, value);
+          });
+        };
+        {
+            std::lock_guard<std::mutex> lock(s->mutex);
+            if (pad.actuators != 0)
+                s->actuators[pad.key] = pad.actuators;
+            if (pad.light)
+                s->lights.insert(pad.key);
+            s->batteries[pad.key] = BatteryOf(controller);
+        }
+        if (s->callbacks.added)
+            s->callbacks.added(pad);
+    };
+    auto disconnect = [](const std::shared_ptr<State>& s, GCController* controller) {
+        const auto found = s->pads.find((__bridge void*)controller);
+        if (!s->running || found == s->pads.end())
+            return;
+        for (Motor& motor : found->second.motors)
+            Release(motor);
+        const std::string key = found->second.key;
+        s->pads.erase(found);
+        {
+            std::lock_guard<std::mutex> lock(s->mutex);
+            s->actuators.erase(key);
+            s->lights.erase(key);
+            s->batteries.erase(key);
+        }
+        if (s->callbacks.removed)
+            s->callbacks.removed(key);
+    };
+
+    dispatch_sync(state->queue, ^{
+      state->running = true;
+    });
+    // The batteries, read again on the queue every 30 s: Battery never waits for GameController
+    state->batteryTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, state->queue);
+    {
+        std::weak_ptr<State> weakState = state;
+        dispatch_source_set_event_handler(state->batteryTimer, ^{
+          const std::shared_ptr<State> s = weakState.lock();
+          if (!s || !s->running)
+              return;
+          std::map<std::string, BatteryState> read;
+          for (const auto& [handle, entry] : s->pads)
+              read[entry.key] = BatteryOf(entry.controller);
+          std::lock_guard<std::mutex> lock(s->mutex);
+          s->batteries.swap(read);
+        });
+    }
+    dispatch_source_set_timer(state->batteryTimer, dispatch_time(DISPATCH_TIME_NOW, kBatteryRefreshNs),
+                              static_cast<uint64_t>(kBatteryRefreshNs), static_cast<uint64_t>(kBatteryRefreshNs / 10));
+    dispatch_resume(state->batteryTimer);
+    std::weak_ptr<State> weak = state;
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    [state->observers addObject:[center addObserverForName:GCControllerDidConnectNotification
+                                                    object:nil
+                                                     queue:nil
+                                                usingBlock:^(NSNotification* note) {
+                                                  GCController* controller = note.object;
+                                                  if (const std::shared_ptr<State> s = weak.lock())
+                                                      dispatch_async(s->queue, ^{
+                                                        connect(s, controller);
+                                                      });
+                                                }]];
+    [state->observers addObject:[center addObserverForName:GCControllerDidDisconnectNotification
+                                                    object:nil
+                                                     queue:nil
+                                                usingBlock:^(NSNotification* note) {
+                                                  GCController* controller = note.object;
+                                                  if (const std::shared_ptr<State> s = weak.lock())
+                                                      dispatch_async(s->queue, ^{
+                                                        disconnect(s, controller);
+                                                      });
+                                                }]];
+    // The pads already connected
+    dispatch_async(state->queue, ^{
+      for (GCController* controller in GCController.controllers)
+          connect(state, controller);
+    });
+    _state = state;
+    return true;
+}
+
+void GcCompanion::Stop()
+{
+    if (!_state)
+        return;
+    std::shared_ptr<State> state = std::move(_state);
+    for (id observer in state->observers)
+        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+    [state->observers removeAllObjects];
+    dispatch_source_cancel(state->batteryTimer);
+    dispatch_sync(state->queue, ^{
+      state->running = false;
+      for (auto& [handle, entry] : state->pads)
+      {
+          for (Motor& motor : entry.motors)
+              Release(motor);
+          for (GCControllerButtonInput* button in MatchButtons(entry.controller.extendedGamepad))
+              button.pressedChangedHandler = nil;
+          entry.controller.extendedGamepad.valueChangedHandler = nil;
+      }
+      state->pads.clear();
+      state->callbacks = {};
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->actuators.clear();
+      state->lights.clear();
+      state->batteries.clear();
+    });
+}
+
+bool GcCompanion::SetRumble(const std::string& key, const RumbleLevels& levels)
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->actuators.count(key) == 0)
+            return false;
+    }
+    const RumbleLevels copy = levels;
+    dispatch_async(state->queue, ^{
+      for (auto& [handle, entry] : state->pads)
+          if (entry.key == key)
+              for (Motor& motor : entry.motors)
+                  Apply(entry.controller, motor, LevelFor(motor.source, copy),
+                        GcPad::SharpnessFor(HzFor(motor.source, copy)));
+    });
+    return true;
+}
+
+BatteryState GcCompanion::Battery(const std::string& key) const
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return {};
+    std::lock_guard<std::mutex> lock(state->mutex);
+    const auto found = state->batteries.find(key);
+    return found == state->batteries.end() ? BatteryState{} : found->second;
+}
+
+bool GcCompanion::SetLight(const std::string& key, const LightColor& color)
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->lights.count(key) == 0)
+            return false;
+    }
+    const LightColor copy = color;
+    dispatch_async(state->queue, ^{
+      for (auto& [handle, entry] : state->pads)
+          if (entry.key == key && entry.controller.light != nil)
+              entry.controller.light.color = [[GCColor alloc] initWithRed:copy.red / 255.0f
+                                                                    green:copy.green / 255.0f
+                                                                     blue:copy.blue / 255.0f];
+    });
+    return true;
+}
+
+void GcCompanion::SetInput(const std::string& key, bool on)
+{
+    std::shared_ptr<State> state = _state;
+    if (!state)
+        return;
+    const std::string copy = key;
+    dispatch_async(state->queue, ^{
+      for (auto& [handle, entry] : state->pads)
+      {
+          if (entry.key != copy || entry.input == on)
+              continue;
+          entry.input = on;
+          if (!on && state->running && state->callbacks.control)
+              entry.pad.Release([&state, &copy](const std::string& control, float value) {
+                  state->callbacks.control(copy, control, value);
+              });
+          entry.pad.Reset();
+          if (on && state->running && state->callbacks.control && entry.controller.extendedGamepad != nil)
+              entry.pad.Update(SnapshotOf(entry.controller.extendedGamepad),
+                               [&state, &copy](const std::string& control, float value) {
+                                   state->callbacks.control(copy, control, value);
+                               });
+      }
+    });
+}
+
+}  // namespace controllers

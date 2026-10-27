@@ -38,13 +38,22 @@ One uniform device model that:
 
 ### 3.1 Device descriptor and registry
 
-`SoundManager` owns an ordered registry of present devices:
+`SoundManager` owns an ordered registry of present devices. The AY socket's rows are named after what sits in the
+socket (the slot set's `ay-socket` card), so they never read as the board AY when a card replaced it: the board chip
+`AY`; a TurboSound `TS AY 1` / `TS AY 2`; a TurboSound FM `TSFM SSG 1` / `TSFM SSG 2` and `TSFM FM 1` / `TSFM FM 2`.
+The source keys stay `ay1`, `ay2`, `fm1`, `fm2`. A board AY shadowed by a card keeps its `AY` row with the state
+`shadowed by <slot>`. The HUD follows the same rule: a TSFM's SSG parts light the TSFM indicator, not the AY one.
+A ZX-MultiSound in a slot shows its YM2203 pair the same way, per chip: `MS SSG 1` / `MS SSG 2` and `MS FM 1` /
+`MS FM 2` (keys `ms_ssg1`, `ms_ssg2`, `ms_fm1`, `ms_fm2`), then `MS SAA`, `MS PCM` (its GS + SounDrive DACs) and
+`MS MIDI` (`ms_saa`, `ms_pcm`, `ms_midi`), one HUD indicator per row. One FM calibration for every YM2203 FM in the
+machine: `[SOUND] TSFM_FmLevelDb` (the audio settings' FM trim, `SoundManager::setFmTrimDb`) drives the TSFM and the
+card alike.
 
 ```cpp
 struct AudioDeviceInfo
 {
     AudioSourceType type;          // Identity, shared with recording
-    std::string     name;          // Display name ("AY 1", "COVOX", ...)
+    std::string     name;          // Display name ("AY", "TS AY 1", "TSFM SSG 1", "COVOX", ...)
     SoundDevice*    device;        // Owning pointer lives in SoundManager
 
     // Monitor state (runtime, per emulator instance)
@@ -119,12 +128,13 @@ out[i] = Σ audible(d) · d.volume · d.buffer[i]   (saturating add)
   and host-mute do not affect capture (UX doc open question #3: the mix
   above runs in `handleFrameEnd` regardless of the audio callback).
 
-### 3.4 Channel-level layer (AY)
+### 3.4 Channel-level layer
 
-Channel mute/solo/volume stay on `SoundChip_AY8910` (already implemented
-for mute/volume; solo added the same way). Channel-split capture buffers
-(`getChannelBuffer(ch)`) come in milestone M5 and are only rendered while
-a channel-split recording or channel solo is active (zero cost otherwise).
+Implemented for every chip with channels (AY, YM2203 FM, Covox / SounDrive, GS / NeoGS, OPL4 FM and PCM, the
+ZX-MultiSound's parts, the Next): one store in SoundManager, the user's mute / solo (within the row) / volume per
+channel applied to the device at the frame start - see
+[mixer-channels-and-settings.md](mixer-channels-and-settings.md). Channel-split capture buffers
+(`getChannelBuffer(ch)`) remain milestone M5.
 
 ## 4. Device stubs and implementation order
 

@@ -39,7 +39,8 @@ public:
     /// A memory write, after every write appended so far (time order)
     void Append(const TTDWriteRecord& rec);
     /// The spans the records cover, oldest first
-    void SetSegments(std::vector<TTDJournalSegment> segments) { _segments = std::move(segments); }
+    /// (clipped to after the records DropBefore released)
+    void SetSegments(std::vector<TTDJournalSegment> segments);
     const std::vector<TTDJournalSegment>& Segments() const { return _segments; }
 
     uint64_t Size() const { return _size; }
@@ -50,6 +51,16 @@ public:
     void ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const;
 
     void Clear();
+    /// Replace the records by @p records (in time order); what DropBefore
+    /// released stays released (the segments stay clipped after it)
+    void Rebuild(const std::vector<TTDWriteRecord>& records);
+    /// Drop the sealed blocks whose records all lie before @p globalT (a
+    /// history limit releasing the oldest frames); the segments then start
+    /// after the newest record dropped
+    void DropBefore(uint64_t globalT);
+    /// Drop every record after @p globalT (a recording resumed from the past;
+    /// records at it stay) and the segments' parts after it
+    void DropAfter(uint64_t globalT);
     /// Sealed blocks, their directory and the open block
     size_t HeapBytes() const;
 
@@ -69,6 +80,7 @@ private:
     std::vector<TTDWriteRecord> _open;   ///< the newest records, not sealed yet
     std::vector<TTDJournalSegment> _segments;
     uint64_t _size = 0;
+    uint64_t _droppedUpTo = 0;   ///< the newest record DropBefore released (0: none)
     mutable int64_t _cachedBlock = -1;   ///< the last decoded block (queries scan backward)
     mutable std::vector<TTDWriteRecord> _cached;
 };

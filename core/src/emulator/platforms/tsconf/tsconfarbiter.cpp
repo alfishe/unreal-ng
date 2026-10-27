@@ -26,6 +26,19 @@ TsConfArbiter::Fetch TsConfArbiter::FetchOf(const TsConfLine& set, uint32_t line
     return f;
 }
 
+const TsConfArbiter::Fetch& TsConfArbiter::FetchAt(uint32_t line)
+{
+    const TsConfLine& set = _engine.Line(line);
+    if (line != _fetchLine || set.vConfig != _fetchConfig || set.gxOffs != _fetchOffs)
+    {
+        _fetch = FetchOf(set, line);
+        _fetchLine = line;
+        _fetchConfig = set.vConfig;
+        _fetchOffs = set.gxOffs;
+    }
+    return _fetch;
+}
+
 void TsConfArbiter::Reset()
 {
     _cycle = 0;
@@ -40,7 +53,7 @@ void TsConfArbiter::Step(bool cpuRequest)
     {
         const uint32_t line = _cycle / kLineCycles;
         const uint32_t h = _cycle % kLineCycles;
-        const Fetch f = FetchOf(_engine.Line(line), line);
+        const Fetch& f = FetchAt(line);
         if (f.active && h >= f.h0 && h < f.h1)
         {
             _blkRem = static_cast<uint8_t>(f.length - 1);
@@ -66,7 +79,7 @@ void TsConfArbiter::SeekClean(uint32_t cycle)
 
     const uint32_t line = cycle / kLineCycles;
     const uint32_t h = cycle % kLineCycles;
-    const Fetch f = FetchOf(_engine.Line(line), line);
+    const Fetch& f = FetchAt(line);
     if (!f.active || h <= f.h0)
         return;
     // The block decided last at or before `cycle` (blocks start at h0 + k*length below h1)

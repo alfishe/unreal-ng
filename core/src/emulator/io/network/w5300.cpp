@@ -732,14 +732,15 @@ W5300::SocketView W5300::GetSocket(int n) const
 // TTD state
 // ---------------------------------------------------------------------------
 
-bool W5300::SaveState(netstate::Adapters& out) const
+void W5300::SaveState(netstate::Adapters& out, netstate::Tail& tail) const
 {
-    bool complete = true;
+    using List = netstate::Tail::List;
     std::memcpy(out.common, _common.data(), sizeof(out.common));
     for (int n = 0; n < kSockets; ++n)
     {
         const Socket& s = _sockets[n];
         netstate::W5300Socket& o = out.sockets[n];
+        const uint16_t owner = static_cast<uint16_t>(n);
         std::memcpy(o.mr, s.mr, sizeof(o.mr));
         o.imr = s.imr;
         o.ir = s.ir;
@@ -761,57 +762,66 @@ bool W5300::SaveState(netstate::Adapters& out) const
         o.rxSize = s.rxSize;
         o.net = s.net;
 
+        // Unsent bytes: the fixed array, the rest in the tail
         const size_t tx = std::min<size_t>(s.tx.size(), netstate::kMaxTxBytes);
-        complete = complete && tx == s.tx.size();
         o.txLength = static_cast<uint16_t>(tx);
         if (tx)
             std::memcpy(o.tx, s.tx.data(), tx);
+        if (s.tx.size() > tx)
+            tail.AddBytes(List::W5300Tx, owner, 0, s.tx.data() + tx, s.tx.size() - tx);
 
+        // Receive packets: journal references; the ones past the array and the bytes the journal lacks in the tail
         o.rxRead = s.rxRead;
-        uint16_t p = 0;
+        uint32_t p = 0;
         for (const Socket::RxPacket& packet : s.rx)
         {
-            if (p >= netstate::kMaxPackets)
-            {
-                complete = false;
-                break;
-            }
-            netstate::RxPacket& op = o.packets[p++];
+            netstate::RxPacket op{};
             std::memcpy(op.header, packet.header, sizeof(op.header));
             op.headerLength = packet.headerLength;
             op.data.source = packet.source;
             op.data.sourceOffset = packet.sourceOffset;
             op.data.length = static_cast<uint32_t>(packet.data.size());
-            complete = complete && (packet.source != 0 || packet.data.empty());
+            if (p < netstate::kMaxPackets)
+                o.packets[p] = op;
+            else
+                tail.Add(List::W5300Packet, owner, p, &op, sizeof(op));
+            if (packet.source == 0 && !packet.data.empty())
+                tail.AddBytes(List::W5300PacketBytes, owner, p, packet.data.data(), packet.data.size());
+            ++p;
         }
-        o.packetCount = p;
+        o.packetCount = static_cast<uint16_t>(std::min<uint32_t>(p, netstate::kMaxPackets));
 
-        uint16_t b = 0;
+        uint32_t b = 0;
         for (const Socket::Chunk& chunk : s.backlog)
         {
-            if (b >= netstate::kMaxBacklog)
-            {
-                complete = false;
-                break;
-            }
-            o.backlog[b].source = chunk.source;
-            o.backlog[b].sourceOffset = chunk.sourceOffset;
-            o.backlog[b].length = static_cast<uint32_t>(chunk.data.size());
-            complete = complete && chunk.source != 0;
+            netstate::Reference ref{chunk.source, chunk.sourceOffset, static_cast<uint32_t>(chunk.data.size())};
+            if (b < netstate::kMaxBacklog)
+                o.backlog[b] = ref;
+            else
+                tail.Add(List::W5300Backlog, owner, b, &ref, sizeof(ref));
+            if (chunk.source == 0 && !chunk.data.empty())
+                tail.AddBytes(List::W5300BacklogBytes, owner, b, chunk.data.data(), chunk.data.size());
             ++b;
         }
-        o.backlogCount = b;
+        o.backlogCount = static_cast<uint16_t>(std::min<uint32_t>(b, netstate::kMaxBacklog));
     }
-    return complete;
 }
 
-bool W5300::LoadState(const netstate::Adapters& in, const ByteSource& bytes)
+bool W5300::LoadState(const netstate::Adapters& in, const netstate::Tail& tail, const ByteSource& bytes)
 {
+    using List = netstate::Tail::List;
     bool found = true;
-    auto fetch = [&](const netstate::Reference& ref, std::vector<uint8_t>& out) {
+    // An item's bytes: inline in the tail when the journal did not hold them, else from the journal
+    auto fetch = [&](List inlineList, uint16_t owner, uint32_t index, const netstate::Reference& ref,
+                     std::vector<uint8_t>& out) {
         out.clear();
         if (ref.length == 0)
             return;
+        if (const std::vector<uint8_t>* own = tail.Find(inlineList, owner, index))
+        {
+            out = *own;
+            return;
+        }
         if (!bytes || !bytes(ref.source, ref.sourceOffset, ref.length, out) || out.size() != ref.length)
         {
             out.assign(ref.length, 0);
@@ -824,6 +834,7 @@ bool W5300::LoadState(const netstate::Adapters& in, const ByteSource& bytes)
     {
         Socket& s = _sockets[n];
         const netstate::W5300Socket& o = in.sockets[n];
+        const uint16_t owner = static_cast<uint16_t>(n);
         s = Socket();
         std::memcpy(s.mr, o.mr, sizeof(s.mr));
         s.imr = o.imr;
@@ -847,31 +858,50 @@ bool W5300::LoadState(const netstate::Adapters& in, const ByteSource& bytes)
         s.net = o.net;   // the virtual network restores its own table (the ids stay valid)
         const size_t tx = std::min<size_t>(o.txLength, netstate::kMaxTxBytes);
         s.tx.assign(o.tx, o.tx + tx);
+        if (const std::vector<uint8_t>* more = tail.Find(List::W5300Tx, owner, 0))
+            s.tx.insert(s.tx.end(), more->begin(), more->end());
 
-        for (uint16_t p = 0; p < o.packetCount && p < netstate::kMaxPackets; ++p)
-        {
-            const netstate::RxPacket& op = o.packets[p];
+        auto addPacket = [&](uint32_t index, const netstate::RxPacket& op) {
             Socket::RxPacket packet;
             std::memcpy(packet.header, op.header, sizeof(packet.header));
             packet.headerLength = op.headerLength;
             packet.source = op.data.source;
             packet.sourceOffset = op.data.sourceOffset;
-            fetch(op.data, packet.data);
+            fetch(List::W5300PacketBytes, owner, index, op.data, packet.data);
             s.rxBytes += packet.Size();
             s.rx.push_back(std::move(packet));
-        }
+        };
+        for (uint16_t p = 0; p < o.packetCount && p < netstate::kMaxPackets; ++p)
+            addPacket(p, o.packets[p]);
+        tail.ForEach(List::W5300Packet, owner, [&](uint32_t index, const uint8_t* data, uint32_t size) {
+            netstate::RxPacket op{};
+            if (size == sizeof(op))
+            {
+                std::memcpy(&op, data, sizeof(op));
+                addPacket(index, op);
+            }
+        });
         s.rxRead = std::min(o.rxRead, s.rxBytes);
         s.rxBytes -= s.rxRead;
 
-        for (uint16_t b = 0; b < o.backlogCount && b < netstate::kMaxBacklog; ++b)
-        {
+        auto addChunk = [&](uint32_t index, const netstate::Reference& ref) {
             Socket::Chunk chunk;
-            chunk.source = o.backlog[b].source;
-            chunk.sourceOffset = o.backlog[b].sourceOffset;
-            fetch(o.backlog[b], chunk.data);
+            chunk.source = ref.source;
+            chunk.sourceOffset = ref.sourceOffset;
+            fetch(List::W5300BacklogBytes, owner, index, ref, chunk.data);
             s.backlogBytes += chunk.data.size();
             s.backlog.push_back(std::move(chunk));
-        }
+        };
+        for (uint16_t b = 0; b < o.backlogCount && b < netstate::kMaxBacklog; ++b)
+            addChunk(b, o.backlog[b]);
+        tail.ForEach(List::W5300Backlog, owner, [&](uint32_t index, const uint8_t* data, uint32_t size) {
+            netstate::Reference ref{};
+            if (size == sizeof(ref))
+            {
+                std::memcpy(&ref, data, sizeof(ref));
+                addChunk(index, ref);
+            }
+        });
     }
     return found;
 }

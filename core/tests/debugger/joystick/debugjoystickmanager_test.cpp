@@ -12,7 +12,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -31,7 +31,7 @@ protected:
     EmulatorContext* _context = nullptr;
     DebugJoystickManager* _manager = nullptr;
     Joystick* _joystick = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     struct Sample
     {
@@ -54,7 +54,7 @@ protected:
         ASSERT_NE(_manager, nullptr);
         _joystick = _context->pJoystick;
         ASSERT_NE(_joystick, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
     }
 
     void TearDown() override
@@ -284,7 +284,8 @@ TEST_F(DebugJoystickManager_Test, NotFitted_ReportsAbsentAndWarns)
     EXPECT_EQ(state.portValue, 0x00);
 }
 
-/// A machine whose decoder has no #1F joystick: accepted, with a warning that the guest cannot see it
+/// A machine whose decoder has no #1F joystick: accepted, with a warning that the guest cannot see it and how to fit
+/// the interface (the slot card `kempston`)
 TEST(DebugJoystickManagerUnwired_Test, MachineWithoutTheArmWarns)
 {
     // The 48K decoder has no #1F arm (the Pentagon family and Profi have one since 2026-10-01)
@@ -295,8 +296,11 @@ TEST(DebugJoystickManagerUnwired_Test, MachineWithoutTheArmWarns)
 
     JoystickInjectResult result = manager->Press("fire");
     EXPECT_TRUE(result.ok());
-    EXPECT_NE(result.warning.find("does not decode"), std::string::npos) << result.warning;
-    EXPECT_FALSE(manager->GetState().wired);
+    EXPECT_NE(result.warning.find("no Kempston joystick interface"), std::string::npos) << result.warning;
+    EXPECT_NE(result.warning.find("slots plug edge.1 kempston"), std::string::npos) << result.warning;
+    const JoystickStateSnapshot state = manager->GetState();
+    EXPECT_FALSE(state.wired);
+    EXPECT_NE(state.fit.find("slots_plug slot=edge.1 card=kempston"), std::string::npos) << state.fit;
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

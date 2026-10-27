@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include "_helpers/messagecenterdrain.h"
 #include "_helpers/testtiminghelper.h"
 
 class HudModel_Test : public ::testing::Test
@@ -258,12 +259,7 @@ TEST_F(HudModel_Test, EventMapping_FddState)
 
     mc.Post(NC_FDD_STATE_CHANGED, new FDDStatePayload(_id.toString(), state));
 
-    auto start = std::chrono::steady_clock::now();
-    while (model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(model.snapshot()->elements.empty()); });
 
     auto snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -277,12 +273,7 @@ TEST_F(HudModel_Test, EventMapping_FddState)
     state.motorOn = false;
     mc.Post(NC_FDD_STATE_CHANGED, new FDDStatePayload(_id.toString(), state));
 
-    start = std::chrono::steady_clock::now();
-    while (!model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(!model.snapshot()->elements.empty()); });
 
     snap = model.snapshot();
     EXPECT_TRUE(snap->elements.empty());
@@ -347,12 +338,7 @@ TEST_F(HudModel_Test, EventMapping_SpeedChanged)
     // 2x speed
     mc.Post(NC_SPEED_CHANGED, new SpeedChangedPayload(_id, 2, false));
 
-    auto start = std::chrono::steady_clock::now();
-    while (model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(model.snapshot()->elements.empty()); });
 
     auto snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -362,12 +348,7 @@ TEST_F(HudModel_Test, EventMapping_SpeedChanged)
     // Turbo
     mc.Post(NC_SPEED_CHANGED, new SpeedChangedPayload(_id, 1, true));
 
-    start = std::chrono::steady_clock::now();
-    while (model.snapshot()->elements[0].value != "TURBO" &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(model.snapshot()->elements[0].value != "TURBO"); });
 
     snap = model.snapshot();
     EXPECT_EQ(snap->elements[0].value, "TURBO");
@@ -375,12 +356,7 @@ TEST_F(HudModel_Test, EventMapping_SpeedChanged)
     // 1x speed normal -> indicator off
     mc.Post(NC_SPEED_CHANGED, new SpeedChangedPayload(_id, 1, false));
 
-    start = std::chrono::steady_clock::now();
-    while (!model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(!model.snapshot()->elements.empty()); });
 
     snap = model.snapshot();
     EXPECT_TRUE(snap->elements.empty());
@@ -396,7 +372,6 @@ TEST_F(HudModel_Test, EventMapping_FileLoaded)
     // Success load
     mc.Post(NC_FILE_LOADED, new FileLoadedPayload(_id, "snapshot", "/games/elite.sna", true));
 
-    auto start = std::chrono::steady_clock::now();
     EXPECT_TRUE(WaitForCondition([&] { return !model.snapshot()->elements.empty(); }));
 
     auto snap = model.snapshot();
@@ -428,12 +403,7 @@ TEST_F(HudModel_Test, EventMapping_RecordingState)
     // Start video recording (VideoAudio type = video with embedded audio)
     mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, true, "/tmp/rec.mp4", RecordingType::VideoAudio));
 
-    auto start = std::chrono::steady_clock::now();
-    while (model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(model.snapshot()->elements.empty()); });
 
     auto snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -445,13 +415,8 @@ TEST_F(HudModel_Test, EventMapping_RecordingState)
     // Stop recording
     mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, false, "/tmp/rec.mp4", RecordingType::VideoAudio));
 
-    start = std::chrono::steady_clock::now();
-    while ((model.snapshot()->elements.empty() ||
-            model.snapshot()->elements[0].kind != HudKind::Toast) &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !((model.snapshot()->elements.empty() ||
+            model.snapshot()->elements[0].kind != HudKind::Toast)); });
 
     snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -470,12 +435,7 @@ TEST_F(HudModel_Test, EventMapping_EmulatorStateChange)
     // Paused
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(_id, StatePaused));
 
-    auto start = std::chrono::steady_clock::now();
-    while (model.snapshot()->elements.empty() &&
-           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    WaitForCondition([&] { return !(model.snapshot()->elements.empty()); });
 
     auto snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -964,7 +924,7 @@ TEST_F(HudModel_Test, EventMapping_FddDiskInserted_SingleCombinedNotification)
 
     // 2. Rapid duplicate NC_FDD_DISK_INSERTED must NOT create a second toast and must NOT increment coalesced counter
     mc.Post(NC_FDD_DISK_INSERTED, new FDDDiskPayload(_id.toString(), 0, "/games/elite.trd"));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(DrainMessageCenter(mc));  // what was posted before has been delivered: the negative check below is a fact
 
     snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
@@ -974,7 +934,7 @@ TEST_F(HudModel_Test, EventMapping_FddDiskInserted_SingleCombinedNotification)
 
     // 3. NC_FILE_LOADED with kind="disk" and ok=true must NOT create an extra toast
     mc.Post(NC_FILE_LOADED, new FileLoadedPayload(_id, "disk", "/games/elite.trd", true));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(DrainMessageCenter(mc));  // what was posted before has been delivered: the negative check below is a fact
 
     snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u); // still exactly 1 toast
@@ -1039,7 +999,7 @@ TEST_F(HudModel_Test, EventMapping_BreakpointTriggered_HiddenFiltered)
     // Trigger a hidden breakpoint (e.g. step-over / step-out)
     mc.Post(NC_EXECUTION_BREAKPOINT, new BreakpointTriggeredPayload(_id, 5, 0x8000, true));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(DrainMessageCenter(mc));  // what was posted before has been delivered: the negative check below is a fact
 
     // Hidden breakpoint must be filtered: no HUD toast or indicator
     auto snap = model.snapshot();
@@ -1284,7 +1244,7 @@ TEST_F(HudModel_Test, ExecState_ResetBlocksExecuteTransition)
 
     // 2. State change to running fires immediately after - RESET must block EXECUTE
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(_id, StateRun));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(DrainMessageCenter(mc));  // what was posted before has been delivered: the negative check below is a fact
 
     auto snap = model.snapshot();
     auto it = std::find_if(snap->elements.begin(), snap->elements.end(), [](const HudElement& e) {
@@ -1369,4 +1329,38 @@ TEST_F(HudModel_Test, EventMapping_AudioActivity_NeoGSDmaAndTransfers)
     mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSTransfer, false));
     EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngszx").empty(); }));
     EXPECT_EQ(value("ind/ngsdma"), "NeoGS DMA");
+}
+
+// Automation sessions (execution arbiter X7c): turned off, the HUD still shows the session's indicator and toasts
+// (the always-shown prefix) and nothing else; turned on, everything
+TEST_F(HudModel_Test, AlwaysShownElementsShowWithTheHudTurnedOff)
+{
+    HudModel model(nullptr);
+    model.setAlwaysShownPrefix("remote");
+    model.setIndicator("speed", HudState::Active, "TURBO");
+    model.setIndicator("remote", HudState::Active, "DeZog (ZRCP)", {}, "remote");
+    HudToastRequest session;
+    session.title = "Remote control";
+    session.dedupKey = "remote-control";
+    model.notify(session);
+    HudToastRequest other;
+    other.title = "Disk inserted";
+    model.notify(other);
+
+    model.onFeatureChanged(false);
+    auto snap = model.snapshot();
+    ASSERT_NE(snap, nullptr);
+    std::vector<std::string> titles;
+    for (const auto& el : snap->elements)
+        titles.push_back(el.id.rfind("ind/", 0) == 0 ? el.id : el.title);
+    EXPECT_EQ(titles.size(), 2u);
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "ind/remote"), titles.end());
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "Remote control"), titles.end());
+
+    model.onFeatureChanged(true);
+    EXPECT_EQ(model.snapshot()->elements.size(), 4u);
+
+    model.setAlwaysShownPrefix({});
+    model.onFeatureChanged(false);
+    EXPECT_TRUE(model.snapshot()->elements.empty());
 }

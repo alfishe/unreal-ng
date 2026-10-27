@@ -163,7 +163,7 @@ struct Range
 
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
-    if (id >= kFrameStreamFirst && id <= kFrameStreamLast)
+    if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
     for (const TTDStreamDesc& s : Streams())
         if (s.id == id)
@@ -225,6 +225,15 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
         if (e._streams.IsRegistered(id))
             header.streams.push_back(
                 {static_cast<uint16_t>(kFrameStreamFirst + id), 1, TTDStreamKind::Ancillary, e._streams.Name(id)});
+    for (const TTDHolderStream& h : params.holderStreams)
+    {
+        if (!IsHolderStream(h.id))
+        {
+            error = "holder stream " + std::to_string(h.id) + " is not a holder stream id";
+            return false;
+        }
+        header.streams.push_back({h.id, 1, TTDStreamKind::Ancillary, h.name});
+    }
     {
         TTDByteWriter w;
         w.U16(kTablesVersion);
@@ -642,6 +651,12 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         job.records.emplace_back(kWriteJournal, std::move(wj.bytes));
     }
 
+    // The holder's own data, whole, with the session's last part
+    if (ok && lastPart && atSessionEnd)
+        for (const TTDHolderStream& h : _params.holderStreams)
+            if (!h.bytes.empty())
+                job.records.emplace_back(h.id, h.bytes);
+
     job.end.firstFrame = head.position.frame;
     job.end.frameCount = static_cast<uint32_t>(e.CpAt(last - 1).position.frame - head.position.frame + 1);
     job.end.dependencies.assign(dependencies.begin(), dependencies.end());
@@ -672,28 +687,17 @@ bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::st
 
 /// region <Load>
 
-bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std::string& error,
-                          TTDSessionLoadReport* reportOut, bool append)
+bool TTDSessionFile::ReadTables(const std::vector<uint8_t>& tables, uint32_t& interval, std::vector<TTDRegionDesc>& regions,
+                                std::vector<TTDDeviceEntry>& devices, std::string& error)
 {
-    TTDSessionLoadReport report;
-    TTDContainerReader reader;
-    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
-        return false;
-    report.notes = reader.Notes();
-    report.partsInFile = reader.Parts().size();
-    report.convertedFromV1 = (reader.Header().flags & kSessionConvertedFromV1) != 0;
-
-    // The tables: regions and devices, then the session as at its start
-    TTDByteReader t(reader.Header().sessionTables);
+    TTDByteReader t(tables);
     uint16_t version = 0;
-    uint32_t interval = 0;
     uint64_t count = 0;
     if (!t.U16(version) || version != kTablesVersion || !t.U32(interval) || !t.Varint(count) || count > t.Left())
     {
         error = "damaged session tables";
         return false;
     }
-    std::vector<TTDRegionDesc> regions;
     for (uint64_t i = 0; i < count; ++i)
     {
         TTDRegionDesc r;
@@ -707,7 +711,6 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         r.id = static_cast<TTDRegionId>(id);
         regions.push_back(std::move(r));
     }
-    std::vector<TTDDeviceEntry> devices;
     if (!t.Varint(count) || count > t.Left())
     {
         error = "damaged session tables (devices)";
@@ -723,6 +726,42 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         }
         devices.push_back(std::move(d));
     }
+    return true;
+}
+
+bool TTDSessionFile::ReadDevices(const ITTDByteSource& source, std::vector<TTDDeviceDescriptor>& out, std::string& error)
+{
+    out.clear();
+    TTDContainerReader reader;
+    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
+        return false;
+    uint32_t interval = 0;
+    std::vector<TTDRegionDesc> regions;
+    std::vector<TTDDeviceEntry> devices;
+    if (!ReadTables(reader.Header().sessionTables, interval, regions, devices, error))
+        return false;
+    for (TTDDeviceEntry& d : devices)
+        out.push_back(std::move(d.descriptor));
+    return true;
+}
+
+bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std::string& error,
+                          TTDSessionLoadReport* reportOut, bool append)
+{
+    TTDSessionLoadReport report;
+    TTDContainerReader reader;
+    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
+        return false;
+    report.notes = reader.Notes();
+    report.partsInFile = reader.Parts().size();
+    report.convertedFromV1 = (reader.Header().flags & kSessionConvertedFromV1) != 0;
+
+    // The tables: regions and devices, then the session as at its start
+    uint32_t interval = 0;
+    std::vector<TTDRegionDesc> regions;
+    std::vector<TTDDeviceEntry> devices;
+    if (!ReadTables(reader.Header().sessionTables, interval, regions, devices, error))
+        return false;
     if (append && e._open)
     {
         // The next file of the same recording: the same regions and devices
@@ -765,6 +804,17 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
             if (!KnownStream(record.streamId))
                 continue;
             std::vector<uint8_t> bytes;
+            if (IsHolderStream(record.streamId))
+            {
+                // The holder's data: ancillary, a damaged one is left out
+                std::string holderWhy;
+                if (reader.ReadRecord(record, bytes, &holderWhy))
+                    report.holderStreams[record.streamId] = std::move(bytes);
+                else
+                    report.notes.push_back("holder stream " + std::to_string(record.streamId) +
+                                           " is damaged: left out (" + holderWhy + ")");
+                continue;
+            }
             if (!reader.ReadRecord(record, bytes, &why))
             {
                 readOk = false;

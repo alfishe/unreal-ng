@@ -10,7 +10,8 @@
 #include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
-#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
+#include <mutex>
+#include <unordered_set>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -20,6 +21,7 @@
 #include <emulator/memory/devicememory.h>  // device memory regions (/memory/page/vram/{n})
 #include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
+#include <emulator/memory/atm/evoflashrequest.h>  // ZX-Evo flash persistence
 #include <emulator/cpu/core.h>    // Core::GetROM()
 #include <emulator/ports/portdecoder.h>  // Tagged port registry
 #include <emulator/state/devicestate.h>  // DeviceState::SprinterPaging
@@ -93,7 +95,7 @@ Json::Value RenderMemoryWindowFormat(const uint8_t* data, size_t size, uint32_t 
 
 /// @brief GET /api/v1/emulator/{id}/state/memory
 /// @brief Get complete memory configuration
-void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateMemory(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
@@ -223,7 +225,8 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/ram
 /// @brief Get RAM banking details
-void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
@@ -338,7 +341,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/rom
 /// @brief Get ROM configuration with signatures
-void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
+void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
@@ -497,8 +500,39 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     callback(resp);
 }
 
-// Static flag for ROM write protection (default: protected)
-static bool s_romWriteProtected = true;
+// ROM write protection of the WebAPI's page writes, per emulator instance (by its id; default: protected). It was one
+// flag for the process: unprotecting one instance unprotected them all
+namespace
+{
+std::mutex s_romProtectMutex;
+std::unordered_set<std::string> s_romUnprotected;   ///< instances whose ROM pages the page write may change
+
+bool RomWriteProtected(const Emulator& emulator)
+{
+    std::lock_guard<std::mutex> lock(s_romProtectMutex);
+    return s_romUnprotected.count(emulator.GetId()) == 0;
+}
+
+void SetRomWriteProtected(const Emulator& emulator, bool on)
+{
+    std::lock_guard<std::mutex> lock(s_romProtectMutex);
+    if (on)
+        s_romUnprotected.erase(emulator.GetId());
+    else
+        s_romUnprotected.insert(emulator.GetId());
+}
+
+void ReplyEmulatorNotFound(std::function<void(const HttpResponsePtr&)>& callback)
+{
+    Json::Value error;
+    error["error"] = "Not Found";
+    error["message"] = "Emulator with specified ID not found";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k404NotFound);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
 
 /// @brief GET /api/v1/emulator/{id}/memory/read/{address}
 /// @brief Read memory at Z80 address
@@ -696,41 +730,27 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
 
-    // Phase 2 Item 6 — record a debugger-edit marker before the write
-    // executes. One marker per API call, regardless of byte count. The
-    // marker is a no-op unless a TTD session is Recording.
-    EmulatorContext* ctx = emulator->GetContext();
-
-    // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
-    // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
-    // bitmap is documented as emulator-thread-only (ttddirtytracker.h),
-    // so we must pause the Z80 thread before writing when recording is
-    // active. The cost is one paused frame boundary (~20 ms worst case);
-    // a no-op when no session is recording.
-    const bool ttdRecording = ctx && ctx->pTimeTravelManager
-                              && ctx->pTimeTravelManager->IsRecording();
-    const bool wasRunning = ttdRecording && emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning)
+    // A tool edit (Emulator::EditMemoryFromTool): it parks a running machine and,
+    // while TTD records, records the write as an event with its bytes, so a
+    // replay reproduces it (D9). Refused in the recorded past (409)
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+        for (Json::ArrayIndex i = 0; i < data.size(); i++)
+        {
+            memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
+            bytesWritten++;
+        }
+    });
+    if (!refused.empty())
     {
-        emulator->Pause(false);
-        emulator->WaitForPauseConfirmation(1000);
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
-
-    if (ctx && ctx->pTimeTravelManager)
-        ctx->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DebuggerEdit, "WebAPI memory write");
-
-    for (Json::ArrayIndex i = 0; i < data.size(); i++)
-    {
-        memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
-        bytesWritten++;
-    }
-
-    // Resume if we paused. Use broadcast=false to avoid spurious UI flicker —
-    // the caller did not ask to pause, and the framebuffer did not change
-    // in a way the periodic refresh won't pick up.
-    if (wasRunning)
-        emulator->Resume(false);
 
     Json::Value ret;
     ret["success"] = true;
@@ -863,7 +883,12 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     for (const MemorySearchMatch& m : result.matches)
     {
         Json::Value match;
-        if (m.page < 0)
+        if (!m.region.empty())
+        {
+            match["region"] = m.region;
+            match["offset"] = StringHelper::Format("0x%05X", m.address);
+        }
+        else if (m.page < 0)
             match["address"] = StringHelper::Format("0x%04X", m.address);
         else
         {
@@ -1042,13 +1067,14 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
 
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
-    if (!isROM && !isRAM && ReadRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+    const bool isCache = (type == "cache");   // the CPU's fast RAM pages (the Sprinter's), as page_read takes them
+    if (!isROM && !isRAM && !isCache && ReadRegionPage(req, emulator->GetContext(), type, pageStr, callback))
         return;  // a device memory region by name (/memory/page/vram/{n}: the Sprinter's video RAM)
-    if (!isROM && !isRAM)
+    if (!isROM && !isRAM && !isCache)
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Type must be 'ram', 'rom' or a device memory region (GET /memory/regions)";
+        error["message"] = "Type must be 'ram', 'rom', 'cache' or a device memory region (GET /memory/regions)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1104,7 +1130,7 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
-    const uint64_t maxPage = isRAM ? MAX_RAM_PAGES - 1 : MAX_ROM_PAGES - 1;
+    const uint64_t maxPage = isRAM ? MAX_RAM_PAGES - 1 : isCache ? MAX_CACHE_PAGES - 1 : MAX_ROM_PAGES - 1;
     if (page > maxPage)
     {
         Json::Value error;
@@ -1118,7 +1144,9 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
-    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page)) : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
+    uint8_t* pagePtr = isCache ? (memory->CacheBase() ? memory->CacheBase() + page * PAGE_SIZE : nullptr)
+                       : isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page))
+                               : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
     if (!pagePtr)
     {
         Json::Value error;
@@ -1214,10 +1242,23 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Memory* memory = emulator->GetMemory();
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
-    if (!isROM && !isRAM && WriteRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+    const bool isCache = (type == "cache");
+    if (!isROM && !isRAM && !isCache && WriteRegionPage(req, emulator->GetContext(), type, pageStr, callback))
         return;  // a device memory region by name (DeviceMemory::Write: the device's own write path)
+    if (!isROM && !isRAM && !isCache)
+    {
+        // Any other name wrote ROM pages before (the pointer below falls back to ROM)
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Type must be 'ram', 'rom', 'cache' or a device memory region (GET /memory/regions)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
-    if (isROM && s_romWriteProtected)
+    if (isROM && RomWriteProtected(*emulator))
     {
         Json::Value error;
         error["error"] = "Forbidden";
@@ -1260,7 +1301,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         callback(resp);
         return;
     }
-    const uint64_t maxWritePage = isRAM ? MAX_RAM_PAGES - 1 : MAX_ROM_PAGES - 1;
+    const uint64_t maxWritePage = isRAM ? MAX_RAM_PAGES - 1 : isCache ? MAX_CACHE_PAGES - 1 : MAX_ROM_PAGES - 1;
     if (page > maxWritePage)
     {
         Json::Value error;
@@ -1292,7 +1333,9 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
 
-    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page)) : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
+    uint8_t* pagePtr = isCache ? (memory->CacheBase() ? memory->CacheBase() + page * PAGE_SIZE : nullptr)
+                       : isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page))
+                               : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
     if (!pagePtr)
     {
         Json::Value error;
@@ -1309,7 +1352,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
     // A page edit behind the CPU's back: TTD must see it like any other tool write
-    emulator->EditMemoryFromTool("WebAPI page write", [&] {
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI page write", [&] {
         for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
         {
             pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
@@ -1318,6 +1361,17 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         if (isRAM)
             memory->MarkRamPageEdited(page);
     });
+    if (!refused.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;
@@ -1333,12 +1387,19 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
 
 /// @brief GET /api/v1/emulator/{id}/memory/rom/protect
 /// @brief Get ROM write protection status
-void EmulatorAPI::getROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getROMProtect(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        ReplyEmulatorNotFound(callback);
+        return;
+    }
+    const bool on = RomWriteProtected(*emulator);
     Json::Value ret;
-    ret["protected"] = s_romWriteProtected;
-    ret["message"] = s_romWriteProtected ? "ROM pages are write-protected" : "ROM pages are writable";
+    ret["protected"] = on;
+    ret["message"] = on ? "ROM pages are write-protected" : "ROM pages are writable";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1350,6 +1411,12 @@ void EmulatorAPI::getROMProtect(const HttpRequestPtr& req, std::function<void(co
 void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        ReplyEmulatorNotFound(callback);
+        return;
+    }
     auto body = req->getJsonObject();
     if (!body || !body->isMember("protected"))
     {
@@ -1364,16 +1431,114 @@ void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(co
         return;
     }
 
-    s_romWriteProtected = (*body)["protected"].asBool();
+    const bool on = (*body)["protected"].asBool();
+    SetRomWriteProtected(*emulator, on);
 
     Json::Value ret;
     ret["success"] = true;
-    ret["protected"] = s_romWriteProtected;
-    ret["message"] = s_romWriteProtected ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
+    ret["protected"] = on;
+    ret["message"] = on ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+Json::Value EvoFlashStatusJson(const EvoFlash::PersistStatus& s)
+{
+    Json::Value ret;
+    ret["machine"] = s.machine;
+    ret["file"] = s.path;
+    ret["file_exists"] = s.fileExists;
+    ret["base_rom_sha256"] = s.baseDigest;
+    ret["loaded_from_file"] = s.loadedFromFile;
+    ret["unsaved"] = s.unsaved;
+    ret["changes"] = static_cast<Json::UInt>(s.changes);
+    ret["other_image_files"] = Json::arrayValue;
+    for (const std::string& other : s.otherImageFiles)
+        ret["other_image_files"].append(other);
+    return ret;
+}
+
+void SendJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode code)
+{
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/memory/rom/flash
+/// @brief The ZX-Evo's saved flash: the file for the loaded ROM image, whether it exists, unsaved changes, files
+/// flashed over other ROM images (not used)
+void EmulatorAPI::getROMFlash(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    (void)req;
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator || !emulator->GetContext())
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        SendJson(callback, error, HttpStatusCode::k404NotFound);
+        return;
+    }
+    EvoFlash::PersistStatus status;
+    if (!EvoFlashGetStatus(emulator->GetContext(), status))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = EvoFlashResultText(EvoFlashResult::NoFlash);
+        SendJson(callback, error, HttpStatusCode::k400BadRequest);
+        return;
+    }
+    SendJson(callback, EvoFlashStatusJson(status), HttpStatusCode::k200OK);
+}
+
+/// @brief POST /api/v1/emulator/{id}/memory/rom/flash  {"action": "save" | "discard"}
+/// @brief save: write the flash file now; discard: delete it (the shipped ROM image returns at the next reset)
+void EmulatorAPI::postROMFlash(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator || !emulator->GetContext())
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        SendJson(callback, error, HttpStatusCode::k404NotFound);
+        return;
+    }
+    auto body = req->getJsonObject();
+    const std::string action = body && body->isMember("action") ? (*body)["action"].asString() : "";
+    if (action != "save" && action != "discard")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'action' must be 'save' or 'discard'";
+        SendJson(callback, error, HttpStatusCode::k400BadRequest);
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    const EvoFlashResult result = action == "save" ? EvoFlashRequestSave(context) : EvoFlashRequestDiscard(context);
+    Json::Value ret;
+    ret["action"] = action;
+    ret["result"] = EvoFlashResultText(result);
+    ret["success"] = EvoFlashAccepted(result);
+    if (action == "discard" && EvoFlashAccepted(result))
+        ret["note"] = "the shipped ROM image returns at the next reset";
+    EvoFlash::PersistStatus status;
+    if (EvoFlashGetStatus(context, status))
+        ret["flash"] = EvoFlashStatusJson(status);
+    const HttpStatusCode code = EvoFlashAccepted(result) ? HttpStatusCode::k200OK
+                                : result == EvoFlashResult::NoFlash ? HttpStatusCode::k400BadRequest
+                                : result == EvoFlashResult::ReplayOwnsInput ? HttpStatusCode::k409Conflict
+                                                                             : HttpStatusCode::k500InternalServerError;
+    SendJson(callback, ret, code);
 }
 
 namespace
@@ -1415,7 +1580,7 @@ Json::Value DecodeLatchValue(PagingLatch latch, uint32_t value, MEM_MODEL model,
 
 /// @brief GET /api/v1/emulator/{id}/state/paging
 /// @brief Get unified paging state assembled from the tagged port registry (P1-2)
-void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();

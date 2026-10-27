@@ -1,0 +1,70 @@
+ATTRP|5C8D|65535|65535|RAM|data||1 IY+83 Permanent current colours, etc.|1
+ATTRT|5C8F|65535|65535|RAM|data||N1 IY+85 Temporary current colours, etc.|1
+BORDCR|5C48|65535|65535|RAM|data||1 IY+14 Border colour * 8; also lower screen attributes.|1
+BREG|5C67|65535|65535|RAM|data||N1 IY+45 Calculator's B register.|1
+CHANS|5C4F|65535|65535|RAM|data||X2 IY+21 Address of channel data. (See 5CB6/5CF0 for IF1 CHANS start)|1
+CHARS|5C36|65535|65535|RAM|data||2 IY-4 256 less than address of character set.|1
+CH_ADD|5C5D|65535|65535|RAM|data||X2 IY+35 Address of the next character to be interpreted.|1
+COORDS_X|5C7D|65535|65535|RAM|data||1 IY+67 X-coordinate of last point plotted. (Original COORDS implies X then Y)|1
+COORDS_Y|5C7E|65535|65535|RAM|data||1 IY+68 Y-coordinate of last point plotted.|1
+CURCHL|5C51|65535|65535|RAM|data||X2 IY+23 Address of channel currently being used for input/output.|1
+DATADD|5C57|65535|65535|RAM|data||X2 IY+29 Address of terminator of last DATA item.|1
+DEFADD|5C0B|65535|65535|RAM|data||N2 IY-47 Address of arguments of user defined function, else 0.|1
+DEST|5C4D|65535|65535|RAM|data||N2 IY+19 Address of variable in assignment.|1
+DFCC|5C84|65535|65535|RAM|data||2 IY+74 Address in display file of PRINT position.|1
+DFCCL|5C86|65535|65535|RAM|data||2 IY+76 Like DFCC for lower part of screen.|1
+DFSZ|5C6B|65535|65535|RAM|data||X1 IY+49 The number of lines in lower part of screen.|1
+ECHO_E|5C82|65535|65535|RAM|data||2 IY+72 33-column number and 24-line number (lower half, end of input buffer).|1
+ERRNR|5C3A|65535|65535|RAM|data||1 IY+0 1 less than the report code. Starts at 255 (for -1).|1
+ERRSP|5C3D|65535|65535|RAM|data||X2 IY+3 Address of item on machine stack for error return.|1
+E_LINE|5C59|65535|65535|RAM|data||X2 IY+31 Address of command being typed in.|1
+E_PPC|5C49|65535|65535|RAM|data||2 IY+15 Number of current line (with program cursor).|1
+FLAGS|5C3B|65535|65535|RAM|data||X1 IY+1 Various flags: b7?, b6 Str/Num, b5 NewKey, b4 128KMode, b3 K/L In, b2 K/L Prn, b1 PrnTxt/Raw, b0 LeadSpace.|1
+FLAGS2|5C6A|65535|65535|RAM|data||1 IY+48 More flags: b7 DefTokIgnoreCase, b6 DefTokNoAbbrev, b5 DefTokSep, b4 OutChanK, b3 CapsLock, b2 ParseInQuote, b1 PrnBufNotEmpty, b0 ScreenClear.|1
+FLAGX|5C71|65535|65535|RAM|data||N1 IY+55 Various flags: b7 INPLINE, b6 StrRes, b5 INPUT, b4?, b3?, b2?, b1 NewVar, b0 Slice/SimpleStr.|1
+FRAMES|5C78|65535|65535|RAM|data||3 IY+62 3-byte frame counter, incremented every 20ms.|1
+KSTATE|5C00|65535|65535|RAM|data||N8 IY-58 Used in reading the keyboard.|1
+K_CUR|5C5B|65535|65535|RAM|data||2 IY+33 Address of cursor.|1
+K_DATA|5C0D|65535|65535|RAM|data||N1 IY-45 Stores 2nd byte of colour controls entered from keyboard.|1
+LASTK|5C08|65535|65535|RAM|data||N1 IY-50 Stores newly pressed key.|1
+LISTSP|5C3F|65535|65535|RAM|data||N2 IY+5 Address of return address from automatic listing.|1
+MASKP|5C8E|65535|65535|RAM|data||1 IY+84 Permanent transparency mask.|1
+MASKT|5C90|65535|65535|RAM|data||N1 IY+86 Temporary transparency mask.|1
+MEM|5C68|65535|65535|RAM|data||N2 IY+46 Address of area used for calculator's memory (usually MEMBOT).|1
+MEMBOT|5C92|65535|65535|RAM|data||N30 IY+88 Calculator's memory area / miscellaneous workspace.|1
+MODE|5C41|65535|65535|RAM|data||N1 IY+7 Specifies 'K', 'L', 'C', 'E' or 'G' cursor.|1
+NEWPPC|5C42|65535|65535|RAM|data||2 IY+8 Line to be jumped to.|1
+NMIADD|5CB0|65535|65535|RAM|data||2 IY+118 Holds user's NMI service routine address. [IF1: PRCOL]|1
+NSPPC|5C44|65535|65535|RAM|data||1 IY+10 Statement number in line to be jumped to.|1
+NXTLIN|5C55|65535|65535|RAM|data||X2 IY+27 Address of next line in program. (Note: Original text has 5C57 for NXTLIN, typo? DATADD is also 5C57)|1
+OLDPPC|5C6E|65535|65535|RAM|data||2 IY+52 Line number to which CONTINUE jumps.|1
+OSPPC|5C70|65535|65535|RAM|data||1 IY+54 Number within line of statement to which CONTINUE jumps.|1
+PFLAG|5C91|65535|65535|RAM|data||1 IY+87 Print flags: b7 Pap9Perm, b6 Pap9Curr, b5 Ink9Perm, b4 Ink9Curr, b3 InvPerm, b2 InvCurr, b1 OverPerm, b0 OverCurr.|1
+PIP|5C39|65535|65535|RAM|data||1 IY-1 Length of keyboard click.|1
+PPC|5C45|65535|65535|RAM|data||2 IY+11 Line number of statement currently being executed.|1
+PRAMT|5CB4|65535|65535|RAM|data||2 IY+122 Address of last byte of physical RAM.|1
+PRCC|5C80|65535|65535|RAM|data||X2 IY+70 Full address of next LPRINT pos (ZX printer buffer 5B00-5B1F). [Not used in 128K/some peripherals] [NMIADD on some systems]|1
+PROG|5C53|65535|65535|RAM|data||X2 IY+25 Address of BASIC program.|1
+P_POSN|5C7F|65535|65535|RAM|data||1 IY+69 33-column number of printer position. [Current default device 'T' or '1'-'8']|1
+RAMTOP|5CB2|65535|65535|RAM|data||2 IY+120 Address of last byte of BASIC system area.|1
+RASP|5C38|65535|65535|RAM|data||1 IY-2 Length of warning buzz.|1
+REPDEL|5C09|65535|65535|RAM|data||1 IY-49 Time (in 50ths of a second) before key repeat. Default 35.|1
+REPPER|5C0A|65535|65535|RAM|data||1 IY-48 Delay (in 50ths of a second) between successive repeats. Default 5.|1
+SCRCT|5C8C|65535|65535|RAM|data||1 IY+82 Scroll counter before 'scroll?'. Poke >1 to disable prompt.|1
+SEED|5C76|65535|65535|RAM|data||2 IY+60 The seed for RND. Set by RANDOMIZE.|1
+SPOSNL|5C8A|65535|65535|RAM|data||X2 IY+80 Like S_POSN but for lower part.|1
+STKBOT|5C63|65535|65535|RAM|data||X2 IY+41 Address of bottom of calculator stack.|1
+STKEND|5C65|65535|65535|RAM|data||X2 IY+43 Address of start of spare space.|1
+STRLEN|5C72|65535|65535|RAM|data||N2 IY+56 Length of string type destination in assignment.|1
+STRMS|5C10|65535|65535|RAM|data||X38 IY-42 Addresses of channels attached to streams &FD to &0F.|1
+SUBPPC|5C47|65535|65535|RAM|data||1 IY+13 Number within line of statement currently being executed.|1
+S_POSN_COL|5C88|65535|65535|RAM|data||X1 IY+78 33-column number for PRINT position. (Original S_POSN implies col then line)|1
+S_POSN_ROW|5C89|65535|65535|RAM|data||X1 IY+79 24-line number for PRINT position.|1
+S_TOP|5C6C|65535|65535|RAM|data||2 IY+50 The number of the top program line in automatic listings.|1
+TVDATA|5C0E|65535|65535|RAM|data||N2 IY-44 Stores bytes of colour, AT and TAB controls going to TV.|1
+TVFLAG|5C3C|65535|65535|RAM|data||X1 IY+2 TV Flags: b7?, b6?, b5 ClrLwKey, b4 AutoList, b3 ModeChg, b2?, b1?, b0?.|1
+T_ADDR|5C74|65535|65535|RAM|data||N2 IY+58 Address of next item in syntax table; file ops: 0=SAVE,1=LOAD,2=VERIFY,3=MERGE.|1
+UDG|5C7B|65535|65535|RAM|data||2 IY+65 Address of first user-defined graphic.|1
+VARS|5C4B|65535|65535|RAM|data||X2 IY+17 Address of variables.|1
+WORKSP|5C61|65535|65535|RAM|data||X2 IY+39 Address of temporary work space.|1
+X_PTR|5C5F|65535|65535|RAM|data||2 IY+37 Address of the character after the [?] error marker.|1

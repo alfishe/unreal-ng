@@ -140,6 +140,28 @@ Json::Value deviceToJson(const MouseDeviceStatus& device)
         json["ps2"]["resolution"] = device.ps2.resolution;
         json["ps2"]["counts_per_mm"] = 1 << device.ps2.resolution;
     }
+    if (device.hasPio)
+    {
+        const MouseDeviceStatus::Pio& pio = device.pio;
+        Json::Value out;
+        for (int axis = 0; axis < 2; axis++)
+        {
+            const MouseDeviceStatus::Pio::Port& port = pio.port[axis];
+            Json::Value p;
+            p["mode"] = port.mode;
+            p["vector"] = port.vector;
+            p["data"] = port.data;
+            p["interrupt_enabled"] = port.ie;
+            p["interrupt_pending"] = port.ip;
+            p["under_service"] = port.ius;
+            out[axis == 0 ? "a" : "b"] = p;
+        }
+        out["pending"]["dx"] = pio.pendingDx;
+        out["pending"]["dy"] = pio.pendingDy;
+        out["buttons_port"] = pio.buttonsPort;
+        out["strobes"] = static_cast<Json::UInt64>(pio.strobes);
+        json["pio"] = out;
+    }
     return json;
 }
 

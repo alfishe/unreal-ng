@@ -12,6 +12,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/video/displaygeometry.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
 namespace
@@ -116,6 +117,80 @@ ScreenshotResult Fail(ScreenshotError error, const std::string& message)
     r.errorMessage = message;
     return r;
 }
+/// Encode `rgba` (width x height) as the options say, into `r` (the bytes, or the file): r.ok on success
+void EncodeInto(const uint8_t* rgba, uint16_t width, uint16_t height, const ScreenshotOptions& options, ScreenshotResult& r)
+{
+    std::vector<uint8_t> encoded = options.format == ScreenshotFormat::Png ? EncodePng(rgba, width, height)
+                                                                          : EncodeGif(rgba, width, height);
+    if (encoded.empty())
+    {
+        r.error = ScreenshotError::EncodeFailed;
+        r.errorMessage = std::string("The ") + Screenshotter::FormatName(options.format) + " encoder produced nothing";
+        return;
+    }
+
+    r.format = options.format;
+    r.width = width;
+    r.height = height;
+    r.encodedSize = encoded.size();
+
+    if (!options.saveTo.empty())
+    {
+        const std::filesystem::path out = FileHelper::ToFsPath(options.saveTo);
+        if (out.has_parent_path())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(out.parent_path(), ec);  // a failure shows in the open below
+        }
+        if (!FileHelper::SaveBufferToFile(options.saveTo, encoded.data(), encoded.size()))
+        {
+            std::remove(options.saveTo.c_str());  // never leave a truncated image behind
+            r.error = ScreenshotError::IoFailed;
+            r.errorMessage = "Failed to write the image to " + options.saveTo;
+            return;
+        }
+        // The absolute path: a relative one resolves against the emulator's working directory,
+        // which the caller (an MCP client, a script elsewhere) does not know
+        std::error_code ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(out, ec);
+        r.savedFile = ec ? options.saveTo : FileHelper::FromFsPath(absolute.lexically_normal());
+    }
+    else
+    {
+        r.bytes = std::move(encoded);
+    }
+    r.ok = true;
+}
+
+/// Source window: the picture the front end's window draws for this emulator (WindowView), the frame it shows
+ScreenshotResult TakeWindow(const std::string& emulatorId, const PictureGeometry& frame, const ScreenshotOptions& options)
+{
+    if (options.area != ScreenshotArea::Full)
+        return Fail(ScreenshotError::BadParameter, "source=window gives the whole picture the window draws: use area=full");
+
+    const std::shared_ptr<IWindowViewProvider> provider = WindowView::Provider();
+    if (!provider)
+        return Fail(ScreenshotError::NoWindow, "No GUI window: source=window needs a front end that draws the machine (unreal-qt)");
+
+    WindowViewGrab grab;
+    std::string error;
+    if (!provider->GrabWindowView(emulatorId, grab, error))
+        return Fail(ScreenshotError::NoWindow, error.empty() ? "The window could not be grabbed" : error);
+    if (grab.width == 0 || grab.height == 0 || grab.rgba.size() != static_cast<size_t>(grab.width) * grab.height * RGBA_SIZE)
+        return Fail(ScreenshotError::NoFrame, "The window gave no picture");
+
+    ScreenshotResult r;
+    r.crop = PictureRect{0, 0, frame.width, frame.height};
+    r.frame = frame;
+    EncodeInto(grab.rgba.data(), grab.width, grab.height, options, r);
+    if (!r.ok)
+        return r;
+    grab.rgba.clear();
+    grab.rgba.shrink_to_fit();
+    r.fromWindow = true;
+    r.window = std::move(grab);
+    return r;
+}
 }  // namespace
 
 ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const ScreenshotOptions& options)
@@ -138,45 +213,44 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
         rgba = cropped.data();
     }
 
-    std::vector<uint8_t> encoded = options.format == ScreenshotFormat::Png ? EncodePng(rgba, rect.width, rect.height)
-                                                                          : EncodeGif(rgba, rect.width, rect.height);
-    if (encoded.empty())
-        return Fail(ScreenshotError::EncodeFailed, std::string("The ") + FormatName(options.format) + " encoder produced nothing");
+    // The picture as the CRT shows it, the same as a recording (DisplayGeometry::Picture): the whole frame in the
+    // reference 352:288 shape, the working window in its share of it. A Sprinter / TS-Conf frame of 736x288 / 720x288
+    // doubles its lines, an ATM's 640x200 window grows to its shape; a Spectrum's 352x288 stays as it is. The stored
+    // pixels are the crop's (and /capture/framebuffer's). A video card's picture (the FT812's VGA modes) has square
+    // pixels of its own and stays as it is
+    DisplayGeometry::Size shown{rect.width, rect.height, 1};
+    if (g.source != FrameSource::External)
+    {
+        const double aspect = options.area == ScreenshotArea::Full
+                                  ? 0.0
+                                  : DisplayGeometry::WindowAspect(g.width, g.height, rect.width, rect.height);
+        shown = DisplayGeometry::Picture(rect.width, rect.height, aspect);
+    }
+    std::vector<uint8_t> shaped;
+    if (shown.width != rect.width || shown.height != rect.height)
+    {
+        shaped.resize(static_cast<size_t>(shown.width) * shown.height * RGBA_SIZE);
+        DisplayGeometry::StretchNearest(rgba, rect.width, rect.height, shaped.data(), shown.width, shown.height);
+        rgba = shaped.data();
+    }
 
     ScreenshotResult r;
-    r.format = options.format;
-    r.width = rect.width;
-    r.height = rect.height;
     r.crop = rect;
     r.frame = g;
-    r.encodedSize = encoded.size();
-
-    if (!options.saveTo.empty())
-    {
-        const std::filesystem::path out = FileHelper::ToFsPath(options.saveTo);
-        if (out.has_parent_path())
-        {
-            std::error_code ec;
-            std::filesystem::create_directories(out.parent_path(), ec);  // a failure shows in the open below
-        }
-        if (!FileHelper::SaveBufferToFile(options.saveTo, encoded.data(), encoded.size()))
-        {
-            std::remove(options.saveTo.c_str());  // never leave a truncated image behind
-            return Fail(ScreenshotError::IoFailed, "Failed to write the image to " + options.saveTo);
-        }
-        r.savedFile = options.saveTo;
-    }
-    else
-    {
-        r.bytes = std::move(encoded);
-    }
-    r.ok = true;
+    EncodeInto(rgba, shown.width, shown.height, options, r);
     return r;
 }
 
 ScreenshotResult Screenshotter::TakeFrom(Screen& screen, const ScreenshotOptions& options, bool emulationParked)
 {
     FrameSnapshot snapshot;
+    if (options.source == ScreenshotSource::Window)
+    {
+        const EmulatorContext* context = screen.GetEmulatorContext();
+        if (!context || !context->pEmulator)
+            return Fail(ScreenshotError::NoWindow, "The screen belongs to no emulator: no window shows it");
+        return TakeWindow(context->pEmulator->GetId(), screen.DescribeCurrentFrame(), options);
+    }
     if (options.source == ScreenshotSource::Live)
     {
         if (!screen.SnapshotLive(snapshot, emulationParked, options.liveTimeoutMs))
@@ -215,6 +289,8 @@ ScreenshotResult Screenshotter::Take(const std::string& emulatorId, const Screen
         FrameSnapshot snapshot;
         if (!group->SnapshotDisplay(snapshot))
             return Fail(ScreenshotError::NoFrame, "The ZX-Poly group has not composed a frame yet");
+        if (options.source == ScreenshotSource::Window)
+            return TakeWindow(emulatorId, snapshot.geometry, options);
         return Render(snapshot, options);
     }
     return TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
@@ -248,6 +324,8 @@ bool Screenshotter::ParseSource(const std::string& text, ScreenshotSource& sourc
         source = ScreenshotSource::Presented;
     else if (text == "live")
         source = ScreenshotSource::Live;
+    else if (text == "window")
+        source = ScreenshotSource::Window;
     else
         return false;
     return true;
@@ -283,7 +361,7 @@ bool Screenshotter::ParseRequestWords(const std::string& area, const std::string
     }
     if (!source.empty() && !ParseSource(source, options.source))
     {
-        message = "Unknown source '" + source + "': use presented or live";
+        message = "Unknown source '" + source + "': use presented, live or window";
         return false;
     }
     return true;
@@ -296,7 +374,13 @@ const char* Screenshotter::AreaName(ScreenshotArea area)
 
 const char* Screenshotter::RequestSourceName(ScreenshotSource source)
 {
-    return source == ScreenshotSource::Presented ? "presented" : "live";
+    switch (source)
+    {
+        case ScreenshotSource::Presented: return "presented";
+        case ScreenshotSource::Live: return "live";
+        case ScreenshotSource::Window: return "window";
+    }
+    return "unknown";
 }
 
 const char* Screenshotter::FormatName(ScreenshotFormat format)
@@ -326,6 +410,7 @@ const char* Screenshotter::ErrorName(ScreenshotError error)
         case ScreenshotError::BadGeometry: return "bad-geometry";
         case ScreenshotError::EncodeFailed: return "encode-failed";
         case ScreenshotError::IoFailed: return "io-failed";
+        case ScreenshotError::NoWindow: return "no-window";
     }
     return "unknown";
 }

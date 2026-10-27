@@ -1,4 +1,6 @@
 #include "videowall/TileGrid.h"
+#include <emulator/video/displaygeometry.h>
+#include <QPainter>
 
 #include <emulatormanager.h>
 #include <emulator/emulatorcontext.h>
@@ -350,20 +352,41 @@ auto& desc = screen->GetFramebufferDescriptor();
     }
 
     // Copy from the frame-end latched snapshot (tear-free)
+    PictureGeometry geometry;
     if (!screen->CopyPresentedFramebuffer(_latchedFrame.bits(),
-                                          static_cast<size_t>(_latchedFrame.sizeInBytes())))
+                                          static_cast<size_t>(_latchedFrame.sizeInBytes()), &geometry))
     {
         return;
     }
 
     QImage& rawImage = _latchedFrame;
-    
-    // 2. Extract the 256x192 active area
-    QImage activeArea = rawImage.copy(48, 48, 256, 192);
+
+    // 2. Extract the working picture: the machine says where it sits in the frame
+    QRect window(geometry.screenWindow.x, geometry.screenWindow.y, geometry.screenWindow.width,
+                 geometry.screenWindow.height);
+    window = window.intersected(rawImage.rect());
+    QImage activeArea = window.isEmpty() ? rawImage : rawImage.copy(window);
 
     // 3. Scale it *once* to the target tile size
-    QImage scaledTile = activeArea.scaled(TILE_WIDTH, TILE_HEIGHT, Qt::IgnoreAspectRatio, Qt::FastTransformation);
-    
+    // (the picture keeps the raster's own shape inside the 4:3 tile: bars, not a stretch)
+    const double aspect = DisplayGeometry::WindowAspect(static_cast<uint16_t>(rawImage.width()), static_cast<uint16_t>(rawImage.height()),
+                                                        static_cast<uint16_t>(activeArea.width()), static_cast<uint16_t>(activeArea.height()));
+    QSize shown(TILE_WIDTH, TILE_HEIGHT);
+    if (aspect > 0.0)
+    {
+        if (aspect > static_cast<double>(TILE_WIDTH) / TILE_HEIGHT)
+            shown.setHeight(qRound(TILE_WIDTH / aspect));
+        else
+            shown.setWidth(qRound(TILE_HEIGHT * aspect));
+    }
+    QImage scaledTile(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+    scaledTile.fill(Qt::black);
+    {
+        const QImage picture = activeArea.scaled(shown, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        QPainter painter(&scaledTile);
+        painter.drawImage((TILE_WIDTH - shown.width()) / 2, (TILE_HEIGHT - shown.height()) / 2, picture);
+    }
+
     if (scaledTile.isNull()) return;
 
     // 4. Blit to Composite Buffer

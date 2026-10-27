@@ -14,8 +14,11 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/video/screen.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -425,4 +428,378 @@ TEST_F(SnapshotPlan_Test, AMachinePolicyIsAskedBeforeTheFitCheck)
     ASSERT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-scorpion.z80")))
         << "the policy took it; the 128 KB Pentagon's fit check never ran";
     EXPECT_EQ(machine.committed, 1);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ATM family (P5): a snapshot lands in RAM and the picture is the Pentagon's
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// FNV-1a over the frame the machine shows
+uint64_t PictureHash(Emulator* emulator)
+{
+    uint32_t* frame = nullptr;
+    size_t size = 0;
+    emulator->GetContext()->pScreen->GetFramebufferData(&frame, &size);
+    uint64_t h = 14695981038346656037ull;
+    for (size_t i = 0; i < size / sizeof(uint32_t); ++i)
+    {
+        h ^= frame[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+uint64_t PictureAfterLoad(const char* model, const std::string& file)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+    EXPECT_NE(emulator, nullptr) << model;
+    if (!emulator)
+        return 0;
+    EXPECT_TRUE(emulator->LoadSnapshot(file)) << model << " " << file;
+    emulator->RunNFrames(3);
+    const uint64_t hash = PictureHash(emulator);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    return hash;
+}
+}  // namespace
+
+// The reset of an ATM leaves the pager off (or the system ROM on): the snapshot used to land in a machine whose RAM was not in
+// the address space. The pictures of static programs are compared with the Pentagon's on all three clones
+TEST(SnapshotAtm_Test, TheSamePictureAsThePentagonOnEveryClone)
+{
+    for (const char* file : {"loaders/z80/dizzyx.z80", "loaders/sna/z80full.sna", "loaders/sna/Dizzy Y.sna"})
+    {
+        const std::string path = TestPathHelper::GetTestDataPath(file);
+        const uint64_t pentagon = PictureAfterLoad("PENTAGON", path);
+        for (const char* clone : {"ATM710", "ATM3", "ATM450"})
+            EXPECT_EQ(PictureAfterLoad(clone, path), pentagon) << clone << " " << file;
+    }
+}
+
+// An SNA / Z80 has no clock: the program runs at the clock the machine ran at (Xpeccy keeps it too), not at the reset's
+// 3.5 MHz (owner report 2026-10-18, ATM710 at 7 MHz). The ATM710's #FF77 bit 3 is 7 MHz; the ATM3's #FF77 bit 3 is
+// 14 MHz, its #EFF7 bit 4 3.5 MHz (7 MHz is its reset clock). Six machines are created: about 200 ms
+TEST(SnapshotAtm_Test, TheClockTheMachineRanAtIsKept)
+{
+    struct Case
+    {
+        const char* model;
+        uint16_t port;
+        uint8_t bit;
+        uint8_t ratio;
+    };
+    for (const Case& c : {Case{"ATM710", 0xFF77, 0x08, 2}, Case{"ATM3", 0xFF77, 0x08, 4}, Case{"ATM3", 0xEFF7, 0x10, 1}})
+    {
+        for (const char* file : {"loaders/sna/across-the-edge-second.sna", "loaders/z80/dizzyx.z80"})
+        {
+            const std::string what = std::string(c.model) + " #" + (c.port == 0xFF77 ? "FF77" : "EFF7") + " " + file;
+            Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(c.model, LoggerLevel::LogError, RamPowerOn::Zero);
+            ASSERT_NE(emulator, nullptr) << what;
+            EmulatorContext* context = emulator->GetContext();
+            EmulatorState& state = context->emulatorState;
+            // #EFF7 is the pager's inside the shadow (the ATM3 boots in it): the latch is set the way the decoder keeps it
+            if (c.port == 0xFF77)
+                context->pPortDecoder->DecodePortOut(c.port, static_cast<uint8_t>(state.pFF77 | c.bit), 0x8000);
+            else
+                context->pPortDecoder->RestoreClockSelect(static_cast<uint16_t>(c.bit << 8));
+            ASSERT_EQ(state.hw_turbo_ratio, c.ratio) << what << ": the guest's clock select";
+
+            ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file))) << what;
+            EXPECT_EQ(state.hw_turbo_ratio, c.ratio) << what;
+            emulator->RunNFrames(1, true);
+            EXPECT_EQ(state.current_z80_frequency_multiplier, state.next_z80_frequency_multiplier * c.ratio) << what;
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
+}
+
+// A load sets up only the video mode the snapshot's ports select (Screen::RasterDeferral): the reset's EGA mode on the
+// way is never built. From a ZX picture the framebuffer stays the same buffer (nothing for the GUI to re-attach); from an
+// EGA program the ZX mode comes back, with the picture a fresh machine shows
+TEST(SnapshotAtm_Test, ALoadSetsUpOnlyTheVideoModeTheSnapshotSelects)
+{
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/sna/z80full.sna");
+    const uint64_t fresh = PictureAfterLoad("ATM3", path);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    Screen& screen = *emulator->GetContext()->pScreen;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    ASSERT_EQ(screen.GetVideoMode(), M_ZX48);
+    const uint8_t* zxBuffer = screen.GetFramebufferDescriptor().memoryBuffer;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    EXPECT_EQ(screen.GetFramebufferDescriptor().memoryBuffer, zxBuffer) << "the framebuffer was built again";
+
+    // An EGA program before the load
+    emulator->GetContext()->emulatorState.pFF77 = (emulator->GetContext()->emulatorState.pFF77 & ~PortDecoder_ATM710::ATM_FF77_VMODE_MASK) | FF77_16;
+    screen.InitRaster();
+    ASSERT_EQ(screen.GetVideoMode(), M_ATM16);
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    emulator->RunNFrames(3);
+    EXPECT_EQ(PictureHash(emulator), fresh);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
+{
+    for (const char* model : {"ATM710", "ATM3"})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr) << model;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna"))) << model;
+        const EmulatorState& state = emulator->GetContext()->emulatorState;
+        Memory& memory = *emulator->GetContext()->pMemory;
+        EXPECT_NE(state.atm.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
+        EXPECT_NE(state.atm.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
+        EXPECT_EQ(state.flags & CF_TRDOS, 0) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(1), 5u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(2), 2u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(3), 7u) << model << ": window 3 follows #7FFD";
+        EXPECT_TRUE(memory.IsBank0ROM()) << model << ": window 0 is ROM";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+    // The ATM450: ROM at #0000, not the system ROM
+    Emulator* atm450 = EmulatorTestHelper::CreateStandardEmulator("ATM450", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(atm450, nullptr);
+    ASSERT_TRUE(atm450->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna")));
+    EXPECT_NE(atm450->GetContext()->emulatorState.atm.aFE & 0x80, 0) << "ROM at #0000";
+    EXPECT_EQ(atm450->GetContext()->emulatorState.atm.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
+    EmulatorTestHelper::CleanupEmulator(atm450);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// TS-Conf (P5): window 0 shows the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The reset leaves MEM_CONFIG in the normal mode: window 0 is ROM page 0 (the TS-BIOS image, an "unknown ROM") whatever #7FFD
+// says, so a snapshot's program called the TS-BIOS where it expected BASIC. The commit now puts MEM_CONFIG in the mapped mode
+// (window 0 = the {service, TR-DOS, 128, 48} group by ROM128 = #7FFD bit 4) with the 128K decode first
+TEST(SnapshotTsConf_Test, WindowZeroShowsTheBasicTheSnapshotSelected)
+{
+    struct Case
+    {
+        const char* file;
+        bool basic48;
+        const char* what;
+    };
+    const Case cases[] = {
+        {"loaders/sna/Dizzy Y 2.sna", false, "128K SNA, #7FFD = #00: BASIC-128"},
+        {"loaders/sna/aytest_0.2.sna", true, "128K SNA, #7FFD = #10: BASIC-48"},
+        {"loaders/sna/z80full.sna", true, "48K SNA"},
+        {"loaders/z80/newbench.z80", true, "48K Z80 (#7FFD = #30)"},
+        {"loaders/z80/BBG128.z80", false, "128K Z80, #7FFD = #30 -> bit 4 set: BASIC-48"},
+    };
+    for (const Case& c : cases)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr);
+        Memory& memory = *emulator->GetContext()->pMemory;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << c.what;
+        const uint8_t p7ffd = emulator->GetContext()->emulatorState.p7FFD;
+        const bool basic48 = (p7ffd & 0x10) != 0;
+        EXPECT_TRUE(memory.IsBank0ROM()) << c.what;
+        EXPECT_EQ(memory.GetROMPage(), memory.GetROMPageFromAddress(basic48 ? memory.base_sos_rom : memory.base_128_rom))
+            << c.what << " (#7FFD " << std::hex << int(p7ffd) << "): the ROM that #7FFD bit 4 names";
+        if (std::string(c.file).find("BBG128") == std::string::npos)
+        {
+            EXPECT_EQ(basic48, c.basic48) << c.what;
+        }
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ROM latch agrees with the ROM shown (P5): a bank recompute keeps the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The shipped configs say RESET=128, so after the reset the latches select BASIC-128. A 48K snapshot showed the 48K ROM (a bank
+// pointer) while the latch still said BASIC-128: the first recompute of the banks (any #7FFD write, a TR-DOS page-in) swapped the
+// ROM under the program, on every machine. The other tests reset to RM_SOS, where the latch already agrees and the bug hides
+TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
+{
+    struct Case
+    {
+        const char* file;
+        bool is48k;   // a 48K snapshot: the ROM must be the 48K BASIC. A 128K one (#7FFD = #10 here) keeps what it selected
+    };
+    const Case cases[] = {
+        {"loaders/sna/z80full.sna", true},      // 48K SNA
+        {"loaders/z80/newbench.z80", true},     // 48K Z80
+        {"loaders/sna/aytest_0.2.sna", false},  // 128K SNA, #7FFD = #10 (on a +2A / +3 that is ROM 1: no #1FFD in an SNA)
+    };
+    for (const char* model : {"PENTAGON", "128k", "PLUS2", "PLUS2A", "PLUS3", "TSL", "ATM710", "ATM3", "ATM450", "PROFI",
+                              "SCORPION", "PROFSCORP"})
+    {
+        for (const Case& c : cases)
+        {
+            Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+            ASSERT_NE(emulator, nullptr) << model;
+            emulator->GetContext()->config.reset_rom = RM_128;
+            emulator->Reset();
+            Memory& memory = *emulator->GetContext()->pMemory;
+            ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << model << " " << c.file;
+            const uint16_t shown = memory.GetROMPage();
+            if (c.is48k)
+            {
+                EXPECT_EQ(shown, memory.GetROMPageFromAddress(memory.base_sos_rom)) << model << " " << c.file << ": the 48K BASIC";
+            }
+            memory.UpdateZ80Banks();
+            EXPECT_EQ(memory.GetROMPage(), shown) << model << " " << c.file << ": the latch agrees with the ROM shown";
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
+}
+
+// The plan announces a commit exactly once, and only when the snapshot WILL be committed: the emulator ends a TTD recording
+// session from it, so a refused load must never fire it
+class SnapshotBeforeCommit_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_emulator, nullptr);
+        _options.beforeCommit = [this] { _announced++; };
+    }
+    void TearDown() override { EmulatorTestHelper::CleanupEmulator(_emulator); }
+
+    Emulator* _emulator = nullptr;
+    snapshot::Options _options;
+    int _announced = 0;
+};
+
+TEST_F(SnapshotBeforeCommit_Test, AGoodLoadAnnouncesTheCommitOnce)
+{
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80", "loaders/szx/libspectrum/synth-pentagon.szx"})
+    {
+        _announced = 0;
+        EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 1) << file;
+    }
+}
+
+TEST_F(SnapshotBeforeCommit_Test, ARefusedLoadNeverAnnouncesIt)
+{
+    // an SZX of another model (the loader's own rule, now judged by the plan), an SPG on a machine that is not a TS-Conf
+    for (const char* file : {"loaders/szx/libspectrum/synth-48.szx", "loaders/szx/libspectrum/synth-128.szx",
+                             "machines/tsconf/spg/empty.spg"})
+    {
+        EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 0) << file << ": the load was refused, nothing was announced";
+        EXPECT_TRUE(_emulator->LastSnapshotReport().refused) << file;
+        EXPECT_FALSE(_emulator->LastSnapshotReport().reason.empty()) << file;
+    }
+    // the refusals carry what would work
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:TSL");
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:128k");
+    EXPECT_EQ(_announced, 0);
+
+    // a file that is no snapshot at all fails before the plan
+    const std::string garbage = TestPathHelper::GetUniqueTestScratchPath("garbage.sna");
+    {
+        std::ofstream out(garbage, std::ios::binary);
+        out << "not a snapshot";
+    }
+    EXPECT_FALSE(_emulator->LoadSnapshot(garbage, {}, _options));
+    EXPECT_EQ(_announced, 0);
+    std::remove(garbage.c_str());
+}
+
+TEST_F(SnapshotBeforeCommit_Test, TheCallersChoiceOfLegacyIsJudgedByThePlanToo)
+{
+    _options.commit = "legacy";
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, _options));
+    EXPECT_EQ(_announced, 1);
+}
+
+// inspect (the dry plan) never announces
+TEST_F(SnapshotBeforeCommit_Test, InspectNeverAnnouncesIt)
+{
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(_emulator->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), _options, inspected, error)) << error;
+    EXPECT_EQ(_announced, 0);
+}
+
+// A ZX-Poly takes a .zxp and nothing else (owner rule 2026-10-07): the four modules run in lockstep, so a snapshot of one machine
+// means nothing there. Refused on load with the reason, nothing written on save, a module never replaced by another model
+class SnapshotZXPoly_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        std::string error;
+        _master = EmulatorManager::GetInstance()->CreateZXPolyMachine("zxpoly-snapshot", "128K", "", &error);
+        ASSERT_TRUE(_master) << error;
+        _plain = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_plain, nullptr);
+    }
+    void TearDown() override
+    {
+        for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+            EmulatorManager::GetInstance()->RemoveEmulator(id);
+    }
+
+    std::shared_ptr<Emulator> _master;
+    Emulator* _plain = nullptr;
+};
+
+TEST_F(SnapshotZXPoly_Test, EverySingleMachineSnapshotIsRefusedWithTheReason)
+{
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80", "loaders/szx/libspectrum/synth-128.szx",
+                             "machines/tsconf/spg/empty.spg"})
+    {
+        EXPECT_FALSE(_master->LoadSnapshot(TestPathHelper::GetTestDataPath(file))) << file;
+        const snapshot::Report& report = _master->LastSnapshotReport();
+        EXPECT_TRUE(report.refused) << file;
+        EXPECT_EQ(report.needs, "format:zxp") << file;
+        EXPECT_NE(report.reason.find("ZX-Poly"), std::string::npos) << report.reason;
+        EXPECT_NE(report.reason.find(".zxp"), std::string::npos) << "it says what is taken";
+    }
+    // the same file loads on a single machine
+    EXPECT_TRUE(_plain->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna")));
+
+    // inspect says so before a load is tried
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(_master->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, inspected, error)) << error;
+    EXPECT_FALSE(inspected.find("would_load")->b);
+}
+
+TEST_F(SnapshotZXPoly_Test, TheLauncherNeverReplacesAModule)
+{
+    SnapshotLoadRequest request;
+    request.emulatorId = _master->GetId();
+    request.path = TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg");   // would switch a single machine to TS-Conf
+    request.switchModel = true;
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.modelSwitched);
+    EXPECT_NE(result.message.find("ZX-Poly"), std::string::npos) << result.message;
+    EXPECT_NE(EmulatorManager::GetInstance()->GetEmulator(_master->GetId()), nullptr) << "the module is still there";
+}
+
+TEST_F(SnapshotZXPoly_Test, NoSnapshotIsSavedFromAModule)
+{
+    const snapshot::SaveFormats formats = _master->SnapshotSaveFormats();
+    EXPECT_FALSE(formats.viewAvailable);
+    for (const snapshot::FormatStatus& status : formats.formats)
+    {
+        EXPECT_FALSE(status.available) << snapshot::ToText(status.format);
+        EXPECT_EQ(status.needs, "zxpoly");
+        EXPECT_NE(status.reason.find("ZX-Poly"), std::string::npos) << status.reason;
+    }
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("zxpoly-save.sna");
+    EXPECT_FALSE(_master->SaveSnapshot(path));
+    EXPECT_FALSE(std::ifstream(path).good());
 }

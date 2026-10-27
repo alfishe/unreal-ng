@@ -1,0 +1,13 @@
+# The Deck's back grips carry the layer key and the bookmarks, as the Elite's paddles (debug-and-ttd.md §4.1): L5
+# (paddle.p4) holds the layer, R4 / L4 step the bookmarks, R5 finds the last write
+schema: 1
+kind: debug
+id: builtin/debug/steam-deck
+label: Debugger on a Steam Deck
+applies_to: { families: [steam-deck] }
+layer_key: { control: paddle.p4, mode: hold }
+layers:
+  debug:
+    paddle.p1: { action: ttd.bookmark_next }
+    paddle.p3: { action: ttd.bookmark_prev }
+    paddle.p2: { action: ttd.find_last_write }

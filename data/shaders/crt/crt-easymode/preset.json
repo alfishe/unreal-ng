@@ -1,0 +1,173 @@
+{
+ "key": "crt-easymode",
+ "preset": "crt/crt-easymode.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-easymode.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "BRIGHT_BOOST": "float",
+    "DILATION": "float",
+    "GAMMA_INPUT": "float",
+    "GAMMA_OUTPUT": "float",
+    "MASK_SIZE": "float",
+    "MASK_STAGGER": "float",
+    "MASK_STRENGTH": "float",
+    "MASK_DOT_HEIGHT": "float",
+    "MASK_DOT_WIDTH": "float",
+    "SCANLINE_CUTOFF": "float",
+    "SCANLINE_BEAM_WIDTH_MAX": "float",
+    "SCANLINE_BEAM_WIDTH_MIN": "float",
+    "SCANLINE_BRIGHT_MAX": "float",
+    "SCANLINE_BRIGHT_MIN": "float",
+    "SCANLINE_STRENGTH": "float",
+    "SHARPNESS_H": "float",
+    "SHARPNESS_V": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "SHARPNESS_H": {
+   "description": "Sharpness Horizontal",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SHARPNESS_V": {
+   "description": "Sharpness Vertical",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "MASK_STRENGTH": {
+   "description": "Mask Strength",
+   "initial": 0.3,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "MASK_DOT_WIDTH": {
+   "description": "Mask Dot Width",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "MASK_DOT_HEIGHT": {
+   "description": "Mask Dot Height",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "MASK_STAGGER": {
+   "description": "Mask Stagger",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "MASK_SIZE": {
+   "description": "Mask Size",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 100.0,
+   "step": 1.0
+  },
+  "SCANLINE_STRENGTH": {
+   "description": "Scanline Strength",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SCANLINE_BEAM_WIDTH_MIN": {
+   "description": "Scanline Beam Width Min.",
+   "initial": 1.5,
+   "minimum": 0.5,
+   "maximum": 5.0,
+   "step": 0.5
+  },
+  "SCANLINE_BEAM_WIDTH_MAX": {
+   "description": "Scanline Beam Width Max.",
+   "initial": 1.5,
+   "minimum": 0.5,
+   "maximum": 5.0,
+   "step": 0.5
+  },
+  "SCANLINE_BRIGHT_MIN": {
+   "description": "Scanline Brightness Min.",
+   "initial": 0.35,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SCANLINE_BRIGHT_MAX": {
+   "description": "Scanline Brightness Max.",
+   "initial": 0.65,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SCANLINE_CUTOFF": {
+   "description": "Scanline Cutoff",
+   "initial": 400.0,
+   "minimum": 1.0,
+   "maximum": 1000.0,
+   "step": 1.0
+  },
+  "GAMMA_INPUT": {
+   "description": "Gamma Input",
+   "initial": 2.0,
+   "minimum": 0.1,
+   "maximum": 5.0,
+   "step": 0.1
+  },
+  "GAMMA_OUTPUT": {
+   "description": "Gamma Output",
+   "initial": 1.8,
+   "minimum": 0.1,
+   "maximum": 5.0,
+   "step": 0.1
+  },
+  "BRIGHT_BOOST": {
+   "description": "Brightness Boost",
+   "initial": 1.2,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "DILATION": {
+   "description": "Dilation",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  }
+ }
+}

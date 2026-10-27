@@ -54,6 +54,10 @@ public:
     // taps, otherwise the engine's pre-mixed pair through unchanged.
     void Advance(std::array<int32_t, kChannelCount>& taps, int32_t& outL, int32_t& outR);
 
+    // The timers of `ticks` FM steps at once, exactly as `ticks` AdvanceTimers
+    // calls (the owner's idle fast path: the engine advanced on its own)
+    void AdvanceTimersIdle(uint64_t ticks);
+
     uint8_t Status() const { return _status; }
     uint8_t ReadStatus() const { return static_cast<uint8_t>(_status | 0x80); } // bit 7 reads as 1
     bool NewMode() const { return _newMode; }
@@ -78,6 +82,8 @@ public:
     }
 
     void SetChannelMute(int ch, bool mute);
+    // Host gain of one channel in the tap sum, Q15 (32768 = unity, the sum untouched); render-side only, like mute
+    void SetChannelGain(int ch, int32_t gainQ15);
 
     // POD pair (TTD §9); mute is deliberately not saved (R7).
     void SaveState(uint8_t* dst) const;
@@ -96,6 +102,8 @@ private:
     bool _newMode = false; // 0x105 NEW (bit 0, OPL3 mode) — bus authority
     bool _new2 = false;    // 0x105 NEW2 (bit 1, OPL4 wave gate) — bus authority
     uint32_t _muteMask = 0; // bit ch (render-side only, never serialised)
+    std::array<int32_t, kChannelCount> _gain{}; // Q15 per channel (render-side only, never serialised)
+    bool _anyGain = false;                      // some _gain is not unity
     IFmSynth* _synth = nullptr;
 };
 

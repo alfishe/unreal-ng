@@ -15,7 +15,7 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/tsfmplayerharness.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -138,9 +138,12 @@ Emulator* CreateFmEmulator(LoggerLevel level)
     }
     // The shipped slot kind flips between releases (FM ships enabled now);
     // force FM from whichever value the ini carries
+    // (Since ZX-bus slots SL-4 the shipped ini names the board in [SLOTS] as `ay-socket = tsfm` and has no
+    // TurboSound= key: that form counts as FM too)
     const std::string to = "TurboSound=FM";
     const size_t atAy = ini.find("TurboSound=AY");
-    if (ini.empty() || (atAy == std::string::npos && ini.find(to) == std::string::npos))
+    if (ini.empty() ||
+        (atAy == std::string::npos && ini.find(to) == std::string::npos && ini.find("\nay-socket = tsfm") == std::string::npos))
         return nullptr;
     if (atAy != std::string::npos)
         ini.replace(atAy, to.size(), to);  // both slot literals are the same length
@@ -1139,7 +1142,9 @@ protected:
         if (mode == RunMode::SoundOff || mode == RunMode::SoundOffUnderTtd)
             fm->GetFeatureManager()->setFeature(Features::kSoundGeneration, false);
         if (mode == RunMode::SoundOffUnderTtd)
-            EXPECT_TRUE(fm->GetContext()->pTimeTravelManager->StartRecording()) << "TTD recording did not start";
+        {
+            EXPECT_TRUE(fm->GetContext()->pTimeTravelController->StartRecording()) << "TTD recording did not start";
+        }
 
         TsfmPlayerHarness harness;
         EXPECT_TRUE(harness.Setup(fm, 0));

@@ -24,6 +24,7 @@
 
 #include "common/network/nettypes.h"
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/netstatetail.h"
 
 class VirtualNetwork;
 
@@ -170,10 +171,11 @@ public:
     /// Is the TCP connection still open (no FIN yet)?
     bool Established(int slot) const;
 
-    /// TTD state (netstate::EspStack); false when something did not fit
-    bool SaveState(netstate::EspStackState& out) const;
+    /// TTD state (netstate::EspStack); what the fixed arrays do not hold, and received bytes the journal does
+    /// not, go to `tail`
+    void SaveState(netstate::EspStackState& out, netstate::Tail& tail) const;
     using ByteSource = std::function<bool(uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out)>;
-    bool LoadState(const netstate::EspStackState& in, const ByteSource& bytes);
+    bool LoadState(const netstate::EspStackState& in, const netstate::Tail& tail, const ByteSource& bytes);
     /// The virtual-network sockets of this stack belong to it (TTD restore)
     void RebindAll();
 

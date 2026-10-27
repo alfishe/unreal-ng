@@ -2,6 +2,8 @@
 // @details Tests MessageCenter notifications NC_FDD_DISK_INSERTED and NC_FDD_DISK_EJECTED
 
 #include <gtest/gtest.h>
+#include "_helpers/testwaithelper.h"
+#include <algorithm>
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/emulatorcontext.h"
@@ -237,16 +239,27 @@ protected:
         }
     }
     
-    static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 200)
+    static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 2000)
     {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (condition())
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return condition();
+        // The timeout only bounds a failure: the wait ends the moment the condition holds
+        return TestWait::For(condition, std::chrono::milliseconds(timeoutMs));
+    }
+
+    /// Everything posted before this call (any topic, one FIFO worker) has been dispatched and captured when it returns
+    /// true; the sentinel (drive 0xFF) is taken out of the captures again
+    static bool DrainPendingNotifications()
+    {
+        constexpr uint8_t SENTINEL_DRIVE = 0xFF;  // No test or FDD uses this drive index
+        FDDDiskPayload* sentinel = new FDDDiskPayload(unreal::UUID(), SENTINEL_DRIVE, "");
+        MessageCenter::DefaultMessageCenter().Post(NC_FDD_DISK_INSERTED, sentinel, true);
+        if (!WaitForCondition([]() { return hasInsertedWithDrive(0xFF); }, 1000))
+            return false;
+        // The sentinel has done its job: out of the captures, so the next drain waits for its own
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        g_insertedDisks.erase(std::remove_if(g_insertedDisks.begin(), g_insertedDisks.end(),
+                                             [](const CapturedDiskEvent& e) { return e.driveId == 0xFF; }),
+                              g_insertedDisks.end());
+        return true;
     }
 
     void SetUp() override
@@ -258,12 +271,9 @@ protected:
         // single-FIFO-worker queue and waiting for it to be captured guarantees
         // every earlier post (any topic) has been dispatched by the time SetUp
         // clears the vectors.
-        constexpr uint8_t SENTINEL_DRIVE = 0xFF;  // No test or FDD uses this drive index
-        FDDDiskPayload* sentinel = new FDDDiskPayload(unreal::UUID(), SENTINEL_DRIVE, "");
-        MessageCenter::DefaultMessageCenter().Post(NC_FDD_DISK_INSERTED, sentinel, true);
-        if (!WaitForCondition([&SENTINEL_DRIVE]() { return hasInsertedWithDrive(SENTINEL_DRIVE); }, 1000))
+        if (!DrainPendingNotifications())
         {
-            FAIL() << "MessageCenter drain sentinel not dispatched within 1000 ms";
+            FAIL() << "MessageCenter drain sentinel not dispatched";
         }
 
         // Drain complete - clear captured events for this test
@@ -318,11 +328,9 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
 
     fdd.insertDisk(nullptr);
 
-    // A null insert must post nothing; bounded window, fails the moment it does.
-    EXPECT_FALSE(WaitForCondition([]() { return insertedCount() > 0; }, 5))
-        << "insertDisk(nullptr) posted an insert notification";
-
-    EXPECT_EQ(insertedCount(), 0u);
+    // A null insert must post nothing: after the drain everything posted before it is captured
+    ASSERT_TRUE(DrainPendingNotifications());
+    EXPECT_EQ(insertedCount(), 0u) << "insertDisk(nullptr) posted an insert notification";
 }
 
 TEST_F(FDDNotificationTest, EjectWhenNoDiskInsertedDoesNotSendNotification)
@@ -331,7 +339,7 @@ TEST_F(FDDNotificationTest, EjectWhenNoDiskInsertedDoesNotSendNotification)
     FDD fdd(&ctx);
 
     fdd.ejectDisk();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_TRUE(DrainPendingNotifications());  // everything posted before it has been dispatched
 
     EXPECT_EQ(ejectedCount(), 0u);
 }

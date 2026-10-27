@@ -190,6 +190,11 @@ public:
 	// master clocking function
 	void clock(uint32_t env_counter, int32_t lfo_raw_pm);
 
+	// [unreal-ng patch 6] idle fast path (PATCHES.md §6): released to full attenuation, no key, no SSG-EG and a
+	// cached phase step - clock() then only turns the phase; clock_idle() stands for 'count' clock() calls
+	bool idle() const;
+	void clock_idle(uint32_t count);
+
 	// return the current phase value
 	uint32_t phase() const { return m_phase >> 10; }
 
@@ -281,6 +286,10 @@ public:
 
 	// master clocking function
 	void clock(uint32_t env_counter, int32_t lfo_raw_pm);
+
+	// [unreal-ng patch 6] 'count' clock() calls of a channel whose operators are all idle (PATCHES.md §6)
+	bool idle() const;
+	void clock_idle(uint32_t count);
 
 	// specific 2-operator and 4-operator output handlers
 	void output_2op(output_data &output, uint32_t rshift, int32_t clipmax) const;
@@ -377,6 +386,13 @@ public:
 	// -(m_total_clocks & 15), see engine_mode_write), so a skipped stretch must still be counted;
 	// operator phases and envelopes (sound output only) are left frozen
 	void skip_clocks(uint32_t count) { m_total_clocks += uint8_t(count); }
+
+	// [unreal-ng patch 6] idle fast path (PATCHES.md §6): with no channel active or modified and every operator
+	// idle, clock() changes only counters, phases and the feedback taps, and its output is 0. idle() tells;
+	// clock_idle() stands for 'count' clock() calls bit for bit. For chips whose clock_noise_and_lfo() is a
+	// constant (OPN: no noise, no LFO); false when the envelope sub-counter is off its cycle
+	bool idle() const;
+	void clock_idle(uint32_t count);
 
 	// compute sum of channel outputs
 	void output(output_data &output, uint32_t rshift, int32_t clipmax, uint32_t chanmask) const;

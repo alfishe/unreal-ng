@@ -65,7 +65,7 @@ protected:
 TEST_F(SprinterPldGame_Test, Registry_KnowsGameByBothHashesAndName)
 {
     SprinterPldConfigurationRegistry registry;
-    ASSERT_EQ(registry.Count(), 2u);
+    ASSERT_EQ(registry.Count(), 3u);
     EXPECT_EQ(registry.At(SprinterPldConfigurationRegistry::kGameIndex).Descriptor().name, "Game");
     EXPECT_EQ(registry.Find(0xC0FA3055, 0), 1) << "GAME_00.ACX = GC.BIN: the full hash";
     EXPECT_EQ(registry.Find(0x12345678, 0x3861CFA4), 1) << "MAME's constant: the head hash";
@@ -224,7 +224,8 @@ TEST_F(SprinterPldGame_Test, Ttd_TheGameStateTravelsInThePldBlob)
 
     ttd::TTDSprinterPld serializer(*_decoder);
     EXPECT_EQ(serializer.TTDStateSize(),
-              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 + sizeof(SprinterAccelState));
+              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterAccelTmkState) + 2 + sizeof(SprinterAccelState))
+        << "the room is the largest module state, TMK's";
     std::vector<uint8_t> saved(serializer.TTDStateSize());
     serializer.TTDSaveState(saved.data());
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(saved.data()) + 139), "Game");

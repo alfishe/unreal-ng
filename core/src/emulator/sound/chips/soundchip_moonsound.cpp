@@ -236,6 +236,12 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
             _fmBuffer[i] = TrimToI16(_fmScratch[i]);
             _pcmBuffer[i] = TrimToI16(_pcmScratch[i]);
         }
+
+        // A frame longer than the base frame (host speed multiplier) produced its multiplied time, the mixer read the
+        // base frame's samples: the rest is the excess the mixer drops knowingly. Left in the delivery streams it
+        // piled up (unbounded) and the output ran that much late for good after the speed went back to 1x
+        if (frameDuration() != _context->config.frame)
+            _opl4.DiscardPendingAudio();
     }
 
     // The frame is complete: fold its whole duration into the absolute axis
@@ -281,6 +287,14 @@ void SoundChip_Moonsound::setChannelMute(opl4::ChannelGroup group, size_t index,
     id.group = group;
     id.index = static_cast<uint8_t>(index);
     _opl4.SetChannelMute(id, mute);
+}
+
+void SoundChip_Moonsound::setChannelGain(opl4::ChannelGroup group, size_t index, int32_t gainQ15)
+{
+    opl4::ChannelId id;
+    id.group = group;
+    id.index = static_cast<uint8_t>(index);
+    _opl4.SetChannelGain(id, gainQ15);
 }
 
 float SoundChip_Moonsound::channelPeak(opl4::ChannelGroup group, size_t index) const

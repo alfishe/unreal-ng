@@ -1,0 +1,1112 @@
+(stk-half)|32CC|65535|65535|ROM|data||Floating Point constant: 0.5|1
+(stk-one)|32C8|65535|65535|ROM|data||Floating Point constant: 1|1
+(stk-pi/2)|32CE|65535|65535|ROM|data||Floating Point constant: PI/2|1
+(stk-ten)|32D3|65535|65535|ROM|data||Floating Point constant: 10|1
+(stk-zero)|32C5|65535|65535|ROM|data||Floating Point constant: 0|1
+ADD-BACK|3004|65535|65535|ROM|code||Floating Point: Add mantissas (from LSB)|1
+ADD-CH-1|F8B|65535|65535|ROM|code||Editor: Make space for character|1
+ADD-CHAR|F81|65535|65535|ROM|code||Editor: Add character to current line buffer|1
+ADD-REP-6|309F|65535|65535|ROM|code||Floating Point: Addition report 6 (Out of memory/number too big)|1
+ADDEND-0|2FF9|65535|65535|ROM|code||Floating Point: Check if addend is zero|1
+ADDN-OFLW|303C|65535|65535|ROM|code||Floating Point: Addition overflow check|1
+ALL-ADDED|300D|65535|65535|ROM|code||Floating Point: Addition complete|1
+ALPHA|2C8D|65535|65535|ROM|code||Test if A is alphabetic|1
+ALPHANUM|2C88|65535|65535|ROM|code||Test if A is alphanumeric|1
+ARC-END|245F|65535|65535|ROM|code||DRAW: End of arc drawing|1
+ARC-LOOP|2425|65535|65535|ROM|code||DRAW: Loop for drawing arc segments|1
+ARC-START|2439|65535|65535|ROM|code||DRAW: Start drawing an arc|1
+AUTO-L-1|17CE|65535|65535|ROM|code||AUTO-LIST: Check if auto-listing is enabled|1
+AUTO-L-2|17E1|65535|65535|ROM|code||AUTO-LIST: Set line number to list|1
+AUTO-L-3|17E4|65535|65535|ROM|code||AUTO-LIST: Call LIST routine|1
+AUTO-L-4|17ED|65535|65535|ROM|code||AUTO-LIST: Error during auto-list|1
+AUTO-LIST|1795|65535|65535|ROM|code||Automatic listing of current line after execution or error|1
+BC-SPACES|30|65535|65535|ROM|code||Output BC spaces to current channel|1
+BE-AGAIN|3F2|65535|65535|ROM|code||Beeper: Loop for duration|1
+BE-END|3F6|65535|65535|ROM|code||Beeper: End of sound generation|1
+BE-H&L-LP|3D6|65535|65535|ROM|code||Beeper: Main sound generation loop|1
+BE-IX+0|3D4|65535|65535|ROM|code||Beeper: Parameter access (IX+0) - duration low byte|1
+BE-IX+1|3D3|65535|65535|ROM|code||Beeper: Parameter access (IX+1) - duration high byte|1
+BE-IX+2|3D2|65535|65535|ROM|code||Beeper: Parameter access (IX+2) - pitch low byte|1
+BE-IX+3|3D1|65535|65535|ROM|code||Beeper: Parameter access (IX+3) - pitch high byte|1
+BE-OCTAVE|427|65535|65535|ROM|code||Beeper: Octave calculation or adjustment|1
+BE-i-OK|425|65535|65535|ROM|code||Beeper: Internal check or setup|1
+BEEPER|3B5|65535|65535|ROM|code||Sound generation routine (used by BEEP command)|1
+BIN-DIGIT|2CA2|65535|65535|ROM|code||Convert binary digit to FP|1
+BIN-END|2CB3|65535|65535|ROM|code||End of binary to FP conversion|1
+BITS-ZERO|3283|65535|65535|ROM|code||Floating Point: Zero bits in mantissa|1
+BORDER|2294|65535|65535|ROM|code||BORDER command execution|1
+BORDER-1|22A6|65535|65535|ROM|code||BORDER: Get color parameter and set border|1
+BOTH-NULL|3572|65535|65535|ROM|code||Both strings null|1
+BREAK-KEY|1F54|65535|65535|ROM|code||Check for BREAK key (SHIFT + SPACE)|1
+BYTE-COMP|3564|65535|65535|ROM|code||Compare bytes for string comparison|1
+BYTE-ZERO|327E|65535|65535|ROM|code||Floating Point: Zero one byte|1
+C-ARC-GE1|235A|65535|65535|ROM|code||CIRCLE: Arc segment calculation for radius >= 1|1
+C-ENT|37B7|65535|65535|ROM|code||SIN/COS: Common entry point using series|1
+C-R-GRE-1|233B|65535|65535|ROM|code||CIRCLE: Radius greater than 1 specific calculation|1
+CA-10*A+C|2F8B|65535|65535|ROM|code||Calculate (A*10)+C (used in FP conversion)|1
+CALCULATE|335B|65535|65535|ROM|code||Main entry for expression calculation (from FP-CALC)|1
+CALL-JUMP|162C|65535|65535|ROM|code||Indirect jump via address in HL|1
+CALL-SUB|15F7|65535|65535|ROM|code||Call subroutine in ROM, manage stack|1
+CASES|37FA|65535|65535|ROM|code||ATN: Different cases for argument ranges|1
+CAT-ETC|1793|65535|65535|ROM|code||CAT, ERASE, FORMAT, MOVE command dispatcher (Interface 1)|1
+CD-PRMS1|247D|65535|65535|ROM|code||CIRCLE/DRAW: Get common parameters (center X, Y)|1
+CH-ADD+1|74|65535|65535|ROM|code||Points to CH_ADD+1 (used to get next char without advancing pointer)|1
+CHAN-FLAG|1615|65535|65535|ROM|code||Set channel flags|1
+CHAN-K|1634|65535|65535|ROM|code||Open channel K (Keyboard/Screen)|1
+CHAN-OP-1|1610|65535|65535|ROM|code||CHAN-OPEN: Find free channel slot|1
+CHAN-OPEN|1601|65535|65535|ROM|code||Open a channel|1
+CHAN-P|164D|65535|65535|ROM|code||Open channel P (Printer)|1
+CHAN-S|1642|65535|65535|ROM|code||Open channel S (Screen)|1
+CHAN-S-1|1646|65535|65535|ROM|code||CHAN-S: Set screen channel data|1
+CHECK-END|1BEE|65535|65535|ROM|code||Check for end of program or BREAK key|1
+CIRCLE|2320|65535|65535|ROM|code||CIRCLE command execution|1
+CL-09-1|1CD6|65535|65535|ROM|code||CLASS-09: Handle special variable|1
+CL-ADDR|E9B|65535|65535|ROM|code||Calculate screen address from Y,X coordinates|1
+CL-ALL|DAF|65535|65535|ROM|code||Channel I/O: Clear all channels|1
+CL-ATTR|E88|65535|65535|ROM|code||Set attribute byte for current INK/PAPER etc.|1
+CL-CHAN|D94|65535|65535|ROM|code||Channel I/O: Clear channel information|1
+CL-CHAN-A|DA0|65535|65535|ROM|code||Channel I/O: Clear a specific channel|1
+CL-LINE|E44|65535|65535|ROM|code||Clear a line in the display file|1
+CL-LINE-1|E4A|65535|65535|ROM|code||Clear line: display part|1
+CL-LINE-2|E4D|65535|65535|ROM|code||Clear line: attribute part|1
+CL-LINE-3|E80|65535|65535|ROM|code||Clear line: fill with spaces/attributes|1
+CL-SC-ALL|DFE|65535|65535|ROM|code||Clear entire screen (display and attributes)|1
+CL-SCR-1|E05|65535|65535|ROM|code||Scroll: Calculate addresses|1
+CL-SCR-2|E0D|65535|65535|ROM|code||Scroll: Copy display file lines|1
+CL-SCR-3|E19|65535|65535|ROM|code||Scroll: Copy attribute file lines|1
+CL-SCROLL|E00|65535|65535|ROM|code||Scroll screen area|1
+CL-SET|DD9|65535|65535|ROM|code||Set paper/ink/border etc from system variables|1
+CL-SET-1|DEE|65535|65535|ROM|code||Set screen attributes based on ATTR_P|1
+CL-SET-2|DF4|65535|65535|ROM|code||Set border color from BORDCR|1
+CLASS-00|1C10|65535|65535|ROM|code||Token class 0: Numeric variable|1
+CLASS-01|1C1F|65535|65535|ROM|code||Token class 1: Number|1
+CLASS-02|1C4E|65535|65535|ROM|code||Token class 2: Operator|1
+CLASS-03|1C0D|65535|65535|ROM|code||Token class 3: String variable|1
+CLASS-04|1C6C|65535|65535|ROM|code||Token class 4: Function|1
+CLASS-05|1C11|65535|65535|ROM|code||Token class 5: Array variable|1
+CLASS-07|1C96|65535|65535|ROM|code||Token class 7: Reserved words (e.g. TO, STEP, THEN)|1
+CLASS-09|1CBE|65535|65535|ROM|code||Token class 9: Special system variables (e.g. ATTR, SCREEN$)|1
+CLASS-0B|1CDB|65535|65535|ROM|code||Token class 0B: Delimiters like comma, semicolon|1
+CLEAR|1EAC|65535|65535|ROM|code||CLEAR command execution|1
+CLEAR-1|1EB7|65535|65535|ROM|code||CLEAR: Initialize variables area, stack, etc.|1
+CLEAR-2|1EDC|65535|65535|ROM|code||CLEAR: Reset system variables|1
+CLEAR-PRB|EDF|65535|65535|ROM|code||Clear printer buffer|1
+CLEAR-RUN|1EAF|65535|65535|ROM|code||CLEAR: Optional address parameter for RAMTOP|1
+CLEAR-SP|1097|65535|65535|ROM|code||Clear spare part of BASIC area (above STKEND)|1
+CLOSE|16E5|65535|65535|ROM|code||CLOSE # command|1
+CLOSE-1|16FC|65535|65535|ROM|code||CLOSE: Get stream number|1
+CLOSE-2|1701|65535|65535|ROM|code||CLOSE: Find and clear stream data|1
+CLOSE-STR|171C|65535|65535|ROM|code||Close a specific stream|1
+CLS|D6B|65535|65535|ROM|code||CLS command: Clear screen|1
+CLS-1|D87|65535|65535|ROM|code||CLS: Clear display file|1
+CLS-2|D89|65535|65535|ROM|code||CLS: Clear attribute file|1
+CLS-3|D8E|65535|65535|ROM|code||CLS: Reset print position variables|1
+CLS-LOWER|D6E|65535|65535|ROM|code||CLS: Clear lower part of screen (input area)|1
+CO-CHANGE|226C|65535|65535|ROM|code||Color: Change attribute byte in ATTR_T/ATTR_P|1
+CO-TEMP-1|21E1|65535|65535|ROM|code||Color command (INK, PAPER, etc.) parameter parsing|1
+CO-TEMP-2|21E2|65535|65535|ROM|code||Color: Get color value|1
+CO-TEMP-3|21F2|65535|65535|ROM|code||Color: Apply INK|1
+CO-TEMP-4|21FC|65535|65535|ROM|code||Color: Apply PAPER|1
+CO-TEMP-5|2211|65535|65535|ROM|code||Color: Apply FLASH|1
+CO-TEMP-6|2228|65535|65535|ROM|code||Color: Apply BRIGHT|1
+CO-TEMP-7|2234|65535|65535|ROM|code||Color: Apply INVERSE|1
+CO-TEMP-8|223E|65535|65535|ROM|code||Color: Apply OVER|1
+CO-TEMP-9|2246|65535|65535|ROM|code||Color: Parameter validation|1
+CO-TEMP-A|2257|65535|65535|ROM|code||Color: Update attribute system variables|1
+CO-TEMP-B|2258|65535|65535|ROM|code||Color: Set temporary or permanent attributes|1
+CO-TEMP-C|2273|65535|65535|ROM|code||Color: Common routine for attribute commands|1
+CO-TEMP-D|227D|65535|65535|ROM|code||Color: End of color command processing|1
+CO-TEMP-E|2287|65535|65535|ROM|code||Color: Fetch current attribute settings|1
+CONTINUE|1E5F|65535|65535|ROM|code||CONTINUE command execution|1
+COPY|EAC|65535|65535|ROM|code||COPY command: Print screen to printer|1
+COPY-1|EB2|65535|65535|ROM|code||COPY: Initialize printer|1
+COPY-2|EC9|65535|65535|ROM|code||COPY: Loop through screen lines|1
+COPY-3|ED3|65535|65535|ROM|code||COPY: Process one screen line for printer|1
+COPY-BUFF|ECD|65535|65535|ROM|code||COPY: Send printer buffer|1
+COPY-END|EDA|65535|65535|ROM|code||COPY: Finish printing, reset printer|1
+COPY-L-1|EFD|65535|65535|ROM|code||COPY: Get pixels for one character row|1
+COPY-L-2|F0C|65535|65535|ROM|code||COPY: Add pixels to printer buffer|1
+COPY-L-3|F14|65535|65535|ROM|code||COPY: Handle end of printer line|1
+COPY-L-4|F18|65535|65535|ROM|code||COPY: Check for printer buffer full|1
+COPY-L-5|F1E|65535|65535|ROM|code||COPY: Loop for character rows|1
+COPY-LINE|EF4|65535|65535|ROM|code||COPY: Convert screen line to printer codes|1
+COUNT-ONE|31FA|65535|65535|ROM|code||Floating Point: Count one bit set|1
+CP-LINES|1980|65535|65535|ROM|code||Compare two BASIC lines for merging|1
+CTL-CODES|260|65535|65535|ROM|data||Table of control codes (INK, PAPER, etc.) for keyboard|1
+D-L-DIAG|24D4|65535|65535|ROM|code||DRAW-LINE: Diagonal step|1
+D-L-HR-VT|24DB|65535|65535|ROM|code||DRAW-LINE: Horizontal/Vertical step|1
+D-L-LOOP|24CE|65535|65535|ROM|code||DRAW-LINE: Main plotting loop|1
+D-L-PLOT|24EC|65535|65535|ROM|code||DRAW-LINE: Plot current point|1
+D-L-RANGE|24F7|65535|65535|ROM|code||DRAW-LINE: Check if coordinates are in range|1
+D-L-STEP|24DF|65535|65535|ROM|code||DRAW-LINE: Increment coordinates|1
+D-LETTER|2C1F|65535|65535|ROM|code||DIM: Get variable name|1
+D-NO-LOOP|2C2E|65535|65535|ROM|code||DIM: Array already dimensioned error path|1
+D-RPORT-C|2C05|65535|65535|ROM|code||DIM: Report error in DIM statement|1
+D-RUN|2C15|65535|65535|ROM|code||DIM: Process one dimensioned variable|1
+D-SIZE|2C2D|65535|65535|ROM|code||DIM: Get dimension sizes|1
+DATA|1E27|65535|65535|ROM|code||DATA command: Skip data items (no execution)|1
+DATA-1|1E2C|65535|65535|ROM|code||DATA: Skip to next comma or end of line|1
+DATA-2|1E37|65535|65535|ROM|code||DATA: Skip string data|1
+DE,(DE+1)|2AEE|65535|65535|ROM|code||DE = (DE) + 1 (16-bit increment pointed to by DE)|1
+DEC-RPT-C|2CCF|65535|65535|ROM|code||DECIMAL: Report error in number format|1
+DEC-STO-1|2CD5|65535|65535|ROM|code||DECIMAL: Store digit|1
+DEC-TO-FP|2C9B|65535|65535|ROM|code||Convert decimal string (pointed by HL) to floating point on stack|1
+DECIMAL|2CCB|65535|65535|ROM|code||Convert decimal string (from CH_ADD) to FP|1
+DEF-FN|1F60|65535|65535|ROM|code||DEF FN command execution|1
+DEF-FN-1|1F6A|65535|65535|ROM|code||DEF FN: Get function name and parameters|1
+DEF-FN-2|1F7D|65535|65535|ROM|code||DEF FN: Store function definition|1
+DEF-FN-3|1F86|65535|65535|ROM|code||DEF FN: Check for existing definition|1
+DEF-FN-4|1F89|65535|65535|ROM|code||DEF FN: Allocate space for definition|1
+DEF-FN-5|1F94|65535|65535|ROM|code||DEF FN: Copy definition to VARS area|1
+DEF-FN-6|1FA6|65535|65535|ROM|code||DEF FN: Handle errors|1
+DEF-FN-7|1FBD|65535|65535|ROM|code||DEF FN: Complete definition|1
+DIFFER|19DD|65535|65535|ROM|code||Compare HL with DE (sets flags)|1
+DIM|2C02|65535|65535|ROM|code||DIM command execution|1
+DIM-CLEAR|2C7C|65535|65535|ROM|code||DIM: Clear space for new array|1
+DIM-SIZES|2C7F|65535|65535|ROM|code||DIM: Store dimension sizes|1
+DIV-LOOP|31D2|65535|65535|ROM|code||Floating Point: Division loop|1
+DIV-START|31E2|65535|65535|ROM|code||Floating Point: Start division|1
+DIVN-EXPT|313D|65535|65535|ROM|code||Floating Point: Create exponent for division result|1
+DL-LARGER|24CB|65535|65535|ROM|code||DRAW-LINE: Swap deltas if dy > dx|1
+DL-X-GE-Y|24C4|65535|65535|ROM|code||DRAW-LINE: Delta X greater than or equal to Delta Y|1
+DOUBLE-A|338C|65535|65535|ROM|code||Calculator: Double A (A = A*2)|1
+DR-3-PRMS|238D|65535|65535|ROM|code||DRAW: Get 3 parameters (X, Y, Angle) for arc|1
+DR-PRMS|23C1|65535|65535|ROM|code||DRAW: Get parameters (X, Y displacement; optional angle)|1
+DR-SIN-NZ|23A3|65535|65535|ROM|code||DRAW: Calculate sine for non-zero angle|1
+DRAW|2382|65535|65535|ROM|code||DRAW command execution|1
+DRAW-LINE|24B7|65535|65535|ROM|code||Draw line using Bresenham's algorithm variant|1
+DRAW-SAVE|2497|65535|65535|ROM|code||DRAW: Save current coordinates|1
+DRW-STEPS|2420|65535|65535|ROM|code||DRAW: Calculate steps for line/arc|1
+E-DIGITS|284|65535|65535|ROM|code||Keyboard: Handle digits in extended mode|1
+E-DIVSN|2D6D|65535|65535|ROM|code||E-format division for exponent|1
+E-END|2D7B|65535|65535|ROM|code||End of E-format processing|1
+E-FETCH|2D6E|65535|65535|ROM|code||Fetch E-format digit|1
+E-FORMAT|2CEB|65535|65535|ROM|code||Handle E-notation in numbers (e.g. 1.23E4)|1
+E-FP-JUMP|2D18|65535|65535|ROM|code||Jump for E-format FP conversion|1
+E-L-1|1A15|65535|65535|ROM|code||E-LINE-NO: Convert ASCII digits to binary|1
+E-LINE-NO|19FB|65535|65535|ROM|code||Get line number from editable E_LINE buffer|1
+E-LOOP|2D60|65535|65535|ROM|code||E-format exponent calculation loop|1
+E-SAVE|2D55|65535|65535|ROM|code||Save E-format exponent value|1
+E-TO-FP|2D4F|65535|65535|ROM|code||Convert E-format exponent to FP adjustment|1
+E-TST-END|2D71|65535|65535|ROM|code||Test for end of E-format exponent|1
+E-UNSHIFT|22C|65535|65535|ROM|code||Keyboard: Handle unshifted extended mode keys|1
+EACH-S-1|1990|65535|65535|ROM|code||EACH-STMT: Get next token|1
+EACH-S-2|1998|65535|65535|ROM|code||EACH-STMT: Dispatch to statement handler|1
+EACH-S-3|199A|65535|65535|ROM|code||EACH-STMT: Check for end of line|1
+EACH-S-4|19A5|65535|65535|ROM|code||EACH-STMT: Handle colon separator|1
+EACH-S-5|19AD|65535|65535|ROM|code||EACH-STMT: Error if unexpected token|1
+EACH-S-6|19B1|65535|65535|ROM|code||EACH-STMT: After statement execution|1
+EACH-STMT|198B|65535|65535|ROM|code||Execute each statement in a BASIC line|1
+ED-AGAIN|F30|65535|65535|ROM|code||Editor: Re-enter editor loop|1
+ED-BLANK|1150|65535|65535|ROM|code||Editor: Insert blank space / clear to end of line|1
+ED-C-DONE|117C|65535|65535|ROM|code||Editor: Line input complete, tokenise|1
+ED-C-END|117E|65535|65535|ROM|code||Editor: End of command line input processing|1
+ED-CONTR|F6C|65535|65535|ROM|code||Editor: Handle control key presses (cursor, delete etc)|1
+ED-COPY|111D|65535|65535|ROM|code||Editor: COPY (screen dump) invoked from edit mode (Spectrum+)|1
+ED-CUR|1011|65535|65535|ROM|code||Editor: Update cursor position|1
+ED-DELETE|1015|65535|65535|ROM|code||Editor: Delete character under cursor|1
+ED-DOWN|FF3|65535|65535|ROM|code||Editor: Cursor Down|1
+ED-EDGE|1031|65535|65535|ROM|code||Editor: Check for screen edge collision|1
+ED-EDGE-1|103E|65535|65535|ROM|code||Editor: Screen edge for X coordinate|1
+ED-EDGE-2|1051|65535|65535|ROM|code||Editor: Screen edge for Y coordinate|1
+ED-EDIT|FA9|65535|65535|ROM|code||Editor: Edit existing line or input new line|1
+ED-END|1026|65535|65535|ROM|code||Editor: End of editing, process line|1
+ED-ENTER|1024|65535|65535|ROM|code||Editor: Handle ENTER key (tokenize and execute/store line)|1
+ED-ERROR|107F|65535|65535|ROM|code||Editor: Handle error during input (e.g. line too long)|1
+ED-FULL|1167|65535|65535|ROM|code||Editor: Check if edit buffer is full|1
+ED-GRAPH|107C|65535|65535|ROM|code||Editor: Graphics mode|1
+ED-IGNORE|101E|65535|65535|ROM|code||Editor: Ignore current key press|1
+ED-KEYS|F92|65535|65535|ROM|code||Editor: Process normal character keys|1
+ED-LEFT|1007|65535|65535|ROM|code||Editor: Cursor Left|1
+ED-LIST|106E|65535|65535|ROM|code||Editor: List current line (auto-list)|1
+ED-LOOP|F38|65535|65535|ROM|code||Editor: Main input and editing loop|1
+ED-RIGHT|100C|65535|65535|ROM|code||Editor: Cursor Right|1
+ED-SPACES|115E|65535|65535|ROM|code||Editor: Output spaces in editor|1
+ED-STOP|1001|65535|65535|ROM|code||Editor: Handle BREAK or STOP condition|1
+ED-SYMBOL|1076|65535|65535|ROM|code||Editor: Symbol Shift mode|1
+ED-UP|1059|65535|65535|ROM|code||Editor: Cursor Up|1
+EDITOR|F2C|65535|65535|ROM|code||Main BASIC line editor|1
+END-COMPL|30A3|65535|65535|ROM|code||Floating Point: End of 2's complement|1
+END-TESTS|358C|65535|65535|ROM|code||End of comparison tests|1
+ENT-TABLE|338E|65535|65535|ROM|data||Calculator: Table of function entry points|1
+ERROR-1|8|65535|65535|ROM|code||Error Restart Point 1 (often after report code set)|1
+ERROR-2|53|65535|65535|ROM|code||Error Restart Point 2|1
+ERROR-3|55|65535|65535|ROM|code||Error Restart Point 3|1
+EX-OR-NOT|3543|65535|65535|ROM|code||Used by OR and AND for result|1
+EXIT|36C2|65535|65535|ROM|code||Exit calculator with result|1
+EXPT-1NUM|1C82|65535|65535|ROM|code||Expect one numeric parameter|1
+EXPT-2NUM|1C7A|65535|65535|ROM|code||Expect two numeric parameters|1
+EXPT-EXP|1C8C|65535|65535|ROM|code||Expect expression|1
+EXT-SHIFT|246|65535|65535|ROM|code||Keyboard: Handle shifted extended mode keys|1
+F-FOUND|1D7C|65535|65535|ROM|code||FOR: Found existing FOR loop entry|1
+F-L-S|1D34|65535|65535|ROM|code||FOR: Store loop parameters|1
+F-LOOP|1D64|65535|65535|ROM|code||FOR: Check loop condition, increment variable|1
+F-REORDER|1D16|65535|65535|ROM|code||FOR: Reorder FOR loop parameters on stack|1
+F-USE-1|1D10|65535|65535|ROM|code||FOR: Get loop variable, initial, TO, and STEP values|1
+FETCH-NUM|1CDE|65535|65535|ROM|code||Fetch a number from BASIC line to calculator stack|1
+FETCH-TWO|2FBA|65535|65535|ROM|code||Floating Point: Fetch two operands from calculator stack|1
+FIND-I-1|1E9C|65535|65535|ROM|code||Integer conversion sub-routine|1
+FIND-INT1|1E94|65535|65535|ROM|code||Convert FP to 16-bit integer in DE|1
+FIND-INT2|1E99|65535|65535|ROM|code||Convert FP to 8-bit integer in A|1
+FIRST-3D|3380|65535|65535|ROM|code||Calculator: Handle first 3D token (obsolete?)|1
+FN-SKPOVR|28AB|65535|65535|ROM|code||FN: Skip over DEF FN definition during execution|1
+FOR|1D03|65535|65535|ROM|code||FOR command execution|1
+FORM-EXP|33DE|65535|65535|ROM|code||Calculator: Form exponent for STK-CONST|1
+FP-0/1|350B|65535|65535|ROM|code||Push 0 or 1 (FP) based on C flag (for logical ops)|1
+FP-A-END|2DE1|65535|65535|ROM|code||End of FP-TO-A conversion|1
+FP-CALC|28|65535|65535|ROM|code||Floating Point Calculator entry point (DE points to op, HL to address)|1
+FP-DELETE|2DAD|65535|65535|ROM|code||Delete FP number from calculator stack (DE points to it)|1
+FP-TO-A|2DD5|65535|65535|ROM|code||Convert FP number on stack to 8-bit integer in A|1
+FP-TO-BC|2DA2|65535|65535|ROM|code||Convert FP number on stack to 16-bit integer in BC|1
+FRST-LESS|3585|65535|65535|ROM|code||First string is "lesser"|1
+FULL-ADDN|303E|65535|65535|ROM|code||Floating Point: Full mantissa addition|1
+G-LOOP|3453|65535|65535|ROM|code||Series calculation loop|1
+GEN-ENT-1|335E|65535|65535|ROM|code||Calculator: General entry point 1|1
+GEN-ENT-2|3362|65535|65535|ROM|code||Calculator: General entry point 2|1
+GET-CHAR|18|65535|65535|ROM|code||Get next character from BASIC line into A, advance CH_ADD|1
+GET-HL*DE|2AF4|65535|65535|ROM|code||Multiply HL by DE (16-bit multiplication)|1
+GET-PARAM|1B55|65535|65535|ROM|code||Get a parameter (numeric or string expression) from BASIC line|1
+GO-NC-MLT|30A5|65535|65535|ROM|code||Floating Point: Go to multiplication (no carry)|1
+GO-SUB|1EED|65535|65535|ROM|code||GOSUB command execution|1
+GO-TO|1E67|65535|65535|ROM|code||GOTO command execution|1
+GO-TO-2|1E73|65535|65535|ROM|code||GOTO: Find line and jump|1
+GRE.8|373D|65535|65535|ROM|code||LN: Argument > 0.8 internal check for series|1
+HL-AGAIN|30BC|65535|65535|ROM|code||Integer multiply loop continue|1
+HL-END|30BE|65535|65535|ROM|code||Integer multiply end|1
+HL-HL*DE|30A9|65535|65535|ROM|code||Integer multiply: HL = HL * DE (16-bit result in HLDE)|1
+HL-LOOP|30B1|65535|65535|ROM|code||Integer multiply loop|1
+I-CARRY|2AE8|65535|65535|ROM|code||Integer arithmetic: handle carry|1
+I-RESTORE|2AEB|65535|65535|ROM|code||Integer arithmetic: restore registers|1
+IF|1CF0|65535|65535|ROM|code||IF command execution|1
+IF-1|1D00|65535|65535|ROM|code||IF: Evaluate condition, skip statement if false|1
+IN-ASSIGN|21B9|65535|65535|ROM|code||INPUT: Assign value from stack to variable|1
+IN-CHAN-K|21D6|65535|65535|ROM|code||INPUT: Ensure input is from channel K|1
+IN-ITEM-1|20C1|65535|65535|ROM|code||INPUT: Get variable to assign to|1
+IN-ITEM-2|20D8|65535|65535|ROM|code||INPUT: Read line from keyboard|1
+IN-ITEM-3|20ED|65535|65535|ROM|code||INPUT: Parse input line and assign to variable|1
+IN-NEXT-1|21AF|65535|65535|ROM|code||INPUT: Move to next item in input line|1
+IN-NEXT-2|21B2|65535|65535|ROM|code||INPUT: Check for end of input line|1
+IN-PK-STK|34B0|65535|65535|ROM|code||PEEK/IN: Get address/port, stack result|1
+IN-PR-1|211A|65535|65535|ROM|code||INPUT: Print "? " prompt if no custom prompt|1
+IN-PR-2|211C|65535|65535|ROM|code||INPUT: Display prompt|1
+IN-PR-3|2129|65535|65535|ROM|code||INPUT: Handle LINE INPUT|1
+IN-PROMPT|20FA|65535|65535|ROM|code||INPUT: Print prompt string|1
+IN-STOP|21D0|65535|65535|ROM|code||INPUT: Handle STOP requested during input|1
+IN-VAR-1|213A|65535|65535|ROM|code||INPUT: Assign numeric value|1
+IN-VAR-2|2148|65535|65535|ROM|code||INPUT: Assign string value|1
+IN-VAR-3|215E|65535|65535|ROM|code||INPUT: Check for type mismatch|1
+IN-VAR-4|2161|65535|65535|ROM|code||INPUT: Handle errors during assignment|1
+IN-VAR-5|2174|65535|65535|ROM|code||INPUT: Check for comma separator|1
+IN-VAR-6|219B|65535|65535|ROM|code||INPUT: Finished with current variable|1
+INDEXER|16DC|65535|65535|ROM|code||Find stream data address for a given stream number|1
+INDEXER-1|16DB|65535|65535|ROM|code||Index into stream data table|1
+INPUT|2089|65535|65535|ROM|code||INPUT command execution|1
+INPUT-1|2096|65535|65535|ROM|code||INPUT: Handle prompt string|1
+INPUT-2|20AD|65535|65535|ROM|code||INPUT: Main loop for inputting items|1
+INPUT-AD|15E6|65535|65535|ROM|code||Get address for INPUT variable|1
+INT-CASE|3483|65535|65535|ROM|code||Integer conversion case for SGN/ABS|1
+INT-EXP1|2ACC|65535|65535|ROM|code||Integer exponentiation part 1 (e.g. 2^N)|1
+INT-EXP2|2ACD|65535|65535|ROM|code||Integer exponentiation part 2|1
+INT-FETCH|2D7F|65535|65535|ROM|code||Fetch integer from BASIC line to BC|1
+INT-STORE|2D8E|65535|65535|ROM|code||Store integer from BC into BASIC line (as string)|1
+INT-TO-FP|2D3B|65535|65535|ROM|code||Convert integer in BC to floating point on stack|1
+IX-END|3290|65535|65535|ROM|code||Floating Point: IX related end|1
+JUMP|3686|65535|65535|ROM|code||Unconditional jump to address in HL (JP HL)|1
+JUMP-2|3687|65535|65535|ROM|code||Jump if Z to address in HL|1
+K-8-&-9|382|65535|65535|ROM|code||Keyboard: Special handling for 8 & 9 (graphics/control)|1
+K-@-CHAR|3B2|65535|65535|ROM|code||Keyboard: Handle '@' character (often part of INKEY$)|1
+K-CH-SET|2D1|65535|65535|ROM|code||Keyboard: Set character set (K, L, C, G, E modes)|1
+K-DECODE|333|65535|65535|ROM|code||Keyboard: Decode key value to character or token|1
+K-DIGIT|367|65535|65535|ROM|code||Keyboard: Handle digit key presses|1
+K-E-LET|341|65535|65535|ROM|code||Keyboard: Handle letter keys in Extended mode|1
+K-END|308|65535|65535|ROM|code||Keyboard: End of key processing branch|1
+K-GRA-DGT|389|65535|65535|ROM|code||Keyboard: Handle graphics digits (1-8 for UDG)|1
+K-KLC-DGT|39D|65535|65535|ROM|code||Keyboard: Handle digits in K, L, C modes|1
+K-KLC-LET|34F|65535|65535|ROM|code||Keyboard: Handle letters in K, L, C modes|1
+K-LOOK-UP|34A|65535|65535|ROM|code||Keyboard: Look up key in code tables|1
+K-MAIN|32C|65535|65535|ROM|code||Keyboard: Main decoding logic for key presses|1
+K-NEW|2F1|65535|65535|ROM|code||Keyboard: Handle new key press|1
+K-REPEAT|310|65535|65535|ROM|code||Keyboard: Handle key repeat logic|1
+K-ST-LOOP|2C6|65535|65535|ROM|code||Keyboard input state machine loop|1
+K-TEST|31E|65535|65535|ROM|code||Keyboard: Test key state for repeat or new press|1
+K-TOKENS|364|65535|65535|ROM|code||Keyboard: Handle token generation from key presses|1
+KEY-3KEYS|29F|65535|65535|ROM|code||Keyboard: Check for 3-key combinations (e.g., CAPS SHIFT + SYMBOL SHIFT + key)|1
+KEY-BITS|2A1|65535|65535|ROM|code||Keyboard: Decode key bits from half-row scan|1
+KEY-CHAN|1113|65535|65535|ROM|code||KEY-INPUT: Set input channel to K|1
+KEY-CONTR|10FA|65535|65535|ROM|code||KEY-INPUT: Handle control characters|1
+KEY-DATA|1105|65535|65535|ROM|code||KEY-INPUT: Get data from keyboard|1
+KEY-DONE|111B|65535|65535|ROM|code||KEY-INPUT: Finish inputting line|1
+KEY-FLAG|10F4|65535|65535|ROM|code||KEY-INPUT: Set input flags|1
+KEY-INPUT|10A8|65535|65535|ROM|code||Input a line from keyboard (used by INPUT command)|1
+KEY-INT|48|65535|65535|ROM|code||Part of interrupt routine: keyboard scan and DEBOUNCE|1
+KEY-LINE|296|65535|65535|ROM|code||Keyboard: Read a specific line of the keyboard matrix|1
+KEY-M-CL|10DB|65535|65535|ROM|code||KEY-INPUT: Clear message line|1
+KEY-MODE|10E6|65535|65535|ROM|code||KEY-INPUT: Set input mode (K, L, C)|1
+KEY-NEXT|110D|65535|65535|ROM|code||KEY-INPUT: Get next character|1
+KEY-SCAN|28E|65535|65535|ROM|code||Scan keyboard matrix, return key code in HL|1
+KEYBOARD|2BF|65535|65535|ROM|code||Main routine to scan keyboard and get a debounced key press|1
+L-ADD$|2BAF|65535|65535|ROM|code||LET: Add new string to variables area|1
+L-CHAR|2B3E|65535|65535|ROM|code||LET: Get variable name character|1
+L-DELETE$|2B72|65535|65535|ROM|code||LET: Delete old string value before assigning new|1
+L-EACH-CH|2B0B|65535|65535|ROM|code||LET: Check each character of variable name|1
+L-ENTER|2BA6|65535|65535|ROM|code||LET: Store new variable or update existing|1
+L-EXISTS|2B66|65535|65535|ROM|code||LET: Check if variable already exists|1
+L-FIRST|2BEA|65535|65535|ROM|code||LET: Get first character of variable name|1
+L-IN-W/S|2BA3|65535|65535|ROM|code||LET: Check if string is in workspace (needs copying)|1
+L-LENGTH|2B9B|65535|65535|ROM|code||LET: Get length of string to be assigned|1
+L-NEW$|2BC0|65535|65535|ROM|code||LET: Create new string variable|1
+L-NO-SP|2B0C|65535|65535|ROM|code||LET: No space allowed in variable name|1
+L-NUMERIC|2B59|65535|65535|ROM|code||LET: Assign to numeric variable|1
+L-SINGLE|2B4F|65535|65535|ROM|code||LET: Handle single letter numeric variable|1
+L-SPACES|2B29|65535|65535|ROM|code||LET: Skip spaces after variable name|1
+L-STRING|2BC6|65535|65535|ROM|code||LET: Assign to string variable|1
+L-TEST-CH|2B1F|65535|65535|ROM|code||LET: Test character for validity in name|1
+LAST|386C|65535|65535|ROM|code||Power: Last checks for power|1
+LD-8-BITS|5CA|65535|65535|ROM|code||Tape LOAD: Loop for 8 bits of a byte|1
+LD-BLOCK|802|65535|65535|ROM|code||LOAD/VERIFY/MERGE: Load a data block from tape|1
+LD-BREAK|56B|65535|65535|ROM|code||Tape LOAD: Check for BREAK key|1
+LD-BYTES|556|65535|65535|ROM|code||Tape LOAD: Load a block of bytes (header or data)|1
+LD-CH-PR|7AD|65535|65535|ROM|code||LOAD/VERIFY/MERGE: Check program/code compatibility|1
+LD-CONT-1|819|65535|65535|ROM|code||LOAD: Load header|1
+LD-CONT-2|825|65535|65535|ROM|code||LOAD: Check header details|1
+LD-CONTRL|808|65535|65535|ROM|code||LOAD command main routine|1
+LD-DATA|82E|65535|65535|ROM|code||LOAD: Load data block based on type|1
+LD-DATA-1|84C|65535|65535|ROM|code||LOAD: Load data into memory|1
+LD-DEC|5C4|65535|65535|ROM|code||Tape LOAD: Decrement byte counter|1
+LD-DELAY|5E9|65535|65535|ROM|code||Tape LOAD: Delay for bit timing|1
+LD-EDGE-1|5E7|65535|65535|ROM|code||Tape LOAD: Detect first edge of a bit pulse|1
+LD-EDGE-2|5E3|65535|65535|ROM|code||Tape LOAD: Detect second edge of a bit pulse|1
+LD-FLAG|5B3|65535|65535|ROM|code||Tape LOAD: Load flag byte with parity check|1
+LD-LEADER|580|65535|65535|ROM|code||Tape LOAD: Detect leader tone|1
+LD-LOOK-H|767|65535|65535|ROM|code||LOAD/VERIFY/MERGE: Look for header on tape|1
+LD-LOOP|5A9|65535|65535|ROM|code||Tape LOAD: Main byte loading loop|1
+LD-MARKER|5C8|65535|65535|ROM|code||Tape LOAD: Check for block type marker|1
+LD-NAME|7A6|65535|65535|ROM|code||LOAD/VERIFY/MERGE: Compare filename from tape with expected|1
+LD-NEXT|5C2|65535|65535|ROM|code||Tape LOAD: Get next byte|1
+LD-PROG|873|65535|65535|ROM|code||LOAD: Load BASIC program, re-linking variables|1
+LD-PROG-1|8AD|65535|65535|ROM|code||LOAD: Adjust program variables pointer (VARS)|1
+LD-SAMPLE|5ED|65535|65535|ROM|code||Tape LOAD: Sample EAR input level|1
+LD-START|56C|65535|65535|ROM|code||Tape LOAD: Start loading process, find leader|1
+LD-SYNC|58F|65535|65535|ROM|code||Tape LOAD: Detect sync pulses|1
+LD-TYPE|78A|65535|65535|ROM|code||LOAD/VERIFY/MERGE: Check block type from header|1
+LD-VERIFY|5BD|65535|65535|ROM|code||Tape LOAD: Verify byte against memory|1
+LD-WAIT|574|65535|65535|ROM|code||Tape LOAD: Wait for EAR signal edge|1
+LESS-MASK|328A|65535|65535|ROM|code||Floating Point: Mask for less significant bits|1
+LET|2AFF|65535|65535|ROM|code||LET command execution|1
+LINE-AD-1|1974|65535|65535|ROM|code||Get address of BASIC line number in DE|1
+LINE-ADDR|196E|65535|65535|ROM|code||Get address of current BASIC line (PPC)|1
+LINE-DRAW|2477|65535|65535|ROM|code||Draw a line segment (used by DRAW and PLOT)|1
+LINE-END|1BB3|65535|65535|ROM|code||Check for end of BASIC line (0Dh)|1
+LINE-NEW|1B9E|65535|65535|ROM|code||Tokenize and add a new line from E_LINE to program|1
+LINE-NO|1695|65535|65535|ROM|code||Get line number (from current line) into BC|1
+LINE-NO-A|1691|65535|65535|ROM|code||Get line number (from current line) into A register (high byte)|1
+LINE-RUN|1B8A|65535|65535|ROM|code||Execute a BASIC line from specified address|1
+LINE-SCAN|1B17|65535|65535|ROM|code||Scan current BASIC line for syntax, set CH_ADD|1
+LINE-USE|1BBF|65535|65535|ROM|code||Find line number in DE, set PPC to it|1
+LINE-ZERO|168F|65535|65535|ROM|code||Check if line number is zero|1
+LIST|17F9|65535|65535|ROM|code||LIST command|1
+LIST-1|17FB|65535|65535|ROM|code||LIST/LLIST: Get optional line number parameter|1
+LIST-2|1814|65535|65535|ROM|code||LIST/LLIST: Find starting line|1
+LIST-3|181A|65535|65535|ROM|code||LIST/LLIST: Loop through lines|1
+LIST-4|181F|65535|65535|ROM|code||LIST/LLIST: Check for BREAK key|1
+LIST-5|1822|65535|65535|ROM|code||LIST/LLIST: Output line number and content|1
+LIST-ALL|1833|65535|65535|ROM|code||List all lines from current or specified|1
+LIST-ALL1|1835|65535|65535|ROM|code||LIST-ALL: Main listing loop|1
+LLIST|17F5|65535|65535|ROM|code||LLIST command|1
+LN-FETCH|190F|65535|65535|ROM|code||Fetch line address for given line number|1
+LN-STORE|191C|65535|65535|ROM|code||Store line address for current line (during renumbering)|1
+LOC-MEM|3406|65535|65535|ROM|code||Calculator: Locate item in memory for series calc|1
+LOG(2^A)|2DC1|65535|65535|ROM|code||Calculate log base e of 2^A|1
+LOOK-P-1|1D8B|65535|65535|ROM|code||LOOK-PROG: Main search loop|1
+LOOK-P-2|1DA3|65535|65535|ROM|code||LOOK-PROG: Token found|1
+LOOK-PROG|1D86|65535|65535|ROM|code||Search for specific token in program (e.g. DATA)|1
+LOOK-VARS|28B2|65535|65535|ROM|code||Find a variable in the variables area (VARS)|1
+LPRINT|1FC9|65535|65535|ROM|code||LPRINT command execution|1
+MAIN-1|12A9|65535|65535|ROM|code||Main loop: Get next statement|1
+MAIN-2|12AC|65535|65535|ROM|code||Main loop: Check for BREAK, execute statement|1
+MAIN-3|12CF|65535|65535|ROM|code||Main loop: Handle errors, automatic listing|1
+MAIN-4|1303|65535|65535|ROM|code||Main loop: Fetch line number for error reporting|1
+MAIN-5|133C|65535|65535|ROM|code||Main loop: Continue to next statement or line|1
+MAIN-6|1373|65535|65535|ROM|code||Main loop: Update PPC, SUBPPC|1
+MAIN-7|1376|65535|65535|ROM|code||Main loop: Handle end of program|1
+MAIN-8|1384|65535|65535|ROM|code||Main loop: Error reporting setup|1
+MAIN-9|1386|65535|65535|ROM|code||Main loop: Check for STOP statement|1
+MAIN-ADD|155D|65535|65535|ROM|code||Add line to BASIC program area (from editor/LOAD)|1
+MAIN-ADD1|157D|65535|65535|ROM|code||MAIN-ADD: Make room for new line|1
+MAIN-ADD2|15AB|65535|65535|ROM|code||MAIN-ADD: Insert line, update pointers|1
+MAIN-EXEC|12A2|65535|65535|ROM|code||Main BASIC execution loop (statement dispatcher)|1
+MAIN-G|1313|65535|65535|ROM|code||Main loop: Handle GOTO, GOSUB, RETURN|1
+MAIN-KEYS|205|65535|65535|ROM|code||Main keyboard routine: process key presses|1
+MAKE-EXPT|313B|65535|65535|ROM|code||Floating Point: Create exponent for multiplication result|1
+MAKE-ROOM|1655|65535|65535|ROM|code||Make BC bytes of room at HL in BASIC area|1
+MASK-INT|38|65535|65535|ROM|code||Maskable Interrupt Service Routine (IM 2 vector points here)|1
+ME-CONTRL|8B6|65535|65535|ROM|code||MERGE command main routine|1
+ME-ENT-1|93E|65535|65535|ROM|code||MERGE: Adjust program pointers|1
+ME-ENT-2|955|65535|65535|ROM|code||MERGE: Set new program end|1
+ME-ENT-3|958|65535|65535|ROM|code||MERGE: Finalize merge, clear stack|1
+ME-ENTER|92C|65535|65535|ROM|code||MERGE: Integrate merged program|1
+ME-NEW-L2|8EB|65535|65535|ROM|code||MERGE: Insert new line|1
+ME-NEW-LP|8D2|65535|65535|ROM|code||MERGE: Process new program lines|1
+ME-OLD-L1|8DF|65535|65535|ROM|code||MERGE: Compare old and new line numbers|1
+ME-OLD-LP|8D7|65535|65535|ROM|code||MERGE: Process old program lines|1
+ME-OLD-V1|901|65535|65535|ROM|code||MERGE: Find matching variable in existing program|1
+ME-OLD-V2|909|65535|65535|ROM|code||MERGE: Handle non-matching variable|1
+ME-OLD-V3|912|65535|65535|ROM|code||MERGE: Update variable value|1
+ME-OLD-V4|91E|65535|65535|ROM|code||MERGE: Add new variable|1
+ME-OLD-VP|8F9|65535|65535|ROM|code||MERGE: Process old variables|1
+ME-VAR-L1|921|65535|65535|ROM|code||MERGE: Variable loop control|1
+ME-VAR-L2|923|65535|65535|ROM|code||MERGE: Get next variable from tape|1
+ME-VAR-LP|8F0|65535|65535|ROM|code||MERGE: Merge variables|1
+MLT-LOOP|3114|65535|65535|ROM|code||Floating Point: Multiplication loop|1
+MOVE-FP|33C0|65535|65535|ROM|code||Calculator: Move FP number on stack|1
+MULT-LONG|30F0|65535|65535|ROM|code||Floating Point: Long multiplication of mantissas|1
+MULT-OFLW|30EF|65535|65535|ROM|code||Floating Point: Multiplication overflow|1
+MULT-RSLT|30EA|65535|65535|ROM|code||Floating Point: Store multiplication result|1
+N-NEGTV|3705|65535|65535|ROM|code||EXP: Handle negative exponent|1
+NEAR-ZERO|3159|65535|65535|ROM|code||Floating Point: Handle result very near zero|1
+NEG-BYTE|2FAF|65535|65535|ROM|code||Floating Point: Negate byte (2's complement)|1
+NEG-TEST|3474|65535|65535|ROM|code||Test if number on stack is negative|1
+NEW|11B7|65535|65535|ROM|code||NEW command: Initialize BASIC system|1
+NEXT|1DAB|65535|65535|ROM|code||NEXT command execution|1
+NEXT-1|1DE2|65535|65535|ROM|code||NEXT: Get loop variable|1
+NEXT-2|1DE9|65535|65535|ROM|code||NEXT: Increment and test loop variable|1
+NEXT-2NUM|1C79|65535|65535|ROM|code||Expect two numeric parameters on stack|1
+NEXT-CHAR|20|65535|65535|ROM|code||Get next char from BASIC line into A (like GET-CHAR but CH_ADD not advanced)|1
+NEXT-LINE|1BD1|65535|65535|ROM|code||Advance PPC to the next line in the program|1
+NEXT-LOOP|1DDA|65535|65535|ROM|code||NEXT: Find corresponding FOR loop data|1
+NEXT-O-1|19C7|65535|65535|ROM|code||NEXT-ONE: Skip spaces|1
+NEXT-O-2|19CE|65535|65535|ROM|code||NEXT-ONE: Check for specific character|1
+NEXT-O-3|19D5|65535|65535|ROM|code||NEXT-O-3: End of line check|1
+NEXT-O-4|19D6|65535|65535|ROM|code||NEXT-O-4: Get character|1
+NEXT-O-5|19DB|65535|65535|ROM|code||NEXT-O-5: Advance pointer|1
+NEXT-ONE|19B8|65535|65535|ROM|code||Find next item (variable, token, etc.)|1
+NIL-BYTES|3272|65535|65535|ROM|code||Floating Point: Zero out bytes of mantissa|1
+NO-ADD|311B|65535|65535|ROM|code||Floating Point: Skip addition in multiplication|1
+NO-RESET|70|65535|65535|ROM|code||Warm Reset: preserve some state, e.g., after BREAK|1
+NO-RSTORE|31F9|65535|65535|ROM|code||Floating Point: No restore needed|1
+NORMALISE|316C|65535|65535|ROM|code||Floating Point: Normalize mantissa (MSB set)|1
+NORML-NOW|3186|65535|65535|ROM|code||Floating Point: Normalization complete|1
+NOT-BIN|2CB8|65535|65535|ROM|code||Not a binary digit|1
+NU-OR-STR|354E|65535|65535|ROM|code||Numeric OR String (error)|1
+NUMBER|18B6|65535|65535|ROM|code||Output number in BC in decimal|1
+NUMERIC|2D1B|65535|65535|ROM|code||Check if current char is part of a number|1
+NXT-DGT-1|2CDA|65535|65535|ROM|code||Get next digit for FP conversion|1
+NXT-DGT-2|2D40|65535|65535|ROM|code||Get next digit for INT-TO-FP|1
+OFLOW-CLR|3195|65535|65535|ROM|code||Floating Point: Clear overflow status|1
+OFLW1-CLR|3146|65535|65535|ROM|code||Floating Point: Clear overflow flag 1|1
+OFLW2-CLR|3151|65535|65535|ROM|code||Floating Point: Clear overflow flag 2|1
+ONE|386A|65535|65535|ROM|code||Power: Result is one|1
+ONE-SHIFT|2FE5|65535|65535|ROM|code||Floating Point: Shift mantissa by one bit|1
+ONE-SPACE|1652|65535|65535|ROM|code||Output one space character|1
+OPEN|1736|65535|65535|ROM|code||OPEN # command|1
+OPEN-1|1756|65535|65535|ROM|code||OPEN: Get parameters (stream, device, channel)|1
+OPEN-2|175D|65535|65535|ROM|code||OPEN: Find free stream slot|1
+OPEN-3|1767|65535|65535|ROM|code||OPEN: Set up stream data|1
+OPEN-END|178B|65535|65535|ROM|code||OPEN: Finish stream setup|1
+OPEN-K|1781|65535|65535|ROM|code||Open stream for K channel|1
+OPEN-P|1789|65535|65535|ROM|code||Open stream for P channel|1
+OPEN-S|1785|65535|65535|ROM|code||Open stream for S channel|1
+OTHER-STR|35B7|65535|65535|ROM|code||String concatenation: get other string|1
+OUT|1E7A|65535|65535|ROM|code||OUT command execution|1
+OUT-C-1|18F3|65535|65535|ROM|code||OUT-CURS: Get cursor character based on MODE|1
+OUT-C-2|1909|65535|65535|ROM|code||OUT-CURS: Print the cursor character|1
+OUT-CH-1|195A|65535|65535|ROM|code||OUT-CHAR: Handle printable characters|1
+OUT-CH-2|1968|65535|65535|ROM|code||OUT-CHAR: Handle control codes via table|1
+OUT-CH-3|196C|65535|65535|ROM|code||OUT-CHAR: Raw character output (no control code processing)|1
+OUT-CHAR|1937|65535|65535|ROM|code||Output character in A to current channel (handles control codes)|1
+OUT-CODE|15EF|65535|65535|ROM|code||Output a byte in A to port in C|1
+OUT-CURS|18E1|65535|65535|ROM|code||Output cursor character (K, L, C, E, G)|1
+OUT-FLASH|18C1|65535|65535|ROM|code||Output character with flashing attribute|1
+OUT-LINE|1855|65535|65535|ROM|code||Output a tokenized BASIC line|1
+OUT-LINE1|1865|65535|65535|ROM|code||OUT-LINE: Output line number|1
+OUT-LINE2|187D|65535|65535|ROM|code||OUT-LINE: Loop through tokens in line|1
+OUT-LINE3|1881|65535|65535|ROM|code||OUT-LINE: Output token (keyword or char)|1
+OUT-LINE4|1894|65535|65535|ROM|code||OUT-LINE: Output number|1
+OUT-LINE5|18A1|65535|65535|ROM|code||OUT-LINE: Output string|1
+OUT-LINE6|18B4|65535|65535|ROM|code||OUT-LINE: Handle REM statement|1
+OUT-NUM-1|1A1B|65535|65535|ROM|code||Output number in HL as decimal|1
+OUT-NUM-2|1A28|65535|65535|ROM|code||OUT-NUM-1: Division by 10 loop|1
+OUT-NUM-3|1A30|65535|65535|ROM|code||OUT-NUM-1: Convert digit to ASCII and print|1
+OUT-NUM-4|1A42|65535|65535|ROM|code||OUT-NUM-1: Handle leading zeros|1
+OUT-SP-1|192B|65535|65535|ROM|code||Output N spaces (N in C)|1
+OUT-SP-2|1925|65535|65535|ROM|code||Output N spaces (N in B)|1
+OUT-SP-NO|192A|65535|65535|ROM|code||Output N spaces (N in A)|1
+P-BEEP|1AE3|65535|65535|ROM|code||Parse/Execute BEEP command|1
+P-BORDER|1AF5|65535|65535|ROM|code||Parse/Execute BORDER command|1
+P-BRIGHT|1AEE|65535|65535|ROM|code||Parse/Execute BRIGHT command|1
+P-CAT|1B14|65535|65535|ROM|code||Parse/Execute CAT command (Interface 1)|1
+P-CIRCLE|1AE7|65535|65535|ROM|code||Parse/Execute CIRCLE command|1
+P-CLEAR|1ABB|65535|65535|ROM|code||Parse/Execute CLEAR command|1
+P-CLOSE|1B02|65535|65535|ROM|code||Parse/Execute CLOSE # command|1
+P-CLS|1ABE|65535|65535|ROM|code||Parse/Execute CLS command|1
+P-CONT|1AB8|65535|65535|ROM|code||Parse/Execute CONTINUE command|1
+P-COPY|1AD6|65535|65535|ROM|code||Parse/Execute COPY command|1
+P-DATA|1ACC|65535|65535|ROM|code||Parse/Execute DATA command|1
+P-DEF-FN|1AF9|65535|65535|ROM|code||Parse/Execute DEF FN command|1
+P-DIM|1AA2|65535|65535|ROM|code||Parse/Execute DIM command|1
+P-DRAW|1AD2|65535|65535|ROM|code||Parse/Execute DRAW command|1
+P-ERASE|1B10|65535|65535|ROM|code||Parse/Execute ERASE command (Interface 1)|1
+P-FLASH|1AED|65535|65535|ROM|code||Parse/Execute FLASH command|1
+P-FOR|1A90|65535|65535|ROM|code||Parse/Execute FOR command|1
+P-FORMAT|1B06|65535|65535|ROM|code||Parse/Execute FORMAT command (Interface 1)|1
+P-GO-SUB|1A86|65535|65535|ROM|code||Parse/Execute GOSUB command|1
+P-GO-TO|1A7D|65535|65535|ROM|code||Parse/Execute GOTO command|1
+P-IF|1A81|65535|65535|ROM|code||Parse/Execute IF command|1
+P-INK|1AEB|65535|65535|ROM|code||Parse/Execute INK command|1
+P-INPUT|1A9F|65535|65535|ROM|code||Parse/Execute INPUT command|1
+P-INVERSE|1AEF|65535|65535|ROM|code||Parse/Execute INVERSE command|1
+P-LET|1A7A|65535|65535|ROM|code||Parse/Execute LET command|1
+P-LIST|1AAE|65535|65535|ROM|code||Parse/Execute LIST command|1
+P-LLIST|1ADC|65535|65535|ROM|code||Parse/Execute LLIST command|1
+P-LOAD|1AE0|65535|65535|ROM|code||Parse/Execute LOAD command|1
+P-LPRINT|1AD9|65535|65535|ROM|code||Parse/Execute LPRINT command|1
+P-MERGE|1AE2|65535|65535|ROM|code||Parse/Execute MERGE command|1
+P-MOVE|1B0A|65535|65535|ROM|code||Parse/Execute MOVE command (Interface 1)|1
+P-NEW|1AA8|65535|65535|ROM|code||Parse/Execute NEW command|1
+P-NEXT|1A98|65535|65535|ROM|code||Parse/Execute NEXT command|1
+P-OPEN|1AFC|65535|65535|ROM|code||Parse/Execute OPEN # command|1
+P-OUT|1AF1|65535|65535|ROM|code||Parse/Execute OUT command|1
+P-OVER|1AF0|65535|65535|ROM|code||Parse/Execute OVER command|1
+P-PAPER|1AEC|65535|65535|ROM|code||Parse/Execute PAPER command|1
+P-PAUSE|1AC5|65535|65535|ROM|code||Parse/Execute PAUSE command|1
+P-PLOT|1AC1|65535|65535|ROM|code||Parse/Execute PLOT command|1
+P-POKE|1AB1|65535|65535|ROM|code||Parse/Execute POKE command|1
+P-PRINT|1A9C|65535|65535|ROM|code||Parse/Execute PRINT command|1
+P-RANDOM|1AB5|65535|65535|ROM|code||Parse/Execute RANDOMIZE command|1
+P-READ|1AC9|65535|65535|ROM|code||Parse/Execute READ command|1
+P-REM|1AA5|65535|65535|ROM|code||Parse/Execute REM command|1
+P-RESTORE|1ACF|65535|65535|ROM|code||Parse/Execute RESTORE command|1
+P-RETURN|1A8D|65535|65535|ROM|code||Parse/Execute RETURN command|1
+P-RUN|1AAB|65535|65535|ROM|code||Parse/Execute RUN command|1
+P-SAVE|1ADF|65535|65535|ROM|code||Parse/Execute SAVE command|1
+P-STOP|1A8A|65535|65535|ROM|code||Parse/Execute STOP command|1
+P-VERIFY|1AE1|65535|65535|ROM|code||Parse/Execute VERIFY command|1
+PASS-BY|1E39|65535|65535|ROM|code||Skip current DATA item pointed to by DATADD|1
+PAUSE|1F3A|65535|65535|ROM|code||PAUSE command execution|1
+PAUSE-1|1F3D|65535|65535|ROM|code||PAUSE: Get duration parameter|1
+PAUSE-2|1F49|65535|65535|ROM|code||PAUSE: Loop for specified duration or until key press|1
+PAUSE-END|1F4F|65535|65535|ROM|code||PAUSE: End of pause|1
+PF-ALL-9|2EB8|65535|65535|ROM|code||PRINT-FP: Handle strings of 9s (rounding)|1
+PF-BITS|2E7B|65535|65535|ROM|code||PRINT-FP: Extract bits for conversion|1
+PF-BYTES|2E8A|65535|65535|ROM|code||PRINT-FP: Convert bytes to digits|1
+PF-COUNT|2F2D|65535|65535|ROM|code||PRINT-FP: Count digits printed|1
+PF-DC-OUT|2F5E|65535|65535|ROM|code||PRINT-FP: Output decimal point|1
+PF-DEC-0$|2F64|65535|65535|ROM|code||PRINT-FP: Output '0' character|1
+PF-DIGITS|2EA1|65535|65535|ROM|code||PRINT-FP: Output digits|1
+PF-E-FRMT|2F6C|65535|65535|ROM|code||PRINT-FP: Print in E-format (scientific notation)|1
+PF-E-POS|2F83|65535|65535|ROM|code||PRINT-FP: E-format positive exponent|1
+PF-E-SBRN|2F4A|65535|65535|ROM|code||PRINT-FP: Subroutine for E-format printing|1
+PF-E-SIGN|2F85|65535|65535|ROM|code||PRINT-FP: E-format exponent sign|1
+PF-FR-DGT|2EEC|65535|65535|ROM|code||PRINT-FP: Get fractional digit|1
+PF-FR-EXX|2EEF|65535|65535|ROM|code||PRINT-FP: Fractional exponent handling|1
+PF-FRACTN|2ECF|65535|65535|ROM|code||PRINT-FP: Print fractional part|1
+PF-FRN-LP|2EDF|65535|65535|ROM|code||PRINT-FP: Fractional part loop|1
+PF-INSERT|2EA9|65535|65535|ROM|code||PRINT-FP: Insert decimal point|1
+PF-LARGE|2E56|65535|65535|ROM|code||PRINT-FP: Handle very large numbers (scientific notation)|1
+PF-LOOP|2E01|65535|65535|ROM|code||PRINT-FP: Main printing loop|1
+PF-MEDIUM|2E6F|65535|65535|ROM|code||PRINT-FP: Handle numbers in standard decimal format|1
+PF-MORE|2ECB|65535|65535|ROM|code||PRINT-FP: More digits to print|1
+PF-NEGTVE|2DF2|65535|65535|ROM|code||PRINT-FP: Handle negative number|1
+PF-NOT-E|2F46|65535|65535|ROM|code||PRINT-FP: Not using E-format|1
+PF-OUT-DT|2F59|65535|65535|ROM|code||PRINT-FP: Output digit|1
+PF-OUT-LP|2F52|65535|65535|ROM|code||PRINT-FP: Output loop for digits|1
+PF-POSTVE|2DF8|65535|65535|ROM|code||PRINT-FP: Handle positive number|1
+PF-R-BACK|2F25|65535|65535|ROM|code||PRINT-FP: Backtrack for rounding|1
+PF-RND-LP|2F18|65535|65535|ROM|code||PRINT-FP: Rounding loop|1
+PF-ROUND|2F0C|65535|65535|ROM|code||PRINT-FP: Round number|1
+PF-SAVE|2E1E|65535|65535|ROM|code||PRINT-FP: Save intermediate values|1
+PF-SMALL|2E24|65535|65535|ROM|code||PRINT-FP: Handle very small numbers (scientific notation)|1
+PF-TEST-2|2EB3|65535|65535|ROM|code||PRINT-FP: Test number magnitude|1
+PIXEL-ADD|22AA|65535|65535|ROM|code||Calculate pixel address in display file (HL) and bit mask (A) for (Y,X)|1
+PL-TST-IN|22FD|65535|65535|ROM|code||PLOT: Test if INK/PAPER/etc. parameters follow|1
+PLOT|22DC|65535|65535|ROM|code||PLOT command execution|1
+PLOT-END|2303|65535|65535|ROM|code||PLOT: End of PLOT command|1
+PLOT-LOOP|22F0|65535|65535|ROM|code||PLOT: Get X,Y coordinates|1
+PLOT-SUB|22E5|65535|65535|ROM|code||PLOT: Set a pixel|1
+PO-1-OPER|A7A|65535|65535|ROM|code||Print Output: Output character using current stream (1 operand)|1
+PO-2-OPER|A75|65535|65535|ROM|code||Print Output: Output character using current stream (2 operands)|1
+PO-ABLE|AD9|65535|65535|ROM|code||Print Output: Check if printing is enabled for current channel|1
+PO-ANY|B24|65535|65535|ROM|code||Print Output: Print any character (control or printable)|1
+PO-AT-ERR|AAC|65535|65535|ROM|code||Print Output: AT command error (invalid coordinates)|1
+PO-AT-SET|ABF|65535|65535|ROM|code||Print Output: Set print position for AT command|1
+PO-ATTR|BDB|65535|65535|ROM|code||Print Output: Set new permanent attributes|1
+PO-ATTR-1|BFA|65535|65535|ROM|code||Print Output: Apply attribute changes|1
+PO-ATTR-2|C08|65535|65535|ROM|code||Print Output: Update ATTR_P, MASK_P|1
+PO-BACK-1|A23|65535|65535|ROM|code||Print Output: Handle backspace character (CH_ADD-1)|1
+PO-BACK-2|A38|65535|65535|ROM|code||Print Output: Handle backspace (actual screen update)|1
+PO-BACK-3|A3A|65535|65535|ROM|code||Print Output: Backspace character logic|1
+PO-CHANGE|A80|65535|65535|ROM|code||Print Output: Change print position|1
+PO-CHAR|B65|65535|65535|ROM|code||Print Output: Print a single character from A|1
+PO-CHAR-2|B6A|65535|65535|ROM|code||Print Output: Character output sub-routine|1
+PO-CHAR-3|B76|65535|65535|ROM|code||Print Output: Calculate screen address for character|1
+PO-COMMA|A5F|65535|65535|ROM|code||Print Output: Handle comma (tab to next print zone)|1
+PO-CONT|A87|65535|65535|ROM|code||Print Output: Continue printing after attribute/control|1
+PO-EACH|C22|65535|65535|ROM|code||Print Output: Print each character of a token|1
+PO-ENTER|A4F|65535|65535|ROM|code||Print Output: Handle ENTER (newline)|1
+PO-F-PR|B1D|65535|65535|ROM|code||Print Output: Fetch character for printer|1
+PO-FETCH|B03|65535|65535|ROM|code||Print Output: Fetch character from display file|1
+PO-FILL|AC3|65535|65535|ROM|code||Print Output: Fill with spaces (for TAB)|1
+PO-GR-1|B38|65535|65535|ROM|code||Print Output: Graphics character part 1|1
+PO-GR-2|B3E|65535|65535|ROM|code||Print Output: Graphics character part 2|1
+PO-GR-3|B4C|65535|65535|ROM|code||Print Output: Graphics character part 3 (UDG)|1
+PO-MSG|C0A|65535|65535|ROM|code||Print Output: Print a system message (HL points to string)|1
+PO-QUEST|A69|65535|65535|ROM|code||Print Output: Handle '?' (prints as keyword)|1
+PO-RIGHT|A3D|65535|65535|ROM|code||Print Output: Move cursor right|1
+PO-SAVE|C3B|65535|65535|ROM|code||Print Output: Save print parameters|1
+PO-SCR|C55|65535|65535|ROM|code||Print Output: Scroll screen if necessary|1
+PO-SCR-2|C88|65535|65535|ROM|code||Print Output: Scroll screen up one line|1
+PO-SCR-3|CD2|65535|65535|ROM|code||Print Output: Scroll main screen area|1
+PO-SCR-3A|CF0|65535|65535|ROM|code||Print Output: Scroll, copy attributes|1
+PO-SCR-4|D02|65535|65535|ROM|code||Print Output: Display "scroll?" prompt and wait|1
+PO-SCR-4A|D1C|65535|65535|ROM|code||Print Output: Handle response to "scroll?"|1
+PO-SCR-4B|D2D|65535|65535|ROM|code||Print Output: Continue after "scroll?"|1
+PO-SEARCH|C41|65535|65535|ROM|code||Print Output: Search for character in display file|1
+PO-SPACE|AD0|65535|65535|ROM|code||Print Output: Print a space character|1
+PO-ST-E|AF0|65535|65535|ROM|code||Print Output: Store character and advance edit line cursor|1
+PO-ST-PR|AFC|65535|65535|ROM|code||Print Output: Store character and advance printer cursor|1
+PO-STEP|C44|65535|65535|ROM|code||Print Output: Step to next print position|1
+PO-STORE|ADC|65535|65535|ROM|code||Print Output: Store character in display file|1
+PO-T|B5F|65535|65535|ROM|code||Print Output: Text character|1
+PO-T&UDG|B52|65535|65535|ROM|code||Print Output: Handle text and UDG characters|1
+PO-TAB|AC2|65535|65535|ROM|code||Print Output: Handle TAB command|1
+PO-TABLE|C14|65535|65535|ROM|code||Print Output: Look up token in table|1
+PO-TOKENS|C10|65535|65535|ROM|code||Print Output: Print tokenized keyword|1
+PO-TR-SP|C35|65535|65535|ROM|code||Print Output: Trailing space after keyword|1
+PO-TV-1|A7D|65535|65535|ROM|code||Print Output: TV output main entry|1
+PO-TV-2|A6D|65535|65535|ROM|code||Print Output: TV output specific logic|1
+POINT-LP|22D4|65535|65535|ROM|code||POINT: Loop for coordinates|1
+POINT-SUB|22CB|65535|65535|ROM|code||Subroutine for POINT function (test pixel state)|1
+POINTERS|1664|65535|65535|ROM|code||Re-establish system pointers (VARS, E_LINE etc) after memory shift|1
+POKE|1E80|65535|65535|ROM|code||POKE command execution|1
+PR-ALL|B7F|65535|65535|ROM|code||Print item (general routine for PRINT statement)|1
+PR-ALL-1|B93|65535|65535|ROM|code||Print item: String|1
+PR-ALL-2|BA4|65535|65535|ROM|code||Print item: Number|1
+PR-ALL-3|BB6|65535|65535|ROM|code||Print item: TAB or AT|1
+PR-ALL-4|BB7|65535|65535|ROM|code||Print item: Attributes (INK, PAPER etc)|1
+PR-ALL-5|BC1|65535|65535|ROM|code||Print item: Finished processing item|1
+PR-ALL-6|BD3|65535|65535|ROM|code||Print item: Check for comma or semicolon|1
+PR-AT-TAB|201E|65535|65535|ROM|code||Print item: Handle AT or TAB|1
+PR-END-Z|2045|65535|65535|ROM|code||Print: End of printing, restore channel|1
+PR-ITEM-1|1FFC|65535|65535|ROM|code||Print item: Evaluate expression|1
+PR-ITEM-2|200E|65535|65535|ROM|code||Print item: Dispatch to string or number printing|1
+PR-ITEM-3|2024|65535|65535|ROM|code||Print item: Handle INK, PAPER etc.|1
+PR-POSN-1|204E|65535|65535|ROM|code||Print: Handle AT (line, column)|1
+PR-POSN-2|2061|65535|65535|ROM|code||Print: Handle TAB (column)|1
+PR-POSN-3|2067|65535|65535|ROM|code||Print: Set print position|1
+PR-POSN-4|206E|65535|65535|ROM|code||Print: Check for valid screen coordinates|1
+PR-ST-END|2048|65535|65535|ROM|code||Print: Check for end of statement|1
+PR-STRING|203C|65535|65535|ROM|code||Print a string from calculator stack|1
+PRB-BYTES|EE7|65535|65535|ROM|code||Send bytes from printer buffer|1
+PREP-ADD|2F9B|65535|65535|ROM|code||Floating Point: Prepare for addition/subtraction (align exponents)|1
+PREP-M/D|30C0|65535|65535|ROM|code||Floating Point: Prepare for multiplication/division|1
+PRINT|1FCD|65535|65535|ROM|code||PRINT command execution|1
+PRINT-1|1FCF|65535|65535|ROM|code||PRINT/LPRINT: Set current channel|1
+PRINT-2|1FDF|65535|65535|ROM|code||PRINT/LPRINT: Main loop for printing items|1
+PRINT-3|1FE5|65535|65535|ROM|code||PRINT/LPRINT: Handle separators (comma, semicolon)|1
+PRINT-4|1FF2|65535|65535|ROM|code||PRINT/LPRINT: End of statement, print newline if needed|1
+PRINT-A-1|10|65535|65535|ROM|code||Print character in A (preserved), HL points to next char loc|1
+PRINT-A-2|15F2|65535|65535|ROM|code||Print char in A, preserve other regs, update print pos|1
+PRINT-CR|1FF5|65535|65535|ROM|code||Print Carriage Return / Newline|1
+PRINT-FP|2DE3|65535|65535|ROM|code||Print floating point number from calculator stack|1
+PRINT-OUT|9F4|65535|65535|ROM|code||Main print routine for characters to screen/printer|1
+PTR-DONE|167F|65535|65535|ROM|code||POINTERS: Finished updating|1
+PTR-NEXT|166B|65535|65535|ROM|code||POINTERS: Update next pointer in list|1
+R-I-STORE|365F|65535|65535|ROM|code||VAL: Store intermediate result|1
+RAM-DONE|11EF|65535|65535|ROM|code||NEW: RAM check complete, set RAMTOP|1
+RAM-FILL|11DC|65535|65535|ROM|code||NEW: Fill RAM with pattern|1
+RAM-READ|11E2|65535|65535|ROM|code||NEW: Read RAM pattern and verify|1
+RAM-SET|1219|65535|65535|ROM|code||NEW: Set system variables after RAM check|1
+RAND-1|1E5A|65535|65535|ROM|code||RANDOMIZE: Get seed value or use FRAMES|1
+RANDOMIZE|1E4F|65535|65535|ROM|code||RANDOMIZE command execution|1
+RE-ENTRY|3365|65535|65535|ROM|code||Calculator: Re-entry point after operation|1
+RE-ST-TWO|3293|65535|65535|ROM|code||Floating Point: Re-stack two numbers|1
+READ|1DED|65535|65535|ROM|code||READ command execution|1
+READ-1|1E0A|65535|65535|ROM|code||READ: Get variable to assign to|1
+READ-2|1E1E|65535|65535|ROM|code||READ: Find next DATA item|1
+READ-3|1DEC|65535|65535|ROM|code||READ: Assign value to variable|1
+REC-EDIT|16D4|65535|65535|ROM|code||Recover edit line after memory full error|1
+RECLAIM-1|19E5|65535|65535|ROM|code||Reclaim memory (e.g. after deleting a line) - part 1|1
+RECLAIM-2|19E8|65535|65535|ROM|code||Reclaim memory - part 2, update pointers|1
+REM|1BB2|65535|65535|ROM|code||REM command: Skip to end of line|1
+REMOVE-FP|11A7|65535|65535|ROM|code||Remove floating point number from calculator stack|1
+REPORT-0|1BB0|65535|65535|ROM|code||Error Report: "OK" or successful completion|1
+REPORT-1|1DD8|65535|65535|ROM|code||Error Report: "NEXT without FOR"|1
+REPORT-2|1C2E|65535|65535|ROM|code||Error Report: "Variable not found"|1
+REPORT-2a|670|65535|65535|ROM|code||Error Report: "Variable not found" (2 - Variable not found) - during SAVE data|1
+REPORT-3|2A20|65535|65535|ROM|code||Error Report: "Subscript out of range"|1
+REPORT-4|1F15|65535|65535|ROM|code||Error Report: "Out of memory" (stack collision)|1
+REPORT-5|C86|65535|65535|ROM|code||Error Report: "Screen full" or "Invalid in PRINT AT/TAB"|1
+REPORT-6|31AD|65535|65535|ROM|code||Error Report: "Number too big" or "Out of Memory for FP calc"|1
+REPORT-6b|3703|65535|65535|ROM|code||Error Report: "Number too big" for EXP|1
+REPORT-7|1F36|65535|65535|ROM|code||Error Report: "RETURN without GOSUB"|1
+REPORT-8|15E4|65535|65535|ROM|code||Error Report: "FN without DEF FN"|1
+REPORT-9|1CEE|65535|65535|ROM|code||Error Report: "Out of memory" (also for subscript out of range)|1
+REPORT-A|34E7|65535|65535|ROM|code||Error Report: "Invalid argument" (often for USR address)|1
+REPORT-Ab|371A|65535|65535|ROM|code||Error Report: "LN of zero or negative" (A - Invalid argument)|1
+REPORT-B|46C|65535|65535|ROM|code||Error Report: "Nonsense in BASIC" or "Invalid argument"|1
+REPORT-Bb|1E9F|65535|65535|ROM|code||Error Report: "Integer out of range" (B - Integer out of range)|1
+REPORT-Bc|24F9|65535|65535|ROM|code||Error Report: "Coordinates out of range" (B - Integer out of range)|1
+REPORT-Bd|35DC|65535|65535|ROM|code||Error Report: "CHR$ argument out of range" (B - Integer out of range)|1
+REPORT-C|1C8A|65535|65535|ROM|code||Error Report: "Nonsense in BASIC" / "Syntax Error"|1
+REPORT-Cb|21CE|65535|65535|ROM|code||Error Report: "Invalid input" (C - Nonsense in BASIC often from INPUT)|1
+REPORT-D|D00|65535|65535|ROM|code||Error Report: "Tape loading error" (also "Out of screen")|1
+REPORT-Da|552|65535|65535|ROM|code||Error Report: "Tape loading error" (D - R Tape loading error)|1
+REPORT-Dc|F0A|65535|65535|ROM|code||Error Report: "No room for line" (D - Out of memory, can also be printer error)|1
+REPORT-E|1E08|65535|65535|ROM|code||Error Report: "Out of DATA"|1
+REPORT-F|1765|65535|65535|ROM|code||Error Report: "Tape saving error" (also file operation errors)|1
+REPORT-Fa|642|65535|65535|ROM|code||Error Report: "Tape saving error" (F - Tape saving error)|1
+REPORT-G|1555|65535|65535|ROM|code||Error Report: "No FN for DEF FN" or "Argument error in DEF FN"|1
+REPORT-H|21D4|65535|65535|ROM|code||Error Report: "STOP in INPUT"|1
+REPORT-I|1D84|65535|65535|ROM|code||Error Report: "FOR without NEXT" or "NEXT without FOR" related|1
+REPORT-J|15C4|65535|65535|ROM|code||Error Report: "Invalid I/O device"|1
+REPORT-K|2244|65535|65535|ROM|code||Error Report: "Invalid colour, FLASH, BRIGHT, INVERSE or OVER"|1
+REPORT-L|1B7B|65535|65535|ROM|code||Error Report: "Invalid FOR variable" or other loop errors|1
+REPORT-M|1EDA|65535|65535|ROM|code||Error Report: "RAMTOP too small" (M - RAMTOP too small)|1
+REPORT-N|1BEC|65535|65535|ROM|code||Error Report: "NEXT without FOR"|1
+REPORT-Oa|160E|65535|65535|ROM|code||Error Report: "Channel already open" (O - Channel open)|1
+REPORT-Ob|1725|65535|65535|ROM|code||Error Report: "Invalid channel" (O - Channel open can also mean this)|1
+REPORT-P|2812|65535|65535|ROM|code||Error Report: "Invalid FN call" (P - FN without DEF FN or wrong args)|1
+REPORT-Q|288B|65535|65535|ROM|code||Error Report: "Parameter error" (e.g. wrong number of args for FN)|1
+REPORT-R|806|65535|65535|ROM|code||Error Report: "R Tape loading error"|1
+RESERVE|169E|65535|65535|ROM|code||Reserve memory space (at STKEND)|1
+RESET|66|65535|65535|ROM|code||Cold Reset routine: initialize system variables, clear screen|1
+REST-RUN|1E45|65535|65535|ROM|code||RESTORE: Find line number, set DATADD|1
+RESTK-SUB|3296|65535|65535|ROM|code||Floating Point: Re-stack subroutine|1
+RESTORE|1E42|65535|65535|ROM|code||RESTORE command execution|1
+RESULT-OK|370C|65535|65535|ROM|code||EXP: Result is valid|1
+RETURN|1F23|65535|65535|ROM|code||RETURN command execution|1
+RS-NRMLSE|32B1|65535|65535|ROM|code||Re-stack and normalize|1
+RS-STORE|32BD|65535|65535|ROM|code||Re-stack store|1
+RSLT-ZERO|370E|65535|65535|ROM|code||EXP: Result is zero|1
+RSTK-LOOP|32B2|65535|65535|ROM|code||Re-stack loop|1
+RUN|1EA1|65535|65535|ROM|code||RUN command execution|1
+S-2-COORD|2522|65535|65535|ROM|code||SCANNING: Expect two coordinates (e.g., for AT)|1
+S-ALPHNUM|2684|65535|65535|ROM|code||SCANNING: Check for alphanumeric character|1
+S-ATTR|2672|65535|65535|ROM|code||Execute ATTR function (entry point)|1
+S-ATTR-S|2580|65535|65535|ROM|code||SCANNING: Handle ATTR function|1
+S-BRACKET|25E8|65535|65535|ROM|code||SCANNING: Expect opening bracket '('|1
+S-CONT-1|26DD|65535|65535|ROM|code||SCANNING: Continue after operand|1
+S-CONT-2|2712|65535|65535|ROM|code||SCANNING: Continue after operator|1
+S-CONT-3|2713|65535|65535|ROM|code||SCANNING: Expression evaluation main logic|1
+S-DECIMAL|268D|65535|65535|ROM|code||SCANNING: Check for decimal point|1
+S-FN|25F5|65535|65535|ROM|code||SCANNING: Handle user-defined function FN|1
+S-FN-SBRN|27BD|65535|65535|ROM|code||SCANNING: Subroutine for FN (user defined function) call|1
+S-IK$-STK|2660|65535|65535|ROM|code||INKEY$: Stack result string|1
+S-INK$-EN|2665|65535|65535|ROM|code||INKEY$: End of INKEY$ processing|1
+S-INKEY$|2634|65535|65535|ROM|code||SCANNING: Handle INKEY$ function (non-empty string means key pressed)|1
+S-LETTER|26C9|65535|65535|ROM|code||SCANNING: Check for letter (variable name start)|1
+S-LOOP|2734|65535|65535|ROM|code||SCANNING: Operator precedence loop (shunting-yard)|1
+S-LOOP-1|24FF|65535|65535|ROM|code||SCANNING: Main loop, get token|1
+S-LOOPEND|2770|65535|65535|ROM|code||SCANNING: End of operator loop|1
+S-NEGATE|26DF|65535|65535|ROM|code||SCANNING: Handle unary minus|1
+S-NEXT|2790|65535|65535|ROM|code||SCANNING: Get next token in expression|1
+S-NO-TO-$|2707|65535|65535|ROM|code||SCANNING: Ensure numeric operand, not string|1
+S-NOT-AND|2788|65535|65535|ROM|code||SCANNING: Handle NOT and AND operators|1
+S-NUMERIC|26C3|65535|65535|ROM|code||SCANNING: Process numeric literal or variable|1
+S-OPERTR|2723|65535|65535|ROM|code||SCANNING: Process operator (AND, OR, +, -, *, / etc.)|1
+S-PI|2627|65535|65535|ROM|code||SCANNING: Handle PI constant|1
+S-PI-END|2630|65535|65535|ROM|code||PI: End of PI processing|1
+S-POINT|267B|65535|65535|ROM|code||Execute POINT function (entry point)|1
+S-PUSH-PO|270D|65535|65535|ROM|code||SCANNING: Push operator onto stack|1
+S-Q-AGAIN|25BE|65535|65535|ROM|code||SCANNING: Get characters within quotes|1
+S-Q-COPY|25CB|65535|65535|ROM|code||SCANNING: Copy string to workspace|1
+S-Q-PRMS|25D9|65535|65535|ROM|code||SCANNING: String parameters (e.g. for VAL$)|1
+S-QUOTE|25B3|65535|65535|ROM|code||SCANNING: Expect opening quote|1
+S-QUOTE-S|250F|65535|65535|ROM|code||SCANNING: Handle quoted string|1
+S-RND|25F8|65535|65535|ROM|code||SCANNING: Handle RND function|1
+S-RND-END|2625|65535|65535|ROM|code||RND: End of RND processing|1
+S-RPORT-C|2761|65535|65535|ROM|code||SCANNING: Report syntax error C|1
+S-RUNTEST|2764|65535|65535|ROM|code||SCANNING: Runtime test (e.g. for type compatibility)|1
+S-SC-MTCH|255A|65535|65535|ROM|code||SCREEN$: Character match|1
+S-SC-ROWS|255D|65535|65535|ROM|code||SCREEN$: Row processing for SCREEN$|1
+S-SCR-NXT|2573|65535|65535|ROM|code||SCREEN$: Next character|1
+S-SCR-STO|257D|65535|65535|ROM|code||SCREEN$: Store result|1
+S-SCREEN$|2668|65535|65535|ROM|code||Execute SCREEN$ function (entry point)|1
+S-SCRN$-S|2535|65535|65535|ROM|code||SCANNING: Handle SCREEN$ function|1
+S-SCRN-LP|254F|65535|65535|ROM|code||SCREEN$: Loop through screen characters|1
+S-SD-SKIP|26B6|65535|65535|ROM|code||SCANNING: Skip non-numeric part|1
+S-STK-DEC|26B5|65535|65535|ROM|code||SCANNING: Stack decimal number|1
+S-STK-LST|274C|65535|65535|ROM|code||SCANNING: Stack last operator|1
+S-STRING|25DB|65535|65535|ROM|code||SCANNING: Process string literal or variable|1
+S-SYNTEST|275B|65535|65535|ROM|code||SCANNING: Syntax test for valid expression|1
+S-TIGHTER|2773|65535|65535|ROM|code||SCANNING: Check operator precedence|1
+S-U-PLUS|25AF|65535|65535|ROM|code||SCANNING: Handle unary plus|1
+SA-1-SEC|991|65535|65535|ROM|code||SAVE: Delay for 1 second (approx)|1
+SA-8-BITS|525|65535|65535|ROM|code||Tape SAVE: Loop for 8 bits of a byte|1
+SA-ALL|75A|65535|65535|ROM|code||SAVE: Common routine for saving header and data|1
+SA-BIT-1|514|65535|65535|ROM|code||Tape SAVE: Output '1' bit|1
+SA-BIT-2|511|65535|65535|ROM|code||Tape SAVE: Output '0' bit|1
+SA-BLANK|629|65535|65535|ROM|code||SAVE: Handle blank filename (not allowed)|1
+SA-BYTES|4C2|65535|65535|ROM|code||Tape SAVE: Save a block of bytes (header or data)|1
+SA-CODE|6C3|65535|65535|ROM|code||SAVE CODE command routine|1
+SA-CODE-1|6E1|65535|65535|ROM|code||SAVE CODE: Get parameters (start address, length)|1
+SA-CODE-2|6F0|65535|65535|ROM|code||SAVE CODE: Prepare header|1
+SA-CODE-3|6F5|65535|65535|ROM|code||SAVE CODE: Save header|1
+SA-CODE-4|6F9|65535|65535|ROM|code||SAVE CODE: Save data block|1
+SA-CONTRL|970|65535|65535|ROM|code||SAVE: Control routine for different save types|1
+SA-DATA|652|65535|65535|ROM|code||SAVE: Save data block (variables, array, code)|1
+SA-DATA-1|692|65535|65535|ROM|code||SAVE: Prepare data for saving|1
+SA-DELAY|53C|65535|65535|ROM|code||Tape SAVE: Delay routine|1
+SA-FLAG|4D0|65535|65535|ROM|code||Tape SAVE: Save flag byte (A) with parity|1
+SA-LEADER|4D8|65535|65535|ROM|code||Tape SAVE: Output leader tone|1
+SA-LINE|716|65535|65535|ROM|code||SAVE: Handle LINE parameter for auto-start|1
+SA-LINE-1|723|65535|65535|ROM|code||SAVE: Get LINE number|1
+SA-LOOP|4FE|65535|65535|ROM|code||Tape SAVE: Main byte saving loop|1
+SA-LOOP-P|505|65535|65535|ROM|code||Tape SAVE: Loop for saving bits with parity|1
+SA-NAME|64B|65535|65535|ROM|code||SAVE: Process filename from BASIC|1
+SA-NULL|644|65535|65535|ROM|code||SAVE: Handle null characters in filename|1
+SA-OUT|51C|65535|65535|ROM|code||Tape SAVE: Output pulse to EAR|1
+SA-PARITY|50E|65535|65535|ROM|code||Tape SAVE: Calculate and add parity bit|1
+SA-SCR$|6A0|65535|65535|ROM|code||SAVE SCREEN$ internal routine|1
+SA-SET|51A|65535|65535|ROM|code||Tape SAVE: Set EAR output level|1
+SA-SPACE|621|65535|65535|ROM|code||SAVE: Check for filename space|1
+SA-START|507|65535|65535|ROM|code||Tape SAVE: Start saving a byte|1
+SA-SYNC-1|4EA|65535|65535|ROM|code||Tape SAVE: Output first sync pulse|1
+SA-SYNC-2|4F2|65535|65535|ROM|code||Tape SAVE: Output second sync pulse|1
+SA-TYPE-0|73A|65535|65535|ROM|code||SAVE: Type 0 (Program block)|1
+SA-TYPE-3|710|65535|65535|ROM|code||SAVE: Type 3 (CODE block)|1
+SA-V-NEW|685|65535|65535|ROM|code||SAVE: Handle new variable format|1
+SA-V-OLD|672|65535|65535|ROM|code||SAVE: Handle old variable format (unused)|1
+SA-V-TYPE|68F|65535|65535|ROM|code||SAVE: Determine variable type for saving|1
+SA/LD-END|554|65535|65535|ROM|code||Tape SAVE/LOAD: Common end routine, disable interrupts|1
+SA/LD-RET|53F|65535|65535|ROM|code||Tape SAVE/LOAD: Common return point|1
+SAVE-ETC|605|65535|65535|ROM|code||SAVE command main routine|1
+SCAN-ENT|336C|65535|65535|ROM|code||Calculator: Entry from SCANNING routine|1
+SCAN-LOOP|1B52|65535|65535|ROM|code||Expression scanning loop|1
+SCANNING|24FB|65535|65535|ROM|code||Main expression evaluation routine (scanner)|1
+SEC-PLUS|3575|65535|65535|ROM|code||Second string is "greater"|1
+SECND-LOW|356B|65535|65535|ROM|code||Second string char lower|1
+SEPARATOR|1B6F|65535|65535|ROM|code||Check for comma or other separator|1
+SET-DE|1195|65535|65535|ROM|code||Set DE from stack (POP DE)|1
+SET-HL|1190|65535|65535|ROM|code||Set HL from stack (POP HL)|1
+SET-MIN|16B0|65535|65535|ROM|code||Set system variable S_TOP to current program line|1
+SET-STK|16C5|65535|65535|ROM|code||Set STKBOT, STKEND|1
+SET-WORK|16BF|65535|65535|ROM|code||Set WORKSP to current E_LINE|1
+SF-ARG-LP|2843|65535|65535|ROM|code||FN: Argument substitution loop|1
+SF-ARG-VL|2852|65535|65535|ROM|code||FN: Evaluate argument value|1
+SF-ARGMT1|2802|65535|65535|ROM|code||FN: Get first argument|1
+SF-ARGMTS|27D9|65535|65535|ROM|code||FN: Process arguments|1
+SF-BRKT-1|27D0|65535|65535|ROM|code||FN: Expect opening bracket for arguments|1
+SF-BRKT-2|27E4|65535|65535|ROM|code||FN: Expect closing bracket|1
+SF-CP-DEF|2814|65535|65535|ROM|code||FN: Copy DEF FN parameters and expression|1
+SF-FLAG-6|27E9|65535|65535|ROM|code||FN: Set flag for function evaluation|1
+SF-FND-DF|2808|65535|65535|ROM|code||FN: Find DEF FN definition|1
+SF-NOT-FD|2825|65535|65535|ROM|code||FN: DEF FN not found|1
+SF-R-BR-2|2885|65535|65535|ROM|code||FN: Check for closing bracket after args|1
+SF-RPRT-C|27E6|65535|65535|ROM|code||FN: Report syntax error|1
+SF-RUN|27F7|65535|65535|ROM|code||FN: Execute user defined function|1
+SF-SYN-EN|27F4|65535|65535|ROM|code||FN: Syntax check end|1
+SF-VALUE|288D|65535|65535|ROM|code||FN: Evaluate the function's expression|1
+SF-VALUES|2831|65535|65535|ROM|code||FN: Substitute argument values|1
+SFA-CP-VR|296B|65535|65535|ROM|code||STK-F-ARG: Copy variable value to stack|1
+SFA-END|2991|65535|65535|ROM|code||STK-F-ARG: End of arguments|1
+SFA-LOOP|295A|65535|65535|ROM|code||STK-F-ARG: Loop for arguments|1
+SFA-MATCH|2981|65535|65535|ROM|code||STK-F-ARG: Matched argument|1
+SHIFT-FP|2FDD|65535|65535|ROM|code||Floating Point: Shift mantissa (left or right)|1
+SHIFT-LEN|3055|65535|65535|ROM|code||Floating Point: Shift mantissa by length in B|1
+SHIFT-ONE|316E|65535|65535|ROM|code||Floating Point: Shift mantissa one bit left for normalization|1
+SIGN-DONE|2CFE|65535|65535|ROM|code||Sign processing finished|1
+SIGN-FLAG|2CF2|65535|65535|ROM|code||Set sign flag for FP number|1
+SIGN-TO-C|3507|65535|65535|ROM|code||Set C flag based on sign of FP number|1
+SKIP-CONS|33F7|65535|65535|ROM|code||Calculator: Skip constant data|1
+SKIP-NEXT|33F8|65535|65535|ROM|code||Calculator: Skip to next item|1
+SKIP-OVER|7D|65535|65535|ROM|code||Skip a BASIC statement (e.g., after IF condition false)|1
+SKIP-ZERO|315E|65535|65535|ROM|code||Floating Point: Skip if operand is zero|1
+SKIPS|90|65535|65535|ROM|code||Skip spaces and colons|1
+SL-DEFINE|2A94|65535|65535|ROM|code||SLICING: Define slice parameters|1
+SL-OVER|2AA8|65535|65535|ROM|code||SLICING: Handle slice exceeding string length|1
+SL-RPT-C|2A7A|65535|65535|ROM|code||SLICING: Report error in slice parameters|1
+SL-SECOND|2A81|65535|65535|ROM|code||SLICING: Get second slice parameter (TO m)|1
+SL-STORE|2AAD|65535|65535|ROM|code||SLICING: Store sliced string descriptor on stack|1
+SLICING|2A52|65535|65535|ROM|code||Perform string slicing|1
+SMALL|37F8|65535|65535|ROM|code||ATN: Handle small argument|1
+ST-E-PART|2CFF|65535|65535|ROM|code||Store exponent part of FP number|1
+STACK-A|2D28|65535|65535|ROM|code||Push A onto calculator stack (as byte)|1
+STACK-BC|2D2B|65535|65535|ROM|code||Push BC onto calculator stack (as 2 bytes)|1
+STACK-NUM|33B4|65535|65535|ROM|code||Calculator: Stack a number from BASIC line|1
+START|0|65535|65535|ROM|code||ROM Reset Entry Point / Start of ROM|1
+START-NEW|11CB|65535|65535|ROM|code||NEW: Start of BASIC initialization process|1
+STK-CODE|3671|65535|65535|ROM|code||CODE: Stack result|1
+STK-CONST|33C8|65535|65535|ROM|code||Calculator: Stack a constant (pointed by DE)|1
+STK-DIGIT|2D22|65535|65535|ROM|code||Stack a single digit as FP number|1
+STK-F-ARG|2951|65535|65535|ROM|code||Stack function argument (numeric or string)|1
+STK-FETCH|2BF1|65535|65535|ROM|code||Fetch numeric or string value from variable to calculator stack|1
+STK-PNTRS|35BF|65535|65535|ROM|code||String concatenation: stack pointers|1
+STK-ST-0|2AB1|65535|65535|ROM|code||Store zero on calculator stack (for LET X=0)|1
+STK-STO-$|2AB2|65535|65535|ROM|code||Store string from calculator stack to variable|1
+STK-STORE|2AB6|65535|65535|ROM|code||Store numeric value from calculator stack to variable|1
+STK-TO-A|2314|65535|65535|ROM|code||Pop value from calculator stack to A (integer)|1
+STK-TO-BC|2307|65535|65535|ROM|code||Pop value from calculator stack to BC (integer)|1
+STK-VAR|2996|65535|65535|ROM|code||Stack variable's value (numeric or string descriptor)|1
+STK-ZEROS|33F1|65535|65535|ROM|code||Calculator: Stack zeros (for uninitialized FP)|1
+STMT-L-1|1B29|65535|65535|ROM|code||STMT-LOOP: Get command token|1
+STMT-LOOP|1B28|65535|65535|ROM|code||Main statement execution loop within a line|1
+STMT-NEXT|1BF4|65535|65535|ROM|code||Go to next statement (after colon or end of line)|1
+STMT-R-1|1B7D|65535|65535|ROM|code||Error handling during statement execution|1
+STMT-RET|1B76|65535|65535|ROM|code||Return from statement execution|1
+STR-ALTER|2070|65535|65535|ROM|code||Alter string variable (e.g. A$(5) = "X")|1
+STR-DATA|171E|65535|65535|ROM|code||Get stream data pointer|1
+STR-DATA1|1727|65535|65535|ROM|code||STR-DATA: Validate stream number|1
+STR-TEST|3588|65535|65535|ROM|code||Test string comparison result|1
+STRINGS|3559|65535|65535|ROM|code||String comparison routine (=, <, >, <=, >=, <>)|1
+STRT-MLT|3125|65535|65535|ROM|code||Floating Point: Start multiplication|1
+SUBN-ONLY|31F2|65535|65535|ROM|code||Floating Point: Subtract only (part of division)|1
+SV-ARRAYS|29AE|65535|65535|ROM|code||STK-VAR: Handle array variable (numeric or string)|1
+SV-CH-ADD|29E0|65535|65535|ROM|code||STK-VAR: Update CH_ADD after parsing subscript|1
+SV-CLOSE|29D8|65535|65535|ROM|code||STK-VAR: Expect closing bracket for array subscript|1
+SV-COMMA|29C3|65535|65535|ROM|code||STK-VAR: Expect comma for array subscript|1
+SV-COUNT|29E7|65535|65535|ROM|code||STK-VAR: Count array dimensions|1
+SV-DIM|2A48|65535|65535|ROM|code||STK-VAR: Get array dimensions|1
+SV-ELEM$|2A2C|65535|65535|ROM|code||STK-VAR: Handle string array element|1
+SV-LOOP|29EA|65535|65535|ROM|code||STK-VAR: Loop for array subscripts|1
+SV-MULT|29FB|65535|65535|ROM|code||STK-VAR: Calculate array element offset|1
+SV-NUMBER|2A22|65535|65535|ROM|code||STK-VAR: Handle numeric array element|1
+SV-PTR|29C0|65535|65535|ROM|code||STK-VAR: Get pointer to array data|1
+SV-RPT-C|2A12|65535|65535|ROM|code||STK-VAR: Report syntax error in subscript|1
+SV-SIMPLE$|29A1|65535|65535|ROM|code||STK-VAR: Handle simple string variable|1
+SV-SLICE|2A45|65535|65535|ROM|code||STK-VAR: Handle string array slicing A$(n TO m)|1
+SV-SLICE?|2A49|65535|65535|ROM|code||STK-VAR: Check for slice "TO" syntax|1
+SWAP-BYTE|343E|65535|65535|ROM|code||Swap byte A with (HL)|1
+SYM-CODES|26A|65535|65535|ROM|data||Table of symbol shift codes for keyboard|1
+SYNTAX-Z|2530|65535|65535|ROM|code||Check syntax, expects specific token or end of expression|1
+T-EXPNENT|326C|65535|65535|ROM|code||Truncate: Exponent handling|1
+T-FIRST|3233|65535|65535|ROM|code||Truncate: First part of truncation|1
+T-GR-ZERO|3221|65535|65535|ROM|code||Truncate: Greater than zero|1
+T-NUMERIC|3252|65535|65535|ROM|code||Truncate: Numeric specific path|1
+T-SHIFT|3261|65535|65535|ROM|code||Truncate: Shift mantissa|1
+T-SMALL|323F|65535|65535|ROM|code||Truncate: Number is small (less than 1)|1
+T-STORE|3267|65535|65535|ROM|code||Truncate: Store result|1
+T-TEST|325E|65535|65535|ROM|code||Truncate: Test exponent|1
+TEMP-PTR1|77|65535|65535|ROM|code||Temporary pointer manipulation (e.g., DE <-> HL)|1
+TEMP-PTR2|78|65535|65535|ROM|code||Temporary pointer manipulation|1
+TEMPS|D4D|65535|65535|ROM|code||Set temporary attributes for PRINT items|1
+TEMPS-1|D5B|65535|65535|ROM|code||TEMPS: Apply temporary attributes|1
+TEMPS-2|D65|65535|65535|ROM|code||TEMPS: Restore permanent attributes|1
+TEST-5-SP|33A9|65535|65535|ROM|code||Calculator: Test for 5 bytes of space on calc stack|1
+TEST-CHAR|1C|65535|65535|ROM|code||Test char in A: skip spaces, check for digit/alpha, set flags|1
+TEST-NEG|307C|65535|65535|ROM|code||Floating Point: Test if number is negative|1
+TEST-NORM|3155|65535|65535|ROM|code||Floating Point: Test if normalization is needed|1
+TEST-ROOM|1F05|65535|65535|ROM|code||Test if BC bytes of stack space are available|1
+TEST-ZERO|34E9|65535|65535|ROM|code||Test if FP number on stack is zero|1
+TKN-TABLE|95|65535|65535|ROM|data||Table of BASIC tokens (keywords)|1
+TWO-P-1|1E8E|65535|65535|ROM|code||TWO-PARAM: Get first parameter (address/port)|1
+TWO-PARAM|1E85|65535|65535|ROM|code||Get two numeric parameters for POKE/OUT|1
+UNSTACK-Z|1FC3|65535|65535|ROM|code||Unstack zero from calculator stack|1
+USE-252|2495|65535|65535|ROM|code||Use fixed value 252 (related to scaling?)|1
+USE-ZERO|1CE6|65535|65535|ROM|code||Push zero onto calculator stack|1
+USR-RANGE|34D3|65535|65535|ROM|code||USR: Check address range|1
+USR-STACK|34E4|65535|65535|ROM|code||USR: Setup stack and call user code|1
+V-80-BYTE|2932|65535|65535|ROM|code||LOOK-VARS: Check for 80h (end of simple vars)|1
+V-CHAR|28D4|65535|65535|ROM|code||LOOK-VARS: Get variable name character|1
+V-EACH|2900|65535|65535|ROM|code||LOOK-VARS: Loop through each variable|1
+V-END|294B|65535|65535|ROM|code||LOOK-VARS: End of search, variable not found|1
+V-FOUND-1|293E|65535|65535|ROM|code||LOOK-VARS: Variable found (numeric)|1
+V-FOUND-2|293F|65535|65535|ROM|code||LOOK-VARS: Variable found (string)|1
+V-GET-PTR|2929|65535|65535|ROM|code||LOOK-VARS: Get pointer to variable data|1
+V-MATCHES|2912|65535|65535|ROM|code||LOOK-VARS: Name matches|1
+V-NEXT|292A|65535|65535|ROM|code||LOOK-VARS: Go to next variable entry|1
+V-PASS|2943|65535|65535|ROM|code||LOOK-VARS: Variable found, return pointer|1
+V-RPORT-C|360C|65535|65535|ROM|code||VAL: Report error in VAL string|1
+V-RUN|28FD|65535|65535|ROM|code||LOOK-VARS: Runtime lookup|1
+V-RUN/SYN|28EF|65535|65535|ROM|code||LOOK-VARS: Differentiate runtime vs syntax time lookup|1
+V-SPACES|2913|65535|65535|ROM|code||LOOK-VARS: Skip spaces (unused in clean VARS)|1
+V-STR-VAR|28DE|65535|65535|ROM|code||LOOK-VARS: Handle string variable name ($)|1
+V-SYNTAX|2934|65535|65535|ROM|code||LOOK-VARS: Syntax time lookup (for LET, INPUT, DIM)|1
+V-TEST-FN|28E3|65535|65535|ROM|code||LOOK-VARS: Test if variable is a FN definition|1
+VAL-FET-1|1C56|65535|65535|ROM|code||Fetch value of numeric variable|1
+VAL-FET-2|1C59|65535|65535|ROM|code||Fetch value of string variable|1
+VALID|371C|65535|65535|ROM|code||LN: Validate argument (>0)|1
+VAR-A-1|1C22|65535|65535|ROM|code||Find or create simple variable (numeric or string)|1
+VAR-A-2|1C30|65535|65535|ROM|code||VAR-A-1: Search for existing variable|1
+VAR-A-3|1C46|65535|65535|ROM|code||VAR-A-1: Create new variable|1
+VR-CONT-1|7E9|65535|65535|ROM|code||VERIFY: Load header|1
+VR-CONT-2|7F4|65535|65535|ROM|code||VERIFY: Check header details|1
+VR-CONT-3|800|65535|65535|ROM|code||VERIFY: Load and verify data block|1
+VR-CONTROL|7CB|65535|65535|ROM|code||VERIFY command main routine|1
+WAIT-KEY|15D4|65535|65535|ROM|code||Wait for a key press|1
+WAIT-KEY1|15DE|65535|65535|ROM|code||WAIT-KEY: Loop until key pressed|1
+X-LARGE|326D|65535|65535|ROM|code||Floating Point: Exponent too large|1
+X-NEG|36B7|65535|65535|ROM|code||INT: Handle negative number|1
+XISO|385D|65535|65535|ROM|code||Power: X is zero|1
+YNEG|37A8|65535|65535|ROM|code||Trig: negate Y component for ATN|1
+ZERO-RSLT|315D|65535|65535|ROM|code||Floating Point: Set result to zero|1
+ZEROS-4/5|2FFB|65535|65535|ROM|code||Floating Point: Zero 4 or 5 bytes of mantissa|1
+ZPLUS|37A1|65535|65535|ROM|code||Trig: argument + 0|1
+abs|346A|65535|65535|ROM|code||Calculator: ABS function|1
+acs|3843|65535|65535|ROM|code||Calculator: ACS function (arccos)|1
+addit|33E|65535|65535|ROM|code||Keyboard: Local routine, possibly "add it to buffer" or part of token logic|1
+addition|3014|65535|65535|ROM|code||Floating Point: Addition|1
+asn|3833|65535|65535|ROM|code||Calculator: ASN function (arcsin)|1
+atn|37E2|65535|65535|ROM|code||Calculator: ATN function (arctangent)|1
+beep|3F8|65535|65535|ROM|code||Beeper: Alias or internal entry for BEEPER|1
+char_set|3D00|65535|65535|ROM|data||Default Character Set bitmap data (starts with space)|1
+chn-cd-lu|162D|65535|65535|ROM|data||Channel code look-up table (for 'K', 'S', 'P')|1
+chrs|35C9|65535|65535|ROM|code||Calculator: CHR$ function|1
+cl-str-lu|1716|65535|65535|ROM|code||CLOSE: Stream look-up for closing|1
+class-tbl|1C01|65535|65535|ROM|data||Table of token classes (operator, function, variable, etc.)|1
+code|3669|65535|65535|ROM|code||Calculator: CODE function (ASCII value of char)|1
+cos|37AA|65535|65535|ROM|code||Calculator: COS function|1
+ctlchrtab|A11|65535|65535|ROM|data||Table of control characters and their actions|1
+dec-jr-nz|367A|65535|65535|ROM|code||DE decrement and jump if not zero|1
+delete|33A1|65535|65535|ROM|code||Calculator: Delete FP number from stack (pops HL from calc stack)|1
+div-34th|31DB|65535|65535|ROM|code||Floating Point: Division specific calculation (34th bit?)|1
+division|31AF|65535|65535|ROM|code||Floating Point: Division|1
+ed-keys-t|FA0|65535|65535|ROM|data||Editor: Table for key handling (cursor, edit etc.)|1
+end-calc|369B|65535|65535|ROM|code||End of calculator operation, return result on stack|1
+exchange|343C|65535|65535|ROM|code||Calculator: Exchange top two FP numbers on stack|1
+exp|36C4|65535|65535|ROM|code||Calculator: EXP function (e^x)|1
+fp-calc-2|33A2|65535|65535|ROM|code||Calculator: Secondary entry or continuation|1
+free-mem|1F1A|65535|65535|ROM|code||Calculate free memory (STKEND - STKBOT)|1
+get-argt|3783|65535|65535|ROM|code||Get argument for trig functions (SIN, COS, TAN)|1
+get-mem-xx|340F|65535|65535|ROM|code||Calculator: Get value from memory for series calc|1
+greater-0|34F9|65535|65535|ROM|code||Test if FP number on stack is > 0|1
+in|34A5|65535|65535|ROM|code||Calculator: IN function (read from I/O port)|1
+init-chan|15AF|65535|65535|ROM|code||Initialize stream and channel data|1
+init-strm|15C6|65535|65535|ROM|code||Initialize stream data (for S, K, P channels)|1
+int|36AF|65535|65535|ROM|code||Calculator: INT function (truncate towards negative infinity)|1
+jump-true|368F|65535|65535|ROM|code||Jump if condition true (result of comparison on stack is non-zero)|1
+len|3674|65535|65535|ROM|code||Calculator: LEN function (length of string)|1
+less-0|3506|65535|65535|ROM|code||Test if FP number on stack is < 0|1
+ln|3713|65535|65535|ROM|code||Calculator: LN function (natural logarithm)|1
+multiply|30CA|65535|65535|ROM|code||Floating Point: Multiplication|1
+n-mod-m|36A0|65535|65535|ROM|code||Modulo operation N MOD M (not a direct BASIC command)|1
+negate|346E|65535|65535|ROM|code||Calculator: Negate FP number on stack (unary minus)|1
+no-&-no|3524|65535|65535|ROM|code||Numeric AND numeric|1
+no-l-eql|353B|65535|65535|ROM|code||Numeric comparison (<=, >=, <>, =)|1
+not|3501|65535|65535|ROM|code||Calculator: NOT function (logical)|1
+not-used|1988|65535|65535|ROM|----||Unused ROM space or NOPs|1
+offst-tbl|1A48|65535|65535|ROM|data||Table of offsets for command parsing/execution|1
+op-str-lu|177A|65535|65535|ROM|code||OPEN: Stream look-up for opening|1
+or|351B|65535|65535|ROM|code||Calculator: OR operator (logical/bitwise)|1
+p-int-sto|2D8C|65535|65535|ROM|code||Store integer (part of INT-STORE)|1
+peek|34AC|65535|65535|ROM|code||Calculator: PEEK function|1
+ram-check|11DA|65535|65535|ROM|code||NEW: Check RAM from RAMTOP downwards|1
+re-stack|3297|65535|65535|ROM|code||Floating Point: Re-stack calculator operands|1
+read-in|3645|65535|65535|ROM|code||Calculator: READ-IN for VAL (get char from string)|1
+rpt-mesgs|1391|65535|65535|ROM|data||Table of error messages|1
+scan-func|2596|65535|65535|ROM|code||SCANNING: Dispatch to specific function handler|1
+scrl-mssg|CF8|65535|65535|ROM|data||"scroll?" message string|1
+semi-tone|46E|65535|65535|ROM|code||Beeper: Semitone calculation for pitch|1
+series-xx|3449|65535|65535|ROM|code||Calculator: Evaluate series (for SIN, COS, EXP etc.)|1
+sgn|3492|65535|65535|ROM|code||Calculator: SGN function|1
+sin|37B5|65535|65535|ROM|code||Calculator: SIN function|1
+spare|386E|65535|65535|ROM|----||Unused ROM space / NOPs|1
+sqr|384A|65535|65535|ROM|code||Calculator: SQR function (square root)|1
+st-mem-xx|342D|65535|65535|ROM|code||Calculator: Store to memory for series calc|1
+stk-const-xx|341B|65535|65535|ROM|code||Calculator: Stack constant for series calc|1
+stk-data|33C6|65535|65535|ROM|code||Calculator: Stack data from memory|1
+str$|361F|65535|65535|ROM|code||Calculator: STR$ function (convert number to string)|1
+str-&-no|352D|65535|65535|ROM|code||String AND numeric (error) or vice versa|1
+strs-add|359C|65535|65535|ROM|code||String concatenation (+)|1
+subtract|300F|65535|65535|ROM|code||Floating Point: Subtraction (negate second operand then add)|1
+tan|37DA|65535|65535|ROM|code||Calculator: TAN function (SIN/COS)|1
+tape-msgs|9A1|65535|65535|ROM|data||Table of tape operation messages (Start tape, Program:, etc.)|1
+tbl-addrs|32D7|65535|65535|ROM|data||Table of addresses for arithmetic/logical operations|1
+tbl-of-ops|2795|65535|65535|ROM|data||Table of operators and their properties (precedence, routine)|1
+tbl-priors|27B0|65535|65535|ROM|data||Table of operator precedences|1
+to-power|3851|65535|65535|ROM|code||Calculator: ^ operator (raise to power)|1
+truncate|3214|65535|65535|ROM|code||Floating Point: Truncate to integer (INT function)|1
+usr-$|34BC|65535|65535|ROM|code||Calculator: USR function (string address - Spectrum+)|1
+usr-no|34B3|65535|65535|ROM|code||Calculator: USR function (numeric address)|1
+val|35DE|65535|65535|ROM|code||Calculator: VAL function (convert string to number)|1
+zx81-name|4AA|65535|65535|ROM|data||Possibly related to ZX81 compatibility filename/header check, or unused data "ZX81"|1

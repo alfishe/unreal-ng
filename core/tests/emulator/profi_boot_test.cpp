@@ -28,14 +28,17 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/subrangedevice.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/video/screen.h"
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/scratchfolder.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -242,7 +245,9 @@ TEST_F(ProfiBoot_Test, DISABLED_ProbeBootScreen)
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
     if (const char* disk = std::getenv("PROFI_PROBE_DISK"))
+    {
         ASSERT_TRUE(_emulator->LoadDisk(disk));
+    }
     _emulator->RunNFrames(900, true);
 
     for (int i = 0; i < 6; i++)
@@ -287,7 +292,9 @@ TEST_F(ProfiBoot_Test, MenuEntriesStartWhatTheyName)
         }
         else
         {
-            _emulator->RunNFrames(300, true);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] {
+                return context->pMemory->GetROMPage() == e.romPage && (context->emulatorState.flags & CF_TRDOS) == 0;
+            }, 300);
             EXPECT_EQ(context->pMemory->GetROMPage(), e.romPage);
             EXPECT_EQ(context->emulatorState.flags & CF_TRDOS, 0) << "the SYS session is over";
         }
@@ -314,16 +321,20 @@ static uint32_t SpeedTestBarEnd(EmulatorContext* context)
 
 TEST_F(ProfiBoot_Test, BiosSpeedTestReadsWhatARealBoardReads)
 {
-    // Slower than the 50 ms guideline on purpose: the real BIOS boots, then runs its own timing loop
+    // The real BIOS boots, then runs its own timing loop: emulated time, so the frames before the bar is drawn need
+    // no picture (turbo: no rendering, no audio); the last two render it
     for (const bool turbo : {false, true})
     {
         SCOPED_TRACE(turbo ? "TURBO" : "normal");
         _emulator->Reset(true);
+        _emulator->EnableTurboMode();
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, turbo);
         _emulator->RunNFrames(600, true);                  // the BIOS menu
         TapKeys("C6,C6,C6,C6,C6,ENT");                     // the test menu
         TapKeys("C6,C6,C6,C6,C6,C6,ENT");                  // Тест быстродействия
-        _emulator->RunNFrames(400, true);
+        _emulator->RunNFrames(398, true);
+        _emulator->DisableTurboMode();
+        _emulator->RunNFrames(2, true);
         const uint32_t end = SpeedTestBarEnd(_emulator->GetContext());
         EXPECT_EQ(end, turbo ? 63u + 196u : 63u + 120u) << "bar end " << end << " = speed " << (end - 63) / 80.0;
     }
@@ -350,7 +361,7 @@ static uint32_t HiresLinesWithInk(EmulatorContext* context)
 ///        and every read ends in Lost Data (WD1793::SetBaseClockTimeBase, set by PortDecoder_Profi)
 TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and SP-DOS boot from a floppy
+    // An integration test: the BIOS and SP-DOS boot from a floppy, until the shell is in memory
     const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/sp-dos/unicopy-sp-dos.td0");
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
@@ -358,13 +369,14 @@ TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
     std::string error;
     ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
     TapKeys("ENT");                      // the first entry: CP/M
-    _emulator->RunNFrames(1500, true);
-
-    std::string ram;
-    for (uint32_t a = 0; a < 0x10000; a++)
-        ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
-    EXPECT_NE(ram.find("SP-DOS Shell by Michael Markowsky"), std::string::npos)
-        << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
+    auto shellLoaded = [&] {
+        std::string ram;
+        for (uint32_t a = 0; a < 0x10000; a++)
+            ram.push_back(static_cast<char>(context->pCore->GetZ80()->DirectRead(static_cast<uint16_t>(a))));
+        return ram.find("SP-DOS Shell by Michael Markowsky") != std::string::npos;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), shellLoaded, 1500, 25);
+    EXPECT_TRUE(shellLoaded()) << "the shell did not load, pc=" << std::hex << context->pCore->GetZ80()->pc;
     EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
 }
 
@@ -373,7 +385,7 @@ TEST_F(ProfiBoot_Test, SpDosBootsToItsShell)
 ///        runs its AUTOEXEC.BAT (KEYHELP, PRSCR, then PAUSE, which waits for Space)
 TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and CP/M boot from a floppy
+    // An integration test: the BIOS and CP/M boot from a floppy, until the screen fills
     const std::string disk = TestPathHelper::GetTestDataPath("machines/profi/cpm/v5/kondor-system-copyk.fdi");
     EmulatorContext* context = _emulator->GetContext();
     _emulator->EnableTurboMode();
@@ -381,7 +393,9 @@ TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
     std::string error;
     ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
     TapKeys("ENT");                      // the first entry: CP/M
-    _emulator->RunNFrames(2500, true);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] {
+        return (context->emulatorState.pDFFD & 0xA0) == 0xA0 && HiresLinesWithInk(context) >= 80;
+    }, 2500, 25);
 
     EXPECT_NE(context->emulatorState.pDFFD & 0x20, 0) << "CP/M mode";
     EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
@@ -934,7 +948,7 @@ TEST_F(ProfiPlusBoot_Test, TtdReplaysTheComPortExactly)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2);
@@ -1028,6 +1042,81 @@ TEST_F(ProfiPlusPqDos_Test, BootsFromTheHardDiskToDosNavigator)
     EXPECT_TRUE(RunUntilText("DOS Navigator", 3000)) << "PQ-DOS did not reach DOS Navigator, pc=" << std::hex
                                                      << context->pCore->GetZ80()->pc;
     EXPECT_FALSE(CpuMemoryHas("PQ-DOS Startup Menu")) << "a floppy menu: the disk was not the boot device";
+}
+
+/// @brief ACC-C4 (media-multisource C7, docs/inprogress/2026-10-05-media-multisource/phases/c7-partitions.md): one IDE
+///        disk of two partitions from a descriptor. Partition 1 is the PQ-DOS image's partition grafted with an
+///        AUTOEXEC.BAT that makes D:\ACC4 and starts DOS Navigator; partition 2 is composed from a host folder, as
+///        `fs` says. PQ-DOS boots from partition 1 and the directory it made is on partition 2
+class ProfiPlusComposed_Test : public ProfiPlusPqDos_Test
+{
+protected:
+    /// Boot the two-partition disk; whether PQ-DOS made D:\ACC4 on partition 2 (and the partition's type)
+    bool BootAndMakeDirectoryOnD(const std::string& fs, std::string& note)
+    {
+        ScratchFolder folder(("profi-composed-" + fs).c_str());
+        folder.File("patch/AUTOEXEC.BAT", "@echo off\r\npath c:\\dos;c:\\dn;\r\nmd d:\\acc4\r\ndn\r\n");
+        folder.File("data/HELLO.TXT", "on partition 2");
+        std::string image = TestPathHelper::GetTestDataPath("machines/profi/pqdos/pqdos-hdd-small.img");
+        std::replace(image.begin(), image.end(), '\\', '/');
+        const auto descriptor = folder.File(
+            "hd.ucompose.yaml", std::string("version: 1\ntarget: {fixedTime: 1767268800}\npartitions:\n")
+                                + "  - {name: dos, compose: {build: graft, layers: [{source: {image: '" + image + "', partition: 1}}, "
+                                  "{source: {folder: patch}}]}}\n" +
+                                "  - {name: data, fs: " + fs + ", compose: {free: 1MiB, layers: [{source: {folder: data}}]}}\n");
+        EmulatorContext* context = _emulator->GetContext();
+        MediaSource source;
+        source.path = descriptor.string();
+        InsertOptions options;
+        options.immediate = true;
+        const MediaResult inserted = context->pMediaManager->Insert("ide0.master", source, options);
+        EXPECT_TRUE(inserted.Ok()) << inserted.message;
+        if (!inserted.Ok())
+            return false;
+        _emulator->Reset();
+        _emulator->EnableTurboMode();
+        EXPECT_TRUE(RunUntilText("DOS Navigator", 3000)) << "PQ-DOS did not reach DOS Navigator, pc=" << std::hex
+                                                         << context->pCore->GetZ80()->pc;
+
+        std::shared_ptr<IBlockDevice> disk(context->pMediaManager->GetMedium("ide0.master")->Block(), [](IBlockDevice*) {});
+        FatPartition second;
+        if (!FatVolumeReader::FindPartition(*disk, 2, second))
+            return false;
+        uint8_t mbr[512];
+        disk->ReadSector(0, mbr);
+        note = "type " + std::to_string(mbr[446 + 16 + 4]);
+        SubRangeDevice window(disk, second.first, second.count);
+        FatVolumeReader reader;
+        FatDirEntryInfo acc;
+        return reader.Open(window) && reader.Stat("/ACC4", acc) && acc.isDirectory;
+    }
+};
+
+TEST_F(ProfiPlusComposed_Test, Fat16SecondPartition)
+{
+    // Slower than the 50 ms guideline on purpose: the BIOS and PQ-DOS boot from a hard disk (about 1300 frames)
+    std::string note;
+    EXPECT_TRUE(BootAndMakeDirectoryOnD("fat16", note)) << "PQ-DOS did not make D:\\ACC4 on the composed FAT16 partition ("
+                                                       << note << ")";
+}
+
+/// The FAT32 run of ACC-C4 (2026-10-06, before the rule below): PQ-DOS booted from partition 1 and did not make
+/// D:\ACC4 on a composed FAT32 partition 2 (type #0B): it does not use FAT32 partitions. The Profi IDE slots took
+/// fsCompatibility {Fat16} from that, so the same descriptor is now refused at insert with the reason
+TEST_F(ProfiPlusComposed_Test, Fat32SecondPartitionRefused)
+{
+    ScratchFolder folder("profi-composed-fat32");
+    folder.File("data/HELLO.TXT", "on partition 2");
+    std::string image = TestPathHelper::GetTestDataPath("machines/profi/pqdos/pqdos-hdd-small.img");
+    std::replace(image.begin(), image.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\npartitions:\n"
+                                                            "  - {name: dos, source: {image: '" + image + "', partition: 1}}\n"
+                                                            "  - {name: data, fs: fat32, compose: {layers: [{source: {folder: data}}]}}\n");
+    MediaSource source;
+    source.path = descriptor.string();
+    const MediaResult inserted = _emulator->GetContext()->pMediaManager->Insert("ide0.master", source, {});
+    EXPECT_EQ(inserted.error, MediaError::BadRequest) << inserted.message;
+    EXPECT_NE(inserted.message.find("fat16"), std::string::npos) << inserted.message;
 }
 
 /// endregion </PROFI-PLUS>

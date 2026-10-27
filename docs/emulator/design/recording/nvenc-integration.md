@@ -329,7 +329,7 @@ The NVENC encoder applies this during RGBA→NV12 conversion, matching the behav
 
 ## Quality Preset Test Results
 
-Automated testing validates that all 5 UI quality levels produce correct output characteristics. Test harness: `tools/nvenc_poc/test_quality_presets.py`
+Automated testing validates that all 5 UI quality levels produce correct output characteristics. Test harness: `tools/poc/013-nvenc-poc/test_quality_presets.py`
 
 ### Test Methodology
 
@@ -372,10 +372,10 @@ Automated testing validates that all 5 UI quality levels produce correct output 
 
 ```bash
 # HEVC test (default)
-python tools/nvenc_poc/test_quality_presets.py
+python tools/poc/013-nvenc-poc/test_quality_presets.py
 
 # H.264 test
-python tools/nvenc_poc/test_quality_presets.py --h264
+python tools/poc/013-nvenc-poc/test_quality_presets.py --h264
 ```
 
 Output files (comparison frames and encoded MP4s) are written to `%TEMP%\nvenc_quality_test\`.

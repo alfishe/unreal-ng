@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "debugger/search/memorysearch.h"
+#include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
@@ -118,6 +119,26 @@ Result Bytes(EmulatorContext* context, const std::string& space, uint32_t addres
                 result.bytes.insert(result.bytes.end(), page + at % PAGE_SIZE, page + at % PAGE_SIZE + run);
                 i += run;
             }
+            return result;
+        }
+        case MemorySearchRequest::Space::Region:
+        {
+            std::string error;
+            IDeviceMemoryRegion* region = DeviceMemory::Find(context, where.region, &error);
+            if (!region)
+            {
+                result.error = "space must be cpu, ram, a page (ram5, rom2, cache0) or a memory region: " + error;
+                return result;
+            }
+            result.space = region->Name();
+            if (address >= region->Size())
+            {
+                result.error = "past the end of " + result.space;
+                return result;
+            }
+            const uint32_t n = std::min<uint32_t>(length, region->Size() - address);
+            if (!DeviceMemory::Read(context, where.region, address, n, result.bytes, error))
+                result.error = error;
             return result;
         }
     }

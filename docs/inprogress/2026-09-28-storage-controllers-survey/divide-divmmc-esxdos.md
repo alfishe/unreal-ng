@@ -78,7 +78,7 @@ read-only, and `#2000-#3FFF` is read-only when the selected bank is 3 (zxsp `Div
 | Point | zxsp | pico-spec | Karabas-Pro RTL | Next (MAME, jnext) | **Take** |
 |---|---|---|---|---|---|
 | `#E3` readable | no (reads go to IDE) | yes | no | yes, bits 5:4 read 0 | **write-only** on DivIDE / classic DivMMC; readable on the Next |
-| Reset clears MAPRAM | no | yes | "DivMMC map reset" on reset | yes (`#E3` = 0) | **no** on DivIDE (the board has no reset input, zxsp `DivIDE.cpp:184-186`); **yes** on the Next |
+| Reset clears MAPRAM | no | yes | "DivMMC map reset" on reset | yes (`#E3` = 0) | **no** on DivIDE (the board has no reset input, zxsp `DivIDE.cpp:184-186`) and **no** on the original DivMMC (`divmmc.vhd`: only `poweron` clears bank, MAPRAM and CONMEM; the CPU reset clears the chip selects and the SPI engine; the automap latch has no reset at all); **yes** on the Next |
 | CONMEM overrides MAPRAM | yes | no | n/a | yes | **yes** |
 | Bank 3 write-protect | yes | no | n/a | yes | **yes** |
 
@@ -115,9 +115,11 @@ the real tape. (`#04C6` is the same trick inside `SA-BYTES` for saving.)
 | `#EB` | read | the byte the card sent during the last exchange; on the Next it also starts an exchange sending `#FF` (the Z-Controller rule) | pico-spec `Ports.cpp:825-827`; MAME `specnext.cpp:1246-1278`; jnext `spi.cpp:176-215` |
 
 This is the Z-Controller's `#77` / `#57` pair with other port numbers and the select on bit 0
-instead of bit 1 ([zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) §1.1). Whether a classic
-DivMMC read also starts a new exchange is **unverified** (pico-spec emulates the card at protocol
-level, not the shift register); esxDOS's driver works either way if it sends `#FF` itself.
+instead of bit 1 ([zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) §1.1). A classic
+DivMMC read **does** start a new exchange: verified in the CPLD source (Mario Prato's `divmmc.vhd`, `IDLE` intercepts any access to `#EB`; a read loads
+nothing, so the byte sent is the leftover of the previous write: its bit 0, then 1s), see
+[research-divmmc-original-rtl.md](../2026-10-07-zx-next/research-divmmc-original-rtl.md). The byte is 16 CPU clocks, `toCPUByte` is latched at the end of it, and an
+access that comes earlier is ignored (a read returns the old byte).
 
 ## 3. What esxDOS needs from the machine
 

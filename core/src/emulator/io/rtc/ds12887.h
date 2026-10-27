@@ -38,7 +38,9 @@
 ///   - Host: the reference is the host's local time (normal running)
 ///   - Emulated: while a TTD session records, the reference is the host time at
 ///     the moment recording started plus the emulated time elapsed since, so a
-///     replay reads exactly what the recording read
+///     replay reads exactly what the recording read. Tests run it from a fixed
+///     start (AnchorEmulatedTime): their reads never depend on the host's speed
+///     or its clock. A reset or a state transfer rebases it (RebaseEmulatedTime)
 ///   - Fixed: a frozen instant (tests); the clock never ticks, UF never rises
 
 #include <array>
@@ -151,6 +153,13 @@ public:
     /// clock stays fixed
     void EnterEmulatedTime();
     void LeaveEmulatedTime();
+    /// The emulated clock jumped from `before` to `after` without time passing (a reset zeroes it, a state transfer
+    /// takes another machine's time axis): the chip keeps its time across the jump. Emulated mode only
+    void RebaseEmulatedTime(uint64_t before, uint64_t after);
+    /// Test mode: emulated time from the wall instant `wallMicros` (civil microseconds) at the emulated clock's now,
+    /// one fixed start for runs that must match each other bit for bit. Stays over a TTD recording's stop. Keeps the
+    /// offset the guest set
+    void AnchorEmulatedTime(int64_t wallMicros);
     TimeMode GetTimeMode() const { return _mode; }
     /// Century register index (DS12887A / DS12C887: 0x32); 0 = none
     void SetCenturyRegister(uint8_t index) { _centuryRegister = index; }
@@ -240,6 +249,7 @@ protected:
     int64_t _rawSecond = 0;       ///< the chip second the raw fields belong to
     bool _secondValid = false;
     int64_t _lastSecond = 0;      ///< last second UpdateFlags() saw
+    bool _emulatedForSession = false;  ///< EnterEmulatedTime left the host clock: LeaveEmulatedTime goes back to it
 
     SessionWall _sessionWall;
     EmulatedClock _emulatedClock;
@@ -249,7 +259,8 @@ private:
     {
     public:
         explicit CmosRegion(Ds12887& chip) : _chip(chip) {}
-        const char* Name() const override { return "cmos"; }
+        const char* Name() const override { return "rtc.cmos"; }
+        const char* Aliases() const override { return "cmos"; }
         const char* Description() const override
         {
             return "CMOS clock cells as the guest addresses them: #00-#09 time and alarm, #0A-#0D registers A-D, "

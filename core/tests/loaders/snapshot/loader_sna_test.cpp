@@ -2,6 +2,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatormanager.h"
+#include <algorithm>
 #include <memory>
 #include <cstring>
 #include "loader_sna_test.h"
@@ -70,17 +71,7 @@ void LoaderSNA_Test::SetUp()
 
 void LoaderSNA_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>
@@ -417,59 +408,33 @@ TEST_F(LoaderSNA_Test, repeatedLoadIsIdempotent)
     ASSERT_TRUE(apply2) << "Second apply should succeed";
 }
 
+TEST_F(LoaderSNA_Test, loadLeavesNoPageOfThePreviousProgram)
+{
+    // Every RAM page of the model holds the program before; a 48K snapshot carries pages 5, 2 and 0 only
+    Memory& memory = *_context->pMemory;
+    const uint16_t pages = static_cast<uint16_t>(_context->config.ramsize / 16);
+    ASSERT_GT(pages, 3);
+    for (uint16_t page = 0; page < pages; page++)
+        std::memset(memory.RAMPageAddress(page), 0xAA, PAGE_SIZE);
+
+    static std::string test48Path = TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna");
+    LoaderSNACUT loader48(_context, test48Path);
+    ASSERT_TRUE(loader48.load());
+    ASSERT_TRUE(loader48.applySnapshotFromStaging());
+
+    for (uint16_t page = 0; page < pages; page++)
+    {
+        if (page == 0 || page == 2 || page == 5)
+            continue;
+        const uint8_t* bytes = memory.RAMPageAddress(page);
+        const bool clear = std::all_of(bytes, bytes + PAGE_SIZE, [](uint8_t b) { return b == 0; });
+        EXPECT_TRUE(clear) << "RAM page " << page << " kept the previous program";
+    }
+}
+
 /// endregion </Lock/State Verification Tests>
 
 /// region <Save Tests>
-
-TEST_F(LoaderSNA_Test, determineOutputFormat_48kMode)
-{
-    // Set up 48K mode by locking paging (bit 5 of port 7FFD)
-    _context->emulatorState.p7FFD = 0x20;  // Lock bit set
-    _context->pPortDecoder->LockPaging();
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_48k.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    SNA_MODE mode = loader.determineOutputFormat();
-    EXPECT_EQ(mode, SNA_48) << "Locked paging should result in 48K format";
-}
-
-TEST_F(LoaderSNA_Test, determineOutputFormat_128kMode)
-{
-    // Set up 128K mode (unlocked paging)
-    _context->emulatorState.p7FFD = 0x00;  // No lock bit
-    _context->pPortDecoder->UnlockPaging();
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_128k.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    SNA_MODE mode = loader.determineOutputFormat();
-    EXPECT_EQ(mode, SNA_128) << "Unlocked paging should result in 128K format";
-}
-
-TEST_F(LoaderSNA_Test, isPageEmpty_AllZeros)
-{
-    // Explicitly zero out page 0 for this test
-    Memory& memory = *_context->pMemory;
-    memset(memory.RAMPageAddress(0), 0, PAGE_SIZE);
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_empty_page.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    // Page 0 should now be empty after explicit zeroing
-    bool isEmpty = loader.isPageEmpty(0);
-    EXPECT_TRUE(isEmpty) << "Page 0 should be empty after zeroing";
-}
-
-TEST_F(LoaderSNA_Test, isPageEmpty_Randomized)
-{
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_randomized_page.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    // Page 5 should NOT be empty (randomized during init)
-    bool isEmpty = loader.isPageEmpty(5);
-    EXPECT_FALSE(isEmpty) << "Page 5 should not be empty (randomized)";
-}
 
 // NOTE: Save tests require full EmulatorContext initialization (pCore, pMemory).
 // The test fixture initializes Core but not Screen - save handles Screen being null.
@@ -1012,4 +977,78 @@ TEST(LoaderSNA_Memory_Test, TruncatedMemoryIsRefused)
     LoaderSNA tiny(emulator->GetContext(), std::vector<uint8_t>(10, 0x11), "tiny");
     EXPECT_FALSE(tiny.load());
     manager->RemoveEmulator(emulator->GetId());
+}
+
+namespace
+{
+    /// A 128K .sna layout: header, banks 5 / 2 / the one at #C000, the extended header, then `extraBanks` banks (each filled with
+    /// 0x80 + its order in the file) and `privateBytes` of 0xEE
+    std::vector<uint8_t> Make128kSnx(uint8_t p7ffd, size_t extraBanks, size_t privateBytes)
+    {
+        std::vector<uint8_t> file(sizeof(snaHeader), 0);
+        file[23] = 0x00;
+        file[24] = 0x80;  // SP #8000
+        for (const uint8_t fill : {uint8_t{0x05}, uint8_t{0x02}, static_cast<uint8_t>(p7ffd & 0x07)})
+            file.insert(file.end(), PAGE_SIZE, fill);
+        file.insert(file.end(), {0x00, 0x80, p7ffd, 0x00});  // PC #8000, #7FFD, no TR-DOS
+        for (size_t i = 0; i < extraBanks; i++)
+            file.insert(file.end(), PAGE_SIZE, static_cast<uint8_t>(0x80 + i));
+        file.insert(file.end(), privateBytes, 0xEE);
+        return file;
+    }
+}  // namespace
+
+/// A NextZXOS .snx (~1 ms): a 128K one has the five banks #7FFD leaves, then the program's private data; the same bytes as an .sna
+/// are refused (a partial page)
+TEST_F(LoaderSNA_Test, snx128kTakesTheBanksAndLeavesThePrivateData)
+{
+    const std::vector<uint8_t> file = Make128kSnx(0x03, 5, 1000);
+    LoaderSNACUT snx(_context, file, "memory");
+    snx.SetSnx(true);
+    ASSERT_TRUE(snx.validate());
+    EXPECT_EQ(snx._snapshotMode, SNA_128);
+    EXPECT_EQ(snx._extraBanks, 5u);
+    EXPECT_EQ(snx.PrivateDataSize(), 1000u);
+    ASSERT_TRUE(snx.loadToStaging());
+    EXPECT_EQ(snx._memoryPages[3][0], 0x03) << "the bank at #C000 goes to #7FFD's bank";
+    const uint8_t order[] = {0, 1, 4, 6, 7};  // the rest in ascending order
+    for (size_t i = 0; i < 5; i++)
+    {
+        EXPECT_TRUE(snx._memoryPagesUsed[order[i]]);
+        EXPECT_EQ(snx._memoryPages[order[i]][PAGE_SIZE - 1], 0x80 + i) << "bank " << int(order[i]);
+    }
+    EXPECT_EQ(snx.BuildImage().format, "snx");
+
+    LoaderSNACUT sna(_context, file, "memory");
+    EXPECT_FALSE(sna.validate()) << "an .sna has whole banks only";
+}
+
+/// An .snx with bank 5 or 2 at #C000 (~1 ms) has six banks after its header; fewer is a truncated file
+TEST_F(LoaderSNA_Test, snx128kWithBank5AtTheTopHasSixBanks)
+{
+    LoaderSNACUT six(_context, Make128kSnx(0x15, 6, 0), "memory");
+    six.SetSnx(true);
+    ASSERT_TRUE(six.validate());
+    EXPECT_EQ(six._extraBanks, 6u);
+    EXPECT_EQ(six.PrivateDataSize(), 0u);
+    ASSERT_TRUE(six.loadToStaging());
+    EXPECT_EQ(six._memoryPages[7][0], 0x85);
+
+    LoaderSNACUT truncated(_context, Make128kSnx(0x15, 5, 100), "memory");
+    truncated.SetSnx(true);
+    EXPECT_FALSE(truncated.validate());
+}
+
+/// A 48K .snx (~1 ms): exactly 49179 bytes, read as a 48K .sna; the extension makes it one
+TEST_F(LoaderSNA_Test, snx48kIsA48kSna)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("snx48k.snx");
+    ScopedTestFile cleanup(path);
+    std::vector<uint8_t> file(sizeof(snaHeader) + 3 * PAGE_SIZE, 0x11);
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(path, file.data(), file.size()));
+    LoaderSNACUT loader(_context, path);
+    EXPECT_TRUE(loader.IsSnx());
+    ASSERT_TRUE(loader.validate());
+    EXPECT_EQ(loader._snapshotMode, SNA_48);
+    EXPECT_EQ(loader.BuildImage().format, "snx");
 }

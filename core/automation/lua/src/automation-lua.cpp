@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "common/threadhelper.h"
+#include "emulator/coordinator/machineop.h"
 
 /// region <Methods>
 void AutomationLua::start()
@@ -36,9 +37,12 @@ void AutomationLua::stop()
         return;
     }
 
-    _stopThread = true;
-
-    // Notify the thread to wake up and check _stopThread
+    // Set under the queue lock: the thread is either before its wait (and sees the flag) or in it (and gets the
+    // notification), never between the two
+    {
+        std::lock_guard<std::mutex> lock(_queueMutex);
+        _stopThread = true;
+    }
     _queueCV.notify_one();
     
     // CRITICAL: Join thread FIRST before deleting objects it references
@@ -109,11 +113,19 @@ bool AutomationLua::executeCode(const std::string& code, std::string& errorMessa
                 output += "\n"; // Lua's default print newline
             };
 
-            // Execute the code
-            lua.script(code);
+            // Protected call: an error the script raises (a nil index, error(), a syntax error) comes back as a
+            // result. lua.script() calls unprotected: the error reaches the panic handler, whose C++ throw cannot
+            // unwind through Lua's C frames and terminates the process
+            const sol::protected_function_result result = lua.safe_script(code, sol::script_pass_on_error);
 
-            // Restore original print function
+            // Restore original print function (the capture refers to this frame's output)
             lua["print"] = original_print;
+
+            if (!result.valid())
+            {
+                sol::error error = result;
+                throw error;
+            }
 
             return output;
         });
@@ -188,6 +200,7 @@ std::string AutomationLua::getStatusString() const
 void AutomationLua::threadFunc(AutomationLua* lua)
 {
     ThreadHelper::setThreadName("automation-lua");
+    coordinator::SetThreadSource(coordinator::OpSource::Lua);   // every script runs here: the operation log names it
 
     // Initialize Lua state on this dedicated thread (single-threaded ownership)
     lua->_lua = new sol::state();
@@ -225,8 +238,7 @@ void AutomationLua::threadFunc(AutomationLua* lua)
 
     lua->onStart();
 
-    using namespace std::chrono_literals;
-
+    // The wait blocks until a task or the stop arrives: no sleep after a task, a script waits for nothing
     while (!lua->_stopThread)
     {
         // Process pending tasks from the queue
@@ -250,9 +262,6 @@ void AutomationLua::threadFunc(AutomationLua* lua)
                 lock.lock();
             }
         }
-        
-        // Small sleep to avoid busy-waiting
-        std::this_thread::sleep_for(10ms);
     }
 
     lua->onFinish();

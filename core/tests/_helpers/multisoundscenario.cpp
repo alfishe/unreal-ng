@@ -1,5 +1,7 @@
 #include "multisoundscenario.h"
 
+#include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -203,6 +205,8 @@ bool ParseMultiSoundScenario(const std::string& text, MultiSoundScenario& scenar
     std::string line;
     int lineNumber = 0;
     bool headerOpen = true;
+    uint64_t clock = 0;     // the sum of the '+D' deltas so far
+    std::string pendingFrames;
 
     auto fail = [&](const std::string& message)
     {
@@ -224,7 +228,8 @@ bool ParseMultiSoundScenario(const std::string& text, MultiSoundScenario& scenar
             continue;
 
         const std::string& head = tokens[0];
-        if (head == "mask" || head == "ram" || head == "cpu")
+        if (head == "mask" || head == "ram" || head == "cpu" || head == "frame" || head == "rate" ||
+            head == "length")
         {
             if (!headerOpen)
                 return fail("'" + head + "' is a header directive (before the first cycle)");
@@ -242,6 +247,19 @@ bool ParseMultiSoundScenario(const std::string& text, MultiSoundScenario& scenar
                 else if (tokens[1] == "2m") scenario.options.gsRam = MultiSoundGsRam::TwoMb;
                 else return fail("ram is 1m or 2m");
             }
+            else if (head == "frame" || head == "rate" || head == "length")
+            {
+                char* end = nullptr;
+                const unsigned long long parsed = std::strtoull(tokens[1].c_str(), &end, 10);
+                if (end == nullptr || *end != '\0' || parsed == 0 || (head != "length" && parsed > 0xFFFFFFFFull))
+                    return fail(head + " takes a positive decimal tick count");
+                if (head == "frame")
+                    scenario.frameTicks = parsed;
+                else if (head == "length")
+                    scenario.lengthTicks = parsed;
+                else
+                    scenario.tickRate = static_cast<uint32_t>(parsed);
+            }
             else
             {
                 scenario.cpuMHz = std::atof(tokens[1].c_str());
@@ -251,8 +269,19 @@ bool ParseMultiSoundScenario(const std::string& text, MultiSoundScenario& scenar
             continue;
         }
 
+        if (head == "frame-end" || head == "frame-start")
+        {
+            if (tokens.size() != 1)
+                return fail(head + " takes no operands");
+            pendingFrames += head == "frame-end" ? 'E' : 'S';
+            headerOpen = false;
+            continue;
+        }
+
         MultiSoundCycle cycle;
         cycle.sourceLine = lineNumber;
+        cycle.framesBefore.swap(pendingFrames);
+        pendingFrames.clear();
         if (head == "dip")
         {
             uint8_t bits = 0;
@@ -300,15 +329,55 @@ bool ParseMultiSoundScenario(const std::string& text, MultiSoundScenario& scenar
             uint16_t address = 0;
             uint8_t value = 0;
             const size_t used = ParseCycle(tokens, 0, op, address, value);
-            if (used == 0 || used != tokens.size())
+            if (used == 0)
                 return fail("unknown cycle or wrong operands");
             cycle.op = op;
             cycle.address = address;
             cycle.value = value;
+            // Trace annotations: '=XX' / '=--' (reads), '*N' (reads), '+D' (any cycle)
+            const bool read = op == Op::In || op == Op::GsIn;
+            for (size_t i = used; i < tokens.size(); i++)
+            {
+                const std::string& token = tokens[i];
+                char* end = nullptr;
+                if (token[0] == '=' && read && !cycle.observed)
+                {
+                    cycle.observed = true;
+                    uint32_t parsed = 0;
+                    if (token == "=--")
+                        cycle.observedDriven = false;
+                    else if (token.size() == 3 && ParseHex(token.substr(1), 0xFF, parsed))
+                    {
+                        cycle.observedDriven = true;
+                        cycle.observedValue = static_cast<uint8_t>(parsed);
+                    }
+                    else
+                        return fail("a read's observed value is =XX or =--");
+                }
+                else if (token[0] == '*' && read && cycle.repeat == 1)
+                {
+                    const unsigned long long parsed = std::strtoull(token.c_str() + 1, &end, 10);
+                    if (token.size() < 2 || end == nullptr || *end != '\0' || parsed < 2 || parsed > 0xFFFFFFFFull)
+                        return fail("a repeat count is *N with N >= 2");
+                    cycle.repeat = static_cast<uint32_t>(parsed);
+                }
+                else if (token[0] == '+' && !cycle.timed)
+                {
+                    const unsigned long long parsed = std::strtoull(token.c_str() + 1, &end, 10);
+                    if (token.size() < 2 || end == nullptr || *end != '\0')
+                        return fail("a time delta is +D (decimal host ticks)");
+                    cycle.timed = true;
+                    clock += parsed;
+                    cycle.time = clock;
+                }
+                else
+                    return fail("unknown annotation");
+            }
         }
         headerOpen = false;
         scenario.cycles.push_back(cycle);
     }
+    scenario.trailingFrames = pendingFrames;
     return true;
 }
 
@@ -366,6 +435,237 @@ std::string FormatMultiSoundRecord(const MultiSoundCycleRecord& r)
         text += Hex2(r.dacSample[static_cast<size_t>(i)]) + "/" + Hex2(r.dacVolume[static_cast<size_t>(i)]);
     }
     return text;
+}
+
+namespace
+{
+    /// The SounDrive decode (L9) without the DIP and lock terms: a write here may change a DAC register
+    bool TraceSoundrivePort(uint16_t port) { return (port & 0x00AFu) == 0x000Fu; }
+    int TraceSoundriveChannel(uint16_t port) { return static_cast<int>(((port >> 5) & 0x02u) | ((port >> 4) & 0x01u)); }
+
+    /// Reads that change nothing in the CPLD (a repeat is the same cycle again): all host reads but #B3, GS reads of
+    /// ports other than 2, 3, 5, #0A, #0B
+    bool TraceReadIsIdempotent(const MultiSoundBusEvent& event)
+    {
+        if (event.kind == MultiSoundBusEvent::Kind::HostIn)
+            return (event.address & 0x00FFu) != 0x00B3u;
+        const uint8_t port = event.address & 0x0Fu;
+        return !(port == 0x2 || port == 0x3 || port == 0x5 || port == 0xA || port == 0xB);
+    }
+}
+
+void MultiSoundTraceWriter::OnMultiSoundBus(const MultiSoundBusEvent& event)
+{
+    using Kind = MultiSoundBusEvent::Kind;
+    switch (event.kind)
+    {
+        case Kind::GsDacFetch:
+        {
+            _stats.dacFetches++;
+            const int channel = (event.address >> 8) & 0x03;
+            if (_dacByte[channel] == event.value)
+            {
+                _stats.dacUnchanged++;
+                return;
+            }
+            if (_stats.dacLines >= _dacFetchBudget)
+            {
+                _stats.dacOverBudget++;
+                if (!_budgetNoted)
+                {
+                    Flush();
+                    _body += "# DAC fetch budget reached: the GS DAC fetches after this line are not in the trace\n";
+                    _budgetNoted = true;
+                }
+                return;
+            }
+            _dacByte[channel] = event.value;
+            _stats.dacLines++;
+            Flush();
+            Emit(event, 1);
+            return;
+        }
+        case Kind::HostOut:
+            _stats.hostWrites++;
+            if (TraceSoundrivePort(event.address))
+                _dacByte[TraceSoundriveChannel(event.address)] = -1;
+            break;
+        case Kind::BusReset:
+            _stats.resets++;
+            std::fill(std::begin(_dacByte), std::end(_dacByte), -1);
+            break;
+        case Kind::HostIn:
+            _stats.hostReads++;
+            break;
+        case Kind::GsIn:
+        case Kind::GsOut:
+            _stats.gsPortCycles++;
+            break;
+        case Kind::FrameStart:
+        case Kind::FrameEnd:
+            Flush();
+            _body += event.kind == Kind::FrameEnd ? "frame-end\n" : "frame-start\n";
+            _stats.lines++;
+            _stats.frames += event.kind == Kind::FrameEnd ? 1 : 0;
+            return;
+    }
+
+    const bool read = event.kind == Kind::HostIn || event.kind == Kind::GsIn;
+    if (read && TraceReadIsIdempotent(event))
+    {
+        const MultiSoundBusEvent& p = _pending.event;
+        if (_pending.active && p.kind == event.kind && p.address == event.address && p.value == event.value &&
+            p.drives == event.drives && (event.kind != Kind::HostIn || p.m1 == event.m1))
+        {
+            _pending.count++;
+            return;
+        }
+        Flush();
+        _pending.active = true;
+        _pending.event = event;
+        _pending.count = 1;
+        return;
+    }
+    Flush();
+    Emit(event, 1);
+}
+
+void MultiSoundTraceWriter::Flush()
+{
+    if (!_pending.active)
+        return;
+    _pending.active = false;
+    _stats.longestRun = std::max(_stats.longestRun, _pending.count);
+    Emit(_pending.event, _pending.count);
+}
+
+void MultiSoundTraceWriter::Emit(const MultiSoundBusEvent& event, uint32_t count)
+{
+    using Kind = MultiSoundBusEvent::Kind;
+    char line[96];
+    const bool host = event.kind == Kind::HostOut || event.kind == Kind::HostIn || event.kind == Kind::BusReset;
+    if (host && event.kind != Kind::BusReset && (!_haveM1 || event.m1 != _m1))
+    {
+        std::snprintf(line, sizeof(line), "m1 %04X\n", event.m1);
+        _body += line;
+        _stats.lines++;
+        _haveM1 = true;
+        _m1 = event.m1;
+    }
+    std::string observed;
+    if (event.kind == Kind::HostIn || event.kind == Kind::GsIn)
+    {
+        observed = event.drives ? "=" + Hex2(event.value) : std::string("=--");
+        if (count > 1)
+            observed += " *" + std::to_string(count);
+    }
+    std::string delta;
+    if (host)
+    {
+        const uint64_t d = event.time > _lastTime ? event.time - _lastTime : 0;
+        _lastTime = std::max(_lastTime, event.time);
+        delta = " +" + std::to_string(d);
+    }
+    switch (event.kind)
+    {
+        case Kind::HostOut: std::snprintf(line, sizeof(line), "out %04X %02X%s\n", event.address, event.value, delta.c_str()); break;
+        case Kind::HostIn: std::snprintf(line, sizeof(line), "in %04X %s%s\n", event.address, observed.c_str(), delta.c_str()); break;
+        case Kind::BusReset: std::snprintf(line, sizeof(line), "reset%s\n", delta.c_str()); break;
+        case Kind::GsOut: std::snprintf(line, sizeof(line), "gout %04X %02X\n", event.address & 0xFFu, event.value); break;
+        case Kind::GsIn: std::snprintf(line, sizeof(line), "gin %04X %s\n", event.address & 0xFFu, observed.c_str()); break;
+        case Kind::GsDacFetch: std::snprintf(line, sizeof(line), "gmr %04X %02X\n", event.address, event.value); break;
+        case Kind::FrameStart:
+        case Kind::FrameEnd: line[0] = '\0'; break;
+    }
+    _body += line;
+    _stats.lines++;
+    if (event.kind == Kind::HostIn)
+        _stats.hostReadLines++;
+    else if (event.kind == Kind::GsIn || event.kind == Kind::GsOut)
+        _stats.gsPortLines++;
+}
+
+void MultiSoundTraceWriter::StartUp(uint64_t resetTime)
+{
+    MultiSoundBusEvent reset;
+    reset.kind = MultiSoundBusEvent::Kind::BusReset;
+    reset.time = resetTime;
+    OnMultiSoundBus(reset);
+    MultiSoundBusEvent start;
+    start.kind = MultiSoundBusEvent::Kind::FrameStart;
+    OnMultiSoundBus(start);
+}
+
+std::string MultiSoundTraceWriter::Text(const std::string& header)
+{
+    Flush();
+    return header + _body;
+}
+
+bool ParseMultiSoundTraceRtl(const std::string& text, MultiSoundTraceRtl& rtl)
+{
+    rtl = MultiSoundTraceRtl{};
+    std::stringstream lines(text);
+    std::string line;
+    bool haveHash = false;
+    while (std::getline(lines, line))
+    {
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::stringstream words(line);
+        std::string key;
+        words >> key;
+        if (key == "cycles")
+            words >> rtl.cycles;
+        else if (key == "hash")
+        {
+            std::string value;
+            words >> value;
+            rtl.hash = std::strtoull(value.c_str(), nullptr, 16);
+            haveHash = true;
+        }
+        else if (key == "reads")
+            words >> rtl.reads;
+        else if (key == "values")
+            words >> rtl.values;
+        else if (key == "at")
+        {
+            size_t at = 0;
+            std::string value;
+            words >> at >> value;
+            rtl.checkpoints.emplace_back(at, std::strtoull(value.c_str(), nullptr, 16));
+        }
+        else
+            return false;
+        if (words.fail())
+            return false;
+    }
+    return haveHash && rtl.cycles > 0;
+}
+
+bool MultiSoundTraceReadIsYm(const MultiSoundLogic& logic, uint16_t port)
+{
+    const MultiSoundReadResult::Source source = logic.Peek(port).source;
+    return source == MultiSoundReadResult::Source::YmStatus || source == MultiSoundReadResult::Source::YmRegister;
+}
+
+bool MultiSoundTraceReadMatches(const MultiSoundCycle& cycle, const MultiSoundCycleRecord& record, bool ymRead,
+                                std::string& why)
+{
+    if (!cycle.observed)
+        return true;
+    if ((record.readDriven != 0) != cycle.observedDriven)
+    {
+        why = std::string("the emulator saw the bus ") + (cycle.observedDriven ? "driven" : "not driven") +
+              ", the model " + (record.readDriven ? "drives it" : "does not");
+        return false;
+    }
+    if (cycle.observedDriven && !ymRead && record.readValue != cycle.observedValue)
+    {
+        why = "the emulator read " + Hex2(cycle.observedValue) + ", the model drives " + Hex2(record.readValue);
+        return false;
+    }
+    return true;
 }
 
 uint64_t HashMultiSoundRecord(uint64_t hash, const MultiSoundCycleRecord& record)

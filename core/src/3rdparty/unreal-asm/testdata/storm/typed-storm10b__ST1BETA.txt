@@ -1,0 +1,6 @@
+        ORG #8000
+START   LD A,(IX+5)
+        DJNZ START
+TAB     DB 1,2,"AB"
+LEN     EQU $-TAB
+

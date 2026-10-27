@@ -11,6 +11,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -143,7 +144,7 @@ protected:
 
 TEST_F(WD1793Clock_Test, Defaults_Fixed1MHz_DDSeparator)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     EXPECT_EQ(fdc.GetClockPolicy(), FdcClockPolicy::Fixed1MHz);
     EXPECT_EQ(fdc.GetClock(), FdcClock::Clock1MHz);
     EXPECT_EQ(fdc.GetDataRate(), FdcDataRate::Rate250Kbps);
@@ -170,7 +171,7 @@ TEST_F(WD1793Clock_Test, StepRate_HalvesAt2MHz)
     static constexpr size_t ms1MHz[] = {6, 12, 20, 30};
     static constexpr size_t ms2MHz[] = {3, 6, 10, 15};
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(80, 1);
     Prepare(fdc, image, 10);
 
@@ -196,7 +197,7 @@ TEST_F(WD1793Clock_Test, StepRate_HalvesAt2MHz)
 
 TEST_F(WD1793Clock_Test, VerifySettle_30msAt1MHz_15msAt2MHz)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(80, 1);
     Prepare(fdc, image, 5);
 
@@ -224,7 +225,7 @@ TEST_F(WD1793Clock_Test, EFlagSettle_AllTypeIIAndIIICommands)
         const size_t settle = (clock == FdcClock::Clock1MHz ? 30 : 15) * TSTATES_PER_MS;
         for (size_t i = 0; i < 5; i++)
         {
-            WD1793CUT fdc(_context);
+            WD1793TestCUT fdc(_context);
             DiskImage image(2, 1);
             Prepare(fdc, image, 0);
             fdc._sectorRegister = 1;
@@ -252,7 +253,7 @@ TEST_F(WD1793Clock_Test, EFlagSettle_AllTypeIIAndIIICommands)
 
 TEST_F(WD1793Clock_Test, AutoStepTurbo_StepSelects2MHz_DrqReturnsTo1MHz)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(80, 1);
     Prepare(fdc, image, 0);
     fdc.SetClockPolicy(FdcClockPolicy::AutoStepTurbo);
@@ -296,7 +297,7 @@ TEST_F(WD1793Clock_Test, AutoStepTurbo_SeekWithVerify_TakesHalfTheTime)
 {
     for (FdcClockPolicy policy : {FdcClockPolicy::Fixed1MHz, FdcClockPolicy::AutoStepTurbo})
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         DiskImage image(80, 1);
         Prepare(fdc, image, 0);
         fdc.SetClockPolicy(policy);
@@ -320,7 +321,7 @@ TEST_F(WD1793Clock_Test, AutoStepTurbo_SeekWithVerify_TakesHalfTheTime)
 
 TEST_F(WD1793Clock_Test, AutoStepTurbo_NoStepPulse_StaysAt1MHz_ResetReturnsTo1MHz)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(80, 1);
     Prepare(fdc, image, 7);
     fdc.SetClockPolicy(FdcClockPolicy::AutoStepTurbo);
@@ -346,7 +347,7 @@ TEST_F(WD1793Clock_Test, AutoStepTurbo_NoStepPulse_StaysAt1MHz_ResetReturnsTo1MH
 
 TEST_F(WD1793Clock_Test, Latched_SetsClockAndRateTogether_IgnoresStepAndDrq)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(80, 1);
     Prepare(fdc, image, 0);
 
@@ -410,7 +411,7 @@ TEST_F(WD1793Clock_Test, RateMismatch_HDMediumDDSeparator_RecordNotFound)
 
     for (const Case& c : cases)
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         DiskImage image(1, 1);
         FormatHD(image.getTrack(0), 0);
         Prepare(fdc, image, 0);
@@ -430,7 +431,7 @@ TEST_F(WD1793Clock_Test, RateMismatch_HDMediumDDSeparator_RecordNotFound)
 /// DD medium read with an HD separator (latched HD mode): no ID field either
 TEST_F(WD1793Clock_Test, RateMismatch_DDMediumHDSeparator_RecordNotFound)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);  // TR-DOS 6250-byte tracks
     Prepare(fdc, image, 0);
     SetLatched2MHzHD(fdc);
@@ -448,7 +449,7 @@ TEST_F(WD1793Clock_Test, RateMismatch_Verify_SeekError)
 {
     for (bool hd : {true, false})
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         DiskImage image(1, 1);
         if (hd)
             FormatHD(image.getTrack(0), 0);
@@ -476,7 +477,7 @@ TEST_F(WD1793Clock_Test, RateMismatch_Verify_SeekError)
 /// HD medium with an HD separator: the sector reads, one byte every 16 us (56 T-states at 3.5 MHz)
 TEST_F(WD1793Clock_Test, MatchedHD_ReadSector_HalvedBytePeriod)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     FormatHD(image.getTrack(0), 0, 0xE5);
     Prepare(fdc, image, 0);
@@ -505,7 +506,7 @@ TEST_F(WD1793Clock_Test, MatchedHD_ReadSector_HalvedBytePeriod)
 /// WRITE TRACK at 2 MHz lays down an HD track: a DD track under the head becomes a 12 500-byte stream
 TEST_F(WD1793Clock_Test, WriteTrack_At2MHz_FormatsHDTrack)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     DiskImage::Track* track = image.getTrack(0);
     ASSERT_EQ(track->RecordedDataRate(), FdcDataRate::Rate250Kbps);
@@ -533,7 +534,7 @@ TEST_F(WD1793Clock_Test, WriteTrack_At2MHz_FormatsHDTrack)
 
 TEST_F(WD1793Clock_Test, WriteSector_LostData_FirstByte_TerminatesWithoutWriting)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     Prepare(fdc, image, 0);
     DiskImage::Sector* sector = image.getTrack(0)->getSector(0);
@@ -554,7 +555,7 @@ TEST_F(WD1793Clock_Test, WriteSector_LostData_FirstByte_TerminatesWithoutWriting
 
 TEST_F(WD1793Clock_Test, WriteSector_LostData_LaterByte_WritesZeroAndContinues)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     Prepare(fdc, image, 0);
     DiskImage::Sector* sector = image.getTrack(0)->getSector(0);
@@ -594,7 +595,7 @@ TEST_F(WD1793Clock_Test, WriteSector_LostData_LaterByte_WritesZeroAndContinues)
 /// Short 640-byte (DD) track: one byte cell is ~1094 T-states, so the test runs in coarse steps
 TEST_F(WD1793Clock_Test, WriteTrack_LostData_FirstByteMissingAtIndex_Terminates)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     DiskImage::Track* track = image.getTrack(0);
     track->resizeRaw(640);
@@ -614,7 +615,7 @@ TEST_F(WD1793Clock_Test, WriteTrack_LostData_FirstByteMissingAtIndex_Terminates)
 
 TEST_F(WD1793Clock_Test, WriteTrack_LostData_LaterByte_WritesZeroAndContinues)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     DiskImage::Track* track = image.getTrack(0);
     track->resizeRaw(640);
@@ -671,7 +672,7 @@ protected:
 
 TEST_F(WD1793Verify_Test, MatchingId_PassesAtTheIdPosition)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     DiskImage::Track* track = image.getTrack(0);
     Prepare(fdc, image, 0, 1000);
@@ -692,7 +693,7 @@ TEST_F(WD1793Verify_Test, MatchingId_PassesAtTheIdPosition)
 /// Track register says 3, the head reads cylinder 0 (IDs carry C = 0): Seek Error at the fifth index pulse
 TEST_F(WD1793Verify_Test, TrackRegisterMismatch_SeekErrorAtFifthIndex)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(4, 1);
     Prepare(fdc, image, 0, 1000);
     fdc._trackRegister = 3;
@@ -707,7 +708,7 @@ TEST_F(WD1793Verify_Test, TrackRegisterMismatch_SeekErrorAtFifthIndex)
 /// Copy protection: the IDs of physical track 2 say C = 7. Verify with TR = 2 fails, as on hardware
 TEST_F(WD1793Verify_Test, ProtectedTrackWithForeignCylinder_SeekError)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(4, 1);
     DiskImage::Track* track = image.getTrack(2);
     for (DiskImage::Sector& sector : track->sectors())
@@ -722,7 +723,7 @@ TEST_F(WD1793Verify_Test, ProtectedTrackWithForeignCylinder_SeekError)
     EXPECT_TRUE(fdc.getStatusRegister() & WD1793::WDS_SEEKERR);
 
     // TR = 7 matches what the IDs say: verify passes
-    WD1793CUT fdc2(_context);
+    WD1793TestCUT fdc2(_context);
     Prepare(fdc2, image, 2);
     fdc2._trackRegister = 7;
     Verify(fdc2, 100);
@@ -733,7 +734,7 @@ TEST_F(WD1793Verify_Test, CrcErrors_SetCrcAndKeepSearching)
 {
     // Every matching ID has a bad CRC: CRC ERROR + Seek Error
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         DiskImage image(1, 1);
         DiskImage::Track* track = image.getTrack(0);
         for (DiskImage::Sector& sector : track->sectors())
@@ -747,7 +748,7 @@ TEST_F(WD1793Verify_Test, CrcErrors_SetCrcAndKeepSearching)
     }
     // One bad ID among good ones: the search continues and succeeds, CRC ERROR reset at the end
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         DiskImage image(1, 1);
         DiskImage::Track* track = image.getTrack(0);
         track->sectors()[0].id->id_crc ^= 0xFFFF;
@@ -763,7 +764,7 @@ TEST_F(WD1793Verify_Test, CrcErrors_SetCrcAndKeepSearching)
 /// Verify compares the track only: IDs with H = 1 on side 0 still pass
 TEST_F(WD1793Verify_Test, SideIsNotCompared)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     DiskImage::Track* track = image.getTrack(0);
     for (DiskImage::Sector& sector : track->sectors())
@@ -784,14 +785,14 @@ TEST_F(WD1793Verify_Test, FortyTrackDiskIn80TrackDrive)
     DiskImage image(40, 1);
     image.setFortyTrack(true);
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     Prepare(fdc, image, 0);
     fdc._selectedDrive->setTrack(10);  // head at 10 = disk track 5
     fdc._trackRegister = 5;
     Verify(fdc, 100);
     EXPECT_FALSE(fdc.getStatusRegister() & WD1793::WDS_SEEKERR) << "head 2n reads disk track n, ID C = n";
 
-    WD1793CUT fdc2(_context);
+    WD1793TestCUT fdc2(_context);
     Prepare(fdc2, image, 0);
     fdc2._selectedDrive->setTrack(11);  // between two 48 tpi tracks: nothing readable
     fdc2._trackRegister = 5;
@@ -802,7 +803,7 @@ TEST_F(WD1793Verify_Test, FortyTrackDiskIn80TrackDrive)
 /// FM host setting on an MFM disk: no ID field is recognised
 TEST_F(WD1793Verify_Test, EncodingMismatch_SeekError)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     Prepare(fdc, image, 0);
     fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;  // FM
@@ -818,7 +819,7 @@ TEST_F(WD1793Verify_Test, EncodingMismatch_SeekError)
 TEST_F(WD1793Clock_Test, ReadTrack_RateMismatch_ReturnsDeterministicNoise)
 {
     auto readTrack = [this](DiskImage& image) {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         Prepare(fdc, image, 0, ROTATION - 2000);
         Issue(fdc, 0xE0);
         std::vector<uint8_t> bytes;
@@ -885,7 +886,7 @@ TEST_F(WD1793Clock_Test, Machines_ZxEvoHasTurboVg_OthersFixed1MHz)
 // the new rate at once: the ID of a 1.44 MB disk comes within one revolution of the flip
 TEST_F(WD1793Clock_Test, Latched_RateChangeDuringReadAddress_FindsTheId)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     FormatHD(image.getTrack(0), 0);
     Prepare(fdc, image, 0);
@@ -932,7 +933,7 @@ TEST_F(WD1793Clock_Test, Latched_RateChangeDuringReadAddress_FindsTheId)
 // command started, not 5 revolutions after the change
 TEST_F(WD1793Clock_Test, Latched_RateChangeOnAnUnformattedTrack_KeepsTheDeadline)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     Prepare(fdc, image, 1);  // cylinder 1 of a one-cylinder image: nothing under the head
     fdc.SetClockPolicy(FdcClockPolicy::Latched);
@@ -957,7 +958,7 @@ TEST_F(WD1793Clock_Test, Latched_RateChangeOnAnUnformattedTrack_KeepsTheDeadline
 // Type I verify on an HD track at 250 kbit/s, the latch flipped while the chip looks for the ID: no Seek Error
 TEST_F(WD1793Clock_Test, Latched_RateChangeDuringVerify_Verifies)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage image(1, 1);
     FormatHD(image.getTrack(0), 0);
     Prepare(fdc, image, 0);
@@ -989,10 +990,10 @@ TEST_F(WD1793Clock_Test, Latched_RateChangeDuringVerify_Verifies)
 namespace
 {
 /// The production time source (WD1793CUT stubs it)
-class WD1793TimeBaseCUT : public WD1793CUT
+class WD1793TimeBaseCUT : public WD1793TestCUT
 {
 public:
-    explicit WD1793TimeBaseCUT(EmulatorContext* context) : WD1793CUT(context) {}
+    explicit WD1793TimeBaseCUT(EmulatorContext* context) : WD1793TestCUT(context) {}
     uint64_t Now()
     {
         WD1793::updateTimeFromEmulatorState();
@@ -1036,7 +1037,7 @@ TEST_F(WD1793Clock_Test, TimeBase_FollowsTheBaseClockUnderHardwareTurbo)
 // the interface's latch), a spinning motor carries over, a chip reset goes back to drive A
 TEST_F(WD1793Clock_Test, DriveSelect_BetaRegisterPicksTheDrive)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     FDD* driveA = _context->coreState.diskDrives[0];
     FDD* driveB = _context->coreState.diskDrives[1];
     ASSERT_NE(driveA, nullptr);

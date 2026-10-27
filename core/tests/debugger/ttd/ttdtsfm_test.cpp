@@ -20,7 +20,10 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdrecordedstate.h"
+#include "_helpers/ttdv1tests.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttddumpformat.h"
@@ -33,36 +36,13 @@
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 
-using BlobMap = std::unordered_map<uint8_t, std::vector<uint8_t>>;
-
-/// Minimal TurboSound-slot stand-in: the guard only asks for the id
-/// (and the blob map, which the tests build by hand).
-class FakeTurboSoundSlotDevice final : public ttd::TTDSerializable
-{
-public:
-    explicit FakeTurboSoundSlotDevice(ttd::PeripheralId id) : _id(id) {}
-
-    size_t TTDStateSize() const override { return sizeof(uint32_t); }
-    void TTDSaveState(uint8_t* dst) const override
-    {
-        const uint32_t marker = 0x5A5A5A5Au;
-        std::memcpy(dst, &marker, sizeof marker);
-    }
-    void TTDLoadState(const uint8_t* /*src*/) override {}
-    std::string TTDDeviceName() const override { return "FakeTurboSoundSlotDevice"; }
-    ttd::PeripheralId TTDPeripheralId() const override { return _id; }
-
-private:
-    ttd::PeripheralId _id;
-};
-
 class TtdTsfm_Test : public ::testing::Test
 {
 protected:
     SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
 
     void SetUp() override
@@ -75,8 +55,8 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
-        ASSERT_NE(_ttd, nullptr);
+        _ttd = _context->pTimeTravelController;   // null when the test selected v1 (TtdTsfmV1_Test)
+        ASSERT_TRUE(_ttd != nullptr || _context->pTimeTravelManager != nullptr);
         _fm = _emulator->GetFeatureManager();
         ASSERT_NE(_fm, nullptr);
 
@@ -152,7 +132,16 @@ protected:
         std::memcpy(&pageStoreCount, s.data() + p, sizeof pageStoreCount);
         skip(4);
         skip(4);   // checkpoint count
-        skip(8);   // reserved
+        // the peripheral mask (schema 3: u8 word count + u64 words; schema 1: one u64), then the not-recorded mask with flag bit 11
+        uint16_t schema = 0, flags = 0;
+        std::memcpy(&schema, s.data() + 4, 2);
+        std::memcpy(&flags, s.data() + 6, 2);
+        for (int mask = 0; mask < ((flags & 0x0800) ? 2 : 1); ++mask)
+        {
+            if (p >= s.size())
+                return false;
+            skip(schema >= 3 ? 1 + 8 * static_cast<size_t>(static_cast<uint8_t>(s[p])) : 8);
+        }
 
         if (p > s.size())
             return false;
@@ -220,66 +209,33 @@ protected:
     }
 };
 
-// ===========================================================================
-// Decision core (TimeTravelManager::TurboSoundSessionKindMatches)
-// ===========================================================================
-
-TEST_F(TtdTsfm_Test, KindMatchesLegacySessionOnLegacyDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
-
-TEST_F(TtdTsfm_Test, KindMatchesFmSessionOnFmDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesFmSessionOnLegacyDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesLegacySessionOnFmDevice)
-{
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}}};
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindIgnoresSessionWithoutSlotBlob)
-{
-    // Recorded on a machine without any slot device: not a mismatch
-    // (RestoreAll's missingBlobs path already names that situation)
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::BetaDisk), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    FakeTurboSoundSlotDevice fm(ttd::PeripheralId::TSFM);
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-    EXPECT_TRUE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, fm));
-}
-
-TEST_F(TtdTsfm_Test, KindRefusesDefensiveBothIdsSession)
-{
-    // One device occupies the slot; a session carrying both ids cannot come
-    // from a healthy writer - refuse rather than guess
-    BlobMap blobs{{static_cast<uint8_t>(ttd::PeripheralId::TurboSound), {}},
-                  {static_cast<uint8_t>(ttd::PeripheralId::TSFM), {}}};
-    FakeTurboSoundSlotDevice legacy(ttd::PeripheralId::TurboSound);
-    EXPECT_FALSE(ttd::TimeTravelManager::TurboSoundSessionKindMatches(blobs, legacy));
-}
+// The decision core moved to SlotManager::TtdSlotSetMatches (ZX-bus slots SL-5): TtdSlots_Test covers the
+// socket cases (kind mismatch both ways, an empty socket, a session carrying both ids)
 
 // ===========================================================================
 // End to end: DeserializeSession wiring (plan gate: SessionKindMismatchRefused)
 // ===========================================================================
 
-TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
+/// The forge below patches v1's file layout: this test records and loads with v1
+class TtdTsfmV1_Test : public TtdTsfm_Test
 {
-    const std::string data = MakeLegacySession();
+protected:
+    ttdtest::V1Scope _v1;   // before SetUp creates the machine
+};
+
+TEST_F(TtdTsfmV1_Test, SessionKindMismatchRefused)
+{
+    ttd::TimeTravelManager* v1 = _context->pTimeTravelManager;
+    ASSERT_TRUE(v1->StartRecording());
+    RunFrames(2);
+    v1->StopRecording();
+    std::string data;
+    {
+        std::ostringstream out(std::ios::binary);
+        std::string err;
+        ASSERT_TRUE(v1->SerializeSession(out, err)) << err;
+        data = out.str();
+    }
     ASSERT_FALSE(data.empty());
 
     // Sanity first: the same-kind session loads (the guard must not
@@ -287,9 +243,9 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
     {
         std::istringstream in(data, std::ios::binary);
         std::string err;
-        EXPECT_TRUE(_ttd->DeserializeSession(in, err)) << err;
+        EXPECT_TRUE(v1->DeserializeSession(in, err)) << err;
     }
-    _ttd->InvalidateSession("test");
+    v1->InvalidateSession("test");
 
     // Forge the baseline TurboSound blob (id 0) as a TSFM blob (id 4): patch
     // the blob map key and the blob header's own id byte. Everything else
@@ -304,8 +260,8 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
     {
         std::istringstream in(forged, std::ios::binary);
         std::string err;
-        EXPECT_FALSE(_ttd->DeserializeSession(in, err));
-        EXPECT_NE(err.find("TurboSound slot mismatch"), std::string::npos) << err;
+        EXPECT_FALSE(v1->DeserializeSession(in, err));
+        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ts"), std::string::npos) << err;
     }
 
     // The live machine state is untouched by the refused load (restores only
@@ -332,8 +288,9 @@ TEST_F(TtdTsfm_Test, SessionWithSlotDeviceRefusedOnEmptySlot)
 
     std::istringstream in(data, std::ios::binary);
     std::string err;
-    EXPECT_FALSE(empty.GetContext()->pTimeTravelManager->DeserializeSession(in, err));
-    EXPECT_NE(err.find("TurboSound slot mismatch"), std::string::npos) << err;
+    EXPECT_FALSE(empty.GetContext()->pTimeTravelController->DeserializeSession(in, err));
+    // The engine's device table names the socket's board (a v1 file could not: "ay / ts")
+    EXPECT_NE(err.find("ay-socket: recorded ts, this machine none"), std::string::npos) << err;
 
     empty.Stop();
     empty.Release();
@@ -446,7 +403,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     SoundManager* sm = context->pSoundManager;
     ASSERT_NE(sm, nullptr);
@@ -455,21 +412,19 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
     ASSERT_EQ(sm->getTurboSound()->TTDPeripheralId(), ttd::PeripheralId::TSFM)
         << "Test precondition: the FM slot kind must register under id 4";
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
 
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    const auto tsfmBlob = cp->peripheralBlobs.find(
-        static_cast<uint8_t>(ttd::PeripheralId::TSFM));
-    ASSERT_NE(tsfmBlob, cp->peripheralBlobs.end())
+    const auto tsfmState =
+        ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::TSFM);
+    ASSERT_FALSE(tsfmState.empty())
         << "TSFM must register itself and appear in the checkpoint - "
            "TTDPeripheralRegistry::CaptureAll skips any device whose "
            "TTDStateSize()==0, which is the bug this test guards against. See "
            "docs/inprogress/2026-09-10-turbosound-fm/ttd-fm-state-gap.md.";
-    const auto tsfmState = ttd::TTDPeripheralRegistry::DecodeBlob(
-        static_cast<uint8_t>(ttd::PeripheralId::TSFM), tsfmBlob->second);
     // v5: 2 version/board + 48 render phases + 2 x 586 chip payloads (73-byte
     // AY payload each) + 778 timeline tail (render cursor + pending SSG writes)
     // + 8 frame-progress tail
@@ -497,7 +452,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesRealDemoPlaybackState
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     const auto sna = TestPathHelper::FindProjectRoot() / "testdata/sound/tsfm/tech_support.sna";
     ASSERT_TRUE(emulator.LoadSnapshot(sna.string()))
@@ -524,14 +479,12 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesRealDemoPlaybackState
            "at frame 50 - the demo hasn't started playing, this run wouldn't "
            "exercise real synth state";
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    const auto tsfmBlob = cp->peripheralBlobs.find(
-        static_cast<uint8_t>(ttd::PeripheralId::TSFM));
-    EXPECT_NE(tsfmBlob, cp->peripheralBlobs.end())
+    EXPECT_FALSE(ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::TSFM).empty())
         << "Real demo playback drove both YM2203s into non-trivial state "
            "(SSG registers confirmed non-zero above; the FM engine has live "
            "operator/envelope/timer state too); a scrub back to this "
@@ -549,7 +502,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesRealDemoPlaybackState
 /// that the live TSFM device's re-serialized state is byte-identical to what
 /// was captured at record time. Peripheral blobs are NOT delta-encoded like
 /// RAM pages (TTDPeripheralRegistry::CaptureAll runs unconditionally on every
-/// checkpoint - see TimeTravelManager::CaptureNow), so every checkpoint,
+/// checkpoint - see TimeTravelController::CaptureNow), so every checkpoint,
 /// keyframe or not, must carry and restore a full, independent TSFM payload;
 /// this test verifies that is actually true end to end through the real
 /// SeekTo path, not just through TTDSaveState/TTDLoadState in isolation.
@@ -563,7 +516,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_RestoresTsfmStateBitIdenticalOnKey
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
     FeatureManager* featureManager = emulator.GetFeatureManager();
     ASSERT_NE(featureManager, nullptr);
@@ -592,12 +545,8 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_RestoresTsfmStateBitIdenticalOnKey
         const ttd::TTDCheckpoint* cp = ttdMgr->GetCheckpoint(idx);
         ASSERT_NE(cp, nullptr) << "checkpoint " << idx;
 
-        const auto blobIt = cp->peripheralBlobs.find(static_cast<uint8_t>(ttd::PeripheralId::TSFM));
-        ASSERT_NE(blobIt, cp->peripheralBlobs.end())
-            << "checkpoint " << idx << " (" << (cp->frameKind == ttd::TTDFrameKind::KeyFrame ? "I" : "P")
-            << "-frame) is missing its TSFM blob";
-        const auto expected = ttd::TTDPeripheralRegistry::DecodeBlob(
-            static_cast<uint8_t>(ttd::PeripheralId::TSFM), blobIt->second);
+        const auto expected = ttdtest::RecordedDeviceState(*ttdMgr, idx, ttd::PeripheralId::TSFM);
+        ASSERT_FALSE(expected.empty()) << "checkpoint " << idx << " is missing its TSFM state";
         ASSERT_EQ(expected.size(), fm->TTDStateSize())
             << "checkpoint " << idx << ": decoded blob size mismatch";
 
@@ -644,7 +593,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
     FeatureManager* featureManager = emulator.GetFeatureManager();
     ASSERT_NE(featureManager, nullptr);
@@ -688,14 +637,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
 
     auto ssgBytesAtCheckpoint = [&](size_t idx) -> std::vector<uint8_t>
     {
-        const ttd::TTDCheckpoint* cp = ttdMgr->GetCheckpoint(idx);
-        if (!cp)
-            return {};
-        const auto it = cp->peripheralBlobs.find(static_cast<uint8_t>(ttd::PeripheralId::TSFM));
-        if (it == cp->peripheralBlobs.end())
-            return {};
-        const auto full = ttd::TTDPeripheralRegistry::DecodeBlob(
-            static_cast<uint8_t>(ttd::PeripheralId::TSFM), it->second);
+        const auto full = ttdtest::RecordedDeviceState(*ttdMgr, idx, ttd::PeripheralId::TSFM);
         if (full.size() < kChip0SsgOffset + 57)
             return {};
         return std::vector<uint8_t>(full.begin() + static_cast<long>(kChip0SsgOffset),
@@ -788,7 +730,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
     FeatureManager* featureManager = emulator.GetFeatureManager();
     ASSERT_NE(featureManager, nullptr);
@@ -871,7 +813,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_KeepsDeviceAndMixerSampleCountsEqu
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
     FeatureManager* featureManager = emulator.GetFeatureManager();
     ASSERT_NE(featureManager, nullptr);

@@ -1,0 +1,60 @@
+;--------------------------------------------------------
+;PLAYER PT 3.X DAEMON SOURCE
+;--------------------------------------------------------
+               ORG     #9c40
+               LD      HL,c40view
+               LD      (extview),HL
+               LD      IX,c40w1
+               CALL    setwin
+mda            CALL    animal
+               CALL    checkw
+               JP      mda
+
+
+c40w1          DB      10,10,10,6
+               DW      nam1,ret1,ret1
+               DB      16,1,1
+               DW      c40tx1
+               DB      0,#FF
+
+
+nam1           DB      "PT3 player",0
+c40view        LD      A,#10
+               CALL    page
+               CALL    gtadr;У3HAЛИ AДPEC FD
+               LD      DE,8
+               ADD     HL,DE
+               LD      A,(HL)
+               CP      "m";OПPEДEЛИЛИ PACШИPEHИE ФAЙЛA
+               RET     NZ
+               CALL    gtadr
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               CALL    im1
+               CALL    shutay
+               LD      A,#14
+               CALL    page
+               LD      C,14
+               LD      A,#ff
+               LD      HL,#ce21
+               DI
+               CALL    dos;ГPУ3ИM MУ3OH
+               CALL    im1
+               LD      HL,plbl
+               LD      DE,#c000
+               LD      BC,#e20
+               LDIR;ПEPEKИHУЛИ ПЛEEP
+               CALL    idmus;ДAЛИ OПPEДEЛИTЬ CИCTEME TИП ПЛEEPA
+               IM      2
+               EI
+               RET
+
+
+c40tx1         DB      "   PT3 module daemon",#D
+               DB      "Coded by Lynx/><P10s!vE",#D
+               DB      "   Player by Nick/GDC",#D
+               DB      "      - - * * * - -",#D
+               DB      "Use view in browse menu",#D
+               DB      "   To play PT3 module ",0
+plbl           LCODE   "PT3PLAY";PLAYER PT 3.X

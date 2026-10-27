@@ -10,6 +10,7 @@
 namespace
 {
 constexpr const char* kTopicDebug = "debug";
+constexpr const char* kTopicAsmSync = "asm_sync";   // the asm-synchronizer's watch (NC_ASM_SYNC)
 
 std::string CompactJson(const Json::Value& value)
 {
@@ -40,7 +41,7 @@ DebugEventHub::~DebugEventHub()
 
 const std::set<std::string>& DebugEventHub::PublishedTopics()
 {
-    static const std::set<std::string> topics{kTopicDebug};
+    static const std::set<std::string> topics{kTopicDebug, kTopicAsmSync};
     return topics;
 }
 
@@ -59,6 +60,8 @@ void DebugEventHub::Start()
     _observers.emplace_back(NC_BREAKPOINTS_CHANGED,
                             messageCenter.AddObserver(NC_BREAKPOINTS_CHANGED,
                                                       [this](int, Message* message) { OnBreakpointsChanged(message); }));
+    _observers.emplace_back(NC_ASM_SYNC,
+                            messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
 
 void DebugEventHub::Stop()
@@ -173,6 +176,20 @@ void DebugEventHub::RemoveClient(const void* client)
     _clients.erase(client);
 }
 
+uint64_t DebugEventHub::AddSink(Sink sink)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const uint64_t id = _nextSink++;
+    _sinks.emplace(id, std::move(sink));
+    return id;
+}
+
+void DebugEventHub::RemoveSink(uint64_t id)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _sinks.erase(id);
+}
+
 void DebugEventHub::Publish(const std::string& emulatorId, const std::string& topic, Json::Value event)
 {
     std::vector<Send> targets;
@@ -183,6 +200,10 @@ void DebugEventHub::Publish(const std::string& emulatorId, const std::string& to
         event["seq"] = static_cast<Json::UInt64>(++_seq[emulatorId]);
         event["emulator"] = emulatorId;
         event["cpu"] = "main";
+        // Under the lock: a sink removed is never called again (a sink only queues)
+        for (const auto& [id, sink] : _sinks)
+            if (sink)
+                sink(topic, event);
         for (const auto& [client, entry] : _clients)
         {
             for (const Subscription& subscription : entry.subscriptions)
@@ -257,4 +278,22 @@ void DebugEventHub::OnBreakpointsChanged(Message* message)
     for (uint16_t id : payload->ids)
         event["ids"].append(id);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnAsmSync(Message* message)
+{
+    auto* payload = message ? dynamic_cast<AsmSyncPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    Json::Value event;
+    event["event"] = "asm_sync_" + payload->event;
+    event["assembler"] = payload->assembler;
+    if (payload->event == "built")
+    {
+        event["generation"] = static_cast<Json::UInt64>(payload->generation);
+        event["complete"] = payload->complete;
+        event["labels"] = payload->labels;
+        event["hints"] = payload->hints;
+    }
+    Publish(payload->emulatorId.toString(), kTopicAsmSync, event);
 }

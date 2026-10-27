@@ -1,0 +1,12 @@
+# The Elite's paddles carry the layer key and the bookmarks (debug-and-ttd.md §4.1)
+schema: 1
+kind: debug
+id: builtin/debug/elite-paddles
+label: Debugger on an Elite
+applies_to: { families: [xbox-elite] }
+layer_key: { control: paddle.p4, mode: hold }
+layers:
+  debug:
+    paddle.p1: { action: ttd.bookmark_next }
+    paddle.p3: { action: ttd.bookmark_prev }
+    paddle.p2: { action: ttd.find_last_write }

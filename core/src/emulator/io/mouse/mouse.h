@@ -101,6 +101,9 @@ public:
     uint8_t PeekRegister(uint8_t selectRegister) const;
 
     void Move(int dx, int dy);
+    /// A machine whose mouse module scales the motion (the Next's PS/2 module, NR #0A bits 1:0): the deltas are shifted left (> 0) or
+    /// arithmetically right (< 0) by this many bits as they arrive
+    void SetDeltaShift(int shift) { _deltaShift.store(shift, std::memory_order_relaxed); }
     void SetButtons(uint8_t mask);
     void SetWheel(int delta);
     void SetCounters(uint8_t x, uint8_t y);
@@ -162,6 +165,7 @@ private:
     std::atomic<uint8_t> _y{RESET_Y};
     std::atomic<uint8_t> _buttons{0xFF};  // Active-low: D0 = Left, D1 = Right, D2 = Middle
     std::atomic<uint8_t> _wheel{0x00};    // 4 bits, upper nibble of the button register when the wheel is enabled
+    std::atomic<int> _deltaShift{0};
     std::atomic<bool> _present{true};
     std::atomic<bool> _wheelEnabled{false};
     /// Frame (EmulatorState::frame_counter) of the last program read; kNeverPolled = none yet

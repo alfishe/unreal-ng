@@ -1,6 +1,8 @@
 #pragma push_macro("slots")
 #undef slots
+#include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "common/filehelper.h"
 #pragma pop_macro("slots")
@@ -13,19 +15,21 @@
 #include <QSignalBlocker>
 #include <QStyleOptionSlider>
 #include <atomic>
+#include <map>
 #include <memory>
 #include <thread>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QPainter>
 #include <QSettings>
 #include <QStyleOptionButton>
 #include <algorithm>
 #include <fstream>
 
+#include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
-#include "mainwindow.h"
 #include "widgets/tintedsvgicon.h"
 
 namespace {
@@ -86,8 +90,8 @@ private:
 
 } // namespace
 
-TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
-    : QWidget(parent), _mainWindow(mainWindow)
+TtdWidget::TtdWidget(QWidget* parent)
+    : QWidget(parent)
 {
     setObjectName(QStringLiteral("ttdWidget"));
     setAutoFillBackground(true);
@@ -116,33 +120,51 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _exportBtn->setToolTip(tr("Export current TTD timeline session to a .ttd file"));
     connect(_exportBtn, &QPushButton::clicked, this, &TtdWidget::onExportSession);
 
-    _journalBtn = new QPushButton(tr("Journal"), this);
-    _journalBtn->setCheckable(true);
-    _journalBtn->setToolTip(tr("Write journal: record every memory write, so 'who wrote this address last' answers at "
-                               "once. Off by default; switch it at any moment, also while recording (each on-off "
-                               "span is a segment, shown as a band on the timeline). Without it the search replays "
-                               "one frame - same answer, slower."));
-    connect(_journalBtn, &QPushButton::toggled, this, &TtdWidget::onJournalToggled);
 
     _clearBtn = new QPushButton(tr("Clear"), this);
     _clearBtn->setToolTip(tr("Clear current timeline history and reset session"));
     connect(_clearBtn, &QPushButton::clicked, this, &TtdWidget::onClearSession);
 
+    // =========================================================================
+    // Advanced Row: the recording's options, hidden by default. Each is saved,
+    // and so is whether the row is open
+    // =========================================================================
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    _advancedContainer = new QWidget(this);
+    auto* advancedLayout = new QHBoxLayout(_advancedContainer);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setSpacing(6);
+
+    // The write journal: on by default in the panel (automation keeps its own default, off)
+    _journalCheck = new QCheckBox(tr("Write journal"), _advancedContainer);
+    _journalCheck->setToolTip(tr("Record every memory write, so 'who wrote this address last' answers at once. "
+                                 "Switch it at any moment, also while recording (each on-off span is a segment, "
+                                 "shown as a band on the timeline). Without it the search replays one frame - same "
+                                 "answer, slower; 'Build Journal' builds it later."));
+    _journalCheck->setChecked(settings.value(QStringLiteral("ttd/writeJournal"), true).toBool());
+    connect(_journalCheck, &QCheckBox::toggled, this, &TtdWidget::onJournalToggled);
+
     // History limit: the oldest frames are released beyond it while recording, so
     // a long session stays within memory. Applied to the active emulator (an
-    // automation call may set another one afterwards); remembered across runs
-    _historyCombo = new QComboBox(this);
+    // automation call may set another one afterwards)
+    auto* historyLabel = new QLabel(tr("History:"), _advancedContainer);
+    _historyCombo = new QComboBox(_advancedContainer);
     _historyCombo->addItem(tr("Keep all"), QVariant::fromValue<qulonglong>(0));
     for (int gb : {1, 2, 4, 8, 16})
-        _historyCombo->addItem(tr("Keep %1 GB").arg(gb), QVariant::fromValue<qulonglong>(qulonglong(gb) << 30));
-    _historyCombo->setToolTip(tr("History limit: while recording, the oldest frames are released once the history "
-                                 "holds more than this; a session saved afterwards replays its remaining frames"));
+        _historyCombo->addItem(tr("Last %1 GB").arg(gb), QVariant::fromValue<qulonglong>(qulonglong(gb) << 30));
+    _historyCombo->setToolTip(tr("How much history a recording keeps: all of it, or the last N GB - the oldest "
+                                 "frames are released once the history holds more (a long session or the black box "
+                                 "stays within memory); a session saved afterwards replays its remaining frames"));
     {
-        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         const qulonglong saved = settings.value(QStringLiteral("ttd/historyLimitBytes"), 0).toULongLong();
         const int index = _historyCombo->findData(QVariant::fromValue<qulonglong>(saved));
         _historyCombo->setCurrentIndex(index >= 0 ? index : 0);
     }
+    advancedLayout->addWidget(_journalCheck, 0, Qt::AlignVCenter);
+    advancedLayout->addSpacing(18);
+    advancedLayout->addWidget(historyLabel, 0, Qt::AlignVCenter);
+    advancedLayout->addWidget(_historyCombo, 0, Qt::AlignVCenter);
+    advancedLayout->addStretch(1);
     connect(_historyCombo, &QComboBox::currentIndexChanged, this, [this]() {
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue(QStringLiteral("ttd/historyLimitBytes"), _historyCombo->currentData().toULongLong());
@@ -152,6 +174,38 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
 
     const int iconMetric = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QSize toolbarIconSize(iconMetric, iconMetric);
+
+    // Flat like the close button: the sliders icon and the label in the row's font, a soft
+    // background while the row is open
+    _advancedBtn = new QToolButton(this);
+    _advancedBtn->setCheckable(true);
+    _advancedBtn->setAutoRaise(true);
+    _advancedBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    _advancedBtn->setIcon(tintedSvgIcon(QStringLiteral("sliders")));
+    _advancedBtn->setIconSize(toolbarIconSize);
+    _advancedBtn->setFont(_recordBtn->font());
+    _advancedBtn->setCursor(Qt::PointingHandCursor);
+    _advancedBtn->setText(tr("Advanced"));
+    _advancedBtn->setStyleSheet(QStringLiteral(
+        "QToolButton {"
+        "    border: none;"
+        "    background: transparent;"
+        "    padding: 0px 6px;"
+        "    margin: 0px;"
+        "    border-radius: 3px;"
+        "}"
+        "QToolButton:hover {"
+        "    background: rgba(128, 128, 128, 40);"
+        "}"
+        "QToolButton:checked {"
+        "    background: rgba(128, 128, 128, 55);"
+        "}"
+        "QToolButton:pressed {"
+        "    background: rgba(128, 128, 128, 70);"
+        "}"
+    ));
+    _advancedBtn->setToolTip(tr("Recording options: the write journal, how much history to keep"));
+    connect(_advancedBtn, &QToolButton::toggled, this, &TtdWidget::onAdvancedToggled);
 
     _closeBtn = new QToolButton(this);
     _closeBtn->setIcon(tintedSvgIcon(QStringLiteral("close")));
@@ -186,6 +240,9 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _exportBtn->setFixedHeight(row1Height);
     _clearBtn->setFixedHeight(row1Height);
     _historyCombo->setFixedHeight(row1Height);
+    _advancedBtn->setFixedHeight(closeBtnDim);   // the same pill as the close button beside it
+    _advancedContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    _advancedContainer->setFixedHeight(row1Height);
 
     auto* statusLabel = new TtdStatusLabel(tr("TTD: Idle"), _loadBtn, this);
     statusLabel->setFont(_recordBtn->font());
@@ -199,10 +256,9 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     controlLayout->addWidget(_recordBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_loadBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_exportBtn, 0, Qt::AlignVCenter);
-    controlLayout->addWidget(_journalBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_clearBtn, 0, Qt::AlignVCenter);
-    controlLayout->addWidget(_historyCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_statusLabel, 1, Qt::AlignVCenter);
+    controlLayout->addWidget(_advancedBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_closeBtn, 0, Qt::AlignVCenter);
 
     _controlContainer = new QWidget(this);
@@ -289,10 +345,17 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     scrubberLayout->addWidget(_resumeFromHereBtn, 0, Qt::AlignVCenter);
 
     mainLayout->addWidget(_controlContainer);
+    mainLayout->addWidget(_advancedContainer);
     mainLayout->addWidget(_scrubberContainer);
 
     _scrubberContainer->setVisible(false);
-    setFixedHeight(singleRowHeight());
+    {
+        const bool open = settings.value(QStringLiteral("ttd/advancedOpen"), false).toBool();
+        _advancedContainer->setVisible(open);
+        const QSignalBlocker block(_advancedBtn);
+        _advancedBtn->setChecked(open);
+    }
+    setFixedHeight(rowsHeight(_advancedContainer->isVisible(), false));
 
     // Telemetry Update Timer (100 ms interval)
     _telemetryTimer = new QTimer(this);
@@ -300,31 +363,35 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     connect(_telemetryTimer, &QTimer::timeout, this, &TtdWidget::updateTelemetry);
 }
 
-int TtdWidget::singleRowHeight() const
+int TtdWidget::rowsHeight(bool advanced, bool scrubber) const
 {
-    const int row1Height = _controlContainer ? _controlContainer->height() : 26;
     const int topMargin = layout() ? layout()->contentsMargins().top() : 4;
     const int botMargin = layout() ? layout()->contentsMargins().bottom() : 4;
-    return topMargin + row1Height + botMargin;
+    const int spacing = layout() ? layout()->spacing() : 4;
+    int height = topMargin + (_controlContainer ? _controlContainer->height() : 26) + botMargin;
+    if (advanced)
+        height += spacing + (_advancedContainer ? _advancedContainer->height() : 26);
+    if (scrubber)
+        height += spacing + (_scrubberContainer ? _scrubberContainer->height() : 26);
+    return height;
+}
+
+int TtdWidget::singleRowHeight() const
+{
+    return rowsHeight(false, false);
 }
 
 int TtdWidget::doubleRowHeight() const
 {
-    const int row1Height = _controlContainer ? _controlContainer->height() : 26;
-    const int row2Height = _scrubberContainer ? _scrubberContainer->height() : 26;
-    const int topMargin = layout() ? layout()->contentsMargins().top() : 4;
-    const int botMargin = layout() ? layout()->contentsMargins().bottom() : 4;
-    const int spacing = layout() ? layout()->spacing() : 4;
-    return topMargin + row1Height + spacing + row2Height + botMargin;
+    return rowsHeight(false, true);
 }
 
 int TtdWidget::desiredHeight() const
 {
     if (!_visibleByUser)
         return 0;
-    return (_scrubberContainer && _scrubberContainer->isVisible())
-        ? doubleRowHeight()
-        : singleRowHeight();
+    return rowsHeight(_advancedContainer && _advancedContainer->isVisible(),
+                      _scrubberContainer && _scrubberContainer->isVisible());
 }
 
 QSize TtdWidget::sizeHint() const
@@ -342,9 +409,23 @@ void TtdWidget::applyHistoryLimit()
     if (!_activeEmulator || !_historyCombo)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
-    context->pTimeTravelManager->SetHistoryLimit(0, _historyCombo->currentData().toULongLong());
+    (void)ttd::TTDControl(context).Execute(
+        {"history-limit", {{"frames", "0"}, {"bytes", std::to_string(_historyCombo->currentData().toULongLong())}}});
+}
+
+void TtdWidget::applyJournalPreference()
+{
+    if (!_activeEmulator || !_journalCheck)
+        return;
+    EmulatorContext* context = _activeEmulator->GetContext();
+    if (!context || !ttd::HasTimeTravelSession(context))
+        return;
+    const ttd::TTDSessionRef session(context);
+    if (session->IsRecording() || session->GetSessionInfo().checkpointCount > 0)
+        return;   // a session under way or kept: it keeps what it records with
+    (void)ttd::TTDControl(context).Execute({"journal", {{"enabled", _journalCheck->isChecked() ? "true" : "false"}}});
 }
 
 void TtdWidget::updateState(std::shared_ptr<Emulator> activeEmulator)
@@ -352,7 +433,10 @@ void TtdWidget::updateState(std::shared_ptr<Emulator> activeEmulator)
     const bool changed = _activeEmulator != activeEmulator;
     _activeEmulator = activeEmulator;
     if (changed)
+    {
         applyHistoryLimit();
+        applyJournalPreference();   // before the black box starts on a new instance (MainWindow::applyBlackBox)
+    }
 
     if (_activeEmulator && isVisible())
     {
@@ -418,14 +502,14 @@ void TtdWidget::updateTelemetry()
     // Leased for this handler: an automation thread may remove the instance
     const Emulator::ContextLease lease = _activeEmulator->LeaseContext();
     EmulatorContext* context = lease.get();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
     {
         _statusLabel->setText(tr("TTD: Unavailable"));
         _scrubberContainer->setVisible(false);
         return;
     }
 
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TTDSessionRef ttd(context);
     // The published snapshot, never the live session: this 100 ms timer runs
     // while the machine's thread records (and automation may stop or
     // invalidate the session at the same time)
@@ -461,13 +545,12 @@ void TtdWidget::updateTelemetry()
     }
     const bool isDetached = (info.state == ttd::TTDSessionState::Detached);
     const bool hasHistory = (info.checkpointCount > 0);
+    // The engine's controller browses while it records: the slider pauses the recording (D8)
+    EmulatorContext* activeContext = _activeEmulator ? _activeEmulator->GetContext() : nullptr;
+    const bool browsesWhileRecording = isRecording && activeContext && activeContext->pTimeTravelController;
 
     _recordBtn->setEnabled(true);
-    _recordBtn->setText(isRecording ? tr("Stop Rec") : tr("Start Rec"));
-    {
-        const QSignalBlocker block(_journalBtn);
-        _journalBtn->setChecked(info.writeJournalEnabled);
-    }
+    _recordBtn->setText(isRecording || info.recordingPaused ? tr("Stop Rec") : tr("Start Rec"));
     _exportBtn->setEnabled(hasHistory);
     _clearBtn->setEnabled(hasHistory);
 
@@ -475,6 +558,16 @@ void TtdWidget::updateTelemetry()
     QString provenanceStr = info.loadedFromFile
         ? tr(" [Loaded: %1]").arg(QFileInfo(QString::fromStdString(info.sourcePath)).fileName())
         : QString();
+
+    // A non-default recording option stays in sight while the Advanced row is closed
+    if (!_advancedContainer->isVisible())
+    {
+        const bool journalOff = isRecording ? !info.writeJournalEnabled : !_journalCheck->isChecked();
+        if (journalOff)
+            provenanceStr += tr(" | No journal");
+        if (const qulonglong limit = _historyCombo->currentData().toULongLong())
+            provenanceStr += tr(" | Last %1 GB").arg(limit >> 30);
+    }
 
     // What the write journal covers (D40): searches for "who wrote this last"
     // answer at once inside its spans and replay one frame elsewhere
@@ -500,11 +593,22 @@ void TtdWidget::updateTelemetry()
                 .arg(devices.isEmpty() ? tr("none") : devices.join(QStringLiteral(", ")));
         tooltip = tooltip.isEmpty() ? machine : tooltip + QStringLiteral("\n\n") + machine;
     }
+    // How exactly the position the machine stands on came back (other settings, a medium written since): in the
+    // line while browsing, the reasons first in the tooltip
+    if (isDetached && info.lastCheck.status != ttd::TTDRestoreStatus::Exact)
+    {
+        static const char* const kCheckNames[] = {QT_TR_NOOP("Exact"), QT_TR_NOOP("Not bit-exact"), QT_TR_NOOP("Degraded"),
+                                                  QT_TR_NOOP("Damaged")};
+        const QString name = tr(kCheckNames[static_cast<uint8_t>(info.lastCheck.status) & 3]);
+        provenanceStr += tr(" | %1").arg(name);
+        const QString reasons = tr("This position: %1 - %2").arg(name, QString::fromStdString(info.lastCheck.message));
+        tooltip = tooltip.isEmpty() ? reasons : reasons + QStringLiteral("\n\n") + tooltip;
+    }
     _statusLabel->setToolTip(tooltip);
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
 
-    if (isRecording)
+    if (isRecording && !browsesWhileRecording)
     {
         // Actively recording: hide timeline scrubber and display live startFrame - currentFrame recording status
         _scrubberContainer->setVisible(false);
@@ -530,7 +634,26 @@ void TtdWidget::updateTelemetry()
             const uint64_t startFrame = info.sessionStartFrame;
             const uint64_t endFrame = info.currentEndFrame;
 
-            if (isDetached)
+            if (isRecording)
+            {
+                // Recording, the slider ready: moving it pauses the recording
+                _statusLabel->setText(tr("Rec | Frames: %1 - %2 | Memory: %3 MB%4")
+                                          .arg(startFrame)
+                                          .arg(endFrame)
+                                          .arg(memMb, 0, 'f', 1)
+                                          .arg(provenanceStr));
+            }
+            else if (isDetached && info.recordingPaused)
+            {
+                // The recording paused for browsing: resumed at its end it goes on
+                _statusLabel->setText(tr("Rec paused | Range: %1 - %2 | Frame: %3 | Memory: %4 MB%5")
+                                          .arg(startFrame)
+                                          .arg(endFrame)
+                                          .arg(currentPos.frame)
+                                          .arg(memMb, 0, 'f', 1)
+                                          .arg(provenanceStr));
+            }
+            else if (isDetached)
             {
                 // User is actively scrubbing inside the recorded session history
                 const uint64_t currentFrame = currentPos.frame;
@@ -557,7 +680,8 @@ void TtdWidget::updateTelemetry()
             _stepForwardBtn->setEnabled(activeFrame < endFrame);
             _jumpEndBtn->setEnabled(activeFrame < endFrame);
             _resumeFromHereBtn->setEnabled(true);
-            _buildJournalBtn->setEnabled(!info.writeJournalComplete);
+            // Only where the journal is missing: a session recorded without it (or not all the way)
+            _buildJournalBtn->setVisible(!info.writeJournalComplete);
 
             // The write journal's spans as a band along the timeline
             std::vector<std::pair<double, double>> spans;
@@ -586,7 +710,7 @@ void TtdWidget::updateTelemetry()
             _stepForwardBtn->setEnabled(false);
             _jumpEndBtn->setEnabled(false);
             _resumeFromHereBtn->setEnabled(false);
-            _buildJournalBtn->setEnabled(false);
+            _buildJournalBtn->setVisible(false);
             _timelineSlider->setJournalSpans({});
         }
     }
@@ -606,17 +730,15 @@ void TtdWidget::onRecordToggled()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-
-    if (ttd->IsRecording())
-    {
-        ttd->StopRecording();
-    }
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    // A paused recording (D8) is still the recording: the button ends it. A new one
+    // starts with the Advanced row's journal choice
+    const ttd::TTDSessionRef session(context);
+    const bool recording = session->IsRecording() || session->GetSessionInfo().recordingPaused;
+    if (recording)
+        (void)ttd::TTDControl(context).Execute({"stop", {}});
     else
-    {
-        ttd->StartRecording();
-    }
+        (void)ttd::TTDControl(context).Execute({"start", {{"journal", _journalCheck->isChecked() ? "true" : "false"}}});
     updateTelemetry();
 }
 
@@ -624,16 +746,15 @@ void TtdWidget::onLoadSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
 
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Load TTD Session"), QString(),
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Load TTD Session"), QString::fromStdString(ttd::RecordingsRoot()),
                                                    tr("Time Travel Session (*.ttd)"));
     if (fileName.isEmpty()) return;
 
     if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
     }
 
     // The file's recorded machine first (headers only): a session loads only into
@@ -661,18 +782,18 @@ void TtdWidget::onLoadSession()
         return;
     }
 
-    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
-    if (!in.is_open() || !ttd->DeserializeSession(in, err))
+    ttd::TTDControl control(context);
+    const ttd::TTDReply loaded = control.Execute({"load", {{"path", path}}});
+    if (!loaded.Ok())
     {
         QMessageBox::warning(this, tr("TTD Load Failed"),
-                             tr("Failed to load TTD session: %1\n\n%2").arg(QString::fromStdString(err), recordedText));
+                             tr("Failed to load TTD session: %1\n\n%2").arg(QString::fromStdString(loaded.message), recordedText));
     }
     else
     {
-        ttd->SetSessionSourcePath(path);
-        ttd::TTDSessionInfo info = ttd->ReadSessionInfo();
-        ttd->SeekTo(ttd::TTDTimePoint{info.sessionStartFrame, 0});
-        _mainWindow->refreshViewport();
+        (void)control.Execute({"seek", {{"frame", std::to_string(loaded.body.find("session_start_frame")->i)},
+                                        {"tinframe", "0"}}});
+        emit viewportRefreshRequested();
     }
     updateTelemetry();
 }
@@ -681,28 +802,33 @@ void TtdWidget::onExportSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    ttd::TTDSessionRef ttd(context);
 
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export TTD Session"), QString(),
+    // Saved sessions live in ~/.unreal-ng/ttd, next to the folders recordings are written into
+    const std::string recordings = ttd::RecordingsRoot();
+    if (!recordings.empty())
+        FileHelper::CreateFolders(recordings);
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export TTD Session"), QString::fromStdString(recordings),
                                                    tr("Time Travel Session (*.ttd)"));
     if (fileName.isEmpty()) return;
 
     if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
     }
 
-    std::ofstream out(fileName.toStdString(), std::ios::binary);
-    std::string err;
-    if (!out.is_open() || !ttd->SerializeSession(out, err))
+    // UTF-8: the dump verb opens it through FileHelper (non-ASCII names on Windows)
+    const std::string path = fileName.toUtf8().toStdString();
+    const ttd::TTDReply dumped = ttd::TTDControl(context).Execute({"dump", {{"path", path}}});
+    if (!dumped.Ok())
     {
         QMessageBox::warning(this, tr("TTD Export Failed"),
-                             tr("Failed to export TTD session: %1").arg(QString::fromStdString(err)));
+                             tr("Failed to export TTD session: %1").arg(QString::fromStdString(dumped.message)));
     }
     else
     {
-        ttd->SetSessionSourcePath(fileName.toStdString());
+        ttd->SetSessionSourcePath(path);
         QMessageBox::information(this, tr("TTD Export Successful"),
                                 tr("Session saved to %1").arg(fileName));
     }
@@ -713,13 +839,14 @@ void TtdWidget::onClearSession()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    ttd::TTDSessionRef ttd(context);
 
     // B9: clearing while recording would drop the history being recorded
-    if (const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    if (ttd->IsRecording())
     {
-        QMessageBox::warning(this, tr("TTD Recording Active"), QString::fromStdString(refusal));
+        QMessageBox::warning(this, tr("TTD Recording Active"),
+                             QString::fromStdString(ttd::TTDControl(context).Execute({"invalidate", {}}).message));
         return;
     }
     // A Detached machine that runs replays the recorded history (input
@@ -728,29 +855,26 @@ void TtdWidget::onClearSession()
     if (ttd->GetState() == ttd::TTDSessionState::Detached && _activeEmulator->IsRunning() &&
         !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
         _activeEmulator->WaitForPauseConfirmation(1000);
     }
-    ttd->InvalidateSession("User cleared session in Qt GUI");
+    (void)ttd::TTDControl(context).Execute({"invalidate", {{"reason", "User cleared session in Qt GUI"}}});
     updateTelemetry();
 }
 
-void TtdWidget::performSeekToFrame(uint64_t targetFrame)
+void TtdWidget::performSeekToFrame(uint64_t targetFrame, bool frameStart)
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    // The verb parks the machine and leaves it paused at the target. A frame
+    // alone is the frame's end on the engine (D13); the start is asked for by T-state 0
+    std::map<std::string, std::string> options{{"frame", std::to_string(targetFrame)}};
+    if (frameStart)
+        options["tinframe"] = "0";
+    (void)ttd::TTDControl(context).Execute({"seek", options});
 
-    if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
-    {
-        _activeEmulator->Pause();
-    }
-
-    ttd::TTDTimePoint target{targetFrame, 0};
-    ttd->SeekTo(target);
-
-    _mainWindow->refreshViewport();
+    emit viewportRefreshRequested();
     updateTelemetry();
 }
 
@@ -758,27 +882,21 @@ void TtdWidget::onJumpStart()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // Read before the seek pauses the machine: the published snapshot
-    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
-    performSeekToFrame(info.sessionStartFrame);
+    const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
+    performSeekToFrame(info.sessionStartFrame, /*frameStart=*/true);
 }
 
 void TtdWidget::onStepBack()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-
-    if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    const ttd::TTDReply stepped = ttd::TTDControl(context).Execute({"step-back", {}});
+    if (stepped.Ok() && stepped.body.find("stepped")->b)
     {
-        _activeEmulator->Pause();
-    }
-
-    if (ttd->StepBackFrame())
-    {
-        _mainWindow->refreshViewport();
+        emit viewportRefreshRequested();
         updateTelemetry();
     }
 }
@@ -787,17 +905,11 @@ void TtdWidget::onStepForward()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-
-    if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    const ttd::TTDReply stepped = ttd::TTDControl(context).Execute({"step-forward", {}});
+    if (stepped.Ok() && stepped.body.find("stepped")->b)
     {
-        _activeEmulator->Pause();
-    }
-
-    if (ttd->StepForwardFrame())
-    {
-        _mainWindow->refreshViewport();
+        emit viewportRefreshRequested();
         updateTelemetry();
     }
 }
@@ -806,9 +918,9 @@ void TtdWidget::onJumpEnd()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
     // Read before the seek pauses the machine: the published snapshot
-    const ttd::TTDSessionInfo info = context->pTimeTravelManager->GetPublishedSessionInfo();
+    const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
     performSeekToFrame(info.currentEndFrame);
 }
 
@@ -816,11 +928,32 @@ void TtdWidget::onResumeFromHere()
 {
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager) return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-
-    ttd::TTDTimePoint currentPos = ttd->CurrentPosition();
-    ttd->ResumeRecordingFrom(currentPos);
+    if (!context || !ttd::HasTimeTravelSession(context)) return;
+    // From exactly where the machine stands; the verb runs it again. A medium that cannot go back there (another
+    // medium in the slot, a write beyond its undo log) needs the user's decision (M5, F11)
+    ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", {{"media", "ask"}}});
+    if (const StateNode* needs = reply.body.find("needs_decision"); needs && needs->b)
+    {
+        QString list;
+        if (const StateNode* media = reply.body.find("media"))
+            for (const StateNode& item : media->items)
+                list += QString("\n- %1: %2").arg(QString::fromStdString(item.find("slot")->s),
+                                                   QString::fromStdString(item.find("reason")->s));
+        QMessageBox box(QMessageBox::Question, tr("Rec From Here"),
+                        tr("These media cannot go back to this point:%1\n\nThe recording goes on from here either "
+                           "way. What should happen to them?")
+                            .arg(list),
+                        QMessageBox::NoButton, this);
+        QPushButton* empty = box.addButton(tr("Empty the slots"), QMessageBox::AcceptRole);
+        QPushButton* keep = box.addButton(tr("Keep them as they are"), QMessageBox::AcceptRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(empty);
+        box.exec();
+        const QAbstractButton* clicked = box.clickedButton();
+        if (clicked != empty && clicked != keep)
+            return;   // cancelled: the machine stays where it is, nothing changed
+        reply = ttd::TTDControl(context).Execute({"resume", {{"media", clicked == empty ? "empty" : "keep"}}});
+    }
     _activeEmulator->Start();
     updateTelemetry();
 }
@@ -839,12 +972,26 @@ void TtdWidget::onSliderValueChanged(int value)
 
 void TtdWidget::onJournalToggled(bool on)
 {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue(QStringLiteral("ttd/writeJournal"), on);
     if (!_activeEmulator)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
-    context->pTimeTravelManager->SwitchWriteJournal(on);
+    (void)ttd::TTDControl(context).Execute({"journal", {{"enabled", on ? "true" : "false"}}});
+    updateTelemetry();
+}
+
+void TtdWidget::onAdvancedToggled(bool open)
+{
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue(QStringLiteral("ttd/advancedOpen"), open);
+    _advancedContainer->setVisible(open);
+    if (_visibleByUser)
+        setFixedHeight(desiredHeight());
+    updateGeometry();
+    emit heightChanged();
     updateTelemetry();
 }
 
@@ -853,29 +1000,22 @@ void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
     if (!_activeEmulator || _journalBuildRunning)
         return;
     EmulatorContext* context = _activeEmulator->GetContext();
-    if (!context || !context->pTimeTravelManager)
+    if (!context || !ttd::HasTimeTravelSession(context))
         return;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-    if (ttd->IsRecording())
+    if (ttd::TTDSessionRef(context)->IsRecording())
     {
         QMessageBox::information(this, tr("Build Journal"),
                                  tr("Stop the recording first: the journal is built by replaying recorded history."));
         return;
     }
 
-    // The replay needs the machine parked
-    std::shared_ptr<Emulator> emulator = _activeEmulator;
-    if (emulator->IsRunning() && !emulator->IsPaused())
-    {
-        emulator->Pause(false);
-        emulator->WaitForPauseConfirmation(1000);
-    }
-
+    // The verb parks the machine and replays; the dialog follows it through the journal verb
     _journalBuildRunning = true;
-    auto result = std::make_shared<ttd::TTDJournalBuildResult>();
+    auto result = std::make_shared<ttd::TTDReply>();
     auto finished = std::make_shared<std::atomic<bool>>(false);
-    std::thread worker([ttd, fromFrame, toFrame, result, finished]() {
-        *result = ttd->BuildWriteJournalFrames(fromFrame, toFrame);
+    std::thread worker([context, fromFrame, toFrame, result, finished]() {
+        *result = ttd::TTDControl(context).Execute(
+            {"journal-build", {{"from_frame", std::to_string(fromFrame)}, {"to_frame", std::to_string(toFrame)}}});
         finished->store(true);
     });
 
@@ -885,14 +1025,14 @@ void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
     QTimer poll;
     poll.setInterval(100);
     connect(&poll, &QTimer::timeout, this, [&]() {
-        const ttd::TimeTravelManager::JournalBuildState state = ttd->GetJournalBuildState();
-        if (state.total)
+        const ttd::TTDReply journal = ttd::TTDControl(context).Execute({"journal", {}});
+        if (const StateNode* build = journal.body.find("write_journal_build"); build && build->find("total")->i)
         {
-            progress.setMaximum(static_cast<int>(state.total));
-            progress.setValue(static_cast<int>(state.done));
+            progress.setMaximum(static_cast<int>(build->find("total")->i));
+            progress.setValue(static_cast<int>(build->find("done")->i));
         }
         if (progress.wasCanceled())
-            ttd->CancelJournalBuild();
+            (void)ttd::TTDControl(context).Execute({"journal-build-cancel", {}});
         if (finished->load())
             progress.close();
     });
@@ -900,17 +1040,17 @@ void TtdWidget::buildJournal(uint64_t fromFrame, uint64_t toFrame)
     progress.exec();
     poll.stop();
     if (!finished->load())
-        ttd->CancelJournalBuild();   // the dialog went away some other way
+        (void)ttd::TTDControl(context).Execute({"journal-build-cancel", {}});   // the dialog went away some other way
     worker.join();
     _journalBuildRunning = false;
 
-    if (!result->ok)
-        QMessageBox::warning(this, tr("Build Journal"), QString::fromStdString(result->error));
+    if (!result->Ok())
+        QMessageBox::warning(this, tr("Build Journal"), QString::fromStdString(result->message));
     else
         _statusLabel->setToolTip(tr("Write journal built for %1 frame(s), %2 writes%3")
-                                     .arg(result->framesBuilt)
-                                     .arg(result->records)
-                                     .arg(result->cancelled ? tr(" (cancelled)") : QString()));
-    _mainWindow->refreshViewport();
+                                     .arg(result->body.find("frames_built")->i)
+                                     .arg(result->body.find("records")->i)
+                                     .arg(result->body.find("cancelled")->b ? tr(" (cancelled)") : QString()));
+    emit viewportRefreshRequested();
     updateTelemetry();
 }

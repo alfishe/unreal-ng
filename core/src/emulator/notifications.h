@@ -323,7 +323,13 @@ enum class BreakpointHitKind : uint8_t
     MemoryRead,
     MemoryWrite,
     PortIn,
-    PortOut
+    PortOut,
+    NextRegRead,
+    NextRegWrite,
+    Beam,
+    CopperInstruction,
+    Magic,
+    Keyboard  // the program read the keyboard and saw the key change (address: the port read)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -336,6 +342,12 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::MemoryWrite: return "write";
         case BreakpointHitKind::PortIn: return "port_in";
         case BreakpointHitKind::PortOut: return "port_out";
+        case BreakpointHitKind::NextRegRead: return "nextreg_read";
+        case BreakpointHitKind::NextRegWrite: return "nextreg_write";
+        case BreakpointHitKind::Beam: return "beam";
+        case BreakpointHitKind::CopperInstruction: return "copper";
+        case BreakpointHitKind::Magic: return "magic";
+        case BreakpointHitKind::Keyboard: return "keyboard";
     }
     return "execute";
 }
@@ -416,6 +428,108 @@ public:
     virtual ~CpuStepPayload() = default;
 };
 
+/// Payload of NC_RUN_CONTROL_CHANGED: an automation session (the run-control claim) changed. `event`: "taken",
+/// "released", "revoked" (the user took control back at the GUI or from a companion: `by`), "expired" (an HTTP session's idle lease ran out),
+/// "retake_refused" (a client tried to take control back within its cooldown after a take-back), "superseded" (an
+/// explicit take took over this implicit session: `by` names who took it)
+class RunControlChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    std::string surfaceLabel;  ///< "gdb", "webapi", "mcp", "cli", "lua", "python"
+    std::string client;        ///< the client's own name, if it gave one
+    std::string ownerUuid;
+    std::string by;            ///< "revoked": who took control back ("gui", "companion 'Desk panel'")
+
+    RunControlChangedPayload(const unreal::UUID& id, std::string e, std::string label, std::string clientName,
+                             std::string owner, std::string byWhom = {})
+        : emulatorId(id), event(std::move(e)), surfaceLabel(std::move(label)), client(std::move(clientName)),
+          ownerUuid(std::move(owner)), by(std::move(byWhom))
+    {
+    }
+    virtual ~RunControlChangedPayload() = default;
+};
+
+/// Payload of NC_RUN_PACE: the paced run of an instance changed (execution::RunPacer); its state is read back from
+/// the pacer (RunPacer::Find(id)->State())
+class RunPacePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit RunPacePayload(const unreal::UUID& id) : emulatorId(id) {}
+    virtual ~RunPacePayload() = default;
+};
+
+/// Payload of NC_SURFACE_CONTEXT: the context in force on an instance changed (actions::ContextState). `by` names
+/// the setter ("companion:<id>", "webapi:<client>", "gui", "host-device:<id>"); `context` is the new one in force
+/// (the default after a ctx.set "")
+class SurfaceContextPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string context;
+    std::string previous;
+    std::string by;
+
+    SurfaceContextPayload(const unreal::UUID& id, std::string now, std::string before, std::string setter)
+        : emulatorId(id), context(std::move(now)), previous(std::move(before)), by(std::move(setter))
+    {
+    }
+    virtual ~SurfaceContextPayload() = default;
+};
+
+/// Payload of NC_ACTION_CATALOGUE: the action catalogue changed (actions::ActionRegistry::Revision)
+class ActionCatalogueChangedPayload : public MessagePayload
+{
+public:
+    uint64_t revision = 0;
+
+    explicit ActionCatalogueChangedPayload(uint64_t rev) : revision(rev) {}
+    virtual ~ActionCatalogueChangedPayload() = default;
+};
+
+/// Payload of NC_SURFACE_TARGET: the targets of the control surfaces moved (actions::TargetState, Stream Deck
+/// targeting.md). The state itself is read back from TargetState (Views(), TargetFor(session)): the payload says what
+/// moved. `reason`: "view", "focus", "active", "pin", "session", "instance", "selection"
+class SurfaceTargetPayload : public MessagePayload
+{
+public:
+    std::string followed;               ///< the followed instance now ("" = none)
+    std::string previous;               ///< before the change
+    bool viewsChanged = false;          ///< a view came, went, changed its active instance or the focus order
+    std::vector<std::string> sessions;  ///< the surface sessions whose target changed (closed ones not included)
+    std::string reason;
+    uint64_t revision = 0;              ///< TargetState::Revision() after the change
+
+    SurfaceTargetPayload(std::string now, std::string before, bool views, std::vector<std::string> moved,
+                         std::string why, uint64_t rev)
+        : followed(std::move(now)), previous(std::move(before)), viewsChanged(views), sessions(std::move(moved)),
+          reason(std::move(why)), revision(rev)
+    {
+    }
+    virtual ~SurfaceTargetPayload() = default;
+};
+
+/// Payload of NC_COMPANION_CHANGED: the companion registry changed (companionregistry.h). `event`: "pairing_requested",
+/// "pairing_cancelled", "pairing_expired", "paired", "denied", "revoked"
+class CompanionChangedPayload : public MessagePayload
+{
+public:
+    std::string event;
+    std::string companionId;  ///< "paired", "revoked"
+    std::string pairingId;    ///< the pairing events and "paired", "denied"
+    std::string name;         ///< the companion's or the pairing's name
+
+    CompanionChangedPayload(std::string e, std::string companion, std::string pairing, std::string displayName)
+        : event(std::move(e)), companionId(std::move(companion)), pairingId(std::move(pairing)),
+          name(std::move(displayName))
+    {
+    }
+    virtual ~CompanionChangedPayload() = default;
+};
+
 /// Payload of NC_BREAKPOINTS_CHANGED: the breakpoint set of this emulator changed (added,
 /// removed, enabled, disabled, regrouped)
 class BreakpointsChangedPayload : public MessagePayload
@@ -428,6 +542,22 @@ public:
     explicit BreakpointsChangedPayload(const unreal::UUID& id) : emulatorId(id) {}
     explicit BreakpointsChangedPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
     virtual ~BreakpointsChangedPayload() = default;
+};
+
+/// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)
+class AsmSyncPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;            ///< "found", "changed", "built", "lost", "ambiguous"; the push watch: "pushed", "pending", "conflict", "push-error"
+    std::string assembler;        ///< the descriptor id ("alasm-5.09")
+    uint64_t generation = 0;      ///< built: the build's number
+    bool complete = false;        ///< built: every label got its value
+    uint32_t labels = 0;          ///< built: the labels published
+    uint32_t hints = 0;           ///< built: warnings and errors
+
+    explicit AsmSyncPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
+    virtual ~AsmSyncPayload() = default;
 };
 
 /// Payload for NC_FEATURE_CHANGED.
@@ -487,6 +617,8 @@ public:
     std::string source;   // source path or description; empty after an eject
     std::string access;   // "readonly", "session", "writethrough"
     std::string path;     // NC_MEDIA_EXPORTED / NC_MEDIA_SAVED: the file written
+    uint64_t volumeId = 0;  // the medium's volume (Medium::VolumeId; SlotInfo::volumeId), 0 after it left
+    std::string onRelease;  // unsaved changes: what closing the emulator does with them (SlotInfo::onRelease)
 
     MediaSlotPayload(const std::string& id, std::string slot, std::string mediaKind, std::string mediaSource,
                      std::string accessMode)
@@ -496,6 +628,20 @@ public:
         , kind(std::move(mediaKind))
         , source(std::move(mediaSource))
         , access(std::move(accessMode))
+    {}
+};
+
+/// Payload for NC_CONTROLLER_CONNECTOR_CHANGED (controller manager connectors)
+class ControllerConnectorPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string connector;  // "keyjoy.1", "kempston", ...; empty: the connector list was rebuilt
+    std::string device;     // the retro device now plugged ("none" after an unplug); empty with a rebuild
+    uint64_t revision = 0;  // ControllerManager::Revision() after the change
+
+    ControllerConnectorPayload(std::string connectorId, std::string deviceKind, uint64_t rev)
+        : MessagePayload(), connector(std::move(connectorId)), device(std::move(deviceKind)), revision(rev)
     {}
 };
 
@@ -713,7 +859,16 @@ enum class AudioSource : uint8_t
     NeoGSMp3 = 10,    // NeoGS MP3 decoder output
     NeoGSDma = 11,    // NeoGS: the card's own DMA (SD card, MP3 decoder) moving data - not sound
     NeoGSTransfer = 12, // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
-    CdAudio = 13        // CD-DA from an ATAPI CD drive (any IDE unit)
+    CdAudio = 13,       // CD-DA from an ATAPI CD drive (any IDE unit)
+    // ZX-MultiSound card: the YM2203 pair per chip as for the TurboSound FM (2 x AY, 2 x FM), its DACs (PCM), the SAA
+    // and the MIDI synthesizer - one indicator per row
+    MultiSoundSsg1 = 14,
+    MultiSoundSsg2 = 15,
+    MultiSoundFm1 = 16,
+    MultiSoundFm2 = 17,
+    MultiSoundPcm = 18,
+    MultiSoundSaa = 19,
+    MultiSoundMidi = 20
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

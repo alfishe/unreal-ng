@@ -1,0 +1,9 @@
+        LD      A,(HL)
+LABEL   ld A,B ;COMMENT LD A,B
+X  Y   ZIM      3
+        DEFB "LD A",1
+        MAC 2:ENDM:IF 1:ELSE:ENDIF
+        *       6
+        IM      7
+        IM      8
+        IM      9

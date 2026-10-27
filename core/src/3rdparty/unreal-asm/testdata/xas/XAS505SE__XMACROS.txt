@@ -1,0 +1,87 @@
+;1 LD A,
+;2 LD HL,
+;3 LD DE,
+;4 LD BC,
+;5 LD IX,
+;6 LD IY,
+;7 LD SP,
+;8 LD A,(BC)
+;9 LD A,(DE)
+;0 LD A,(HL)
+;! PUSH AF
+;@ PUSH HL
+;# PUSH DE
+;$ PUSH BC
+;% PUSH I
+;& POP I
+;' POP BC
+;( POP DE
+;) POP HL
+;_ POP AF
+;Q EQU_
+;q
+;W DEFW_#
+;w DEFB_#
+;E EX DE,HL
+;e EX AF,AF
+;R RET_
+;r RES_
+;< RST #
+;T RRCA.
+;t RLCA.
+;>
+;Y
+;y
+;U OUT (C),
+;u OUT (#
+;I INC_
+;i IN A,(C)
+;O
+;o
+;;SYSINF
+;P EX (SP),HL
+;p EX (SP),IX
+;" EX (SP),IY
+;A AND_
+;a ADD_A,
+;S SUB_
+;s SBC_
+;D DEC_
+;d DJNZ_
+;F
+;f
+;G
+;g
+;H LD (HL),
+;h (HL)
+;↑ JP (HL)
+;J SBC HL,
+;j
+;-
+;K ADD HL,
+;k ADC
+;+
+;L
+;l LOADTEXT "
+;= LOADCODE "
+;Z
+;z
+;:
+;X
+;x
+;£
+;C CALL_
+;c
+;?
+;V
+;v
+;/
+;B DEFB_
+;b
+;* DEFS_
+;N NOP
+;n
+;,
+;M DEFM_
+;m
+;.

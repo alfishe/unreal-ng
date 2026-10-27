@@ -1,0 +1,45 @@
+available: true
+selected:
+  palette: 1
+  name: layer2_1
+  index: 3
+  auto_increment: true
+  control: 0x10
+transparent:
+  global: 0xE3
+  sprites: 0xE3
+  tilemap: 15
+  fallback: 0xE3
+palettes:
+  [0]
+    palette: 1
+    name: layer2_1
+    entries:
+      [0]
+        index: 0
+        rgb9: 0x1C0
+        red: 7
+        green: 0
+        blue: 0
+        priority: false
+      [1]
+        index: 1
+        rgb9: 0x038
+        red: 0
+        green: 7
+        blue: 0
+        priority: false
+      [2]
+        index: 2
+        rgb9: 0x007
+        red: 0
+        green: 0
+        blue: 7
+        priority: false
+      [3]
+        index: 3
+        rgb9: 0x007
+        red: 0
+        green: 0
+        blue: 7
+        priority: false

@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QPointer>
+#include <QTimer>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -9,6 +10,7 @@
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
 #include <common/shmhelper.h>
+#include <emulator/actions/targetstate.h>
 
 class Emulator;
 class TileGrid;
@@ -126,6 +128,22 @@ private:
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
+    // Screenshots: the core Screenshotter (the same picture the WebAPI / MCP / CLI take), per emulator and for the wall
+    /// The emulator of the tile with the focus; the only one when there is a single tile; null when it is ambiguous
+    std::shared_ptr<Emulator> focusedEmulator() const;
+    /// The focused tile's instance as this window's active instance in TargetState (Stream Deck targeting.md: the
+    /// video wall is one view; a surface following the focus drives its focused tile)
+    void updateSurfaceView();
+    /// Copy the focused tile's frame (whole frame, border included) to the clipboard
+    void handleTileScreenshotToClipboard();
+    /// Save the focused tile's frame to a PNG / GIF file
+    void handleTileScreenshotSaveAs();
+    /// Save every emulator's frame to a folder, one file per emulator
+    void handleAllScreenshotsSave();
+    /// Save the wall as it is on the screen (every tile in its place) to a PNG file
+    void handleWallScreenshotSaveAs();
+    void showScreenshotMessage(const QString& text);
+
     // Helper methods for GPU/CPU mode abstraction
     int tileCount() const;
     std::vector<std::string> allEmulatorIds() const;
@@ -151,6 +169,9 @@ private:
 
     // Observer IDs for reliable lambda removal in the destructor
     // (capturing lambdas cannot be matched by value - see RemoveObserverById)
+    actions::ViewHandle _surfaceView;   ///< this window as a view of TargetState
+    std::string _surfaceActive;         ///< the active instance last reported
+    QTimer* _surfaceTimer = nullptr;    ///< focus paths are many: a cheap check every 200 ms besides the direct calls
     std::uint64_t _singleSyncObserverId = 0;
     std::uint64_t _instanceCreatedObserverId = 0;
     std::uint64_t _instanceDestroyedObserverId = 0;

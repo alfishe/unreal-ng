@@ -113,6 +113,15 @@ namespace
                 std::error_code typeEc;
                 const bool isDirectory = entry.is_directory(typeEc);
                 const bool isFile = entry.is_regular_file(typeEc);
+                std::error_code existsEc;
+                if (typeEc && !std::filesystem::exists(entry.path(), existsEc))
+                {
+                    // Gone since the listing named it (the folder deleted mid-walk): where POSIX
+                    // fails to open the folder, Windows looks the type up again and finds nothing
+                    _ioError = true;
+                    _ioErrorMessage = "gone during the scan: " + path + ": " + typeEc.message();
+                    break;
+                }
                 if (!isDirectory && !isFile)
                 {
                     Skip(path, "not a file or folder");
@@ -251,6 +260,9 @@ bool FolderSnapshot::Scan(const std::filesystem::path& folder, const FolderScanO
     out._root.name = ToUtf8(folder.filename());
     out._root.hostPath = folder;
     out._root.isDirectory = true;
+    // The folder's own time: the volume label's date, and a mount point's when the folder is a layer
+    if (!GetMTimeUnixSeconds(folder, out._root.mtimeUtc))
+        out._root.mtimeUtc = 0;
 
     Scanner scanner(options, filter, out._skipped);
     scanner.ScanFolder(folder, "", 0, out._root);

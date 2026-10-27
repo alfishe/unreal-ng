@@ -1,8 +1,14 @@
 #include "registerswidget.h"
 
+#include <initializer_list>
+#include <utility>
+
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QMetaObject>
 
 #include "debugger/debuggerwindow.h"
+#include "emulator/remotecontrolguard.h"
 #include "ui_registerswidget.h"
 
 RegistersWidget::RegistersWidget(QWidget *parent) : QWidget(parent), ui(new Ui::RegistersWidget)
@@ -92,6 +98,86 @@ void RegistersWidget::setupContextMenus()
     ui->valPC->installEventFilter(this);
     ui->valIX->installEventFilter(this);
     ui->valIY->installEventFilter(this);
+    // Not memory pointers, but editable
+    ui->valAF->installEventFilter(this);
+    ui->valAF1->installEventFilter(this);
+    ui->valIR->installEventFilter(this);
+    ui->valWZ->installEventFilter(this);
+    for (QLabel* label : std::initializer_list<QLabel*>{ui->valAF, ui->valBC, ui->valDE, ui->valHL, ui->valAF1,
+                                                        ui->valBC1, ui->valDE1, ui->valHL1, ui->valSP, ui->valPC, ui->valIX, ui->valIY, ui->valIR, ui->valWZ})
+        label->setToolTip(tr("Right click: edit %1 (on a paused machine), follow it in the disassembly or memory")
+                              .arg(registerOfLabel(label)));
+}
+
+QString RegistersWidget::registerOfLabel(const QLabel* label) const
+{
+    const std::pair<const QLabel*, const char*> names[] = {
+        {ui->valAF, "AF"},   {ui->valBC, "BC"},   {ui->valDE, "DE"},   {ui->valHL, "HL"},   {ui->valAF1, "AF'"},
+        {ui->valBC1, "BC'"}, {ui->valDE1, "DE'"}, {ui->valHL1, "HL'"}, {ui->valSP, "SP"},   {ui->valPC, "PC"},
+        {ui->valIX, "IX"},   {ui->valIY, "IY"},   {ui->valIR, "IR"},   {ui->valWZ, "MEMPTR"}};
+    for (const auto& [candidate, name] : names)
+        if (candidate == label)
+            return QString::fromLatin1(name);
+    return {};
+}
+
+void RegistersWidget::editRegister(const QString& name)
+{
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
+    Emulator* emulator = getEmulator();
+    const Z80::RegisterInfo* info = Z80::FindRegister(name.toStdString());
+    if (emulator == nullptr || info == nullptr || m_z80Registers == nullptr)
+        return;
+    if (!emulator->IsPaused())
+    {
+        QMessageBox::information(this, tr("Edit %1").arg(name), tr("Pause the machine to edit its registers."));
+        return;
+    }
+    const int digits = info->is16bit ? 4 : 2;
+    const unsigned maximum = info->maxValue != 0 ? info->maxValue : (info->is16bit ? 0xFFFFu : 0xFFu);
+    const uint16_t now = info->getter(static_cast<const Z80State*>(m_z80Registers));
+    const QString current = QStringLiteral("%1").arg(now, digits, 16, QLatin1Char('0')).toUpper();
+    bool ok = false;
+    const QString text = QInputDialog::getText(this, tr("Edit %1").arg(name),
+                                               tr("New value of %1 (hex; #, $ or 0x prefix optional, or a decimal "
+                                                  "number with a d suffix; at most %2):")
+                                                   .arg(name)
+                                                   .arg(maximum, digits, 16, QLatin1Char('0')),
+                                               QLineEdit::Normal, current, &ok)
+                             .trimmed();
+    if (!ok || text.isEmpty())
+        return;
+    QString digitsText = text;
+    int base = 16;
+    if (digitsText.startsWith(QLatin1String("0x"), Qt::CaseInsensitive))
+        digitsText = digitsText.mid(2);
+    else if (digitsText.startsWith(QLatin1Char('#')) || digitsText.startsWith(QLatin1Char('$')))
+        digitsText = digitsText.mid(1);
+    else if (digitsText.endsWith(QLatin1Char('d'), Qt::CaseInsensitive))
+    {
+        digitsText.chop(1);
+        base = 10;
+    }
+    bool parsed = false;
+    const uint value = digitsText.toUInt(&parsed, base);
+    if (!parsed || value > maximum)
+    {
+        QMessageBox::warning(this, tr("Edit %1").arg(name),
+                             tr("'%1' is not a value %2 can hold (0..%3 hex).")
+                                 .arg(text, name)
+                                 .arg(maximum, 0, 16));
+        return;
+    }
+    std::string refused;
+    if (!emulator->SetRegisterFromTool("qt registers", name.toStdString(), static_cast<uint16_t>(value), &refused))
+    {
+        QMessageBox::warning(this, tr("Edit %1").arg(name),
+                             refused.empty() ? tr("%1 was not changed.").arg(name) : QString::fromStdString(refused));
+        return;
+    }
+    refresh();
+    emit registerEdited(name);
 }
 
 bool RegistersWidget::eventFilter(QObject* obj, QEvent* event)
@@ -130,6 +216,14 @@ bool RegistersWidget::eventFilter(QObject* obj, QEvent* event)
                 address = m_z80Registers->ix;
             else if (label == ui->valIY)
                 address = m_z80Registers->iy;
+            else if (label == ui->valAF)
+                address = m_z80Registers->af;
+            else if (label == ui->valAF1)
+                address = m_z80Registers->alt.af;
+            else if (label == ui->valIR)
+                address = static_cast<uint16_t>((m_z80Registers->i << 8) | Z80::RegisterR(m_z80Registers));
+            else if (label == ui->valWZ)
+                address = m_z80Registers->memptr;
             else
                 return QWidget::eventFilter(obj, event);
             
@@ -146,7 +240,16 @@ bool RegistersWidget::eventFilter(QObject* obj, QEvent* event)
 void RegistersWidget::showRegisterContextMenu(QLabel* label, uint16_t address, const QPoint& pos)
 {
     QMenu contextMenu("Register Actions", this);
-    
+
+    // Edit the register itself (a paused machine)
+    const QString name = registerOfLabel(label);
+    if (!name.isEmpty())
+    {
+        QAction* editAction = contextMenu.addAction(tr("Edit %1...").arg(name));
+        connect(editAction, &QAction::triggered, this, [this, name]() { editRegister(name); });
+        contextMenu.addSeparator();
+    }
+
     // Create actions
     QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
     QAction* showInMemoryAction = new QAction("Show in Memory View", &contextMenu);
@@ -263,6 +366,12 @@ void RegistersWidget::refresh()
 
         update();
     }
+}
+
+std::vector<QWidget*> RegistersWidget::cursorCells() const
+{
+    return {ui->valBC, ui->valDE, ui->valHL, ui->valBC1, ui->valDE1, ui->valHL1,
+            ui->valSP, ui->valPC, ui->valIX, ui->valIY};
 }
 
 void RegistersWidget::bc_doubleClicked()

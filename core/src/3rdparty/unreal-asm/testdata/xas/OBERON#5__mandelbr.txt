@@ -1,0 +1,313 @@
+        ORG   26000
+;MANDELBROT FRACTAL ENCODER
+;Presented at Noumenon demo, ENLIGHT'97
+;(C) ALK/Stars of Keladan
+;Samara,May-August/1997
+        ENT
+        DI
+        CALL  makesc
+        CALL  calcu
+        LD    IY,#5c3a
+        LD    HL,10072
+        EXX
+        EI
+        RET
+calcu   LD    HL,begy
+        LD    DE,imag
+        LDI
+        LDI
+        LDI
+        LDI
+        LD    HL,#5800
+        LD    (adout+1),HL
+        LD    B,24
+lcolo   PUSH  BC
+        LD    HL,begx
+        LD    DE,real
+        LDI
+        LDI
+        LDI
+        LDI
+        LD    B,32
+lstrf   PUSH  BC
+        CALL  frcalc
+adout   LD    HL,0
+        LD    (HL),B
+        INC   HL
+        LD    (adout+1),HL
+        LD    IX,stepx
+        LD    DE,real
+        PUSH  DE
+        POP   IY
+        CALL  summar
+        POP   BC
+        DJNZ  lstrf
+        LD    IX,stepy
+        LD    DE,imag
+        PUSH  DE
+        POP   IY
+        CALL  summar
+        POP   BC
+        DJNZ  lcolo
+        RET
+frcalc  XOR   A
+        LD    H,A
+        LD    L,A
+        LD    (kwar),HL
+        LD    (arez),HL
+        LD    (kwar+2),HL
+        LD    (arez+2),HL
+        LD    (kwaim),HL
+        LD    (aimez),HL
+        LD    (kwaim+2),HL
+        LD    (aimez+2),HL
+        LD    B,15
+;MAY BE A 1-255 (MORE DIGIT - MORE SLOW,
+;BUT BETTER!)
+lcalf   PUSH  BC
+        LD    IX,kwar
+        LD    IY,kwaim
+        LD    DE,rex
+        CALL  raznost
+        LD    IX,arez
+        LD    IY,aimez
+        LD    DE,imy
+        PUSH  DE
+        CALL  twomult
+        POP   HL
+        SLA   (HL)
+        INC   HL
+        RL    (HL)
+        INC   HL
+        RL    (HL)
+        LD    IX,real
+        LD    IY,rex
+        LD    DE,arez
+        CALL  summar
+        LD    IX,imag
+        LD    IY,imy
+        LD    DE,aimez
+        CALL  summar
+        LD    IY,arez
+        LD    DE,kwar
+        CALL  kwadra
+        JP    C,excalf
+        LD    IY,aimez
+        LD    DE,kwaim
+        CALL  kwadra
+        JP    C,excalf
+        LD    IX,kwar
+        LD    IY,kwaim
+        LD    DE,krite
+        CALL  summar
+        JP    C,excalf
+        LD    A,(krite+2)
+        OR    A
+        JP    NZ,excalf
+        LD    A,(krite+1)
+        CP    #80
+        JP    NC,excalf
+        POP   BC
+        DJNZ  lcalf
+        RET
+excalf  POP   BC
+        RET
+;VARIABLES:
+arez    DEFW  0,0
+aimez   DEFW  0,0
+rex     DEFW  0,0
+imy     DEFW  0,0
+kwar    DEFW  0,0
+kwaim   DEFW  0,0
+real    DEFW  0,0
+imag    DEFW  0,0
+krite   DEFW  0,0
+;--------
+;LOCATION CONSTANTS;
+stepx   DEFB  #14,0,0,0
+stepy   DEFB  #18,0,0,0
+begy    DEFB  #08,1,0,#FF
+begx    DEFB  #E0,1,0,#FF
+;--------
+;SOMETHERE INSIDE
+;stepx   DB    #01,0,0,0
+;stepy   DB    #01,0,0,0
+;begy    DB    #28,0,0,#FF
+;begx    DB    #80,1,0,#FF
+;--------
+;CLASSIC
+;stepx   DB    #14,0,0,0
+;stepy   DB    #18,0,0,0
+;begy    DB    #08,1,0,#FF
+;begx    DB    #E0,1,0,#FF
+;--------
+;ONE HALF - NOUMENON PACK
+;stepx   DB    #14,0,0,0
+;stepy   DB    #10,0,0,0
+;begy    DB    #00,0,0,#00
+;begx    DB    #E0,1,0,#FF
+
+multi   LD    A,LX
+        XOR   HX
+        EX    AF,AF
+        LD    A,B
+        LD    B,24
+        EXX
+        LD    C,A
+        XOR   A
+        LD    (flex+1),A
+        LD    LX,A
+        LD    HX,A
+        LD    LY,A
+        LD    HY,A
+        LD    B,A
+        LD    E,A
+        LD    D,A
+        LD    L,A
+        LD    H,A
+        EXX
+lpmul   SRL   C
+        RR    H
+        RR    L
+        JP    NC,nadmu
+        ADD   IX,DE
+        EXX
+        JP    NC,nn1
+        INC   IY
+nn1     ADD   IY,BC
+        ADC   HL,DE
+        EXX
+        JP    NC,nadmu
+        LD    A,#ff
+        LD    (flex+1),A
+nadmu   SLA   E
+        RL    D
+        EXX
+        RL    C
+        RL    B
+        RL    E
+        RL    D
+        EXX
+        DJNZ  lpmul
+        PUSH  IY
+        POP   HL
+        LD    C,HX
+        EX    AF,AF
+        LD    HX,A
+flex    LD    A,0
+        RRCA
+        RET   C
+        EXX
+        LD    A,H
+        OR    L
+        EXX
+        RET   Z
+        SCF
+        RET
+kwadra  PUSH  IY
+        POP   IX
+twomult PUSH  DE
+        LD    E,(IX+0)
+        LD    D,(IX+1)
+        LD    B,(IX+2)
+        LD    A,(IX+3)
+        LD    LX,A
+        LD    L,(IY+0)
+        LD    H,(IY+1)
+        LD    C,(IY+2)
+        LD    A,(IY+3)
+        LD    HX,A
+        CALL  multi
+        POP   DE
+        EX    DE,HL
+        LD    (HL),C
+        INC   HL
+        LD    (HL),E
+        INC   HL
+        LD    (HL),D
+        INC   HL
+        LD    A,HX
+        LD    (HL),A
+        RET
+raznost LD    A,(IY+3)
+        LD    (oldz+1),A
+        CPL
+        LD    (IY+3),A
+        CALL  summar
+oldz    LD    A,0
+        LD    (IY+3),A
+        RET
+summar  LD    A,(IX+3)
+        LD    C,A
+        XOR   (IY+3)
+        JP    NZ,raznz
+        LD    A,C
+        EX    AF,AF
+        LD    C,(IX+0)
+        LD    B,(IX+1)
+        LD    L,(IY+0)
+        LD    H,(IY+1)
+        ADD   HL,BC
+        LD    A,(IX+2)
+        ADC   A,(IY+2)
+exsum   EX    DE,HL
+        LD    (HL),E
+        INC   HL
+        LD    (HL),D
+        INC   HL
+        LD    (HL),A
+        INC   HL
+        EX    AF,AF
+        LD    (HL),A
+        EX    AF,AF
+        RET
+raznz   PUSH  DE
+        LD    E,(IX+0)
+        LD    D,(IX+1)
+        LD    C,(IX+2)
+        LD    L,(IY+0)
+        LD    H,(IY+1)
+        LD    B,(IY+2)
+        LD    A,C
+        CP    B
+        JP    C,ybo
+        JP    NZ,xbo
+        LD    A,D
+        CP    H
+        JP    C,ybo
+        JP    NZ,xbo
+        LD    A,E
+        CP    L
+        JP    C,ybo
+xbo     EX    DE,HL
+        LD    A,C
+        LD    C,B
+        LD    B,A
+        LD    A,(IX+3)
+        JP    nxxc
+ybo     LD    A,(IY+3)
+nxxc    EX    AF,AF
+        OR    A
+        SBC   HL,DE
+        LD    A,B
+        SBC   A,C
+        POP   DE
+        JP    exsum
+makesc  LD    B,24
+        LD    HL,#4000
+        LD    A,#22
+maker   PUSH  HL
+        PUSH  BC
+        LD    D,H
+        LD    E,L
+        INC   E
+        LD    BC,#ff
+        LD    (HL),A
+        LDIR
+        RRCA
+        RRCA
+        POP   BC
+        POP   HL
+        INC   H
+        DJNZ  maker
+        RET

@@ -18,6 +18,38 @@ Tests multiple CMake build combinations for the `unreal-qt` project to ensure th
 
 ---
 
+### unreal-asm
+
+[`unreal-asm/`](unreal-asm/README.md): the assembler source library's conversions against the original assemblers
+running in unreal-ng (`emulator/assemble-in-emulator.py`) and against cross assemblers and the disks' own binaries
+(`checks/`: round trip, objects, pasmo / z88dk, labels, listings). The emulator's WebAPI port is `--port` (default 8090).
+
+---
+
+### Disassembler quality (`disasm/`)
+
+[`disasm/disasmcheck.py`](disasm/README.md): the Z80 disassembler as the agents see it, over the WebAPI and MCP, against
+z88dk-dis and sjasmplus: every opcode (1780 encodings, undocumented ones included), a linear sweep of the 48K ROM with its
+symbols, branch targets, address / count parsing of `GET /disasm` and the listing in the MCP text (run against a live
+application).
+
+---
+
+### MCP (`mcp/`)
+
+[`mcp/run_all.py`](mcp/README.md): the MCP server as an agent sees it, one script per block of tools (protocol,
+emulator_manage, inspect_state, memory_access, control_execution, debug_code, symbols, capture_media, input,
+time_travel, media, router, analysis, asm_source) and the text-coverage floors; `--launch` starts an instance on ports
+of its own. Rules: [docs/guidelines/mcp-testing-guidelines.md](../../docs/guidelines/mcp-testing-guidelines.md).
+
+---
+
+### TTD surface contract
+
+[`ttd-surface-contract/`](ttd-surface-contract/README.md): the time-travel calls give the same answers on WebAPI, CLI, Lua and Python (run against a live application).
+
+---
+
 ### High-Performance RAM Builds
 
 Located in the `ram/` subdirectory, these scripts allow you to build the entire project on a RAM disk, significantly reducing build times and SSD wear.

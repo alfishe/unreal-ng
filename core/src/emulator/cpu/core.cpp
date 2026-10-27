@@ -1,4 +1,5 @@
 #include "core.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/upd765.h"
@@ -16,7 +18,9 @@
 #include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/memory/scorpion/scorpionmemory.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -86,12 +90,12 @@ bool Core::Init()
     _state->current_z80_frequency = baseFrequency;
     _state->current_z80_frequency_multiplier = 1;
     _state->next_z80_frequency_multiplier = 1;  // Initialize queued multiplier
-    _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
+    _state->scorpion.turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
     _state->hw_turbo_ratio = 1;                 // No hardware turbo engaged at power-on (model-neutral)
     _state->hw_turbo_ratio_applied = 1;
     _state->hw_clock_den = 1;                   // A whole multiple of the base clock (the Profi's hi-res clock is not)
     _state->hw_clock_den_applied = 1;
-    _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
+    _state->scorpion.dosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
     if (_config->speed_multiplier > 0 && _config->speed_multiplier <= 16)
@@ -116,6 +120,8 @@ bool Core::Init()
         _memory = new TsConfMemory(_context);
     else if (_config->mem_model == MM_SPRINTER)
         _memory = new SprinterMemory(_context);
+    else if (_config->mem_model == MM_NEXT)
+        _memory = new NextMemory(_context);
     else
         _memory = new Memory(_context);
     if (_memory)
@@ -196,6 +202,17 @@ bool Core::Init()
     }
 
     /// endregion </Joystick>
+
+    /// region <Controllers>
+
+    // Connectors and retro devices; the list follows the machine (rebuilt below once the slot cards exist)
+    if (result)
+    {
+        _controllerManager = new controllers::ControllerManager(_context);
+        _context->pControllerManager = _controllerManager;
+    }
+
+    /// endregion </Controllers>
 
     /// region <Tape>
 
@@ -310,6 +327,21 @@ bool Core::Init()
     }
 
     /// endregion </Fast disk loading>
+
+    /// region <Slots>
+
+    // The slot set first: it decides which cards the managers below build (ZX-bus slots architecture.md §5-§7)
+    if (result)
+    {
+        _slotManager = new SlotManager(_context);
+        _context->pSlotManager = _slotManager;
+        // Configured cards in conflict refuse the machine (Q8): the reason stays readable (SlotManager::Refusal)
+        result = _slotManager->PlanAtCreate();
+        if (!result)
+            _initError = _slotManager->Refusal();   // kept: the failed Init releases the slot manager
+    }
+
+    /// endregion </Slots>
 
     /// region <Sound manager>
 
@@ -486,6 +518,20 @@ bool Core::Init()
         _networkManager->ApplyConfiguration();
     }
 
+    // The cards the slots build themselves (ZX-bus slots card.h): their claims go onto the decoder, their mixer rows
+    // into the sound manager, both created above
+    if (result && _slotManager)
+    {
+        // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
+        result = _slotManager->BuildCards();
+        if (!result)
+            _initError = _slotManager->BuildError();
+    }
+
+    // The connectors the cards bring (a Fuller Box's stick socket) join the machine's
+    if (result && _controllerManager)
+        _controllerManager->Rebuild();
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -499,13 +545,26 @@ bool Core::Init()
 
 void Core::Release()
 {
+    // The machine goes away: the decoder saves what must outlive it while memory and the CPU still exist (the
+    // ZX-Evo's flashed ROM)
+    if (_portDecoder)
+        _portDecoder->BeforeRelease();
+
     // Unregister itself from context
     _context->pCore = nullptr;
+
+    // Slot-built cards first: they leave the decoder's claim table and the mixer while both exist
+    if (_slotManager)
+        _slotManager->ReleaseCards();
 
     // Network adapters first: the card releases its port claim while the decoder exists
     delete _networkManager;
     _networkManager = nullptr;
     _context->pPortDecoder = nullptr;
+
+    _context->pSlotManager = nullptr;
+    delete _slotManager;
+    _slotManager = nullptr;
 
     _context->pSoundManager = nullptr;
     {
@@ -604,6 +663,13 @@ void Core::Release()
         _mouse = nullptr;
     }
 
+    _context->pControllerManager = nullptr;
+    if (_controllerManager != nullptr)
+    {
+        delete _controllerManager;
+        _controllerManager = nullptr;
+    }
+
     _context->pJoystick = nullptr;
     if (_joystick != nullptr)
     {
@@ -676,7 +742,9 @@ void Core::SelectMemoryInterface()
         return;
 
     std::lock_guard<std::mutex> lock(_memIfMutex);
-    const bool debug = _z80->isDebugMode;
+    _memIfGeneration++;
+    // An atomic byte read: the debugger's switch may be written on another thread meanwhile (it re-selects after)
+    const bool debug = std::atomic_ref<bool>(_z80->isDebugMode).load(std::memory_order_relaxed);
     const bool contended = IsContentionEffective();
     if (_busOverlay)
     {
@@ -693,6 +761,13 @@ void Core::SelectMemoryInterface()
         else
             _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
         _memory->SetBusOverlay(nullptr);
+    }
+
+    // A model that maps memory its own way (slots of 8K) brings its plain interface; a host bus overlay still wins
+    if (!_busOverlay)
+    {
+        if (MemoryInterface* own = _memory->ModelMemoryInterface(debug, contended))
+            _z80->MemIf = own;
     }
 
     // The +2A/+3 gate array contends memory cycles only
@@ -816,10 +891,26 @@ void Core::Reset()
     Reset(static_cast<ROMModeEnum>(_config->reset_rom));
 }
 
+void Core::ResetKeepingClock()
+{
+    ResetKeepingClock(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::ResetKeepingClock(ROMModeEnum mode)
+{
+    const uint16_t clockSelect = _portDecoder->GetClockSelect();
+    Reset(mode);
+    _portDecoder->RestoreClockSelect(clockSelect);
+}
+
 void Core::Reset(ROMModeEnum mode)
 {
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
     _mode = mode;
+
+    // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
+    if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)
+        rtc->RebaseEmulatedTime(_portDecoder->EmulatedMicroseconds(), 0);
 
     // Reset EmulatorState fields that are not covered by individual peripheral resets
     // These must be cleared BEFORE peripheral resets so PortDecoder::reset() can set
@@ -841,6 +932,8 @@ void Core::Reset(ROMModeEnum mode)
                                        // only - RESET does not reach the interface (MiSTer mouse.v: cold_reset)
     if (_joystick)
         _joystick->ApplyConfiguration();  // Kempston joystick fitting and keys; held buttons mirror the physical stick
+    if (_controllerManager)
+        _controllerManager->Rebuild();    // the machine's connectors (plugs and held controls survive by id)
     _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state
@@ -866,9 +959,16 @@ void Core::Reset(ROMModeEnum mode)
     // their own memory manager (ATM) UpdateZ80Banks() re-runs the manager
     // mapping instead of the generic ZX bank layout
     _memory->SetROMMode(_mode);
+
+    // The ULA port latch the decoder reset left is the one source of the border
+    // color: the state's border_attr and the renderer's color follow it, as an
+    // OUT (#FE) makes them. Without this a machine that never wrote #FE showed a
+    // black border while a TTD-composed picture painted pFE's (BUGS.md 2026-10-05 #1)
+    _state->border_attr = _state->pFE & 0x07;
+    _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
-        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+        _recordingManager->Reset();  // Clears the counters; a recording goes on with its file untouched
 #endif
 
     // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:
@@ -918,7 +1018,15 @@ bool Core::CanSetSpeedMultiplier(uint8_t multiplier) const
 {
     // A TTD recording captures the machine at real speed: only 1x while it is
     // active (TimeTravelManager forces 1x on entry and restores the setting on exit)
-    return multiplier == 1 || !_context->pFeatureManager || !_context->pFeatureManager->isTtdRecordingActive();
+    if (multiplier != 1 && _context->pFeatureManager && _context->pFeatureManager->isTtdRecordingActive())
+        return false;
+    // A history the user recorded keeps the speed it was recorded at: a change would drop it (Timing)
+    return multiplier == GetHostSpeedMultiplier() || SpeedLockReason().empty();
+}
+
+std::string Core::SpeedLockReason() const
+{
+    return _context && _context->pTimeTravelHooks ? _context->pTimeTravelHooks->SpeedLock() : std::string();
 }
 
 bool Core::SetSpeedMultiplier(uint8_t multiplier)
@@ -967,6 +1075,9 @@ uint8_t Core::GetHostSpeedMultiplier() const
 //
 void Core::EnableTurboMode(bool withAudio)
 {
+    // A TTD black box stops before the machine runs in turbo (D29)
+    if (!_context->config.turbo_mode && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(true);
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
 
@@ -1003,11 +1114,16 @@ void Core::DisableTurboMode()
         std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
         _turboHostHold.Release();
     }
+    const bool wasTurbo = _context->config.turbo_mode;
     _context->config.turbo_mode = false;
 
     // Restore the previous DSP quality
     if (_context->pSoundManager)
         _context->pSoundManager->setTurboLowQualityOverride(false);
+
+    // A stopped TTD black box records again once nothing accelerates (D29)
+    if (wasTurbo && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(false);
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, host output released");
 

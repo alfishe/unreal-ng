@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -45,6 +46,7 @@ class UdiZvezdnoeBoot_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
+    std::unique_ptr<DiskImage> _disk;  // an inserted image: the drive only points at it
 
     void SetUp() override
     {
@@ -101,6 +103,7 @@ protected:
             delete _emulator;
             _emulator = nullptr;
         }
+        _disk.reset();  // after the emulator: its release ejects the image
         MessageCenter::DisposeDefaultMessageCenter();
     }
 
@@ -268,12 +271,13 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     }
     LoaderUDI udiLoader(_context, udiPath);
     ASSERT_TRUE(udiLoader.loadImage()) << "UDI not loaded: " << udiPath;
+    _disk.reset(udiLoader.getImage());  // the loader hands its image over
 
     WD1793* wd1793 = _context->pBetaDisk;
     ASSERT_NE(wd1793, nullptr);
     FDD* fdd = wd1793->getDrive();
     ASSERT_NE(fdd, nullptr);
-    fdd->insertDisk(udiLoader.getImage());
+    fdd->insertDisk(_disk.get());
     std::cout << "[STEP 2] UDI inserted: " << udiPath << "\n";
 
     // STEP 3: enter TR-DOS

@@ -19,7 +19,10 @@ port decoder PROM (`[PROFI] ExtPorts=v003`: the extended ports also from the SYS
 0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
 Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), serial port (8253 + 8251, see
 [Serial port](#serial-port-com)), RTC and AY. PQ-DOS disks and a 2 GB HDD image: see
-`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`.
+`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`. The IDE disk slots read
+FAT16 only (PQ-DOS ignores FAT32 partitions): FAT32 folders, composites and images are refused. A composed disk of
+two partitions (PQ-DOS on partition 1, a host folder as partition 2, drive D:) is a `*.ucompose.yaml` with
+`partitions:` (see `.recipe/media/use-media-slots.md`).
 
 `[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
 (71680 T, INT 48 T before paper) or `v503`.
@@ -79,7 +82,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | IDE (`[HDD] Scheme=PROFI`, answers in EXT mode): slots `ide0.master` / `ide0.slave`; the SYS ROM boots from a hard disk image; geometry from the disk's ProfiHiDD header (16 x 16 without one) | implemented — see [Hard disk](#hard-disk-ide) |
 | Kempston joystick at `#1F`, Covox extended-mode aliases (v5) | implemented |
 | TURBO front-panel switch (7 MHz; on v3 a loaded floppy head holds 3.5 MHz), recorded by TTD | implemented — see [TURBO switch](#turbo-switch) |
-| AY clock 1.5 MHz in hi-res (v3 always; v5 jumper SB7 `[PROFI] AyClock=old`, the default; `new` keeps 1.75 MHz) | implemented for `TurboSound=AY` / `Single`; the shipped `TurboSound=FM` (TSFM) stays at 1.75 MHz — see [AY clock](#ay-clock-in-hi-res) |
+| AY clock 1.5 MHz in hi-res (v3 always; v5 jumper SB7 `[PROFI] AyClock=old`, the default; `new` keeps 1.75 MHz) | implemented for the AY socket's `ay` (shipped) and `ts`; a `tsfm` in the socket stays at 1.75 MHz — see [AY clock](#ay-clock-in-hi-res) |
 | v5 video WAIT at 3.5 MHz (`[PROFI] WaitPhase` / `WaitConfig` / `RomWait`), v3 turbo waits, v5 turbo waits (approximation) | implemented (feature `contention`) |
 | v3 floating bus (pixel byte on an unanswered `IN` with A0 = 1) | implemented |
 | PROFI-XT keyboard controller (`[PROFI] Keyboard=XT`, v5 default): PC keys, EXT on `#BFFE` bit 5, the Z80 wait, Ctrl + Alt + Del; `XTTable` (no firmware), `Matrix` (v3 default) | implemented — see [Keyboard](#keyboard) |
@@ -164,17 +167,17 @@ is set** - on v3 always, on v5 with jumper SB7 in "CLCAY OLD" (`[PROFI] AyClock=
 `AyClock=new` keeps 1.75 MHz in both modes. Turbo does not change it. Music therefore plays 6/7 lower in hi-res.
 The switch takes effect at the T-state of the `#DFFD` write and is part of TTD state.
 
-It applies to the plain AY slot (`[SOUND] TurboSound=AY` or `Single` in `data/configs/profi*/unreal.ini`). The
-shipped configs fit `TurboSound=FM`; the TSFM keeps 1.75 MHz (open item in
-[design-hires.md](../../docs/inprogress/2026-10-01-profi-v3-v5/design-hires.md)).
+It applies to the AY socket's `ay` (the board's own AY, `ay-socket = ay` in the shipped
+`data/configs/profi*/unreal.ini`) and `ts` (two AYs). A TSFM in the socket (`slots plug ay-socket tsfm --replace`)
+keeps 1.75 MHz (open item in [design-hires.md](../../docs/inprogress/2026-10-01-profi-v3-v5/design-hires.md)).
 
 Read the clock the AY runs at now (`psg_clock_hz`, the same report on every surface: WebAPI below, MCP
 `inspect_state` aspect `audio_ay`, Lua / Python `audio_ay_state()`, CLI `state audio ay` line `AY Clock:`):
 
 ```bash
 curl -s "$BASE/emulator/$ID/state/audio/ay" | jq '{slot_device, psg_clock_hz}'
-#   {"slot_device": "TurboSound", "psg_clock_hz": 1500000}   while a program has hi-res on (TurboSound=AY)
-#   {"slot_device": "TSFM",       "psg_clock_hz": 1750000}   shipped config: TSFM keeps 1.75 MHz
+#   {"slot_device": "TurboSound", "psg_clock_hz": 1500000}   while a program has hi-res on (ay-socket = ts)
+#   {"slot_device": "TSFM",       "psg_clock_hz": 1750000}   ay-socket = tsfm: the TSFM keeps 1.75 MHz
 ```
 
 ### TURBO switch

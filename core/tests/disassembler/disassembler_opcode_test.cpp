@@ -34,6 +34,9 @@ void Disassembler_Opcode_Test::TearDown()
         delete _debugManager;
         _debugManager = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>
@@ -43,7 +46,10 @@ void Disassembler_Opcode_Test::TearDown()
 /// Z80Disassembler::formatOperandString). All tests below disassemble at instructionAddr = 0.
 static std::string RelativeJumpTarget(size_t commandLen, uint8_t offset)
 {
-    uint16_t target = (uint16_t)(0 + commandLen + (int8_t)offset);
+    // The sign by arithmetic, not by a cast to int8_t: MSVC 2019 (/O2) zero-extended `(int8_t)offset` when it inlined
+    // this (also written as static_cast<int8_t>), giving #00D5 for a jump back to #FFD5
+    const int displacement = offset < 0x80 ? offset : offset - 0x100;
+    const uint16_t target = static_cast<uint16_t>(static_cast<int>(commandLen) + displacement);
     return StringHelper::ToHexWithPrefix(target, "#", true);
 }
 
@@ -265,7 +271,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllCBOpCodes)
                 break;
         }
 
-        std::string result = _disasm->disassembleSingleCommand(command, sizeof(command));
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
         
         if (result != referenceResult)
         {

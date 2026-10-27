@@ -398,10 +398,33 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
   Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
   MAME 32 T).
-- Renderer speed (naive v1): `BM_SprinterRender_Logo` 512 µs per frame against 46 µs for the TS-Conf
-  setup screen. Idea for the backlog: cache decoded squares (MAME's tilemap: the mode bytes and the
-  source address once per square, invalidated by video RAM writes into the mode table or the
-  square's source) and measure with the same benchmark.
+- Emulation speed (profile 2026-10-09, DNTBLINK at 21 MHz: 82 % of the steps were idle cycles of a halted CPU):
+  - [x] Idle cycles in one go (`Z84C15Engine::RunIdleCycles`, branch `sprinter-halt-skip`): exact against one cycle
+    per step (`SprinterIdleCycles_Test`), DNTBLINK 5.6 -> 2.4 ms per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.2)
+  - [x] The INT question from a kept "no" between source events (`ChainSource::IsIntAsserted`, change counts in
+    the chip and the PLD's sources): exact (`SprinterIdleCycles_Test`), -4 % to -10 % per frame on four demos
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.3); the
+    prototype's drift was `CovoxBlaster::Acknowledge` not reaching `t` first
+  - [x] The screen drawn on its own events, the tail on the frame's last step (`Screen::CatchesUpOnEvents`): exact
+    on four demos (`SprinterFastPathsDemo_Test`), -8 % to -17 % per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.4)
+  - [x] The per-step checks of the analyzer, the floppy controller and the tape inline (all machines, `9715951d2`)
+  - [~] The sound cards (NeoGS command poll loop, the AY slot's second chip): looked at, not changed - small gains
+    against the exactness or a change of the output
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.7)
+  - [x] The memory bus in one call instead of the overlay chain (`IZ84FastBus`, `SprinterMemory::FusedRead` /
+    `FusedWrite`): exact, -5.5 % to -11 % per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.8)
+  - [x] The accelerator's quiet opcode fetches skipped (`IZ84BusAgent::fetchQuiet`): exact, ROTOZOOM -4.5 %,
+    the others -1 % or noise ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.9)
+  - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
+    plus accelerator fills)
+- Renderer speed: by square segments since 2026-10-09 (the source address, attribute and font byte once per
+  square or 640 half: `BM_SprinterRender_Logo` 550 -> 262 µs, exact against the per-pixel rules,
+  `SprinterVideoRenderer_Test`; [sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md)
+  §8.5). A square cache across frames (MAME's tilemap, invalidated by video RAM writes) is the next step if the
+  renderer shows up again.
 - Hook 3, second half: a configuration module's own INT source (with the first module that needs
   it; Game does not: its INT is Standard's, the program waits with EI / HALT on the mode table's INT).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until

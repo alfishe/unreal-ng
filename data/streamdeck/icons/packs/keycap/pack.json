@@ -1,0 +1,20 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "keycap",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings, rendered smooth), the licence of unreal-ng",
+ "source": "png-smooth",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/keycap.py",
+ "title": "Matte keycap",
+ "style": "A dark matte rubber-key cap with a flat lip, an off-white legend high, a small coloured bar per action group low with a clear gap; no gradient, no sheen; on = a wide bar and a lighter cap",
+ "background": "#121316"
+}

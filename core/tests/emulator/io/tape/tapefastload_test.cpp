@@ -547,6 +547,28 @@ TEST_F(TapeFastLoad_Test, FallbackPositioning)
     EXPECT_FALSE(_tape->_currentTapeBlock->edgePulseTimings.empty());
 }
 
+/// A block restarted from its first pulse is generated again: its edges replace the earlier ones, so
+/// the block plays once. WebAPI play followed by the ROM anchor at #0564 restarted the header that way,
+/// and the doubled edges replayed the header where LD-BYTES expected the data block
+TEST_F(TapeFastLoad_Test, RestartedBlockPlaysOnce)
+{
+    std::vector<uint8_t> headerPayload;
+    std::vector<uint8_t> dataPayload;
+    _context->coreState.tapeFilePath = WriteTAPFile("restart.tap", MakeHeaderDataPair(headerPayload, dataPayload));
+
+    ASSERT_TRUE(_tape->EnsureImageLoaded());
+    _tape->StartPlaybackAtCursor();
+    _tape->handleFrameStart();
+    ASSERT_EQ(_tape->_currentTapeBlock, &_tape->GetBlocks()[0]);
+    const size_t edges = _tape->_currentTapeBlock->edgePulseTimings.size();
+    ASSERT_GT(edges, 0u);
+
+    _tape->StartPlaybackAtCursor();
+    _tape->handleFrameStart();
+    ASSERT_EQ(_tape->_currentTapeBlock, &_tape->GetBlocks()[0]);
+    EXPECT_EQ(_tape->_currentTapeBlock->edgePulseTimings.size(), edges);
+}
+
 // §12.1-8
 /// A stop never consumes the block that was playing (nonstandard-loader investigation P2): the next
 /// load reads that block again, whole

@@ -24,18 +24,28 @@ struct TsConfLine;
 /// the coarse Y bits act about 16 lines late and the fine bits at once (TSU-7).
 ///
 /// DRAM budget (TSU-8): every fetch costs DRAM accesses - 8 map words per
-/// enabled layer for the prefetch, 2 per drawn tile (8 pixels at 4 bpp), 2
-/// per 8 pixels of a visible sprite line. The TSU gets what video and the CPU
-/// leave of the line's 448 accesses; objects that no longer fit are dropped
-/// for that line, in the order the TSU processes them (S0, T0, S1, T1, S2),
-/// as the hardware drops what it could not render before the next ts_start.
+/// enabled layer for the prefetch, 2 per tile (8 pixels at 4 bpp), 2 per 8
+/// pixels of a visible sprite line. A tile layer fetches width / 8 + 1 tiles
+/// (33 / 41 / 46 for 256 / 320 / 360: video_ts.v:177 ends the layer at
+/// tx == x_tiles, video_mode.v:186-189), also the one that falls past the
+/// window when the X offset is a multiple of 8; tiles with number 0 and no
+/// zero drawing cost nothing. The TSU gets what video and the CPU leave of the
+/// pass; objects that no longer fit are dropped for that line, in the order
+/// the TSU processes them (S0, T0, S1, T1, S2), as the hardware drops what it
+/// could not render before the next ts_start.
 ///
 /// When (TSU-6, TsConfEngine): the hardware draws line L during line L - 1
-/// from ts_start (dot hpix_beg_ts - 1, [V] video_sync.v:130), so the engine
-/// draws it at once at that moment: T0/T1_G_PAGE, T0/T1_X_OFFS and PAL_SEL
-/// as latched for line L - 1 (video_ports.v:153-164), T_CONFIG, the pages,
-/// the Y offsets and SFILE as they are then. A write after ts_start of L - 1
-/// acts from L + 1; a tile X offset latched at L acts on the TSU from L + 1.
+/// from ts_start (dot hpix_beg_ts - 1, [V] video_sync.v:130) to the next
+/// ts_start, and the pass crosses line_start of L on a busy line. An object
+/// takes T0/T1_G_PAGE, T0/T1_X_OFFS and PAL_SEL from the latch in force when
+/// it is handed to the renderer (video_ts.v:162-171, video_ports.v:153-165):
+/// L - 1's latch before line_start, L's after. In DRAM terms an object is late
+/// when more than `split` TSU DRAM cycles of the pass came before it (the
+/// cycles from ts_start to line_start that video and the CPU leave,
+/// tools/machines/tsconf/rtl-sim tsulatch). The engine draws the objects up to
+/// the split at ts_start (BeginLine) and the rest at line_start with L's latch
+/// (FinishLine); T_CONFIG's layer enables are taken at ts_start, the pages,
+/// the Y offsets and SFILE as they are when each part is drawn.
 class TsConfTsu
 {
 public:
@@ -75,27 +85,62 @@ public:
     static uint32_t Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t tmLine, MapRing& ring);
 
     /// Render TS-window line `y` (0 = the window's first line) of width `width`
-    /// within `budget` DRAM accesses (`used` returns what it took)
+    /// within `budget` DRAM accesses (`used` returns what it took), all of it
+    /// with one latched set
     /// @return true when the TSU is on (false: `out` untouched)
     static bool RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
                            uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used);
 
-    /// RenderLine that also notes each pixel's source (debug path; `sources`
-    /// has `width` entries)
-    static bool ProbeLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
+    /// A pass split at line_start: where it stopped and what it needs to go on
+    struct Pass
+    {
+        uint32_t y = 0;
+        uint32_t width = 0;
+        uint32_t budget = 0;
+        uint32_t split = 0;    ///< objects after this many DRAM cycles of the pass are late
+        uint32_t used = 0;     ///< DRAM cycles used so far (the prefetch included)
+        uint8_t layers = 0;    ///< T_CONFIG layer enables at ts_start
+        uint8_t phase = 0;     ///< next layer: 0 S0, 1 T0, 2 S1, 3 T1, 4 S2, 5 done
+        uint8_t index = 0;     ///< next object of that layer: SFILE descriptor or tile
+        bool paused = false;   ///< objects are left for FinishLine
+    };
+
+    /// Draw line `y` up to the split with `set` (the latch before line_start).
+    /// `used` holds the prefetch's cycles. Objects past the split are left in
+    /// `pass` (pass.paused) for FinishLine
+    /// @return true when the TSU is on (false: `out` untouched)
+    static bool BeginLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                          uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t split, uint32_t used,
+                          Pass& pass);
+    /// Draw the objects BeginLine left, with `set` (the latch of line_start)
+    static void FinishLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                           uint8_t* out, Pass& pass);
+
+    /// The whole pass, early objects with `set`, late ones with `lateSet`,
+    /// noting each pixel's source (debug path; `sources` has `width` entries)
+    static bool ProbeLine(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, const uint8_t* ram,
+                          const MapRing& ring, uint32_t y, uint32_t width, uint8_t* out, Source* sources,
+                          uint32_t budget, uint32_t split, uint32_t& used);
 
 private:
-    /// kProbe: note sources (ProbeLine); the render path compiles without it
+    enum class Result : uint8_t
+    {
+        Done,     ///< every object of the layer processed
+        Starved,  ///< the budget ran out: the rest of the line is dropped
+        Paused,   ///< stopped at the split (pause mode)
+    };
+
+    /// Process the pass from pass.phase / pass.index. Objects past pass.split
+    /// take `lateSet`, or stop the pass when `pause`. kProbe: note sources
+    /// (ProbeLine); the render path compiles without it
     template <bool kProbe>
-    static bool Render(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                       uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
-    /// @return false when the budget ran out (the rest of the line is dropped)
+    static void Run(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, bool pause,
+                    const uint8_t* ram, const MapRing& ring, uint8_t* out, Source* sources, Pass& pass);
     template <bool kProbe>
-    static bool DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget,
-                          uint32_t& used);
+    static Result DrawTiles(const TsConfState& ts, const TsConfLine& set, const TsConfLine& lateSet, bool pause,
+                            const uint8_t* ram, const MapRing& ring, uint32_t layer, uint8_t* out, Source* sources,
+                            Pass& pass);
     template <bool kProbe>
-    static bool DrawSprites(const TsConfState& ts, const uint8_t* ram, Layer layer, uint32_t first, uint32_t end,
-                            uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
+    static Result DrawSprites(const TsConfState& ts, const uint8_t* ram, Layer layer, uint32_t first, uint32_t end,
+                              bool pause, uint8_t* out, Source* sources, Pass& pass);
 };

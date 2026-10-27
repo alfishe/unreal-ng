@@ -3,6 +3,7 @@
 #include "z80_logic_jump_test.h"
 #include "opcode_test.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "common/modulelogger.h"
 #include <string>
 
@@ -25,17 +26,7 @@ void Z80_Logic_Jump_Test::SetUp()
 
 void Z80_Logic_Jump_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     if (_opcode != nullptr)
     {

@@ -1,0 +1,11 @@
+# TFM Music Compiler player (the player compiled into the tune "uzhos") on the card's YM2203 pair
+describe Real-program trace (CL-2): "uzhos" (uzhos.scl), a TFM Music Compiler tune with its own player; the player
+describe waits for the YM2203's busy flag (status bit 7 at #FFFD) before every register write
+describe Pentagon 128 with zxbus.1 = multisound; RUN "uzhos"
+machine pentagon128k
+cpu 3.5
+disk tsfm/uzhos.scl
+trdos RUN "uzhos"
+frames 260
+shot tfmc-uzhos
+save tfmc-uzhos

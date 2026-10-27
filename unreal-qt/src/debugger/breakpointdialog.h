@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef BREAKPOINTDIALOG_H
 #define BREAKPOINTDIALOG_H
 
@@ -30,8 +32,13 @@ class BreakpointDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit BreakpointDialog(Emulator* emulator, QWidget* parent = nullptr);
+    explicit BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~BreakpointDialog();
+
+signals:
+    /// "Add as haptic probe" (haptics.md §7): @p kind 0 exec, 1 read, 2 write, 3 port-in, 4 port-out (HapticProbeKind);
+    /// @p page a RAM page or -1; @p portMask for a port
+    void hapticProbeRequested(int kind, int address, int page, int portMask);
 
 private slots:
     // Table actions
@@ -67,7 +74,7 @@ private:
     void updateButtonStates();
     void updateStatusBar();
     
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     uint64_t m_breakpointObserverId = 0;  // Store the observer ID for cleanup
     QMutex m_mutex;  // For thread-safe access to the dialog
     QVBoxLayout* _mainLayout = nullptr;

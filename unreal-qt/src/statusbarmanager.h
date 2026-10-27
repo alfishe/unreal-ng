@@ -13,6 +13,7 @@
 #include "emulator/notifications.h"
 
 class Emulator;
+class HostControllers;
 class MainWindow;
 class MenuManager;
 class StatusIndicator;
@@ -73,6 +74,17 @@ public:
     void hideForFullScreen();
     void restoreVisibility();
 
+    /// The host controllers (ui-ux.md §8): the joystick LED becomes the connector LED (every connector, the host
+    /// devices that drive it), a click on it asks for the controllers dialog, and the DEBUG tag shows while a pad
+    /// holds its debug layer key
+    void setControllers(HostControllers* controllers);
+
+signals:
+    /// A click on the connector LED
+    void controllersRequested();
+    /// A player pad's debug layer went up or down by its layer key (the DEBUG tag; the HUD shows it too)
+    void controllerDebugLayerChanged(bool held);
+
 private slots:
     void refresh();
     void toggleSound();
@@ -111,6 +123,8 @@ private:
     uint64_t _ideTransfers = 0;  ///< sectors moved at the last tick (the IDE LED blinks on a change)
     StatusIndicator* _sound = nullptr;
     StatusIndicator* _joystick = nullptr;  ///< Kempston joystick: lit while a button is held, hidden when the guest cannot see one
+    HostControllers* _controllers = nullptr;  ///< set: _joystick is the connector LED
+    QLabel* _debugLayer = nullptr;            ///< amber DEBUG while a pad holds its debug layer key
     /// Rendered straight from each NC_CPU_FREQ_CHANGED post - no local polling
     /// or accumulation. Z80::NotifyCPUFrequencyChanged already classifies a
     /// guest that flips its clock every frame (TS-Conf: Wild Commander's AY
@@ -123,7 +137,7 @@ private:
     QLabel* _videoMode = nullptr;         ///< the picture's mode on machines that mix modes per area (Sprinter: ScreenState::videoModeBrief)
     QLabel* _zxMode = nullptr;            ///< the Sprinter's ZX mode and launcher configuration (DeviceState::SprinterZxModeBrief)
     QLabel* _biosIssues = nullptr;        ///< the loaded Sprinter BIOS image's known issues (DeviceState::SprinterBiosKnownIssues)
-    EmulatorContext* _biosIssuesContext = nullptr;  ///< the machine the label was last checked for
+    std::string _biosIssuesEmulatorId;    ///< the machine the label was last checked for
     int _biosIssuesTicks = 0;             ///< re-checked every few seconds (it hashes the 256 KB flash)
     int _zxModeTicks = 0;                 ///< the tooltip report is rebuilt every few ticks (it reads the vROM pages)
     RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop

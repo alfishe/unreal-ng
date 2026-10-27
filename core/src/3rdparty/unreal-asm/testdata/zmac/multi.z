@@ -1,0 +1,10 @@
+; several statements on a line, case, 8-bit loads, mnemonics as values
+        org     100h
+        ld d,h \ ld e,l
+        LD A,(HL) \ INC HL
+        Ld   Bc , 5
+        cp 5 \ jr z,$+2 \ ret
+        ex af,af'
+        in a,(0feh) \ out (0feh),a
+        bit 3,(ix+5) \ set 7,(iy-1)
+        defb 'x' + 1

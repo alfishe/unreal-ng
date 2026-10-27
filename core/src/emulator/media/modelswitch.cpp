@@ -1,14 +1,18 @@
 #include "stdafx.h"
 
+#include <optional>
+
 #include "modelswitch.h"
 
 #include <algorithm>
 
 #include "common/stringhelper.h"
+#include "emulator/actions/targetstate.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace
 {
@@ -86,13 +90,33 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     const RamPowerOn ramPowerOn =
         request.ramPowerOn ? *request.ramPowerOn
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
+    // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
+    // the running settings the request carries, then the slot set
+    // (exact, or the old machine's cards carried and planned against the new model)
+    std::optional<SlotManager::Result> carried;
+    if (!request.slotSet && old->GetContext()->pSlotManager != nullptr)
+        carried = old->GetContext()->pSlotManager->Snapshot();
+    auto carryReport = std::make_shared<SlotManager::CarryReport>();
+    std::function<void(CONFIG&)> configOverride =
+        [instance = request.keepConfigOverride ? old->GetConfigOverride() : std::function<void(CONFIG&)>{},
+         ram = Config::RamPowerOnOverride(ramPowerOn), carrySettings = request.carrySettings, slotSet = request.slotSet,
+         carried, carryReport](CONFIG& config) {
+            if (instance)
+                instance(config);
+            ram(config);
+            if (carrySettings)
+                carrySettings(config);
+            if (slotSet)
+                SlotManager::UseSlots(*slotSet, config);
+            else if (carried)
+                *carryReport = SlotManager::Carry(*carried, config);
+        };
     std::shared_ptr<Emulator> created =
         request.ramKb > 0
             ? emulators.CreateEmulatorWithModelAndRAM(old->GetSymbolicId(), request.model, request.ramKb,
-                                                      LoggerLevel::LogWarning, &error,
-                                                      Config::RamPowerOnOverride(ramPowerOn))
+                                                      LoggerLevel::LogWarning, &error, configOverride)
             : emulators.CreateEmulatorWithModel(old->GetSymbolicId(), request.model, LoggerLevel::LogWarning, &error,
-                                                Config::RamPowerOnOverride(ramPowerOn));
+                                                configOverride);
     if (!created || !created->GetContext() || !created->GetContext()->pMediaManager)
     {
         if (created)
@@ -113,11 +137,10 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
         return out;
     }
 
-    // The old machine stops executing; stranded writes are dealt with while it
+    // The old machine stops executing (its CPU held: Emulator::CpuHold); stranded writes are dealt with while it
     // can still go on (a failed save leaves it as it was)
-    const bool wasRunning = old->IsRunning() && !old->IsPaused();
-    if (wasRunning)
-        old->Pause(false);
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*old, "model switch");
     for (const SlotInfo& info : out.stranded)
     {
         MediaResult kept = MediaResult::Success();
@@ -128,8 +151,7 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
         if (!kept.Ok())
         {
             emulators.RemoveEmulator(created->GetId());
-            if (wasRunning)
-                old->Resume(false);
+            hold.reset();
             out.result = MediaResult::Fail(kept.error, info.descriptor.id + ": " + kept.message);
             return out;
         }
@@ -137,19 +159,47 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
 
     if (old->IsRunning())
         old->Stop();
+    hold.reset();  // the old machine is stopped: nothing left to hold
     MediaTransfer transfer = from.TakeMediaSet();
     if (request.beforeRelease)
         request.beforeRelease(*old);
     const bool wasSelected = emulators.GetSelectedEmulatorId() == old->GetId();
     const std::string oldId = old->GetId();
     old.reset();
+    // Views showing the old machine and `instance:` pins on it move to the new one (targeting.md §5) before the
+    // removal would let them fall back
+    actions::TargetState::Instance().InstanceReplaced(oldId, created->GetId());
     emulators.RemoveEmulator(oldId);
 
     out.media = to.AdoptMediaSet(std::move(transfer));
     if (wasSelected)
         emulators.SetSelectedEmulatorId(created->GetId());
     out.emulator = created;
+    out.slotCarry = *carryReport;
     out.result = MediaResult::Success();
-    out.result.report = out.media.lines;
+    out.result.report = out.slotCarry.lines;
+    out.result.report.insert(out.result.report.end(), out.media.lines.begin(), out.media.lines.end());
     return out;
+}
+
+ModelSwitch::RunStateBefore ModelSwitch::RunStateBefore::Of(Emulator& emulator)
+{
+    RunStateBefore state;
+    state.running = emulator.IsRunning() && !emulator.IsPaused();
+    state.paused = emulator.IsRunning() && emulator.IsPaused();
+    return state;
+}
+
+bool ModelSwitch::StartAsBefore(Emulator& fresh, const RunStateBefore& before, const std::function<void()>& start)
+{
+    if (!before.running && !before.paused)
+        return false;
+    if (start)
+        start();
+    else
+        fresh.StartAsync();
+    // The start's Run intent is queued first: this pause is newer and wins at the loop's first park
+    if (before.paused)
+        fresh.Pause(execution::Requester{execution::Origin::Lifecycle, {}}, "restart");
+    return true;
 }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <emulator/emulator.h>
+#include "emulator/execution/executionarbiter.h"
+#include "common/uuid.h"
 #include <emulator/emulatormanager.h>
 
 #include <memory>
@@ -13,6 +15,7 @@
 struct StateNode;
 struct BreakpointSpec;
 class BreakpointManager;
+class EmulatorContext;
 
 /**
  * @brief Session context for a client connection
@@ -63,7 +66,7 @@ public:
     using CommandHandler = void (CLIProcessor::*)(const ClientSession&, const std::vector<std::string>&);
 
     CLIProcessor();
-    virtual ~CLIProcessor() = default;
+    virtual ~CLIProcessor();
 
     // Process a command from a client
     void ProcessCommand(ClientSession& session, const std::string& command);
@@ -85,6 +88,7 @@ private:
     void HandleSelect(const ClientSession& session, const std::vector<std::string>& args);
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandleNmi(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleOps(const ClientSession& session, const std::vector<std::string>& args);  // operation log
     void HandleMni(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSwitch(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
@@ -103,8 +107,17 @@ private:
     void HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
+    /// The paced run (core RunPacer): pace [show|presets|set|interval|next|prev|start|stop|toggle|step]
+    void HandlePace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    /// Automation session (execution arbiter design §6a): `session take [name]`, `session release`, `session`
+    void HandleSession(const ClientSession& session, const std::vector<std::string>& args);
+    /// Companion clients (docs/inprogress/2026-10-16-companion-client): `companion auth <token>`, `logout`, `list`,
+    /// `revoke <id|name|all|me>`, `take-back`, `allow-again`, `companion` (status) - cli-processor-companion.cpp
+    void HandleCompanion(const ClientSession& session, const std::vector<std::string>& args);
+    /// ZX-Evo flash ROM: the saved flash (status, save, discard) - cli-processor-romflash.cpp
+    void HandleRomFlash(const ClientSession& session, const std::vector<std::string>& args);
     void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
     static std::string RtcReportText(EmulatorContext* context);
     static std::string IsaReportText(EmulatorContext* context);
@@ -124,6 +137,7 @@ private:
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
@@ -138,10 +152,21 @@ private:
     void HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPHits(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleNextRegBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBeamBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMagicBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCopperBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPClear(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
+    /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
+    /// group:<name>); false when `text` is not one (the caller answers)
+    bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
+                                  const char* verb);
 
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
@@ -157,9 +182,12 @@ private:
     void HandleLabel(const ClientSession& session, const std::vector<std::string>& args);
     void HandleLabels(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSymbols(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSymbolVerb(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Assembler and source-listing commands
     void HandleAssemble(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAsm(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSignature(const ClientSession& session, const std::vector<std::string>& args);
     void HandleListing(const ClientSession& session, const std::vector<std::string>& args);
 
     // Analysis command handlers (screen digest, beam, frame cost, analyzers)
@@ -169,12 +197,16 @@ private:
     void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideo(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoTemporal(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoWindowRecord(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoViewport(const ClientSession& session, Emulator& emulator, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);
 
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);
@@ -219,6 +251,9 @@ private:
 
     // TS-Conf VDAC2 card (FT812) command handlers: bus capture
     void HandleVdac2(const ClientSession& session, const std::vector<std::string>& args);
+    // Bus analyzer (cli-processor-bus.cpp)
+    void HandleBus(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowBusHelp(const ClientSession& session);
     void HandleVdac2Metrics(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void ShowVdac2Help(const ClientSession& session);
 
@@ -343,6 +378,19 @@ private:
 
     // Media command handlers (every slot through MediaControl)
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
+    void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleControllers(const ClientSession& session, const std::vector<std::string>& args);
+    /// action [list | run <id> [value] [param=val ..]]: the core ActionRegistry (cli-processor-action.cpp)
+    void HandleAction(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSurface(const ClientSession& session, const std::vector<std::string>& args);
+    /// streamdeck <verb>: the Stream Deck daemon's supervision, settings, pairing (companion::streamdeck::Call)
+    void HandleStreamDeck(const ClientSession& session, const std::vector<std::string>& args);
+    /// monitor [name]: host process, clients, each instance's pace and summaries (monitoring::Call)
+    void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
+    void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
     void ShowCdAudioHelp(const ClientSession& session);
@@ -381,6 +429,8 @@ private:
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    /// snapshot formats - which formats this machine can be saved in right now, and why not
+    void HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator);
     void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                                const std::vector<std::string>& args);
 
@@ -416,6 +466,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
+    void HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
@@ -428,12 +480,32 @@ private:
                                    const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;
 
     // Reference to the current emulator (if any)
     std::shared_ptr<Emulator> _emulator;
+    /// The automation session this connection holds (nil: none) and its machine: ends with the connection; when the
+    /// user takes control back, the next command answers revoked_by_user and the session is forgotten
+    unreal::UUID _controlSession;
+    std::shared_ptr<Emulator> _controlEmulator;
+    /// The session holds this machine's run control
+    bool HoldsControl(EmulatorContext* context) const;
+    /// The automation gate (automationgate.h): a command that changes the machine without a session opens one
+    /// implicitly for this connection (it ends with the connection). False: refused, the answer is sent
+    bool PassAutomationGate(const ClientSession& session, const std::string& command,
+                            const std::vector<std::string>& args);
+    /// Who asks, for the execution arbiter: this connection's session when it holds control, else the CLI
+    execution::Requester CliRequester(EmulatorContext* context) const;
+    /// The companion this connection acts as (`companion auth`); "" = an ordinary connection. Looked up again per
+    /// command, so a revoke takes effect at once
+    std::string _companionId;
+    /// The companion's gate (automationgate.h): its user actions pass without a session within its scopes; refused
+    /// while a session holds the machine. False: refused, the answer is sent
+    bool PassCompanionGate(const ClientSession& session, const std::string& command,
+                           const std::vector<std::string>& args);
 
     // Flag to track if this is the first command
     bool _isFirstCommand;

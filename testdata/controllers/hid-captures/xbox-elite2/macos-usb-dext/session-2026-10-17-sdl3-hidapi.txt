@@ -1,0 +1,365 @@
+     128 added 'Xbox One Elite 2 Controller' 045e:0b00
+   37195 x down
+   37396 x up
+   37834 b down
+   37882 b up
+   38267 y down
+   38450 y up
+   41076 axis lefttrigger 16607
+   41076 axis lefttrigger 32767
+   41483 axis lefttrigger 11071
+   41490 axis lefttrigger 0
+   41908 axis righttrigger 9919
+   41923 axis righttrigger 25599
+   42339 axis righttrigger 6655
+   47043 back down
+   47251 back up
+   56002 a down
+   56187 a up
+   56420 x down
+   56596 x up
+   56819 b down
+   56964 b up
+   57235 y down
+   57459 y up
+   63515 b down
+   63691 b up
+   69587 axis righttrigger 16063
+   69603 axis righttrigger 32767
+   69691 axis lefttrigger 9311
+   69738 axis lefttrigger 18175
+   69795 axis lefttrigger 24607
+   70075 axis righttrigger 16479
+   70084 axis righttrigger 8799
+   70100 axis righttrigger 1887
+   70123 axis lefttrigger 23007
+   70138 axis lefttrigger 13727
+   70154 axis lefttrigger 0
+   70243 x down
+   70322 axis lefty 8900
+   70338 a down
+   70379 axis lefty 16819
+   70410 axis lefty 16037
+   70426 axis righttrigger 17887
+   70427 axis lefty 4915
+   70436 axis righttrigger 29215
+   70524 b down
+   70531 x up
+   70531 y down
+   70603 a up
+   70715 y up
+   70876 b up
+   71035 axis lefty -9549
+   71052 axis righttrigger 21503
+   71052 axis lefty -18365
+   71059 axis righttrigger 13599
+   71068 axis righttrigger 7263
+   71068 axis lefty -29251
+   71074 axis leftx -10439
+   71075 axis lefty -32768
+   71124 axis lefty -32004
+   71140 axis leftx -17383
+   71220 axis leftx -24915
+   71237 leftstick down
+   71275 axis lefty -24556
+   71291 leftstick up
+   71355 a down
+   71371 axis righttrigger 32767
+   71437 axis leftx -24154
+   71443 axis lefty -24589
+   71450 axis leftx -15486
+   71450 axis lefty -23532
+   71459 axis leftx -8176
+   71468 axis lefty -14140
+   71475 axis leftx 8748
+   71475 axis lefty -8177
+   71491 x down
+   71491 axis leftx 21423
+   71500 axis leftx 26066
+   71538 axis lefty 8483
+   71563 axis lefty 16391
+   71572 b down
+   71572 x up
+   71572 y down
+   71604 a up
+   71642 y up
+   71658 axis leftx 22852
+   71676 axis lefty 24608
+   71683 axis leftx 14436
+   71699 axis leftx 6047
+   71708 axis lefty 21127
+   71715 axis leftx -8754
+   71715 axis lefty 13652
+   71724 axis leftx -18970
+   71724 axis lefty 2342
+   71731 axis leftx -30019
+   71740 axis leftx -32768
+   71740 axis lefty -14261
+   71763 axis leftx -32535
+   71771 axis lefty -17136
+   71828 axis lefty -16303
+   71844 leftstick down
+   71844 axis leftx -32768
+   71919 leftstick up
+   71923 axis righttrigger 16063
+   71923 axis leftx -32302
+   71948 axis righttrigger 3327
+   71948 axis lefty -16592
+   71964 b up
+   71995 axis leftx -23686
+   72011 axis leftx -9970
+   72018 axis leftx -1123
+   72018 axis lefty -1510
+   73579 axis righttrigger 25087
+   73778 y down
+   73796 a down
+   73866 axis leftx -9419
+   73876 x down
+   73876 axis lefty -10927
+   73882 axis leftx -17143
+   73898 axis leftx -25036
+   73898 axis lefty -18064
+   73907 x up
+   73955 b down
+   73964 x down
+   73986 a up
+   74059 axis lefty -16248
+   74188 axis leftx -16107
+   74188 axis lefty -4516
+   74195 axis leftx -3304
+   74210 x up
+   74308 axis righttrigger 18271
+   74314 b up
+   74314 axis righttrigger 12223
+   74324 axis righttrigger 7167
+   74435 dpdown down
+   74466 y up
+   74498 dpdown up
+   74498 axis righty 8397
+   74548 dpup down
+   74548 axis righty 16875
+   74555 axis rightx 10108
+   74571 axis righty 25677
+   74587 axis rightx 16779
+   74618 dpleft down
+   74643 axis rightx 24878
+   74675 axis righty 23569
+   74756 rightstick down
+   74763 dpup up
+   74794 axis righty 15802
+   74803 dpleft up
+   74810 y down
+   74810 axis rightx 22765
+   74826 dpdown down
+   74826 axis rightx 15674
+   74851 axis rightx 7288
+   74851 axis righty 17166
+   74867 axis righttrigger 10431
+   74939 axis rightx -8500
+   74971 dpdown up
+   74987 axis righttrigger 16863
+   74987 axis righty 14970
+   75003 axis righttrigger 29343
+   75003 axis rightx -6539
+   75003 axis righty 6556
+   75018 dpup down
+   75082 dpleft down
+   75138 axis righttrigger 21023
+   75154 axis righttrigger 11615
+   75172 axis righttrigger 4095
+   75172 axis righty 8507
+   75204 dpleft up
+   75204 axis righty 17283
+   75220 dpup up
+   75220 axis righty 24661
+   75243 dpright down
+   75355 dpright up
+   75364 rightstick up
+   75387 axis righty 24182
+   75443 axis rightx 8399
+   75443 axis righty 14910
+   75467 axis righty 4139
+   75474 axis rightx 16711
+   75490 axis righty -10569
+   75499 axis rightx 28355
+   75508 axis righty -18422
+   75594 axis leftx -9249
+   75594 axis lefty -11257
+   75603 axis lefty -17450
+   75610 axis leftx -21781
+   75619 axis lefty -25420
+   75676 axis righttrigger 17375
+   75682 axis righttrigger 32767
+   75780 axis righty -25736
+   75787 axis leftx -13926
+   75787 axis rightx 24134
+   75802 axis leftx -8123
+   75802 axis lefty -32768
+   75827 axis rightx 14483
+   75843 axis leftx 9960
+   75852 axis rightx 7318
+   75868 axis righty -17614
+   75875 axis righty 1910
+   75906 x down
+   75963 axis leftx 6765
+   75995 leftshoulder down
+   76042 axis leftx -8591
+   76099 leftshoulder up
+   76108 leftstick down
+   76114 axis leftx -16415
+   76171 x up
+   76178 b down
+   76196 axis lefty -32578
+   76234 b up
+   76243 leftstick up
+   76284 axis righttrigger 17599
+   76300 axis righttrigger 0
+   76300 axis leftx -14248
+   76316 axis leftx -2770
+   76322 axis lefty -11707
+   76331 axis lefty 10883
+   76338 axis lefty 17113
+   76347 axis lefty 8245
+   76356 axis lefty -5675
+   77347 y up
+   77516 y down
+   77651 x down
+   78019 x up
+   78060 a down
+   78131 b down
+   78267 x down
+   78307 a up
+   78435 axis lefttrigger 19231
+   78444 axis lefttrigger 32767
+   78460 axis righttrigger 11487
+   78467 axis righttrigger 16863
+   78476 axis righttrigger 25087
+   78556 b up
+   78707 x up
+   78818 axis lefttrigger 17535
+   78830 axis lefttrigger 12895
+   78834 axis lefttrigger 7999
+   78908 axis righttrigger 21759
+   78930 axis righttrigger 9247
+   78940 axis righttrigger 4575
+   79020 y up
+   79259 start down
+   79348 y down
+   79444 start up
+   79444 x down
+   79636 a down
+   79668 a up
+   79707 b down
+   79748 a down
+   79748 x up
+   79779 rightshoulder down
+   79795 a up
+   79820 a down
+   79843 a up
+   80060 rightshoulder up
+   80163 b up
+   80546 dpleft down
+   80571 dpup down
+   80826 dpup up
+   80860 dpleft up
+   80867 dpdown down
+   80883 dpright down
+   80946 dpdown up
+   80997 dpup down
+   81019 dpright up
+   81115 dpleft down
+   81220 axis lefty -8782
+   81236 dpleft up
+   81236 dpup up
+   81252 axis righty 8591
+   81332 axis lefty -8177
+   81332 axis rightx 9675
+   81348 axis righty 16408
+   81355 axis rightx 18437
+   81355 axis righty 16379
+   81384 axis rightx 25697
+   81430 axis righty 5086
+   81532 axis lefty -8598
+   81548 axis leftx -8452
+   81548 axis lefty -21941
+   81557 axis lefty -29393
+   81564 axis lefty -32768
+   81595 axis righty -9137
+   81620 axis righty -16736
+   81652 axis leftx -7184
+   81652 axis righty -25365
+   81659 axis rightx 23387
+   81690 axis leftx 13624
+   81690 axis rightx 14634
+   81699 axis leftx 20834
+   81699 axis lefty -30078
+   81706 axis leftx 25816
+   81706 axis rightx 7720
+   81715 axis lefty -20847
+   81724 axis righty -21644
+   81731 axis lefty -14464
+   81740 axis righty -13346
+   81756 axis lefty -8167
+   81762 axis righty -7569
+   81771 axis rightx -8628
+   81828 axis lefty 8712
+   81828 axis rightx -16847
+   81828 axis righty 8638
+   81851 axis righty 18810
+   81866 axis righty 25859
+   81875 axis lefty 17539
+   81875 axis rightx -16367
+   81916 axis leftx 24407
+   81922 axis rightx -6833
+   81956 axis lefty 25792
+   81956 axis rightx 8901
+   81972 axis rightx 21461
+   81972 axis righty 20990
+   81979 axis leftx 12158
+   81979 axis rightx 27179
+   81979 axis righty 14526
+   81988 axis leftx 4478
+   81988 axis righty 8188
+   81995 axis lefty 21875
+   82004 axis leftx -13620
+   82004 axis lefty 11351
+   82011 axis leftx -21350
+   82011 axis lefty 4389
+   82020 y up
+   82020 axis leftx -26443
+   82020 axis rightx 8827
+   82027 axis rightx -135
+   82052 axis leftx -22462
+   82060 axis leftx -11963
+   82066 axis leftx 5953
+   82243 y down
+   82338 y up
+   82524 y down
+   83412 y up
+   84667 axis righttrigger 11167
+   84676 axis righttrigger 26495
+   84835 axis righttrigger 7231
+   84931 axis righttrigger 32767
+   85067 axis righttrigger 20255
+   85083 axis righttrigger 9503
+   85099 axis righttrigger 24511
+   85115 axis righttrigger 32767
+   85219 axis righttrigger 18591
+   85228 axis righttrigger 8319
+   85243 axis righttrigger 0
+   85268 axis righttrigger 14911
+   85275 axis righttrigger 25471
+   85378 axis righttrigger 22943
+   85394 axis righttrigger 13791
+   85428 axis righttrigger 22943
+   85435 axis righttrigger 32767
+   85596 axis righttrigger 22367
+   85612 axis righttrigger 12191
+   85667 axis righttrigger 20799
+   85731 axis righttrigger 12927
+   85740 axis righttrigger 8063
+   88643 axis righttrigger 11583
+   88658 axis righttrigger 16735
+   88715 axis righttrigger 25727
+   88964 axis righttrigger 14719
+   88971 axis righttrigger 5631

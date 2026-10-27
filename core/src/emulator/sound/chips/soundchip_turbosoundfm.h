@@ -23,6 +23,10 @@
 /// The core is advanced in T-states (syncTo) so it is in step with the CPU
 /// at every instruction boundary - the invariant TTD checkpointing relies on
 /// (§5.2). The pair runs at 1 : 1 here (YM master clock = audio T-state).
+/// With the core's synthesis skipped (turbo or sound off, no TTD) nothing but
+/// a port access can observe the chips, and advancing them by a + b clocks
+/// equals a, then b: the step only notes the CPU's position and the chips
+/// catch up at the next port access, the frame end or a TTD recording start.
 
 /// The logic chip's three latches, clocked by a control word
 /// (OUT #FFFD with value 0xF8..0xFF, design §5.1 / hardware-reference §3.2)
@@ -73,8 +77,10 @@ protected:
     int16_t* const _fm0Buffer = (int16_t*)_fm0AudioDescriptor.memoryBuffer;
     int16_t* const _fm1Buffer = (int16_t*)_fm1AudioDescriptor.memoryBuffer;
 
-    /// FM loudness baseline (§7.1): full-scale DAC word -> 0.30 in the mix
-    static constexpr double kFmBaseGain = 0.30;
+    /// FM loudness baseline (§7.1, ISSUES.md #1): full-scale DAC word -> 0.703 in the mix, the real board's measured
+    /// level (one carrier at TL 0 sits 0.8 dB above one SSG channel at volume 15). Exactly 0.30 x 10^(7.4 / 20): the
+    /// MiSTer-derived 0.30 plus the measured 7.4 dB, which the shipped inis carried as TSFM_FmTrimDb=7.4 before
+    static constexpr double kFmBaseGain = 0.7032686445959766;
     /// Constant lag of the render cursor behind the word and SSG-write
     /// timeline (§6.2, see kTurboSoundRenderLagT)
     static constexpr int64_t kFmRenderLagT = Ym2203Pair::kRenderLag;
@@ -102,7 +108,30 @@ protected:
     // before the gap; flushed at the next frame start (emulation thread)
     bool _outputFlushPending = false;
 
-    // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmTrimDb
+    // Deferred core sync (file comment): the CPU position the last step noted, and whether the chips still have
+    // to catch up to it. Allowed while the core's synthesis is skipped, until a TTD recording starts mid-frame
+    uint64_t _deferredT = 0;
+
+    // HQ output stage: newest consecutive zeros fed to each SSG decimator (chip 0 L, R, chip 1 L, R); a silent one
+    // skips its FIR (handleStep). Render-side, not TTD state
+    size_t _ssgZeroRun[4] = {};
+    bool _syncDeferred = false;
+    bool _deferAllowed = true;
+    // The step gate (ITurboSoundDevice::_stepDeadline): the lazy deferral of the step that set it holds until then, so
+    // a step only notes its T and the deferral's bookkeeping is done once (settleSteps)
+    // The quiet deferral: the gate holds until the next entry (a port, the frame end...) because the device is quiet at
+    // rest - every output is +0.0 until a write; settleSteps then runs the step at the last noted T, which renders the
+    // outputs due in one quiet run (renderQuietOutputs)
+    bool _quietDeferral = false;
+    std::vector<uint32_t> _quietOutputTicks;  // renderQuietOutputs: the ticks of each output of the run
+    size_t _longestQuietRun = 0;              // the most outputs one quiet run took (diagnostics, not state)
+    // With audio on: a step that completes no output sample defers its sync as well (handleStep). Off: every such step
+    // syncs, as before (comparison tests)
+    bool _lazySync = true;
+    // Off: no step gate (comparisons; settleSteps)
+    bool _stepGate = true;
+
+    // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
     double _fmTrimDb = 0.0;
 
@@ -184,13 +213,58 @@ public:
     /// construction/reset adopts t without advancing (nothing to simulate).
     void syncTo(uint64_t t)
     {
+        catchUp();
         _pair.syncTo(t);
+    }
+
+    /// The chips to the CPU position the last step noted (a no-op unless the
+    /// step deferred it, see the file comment)
+    void catchUp() override
+    {
+        settleSteps();
+        if (_syncDeferred)
+        {
+            _syncDeferred = false;
+            _pair.syncTo(_deferredT);
+        }
     }
 
     /// Frame-relative T-state of the CPU right now (the port callbacks see
     /// the IORQ's own T-state; handleStep then advances to the instruction
     /// end - §5.3 note)
     uint64_t nowT() const;
+
+    /// The steps the gate let through, booked as the lazy deferral books one (handleStep), and the gate closed: the
+    /// next step goes the full way. Every entry other than handleStep starts here
+    void settleSteps()
+    {
+        _stepDeadline = 0;
+        if (!_stepPending)
+        {
+            _quietDeferral = false;
+            return;
+        }
+        _stepPending = false;
+        if (_quietDeferral)
+        {
+            // The step at the last noted T, as handleStep would have taken it; the entry that called this then acts on
+            // the device, so the gate stays open after it
+            _quietDeferral = false;
+            stepAt(_pendingT);
+            _stepDeadline = 0;
+            _quietDeferral = false;
+            return;
+        }
+        // The deferral's bookkeeping (x1 speed: the gate holds only then) for the last noted T, frame-clipped as the
+        // step clips it; the steps before it added their part of the same sum
+        const uint64_t frameT = uint64_t(_context->config.frame);
+        const uint32_t scaled = uint32_t(std::min(_pendingT, frameT ? frameT : _pendingT));
+        if (scaled > _lastTStates)
+            _samplePhase += uint64_t(scaled - _lastTStates) * _coreRate;
+        _lastTStates = scaled;
+        _deferredT = _pendingT;
+        _syncDeferred = true;
+    }
 
     /// One FM half-tick of chip `chipIndex` ending at half-tick boundary h
     /// (§6.2): consume every word that landed by h into the hold register
@@ -214,6 +288,7 @@ public:
 
     void setHQEnabled(bool enabled) override
     {
+        settleSteps();
         if (enabled != _pair.hqEnabled())
             _renderReanchor = true;
         if (enabled && !_pair.hqEnabled())
@@ -223,6 +298,7 @@ public:
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        settleSteps();
         if (!suppressed && _pair.synthesisSuppressed())
             _outputFlushPending = true;  // nothing was rendered while suppressed
         _pair.setSynthesisSuppressed(suppressed);
@@ -230,9 +306,25 @@ public:
 
     void setCoreSynthesisSkipped(bool skipped) override
     {
+        catchUp();  // the deferred clocks run with the flag they were noted under
         _pair.setCoreSynthesisSkipped(skipped);
+        _deferAllowed = true;
     }
     bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
+    /// Tests: off = the chips are brought to the CPU after every instruction while audio renders
+    void setLazySync(bool on)
+    {
+        catchUp();
+        _lazySync = on;
+    }
+    /// The most outputs one quiet run took (renderQuietOutputs): past the outputs of a step or two only while asleep
+    size_t longestQuietRun() const { return _longestQuietRun; }
+    /// Tests: off = every step through the full deferral path (the step gate of handleStep closed)
+    void setStepGate(bool on)
+    {
+        catchUp();
+        _stepGate = on;
+    }
 
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,
@@ -244,6 +336,7 @@ public:
 
     void setCoreRate(size_t rate) override
     {
+        settleSteps();
         _coreRate = rate;
         _samplePhase = 0;  // in step with SoundManager::applyCoreRate
         _renderReanchor = true;
@@ -259,8 +352,8 @@ public:
         return _coreRate;
     }
 
-    /// FM loudness trim in dB relative to the 0.30 hardware-derived default
-    /// (§7.1); live-adjustable from the Audio Settings dialog
+    /// FM loudness trim in dB relative to the measured hardware level (§7.1,
+    /// 0 = the board); live-adjustable from the Audio Settings dialog
     void setFmTrimDb(double db) override
     {
         _fmTrimDb = db;
@@ -293,16 +386,30 @@ public:
 public:
     uint16_t* getAudioBuffer()
     {
+        settleSteps();
         return (uint16_t*)_ayBuffer;
     }
 
     size_t getRenderedSamplesThisFrame() const override
     {
+        const_cast<SoundChip_TurboSoundFM*>(this)->settleSteps();
         return _ayBufferIndex / AUDIO_CHANNELS;
+    }
+
+    uint64_t getSamplePhase() const override
+    {
+        const_cast<SoundChip_TurboSoundFM*>(this)->settleSteps();
+        return _samplePhase;
+    }
+    void followSamplePhase(uint64_t phase) override
+    {
+        settleSteps();
+        _samplePhase = phase;
     }
 
     int16_t* getChipBuffer(int index) override
     {
+        settleSteps();
         if (index == 0)
             return _chip0Buffer;
         if (index == 1)
@@ -312,6 +419,7 @@ public:
 
     int16_t* getFmBuffer(int index) override
     {
+        settleSteps();
         if (index == 0)
             return _fm0Buffer;
         if (index == 1)
@@ -320,6 +428,12 @@ public:
     }
 
     int getSelectedChip() const override { return _board.chip; }
+    int getBusReadRegister() const override
+    {
+        // As portDeviceInMethod: the status byte in status mode, #FF while an FM address is latched
+        const Ym2203Chip* c = _pair.chip(_board.chip);
+        return !_board.statusRead && c != nullptr && c->address < 0x10 ? c->address : -1;
+    }
 
     SoundChip_AY8910* getChip(int index) const override
     {
@@ -339,6 +453,19 @@ public:
     void handleStep() override;
     void handleFrameEnd() override;
     /// endregion </Emulation events>
+
+private:
+    /// handleStep's full way for a step that ended at audio T `now`
+    void stepAt(uint64_t now);
+    /// The outputs due (as many as the sample phase and the buffer hold) while the pair is quiet at rest over them, in
+    /// one run, HQ; the count it took (0: none). Quiet at rest: both SSGs silentAtRest, the four SSG decimator histories
+    /// zeros, each chip's FM output stage at rest (Ym2203Pair::renderQuiet), and no SSG write due at any of the run's
+    /// ticks, no FM word off the hold at any of their half-ticks. Every output is then +0.0 on every row: the
+    /// generators, the words consumed, the render cursor and the decimator positions and phases move as the ticks would
+    size_t renderQuietOutputs();
+    /// Every output stays +0.0 until something enters the device: quiet at rest with nothing queued and both FM halves
+    /// idle, holding 0 (the gate may then hold until the next entry, handleStep). HQ, x1, the lazy sync on
+    bool sleepsThroughSilence() const;
 
     /// region <Automation tap (MCP M7j)>
 public:
@@ -368,7 +495,9 @@ public:
     /// region <TTDSerializable interface>
     /// §8.2 layout (v5), 2008 bytes, PeripheralId::TSFM = 4:
     ///   u8 version (= 5)
-    ///   u8 board (chip | statusRead<<1 | fmEnabled<<2)
+    ///   u8 board (chip | statusRead<<1 | fmEnabled<<2 | renderReanchor<<3: a
+    ///     re-anchor of the render cursor pending for the next frame start - only
+    ///     a capture inside a frame sees it set; 0 in blobs written before)
     ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
     ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
     ///     resampling phase - all four of these are tick-gating accumulators,
@@ -434,6 +563,14 @@ public:
     std::string TTDDeviceName() const override
     {
         return "TSFM";
+    }
+
+    /// The recording's first capture sees the chips at the CPU: no deferred
+    /// sync from here to the frame start that re-reads the TTD state
+    void TTDRecordingStarted() override
+    {
+        catchUp();
+        _deferAllowed = false;
     }
     /// endregion </TTDSerializable interface>
 };

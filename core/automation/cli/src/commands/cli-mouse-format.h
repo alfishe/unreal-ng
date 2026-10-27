@@ -255,6 +255,22 @@ inline std::string FormatDevice(const MouseDeviceStatus& device, const std::stri
         text += std::string("  PS/2: ") + (device.ps2.connected ? "connected" : "not connected") + ", resolution " +
                 std::to_string(device.ps2.resolution) + " (" + std::to_string(1 << device.ps2.resolution) +
                 " counts/mm)" + newline;
+    if (device.hasPio)
+    {
+        const MouseDeviceStatus::Pio& pio = device.pio;
+        static const char* const kModes[] = {"output", "input", "bidirectional", "bit control"};
+        for (int axis = 0; axis < 2; axis++)
+        {
+            const MouseDeviceStatus::Pio::Port& port = pio.port[axis];
+            text += std::string("  PIO ") + (axis == 0 ? "A (X, #1F)" : "B (Y, #3F)") + ": mode " +
+                    std::to_string(port.mode) + " (" + kModes[port.mode & 3] + "), vector " + Hex2(port.vector) +
+                    ", data " + Hex2(port.data) + ", interrupt " + (port.ie ? "enabled" : "disabled") +
+                    (port.ip ? ", pending" : "") + (port.ius ? ", under service" : "") + newline;
+        }
+        text += "  Pending: dx=" + SignedText(pio.pendingDx) + " dy=" + SignedText(pio.pendingDy) +
+                " mickeys; IN #DF=" + Hex2(pio.buttonsPort) + "; " + std::to_string(pio.strobes) + " strobes" +
+                newline;
+    }
     return text;
 }
 

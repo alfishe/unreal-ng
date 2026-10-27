@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+enum class GSTypeKind : uint8_t;
+
 /// Sound devices the test runner leaves out of every machine by default
 enum class TestSound : uint8_t
 {
@@ -9,6 +11,10 @@ enum class TestSound : uint8_t
     MoonSound    = 1 << 1,  ///< MoonSound (OPL4) card
     TurboSound   = 1 << 2,  ///< TurboSound slot: AY / TurboSound (2 x AY) / TSFM, whichever the config names
     All          = GeneralSound | MoonSound | TurboSound,
+    /// The shipped default General MIDI bank of a slot card's synthesizer (data/midi, 30 MB, about 165 ms to load per
+    /// card): not part of All, a test that wants the real bank names it. Without it an unset [MIDI] Bank= reads as
+    /// NONE (an explicit Bank= path is kept)
+    DefaultMidiBank = 1 << 3,
 };
 
 constexpr TestSound operator|(TestSound a, TestSound b)
@@ -27,7 +33,8 @@ constexpr TestSound operator|(TestSound a, TestSound b)
 /// runner leaves all of them out of every machine it creates
 /// (Config::SetConfigLoadedHook, installed in main() by InstallPolicy): the
 /// TurboSound slot is empty (TurboSound=None - AY ports on the floating bus),
-/// no GS, no MoonSound.
+/// no GS, no MoonSound, and no default MIDI bank (Config::SetMidiBankHook: an
+/// unset [MIDI] Bank= becomes NONE; TestSound::DefaultMidiBank opts back in).
 ///
 /// A test that needs a device opts back in for the machines it creates by
 /// holding a SoundCardScope while the emulator is initialized (typically a
@@ -53,4 +60,27 @@ public:
 
 private:
     TestSound _devices;
+};
+
+/// Fits a General Sound card of the given kind in every machine created while it lives, whatever the config says.
+///
+/// For tests that load a recording made with a card on a model whose shipped config has none (owner decision
+/// 2026-10-04: the 48K, 128K, +2, +2A, +3, Profi v5 / v3 and Sprinter configs ship without a GS): the card has to be
+/// there at creation, as a user's [SLOTS] entry would put it - a personality switch (FitGeneralSoundCard) changes a
+/// fitted card but cannot fill an empty slot. The kind goes into the config field the slot set is translated from;
+/// NONE leaves the config alone. Implies a SoundCardScope for the GS.
+class GeneralSoundFitScope
+{
+public:
+    explicit GeneralSoundFitScope(GSTypeKind kind);
+    ~GeneralSoundFitScope();
+
+    GeneralSoundFitScope(const GeneralSoundFitScope&) = delete;
+    GeneralSoundFitScope& operator=(const GeneralSoundFitScope&) = delete;
+
+    /// The kind machines created now are fitted with (NONE: as configured)
+    static GSTypeKind Kind();
+
+private:
+    uint8_t _previous;
 };

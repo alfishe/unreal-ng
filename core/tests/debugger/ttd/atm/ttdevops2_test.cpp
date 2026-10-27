@@ -9,7 +9,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/atm/ttdevops2.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -48,10 +48,10 @@ TEST(TTDEvoPs2_Test, JournaledKeyReplaysIntoTheSameLog)
     EvoAvr& avr = atm3->GetEvoAvr();
     ASSERT_EQ(context->pKeyboard->GetPs2Sink(), &avr) << "the ZX-Evo decoder attaches its AVR";
 
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::EvoPs2));
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::EvoPs2));
 
     emulator->RunNFrames(2);
     emulator->RunTStates(20000);  // the key goes in the middle of a frame
@@ -100,7 +100,7 @@ TEST(TTDEvoPs2_Test, MachinesWithoutPs2PayNothing)
     EmulatorContext* context = emulator->GetContext();
     EXPECT_FALSE(context->pKeyboard->HasPs2Sink());
 
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ASSERT_TRUE(ttd->StartRecording());
     DebugKeyboardManager* keys = emulator->GetDebugManager()->GetKeyboardManager();

@@ -99,7 +99,9 @@ void FmBus::Advance(std::array<int32_t, kChannelCount>& taps, int32_t& outL, int
             taps[ch] = out.channel[ch]; // raw: meters see muted channels too
             if ((_muteMask >> ch) & 1u)
                 continue;
-            const int32_t v = out.channel[ch];
+            // The host gain (Q15, truncated toward zero): the tap itself at unity
+            const int32_t v = _anyGain ? static_cast<int32_t>((static_cast<int64_t>(out.channel[ch]) * _gain[ch]) / 32768)
+                                       : out.channel[ch];
             // Output routing (YMF262 silicon, include semantics): with NEW
             // set, C0 bits 4..7 enable CHA/CHB/CHC/CHD; the card sums pair
             // A/C into L and pair B/D into R; all four clear = channel
@@ -150,6 +152,34 @@ void FmBus::AdvanceTimers()
     }
 }
 
+namespace
+{
+// `ticks` steps of one timer: +1 per step, an overflow at the period clears it and raises the flag unless masked.
+// The count may stand at or past the period after a load rewrite: the next step overflows
+void TimerTicks(uint16_t& count, uint32_t period, bool mask, uint8_t flag, uint8_t& status, uint64_t ticks)
+{
+    const uint64_t first = (static_cast<uint64_t>(count) + 1 >= period) ? 1 : period - count;
+    if (ticks < first)
+    {
+        count = static_cast<uint16_t>(count + ticks);
+        return;
+    }
+    count = static_cast<uint16_t>((ticks - first) % period);
+    if (!mask)
+        status |= flag;
+}
+} // namespace
+
+void FmBus::AdvanceTimersIdle(uint64_t ticks)
+{
+    if (ticks == 0)
+        return;
+    if (_timer1Enable)
+        TimerTicks(_timer1, (0x100u - _timer1Load) * 4, _timer1Mask, kStatusT1, _status, ticks);
+    if (_timer2Enable)
+        TimerTicks(_timer2, (0x100u - _timer2Load) * 16, _timer2Mask, kStatusT2, _status, ticks);
+}
+
 void FmBus::SetChannelMute(int ch, bool mute)
 {
     if (ch < 0 || ch >= kChannelCount)
@@ -158,6 +188,18 @@ void FmBus::SetChannelMute(int ch, bool mute)
         _muteMask |= (1u << ch);
     else
         _muteMask &= ~(1u << ch);
+}
+
+void FmBus::SetChannelGain(int ch, int32_t gainQ15)
+{
+    if (ch < 0 || ch >= kChannelCount)
+        return;
+    if (!_anyGain)
+        _gain.fill(32768);
+    _gain[ch] = gainQ15;
+    _anyGain = false;
+    for (int32_t g : _gain)
+        _anyGain = _anyGain || g != 32768;
 }
 
 void FmBus::SaveState(uint8_t* dst) const

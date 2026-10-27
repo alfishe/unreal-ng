@@ -18,7 +18,7 @@
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -629,7 +629,7 @@ TEST_F(ProfiXtKbcMachine_Test, TtdSeekReplaysAKeyPressExactly)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     _context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2);

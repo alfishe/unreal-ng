@@ -41,7 +41,24 @@ class EmulatorContext;
 /// remainder (the phase) is TTD state. With equal rates the ratio is 1 : 1 and the master-clock axis IS the
 /// host axis, frame-relative and rebased with it - exactly the TSFM's original arithmetic. With a true ratio
 /// (the MultiSound's own 3.5 MHz oscillator on a 3.5469 MHz 128K host) the master-clock axis is continuous and
-/// never rebased; the host axis still is.
+/// never rebased; the host axis still is. A board whose host axis itself is continuous (the MultiSound's card axis,
+/// never rebased) says so in the configuration: the master-clock axis is then continuous at 1 : 1 too.
+///
+/// The render cursor. Every output path renders on the master-clock axis behind the chips: the render cursor
+/// trails the time the chips were advanced to by kRenderLag, so every FM word and timed SSG write has landed before
+/// the cursor reaches it. ONE rule keeps it there on every path (anchorRender): a render that is about to advance
+/// the cursor by `span` master clocks must END within kRenderWindow behind its reference position - where the
+/// chips' time stands for that render; outside the window the owner lost the timeline (a reset of a frame-relative
+/// axis, a gap in rendering, a host speed or rate change) and the cursor is placed so that the render ends
+/// kRenderLag behind the reference. The two kinds of owner differ only in the reference they pass:
+///  - the TSFM renders as the CPU runs, through the frame (renderTick): the reference is the frame origin of its
+///    frame-relative axis (0) at each frame start, with nothing rendered yet (span 0);
+///  - the MultiSound syncs the chips to the frame end and then renders the frame (renderChannels): the reference is
+///    the chips' synced position and the span the master clocks the frame's output samples cover
+///    (beginChannelRender).
+/// A reset moves the cursor only where time itself restarts: on a frame-relative axis to the frame origin (the
+/// rule, forced); on a continuous axis time does not jump at a reset and the cursor keeps its place. A TTD restore
+/// puts it back exactly (saveTimeline / loadTimeline: relative to the chips).
 
 /// Pair parameters (board configuration, not state)
 struct Ym2203PairConfig
@@ -52,6 +69,9 @@ struct Ym2203PairConfig
     uint32_t hostTickRate = static_cast<uint32_t>(CPU_CLOCK_RATE);
     /// Stereo output stage: FM output coupling high-pass corner (the TSFM's C14 / C15 into the DA5 mixer)
     double fmCouplingHz = 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6);
+    /// The owner's host axis is continuous, never rebased (the MultiSound's card axis); false: frame-relative and
+    /// rebased every frame (rebaseFrame; the TSFM in the AY socket)
+    bool continuousHostAxis = false;
 };
 
 /// FM input rate of the output stage (TSFM §6.3): the YM2203 sample clock at prescaler /6 is master / 8 =
@@ -68,6 +88,8 @@ struct Ym2203OutputState
     double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
     bool couplingSettlePending = false;   // after a flush: settle the coupling on the first live word
     FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
+    size_t zeroRun = 0;                   // newest consecutive zeros fed to the decimator (a reset or a clear only
+                                          // zeroes its history, so the count stays true)
     double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
     uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
     std::shared_ptr<NativeAudioTap> nativeTap = std::make_shared<NativeAudioTap>();
@@ -105,6 +127,7 @@ public:
         fm.write_address(0x2D);
         address = 0;
         fmClockPhase = 0;
+        fmIdleKnown = false;
         fmKeyOn[0] = fmKeyOn[1] = fmKeyOn[2] = 0;
         intf.reset();
         ssg.setChipModel(AYChipModel::YM2149);
@@ -118,6 +141,10 @@ public:
 
     uint8_t address = 0;       // YM2203 address latch (8-bit)
     int32_t fmClockPhase = 0;  // master clocks since the last FM sample, 0 .. 12*p-1
+    // fm.fmIdle() found true and nothing since that could end it: clockFmIdle keeps an idle engine idle (it turns
+    // phases and counters only), so only a register write, a reset, a restore or a clock through clockFmOnce (a timer
+    // expiry may key on: CSM) clears it - the idle test walks every operator
+    bool fmIdleKnown = false;
 
     // Key-on mask per FM channel as last written to register 0x28 (bits 4-7 = slots S1,S2,S3,S4). Mirror for the
     // state report (DeviceState::FmChip); ymfm keeps the live key state privately.
@@ -151,6 +178,10 @@ class Ym2203Pair
 public:
     /// Constant lag of the render cursor behind the newest timed event (see kTurboSoundRenderLagT)
     static constexpr int64_t kRenderLag = kTurboSoundRenderLagT;
+    /// How far behind its reference a render may end before the cursor is re-anchored (anchorRender): four render
+    /// lags, the TSFM's original frame-start window. The steady state ends every render kRenderLag behind, within
+    /// one SSG tick and the decimators' fractional phase
+    static constexpr int64_t kRenderWindow = 4 * kRenderLag;
 
     /// TTD sizes. The per-chip payload and the timeline tail are the TSFM blob's (§8.2), byte for byte:
     /// per chip: address(1) + fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) + ymfm(494) + SSG(73)
@@ -229,6 +260,7 @@ public:
         Ym2203Chip& c = *_chips[index];
         c.address = value;
         c.fm.write_address(value);
+        c.fmIdleKnown = false;
         c.ssg.setRegister(value);
     }
 
@@ -281,6 +313,11 @@ public:
     }
 
     /// FM operator clocking frozen (sound off, no TTD); everything CPU-observable stays exact
+    /// Idle FM halves (nothing sounding or keyed, ymfm patch 6) advance in one go per stretch between timer
+    /// expiries (on by default; off clocks every sample: comparison tests), and the samples that stood for so far
+    void setFmIdleFastPath(bool on) { _fmIdleFastPath = on; }
+    uint64_t fmIdleSamples() const { return _fmIdleSamples; }
+
     void setCoreSynthesisSkipped(bool skipped)
     {
         _coreSynthesisSkipped = skipped;
@@ -288,6 +325,12 @@ public:
     bool coreSynthesisSkipped() const
     {
         return _coreSynthesisSkipped;
+    }
+    /// The next syncTo takes the host position as it is, without advancing (after a reset): a sync must not be put off
+    /// past that first one, or the chips would start from a later moment
+    bool adoptsCpuClock() const
+    {
+        return _adoptCpuClock;
     }
     /// endregion </Render switches>
 
@@ -301,9 +344,32 @@ public:
     {
         return _renderT;
     }
-    void setRenderT(int64_t t)
+
+    /// THE render-cursor rule (see the file comment), for every owner and path: a render about to advance the
+    /// cursor by `span` master clocks, whose chips' time stands at `reference`, must end within
+    /// [reference - kRenderWindow, reference]; outside that window, or when `force`d (the owner knows it lost the
+    /// timeline: a rate or quality switch), the cursor is placed so that the render ends kRenderLag behind
+    /// `reference`. Returns whether the cursor moved
+    bool anchorRender(int64_t reference, int64_t span, bool force = false)
     {
-        _renderT = t;
+        const int64_t end = _renderT + span;
+        if (!force && end <= reference && end >= reference - kRenderWindow)
+            return false;
+        _renderT = reference - kRenderLag - span;
+        ++_renderAnchors;
+        return true;
+    }
+
+    /// Times the cursor was re-anchored since construction (diagnostics and tests; not TTD state)
+    uint64_t renderAnchors() const
+    {
+        return _renderAnchors;
+    }
+
+    /// The master-clock axis is frame-relative (rebased with the TSFM's host axis): 1 : 1 on a frame-relative host
+    bool frameRelativeChipAxis() const
+    {
+        return _unity && !_config.continuousHostAxis;
     }
 
     /// Consume every FM word of chip `index` that landed by half-tick boundary h into the hold register (the raw
@@ -351,7 +417,10 @@ public:
         const double sample = o.coupling.filter(gated);
         o.lastFed = sample;
         if (_hqEnabled)
+        {
             o.decimator.feedSample(sample);
+            o.zeroRun = sample == 0.0 ? o.zeroRun + 1 : 0;
+        }
         else
         {
             o.lqSum += sample;
@@ -402,6 +471,61 @@ public:
         _renderT += 16;
     }
 
+    /// The `ticks` renderTick calls of a pair that is quiet at rest, and true; false (nothing done) otherwise. Quiet at
+    /// rest over the run: no SSG write due by its last tick, both SSGs silentAtRest, the HQ output stage of each chip
+    /// with its coupling at rest on the gated hold, its decimator history all zeros, no native tap, and every FM word
+    /// due by the last tick's second half the level the hold has (nothing within the run can change any of that).
+    /// renderTick would then feed zeros everywhere and change no filter state: only the generators, the words consumed
+    /// and the decimator positions move, and so they do here. The caller feeds the SSG decimators (all zeros too)
+    bool renderQuiet(uint32_t ticks, bool fmEnabled)
+    {
+        if (!_quietTicksEnabled || ticks == 0)
+            return false;
+        const int64_t lastTick = _renderT + 16 * int64_t(ticks - 1);
+        const int64_t lastHalf = lastTick + 8;
+        for (const auto& c : _chips)
+        {
+            if (!c->ssgWrites.empty() && c->ssgWrites.front().t <= lastTick)
+                return false;
+            if (!c->ssg.silentAtRest())
+                return false;
+            const Ym2203OutputState& o = c->out;
+            if (!_hqEnabled || o.nativeTap->isActive() || o.zeroRun < FilterDecimator::history())
+                return false;
+            if (!o.coupling.restsAt(fmEnabled ? o.hold : 0.0))
+                return false;
+            for (size_t i = 0; i < c->words.size() && int64_t(c->words.at(i).t) <= lastHalf; i++)
+            {
+                if (static_cast<double>(c->words.at(i).word) / 32768.0 != o.hold)
+                    return false;
+            }
+        }
+        for (auto& c : _chips)
+        {
+            Ym2203OutputState& o = c->out;
+            bool consumed = false;
+            while (!c->words.empty() && int64_t(c->words.front().t) <= lastHalf)
+            {
+                c->words.pop();
+                consumed = true;
+            }
+            if (consumed)
+                o.couplingSettlePending = false;  // settling on the level it rests at changes nothing
+            o.lastFed = 0.0;
+            o.decimator.feedZerosIntoSilence(2 * size_t(ticks));
+            o.zeroRun += 2 * size_t(ticks);
+            c->ssg.advanceSilent(ticks);
+        }
+        _renderT += 16 * int64_t(ticks);
+        _quietTicks += ticks;
+        return true;
+    }
+
+    /// Off: every tick through renderTick (comparisons); the count of the ticks quietTick took
+    void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    bool quietTicksEnabled() const { return _quietTicksEnabled; }
+    uint64_t quietTicks() const { return _quietTicks; }
+
     /// Silence the output-stage audio content - hold, coupling, LQ boxcar, decimator histories - keeping every
     /// tick-gating phase (determinism)
     void flushOutputStage();
@@ -420,10 +544,30 @@ public:
     /// the stereo output stage is not used then
     void configureChannelOutputs(size_t rate, FilterDecimator::Quality quality = FilterDecimator::Quality::Reference);
 
-    /// Render `frames` output samples of the per-channel streams into `block`. The cursor follows the master-clock
-    /// axis (kRenderLag behind the synced position; re-anchored when the owner lost the timeline). Returns the
-    /// samples written (0 before configureChannelOutputs)
+    /// Master clocks `frames` per-channel output samples cover at the configured output rate
+    int64_t channelSpan(size_t frames) const
+    {
+        return static_cast<int64_t>(frames) * int64_t(_config.masterClockHz) / int64_t(_channelRate);
+    }
+
+    /// The cursor rule for an owner that synced the chips to the end of the time it now renders as `frames`
+    /// output samples (possibly in several renderChannels blocks, e.g. split at mute changes): reference = the
+    /// synced master clock, span = those samples. Call once per synced period, before its blocks
+    bool beginChannelRender(size_t frames)
+    {
+        return anchorRender(_chipT, channelSpan(frames));
+    }
+
+    /// Render `frames` output samples of the per-channel streams into `block`, from where the previous render
+    /// stopped (the cursor placed by beginChannelRender). Returns the samples written (0 before
+    /// configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
+    /// renderChannels' outputs from `n` on while the pair is quiet over them, in one run; the count it took (0: none).
+    /// Quiet: both SSGs silentAtRest (every channel level 0 now and at the last tick), every channel and FM decimator
+    /// history all zeros, each chip's FM part fed 0 (muted, or holding 0), no native tap - and over the run no SSG write
+    /// due and, FM on, no word off 0 due. Every output of the run is then +0.0 on every row: the generators, the words
+    /// consumed, the decimator positions and the master's phase move as the ticks would move them
+    size_t renderQuietChannels(size_t n, size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
     /// region <TTD>
@@ -484,19 +628,30 @@ private:
     int64_t _chipT = 0;          // master clock the chips were advanced to (== _syncedT at 1 : 1)
     uint64_t _ratioPhase = 0;    // ratio accumulator remainder, in host ticks x masterClockHz (TTD state)
     bool _adoptCpuClock = true;  // set by reset: the next sync adopts the host's position without advancing
+    bool _fmIdleFastPath = true;     // idle FM halves clocked in one go (advanceChip); off: the comparison tests
+    uint64_t _fmIdleSamples = 0;     // FM sample clocks the fast path stood for (diagnostics, not state)
 
     bool _hqEnabled = true;
+    bool _quietTicksEnabled = true;
+    uint64_t _quietTicks = 0;
     bool _synthesisSuppressed = false;
     bool _coreSynthesisSkipped = false;
 
-    // Render cursor on the master-clock axis, kRenderLag behind the word and SSG-write timeline
+    // Render cursor on the master-clock axis, kRenderLag behind the word and SSG-write timeline (anchorRender)
     int64_t _renderT = -kRenderLag;
+    uint64_t _renderAnchors = 0;  // re-anchors since construction (diagnostics, not TTD state)
 
     // Per-channel outputs (configureChannelOutputs, allocated on first use): master = SSG chip 0 channel A
     struct ChannelOutputs
     {
         FilterDecimator fm[2];
         FilterDecimator ssg[2][3];
+        // FM samples fed in a row that were zero (muted or silent FM): from fm[i].window() on, the FIR's output is
+        // exactly +0.0 and is not evaluated (render layer, not TTD state; 0 = evaluate)
+        size_t fmZeroRun[2] = {};
+        // The same for the SSG channels: levels 0.0 fed in a row (a silent channel)
+        size_t ssgZeroRun[2][3] = {};
     };
     std::unique_ptr<ChannelOutputs> _channels;
+    size_t _channelRate = 44100;   // output rate of the per-channel streams (configureChannelOutputs)
 };

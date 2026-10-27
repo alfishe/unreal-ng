@@ -1,3 +1,4 @@
+#include "_helpers/emulatortesthelper.h"
 #include "stdafx.h"
 #include "pch.h"
 
@@ -225,17 +226,7 @@ void ModelsRegression_Test::SetUp()
 
 void ModelsRegression_Test::TearDown()
 {
-    if (_core != nullptr)
-    {
-        delete _core;
-        _core = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_core, _context);
 }
 
 /// endregion </SetUp / TearDown>

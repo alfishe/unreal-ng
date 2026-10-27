@@ -134,10 +134,10 @@ public:
 
     /// TTD state of the shared part (netstate::EspModuleState); the firmware's
     /// own state rides in the same struct (SaveFirmware / LoadFirmware)
-    bool SaveState(netstate::EspModuleState& out) const;
+    void SaveState(netstate::EspModuleState& out, netstate::Tail& tail) const;
     /// The line format the ZX side last set (OnLineSettings)
     const SerialLine& ZxLine() const { return _zxLine; }
-    bool LoadState(const netstate::EspModuleState& in, const EspStack::ByteSource& bytes);
+    bool LoadState(const netstate::EspModuleState& in, const netstate::Tail& tail, const EspStack::ByteSource& bytes);
     void RebindSockets() { _stack->RebindAll(); }
 
 protected:
@@ -152,6 +152,9 @@ protected:
     virtual void OnHardwareReset() {}
     /// RST released with GPIO0 high: the firmware starts (its banner)
     virtual void OnHardwareBoot() {}
+    /// A software restart (AT+RST, AT+RESTORE): the boot ROM runs again and reads GPIO0 like after a reset. Low: the chip is in the ROM's
+    /// download mode (silent, links dropped) and this returns true; the firmware must not boot
+    bool RestartIntoDownloadIfStrapped();
 
     /// Queue a reply; it reaches the ZX after the turnaround
     void Send(const uint8_t* data, size_t length, uint64_t turnaroundUs = kTurnaroundUs);

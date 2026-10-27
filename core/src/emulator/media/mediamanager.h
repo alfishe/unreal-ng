@@ -29,14 +29,27 @@
 #include <string>
 #include <vector>
 
+#include "emulator/coordinator/ports.h"
+#include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/blockformats.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/media/medium.h"
 #include "emulator/media/mediatypes.h"
+#include "emulator/media/mediaundolog.h"
 
 class EmulatorContext;
+struct CompositeInfo;
+
+/// What an insert does with the session journal next to the medium (multi-source phases/c10e-session-journal.md §4)
+enum class JournalChoice : uint8_t
+{
+    Default,  ///< [MEDIA] SessionJournal: replay when on, off when off
+    Replay,   ///< a journal left by a crash is replayed
+    Discard,  ///< a journal left by a crash is deleted unread; a new one starts
+    Off,      ///< no journal next to the medium this time (a temp file); an old one is left as it is
+};
 
 struct InsertOptions
 {
@@ -46,10 +59,22 @@ struct InsertOptions
     std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
+    const char* ttdReason = "media-change";  ///< the TTD session the old media described ends with this reason
+    /// The operation the machine state coordinator logs and rules on: a medium in, or a new blank disk
+    coordinator::OpKind opKind = coordinator::OpKind::MediaInsert;
+    /// Which refusal text a recording gives (Emulator::LoadTape / LoadDisk word it for a tape, a disk)
+    coordinator::MediaClass refusalWording = coordinator::MediaClass::Any;
+    coordinator::OpSource origin = coordinator::OpSource::Unknown;   ///< who asked (the operation log)
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
+    JournalChoice journal = JournalChoice::Default;  ///< media written in `session` access
     /// A dirty medium already in the slot: what happens to its writes
     Disposition disposition = Disposition::None;
     std::string exportPath;            ///< Disposition::Export
+    /// Disposition::Save of a composite (D-8): its strategy (empty: the descriptor's writes.save), onConflict
+    /// keep-both, and strict (a failed commit / write-back refuses instead of keeping the writes as a delta)
+    std::string strategy;
+    bool keepBoth = false;
+    bool strict = false;
 
     /// Folder volumes only (BUGS.md #3): forwarded to OpenRequest so a caller
     /// scanning off the UI thread (the GUI's async insert worker) can abort a
@@ -66,6 +91,31 @@ struct EjectOptions
     Disposition disposition = Disposition::None;
     std::string exportPath;     ///< Disposition::Export
     bool endRecording = false;  ///< end a TTD recording instead of refusing
+    std::string strategy;       ///< Disposition::Save of a composite (D-8), as InsertOptions
+    coordinator::OpSource origin = coordinator::OpSource::Unknown;   ///< who asked (the operation log)
+    bool keepBoth = false;
+    bool strict = false;
+
+    /// An eject that drops a dirty medium's writes
+    static EjectOptions Discarding()
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;
+        return options;
+    }
+};
+
+/// A rescan of a folder or composite (DT-16): what happens to unsaved writes when the sources changed
+struct RescanOptions
+{
+    Disposition disposition = Disposition::None;  ///< None refuses with "dirty" (only when the sources changed)
+    std::string exportPath;                       ///< Disposition::Export
+    std::string strategy;                         ///< Disposition::Save of a composite (D-8), as InsertOptions
+    bool keepBoth = false;
+    bool strict = false;
+    /// Build again even when the content id is the same (a write-back changed host files in place: the same size and
+    /// time give the same id)
+    bool force = false;
 };
 
 struct SaveOptions
@@ -73,6 +123,23 @@ struct SaveOptions
     std::string path;           ///< empty: the medium's own image file
     bool allowRetarget = true;  ///< floppies: save as <stem>.udi when the format cannot hold the disk
     std::string compression;    ///< block media saved as a CHD: the codecs (BlockWriteOptions)
+    bool compact = false;       ///< block media: a re-synthesized FAT volume (S1 compact)
+    std::optional<FatType> fs;  ///< compact: the FAT type
+    std::optional<uint64_t> size;  ///< compact: total bytes
+    std::string vhd;               ///< a new .vhd file: fixed (default) or dynamic (BlockWriteOptions)
+    /// Composites (DT-9): flat (needs a path) | delta | commit | write-back; empty: a path means flat,
+    /// no path the descriptor's writes.save (delta when it names none; ask saves a delta too, discard drops the
+    /// writes of a medium that leaves)
+    std::string strategy;
+    bool force = false;          ///< delta: write over a delta that was made over other sources
+    /// The medium leaves its slot (an eject / swap / rescan disposition, the emulator going away): the policy
+    /// runs as for a plain save, and a strategy that fails keeps the writes as a session delta instead (D-8)
+    bool disposition = false;
+    bool strict = false;         ///< disposition: a failed strategy refuses (the medium stays) instead of the delta
+    bool plan = false;           ///< commit / write-back: report what would be written, write nothing
+    bool keepBoth = false;       ///< write-back: a host file changed since the build gets "name (guest).ext" next to it
+    /// commit: all | partial (FR-45); empty: the descriptor's writes.commit. A descriptor's none cannot be lifted here
+    std::string commit;
 };
 
 /// What a save did
@@ -120,10 +187,15 @@ struct SlotInfo
     uint64_t changedUnits = 0;
     std::string changes;          ///< the unsaved changes for people ("1 track: 3 sectors")
     bool writeProtect = false;
+    /// Unsaved changes only (else empty): what closing the emulator does with them (D-8). A composite's policy:
+    /// "delta", "commit", "write-back" (they are saved), "discard" (dropped), "ask" (a GUI asks the user; without
+    /// one a delta). Other media: "journal" (their session journal keeps them for the next insert) or "lost"
+    std::string onRelease;
+    uint64_t volumeId = 0;        ///< Medium::VolumeId: matches the notifications' MediaSlotPayload::volumeId
 };
 
 class IMediaReadJournal;
-class MediaManager : public IMediaHistory
+class MediaManager : public IMediaHistory, public IMediaWriteObserver
 {
 public:
     explicit MediaManager(EmulatorContext* context);
@@ -155,6 +227,10 @@ public:
     MediaResult Eject(const std::string& slotId, const EjectOptions& options = {});
     /// Drop the medium's session changes
     MediaResult Discard(const std::string& slotId);
+    /// The machine state coordinator wiring (Emulator): the operations above go through @p ops; OpOwner() is
+    /// their owner. Null: they run without rules (a manager without an emulator)
+    void SetMachineOps(coordinator::IMachineOps* ops);
+    coordinator::IOpOwner& OpOwner();
     /// Write the medium's current contents to a new image file. The medium
     /// keeps its source and its unsaved changes. Also for a detached medium.
     /// Block media: a `.chd` target is a CHD (`options`), anything else raw
@@ -167,9 +243,11 @@ public:
     MediaResult Save(const std::string& slotId, const SaveOptions& options = {}, SaveOutcome* outcome = nullptr);
     /// The slot's write-protect switch
     MediaResult SetWriteProtect(const std::string& slotId, bool on);
-    /// Build a folder medium again from its folder (host files changed).
-    /// Refused while it has unsaved writes
-    MediaResult Rescan(const std::string& slotId);
+    /// Build a folder or composite medium again from its sources (host files changed), DT-16. Sources that give
+    /// the same content id leave the medium as it is ("unchanged", writes kept). Otherwise unsaved writes need a
+    /// disposition (they cannot follow a rebuild: clusters move); a save follows the policy, then the medium is
+    /// built again
+    MediaResult Rescan(const std::string& slotId, const RescanOptions& options = {});
     /// Media whose slot went away, keyed by that slot's id (add-on removed)
     std::vector<SlotInfo> Detached() const;
     /// Increases with every change of slots, media or dirty state: a polling
@@ -205,6 +283,11 @@ public:
     /// the state of that moment). Floppy write-through waits while held.
     /// Emulation thread
     void HoldHostWrites(bool hold);
+    /// On the recorded history (a replay, the machine at or running from a point in the past), a slot whose medium
+    /// came in after that point is empty for its device until the history reaches the frame it came in: the history
+    /// has the exchange with the controller (ports, sectors), and the guest's earlier writes must not reach a medium
+    /// that came later (M3). Back live, the medium is there again. The TTD restore calls it; every frame boundary too
+    void FollowReplay();
 
     /// Time travel's media read journal (null = none): every block medium's
     /// sector reads are recorded into it, or played back from it. Emulation thread
@@ -217,12 +300,19 @@ public:
     /// barrier: the medium changed, a seek must not cross it silently.
     /// `detail` (the controller's command) goes into the marker's text
     void NoteWrite(const std::string& slotId, const char* detail = nullptr);
+    /// Before the guest changes a sector of a block medium (its read tap, under the tap: @p below) or a floppy track
+    /// (the controller, before the write starts): while a TTD history exists the medium's undo log keeps what the
+    /// unit was, so a seek sets the medium to any recorded version (gap 11). Emulation thread
+    void BeforeSectorWrite(const std::string& slotId, uint64_t lba, IBlockDevice& below) override;
+    void BeforeTrackWrite(const std::string& slotId, const DiskImage::Track& track);
 
-    /// IMediaHistory (TTD Phase 3, Step 4). No change layer yet: a version is
-    /// the count of frames that wrote the medium, and no slot goes back
+    /// IMediaHistory (TTD Phase 3, Step 4). A version is the count of the medium's changes: the frames that wrote it
+    /// and the write-protect toggles. While a TTD history exists every change goes into the slot's undo log
+    /// (MediaUndoLog), and SetHead sets the medium to any version the log reaches
     uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
     void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
     bool SetHead(const std::string& slotId, uint64_t version) override;
+    bool Reaches(const std::string& slotId, uint64_t version) const override;
     /// A slot's peripheral reports that the GUEST took its medium out (a CD drive's START STOP UNIT
     /// eject; emulation thread, inside the command). The normal eject runs at the next frame
     /// boundary (ApplyPending: Detach, NC_MEDIA_EJECTED, revision): the slot is empty for every
@@ -240,6 +330,19 @@ public:
     /// without a running main loop). nullptr restores the emulator's state
     void SetApplyNowProbe(std::function<bool()> probe) { _applyNowProbe = std::move(probe); }
 
+    /// The manager going away (the emulator closes, the application exits, a model switch that recreates the
+    /// emulator) saves every composite's unsaved writes by its writes.save policy (D-8): delta by default and for
+    /// ask, nothing for discard, commit / write-back with the delta fallback. On by default; the test runner turns
+    /// it off so no test leaves a .delta next to its fixtures
+    static void SetSaveOnRelease(bool on) { _saveOnRelease = on; }
+    static bool SaveOnRelease() { return _saveOnRelease; }
+    /// What the save on release did, one line per composite (logged as well)
+    std::vector<std::string> SaveByPolicyOnRelease();
+    /// The media with unsaved changes, attached and detached, each with its onRelease: what a GUI asks about
+    /// before it closes the emulator ("ask" and "lost"). A query, not a notification: the answer is needed before
+    /// the close goes on, and Message Center delivers on its own thread
+    std::vector<SlotInfo> Unsaved() const;
+
 private:
     struct SlotState
     {
@@ -253,24 +356,78 @@ private:
         uint64_t changedUnits = 0;         ///< per-frame snapshot of attached->ChangedUnits()
         std::string changes;               ///< per-frame snapshot of attached->DescribeChanges()
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
-        bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
-        uint64_t writtenFrames = 0;           ///< frames that wrote the medium (its version, IMediaHistory)
+        bool writeMarkedThisFrame = false;    ///< the medium's version moved for this frame's writes
+        bool writeEventThisFrame = false;     ///< a TTD marker already recorded this frame
+        uint64_t writtenFrames = 0;           ///< the medium's changes since it came in (its version's count)
+        uint32_t lineage = 0;                 ///< this insert of the medium (a version names it: VersionOf)
+        MediaUndoLog undo;                    ///< the units before each change while a TTD history exists
+        bool followsHistory = false;          ///< a seek set it to a recorded version: a replay's writes move it along
+        bool versionLost = false;             ///< a replay changed it from no recorded version: it is none any more
+        std::optional<bool> pendingProtect;   ///< a write-protect toggle waiting for the frame boundary (recording)
+        uint64_t landedFrame = 0;             ///< the frame the attached medium came in (its boundary)
+        bool heldForReplay = false;           ///< empty for its device: a replay runs before landedFrame
     };
 
     bool CanApplyNow() const;
+    /// While a TTD history exists, outside a replay: every change of a medium goes into its undo log
+    bool KeepsVersions() const;
+    /// The guest changes the medium in this frame: its version moves once per frame (a replay's writes move it only
+    /// along its history)
+    void MarkWrite(SlotState& state);
+    /// A medium came in, or went back to its source (a discard): a new lineage, its count from 0, nothing to go
+    /// back to
+    void ForgetVersions(SlotState& state);
+    /// IMediaHistory's version: the lineage in the high 32 bits, the count of changes in the low ones. Versions of
+    /// two lineages never meet: another insert, or another run, is another history (F11)
+    static uint64_t VersionOf(const SlotState& state) { return (uint64_t(state.lineage) << 32) | state.writtenFrames; }
+    /// A write-through medium the history sets back becomes a session one (F13): the rollback and every later write
+    /// stay in memory, its host file keeps its content until the user saves
+    void ToSessionAccess(const std::string& slotId, SlotState& state);
+    /// The write-protect switch to @p on now: a version of its own, an event of a recording
+    void ApplyProtect(const std::string& slotId, SlotState& state, bool on);
+    class SlotUnits;
+    /// A change landed in @p slotId (ApplySlot): tell the TTD session (NoteMediaChange)
+    void NoteChangeLanded(const std::string& slotId, const std::string& what);
     SlotInfo Describe(const std::string& slotId, const SlotState& state) const;
+    /// Open `source` the way the slot takes it (its FS matrix, its session journal): Insert and Rescan
+    MediaResult OpenForSlot(const std::string& slotId, const MediaSource& source, const InsertOptions& options,
+                            std::unique_ptr<Medium>& medium);
     /// A dirty medium leaving its slot (or detached): apply the disposition first
     MediaResult ApplyDisposition(const std::string& slotId, Medium& medium, Disposition disposition,
-                                 const std::string& exportPath);
+                                 const std::string& exportPath, const SaveOptions& save);
     MediaResult SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                            SaveOutcome* outcome);
     MediaResult ExportMedium(const std::string& slotId, Medium& medium, const std::string& path,
                              const BlockWriteOptions& options = {});
     MediaResult SaveBlockMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                                 SaveOutcome* outcome);
+    /// S3: a graft composite's patches, grafted files and guest writes into its base image (DT-14)
+    MediaResult CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
+                                const SaveOptions& options, SaveOutcome* outcome);
+    /// FR-45: a partitioned composite's commit: each passthrough partition into its image, each graft partition into
+    /// its base; `partial` leaves the rest (rebuilt partitions, the partition tables) in the session, else they refuse
+    MediaResult CommitPartitioned(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                  const SaveOptions& options, bool partial, SaveOutcome* outcome);
+    /// S4: the guest's file changes into the composite's writable folder layers (DT-10 to DT-12), then a rebuild
+    MediaResult WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                   const SaveOptions& options, SaveOutcome* outcome);
+    /// Another slot (or detached medium) uses `path`: as its own file or as a layer source
+    bool UsedElsewhere(const Medium& self, const std::string& path) const;
+    /// S2: the change layer of a composite into its session delta file
+    MediaResult SaveDelta(const std::string& slotId, Medium& medium, const CompositeInfo& composite, const SaveOptions& options,
+                          const std::string& note, SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
-    MediaResult CheckRecording(bool endRecording);
+    /// Insert, eject and discard run through the machine state coordinator (its rules: refused while a recording
+    /// the user started runs; the TTD session ends at the commit point). The manager is their owner
+    struct MediaRequest;
+    class MediaOpOwner;
+    MediaResult RunMediaOp(coordinator::MachineOp op, MediaRequest& request);
+    static coordinator::MachineOp InsertOp(const std::string& slotId, const std::string& what, const InsertOptions& options);
+    /// Checks that come before the rules (their errors win over a recording's refusal, as before)
+    MediaResult ValidateInsert(const std::string& slotId, const Medium* medium) const;
+    MediaResult PrepareMediaOp(MediaRequest& request);
+    bool CommitMediaOp(MediaRequest& request, coordinator::OpStage& stage);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
     /// One configured entry for a registered slot: its options, then its medium
@@ -280,13 +437,29 @@ private:
     /// A write-through floppy with new guest writes goes back to its file (emulation thread)
     void WriteThroughFloppy(const std::string& slotId, SlotState& state);
     /// Destroy a medium that left the machine (a staged upload's file goes too)
-    static void Retire(std::unique_ptr<Medium> medium);
+    /// A medium leaves for good. `keepJournal`: the emulator goes with its unsaved writes (they stay in the journal
+    /// for the next insert); an eject or a swap decided about them already (a disposition), so its journal goes
+    static void Retire(std::unique_ptr<Medium> medium, bool keepJournal = false);
+    /// SlotInfo::onRelease of a medium with unsaved changes
+    static std::string OnReleaseOf(const Medium& medium);
+    /// A medium written in `session` access gets its journal `<source>.usession` (replayed, discarded or off as
+    /// `choice` says); the outcome goes into its report
+    static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
     std::function<bool()> _applyNowProbe;
+    bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
+    /// Defined in mediamanager.cpp: an inline one gets a different type per TU under MSVC LTCG (C4744)
+    static std::atomic<bool> _saveOnRelease;
     mutable std::recursive_mutex _mutex;
+    /// The coordinator (null: a manager without an emulator, operations run without rules)
+    coordinator::IMachineOps* _machineOps = nullptr;
+    std::unique_ptr<MediaOpOwner> _opOwner;
     std::map<std::string, SlotState> _slots;
     bool _holdHostWrites = false;
+    /// TTD has a history (read at every frame boundary on the machine thread: a write from a card's own thread must
+    /// not read the timeline)
+    std::atomic<bool> _historyExists{false};
     IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran

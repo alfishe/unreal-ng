@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <mutex>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -152,8 +154,10 @@ private:
     // Atomic for thread-safe reads from emulator thread
     std::atomic<bool> _isAllocated{false};
 
-    // Mutex to protect allocation/deallocation from concurrent access
-    mutable std::mutex _allocationMutex;
+    // The counters' lifetime: allocation, freeing and a reset take it exclusive; a tool read (a getter, a
+    // CountersView, a save) takes it shared, so a feature switch-off on another thread never frees the buffers under
+    // a read. The emulation thread's Track* never takes it (a feature change holds the CPU instead)
+    mutable std::shared_mutex _allocationMutex;
 
     // Tracking mode
     TrackingMode _currentMode = TrackingMode::Z80AddressSpace;
@@ -192,9 +196,9 @@ private:
     uint8_t _z80BankExecuteMarks = 0;
 
     // Page-level flags
-    ZeroInitBuffer<uint8_t> _pageReadMarks;     // Size: MAX_PAGES / 8
-    ZeroInitBuffer<uint8_t> _pageWriteMarks;    // Size: MAX_PAGES / 8
-    ZeroInitBuffer<uint8_t> _pageExecuteMarks;  // Size: MAX_PAGES / 8
+    std::bitset<MAX_PAGES> _pageReadMarks;     // One bit a page
+    std::bitset<MAX_PAGES> _pageWriteMarks;
+    std::bitset<MAX_PAGES> _pageExecuteMarks;
 
     std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
     std::unique_ptr<Z80Disassembler> _disassembler;
@@ -364,33 +368,28 @@ public:
     // Get execute access count for a specific Z80 address
     uint32_t GetZ80AddressExecuteCount(uint16_t address) const;
 
-    // Get direct pointer access to Z80 counter arrays (for bulk rendering)
-    const uint32_t* GetZ80ReadCountersPtr() const
+    /// The three counter arrays for a bulk read (rendering, a WebAPI dump): null while the counters are not
+    /// allocated. The view holds the counters' lock shared for its lifetime, so a feature switch-off on another thread
+    /// waits instead of freeing them under the read; keep it short (copy, then format). It never stops the emulation
+    /// thread, which keeps counting while the view is held
+    class CountersView
     {
-        return _z80ReadCounters.empty() ? nullptr : _z80ReadCounters.data();
-    }
-    const uint32_t* GetZ80WriteCountersPtr() const
-    {
-        return _z80WriteCounters.empty() ? nullptr : _z80WriteCounters.data();
-    }
-    const uint32_t* GetZ80ExecuteCountersPtr() const
-    {
-        return _z80ExecuteCounters.empty() ? nullptr : _z80ExecuteCounters.data();
-    }
+    public:
+        const uint32_t* reads = nullptr;
+        const uint32_t* writes = nullptr;
+        const uint32_t* executes = nullptr;
+        size_t size = 0;  ///< elements in each array
 
-    // Get direct pointer access to physical counter arrays (for bulk rendering)
-    const uint32_t* GetPhysReadCountersPtr() const
-    {
-        return _physReadCounters.empty() ? nullptr : _physReadCounters.data();
-    }
-    const uint32_t* GetPhysWriteCountersPtr() const
-    {
-        return _physWriteCounters.empty() ? nullptr : _physWriteCounters.data();
-    }
-    const uint32_t* GetPhysExecuteCountersPtr() const
-    {
-        return _physExecuteCounters.empty() ? nullptr : _physExecuteCounters.data();
-    }
+    private:
+        friend class MemoryAccessTracker;
+        std::shared_lock<std::shared_mutex> _lock;
+    };
+
+    /// The Z80 address space counters (64K each)
+    CountersView Z80CountersView() const;
+
+    /// The physical counters (PAGE_SIZE * MAX_PAGES each, page N at N * PAGE_SIZE)
+    CountersView PhysCountersView() const;
 
     // Get total access count for a physical memory page
     uint32_t GetPageTotalAccessCount(uint16_t page) const;
@@ -497,6 +496,12 @@ private:
     bool SaveDetailedAccessData(const std::filesystem::path& dirPath, const std::vector<std::string>& filterPages);
     void SaveDetailedAccessData(std::ostream& out, const std::vector<std::string>& filterPages);
     void SaveSinglePageAccessData(std::ostream& out, uint16_t page, const std::string& indent = "");
+
+    // The page counts without the lock (the public getters and the save paths hold it)
+    uint32_t PageReadCountUnlocked(uint16_t page) const;
+    uint32_t PageWriteCountUnlocked(uint16_t page) const;
+    uint32_t PageExecuteCountUnlocked(uint16_t page) const;
+    uint32_t PageTotalCountUnlocked(uint16_t page) const;
     std::string GetBankPageName(uint8_t bank) const;
 
     // Allocate counter vectors (lazy allocation - called when tracking is first enabled)

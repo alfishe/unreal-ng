@@ -754,16 +754,18 @@ TEST_F(ZiFiNativeModule_Test, Ttd_ACommandWaitingForTheNetworkSurvivesACheckpoin
     Send(ZiFiNativeModule::kNetOpen, HostPort("bbs.example.org", 23));
     EXPECT_EQ(Cmds(Read()), "FE");
     auto state = std::make_unique<netstate::EspModuleState>();
-    _esp->SaveState(*state);
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
 
     auto copy = std::make_unique<ZiFiNativeModule>(_net.get(), Variant::S3);
     copy->SetClock([this]() { return _now; }, 3500000);
-    copy->LoadState(*state, nullptr);
+    copy->LoadState(*state, tail, nullptr);
     EXPECT_TRUE(copy->Busy());
     EXPECT_EQ(copy->TimeZone(), 2);
     EXPECT_EQ(copy->LastStep(), ZiFiNativeModule::kNetOpen);
     auto again = std::make_unique<netstate::EspModuleState>();
-    copy->SaveState(*again);
+    netstate::Tail againTail;
+    copy->SaveState(*again, againTail);
     EXPECT_EQ(std::memcmp(state->firmware, again->firmware, sizeof(state->firmware)), 0) << "the firmware part round-trips";
     EXPECT_EQ(state->rxLength, again->rxLength) << "the held request stays in the receive buffer";
     EXPECT_GT(state->rxLength, 0u);

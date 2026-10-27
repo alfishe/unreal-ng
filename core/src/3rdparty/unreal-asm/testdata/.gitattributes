@@ -1,0 +1,2 @@
+# Test data must stay byte-exact (CRLF / CR line ends, code pages, invalid bytes): no line-end normalization
+* -text

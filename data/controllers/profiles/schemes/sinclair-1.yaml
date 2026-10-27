@@ -1,0 +1,19 @@
+# Interface 2's left port: 6 left, 7 right, 8 down, 9 up, 0 fire.
+# The d-pad and the left stick move; a game that extends it binds the rest (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/sinclair-1
+label: Sinclair 1 (6 7 8 9 0)
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.up:      { key: "9" }
+    dpad.down:    { key: "8" }
+    dpad.left:    { key: "6" }
+    dpad.right:   { key: "7" }
+    lstick.up:    { key: "9" }
+    lstick.down:  { key: "8" }
+    lstick.left:  { key: "6" }
+    lstick.right: { key: "7" }
+    south:        { key: "0", label: Fire }

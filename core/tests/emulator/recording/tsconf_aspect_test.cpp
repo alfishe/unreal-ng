@@ -6,21 +6,23 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
-#include "emulator/video/videofamily.h"
+#include "emulator/video/displaygeometry.h"
 #include "recordingmanager.h"
 
-/// TS-Conf half-height aspect correction (BUGS.md #6): TS-Conf stores its fat
-/// pixels at half height (720x288 for a 360x288-dot raster), and a square-pixel
-/// recording must double each stored line to show the true 720x576 picture -
-/// the same vertical stretch the live display applies. These tests pin:
-/// 1. CLASSIFICATION - StoresHalfHeightLines is true only for TS-Conf modes
-/// 2. STRETCH - the row-doubling algorithm (mirrored from
-///    RecordingManager::CaptureFrame) reproduces every source pixel twice,
-///    byte-for-byte, in the correct rows
+/// The picture a recording holds (DisplayGeometry::Picture / StretchNearest, the one rule every consumer follows):
+/// TS-Conf stores its fat pixels at half height (720x288 for a 360x288-dot raster), and a square-pixel recording must
+/// double each stored line to show the true 720x576 picture - the same vertical stretch the live display applies
+/// (BUGS.md #6). These tests pin:
+/// 1. SHAPE - which stored size becomes which picture, for every machine's frame
+/// 2. STRETCH - the stretch reproduces every source pixel twice, byte-for-byte, in the correct rows
+/// 3. CHAIN - the real RecordingManager::CaptureFrame delivers that to an encoder, in every TS-Conf video mode
 
 namespace
 {
@@ -51,41 +53,44 @@ bool PixelAt(const uint8_t* buffer, uint16_t stride, uint16_t x, uint16_t y, uin
            buffer[offset + 3] == static_cast<uint8_t>((expectY >> 8) & 0xFF);
 }
 
-// Mirrors the stretch block in RecordingManager::CaptureFrame exactly: every
-// source row is memcpy'd twice into the doubled-height destination
-std::vector<uint8_t> StretchHalfHeightLines(const std::vector<uint8_t>& src, uint16_t width, uint16_t height)
-{
-    const size_t rowBytes = static_cast<size_t>(width) * 4;
-    std::vector<uint8_t> stretched(rowBytes * height * 2);
-    const uint8_t* s = src.data();
-    for (uint32_t y = 0; y < height; y++)
-    {
-        uint8_t* row = stretched.data() + 2 * static_cast<size_t>(y) * rowBytes;
-        memcpy(row, s, rowBytes);
-        memcpy(row + rowBytes, s, rowBytes);
-        s += rowBytes;
-    }
-    return stretched;
-}
-
 } // namespace
 
 class TsConfAspect_Test : public ::testing::Test
 {
 };
 
-TEST_F(TsConfAspect_Test, OnlyTsConfModesStoreHalfHeightLines)
+TEST_F(TsConfAspect_Test, EveryMachinesFrameBecomesAPictureOfTheCrtShape)
 {
-    EXPECT_TRUE(StoresHalfHeightLines(M_TS16));
-    EXPECT_TRUE(StoresHalfHeightLines(M_TS256));
-    EXPECT_TRUE(StoresHalfHeightLines(M_TSTX));
-    EXPECT_TRUE(StoresHalfHeightLines(M_TSZX));
+    struct Case
+    {
+        uint16_t width, height, pictureWidth, pictureHeight;
+        const char* what;
+    };
+    const Case cases[] = {
+        {352, 288, 352, 288, "ZX family, Pentagon, Profi: exact"},
+        {384, 304, 384, 304, "Pentagon overscan: exact"},
+        {720, 288, 720, 576, "TS-Conf: every line doubled"},
+        {736, 288, 736, 576, "Sprinter: every line doubled"},
+        {640, 512, 640, 512, "Next: lines already doubled"},
+        {640, 288, 640, 524, "ATM 640 hi-res: grows to the CRT shape (doubling would be 10% too narrow)"},
+        {608, 288, 608, 498, "Profi hi-res: grows to the CRT shape"},
+        {320, 288, 352, 288, "ATM EGA 320: grows sideways"},
+    };
+    for (const Case& c : cases)
+    {
+        const DisplayGeometry::Size picture = DisplayGeometry::Picture(c.width, c.height);
+        EXPECT_EQ(picture.width, c.pictureWidth) << c.what;
+        EXPECT_EQ(picture.height, c.pictureHeight) << c.what;
+        EXPECT_EQ(picture.width % 2, 0) << c.what << ": codecs want even sizes";
+        EXPECT_EQ(picture.height % 2, 0) << c.what;
+    }
 
-    EXPECT_FALSE(StoresHalfHeightLines(M_NUL));
-    EXPECT_FALSE(StoresHalfHeightLines(M_ZX48));
-    EXPECT_FALSE(StoresHalfHeightLines(M_ATM16));
-    EXPECT_FALSE(StoresHalfHeightLines(M_PROFIHR));
-    EXPECT_FALSE(StoresHalfHeightLines(M_P16));
+    // A working window has the shape of its share of the frame: the Spectrum's paper stays 256x192, the ATM's 640x200 of 288 lines
+    // grows to 1.76
+    EXPECT_EQ(DisplayGeometry::Picture(256, 192, DisplayGeometry::WindowAspect(352, 288, 256, 192)).height, 192);
+    const DisplayGeometry::Size atm = DisplayGeometry::Picture(640, 200, DisplayGeometry::WindowAspect(640, 288, 640, 200));
+    EXPECT_EQ(atm.width, 640);
+    EXPECT_EQ(atm.height, 364);
 }
 
 /// A recording of a TS-Conf session must show what the user sees: the raw
@@ -96,9 +101,8 @@ TEST_F(TsConfAspect_Test, StretchDoublesEveryRowAndPreservesContent)
     const uint16_t height = 288;
 
     auto src = CreateTestFramebuffer(width, height);
-    auto stretched = StretchHalfHeightLines(src, width, height);
-
-    ASSERT_EQ(stretched.size(), static_cast<size_t>(width) * height * 2 * 4);
+    std::vector<uint8_t> stretched(static_cast<size_t>(width) * height * 2 * 4);
+    DisplayGeometry::StretchNearest(src.data(), width, height, stretched.data(), width, height * 2);
 
     for (uint16_t y = 0; y < height; y++)
     {
@@ -118,7 +122,9 @@ TEST_F(TsConfAspect_Test, StretchDoesNotTouchWidth)
     const uint16_t height = 288;
 
     auto src = CreateTestFramebuffer(width, height);
-    auto stretched = StretchHalfHeightLines(src, width, height);
+    const DisplayGeometry::Size picture = DisplayGeometry::Picture(width, height);
+    std::vector<uint8_t> stretched(static_cast<size_t>(picture.width) * picture.height * 4);
+    DisplayGeometry::StretchNearest(src.data(), width, height, stretched.data(), picture.width, picture.height);
 
     const size_t expectedRowBytes = static_cast<size_t>(width) * 4;
     EXPECT_EQ(stretched.size() / expectedRowBytes, static_cast<size_t>(height) * 2)
@@ -204,6 +210,12 @@ TEST_F(TsConfAspect_Test, EveryTsConfModeRecordsTheLiveFramebufferDoubledAndByte
     ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
         TestPathHelper::GetUniqueTestScratchPath("tsconf-capture-sink") + ".mp4", std::move(sink)))
         << "the sink encoder starts";
+
+    // The CPU parks in DI: HALT, so the booting TS-BIOS cannot set V_CONFIG back while the modes are walked (how far
+    // it gets in a few frames depends on its timing: the CMOS reads wait for the AVR)
+    context->pMemory->DirectWriteToZ80Memory(0x8000, 0xF3);   // DI
+    context->pMemory->DirectWriteToZ80Memory(0x8001, 0x76);   // HALT
+    context->pCore->GetZ80()->pc = 0x8000;
 
     // V_CONFIG[1:0] walks every TS-Conf video mode (ScreenTSConf::ModeOf)
     const VideoModeEnum modes[4] = {M_TSZX, M_TS16, M_TS256, M_TSTX};

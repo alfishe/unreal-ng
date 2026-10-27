@@ -40,6 +40,10 @@ For development, every GM bank we can reach is downloaded to `testdata/midi/` (o
 **Owner decision (2026-10-03): A.** One file is tracked in the repository, `data/midi/generaluser-gs.sf2`, with the
 author's license next to it (like the ROMs in `data/`). Installation copies it next to the application. Builds and
 CI work offline, and the library tests pin the bank by SHA-256. The one-time cost is about 30 MB of git history.
+**Done 2026-10-05:** `data/midi/generaluser-gs.sf2` (2.0.3, SHA-256 `9575028c...` as in `testdata/midi/README.md`),
+`LICENSE-generaluser-gs.txt` and `README.md` in `data/midi/`; every build target that ships `data/rom` ships `data/midi`
+(`midi/` beside `rom/`, macOS bundles in `Contents/Resources/midi`, Linux packages `lib/unreal-ng/midi`); the card finds
+it without `[MIDI] Bank=`. `Bank=NONE` loads no bank; the test runner sets it unless a test asks for the default bank.
 
 ## Q5. Which variants of the card are modeled?
 
@@ -58,3 +62,8 @@ firmware: the errata of rev.A / A1 (missing MREQ wire, swapped L/R on the 3.5 mm
 that makes the GS unstable) and the board-level reset glitch from issue #9 (the YM2203 prescaler left wrong after a
 too-short RESET) are not reproduced. The YM2203 is reset properly, the stereo channels are the right way round, and
 the GS runs stable. These faults are listed in the hardware reference as real-world notes only.
+
+**Ball Quest click (2026-10-05, MS-7): decided, not modeled.** The emulated card does what the RTL does with the
+game's `#F0-#F7` writes (chip select, FM unmute), but the click itself comes from the analog level of the YM3014B while
+its serial input is held low (an all-zero word: `S2..S0 = 000`, "not allowed" in the datasheet), which no source
+documents. Owner decision: keep the FM mute output silent.

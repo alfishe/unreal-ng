@@ -1,4 +1,5 @@
 #include "disassemblerwidget.h"
+#include "emulator/remotecontrolguard.h"
 
 // Column widths for disassembly output
 constexpr int BREAKPOINT_COL_WIDTH = 3;  // [ ]
@@ -7,7 +8,11 @@ constexpr int BYTECODE_COL_WIDTH = 11;   // XX XX XX XX XX
 constexpr int LABEL_COL_WIDTH = 15;      // LABEL_NAME:
 constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 
+#include <algorithm>
+
 #include <QApplication>
+#include <algorithm>
+#include <cstdlib>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,6 +27,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debuggerwindow.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
@@ -45,6 +51,9 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // Create a custom DisassemblyTextEdit and replace the default one
     DisassemblyTextEdit* customTextEdit = new DisassemblyTextEdit(this);
     customTextEdit->setReadOnly(true);
+    // Keys reach it from a click and from the controllers' pane keys (PaneFocus sends them to the first child that
+    // takes strong focus): a read-only text edit may not
+    customTextEdit->setFocusPolicy(Qt::StrongFocus);
     customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
 
     // Set a monospace font for the disassembler
@@ -68,6 +77,10 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // Setup breakpoint highlight format
     m_breakpointFormat.setBackground(QColor(255, 0, 0, 100));  // Light red background
     m_breakpointFormat.setForeground(QColor(0, 0, 0));         // Black text
+
+    // The cursor line (run to the cursor): a light blue background, under the PC and breakpoint highlights
+    m_cursorFormat.setBackground(QColor(80, 140, 255, 60));
+    m_cursorFormat.setProperty(QTextFormat::UserProperty, QStringLiteral("cursor-line"));
 
     // Create scroll mode indicator label
     m_scrollModeIndicator = new QLabel(this);
@@ -116,8 +129,11 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     updateDebuggerStateIndicator();
 
     // Connect signals for keyboard navigation
-    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyUpPressed, this, &DisassemblerWidget::navigateUp);
-    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, &DisassemblerWidget::navigateDown);
+    // The keys move the cursor row (run to the cursor, a breakpoint at it); the wheel scrolls the view
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyUpPressed, this, [this] { moveCursorBy(-1); });
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, [this] { moveCursorBy(1); });
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::pageUpPressed, this, [this] { moveCursorBy(-16); });
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::pageDownPressed, this, [this] { moveCursorBy(16); });
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this,
@@ -129,6 +145,122 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
 
     // Connect mouse click events for breakpoint toggling
     m_disassemblyTextEdit->viewport()->installEventFilter(this);
+
+    // The user's text cursor names the cursor line (run to the cursor)
+    connect(m_disassemblyTextEdit, &QTextEdit::cursorPositionChanged, this, &DisassemblerWidget::onTextCursorMoved);
+}
+
+std::atomic<bool>& DisassemblerWidget::LabelsShown()
+{
+    static std::atomic<bool> shown{true};
+    return shown;
+}
+
+void DisassemblerWidget::setShowLabels(bool show)
+{
+    LabelsShown().store(show);
+    refreshPreservingPosition(m_displayAddress);
+}
+
+void DisassemblerWidget::followPc()
+{
+    returnToCurrentPC();
+}
+
+void DisassemblerWidget::switchScrollMode()
+{
+    toggleScrollMode();
+}
+
+void DisassemblerWidget::onTextCursorMoved()
+{
+    if (m_settingContent || m_isShuttingDown)
+        return;
+    const int line = m_disassemblyTextEdit->textCursor().blockNumber();
+    auto it = m_addressMap.find(static_cast<uint16_t>(line));
+    if (line < 0 || it == m_addressMap.end())
+        return;
+    m_cursorAddress = it->second;
+    publishCursor();
+    markCursorLine();
+}
+
+void DisassemblerWidget::publishCursor()
+{
+    if (Emulator* emulator = getEmulator())
+        actions::DebuggerCursors::Instance().Set(emulator->GetId(), "disasm", m_cursorAddress);
+}
+
+bool DisassemblerWidget::lineOf(uint16_t address, int& line) const
+{
+    for (const auto& [row, rowAddress] : m_addressMap)
+        if (rowAddress == address)
+        {
+            line = static_cast<int>(row);
+            return true;
+        }
+    return false;
+}
+
+void DisassemblerWidget::moveCursorBy(int rows)
+{
+    if (rows == 0 || m_isShuttingDown || !getEmulator() || !getZ80Registers() || m_addressMap.empty())
+        return;
+    // From the cursor row; without one, from PC when it is shown, else the top line
+    int line = 0;
+    uint16_t address = m_displayAddress;
+    if (m_cursorAddress)
+        address = *m_cursorAddress;
+    else if (lineOf(m_currentPC, line))
+        address = m_currentPC;
+    const bool bytes = m_scrollMode == ScrollMode::Byte;
+    for (int i = 0; i < std::abs(rows); i++)
+    {
+        if (rows > 0)
+            address = bytes ? static_cast<uint16_t>(address + 1) : getNextCommandAddress(address);
+        else
+            address = bytes ? static_cast<uint16_t>(address - 1) : getPreviousCommandAddress(address);
+    }
+    m_cursorAddress = address;
+    publishCursor();
+    // Keep it visible: up past the top, the row becomes the top; down past the bottom, a few rows stay below it
+    const int rowsShown = static_cast<int>(m_addressMap.size());
+    if (!lineOf(address, line) || (rows > 0 && line >= rowsShown - 2))
+    {
+        uint16_t top = address;
+        if (rows > 0)
+            for (int i = 0; i < std::max(0, rowsShown - 4); i++)
+                top = bytes ? static_cast<uint16_t>(top - 1) : getPreviousCommandAddress(top);
+        setDisassemblerAddress(top);  // marks the cursor line
+        return;
+    }
+    markCursorLine();
+}
+
+void DisassemblerWidget::markCursorLine()
+{
+    QList<QTextEdit::ExtraSelection> selections = m_disassemblyTextEdit->extraSelections();
+    for (int i = 0; i < selections.size();)
+    {
+        if (selections[i].format.property(QTextFormat::UserProperty).toString() == QLatin1String("cursor-line"))
+            selections.removeAt(i);
+        else
+            i++;
+    }
+    if (m_cursorAddress)
+        for (const auto& [line, address] : m_addressMap)
+            if (address == *m_cursorAddress)
+            {
+                QTextCursor cursor(m_disassemblyTextEdit->document()->findBlockByLineNumber(line));
+                cursor.movePosition(QTextCursor::StartOfLine);
+                cursor.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+                QTextEdit::ExtraSelection selection;
+                selection.cursor = cursor;
+                selection.format = m_cursorFormat;
+                selections.prepend(selection);  // under the PC and breakpoint highlights
+                break;
+            }
+    m_disassemblyTextEdit->setExtraSelections(selections);
 }
 
 DisassemblerWidget::~DisassemblerWidget()
@@ -237,6 +369,15 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     uint16_t currentAddress = pc;  // Track current address being disassembled
     std::stringstream ss;
+
+    // Labels off (dbg.labels_toggle): plain addresses in the operands, no label column; this thread only
+    const bool showLabels = LabelsShown().load();
+    std::optional<Z80Disassembler::NoLabelsScope> noLabels;
+    if (!showLabels)
+    {
+        noLabels.emplace();
+        labelManager = nullptr;
+    }
 
     // Disassemble instructions to provide more context
     for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE && currentAddress < 0xFFFF; i++)
@@ -404,12 +545,15 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             return;
         }
 
-        // Set the HTML content
+        // Set the HTML content (the caret it resets is not the user's cursor)
+        m_settingContent = true;
         textEdit->setHtml(htmlContent);
+        m_settingContent = false;
 
-        // Highlight the current PC instruction and any breakpoints
+        // Highlight the current PC instruction, any breakpoints and the cursor line
         highlightCurrentPC();
         updateBreakpointHighlighting();
+        markCursorLine();
     }
     catch (const std::exception& e)
     {
@@ -547,11 +691,14 @@ void DisassemblerWidget::toggleScrollMode()
 
 uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
 {
-    if (!getEmulator() || !getMemory())
+    // getDisassembler() is an empty unique_ptr while the debug manager is not available (see
+    // setDisassemblerAddress): *it bound a null reference and crashed in disassembleSingleCommandWithRuntime
+    std::unique_ptr<Z80Disassembler>& disassemblerPtr = getDisassembler();
+    if (!getEmulator() || !getMemory() || !disassemblerPtr)
         return (currentAddress + 1) & 0xFFFF;
 
     Memory& memory = *getMemory();
-    Z80Disassembler& disassembler = *getDisassembler();
+    Z80Disassembler& disassembler = *disassemblerPtr;
 
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (int i = 0; i < buffer.size(); i++)
@@ -899,7 +1046,7 @@ bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
     const auto& allBreakpoints = bpManager->GetAllBreakpoints();
     for (const auto& pair : allBreakpoints)
     {
-        const BreakpointDescriptor* bp = pair.second;
+        const BreakpointDescriptor* bp = pair.second.get();
         if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address && bp->active)
         {
             return true;
@@ -947,6 +1094,8 @@ void DisassemblerWidget::updateBreakpointHighlighting()
 
 void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     BreakpointManager* bpManager = getBreakpointManager();
     if (!bpManager)
         return;
@@ -961,7 +1110,7 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
         const auto& allBreakpoints = bpManager->GetAllBreakpoints();
         for (const auto& pair : allBreakpoints)
         {
-            const BreakpointDescriptor* bp = pair.second;
+            const BreakpointDescriptor* bp = pair.second.get();
             if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address)
             {
                 bpManager->RemoveBreakpointByID(bp->breakpointID);
@@ -977,6 +1126,11 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
 
     // Refresh the disassembly but maintain the current view position
     refreshPreservingPosition(currentViewAddress);
+}
+
+void DisassemblerWidget::toggleBreakpointAtCursor()
+{
+    toggleBreakpointAtAddress(m_cursorAddress.value_or(m_displayAddress));
 }
 
 void DisassemblerWidget::handleBreakpointClick(int lineNumber)

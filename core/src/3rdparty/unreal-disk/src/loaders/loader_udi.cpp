@@ -1,0 +1,523 @@
+#include "unrealdisk/loaders/loader_udi.h"
+
+#include <cstring>
+
+#include "unrealdisk/detail/helpers.h"
+#include "unrealdisk/detail/helpers.h"
+// (emulator include dropped: emulator/emulator.h)
+// (emulator include dropped: emulator/emulatorcontext.h)
+// (emulator include dropped: emulator/notifications.h)
+
+namespace unrealdisk
+{
+
+namespace
+{
+    inline uint16_t readU16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
+    inline uint32_t readU32(const uint8_t* p)
+    {
+        return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) |
+               (static_cast<uint32_t>(p[3]) << 24);
+    }
+    inline void putU16(std::vector<uint8_t>& out, uint16_t v)
+    {
+        out.push_back(static_cast<uint8_t>(v & 0xFF));
+        out.push_back(static_cast<uint8_t>(v >> 8));
+    }
+    inline void putU32(std::vector<uint8_t>& out, uint32_t v)
+    {
+        for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>((v >> (8 * i)) & 0xFF));
+    }
+}
+
+/// region <Static helpers>
+
+bool LoaderUDI::detect(const uint8_t* data, size_t len, bool* compressed)
+{
+    if (compressed) *compressed = false;
+    if (!data || len < 4) return false;
+
+    if (std::memcmp(data, SIGNATURE, 4) == 0) return true;
+
+    if (std::memcmp(data, SIGNATURE_COMPRESSED, 4) == 0)
+    {
+        if (compressed) *compressed = true;
+        return true;
+    }
+
+    return false;
+}
+
+uint32_t LoaderUDI::computeCrc(const uint8_t* data, size_t len)
+{
+    int crc = -1;
+    CRCHelper::crcUDI(crc, data, len);
+    return static_cast<uint32_t>(crc);
+}
+
+/// endregion </Static helpers>
+
+/// region <Parsing>
+
+DiskImage* LoaderUDI::parse(const uint8_t* data, size_t len, std::vector<std::string>& warnings)
+{
+    bool compressed = false;
+    if (!detect(data, len, &compressed))
+    {
+        warnings.push_back("Not a UDI file: signature 'UDI!' missing");
+        return nullptr;
+    }
+    if (compressed)
+    {
+        warnings.push_back("Compressed UDI ('udi!') is not supported");
+        return nullptr;
+    }
+    if (len < HEADER_SIZE + 4)
+    {
+        warnings.push_back("UDI file is truncated (shorter than header + CRC)");
+        return nullptr;
+    }
+
+    /// region <Header>
+    const uint32_t declaredSize = readU32(data + 4);
+    const uint8_t version = data[8];
+    const uint8_t maxCylinder = data[9];
+    const uint8_t maxHead = data[10];
+    const uint32_t extendedHeaderSize = readU32(data + 12);
+
+    if (version != VERSION)
+    {
+        warnings.push_back(StringHelper::Format("UDI version %d is not supported (expected 0)", version));
+        return nullptr;
+    }
+    if (maxHead > 1)
+    {
+        warnings.push_back(StringHelper::Format("UDI declares %d heads, only 1 or 2 are supported", maxHead + 1));
+        return nullptr;
+    }
+    if (maxCylinder + 1 > MAX_CYLINDERS)
+    {
+        warnings.push_back(StringHelper::Format("UDI declares %d cylinders, the emulator supports at most %d", maxCylinder + 1, MAX_CYLINDERS));
+        return nullptr;
+    }
+    if (declaredSize + 4 != len)
+    {
+        warnings.push_back(StringHelper::Format("UDI size field (%u) does not match the file size minus CRC (%zu)", declaredSize, len - 4));
+        // Continue: the CRC check below decides whether the file is usable
+    }
+    if (HEADER_SIZE + static_cast<size_t>(extendedHeaderSize) > len - 4)
+    {
+        warnings.push_back("UDI extended header runs past the end of the file");
+        return nullptr;
+    }
+    /// endregion </Header>
+
+    /// region <CRC>
+    const uint32_t storedCrc = readU32(data + len - 4);
+    const uint32_t actualCrc = computeCrc(data, len - 4);
+    if (storedCrc != actualCrc)
+    {
+        std::string message = StringHelper::Format("UDI CRC mismatch: stored 0x%08X, computed 0x%08X", storedCrc, actualCrc);
+        if (!_ignoreCrc)
+        {
+            warnings.push_back(message + " (load refused; use setIgnoreCrc(true) to force)");
+            return nullptr;
+        }
+        warnings.push_back(message + " (ignored)");
+    }
+    /// endregion </CRC>
+
+    _extendedHeader.assign(data + HEADER_SIZE, data + HEADER_SIZE + extendedHeaderSize);
+    _reserved = data[11];
+
+    const uint8_t cylinders = static_cast<uint8_t>(maxCylinder + 1);
+    const uint8_t sides = static_cast<uint8_t>(maxHead + 1);
+    DiskImage* image = new DiskImage(cylinders, sides);
+
+    /// region <Tracks>
+    size_t offset = HEADER_SIZE + extendedHeaderSize;
+    const size_t end = len - 4;
+
+    for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            if (offset + 3 > end)
+            {
+                warnings.push_back(StringHelper::Format("UDI truncated at track cylinder %d side %d", cylinder, side));
+                delete image;
+                return nullptr;
+            }
+
+            const uint8_t type = data[offset];
+            const uint16_t trackLength = readU16(data + offset + 1);
+            offset += 3;
+
+            if (type & TRACK_TYPE_MULTIREV_FLAG)
+            {
+                warnings.push_back(StringHelper::Format("UDI track cylinder %d side %d uses the multi-revolution extension, not supported", cylinder, side));
+                delete image;
+                return nullptr;
+            }
+            if (type != TRACK_TYPE_MFM && type != TRACK_TYPE_FM && type != TRACK_TYPE_MIXED)
+            {
+                warnings.push_back(StringHelper::Format("UDI track cylinder %d side %d has unknown type %d", cylinder, side, type));
+                delete image;
+                return nullptr;
+            }
+
+            const size_t bitmapSize = (static_cast<size_t>(trackLength) + 7) / 8;
+            const size_t trackBytes = static_cast<size_t>(trackLength) + bitmapSize + (type == TRACK_TYPE_MIXED ? bitmapSize : 0);
+            if (offset + trackBytes > end)
+            {
+                warnings.push_back(StringHelper::Format("UDI track data truncated at cylinder %d side %d", cylinder, side));
+                delete image;
+                return nullptr;
+            }
+
+            if (trackLength > DiskImage::RawTrack::MAX_TRACK_SIZE)
+            {
+                warnings.push_back(StringHelper::Format("UDI track cylinder %d side %d is %d bytes long, above the supported maximum %zu",
+                                                        cylinder, side, trackLength, DiskImage::RawTrack::MAX_TRACK_SIZE));
+                delete image;
+                return nullptr;
+            }
+            if (trackLength < DiskImage::RawTrack::MIN_TRACK_SIZE)
+            {
+                warnings.push_back(StringHelper::Format("UDI track cylinder %d side %d is only %d bytes long, padded to %zu",
+                                                        cylinder, side, trackLength, DiskImage::RawTrack::MIN_TRACK_SIZE));
+            }
+
+            DiskImage::Encoding encoding = (type == TRACK_TYPE_FM) ? DiskImage::Encoding::FM : DiskImage::Encoding::MFM;
+            if (type == TRACK_TYPE_MIXED)
+            {
+                warnings.push_back(StringHelper::Format("UDI track cylinder %d side %d is a mixed FM/MFM track, loaded as MFM", cylinder, side));
+            }
+
+            DiskImage::Track* track = image->getTrackForCylinderAndSide(cylinder, side);
+            track->setRaw(data + offset, trackLength, encoding);
+            track->setClockBitmap(data + offset + trackLength, bitmapSize);
+            track->markClean();
+
+            offset += trackBytes;
+        }
+    }
+    /// endregion </Tracks>
+
+    // Anything between the last track and the CRC is kept verbatim (TRX2X writes an ASCIIZ comment there)
+    _trailer.assign(data + offset, data + end);
+
+    // An optional "UDIW" weak-bit map in the trailer is applied to the tracks and stripped here,
+    // so serialize() regenerates it instead of duplicating it
+    applyWeakMapChunk(image, warnings);
+
+    image->markClean();
+    return image;
+}
+
+/// endregion </Parsing>
+
+/// region <Weak-bit map>
+
+void LoaderUDI::applyWeakMapChunk(DiskImage* image, std::vector<std::string>& warnings)
+{
+    // First "UDIW" occurrence in the trailer - the bytes before it are the preserved comment
+    size_t pos = std::string::npos;
+    for (size_t i = 0; i + 4 <= _trailer.size(); i++)
+    {
+        if (std::memcmp(_trailer.data() + i, WEAK_CHUNK_SIGNATURE, 4) == 0)
+        {
+            pos = i;
+            break;
+        }
+    }
+    if (pos == std::string::npos) return;
+
+    if (pos + WEAK_CHUNK_HEADER_SIZE > _trailer.size())
+    {
+        warnings.push_back("UDI weak-bit map chunk is truncated, ignored");
+        return;
+    }
+
+    const uint16_t version = readU16(_trailer.data() + pos + 4);
+    if (version != WEAK_CHUNK_VERSION)
+    {
+        warnings.push_back(StringHelper::Format("UDI weak-bit map version %d is not supported (expected 1), ignored", version));
+        return;
+    }
+
+    const uint16_t recordCount = readU16(_trailer.data() + pos + 6);
+    const size_t chunkEnd = pos + WEAK_CHUNK_HEADER_SIZE + static_cast<size_t>(recordCount) * WEAK_CHUNK_RECORD_SIZE;
+    if (chunkEnd > _trailer.size())
+    {
+        warnings.push_back("UDI weak-bit map chunk is truncated, ignored");
+        return;
+    }
+
+    bool flaggedRecord = false;
+    size_t skippedRecords = 0;
+    for (uint16_t recordIndex = 0; recordIndex < recordCount; recordIndex++)
+    {
+        const uint8_t* record = _trailer.data() + pos + WEAK_CHUNK_HEADER_SIZE + static_cast<size_t>(recordIndex) * WEAK_CHUNK_RECORD_SIZE;
+        const uint8_t cylinder = record[0];
+        const uint8_t side = record[1];
+        const uint16_t streamOffset = readU16(record + 3);
+        const uint16_t length = readU16(record + 5);
+
+        DiskImage::Track* track = image->getTrackForCylinderAndSide(cylinder, side);
+        if (!track || static_cast<size_t>(streamOffset) + length > track->rawSize())
+        {
+            skippedRecords++;
+            continue;
+        }
+        if (record[2] != 0) flaggedRecord = true;  // Reserved flag bits: still applied (forward compatibility)
+
+        for (uint16_t i = 0; i < length; i++)
+        {
+            track->setWeakByte(streamOffset + i, true);
+        }
+    }
+
+    if (skippedRecords != 0)
+    {
+        warnings.push_back(StringHelper::Format("UDI weak-bit map: %zu of %d record(s) out of range ignored", skippedRecords, recordCount));
+    }
+    if (flaggedRecord)
+    {
+        warnings.push_back("UDI weak-bit map: unknown flag bits set, records applied anyway");
+    }
+
+    // Strip the chunk: the comment before it survives, serialize() regenerates the map from the tracks
+    _trailer.erase(_trailer.begin() + pos, _trailer.begin() + chunkEnd);
+}
+
+void LoaderUDI::appendWeakMapChunk(DiskImage* diskImage, std::vector<uint8_t>& out, std::vector<std::string>& warnings) const
+{
+    std::vector<uint8_t> records;
+    const auto emitRun = [&records](uint8_t cylinder, uint8_t side, size_t start, size_t length)
+    {
+        records.push_back(cylinder);
+        records.push_back(side);
+        records.push_back(0);  // flags, reserved
+        putU16(records, static_cast<uint16_t>(start));
+        putU16(records, static_cast<uint16_t>(length));
+    };
+
+    bool overflow = false;
+    const uint8_t cylinders = diskImage->getCylinders();
+    const uint8_t sides = diskImage->getSides();
+    for (uint8_t cylinder = 0; cylinder < cylinders && !overflow; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(cylinder, side);
+            if (!track || !track->hasWeakBits()) continue;
+
+            const size_t rawSize = track->rawSize();
+            const std::vector<uint8_t>& weak = track->weakBitmap();
+
+            size_t runStart = 0;
+            bool inRun = false;
+            for (size_t offset = 0; offset <= rawSize; offset++)
+            {
+                const bool weakByte = offset < rawSize && (weak[offset >> 3] & (1u << (offset & 7))) != 0;
+                if (weakByte && !inRun)
+                {
+                    runStart = offset;
+                    inRun = true;
+                }
+                else if (!weakByte && inRun)
+                {
+                    if (records.size() / WEAK_CHUNK_RECORD_SIZE >= 0xFFFF)
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    emitRun(cylinder, side, runStart, offset - runStart);
+                    inRun = false;
+                }
+            }
+            if (overflow) break;
+        }
+    }
+
+    if (overflow)
+    {
+        warnings.push_back("UDI weak-bit map: more than 65535 weak ranges, the rest is dropped");
+    }
+    if (records.empty()) return;
+
+    out.insert(out.end(), WEAK_CHUNK_SIGNATURE, WEAK_CHUNK_SIGNATURE + 4);
+    putU16(out, WEAK_CHUNK_VERSION);
+    putU16(out, static_cast<uint16_t>(records.size() / WEAK_CHUNK_RECORD_SIZE));
+    out.insert(out.end(), records.begin(), records.end());
+}
+
+/// endregion </Weak-bit map>
+
+/// region <Serialisation>
+
+bool LoaderUDI::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::vector<std::string>& warnings) const
+{
+    out.clear();
+
+    if (!diskImage)
+    {
+        warnings.push_back("UDI save refused: disk image is not set");
+        return false;
+    }
+
+    const uint8_t cylinders = diskImage->getCylinders();
+    const uint8_t sides = diskImage->getSides();
+    if (cylinders == 0 || sides == 0 || sides > 2)
+    {
+        warnings.push_back("UDI save refused: invalid disk geometry");
+        return false;
+    }
+
+    // Header
+    out.insert(out.end(), SIGNATURE, SIGNATURE + 4);
+    putU32(out, 0);  // Size, patched below
+    out.push_back(VERSION);
+    out.push_back(static_cast<uint8_t>(cylinders - 1));
+    out.push_back(static_cast<uint8_t>(sides - 1));
+    out.push_back(_reserved);
+    putU32(out, static_cast<uint32_t>(_extendedHeader.size()));
+    out.insert(out.end(), _extendedHeader.begin(), _extendedHeader.end());
+
+    // Tracks
+    for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(cylinder, side);
+            if (!track)
+            {
+                warnings.push_back(StringHelper::Format("UDI save refused: track cylinder %d side %d is missing", cylinder, side));
+                return false;
+            }
+
+            const size_t length = track->rawSize();
+            if (length > 0xFFFF)
+            {
+                warnings.push_back(StringHelper::Format("UDI save refused: track cylinder %d side %d is longer than 65535 bytes", cylinder, side));
+                return false;
+            }
+
+            out.push_back(track->encoding() == DiskImage::Encoding::FM ? TRACK_TYPE_FM : TRACK_TYPE_MFM);
+            putU16(out, static_cast<uint16_t>(length));
+            out.insert(out.end(), track->rawData(), track->rawData() + length);
+
+            const std::vector<uint8_t>& clock = track->clockBitmap();
+            const size_t bitmapSize = (length + 7) / 8;
+            out.insert(out.end(), clock.begin(), clock.begin() + std::min(bitmapSize, clock.size()));
+            if (clock.size() < bitmapSize)
+            {
+                out.insert(out.end(), bitmapSize - clock.size(), 0);
+            }
+        }
+    }
+
+    out.insert(out.end(), _trailer.begin(), _trailer.end());
+
+    // Weak bits ride after the preserved comment as the "UDIW" chunk (parse strips it, so it never duplicates)
+    appendWeakMapChunk(diskImage, out, warnings);
+
+    // Size field = everything before the CRC
+    const uint32_t size = static_cast<uint32_t>(out.size());
+    out[4] = static_cast<uint8_t>(size & 0xFF);
+    out[5] = static_cast<uint8_t>((size >> 8) & 0xFF);
+    out[6] = static_cast<uint8_t>((size >> 16) & 0xFF);
+    out[7] = static_cast<uint8_t>((size >> 24) & 0xFF);
+
+    putU32(out, computeCrc(out.data(), out.size()));
+    return true;
+}
+
+/// endregion </Serialisation>
+
+/// region <Basic methods>
+
+bool LoaderUDI::loadImage()
+{
+    _warnings.clear();
+
+    if (!FileHelper::FileExists(_filepath))
+    {
+        _warnings.push_back("File not found: " + _filepath);
+        return false;
+    }
+
+    const size_t fileSize = FileHelper::GetFileSize(_filepath);
+    if (fileSize == 0)
+    {
+        _warnings.push_back("File is empty: " + _filepath);
+        return false;
+    }
+
+    std::vector<uint8_t> buffer(fileSize);
+    if (FileHelper::ReadFileToBuffer(_filepath, buffer.data(), fileSize) != fileSize)
+    {
+        _warnings.push_back("Unable to read: " + _filepath);
+        return false;
+    }
+
+    DiskImage* image = parse(buffer.data(), buffer.size(), _warnings);
+    if (!image)
+    {
+        return false;
+    }
+
+    image->setFilePath(_filepath);
+    image->setLoaded(true);
+    _diskImage = image;
+    return true;
+}
+
+bool LoaderUDI::writeImage()
+{
+    return writeImage(_filepath);
+}
+
+bool LoaderUDI::writeImage(const std::string& path)
+{
+    _warnings.clear();
+
+    if (!_diskImage || path.empty())
+    {
+        _warnings.push_back("UDI save refused: no image or empty path");
+        return false;
+    }
+
+    std::vector<uint8_t> buffer;
+    if (!serialize(_diskImage, buffer, _warnings))
+    {
+        return false;
+    }
+
+    FILE* file = FileHelper::OpenFile(path, "wb");
+    if (!file)
+    {
+        _warnings.push_back("UDI save failed: cannot open " + path);
+        return false;
+    }
+
+    bool saved = FileHelper::SaveBufferToFile(file, buffer.data(), buffer.size());
+    FileHelper::CloseFile(file);
+
+    if (!saved)
+    {
+        _warnings.push_back("UDI save failed: cannot write " + path);
+        return false;
+    }
+
+    // Mark disk as clean after successful save
+    _diskImage->markClean();
+
+
+    _diskImage->setFilePath(path);
+    return true;
+}
+
+/// endregion </Basic methods>
+}  // namespace unrealdisk

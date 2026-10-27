@@ -203,10 +203,24 @@ LOGICFUNC const logic_ix_opcode[0x100] =
    oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8,
 };
 
-// Direct pointers to registers in Z80 State for: b,c,d,e,h,l,<unused>,a
-// Filled in Z80::Z80(EmulatorContext* context)
+// The register a DDCB/FDCB shift / RES / SET also writes its result to (the undocumented forms): b,c,d,e,h,l,-,a -
+// of the CPU running the instruction. A global table filled by each Z80's constructor pointed at the registers of the
+// last CPU created: every instance wrote there, and into freed memory once that instance was gone (2026-10-10)
 // CPU-LIBRARY-MIGRATION(ddcb-registers): engine internal (unreal-z80 keeps them per CPU context)
-uint8_t* direct_registers[8];
+Z80INLINE uint8_t* DdcbDestinationRegister(Z80* cpu, uint8_t index)
+{
+    switch (index)
+    {
+        case 0: return &cpu->b;
+        case 1: return &cpu->c;
+        case 2: return &cpu->d;
+        case 3: return &cpu->e;
+        case 4: return &cpu->h;
+        case 5: return &cpu->l;
+        case 7: return &cpu->a;
+        default: return nullptr;   // 6: (IX+d) / (IY+d) only
+    }
+}
 
 // offsets to b,c,d,e,h,l,<unused>,a  from cpu.c
 //unsigned reg_offset[] = { 1,0, 5,4, 9,8, 2,13 };
@@ -281,9 +295,9 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         uint8_t destRegisterIndex = opcode & 0b0000'0111;
 
         // Store operation result into specified register
-        // Note: If destRegisterIndex=6 i.e. no results should be stored - _trashRegister will be used
-        // Examples: set <N>, (iy + <M>) and similar mnemonics
-        *(direct_registers[destRegisterIndex]) = byte;
+        // Note: destRegisterIndex=6 stores to memory only (set <N>, (iy + <M>) and similar mnemonics)
+        if (uint8_t* destination = DdcbDestinationRegister(cpu, destRegisterIndex))
+            *destination = byte;
 
         // Store result to IX/IY addressed memory
         cpu->wd(ptr, byte);

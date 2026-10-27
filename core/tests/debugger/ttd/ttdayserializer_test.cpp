@@ -25,6 +25,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/ttdrecordedstate.h"
 #include "common/modulelogger.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/machinestatehash.h"
@@ -33,7 +34,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -393,7 +394,7 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     // TurboSound must exist on the default model for the blob to be non-empty.
     SoundManager* sm = context->pSoundManager;
@@ -401,19 +402,15 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     ASSERT_NE(sm->getTurboSound(), nullptr)
         << "Test precondition: TurboSound must be created by Init()";
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
 
     // Baseline checkpoint should have captured the AY state.
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
-    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelController->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    const auto ayBlob = cp->peripheralBlobs.find(
-        static_cast<uint8_t>(ttd::PeripheralId::TurboSound));
-    ASSERT_NE(ayBlob, cp->peripheralBlobs.end())
-        << "TurboSound must register itself and appear in the checkpoint";
-    const auto ayState = ttd::TTDPeripheralRegistry::DecodeBlob(
-        static_cast<uint8_t>(ttd::PeripheralId::TurboSound), ayBlob->second);
+    const auto ayState = ttdtest::RecordedDeviceState(*context->pTimeTravelController, 0, ttd::PeripheralId::TurboSound);
+    ASSERT_FALSE(ayState.empty()) << "TurboSound must register itself and appear in the checkpoint";
     EXPECT_EQ(ayState.size(), 981u)
         << "TurboSound blob must contain the payload (1 + 2x73 bytes + 778 timeline tail + 56 render tails)";
 
@@ -498,7 +495,7 @@ void RunAyClockReplay(const char* model, bool flipHires, bool ayClockNew, int* h
     features->setFeature(Features::kSoundGeneration, true);
     features->setFeature(Features::kSoundHQ, true);  // the FIR decimators follow the clock too
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     auto* device = dynamic_cast<SoundChip_TurboSound*>(context->pSoundManager->getTurboSound());
     ASSERT_NE(device, nullptr);
 

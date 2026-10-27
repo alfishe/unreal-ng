@@ -26,6 +26,8 @@
 #include "3rdparty/unreal-z80/z80cpu.h"
 #include "common/sound/filters/filterdcblocker.h"
 #include "common/modulelogger.h"
+#include "emulator/bus/bustap.h"
+#include "emulator/bus/spitapdevice.h"
 #include "emulator/io/flash/flash29f040b.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/media/mediaslot.h"
@@ -226,6 +228,15 @@ public:
     const NeoGSConfig& config() const { return _config; }
     const std::string& flashTitle() const { return _flashTitle; }
     uint8_t peek(uint16_t addr) const { return _mem.peek(addr); }
+    /// What the runner may do with this card (GSCardRunner reads these, not the private hooks themselves: a
+    /// requires-expression on a befriended private member is false under MSVC 2019, which compiled the sleep out)
+    static constexpr bool kRunnerIdleSleep = true;          ///< sleepAllowed() and the rest: the idle loop is slept through
+    static constexpr bool kRunnerBatchQuietEvents = true;   ///< sleepQuietEventsBefore()
+
+    /// The firmware's idle poll loop slept through (on by default; off steps it: comparison tests, diagnosis)
+    void setIdleSleep(bool on) { _runner.setSleepOn(on); }
+    /// Card CPU steps the sleeps stood for (tests, diagnosis)
+    uint64_t stepsSlept() const { return _runner.stepsSlept(); }
     void poke(uint16_t addr, uint8_t value) { _mem.poke(addr, value); }
     /// Flash persistence ([NGS] FlashWrite, neogs-tdd.md §5.8). In persist
     /// mode a modified flash is saved as neogs-flash-<sha256 of the shipped
@@ -239,7 +250,7 @@ public:
 
     /// SD card slot `sd.ngs`: insert an image or a folder, eject, inspect.
     /// With a media manager these go through it (the slot's settings from
-    /// [MEDIA] / [NGS], refused while TTD records); without one (bare
+    /// [MEDIA] / [NGS], the media rules while TTD records); without one (bare
     /// contexts) the card opens the image itself
     static constexpr const char* SD_SLOT_ID = "sd.ngs";
     /// [NGS] SDWrite as the slot's access mode (session / persist / off)
@@ -296,6 +307,18 @@ private:
     void onIntAccepted();
     void runEvents(int64_t now);
     int64_t unitsPerCycle() const { return _ticksPerCycle; }
+    // Sleeping through the firmware's idle poll loop (GSCardRunner): the bus accesses that are not plain RAM / ROM
+    // reads or the mailbox status and command reads count as side effects; the quiet events are the timer and the
+    // DAC sides (nothing the loop reads changes with them)
+    uint32_t busEffects() const { return _busEffects; }
+    bool sleepAllowed() const
+    {
+        return !_nmiPending && _resetRequest == ResetKind::None && _nextTicksPerCycle == _ticksPerCycle &&
+               !_portTrace.isCapturing() && !Z80CpuIntPossible(_cpu);
+    }
+    int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
+    void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    bool sleepQuietEventsBefore(int64_t end);
     void onStep()
     {
         _activityCounters.cpuSteps++;
@@ -325,6 +348,9 @@ private:
 
     uint8_t readMem(uint16_t addr)
     {
+        // Flash reads are timed, #6000-#7FFF reads feed the DAC: neither is a plain read the idle loop may repeat
+        if (!_mem.plainRead(addr) || (addr & 0xE000) == 0x6000)
+            _busEffects++;
         const uint8_t value = _mem.read(addr, _runner.now());
         if ((addr & 0xE000) == 0x6000)
             dacCapture(addr, value);
@@ -377,6 +403,18 @@ private:
 
     // Audio
     void dacSideEvent(int64_t crystal);
+    /// One mixer side as the board's DAC gets it
+    int32_t mixerLevel(bool right) const
+    {
+        return _snd.mix(right, _gscfg0) * static_cast<int32_t>(_config.volume) / 16384;
+    }
+    /// One side with the mixer's channel volumes (host-side, setHostChannelGain): what the listener hears of it
+    int32_t hostMixerLevel(bool right) const
+    {
+        return _snd.mixGained(right, _gscfg0, _hostGain) * static_cast<int32_t>(_config.volume) / 16384;
+    }
+    /// Both sides after the listening choice (stereo mode): what the output stage is given
+    void listeningMix(int32_t& left, int32_t& right) const;
     int64_t blipPosition() const { return _runner.now() / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL; }
     int64_t blipFrameLength() const
     {
@@ -390,10 +428,10 @@ private:
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
     uint32_t currentFrameNumber() const;
     void markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason);
-    bool ttdRecording() const;
     bool openSdImage(const std::string& path); // no media manager: the card opens the image itself
     SdCardSpi::Type sdType() const;
     void reselectSd();
+    void wireBusTaps();
     void serializeFixedState(uint8_t* dst) const;
     void serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const;
 
@@ -408,6 +446,14 @@ private:
     ttd::TTDRegionTracker _flashTracker;
     NeoGSInterrupts _irq;
     NeoGSSound _snd;
+    // The bus analyzer's view of the card's three SPI masters (docs/inprogress/2026-10-11-bus-analyzer): the taps
+    // sit in front of the devices, so the master's bytes and the DMA's are both seen
+    BusTap _sdTap{"neogs.sd", BusProtocol::Spi, "NeoGS SD card SPI (SD_SEND / SD_READ, SCTRL chip select, card DMA)"};
+    BusTap _sciTap{"neogs.mp3.sci", BusProtocol::Spi, "NeoGS MP3 decoder control SPI (SCI)"};
+    BusTap _sdiTap{"neogs.mp3.sdi", BusProtocol::Spi, "NeoGS MP3 decoder data SPI (SDI, no chip select)"};
+    SpiTapDevice _sdDevice{_sdTap, 0};
+    SpiTapDevice _sciDevice{_sciTap, 0};
+    SpiTapDevice _sdiDevice{_sdiTap, 0};
     NeoGSSpi _spi;
     std::unique_ptr<SdCardSpi> _sd;
 
@@ -458,6 +504,7 @@ private:
     int64_t _extraStrobeAt = 0;       // TIM_FREQ switch edge (INT64_MAX: none)
     int64_t _nextDacCrystal = 0;      // next mixer side, crystal clocks
     bool _nmiPending = false;
+    uint32_t _busEffects = 0;         // GSCardRunner::busEffects
     ResetKind _resetRequest = ResetKind::None;
 
     // Ready detection (§7.1)
@@ -485,6 +532,9 @@ private:
     bool _synthesisSuppressed = false;
     int32_t _outL = 0; // each side as the board's DAC gets it
     int32_t _outR = 0;
+    // Each side with the mixer's channel volumes (host-side, not state; read only while a gain is not unity)
+    int32_t _hostOutL = 0;
+    int32_t _hostOutR = 0;
     NeoGSConfig::StereoMode _stereoMode = NeoGSConfig::StereoMode::Separated; // listening choice, not state
     bool _frameHadActivity = false;
     bool _wasActive = false;

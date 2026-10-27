@@ -1,0 +1,5 @@
+	ORG #6000
+START	LD A,1
+ZZ	LD B,2
+LOOP	DJNZ LOOP
+        RET

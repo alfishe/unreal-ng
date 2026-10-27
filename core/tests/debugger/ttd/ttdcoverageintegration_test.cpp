@@ -26,7 +26,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdcoverageindex.h"
 #include "debugger/ttd/ttdprobe.h"
@@ -72,7 +72,7 @@ class TTD_CoverageIntegration_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
 
     void SetUp() override
@@ -82,7 +82,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(_memory, nullptr);
@@ -449,7 +449,9 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseContinueFindsAnExecutedPc)
         << "reverse-continue did not find PC 0x" << std::hex << knownPc
         << " even though the machine executed it";
     if (result.matched)
+    {
         EXPECT_EQ(result.pc, knownPc) << "landed on a different PC than requested";
+    }
 }
 
 /// A PC that was never executed must report no match rather than stopping
@@ -651,7 +653,9 @@ TEST_F(TTD_CoverageIntegration_Test, HitsInTheUnindexedOpeningFramesAreFound)
     EXPECT_EQ(withIndex.matched, withoutIndex.matched)
         << "a hit in the unindexed opening frames was lost";
     if (withIndex.matched && withoutIndex.matched)
+    {
         EXPECT_EQ(withIndex.arrivedAt.frame, withoutIndex.arrivedAt.frame);
+    }
 }
 
 /// The frame numbering invariant, asserted directly rather than through a

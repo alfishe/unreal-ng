@@ -22,33 +22,33 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     // pFFF7 is `unsigned` in EmulatorState; copy element-wise so the blob keeps
     // a fixed 32-bit layout regardless of what `unsigned` is on the host.
     for (size_t i = 0; i < 8; ++i)
-        blob.pFFF7[i] = static_cast<uint32_t>(state.pFFF7[i]);
+        blob.pFFF7[i] = static_cast<uint32_t>(state.atm.pFFF7[i]);
 
-    blob.aFF77 = static_cast<uint32_t>(state.aFF77);
-    blob.pBD = state.pBD;
-    blob.pBE = state.pBE;
-    blob.pBF = state.pBF;
-    blob.aFE = state.aFE;
-    blob.aFB = state.aFB;
+    blob.aFF77 = static_cast<uint32_t>(state.atm.aFF77);
+    blob.pBD = state.evo.pBD;
+    blob.pBE = state.evo.pBE;
+    blob.pBF = state.evo.pBF;
+    blob.aFE = state.atm.aFE;
+    blob.aFB = state.atm.aFB;
     blob.pFDFD = state.pFDFD;
-    blob.atmMemSwapped = state.atmMemSwapped ? 1 : 0;
+    blob.atmMemSwapped = state.atm.memSwapped ? 1 : 0;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->GetEvoAvr().GetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
 
     for (size_t i = 0; i < 16; ++i)
     {
-        blob.atmPalette[i] = state.atmPalette[i];
-        blob.atmPaletteRegs[i] = state.atmPaletteRegs[i];
+        blob.atmPalette[i] = state.atm.palette[i];
+        blob.atmPaletteRegs[i] = state.atm.paletteRegs[i];
     }
-    blob.atmBorderBright = state.atmBorderBright;
-    blob.evoFddMask = state.evoFddMask;
-    blob.evoInNmi = state.evoInNmi ? 1 : 0;
-    blob.evoNmiEntry = state.evoNmiEntry ? 1 : 0;
+    blob.atmBorderBright = state.atm.borderBright;
+    blob.evoFddMask = state.evo.fddMask;
+    blob.evoInNmi = state.evo.inNmi ? 1 : 0;
+    blob.evoNmiEntry = state.evo.nmiEntry ? 1 : 0;
     blob.nmiAtIntPending = state.nmiAtIntStartPending ? 1 : 0;
-    blob.evoTrdemu = state.evoTrdemu;
-    blob.evoVgSys = state.evoVgSys;
-    blob.evoWrProt = state.evoWrProt;
-    blob.evoTurboPending = state.evoTurboPending;
+    blob.evoTrdemu = state.evo.trdemu;
+    blob.evoVgSys = state.evo.vgSys;
+    blob.evoWrProt = state.evo.wrProt;
+    blob.evoTurboPending = state.evo.turboPending;
 
     return blob;
 }
@@ -73,16 +73,16 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     EmulatorState& state = _context->emulatorState;
 
     for (size_t i = 0; i < 8; ++i)
-        state.pFFF7[i] = blob.pFFF7[i];
+        state.atm.pFFF7[i] = blob.pFFF7[i];
 
-    state.aFF77 = blob.aFF77;
-    state.pBD = blob.pBD;
-    state.pBE = blob.pBE;
-    state.pBF = blob.pBF;
-    state.aFE = blob.aFE;
-    state.aFB = blob.aFB;
+    state.atm.aFF77 = blob.aFF77;
+    state.evo.pBD = blob.pBD;
+    state.evo.pBE = blob.pBE;
+    state.evo.pBF = blob.pBF;
+    state.atm.aFE = blob.aFE;
+    state.atm.aFB = blob.aFB;
     state.pFDFD = blob.pFDFD;
-    state.atmMemSwapped = blob.atmMemSwapped != 0;
+    state.atm.memSwapped = blob.atmMemSwapped != 0;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->GetEvoAvr().SetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
     // The v7.10 board's 7 MHz RAM waits follow #FF77 bit 3, restored with the core state (no-op on the ZX-Evo)
@@ -91,18 +91,18 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
 
     for (size_t i = 0; i < 16; ++i)
     {
-        state.atmPalette[i] = blob.atmPalette[i];
-        state.atmPaletteRegs[i] = blob.atmPaletteRegs[i];
+        state.atm.palette[i] = blob.atmPalette[i];
+        state.atm.paletteRegs[i] = blob.atmPaletteRegs[i];
     }
-    state.atmBorderBright = blob.atmBorderBright;
-    state.evoFddMask = blob.evoFddMask;
-    state.evoInNmi = blob.evoInNmi != 0;
-    state.evoNmiEntry = blob.evoNmiEntry != 0;
+    state.atm.borderBright = blob.atmBorderBright;
+    state.evo.fddMask = blob.evoFddMask;
+    state.evo.inNmi = blob.evoInNmi != 0;
+    state.evo.nmiEntry = blob.evoNmiEntry != 0;
     state.nmiAtIntStartPending = blob.nmiAtIntPending != 0;
-    state.evoTrdemu = blob.evoTrdemu;
-    state.evoVgSys = blob.evoVgSys;
-    state.evoWrProt = blob.evoWrProt;
-    state.evoTurboPending = blob.evoTurboPending;
+    state.evo.trdemu = blob.evoTrdemu;
+    state.evo.vgSys = blob.evoVgSys;
+    state.evo.wrProt = blob.evoWrProt;
+    state.evo.turboPending = blob.evoTurboPending;
     // #BF bit 2 decides whether the font RAM loader sits on the bus
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->SyncFontOverlay();

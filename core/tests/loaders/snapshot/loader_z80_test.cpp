@@ -8,6 +8,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -70,17 +71,7 @@ void LoaderZ80_Test::SetUp()
 
 void LoaderZ80_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>
@@ -467,6 +458,35 @@ TEST_F(LoaderZ80_Test, compressPageEDHandling)
     EXPECT_EQ(compressed[1], 0xED);
     EXPECT_EQ(compressed[2], 0x02);
     EXPECT_EQ(compressed[3], 0xED);
+}
+
+TEST_F(LoaderZ80_Test, compressPageRunAfterSingleED)
+{
+    // A single ED before a run: the byte after the ED is written as it is, the run starts one byte later. Encoded at
+    // once the run would give ED ED ED 05 ..., which every reader takes for a block of EDs
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    LoaderZ80CUT loader(_context, testSnapshotPath);
+
+    uint8_t src[16];
+    memset(src, 0x05, sizeof(src));
+    src[0] = 0xED;
+
+    uint8_t compressed[64];
+    memset(compressed, 0xFF, sizeof(compressed));
+    const size_t length = loader.compressPage(src, sizeof(src), compressed, sizeof(compressed));
+
+    ASSERT_GE(length, 6u);
+    EXPECT_EQ(compressed[0], 0xED);
+    EXPECT_EQ(compressed[1], 0x05);   // the byte after the single ED, as it is
+    EXPECT_EQ(compressed[2], 0xED);   // then the run of the other 14
+    EXPECT_EQ(compressed[3], 0xED);
+    EXPECT_EQ(compressed[4], 14);
+    EXPECT_EQ(compressed[5], 0x05);
+
+    uint8_t decompressed[16];
+    memset(decompressed, 0xBB, sizeof(decompressed));
+    loader.decompressPage(compressed, length, decompressed, sizeof(decompressed));
+    EXPECT_EQ(memcmp(src, decompressed, sizeof(src)), 0);
 }
 
 TEST_F(LoaderZ80_Test, compressDecompressRoundtrip)
@@ -930,7 +950,9 @@ TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
         EXPECT_EQ(memory.RAMPageAddress(static_cast<uint16_t>(page))[0], page * 16) << "RAM page " << page;
     const bool has1FFD = param.modelCode == 7 || param.modelCode == 13 || param.modelCode == 10;
     if (param.modelCode == 7 || param.modelCode == 13)
+    {
         EXPECT_EQ(context->emulatorState.p1FFD, 0x04);
+    }
 
     const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-model.z80");
     ASSERT_TRUE(emulator->SaveSnapshot(saved));
@@ -945,7 +967,9 @@ TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
     EXPECT_EQ(bytes[34], param.modelCode) << "model byte";
     EXPECT_EQ(extended, has1FFD ? 55 : 54);
     if (has1FFD)
+    {
         EXPECT_EQ(bytes[86], context->emulatorState.p1FFD);
+    }
     // Page blocks after the header: count them
     int pages = 0;
     for (size_t at = 32 + extended; at + 3 <= bytes.size(); pages++)

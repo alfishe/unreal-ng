@@ -54,6 +54,11 @@ public:
     /// Anything else: false (a divergence, counted)
     bool PlayNext(const std::string& slot, uint64_t lba, uint8_t* out, size_t size);
 
+    /// Keep the first @p count records (a recording resumed from the past)
+    void TruncateTo(uint64_t count);
+    /// The number of records at or before frame @p frame, T-state @p tInFrame
+    uint64_t CountUpTo(uint64_t frame, uint32_t tInFrame) const;
+
     uint64_t Size() const { return _records.size(); }
     uint64_t Cursor() const { return _cursor; }
     const Record& At(uint64_t index) const { return _records[index]; }

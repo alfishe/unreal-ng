@@ -1,0 +1,368 @@
+   10 ;"19.07.1994" 64.A94 
+   20 ;"27.10.1995" ADDING DROP FUNCTION
+   30 ;64.A95 - FILE
+   40 ; 64_CHR_PRINT_WINDOW_DRIVER 
+   50 *D+
+   60 ;       ORG  #F000
+   70        ORG  63650    ;FOR "C" PROGRAMM
+   80 
+   90 
+  100 CHRCOD DEFB #20      ;SPASE
+  110 ROW    DEFB 05
+  120 LIN    DEFB 5
+  130 ;WINDOW COORDINATES
+  140 FROW   DEFB 05
+  150 LROW   DEFB 54
+  160 FLIN   DEFB 5
+  170 LLIN   DEFB 10
+  180 ;FONT ADDRES 
+  190 FO_ADR DEFW FONT
+  200        ENT  $
+  210 
+  220 ; ***** FUNCTIONS *******
+  230 ;PRINT CHR SUBROUTINE
+  240 PRCHR: DI
+  250        CALL GO
+  260        EI
+  270        RET
+  280 ;SCROLL WINDOW UP ON ONE LINE
+  290 W_UP:  DI
+  300        CALL WSCRUP
+  310        EI
+  320        RET
+  330 ;SCROLL WINDOW DOWN ON ONE LINE
+  340 W_DWN: DI
+  350        CALL WSCRD
+  360        EI
+  370        RET
+  380 
+  390 DROP   DEFB #01      ;DROPS LONG LINES AVAIBLE
+  400 ;IF DROP=0 NOT PRINT ENDING TO BIG LINES 
+  410 SCRPOS DEFW #4000
+  420 FLAG_1 DEFB #01
+  430 LFA16  DEFB #00
+  440 
+  450 CHRBUF DEFB #00,#00,#00,#00,#00,#00,#00,#00
+  460 
+  470 
+  480 GO:    PUSH IX
+  490        LD   A,(ROW)
+  500        LD   C,A
+  510        LD   A,(LROW)
+  520        CP   C
+  530        JR   NC,L1    ;ROW<LROW
+  540 ; NEXT LINE
+  560        LD   A,(DROP)
+  570        CP   0
+  580        JR   Z,L0     ;NOT PRINT ENDING TOO BIG LINES
+  600        LD   A,(FROW)
+  610        LD   (ROW),A
+  620        LD   A,(LIN)
+  630        LD   C,A
+  640        LD   A,(LLIN)
+  650        CP   C
+  660        JR   Z,L4     ;LAST LINE IN WINDOW
+  670        JR   NC,L2    ;LIN<LLIN
+  680 ; NOW SCROLL WINDOW
+  690 L4:    CALL WSCRUP   ;SCROLL WINDOW 
+  700 ;       LD   A,(LLIN)
+  710 ;       LD   (LIN),A
+  720        JR   L3
+  730 
+  740 L2:    LD   A,C
+  750        INC  A
+  760        LD   (LIN),A  ;NEXT LIN
+  770 L3:    NOP
+  780 L1:    NOP
+  790 
+  800        CALL SETPOS
+  810 
+  820        CALL P_CHR
+  830 
+  840        LD   A,(ROW)
+  850        INC  A
+  860        LD   (ROW),A
+  870 
+  880 L0:    POP  IX
+  890        RET
+  900 ;SET AT COODINATES B=LIN(1-24),C=ROW(1-32)
+  910 SETPOS LD   A,(ROW)
+  920        LD   C,A
+  930        LD   A,(LIN)
+  940        LD   B,A
+  950        LD   A,B
+  960        RRCA
+  970        RRCA
+  980        RRCA
+  990        AND  #E0
+ 1000        LD   L,A
+ 1010        LD   A,B
+ 1020        AND  #18
+ 1030        OR   #40
+ 1040        LD   H,A
+ 1050        BIT  0,C
+ 1060        JR   NZ,SA1
+ 1070        XOR  A
+ 1080        LD   (LFA16),A
+ 1090        JR   SA2
+ 1100 SA1:   LD   A,#01
+ 1110        LD   (LFA16),A
+ 1120 SA2:   SRL  C
+ 1130        LD   A,C
+ 1140        ADD  A,L
+ 1150        LD   L,A
+ 1160        LD   (SCRPOS),HL
+ 1170        RET
+ 1180 
+ 1190 ; PRINT SIMBOL IN "A"
+ 1200 P_CHR: LD   A,(CHRCOD)
+ 1210 
+ 1220        LD   BC,(FO_ADR);FONT_ADR 
+ 1230 
+ 1240 
+ 1250 ; FIND ADR CHR IN GNAKO_GENERATOR
+ 1260        LD   E,#00
+ 1270        RRA
+ 1280        RL   E
+ 1290        ADD  A,A
+ 1300        LD   L,A
+ 1310        LD   H,#00
+ 1320        ADD  HL,HL
+ 1330        ADD  HL,HL
+ 1340        ADD  HL,BC    ;ADR CHR IN GNAKOGENERATOR
+ 1350        XOR  A
+ 1360        CP   E
+ 1370        LD   DE,CHRBUF
+ 1380        PUSH DE
+ 1390 
+ 1400        LD   B,#08
+ 1410        JR   Z,LFA5E
+ 1420 LFA52  LD   A,(HL)   ;IF NOT PARITY COD
+ 1430        ADD  A,A
+ 1440        ADD  A,A
+ 1450        ADD  A,A
+ 1460        ADD  A,A
+ 1470        LD   (DE),A
+ 1480        INC  HL
+ 1490        INC  DE
+ 1500        DJNZ LFA52
+ 1510 ;       XOR  A
+ 1520 ;       LD   (LFA16),A
+ 1530        JR   LFA66
+ 1540 LFA5E  LD   A,(HL)   ;IF PARITY COD
+ 1550        AND  #F0
+ 1560        LD   (DE),A
+ 1570        INC  HL
+ 1580        INC  DE
+ 1590        DJNZ LFA5E
+ 1600 ;       LD   A,1
+ 1610 ;       LD   (LFA16),A
+ 1620 
+ 1630 LFA66  POP  IX
+ 1640 
+ 1650 
+ 1660        LD   A,(LFA16) ;PARITY FLAG
+ 1670        LD   C,A
+ 1680 
+ 1690        LD   HL,(SCRPOS)
+ 1700        LD   B,#08    ;COUNT 8 BYTES
+ 1710 LFA97  LD   A,(FLAG_1) ;FLAG_1
+ 1720        LD   E,A
+ 1730 LFAA0  RRA
+ 1740        RRA
+ 1750        SBC  A,A
+ 1760        AND  #F0
+ 1770        XOR  (IX+0)   ;CHR_BUFF ADR
+ 1780        LD   D,A
+ 1790        XOR  A
+ 1800        CP   C
+ 1810        LD   A,#0F
+ 1820        JR   Z,LFAB7  ;FOR NOT PARITY CHR
+ 1830        LD   A,D      ;FOR PARITY CHR
+ 1840        RRCA
+ 1850        RRCA
+ 1860        RRCA
+ 1870        RRCA
+ 1880        LD   D,A
+ 1890        LD   A,#F0
+ 1900 LFAB7  OR   E
+ 1910        AND  (HL)     ; ADR ON SCREEN
+ 1920        OR   D
+ 1930        LD   (HL),A
+ 1940        INC  IX       ;NEXT CHR BYTE IMAGE
+ 1950        INC  H        ; NEXT LINE ON SCREEN
+ 1960        DJNZ LFA97
+ 1970 ; ONE CHR IS READY ON SCREEN
+ 1980 ; NOW ATTIBYTE
+ 1990 ;       DEC  H        ;OLD SCR ADR
+ 2000 ;       CALL #0BDB    ;SET ATTRIBYTE
+ 2010 ; TOGGLE PARITY FLAG
+ 2020        LD   A,#FF
+ 2030        XOR  C
+ 2040        LD   (LFA16),A
+ 2050        RET
+ 2060 ;SCROLL WINDOW SUBROUTINE
+ 2070 
+ 2080 UP     DEFB #00
+ 2090 DOWN   DEFB #00
+ 2100 LEFT   DEFB #00
+ 2110 RIGHT  DEFB #00
+ 2120 ADRUP  DEFW #0000
+ 2130 ADRDWN DEFW #0000
+ 2140 LEN    DEFB #00
+ 2150 
+ 2160 W_SET: LD   A,(FLIN)
+ 2170        LD   (UP),A
+ 2180        LD   A,(LLIN)
+ 2190        LD   (DOWN),A
+ 2200        LD   A,(FROW)
+ 2210        SRL  A
+ 2220        LD   (LEFT),A
+ 2230        LD   B,A
+ 2240        LD   A,(LROW)
+ 2250        SRL  A
+ 2260        LD   (RIGHT),A
+ 2270        SUB  B        ;RIGHT-LEFT=LEN
+ 2280        INC  A
+ 2290        LD   (LEN),A
+ 2300        RET
+ 2310 
+ 2320 WSCRUP CALL W_SET
+ 2330 SCRL:  LD   A,(UP)
+ 2340        INC  A
+ 2350        LD   (UP),A
+ 2360        LD   B,A      ;NEXT LIN IS END ?
+ 2370        LD   A,(DOWN)
+ 2380        CP   B        ;UP+1=DOWN ?
+ 2390        JP   C,EXT_UP   ;SCROLL END EXIT
+ 2400 
+ 2410        LD   A,(LEFT)
+ 2420        LD   C,A
+ 2430        LD   A,(UP)
+ 2440        DEC  A
+ 2450        LD   B,A
+ 2460        CALL ADDR
+ 2470        LD   (ADRUP),HL
+ 2480 
+ 2490        LD   A,(LEFT)
+ 2500        LD   C,A
+ 2510        LD   A,(UP)
+ 2520        LD   B,A
+ 2530        CALL ADDR
+ 2540        LD   (ADRDWN),HL
+ 2550 
+ 2560        LD   B,#08
+ 2570 SCRLN: PUSH BC
+ 2580        LD   HL,(ADRUP)
+ 2590        EX   DE,HL
+ 2600        LD   HL,(ADRDWN)
+ 2610        LD   BC,(LEN)
+ 2620        XOR  A
+ 2630        LD   B,A
+ 2640        LDIR
+ 2650        LD   A,(ADRUP+1)
+ 2660        INC  A
+ 2670        LD   (ADRUP+1),A
+ 2680        LD   A,(ADRDWN+1)
+ 2690        INC  A
+ 2700        LD   (ADRDWN+1),A
+ 2710        POP  BC
+ 2720        DJNZ SCRLN
+ 2730        JP   SCRL
+ 2740 
+ 2750 WSCRD: CALL W_SET
+ 2760 SCRLD: LD   A,(UP)
+ 2770        LD   B,A
+ 2780        LD   A,(DOWN)
+ 2790        DEC  A
+ 2800        LD   (DOWN),A
+ 2810        CP   B
+ 2820        JR   C,EXT_DN
+ 2830 
+ 2840        LD   A,(LEFT)
+ 2850        LD   C,A
+ 2860        LD   A,(DOWN)
+ 2870        INC  A
+ 2880        LD   B,A
+ 2890        CALL ADDR
+ 2900        LD   (ADRDWN),HL
+ 2910 
+ 2920        LD   A,(LEFT)
+ 2930        LD   C,A
+ 2940        LD   A,(DOWN)
+ 2950        LD   B,A
+ 2960        CALL ADDR
+ 2970        LD   (ADRUP),HL
+ 2980 
+ 2990        LD   B,#08
+ 3000 SCRLN2 PUSH BC
+ 3010        LD   HL,(ADRDWN)
+ 3020        EX   DE,HL
+ 3030        LD   HL,(ADRUP)
+ 3040        LD   BC,(LEN)
+ 3050        XOR  A
+ 3060        LD   B,A
+ 3070        LDIR
+ 3080        LD   A,(ADRUP+1)
+ 3090        INC  A
+ 3100        LD   (ADRUP+1),A
+ 3110        LD   A,(ADRDWN+1)
+ 3120        INC  A
+ 3130        LD   (ADRDWN+1),A
+ 3140        POP  BC
+ 3150        DJNZ SCRLN2
+ 3160        JP   SCRLD
+ 3170 
+ 3180 
+ 3190 
+ 3200 
+ 3210 
+ 3220 
+ 3230 
+ 3240 
+ 3250 
+ 3260 
+ 3270 ;CALCULATE ADDRES OF WINDOW LINE
+ 3280 ADDR:  NOP
+ 3290        LD   A,B
+ 3300        RRCA
+ 3310        RRCA
+ 3320        RRCA
+ 3330        AND  #E0
+ 3340        ADD  A,C
+ 3350        LD   L,A
+ 3360        LD   A,B
+ 3370        AND  #18
+ 3380        OR   #40
+ 3390        LD   H,A
+ 3400        RET  ;ADDRES IN "HL"
+ 3410 
+ 3420 EXT_DN LD   A,(UP)
+ 3430        LD   B,A
+ 3440        JR   EXT_
+ 3450 EXT_UP LD   A,(DOWN)
+ 3460        LD   B,A
+ 3470 EXT_:  LD   A,(LEFT)
+ 3480        LD   C,A
+ 3490        CALL ADDR
+ 3500        LD   B,#08
+ 3510 CLS2:  PUSH BC       ;CLS DOWN LINE
+ 3520        PUSH HL
+ 3530        LD   A,(LEN)
+ 3540        LD   B,A
+ 3550        XOR  A
+ 3560 CLS1:  LD   (HL),A
+ 3570        INC  HL
+ 3580        DJNZ CLS1
+ 3590        POP  HL
+ 3600        INC  H
+ 3610        POP  BC
+ 3620        DJNZ CLS2
+ 3630 
+ 3640        RET
+ 3650 
+ 3660 
+ 3670 
+ 3680 
+ 3690 ;FONT_ADR 
+ 3700 FONT:  DEFB #00,#00,#00

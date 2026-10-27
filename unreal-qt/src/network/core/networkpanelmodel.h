@@ -14,6 +14,7 @@
 /// only on a ZX-Evo, the keyboard controller firmware only on an ATM Turbo 2+
 /// v7.xx. Network TDD §8, tdd-atm2-kbc.md §8.
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,6 +77,19 @@ NetworkForm NetworkFormFromState(const StateNode& network);
 /// avr_firmware, kbc_firmware,
 /// host_access, dns_mode, hosts, forwards, remote_access, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
+
+/// What Apply does with a form change (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards (ZXNETUSB,
+/// ZX-WiFi) is a slot change applied by a restart; the other changed settings (`rest`) are applied after it, to the
+/// restarted machine (or in place when the cards did not change). `rest` keeps `card` only for an ATM2IOESP change
+/// (the INTERNAL connector, not a bus slot). Example: ZXNETUSB ticked and hosts edited -> cardChange, zxBusCards =
+/// ZXNETUSB, rest = {hosts}
+struct NetworkFormApply
+{
+    bool cardChange = false;
+    uint8_t zxBusCards = 0;   ///< networkspec::kCardZxNetUsb | kCardZxWifi wanted
+    std::vector<std::pair<std::string, std::string>> rest;
+};
+NetworkFormApply NetworkFormSplitCards(const NetworkForm& before, const NetworkForm& after);
 
 /// Which controls the machine allows; a reason for each one it does not
 struct NetworkAvailability

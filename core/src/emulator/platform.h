@@ -5,6 +5,13 @@
 #include "common/sound/aystereomode.h"
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotconfig.h"
+#include "emulator/platforms/atm/atmstate.h"
+#include "emulator/platforms/profi/profistate.h"
+#include "emulator/platforms/scorpion/scorpionstate.h"
+#include "emulator/platforms/zxevo/evostate.h"
+
+#include <type_traits>
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -35,6 +42,12 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
+constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, an explicit take took over an implicit one, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
+constexpr char const* NC_RUN_PACE = "RUN_PACE";                                   // An instance's paced run changed: preset, interval, started, stopped (execution::RunPacer) - payload: RunPacePayload
+constexpr char const* NC_SURFACE_CONTEXT = "SURFACE_CONTEXT";                  // An instance's control-surface context changed (ctx.set: play, ttd, ttd.timecode, debug.*) - payload: SurfaceContextPayload
+constexpr char const* NC_ACTION_CATALOGUE = "ACTION_CATALOGUE";                   // An action was registered or dropped (the Qt client's GUI actions) - payload: ActionCatalogueChangedPayload (the registry's revision, the protocol's catalogue_rev; process-wide)
+constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                       // The followed instance, the views (focus order, active instances) or a surface session's target changed (actions::TargetState) - payload: SurfaceTargetPayload (process-wide)
+constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
@@ -42,6 +55,7 @@ constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEO_MODE_CHANGED = "VIDEO_MODE_CHANGED";             // Video mode switched: framebuffer geometry (and possibly its address) changed - consumers holding raw pointers or cached dimensions must re-attach (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_VIDEO_VIEWPORT_CHANGED = "VIDEO_VIEWPORT_CHANGED";     // The display viewport (the crop of an overscan frame) changed: a front end crops its picture the same (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
@@ -61,9 +75,11 @@ constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
-constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload); not repeated per write
+constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload, onRelease = what closing the emulator does with it); not repeated per write
+constexpr char const* NC_MEDIA_CLEAN = "MEDIA_CLEAN";                           // A medium has no unsaved changes any more: saved, discarded, written back (payload: MediaSlotPayload). An eject posts NC_MEDIA_EJECTED instead
 constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
 constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
+constexpr char const* NC_CONTROLLER_CONNECTOR_CHANGED = "CONTROLLER_CONNECTOR_CHANGED"; // A device was plugged into or unplugged from a connector, or the connector list was rebuilt (payload: ControllerConnectorPayload). Posted from ControllerManager on the thread that applied it, after its lock is released
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
@@ -74,6 +90,7 @@ constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               
 
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
 constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
 
@@ -346,6 +363,25 @@ inline constexpr bool IsProfiModel(MEM_MODEL model)
 
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
 
+/// A setting another thread switches while the machine runs (WebAPI, CLI, GUI) and the loop reads once a frame.
+/// Relaxed: the reader needs the value, not an ordering; it costs what a plain bool costs. Copyable, so CONFIG
+/// keeps its value semantics
+class LiveFlag
+{
+public:
+	LiveFlag(bool value = false) : _value(value) {}
+	LiveFlag(const LiveFlag& other) : _value(other.Get()) {}
+	LiveFlag& operator=(const LiveFlag& other) { Set(other.Get()); return *this; }
+	LiveFlag& operator=(bool value) { Set(value); return *this; }
+	operator bool() const { return Get(); }
+
+	bool Get() const { return _value.load(std::memory_order_relaxed); }
+	void Set(bool value) { _value.store(value, std::memory_order_relaxed); }
+
+private:
+	std::atomic<bool> _value;
+};
+
 struct TMemModel
 {
 	const char *FullName;
@@ -569,18 +605,19 @@ struct CONFIG
 
 	/// Turbo/Max speed mode - runs emulation as fast as possible
 	/// When enabled, disables audio synchronization for maximum performance
-	bool turbo_mode = false;
+	LiveFlag turbo_mode = false;
 
 	/// Generate audio samples even in turbo mode
 	/// Useful for video capture or when recording while in turbo mode
 	/// Audio will play at increased pitch due to faster execution
-	bool turbo_mode_audio = false;
+	LiveFlag turbo_mode_audio = false;
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
 	uint8_t fdd_noise;				// Mix FDD disk rotation and positioning noise to sound channel(s)
 
 	bool trdos_present;			// Enable Beta128 disk interface (TR-DOS)
+	bool snapshot_switch_model = false;	// [SNAPSHOT] SwitchModel=: an SZX saved on another model replaces the machine (automation default: refuse)
 	uint8_t trdos_interleave;
 	bool trdos_traps;			// Use TR-DOS traps
 	bool wd93_nodelay;			// Don't emulate WD1793 / VG93 controller delays
@@ -656,8 +693,8 @@ struct CONFIG
 		/// 128-512 at parse; a change needs a new emulator instance.
 		unsigned gsRamKB = 128;
 
-		/// FM loudness trim in dB relative to the hardware-derived default
-		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		/// YM2203 FM loudness trim in dB relative to the measured hardware level
+		/// ([SOUND] TSFM_FmLevelDb; 0 = the real board)
 		double tsfmFmTrimDb = 0.0;
 
 		/// Anti-alias decimator tier for the TurboSound-slot devices
@@ -680,6 +717,9 @@ struct CONFIG
 		AYStereoMode ayStereo = AYStereoMode::ABC;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
+		/// The SounDrive card's port set (ZX-bus slots `soundrive` option `mode`): 0 both (the emulator decode, the
+		/// legacy SD=1), 1 mode 1 (#0F / #1F / #4F / #5F), 2 mode 2 (#F1 / #F3 / #F9 / #FB)
+		uint8_t sdMode = 0;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
@@ -735,6 +775,10 @@ struct CONFIG
 		/// the AVR's 16550): NONE | LOOPBACK | PLUG | TCP:<host>:<port> |
 		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
+		/// The machine's second serial port (the Next's UART 1, the Raspberry Pi's): ComPortSpec like comPort; empty = NONE
+		char comPort2[256];
+		/// What is plugged into the Next's joystick connector for its UART mode (NR #0B): ComPortSpec like comPort; empty = NONE
+		char comPortJoy[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];
@@ -870,6 +914,11 @@ struct CONFIG
 		uint8_t mode; // RSM_MODE
 	} rsm;
 
+    /// [SLOTS] (ZX-bus slots, architecture.md §6): the cards of the machine; SlotManager plans it at creation. Empty
+    /// without the section: the legacy card keys ([SOUND] TurboSound, GSType, MoonSound, CovoxFB, SD, [NETWORK] Card)
+    /// are translated into slots then
+    SlotConfig slotConfig;
+
     std::string romSetName;
     std::string romSet128Path;
     std::string romSetSOSPath;
@@ -915,6 +964,11 @@ struct CONFIG
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
 	char sprinter_rom_path[FILENAME_MAX];
+	char next_rom_path[FILENAME_MAX];
+	char next_sd_path[FILENAME_MAX];       // [NEXT] SdCard: a folder (presented as a FAT16 card) or a raw image for card 0; empty = no card
+	char next_boot_rom_path[FILENAME_MAX];  // the 8K boot ROM (cores/zxnext bootrom.vhd); empty = the bare personality
+	uint8_t next_layer_capture;             // [NEXT] LayerCapture = on|off: the screen records the layers of every frame (design-layer-capture.md); default on
+	uint8_t next_board_issue;               // [NEXT] Board = issue2|issue4|issue5 (ks1|ks2|ks3): NR #0F, NextBoardIssue; default issue4 (KS2)
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];
@@ -1096,19 +1150,6 @@ enum SNAP
 	snHOB, snSCL, snTRD, snFDI, snTD0, snUDI, snISD, snPRO
 };
 
-struct NVRAM
-{
-	enum EEPROM_STATE { IDLE = 0, RCV_CMD, RCV_ADDR, RCV_DATA, SEND_DATA, RD_ACK };
-	unsigned address;
-	uint8_t datain, dataout, bitsin, bitsout;
-	uint8_t state;
-	uint8_t prev;
-	uint8_t out;
-	uint8_t out_z;
-
-	void MemoryWrite(uint8_t val);
-};
-
 struct EmulatorState
 {
     /// region <Counters>
@@ -1152,18 +1193,10 @@ struct EmulatorState
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
     uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
-    uint8_t scorpion_turbo;                     // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
-                                                // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
-                                                // the #1FFD-family decode and by reset. Composes with the host speed
-                                                // multiplier at the frame boundary - see Z80::Z80FrameCycle()
-    uint8_t profi_turbo_switch;                 // Profi front-panel TURBO switch: 1 = pressed. The clock is 7 MHz while it is
-                                                // pressed and (v3) the VG93's HLD is low (PortDecoder_Profi::SyncTurbo)
-    uint8_t profi_cpm_switch;                   // Profi v5 front-panel CP/M switch: 1 = pressed. Holds #DFFD at #00 (the
-                                                // latches' clear input) and every #DFFD write is lost while pressed
     uint8_t hw_turbo_ratio;                     // Model-neutral HARDWARE turbo: the guest-visible CPU clock multiplier,
                                                 // 1..8 (1 = base clock, 2 = e.g. Scorpion / ATM 7 MHz, 4 = 14 MHz clones,
                                                 // 6 = Sprinter 21 MHz). Maintained by the model's port decoder from its
-                                                // own latch (Scorpion: scorpion_turbo; ATM: its turbo bits). The Z80
+                                                // own latch (Scorpion: scorpion.turbo; ATM: its turbo bits). The Z80
                                                 // multiplies it with the host speed control; audio/video descale it
 
     uint8_t hw_turbo_ratio_applied;             // hw_turbo_ratio as composed into current_z80_frequency_multiplier at
@@ -1180,6 +1213,14 @@ struct EmulatorState
                                                 // decoder together with hw_turbo_ratio
     uint8_t hw_clock_den_applied;               // hw_clock_den as composed into the running clock (see the _applied
                                                 // ratio above). Read through ClockDen()
+    uint8_t hw_contention_disabled;             // A board that switches the video memory contention off at run time (the Next
+                                                // above 3.5 MHz, NR #08 bit 6): 1 = off whatever the video mode says
+    uint8_t ula_sixty_hz;                       // The Next's 60 Hz frame (NR #05 bit 2 as latched at the frame sync, never with the
+                                                // Pentagon): the 264-line raster of the family in ula_timing_class
+    uint8_t ula_timing_class;                   // A board that switches its frame timing at run time says which family
+                                                // the video logic follows: 0 = the model's own, 1 = 48K, 2 = 128K / +2,
+                                                // 3 = +2A / +3 (the frame of the 128K), 4 = Pentagon. Read by the
+                                                // per-frame video mode detection
 
     /// Denominator of the clock in effect; 1 for every machine at a whole multiple of the base clock
     uint32_t ClockDen() const { return hw_clock_den_applied > 1 ? hw_clock_den_applied : 1u; }
@@ -1264,117 +1305,26 @@ struct EmulatorState
 
 
     /// region <Port state>
-	uint8_t p7FFD, pFE, pEFF7, pXXXX;   // Common ports
+	uint8_t p7FFD, pFE, pEFF7;          // Common ports
 	uint8_t pBFFD, pFFFD;               // AY sound-specific
 	uint8_t pDFFD, pFDFD, p1FFD, pFF77; // Models with extended memory-specific
-	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
-	uint8_t p00, p80FD; // Quorum specific
 	/// endregion </Port state>
 
 	/// region <Access flags>
 	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed
 	/// endregion </Access flags>
 
-	// ZX-Evo board NMI (znmi.v): evoInNmi = RAM page #FF forced into #0000-#3FFF;
-	// evoNmiEntry = the next NMI the Z80 accepts is the board's own (NOP at #0066,
-	// page switch); nmiAtIntStartPending = a board NMI waits for the frame INT
-	// (read by Z80::ProcessInterrupts, false on every other model). Packed into
-	// the one byte of the former nmi_in_progress flag, so EmulatorState keeps
-	// its layout
-	bool evoInNmi : 1 = false;
-	bool evoNmiEntry : 1 = false;
-	bool nmiAtIntStartPending : 1 = false;
-	
-	uint8_t pLSY256;
-
-	uint8_t aFE, aFB; // ATM 4.50 system ports
-	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
-	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
-	bool atmMemSwapped; // ATM A5-A7 <-> A8-A10 swap flag (vestigial: the swap is not emulated - reference gates it behind the default-off AtmMemSwap ini; kept for the TTD paging blob)
-
-	/// region <ATM Turbo 2+ / ZX-Evo BaseConf video state>
-	// 16-cell programmable palette RAM behind port #FF (both machines). Cell
-	// pointer = the 4-bit border color (border_attr + the FE bright bit), the
-	// write gate = A14 of the last #xx77 write (aFF77 & 0x4000, "pen2").
-	// atmPalette carries the ABGR cell colors (same packing as the ULA
-	// _rgbaColors tables); atmPaletteRegs keeps the raw written byte for the
-	// ATM3 #BE.0D readback. atmBorderBright is the 4th border bit latched from
-	// A3 of every #FE port write (A3 = 0 -> bright border).
-	uint32_t atmPalette[16];
-	uint8_t atmPaletteRegs[16];
-	uint8_t atmBorderBright;
-
-	/// Seed the palette with the standard 16 ZX colors - what the machine
-	/// shows until software overrides cells through #FF (xpeccy vid_reset()
-	/// / zx_set_pal() copy the preset into the live palette the same way at
-	/// every reset). Values mirror ScreenZX's TransformZXSpectrumColorsToRGBA
-	/// tables (ABGR: 0xFF << 24 | B << 16 | G << 8 | R).
-	void InitAtmPalette()
-	{
-		static const uint32_t ZXPAL[16] = {
-			// Brightness = 0
-			0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4,
-			0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
-			// Brightness = 1
-			0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF,
-			0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF};
-		for (int i = 0; i < 16; i++)
-		{
-			atmPalette[i] = ZXPAL[i];
-			atmPaletteRegs[i] = 0x00;
-		}
-		atmBorderBright = 0;
-	}
-	// Text-mode font RAM (ATM Turbo 2+ renders from it too, nothing writes it there). Address = code * 8 + row,
-	// the FPGA's read address {char, row}; the built-in font (stored row * 256 + code) is copied in by
-	// InitAtmFont. ZX-Evo #BF bit 2 mirrors every memory write into it (EvoFontOverlay). atmFontByte is the
-	// glyph byte the text renderer fetched last, what #0EBD reads back (#FF until a text frame is drawn)
-	uint8_t atmFontRam[2048];
-	uint8_t atmFontByte;
-	void InitAtmFont();
-	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
+	// A board NMI waits for the frame INT: read by Z80::ProcessInterrupts on every model,
+	// set only by the ZX-Evo board NMI (EvoState::inNmi / nmiEntry)
+	bool nmiAtIntStartPending = false;
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
 
-	unsigned aFF77;
 	unsigned active_ay;
-	// ATM3
-	union
-	{
-		uint16_t pBD;
-		struct
-		{
-			uint8_t pBDl;
-			uint8_t pBDh;
-		};
-	};
-	uint8_t pBE, pBF;
-	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
-	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
-	// bit 1 = swap due before the next opcode fetch; evoVgSys = D5..D0 of the last OUT (#FF) (the VG93 system latch: drive D1..D0, reset, HLT, side)
-	uint8_t evoTrdemu;
-	uint8_t evoVgSys;
-	// ZX-Evo #xBF7 write protect: bit i = window i of map 0, bit 4 + i = window i of map 1 (the #12BD order)
-	uint8_t evoWrProt;
-	// ZX-Evo clock select written, taken over by the CPU clock at the next M1 refresh (zclock.v int_turbo)
-	uint8_t evoTurboPending;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;
-	uint8_t pVD;
 
-#ifdef MOD_VID_VD
-	uint8_t *vdbase;
-#endif
-
-	uint8_t pFFBA, p7FBA; // SMUC
-	uint8_t res1, res2;
-
-	uint8_t p0F, p1F, p4F, p5F; // soundrive
-	
-	//struct WD1793 wd;
-	
-	struct NVRAM nvram;
 	struct
 	{
 		uint64_t edge_change;
@@ -1386,23 +1336,22 @@ struct EmulatorState
 	} tape;
 	
 	uint8_t comp_pal[0x10];
-	uint16_t profiPalette[0x10];			// Profi hi-res palette: 9-bit GGGRRRBBB (bits 8:6 G, 5:3 R, 2:0 B;
-											// B0 is the extra blue LSB latched from #FE.D7 on the previous OUT),
-											// index = {bright,G,R,B}
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;
 	uint8_t ulaplus_reg;
-	uint8_t profrom_bank;
 
-// Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):
-// armed together with the NMI pulse (DD50.2), it forces page 3 (TR-DOS) of the
-// current ProfROM plane over the #0000-#3FFF window - without touching the #1FFD
-// latch (the service bit still outranks it) or the plane register. Released by
-// the first CPU read from #4000-#FFFF (the Beta128 "leave the ROM window"
-// strobe); cleared by reset. Like profrom_bank it is not reproducible from
-// ports, so TTD checkpoints and the divergence hash carry it explicitly
-uint8_t scorpionDosTrigger;
+	/// region <Hardware-family state>
+	// Model-specific latches and RAM, one plain struct per hardware family (no pointers: reset is
+	// EmulatorState{}, TTD copies field by field). docs/inprogress/2026-10-07-model-state/tdd.md
+	AtmState atm;             // ATM Turbo 1 / 2+ / 3, ZX-Evo BaseConf (shared by the three ATM decoders)
+	EvoState evo;             // ATM3 / ZX-Evo BaseConf decoder only
+	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
+	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
+	/// endregion </Hardware-family state>
 };
+
+static_assert(std::is_trivially_copyable_v<EmulatorState>,
+              "EmulatorState is reset by assignment and copied by TTD: no owning members");
 
 // bits for State::flags
 #define CF_DOSPORTS     0x01    // tr-dos ports are accessible
@@ -1413,49 +1362,6 @@ uint8_t scorpionDosTrigger;
 #define CF_CACHEON      0x20    // cache active
 #define CF_Z80FBUS      0x40    // unstable data bus
 #define CF_PROFROM      0x80    // PROF-ROM active
-
-// LSY256 - BarmaleyM's Orel' extension
-#define PF_DV0			0x01	// RAM r/w at #0000 page selector
-#define PF_BLKROM		0x02	// RAM/!ROM at #0000
-#define PF_EMUL			0x08	// page mode at #0000
-#define PF_PA3			0x10	// page bit3 at #C000
-
-#define TAPE_QUANTUM 64
-struct tzx_block
-{
-	uint8_t *data;
-	unsigned datasize;    // data size, in bytes
-	unsigned pause;
-	union
-	{
-		struct
-		{
-			unsigned pilot_t, s1_t, s2_t, zero_t, one_t;
-			unsigned pilot_len;
-		};
-		struct
-		{
-			unsigned numblocks, numpulses;
-		};
-		unsigned param;
-	};
-
-	uint8_t type; // 0-playable, 1-pulses, 10-20 - info, etc...
-	uint8_t crc; // xor of all bytes
-	char desc[128];
-};
-
-struct SNDVAL
-{
-	union
-	{
-		unsigned data;
-		struct
-		{
-			short left, right;
-		};
-	};
-};
 
 struct virtkeyt
 {
@@ -1489,19 +1395,6 @@ struct action
 	void(*func)();
 	uint16_t k1, k2, k3, k4;
 };
-
-// video overlay 
-typedef union
-{
-	uint32_t p;
-	struct
-	{
-		uint8_t b;
-		uint8_t g;
-		uint8_t r;
-		uint8_t a;
-	};
-} RGB32;
 
 // flags for video filters
 								// misc options

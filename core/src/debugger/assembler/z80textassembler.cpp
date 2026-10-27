@@ -725,7 +725,11 @@ bool LexExpression(const std::string& s, std::vector<ExprToken>& tokens, std::st
             continue;
         }
 
-        error = std::string("Unexpected character in expression: '") + c + "'";
+        // Appended, not "std::string(...) + c + ...": GCC 14 at -O3 -march=x86-64-v3 reports a false
+        // -Warray-bounds on the temporary's inline buffer
+        error = "Unexpected character in expression: '";
+        error += c;
+        error += '\'';
         return false;
     }
 

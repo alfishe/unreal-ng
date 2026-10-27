@@ -470,6 +470,15 @@ protected:
 	void update_prescale(uint8_t prescale);
 	void clock_fm();
 
+	// [unreal-ng patch 6] idle fast path (PATCHES.md §6): the FM engine idle (nothing sounding or keyed), and
+	// 'count' clock_fm() calls of an idle engine at once (each would leave m_last_fm 0)
+	bool fm_idle() const;
+	void clock_fm_idle(uint32_t count);
+
+	// [unreal-ng patch 7] clock_fm() with a host gain per FM channel (PATCHES.md §7): 'gain_q15' (3 values,
+	// 32768 = unity, 0 = silent) scales each channel's clamped output before the sum
+	void clock_fm_gained(const int32_t *gain_q15);
+
 	// internal state
 	opn_fidelity m_fidelity;            // configured fidelity
 	uint8_t m_address;                  // address register

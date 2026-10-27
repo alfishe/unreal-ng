@@ -18,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -180,12 +181,8 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
     // Start the emulator asynchronously using the built-in method
     emulator->StartAsync();
 
-    // Wait for the emulator to transition to running state (1s budget: the
-    // original 100ms cap could trip on a CPU-starved parallel shard runner)
-    for (int i = 0; i < 500 && emulator->GetState() != StateRun; ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    // Wait for the emulator to transition to running state (the wait's timeout only bounds a failure)
+    TestWait::For([&] { return emulator->GetState() == StateRun; }, std::chrono::milliseconds(1000));
 
     // Verify the emulator transitioned to a running state
     int currentState = emulator->GetState();
@@ -204,22 +201,16 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
         // Pause the emulator
         emulator->Pause();
 
-        // Wait for pause to take effect (1s budget - see StartAsync note)
-        for (int i = 0; i < 500 && !emulator->IsPaused(); ++i)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        // Wait for pause to take effect
+        TestWait::For([&] { return emulator->IsPaused(); }, std::chrono::milliseconds(1000));
 
         EXPECT_TRUE(emulator->IsPaused()) << "Emulator should be paused";
 
         // Resume the emulator
         emulator->Resume();
 
-        // Wait for resume to take effect (1s budget - see StartAsync note)
-        for (int i = 0; i < 500 && emulator->IsPaused(); ++i)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        // Wait for resume to take effect
+        TestWait::For([&] { return !emulator->IsPaused(); }, std::chrono::milliseconds(1000));
 
         EXPECT_FALSE(emulator->IsPaused()) << "Emulator should not be paused after resume";
     }
@@ -260,10 +251,11 @@ TEST_F(EmulatorManager_Test, RemoveEmulator)
     ASSERT_EQ(_manager->GetEmulator(emulatorId), nullptr);
 }
 
-// A UI thread holding a context lease (Emulator::LeaseContext) keeps the
-// context alive: a removal on another thread refuses new leases at once, but
-// stops and frees the instance only after the lease ends (2026-10-02 crash:
-// the Qt Machine menu read pKeyboard from a context a WebAPI DELETE had freed)
+// A UI thread holding a context lease (Emulator::LeaseContext): a removal on
+// another thread refuses new leases at once, and stops and retires the instance
+// only after the lease ends (2026-10-02 crash: the Qt Machine menu read
+// pKeyboard from a context a WebAPI DELETE had freed). The retired instance is
+// freed by its last holder, here the test (BUGS.md #11)
 TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
 {
     auto emulator = _manager->CreateEmulator();
@@ -276,10 +268,10 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     ASSERT_EQ(context, emulator->GetContext());
 
     std::atomic<bool> removed{false};
-    std::thread remover([&] {
+    TestThread remover([&] {
         _manager->RemoveEmulator(emulatorId);
         removed = true;
-    });
+    }, [&] { lease.reset(); });  // the removal waits for the lease
 
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
     EXPECT_FALSE(emulator->LeaseContext()) << "a lease taken after the removal began must be refused";
@@ -291,12 +283,17 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     EXPECT_NE(context->pKeyboard, nullptr);
 
     lease.reset();
-    remover.join();
+    remover.Join();
     EXPECT_TRUE(removed.load());
-    EXPECT_TRUE(emulator->IsReleased());
-    EXPECT_EQ(emulator->GetContext(), nullptr);
+    EXPECT_TRUE(emulator->IsRetired());
+    EXPECT_FALSE(emulator->IsReleased()) << "the test still holds it: retired, not freed";
+    EXPECT_EQ(emulator->GetContext(), context);
     EXPECT_FALSE(emulator->LeaseContext());
     EXPECT_FALSE(_manager->HasEmulator(emulatorId));
+
+    const std::weak_ptr<Emulator> watch = emulator;
+    emulator.reset();
+    EXPECT_TRUE(watch.expired());
 }
 
 TEST_F(EmulatorManager_Test, ContextLeaseRefusedOnceReleased)
@@ -467,13 +464,13 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // A non-creatable model (e.g. NEXT): whichever guard fires first,
+    // A non-creatable model (e.g. GMX): whichever guard fires first,
     // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "NEXT", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogWarning, &error);
 
     EXPECT_EQ(emulator, nullptr);
-    EXPECT_NE(error.find("NEXT"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("GMX"), std::string::npos) << "reason was: " << error;
     EXPECT_FALSE(error.empty());
 }
 
@@ -487,6 +484,23 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
 
     EXPECT_EQ(emulator, nullptr);
     EXPECT_EQ(_manager->GetEmulatorIds().size(), countBefore);
+}
+
+// BUGS.md 2026-10-10 #12: a failed create freed nothing it had built - the context, its config and loggers
+// (an unknown model, an unsupported RAM size: Init never ran; a non-creatable model: Init failed or threw)
+TEST_F(EmulatorManager_Test, FailedCreateFreesTheHalfBuiltInstance)
+{
+    const size_t contextsBefore = EmulatorContext::LiveCount();
+
+    std::string error;
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "NO_SUCH_MACHINE", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unknown model";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 256, LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unsupported RAM size";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "non-creatable model: " << error;
 }
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithModelResolvesRequestedMachine)
@@ -697,6 +711,92 @@ TEST_F(EmulatorManager_Test, ShortNameMatchesTheWholeName)
     const TMemModel* plus3 = Config::FindModelByShortName("PLUS3");
     ASSERT_NE(plus3, nullptr);
     EXPECT_EQ(plus3->Model, MM_PLUS3);
+}
+
+// Every creatable model is created, run a few frames and removed while it runs, next to another running instance -
+// what an automation script does when it creates and deletes instances. Heap damage from a teardown (a destructor
+// touching a part already freed) shows up later in an unrelated free on another emulator thread; AddressSanitizer
+// reports it here. Boot-bound (turbo): about 30 models created and run, ~20 ms each
+TEST_F(EmulatorManager_Test, EveryModelCanBeRemovedWhileRunning)
+{
+    auto neighbour = _manager->CreateEmulatorWithModel("neighbour", "48K");
+    ASSERT_NE(neighbour, nullptr);
+    neighbour->StartAsync();
+
+    for (const TMemModel& model : Config::GetAvailableModels())
+    {
+        if (!Config::IsModelCreatable(model))
+            continue;
+        SCOPED_TRACE(model.ShortName);
+        auto emulator = _manager->CreateEmulatorWithModel("removed-running", model.ShortName, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        const std::string id = emulator->GetId();
+        emulator->EnableTurboMode();
+        emulator->StartAsync();
+        EmulatorContext* context = emulator->GetContext();
+        EXPECT_TRUE(TestWait::For([&] { return context->emulatorState.frame_counter >= 3; }));
+        EXPECT_TRUE(_manager->RemoveEmulator(id));
+        EXPECT_FALSE(_manager->HasEmulator(id));
+    }
+    EXPECT_TRUE(neighbour->IsRunning());
+}
+
+// A message handler that looks an instance up while another thread removes one (the GUI following the selection
+// while a WebAPI client deletes): the removal released the instance under the manager's lock, and Release() removing
+// an observer waits for the dispatch in flight - whose handler waited for that lock (2026-10-10 hang). The handler here
+// is posted once the removal's drain is over (the test holds a context lease, so the removal waits there), looks the
+// instance up once the removal has stopped it, and must get its answer. Before the fix: a deadlock in 3 runs of 3
+TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
+{
+    auto emulator = _manager->CreateEmulatorWithModel("removed-under-a-handler", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+    emulator->StartAsync();
+    std::optional<Emulator::ContextLease> lease(emulator->LeaseContext());
+    ASSERT_TRUE(*lease);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    std::atomic<bool> entered{false};
+    std::atomic<bool> answered{false};
+    const uint64_t observer = mc.AddObserver("test_removal_lookup", [&](int, Message*) {
+        entered = true;
+        TestWait::For([&] { return !emulator->IsRunning(); });   // the removal is past Stop(), at Release()
+        _manager->GetEmulator(id);   // waited forever for the lock the removal held while releasing
+        answered = true;
+    });
+    // Unregistered on every exit path (an ASSERT below returns early): after the remover is joined (declared later,
+    // destroyed first) and the handler, which refers to this frame, is through
+    struct ObserverGuard
+    {
+        MessageCenter& mc;
+        uint64_t id;
+        ~ObserverGuard()
+        {
+            mc.WaitForOutstandingMessages();
+            mc.RemoveObserverById("test_removal_lookup", id);
+        }
+    } observerGuard{mc, observer};
+
+    std::atomic<bool> removed{false};
+    TestThread remover([&] {
+        _manager->RemoveEmulator(id);
+        removed = true;
+    }, [&] { lease.reset(); });  // the removal waits for the lease
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
+    mc.WaitForOutstandingMessages();   // the removal's destroy notice is through: it waits for the lease now
+    mc.Post("test_removal_lookup");
+    ASSERT_TRUE(TestWait::For([&] { return entered.load(); }));
+    lease.reset();
+
+    const bool finished = TestWait::For([&] { return removed.load() && answered.load(); }, std::chrono::seconds(5));
+    if (!finished)
+    {
+        // The deadlock: neither thread can be joined, the process cannot end cleanly
+        std::fprintf(stderr, "RemovalDoesNotHoldTheLockAHandlerWaitsFor: the removal and the handler deadlocked\n");
+        std::abort();
+    }
+    remover.Join();
+    EXPECT_FALSE(_manager->HasEmulator(id));
 }
 
 TEST_F(EmulatorManager_Test, IsModelCreatableAgreesWithCreateAttempt)
