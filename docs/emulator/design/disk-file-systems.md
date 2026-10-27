@@ -105,12 +105,19 @@ disk or card image is changed in place, or copied to `-o` first and the copy cha
 - **+3DOS**: `NAME.TYP` (1-8 characters, a type of up to 3), a +3DOS header unless `header` is false; `start` is the
   CODE address.
 - **iS-DOS / TASiS**: a file into a catalogue (`SHELL/new.txt`), laid out as the kernel lays it out: the first free
-  slot of the catalogue (a segmented catalogue grows by 32 bytes, a continuous one is full at its size), the blocks
+  slot of the catalogue (it grows by 32 bytes, see below), the blocks
   first fit from block 0, continuous when one run of at most 255 blocks holds it, else segmented (a table block and up
   to 85 runs). `start` is the load address; FSUM (the checksum at +26), the date and the time are set, NEFIL counts it.
   Names: letters, digits and ``#$&+-=_\`!@%'(){|}~``, Cyrillic as CP866; at most 126 files in a catalogue.
 - **FAT12 / 16 / 32**: any path of an existing directory, a long name with its 8.3 alias; the clusters checked
   against the free space first, the date and time from the host's wall clock.
+
+A full catalogue grows by 32 bytes; past its last block it takes a block. A segmented one adds the block to its
+segment table, as the kernel does. A continuous one (TASiS makes them; the kernel answers "catalogue full") takes the
+block right after it when that block is free and stays continuous; else it becomes segmented: a new segment table
+with its blocks as the first run and the new block as the second, status bit 6 cleared and +17 naming the table in
+both its entry 0 and its parent's entry. That needs two free blocks. A catalogue holds at most 128 entries
+(16 blocks).
 
 `Delete(volume, path)` removes a file; an empty iS-DOS or FAT directory goes too. With `recursive` a directory goes
 with everything in it: every entry is checked first (a protected iS-DOS file or a read-only FAT file anywhere refuses
@@ -170,6 +177,6 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 ## Limits
 
 - iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
-- iS-DOS: a continuous catalogue that is full stays full; files are written with no R / W / hidden bits (`attrib` sets them after).
+- iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
 - Not read: ATM CP/M partitions, MB-02, MDOS, other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.

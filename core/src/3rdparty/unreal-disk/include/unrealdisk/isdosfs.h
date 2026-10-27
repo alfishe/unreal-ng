@@ -11,7 +11,7 @@
 //
 // Writing (a BlockWriter given: OnDisk has one) follows the kernel (inst_dos.sys of ISDOS50, disassembled): a new file
 // takes the first deleted slot of its catalogue, else slot NFILE (a segmented catalogue grows by a block when it is
-// full); its blocks are the first free run (continuous up to 255 blocks, else segmented); the checksum FSUM is
+// full; a continuous one, which the kernel leaves full, takes the block after it, else becomes segmented); its blocks are the first free run (continuous up to 255 blocks, else segmented); the checksum FSUM is
 // 0 - the sum of its bytes, as TASiS keeps it. A deleted entry only loses its status bit 0 (NFILE stays, NEFIL counts
 // down), its blocks are freed. device.sys, boot.sys and the kernel file the descriptor keeps a copy of never change.
 //
@@ -202,10 +202,14 @@ private:
     bool StoreBitmap(const std::vector<uint8_t>& before, const std::vector<uint8_t>& after);
     /// The blocks a file or catalogue entry holds (its segment table included)
     bool Held(const uint8_t* entry, std::vector<uint32_t>& blocks, std::string& error) const;
-    /// A free slot of `c` (the first deleted one, else NFILE, growing a segmented catalogue by a block from `bits`)
+    /// A free slot of `c` (the first deleted one, else NFILE, growing the catalogue by a block from `bits`: a
+    /// segmented one adds it to its table, a continuous one takes the block after it, else becomes segmented)
     bool TakeSlot(CatalogueImage& c, std::vector<uint8_t>& bits, uint32_t& index, std::string& error);
-    /// The block TakeSlot would add to `c` (UINT32_MAX: none needed), without changing anything
-    uint32_t GrowthBlock(const CatalogueImage& c, const std::vector<uint8_t>& bits) const;
+    /// The blocks TakeSlot would take for `c`, without changing anything: none (a free slot, room in its last block,
+    /// or no room at all), the new block, or a continuous catalogue's new segment table and then the new block
+    std::vector<uint32_t> GrowthBlocks(const CatalogueImage& c, const std::vector<uint8_t>& bits) const;
+    /// `parent`'s entry of the catalogue `c` follows its head (continuous bit, +17): false when `parent` has none
+    static bool FollowHead(CatalogueImage& parent, const CatalogueImage& c, uint32_t& index);
     /// A catalogue's level from its entry 0 (Classic +16, Chic +23), and where it goes
     static uint32_t LevelOf(const uint8_t* entry0) { return static_cast<uint32_t>(entry0[16] | entry0[23]); }
     void SetLevel(uint8_t* entry0, uint32_t level) const;

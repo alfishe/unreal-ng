@@ -602,3 +602,81 @@ TEST(IsdosFs_Test, AttributesTimeAndTitle)
     EXPECT_FALSE(fs.SetTitle("123456789", error));
     Walk(fs);
 }
+
+/// A full continuous catalogue grows (TASiS makes them; the kernel leaves them full): into the free block after it,
+/// staying continuous, else it becomes segmented, its parent's entry following
+TEST(IsdosFs_Test, AFullContinuousCatalogueGrows)
+{
+    auto disk = Load("loaders/isdos/tasis540.fdi");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    const Tree before = Walk(fs);
+    std::string error;
+    std::vector<IsdosFile> help;
+    ASSERT_TRUE(fs.List(help, nullptr, error)) << error;
+    std::vector<std::string> files;
+    for (const IsdosFile& f : help)
+        if (f.path.rfind("SHELL/HELP/", 0) == 0 && !f.directory && f.name != "residenthlp" && files.size() < 17)
+            files.push_back(f.path);
+    ASSERT_EQ(files.size(), 17u);
+    uint32_t room = 0;
+    ASSERT_TRUE(fs.FreeBlocks(room));
+    ASSERT_EQ(room, 0u) << "a full disk";
+
+    // MY_GAMES: one block (143) of 8 entries, autoexec.bat in block 144 after it
+    std::vector<uint8_t> head = RawBlock(fs, 143);
+    ASSERT_EQ(head[11], 0x61);
+    ASSERT_EQ(head[21], 1);
+    ASSERT_TRUE(fs.Delete("autoexec.bat", error)) << error;
+    for (size_t k = 0; k < 8; k++)
+        ASSERT_TRUE(fs.Rename(files[k], "/MY_GAMES/" + files[k].substr(11), error)) << files[k] << ": " << error;
+    head = RawBlock(fs, 143);
+    EXPECT_EQ(head[11], 0x61) << "still continuous";
+    EXPECT_EQ(Word(head, 14), 288);
+    EXPECT_EQ(head[21], 9);
+    EXPECT_EQ(std::memcmp(RawBlock(fs, 144).data(), files[7].substr(11).c_str(), 4), 0) << "entry 8 in block 144";
+
+    // MY_DOCS/SOURCES: one block (140), SHELL/HELP/residenthlp in block 141; the 8th entry a catalogue of MY_DOCS
+    // (the entry moved and the parent's entry of SOURCES in the same catalogue block). Becoming segmented needs two
+    // free blocks: none until a file goes
+    for (size_t k = 8; k < 15; k++)
+        ASSERT_TRUE(fs.Rename(files[k], "/MY_DOCS/SOURCES/" + files[k].substr(11), error)) << files[k] << ": " << error;
+    EXPECT_FALSE(fs.Rename("MY_DOCS/TEXTS", "/MY_DOCS/SOURCES/TEXTS", error));
+    EXPECT_NE(error.find("cannot grow"), std::string::npos) << error;
+    ASSERT_TRUE(fs.Delete(files[16], error)) << error;
+    ASSERT_EQ(RawBlock(fs, 140)[21], 8);
+    ASSERT_TRUE(fs.Rename("MY_DOCS/TEXTS", "/MY_DOCS/SOURCES/TEXTS", error)) << error;
+    head = RawBlock(fs, 140);
+    EXPECT_EQ(head[11], 0x21) << "segmented now";
+    EXPECT_EQ(Word(head, 14), 288);
+    EXPECT_EQ(Word(head, 19), 140);
+    const uint16_t table = Word(head, 17);
+    const std::vector<uint8_t> t = RawBlock(fs, table);
+    ASSERT_EQ(t[0], 2);
+    EXPECT_EQ(Word(t, 1), 140);
+    EXPECT_EQ(t[3], 1);
+    EXPECT_EQ(t[6], 1);
+    const uint16_t grown = Word(t, 4);
+    EXPECT_NE(grown, 141);
+    const std::vector<uint8_t> outer = EntryIn(fs, 130, "SOURCES    ");
+    EXPECT_EQ(outer[11], 0x21) << "the parent's entry says segmented";
+    EXPECT_EQ(Word(outer, 17), table);
+    EXPECT_EQ(Word(outer, 19), 140);
+    IsdosFile texts;
+    ASSERT_TRUE(fs.Find("MY_DOCS/SOURCES/TEXTS", texts, error)) << error;
+    EXPECT_TRUE(texts.directory);
+
+    // One more fits the grown block; everything reads, the free space counted
+    ASSERT_TRUE(fs.Rename(files[15], "/MY_DOCS/SOURCES/" + files[15].substr(11), error)) << error;
+    EXPECT_EQ(Word(RawBlock(fs, 140), 14), 320);
+    const Tree after = Walk(fs);
+    EXPECT_EQ(after.files, before.files - 2);
+    EXPECT_EQ(after.catalogues, before.catalogues);
+    std::vector<IsdosFile> sources;
+    ASSERT_TRUE(fs.List(sources, nullptr, error)) << error;
+    size_t inSources = 0;
+    for (const IsdosFile& f : sources)
+        inSources += f.path.rfind("MY_DOCS/SOURCES/", 0) == 0 && f.path.find('/', 16) == std::string::npos;
+    EXPECT_EQ(inSources, 9u);
+    EXPECT_TRUE(fs.Find("MY_GAMES/" + files[7].substr(11), texts, error)) << error;
+}
