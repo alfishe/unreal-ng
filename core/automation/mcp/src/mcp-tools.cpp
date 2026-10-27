@@ -232,7 +232,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         schema["properties"][key]["type"] = "string";
         schema["properties"][key]["description"] =
             "'create' with model SPRINTER: the card in ISA slot 1 / 2 - none | ne2000 | zxbus | ram | el3c509b | "
-            "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
+            "sprinteresp | modem | dual16552 | wildsound (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
             "refused in the slot report /state/isa); fixed for the instance's lifetime";
     }
     schema["properties"]["profi_keyboard"]["type"] = "string";
@@ -2044,7 +2044,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution", "monitor"})
+                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound"})
     {
         allowed.append(aspect);
     }
@@ -2084,6 +2084,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
         "{action: clear | start (path: a pcapng file, unbounded) | stop | ring | stream (port: a live pcapng stream for "
         "Wireshark, 0 = any free port) | stream-stop}), "
+        "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
+        "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
         "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
@@ -2354,11 +2356,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
-                    aspect != "monitor")
+                    aspect != "monitor" && aspect != "audio_wildsound")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound"));
                     return;
                 }
             }
@@ -3065,10 +3067,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "audio_multisound" || aspect == "audio_midi")
+                        else if (aspect == "audio_multisound" || aspect == "audio_midi" || aspect == "audio_wildsound")
                         {
-                            // ZX-MultiSound / its MIDI synthesizer via the WebAPI (DeviceState::MultiSound / Midi); 404 = not fitted
-                            const std::string path = aspect == "audio_midi" ? "/state/audio/midi" : "/state/audio/multisound";
+                            // ZX-MultiSound / its MIDI synthesizer / the Sprinter's Wild Sound via the WebAPI
+                            // (DeviceState::MultiSound / Midi / WildSound); 404 = not fitted
+                            const std::string path = aspect == "audio_midi"        ? "/state/audio/midi"
+                                                     : aspect == "audio_wildsound" ? "/state/audio/wildsound"
+                                                                                   : "/state/audio/multisound";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -4092,6 +4097,28 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
                                                 << ", " << slot["playback_rate_hz"].asDouble() << " Hz, "
                                                 << slot["envelope"]["phase"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_wildsound")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_wildsound] " << value["description"].asString();
+                                for (const Json::Value& card : value["cards"])
+                                {
+                                    const Json::Value& ws = card["wild_sound"];
+                                    out << "\n[audio_wildsound] slot " << card["slot"].asInt() << ": " << ws["mode"].asString()
+                                        << " mode, " << (ws["unlocked"].asBool() ? "unlocked" : "locked") << ", stream "
+                                        << ws["stream"]["command_name"].asString() << " " << ws["stream"]["pos"].asUInt64() << "/"
+                                        << ws["stream"]["size"].asUInt64() << ", storage " << ws["storage"]["used"].asUInt64()
+                                        << " bytes";
+                                    if (ws.isMember("track"))
+                                        out << ", track \"" << ws["track"]["name"].asString() << "\" "
+                                            << ws["track"]["channels"].asInt() << " ch";
+                                    const Json::Value& p = card["player"];
+                                    if (p["playing"].asBool())
+                                        out << "\n  playing order " << p["order"].asInt() << " pattern " << p["pattern"].asInt()
+                                            << " row " << p["row"].asInt() << ", speed " << p["speed"].asInt() << " BPM "
+                                            << p["bpm"].asInt();
                                 }
                             }
                             else if (aspect == "audio_multisound")

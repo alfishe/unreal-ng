@@ -93,6 +93,13 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
 StateNode MultiSound(EmulatorContext* context);
 StateNode Midi(EmulatorContext* context);
 
+/// The Sprinter's ISA Wild Sound (docs/inprogress/2026-10-09-wildsound; built beside the card,
+/// io/sprinter/isa/cards/wildsounddevicestate.cpp): every fitted card - its slot, the slot report's `wild_sound` object
+/// (mode, unlock, stream command / size / pos, storage, track), the XM player (playing, order, pattern, row, tick,
+/// speed, BPM, global volume, each channel's instrument, note, volume, panning, period) and both AY chips
+/// (AyChipReport at 1 774 400 Hz). Unavailable, with how to fit one, without a card. Peeked: reading changes nothing
+StateNode WildSound(EmulatorContext* context);
+
 /// Covox / SoundDrive: `Covox()` fitment (mono #FB or the quad SoundDrive),
 /// the ports this model's decoder routes to it (from its port map), the ports
 /// it shares with the Beta-128 interface and who wins them, the four DAC

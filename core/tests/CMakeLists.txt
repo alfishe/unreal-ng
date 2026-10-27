@@ -103,6 +103,15 @@ if (WIN32 AND NOT MSVC)
         ${GOOGLETEST_DIR}/googletest/src/gtest-typed-test.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
     )
+    # As targets, so the other test executables (unreal-disk-tests, unreal-asm-tests, the HUD and Qt tests) link
+    # the same GoogleTest
+    if (NOT TARGET gtest)
+        add_library(gtest STATIC ${GOOGLETEST_FILES})
+        target_include_directories(gtest PUBLIC ${GOOGLETEST_DIR}/googletest/include PRIVATE ${GOOGLETEST_DIR}/googletest)
+        add_library(gtest_main STATIC ${GOOGLETEST_DIR}/googletest/src/gtest_main.cc)
+        target_link_libraries(gtest_main PUBLIC gtest)
+    endif()
+    set(GOOGLETEST_FILES)
 else (WIN32 AND NOT MSVC)
     # Compile GoogleTest to <binary>/googletest subfolder (skip if already defined)
     if (NOT TARGET gtest)
@@ -281,7 +290,7 @@ if (NOT TARGET ${PROJECT_NAME})
         # and with both forced in ld reported ".rsrc merge failure: duplicate leaf: type: 10 (VERSION)"
         set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive -liconv")
 
-        set(common_libraries shlwapi ws2_32)
+        set(common_libraries shlwapi ws2_32 gtest)
     endif (WIN32 AND MINGW)
 
     if (UNIX AND NOT APPLE)

@@ -49,6 +49,7 @@ build). Exit code 0 = every test passed. The whole set takes about 5 seconds.
 | `test_media.py` | `media`, `load_software`, `rzx_playback` | slots and formats in the text, a tape from `testdata/` loads into its slot, a missing file is named |
 | `test_router.py` | `search_api`, `invoke_api` | search by words, a GET by path, a missing path |
 | `test_analysis.py` | `analyze_performance` | frame cost and profiler status in the text, coverage over a run |
+| `test_memory_counters.py` | `analyze_performance`, `control_execution` | memory counters: the top executed cells as text lines (heaviest first), one cell by address, `phys` cells naming their page, an unknown space refused; a masked port watch (`#FE` / `0x00FF`) counting the ROM's keyboard reads, a duplicate name refused, removed |
 | `test_asm_source.py` | `asm_source` | dialects and formats, an encode / decode round trip |
 | `test_signature.py` | `signature_info`, `controllers` (`match`, `context`), `media` | The media signatures: a tape's content signature and hashes in the text, a disk's TR-DOS file set, compare (exact; a tape against a disk: none), a missing file named, the signature of a disk inserted into a drive, the game-profile match of a signature and of a path (the Qt client computes it), context naming the matches and the haptics reason |
 | `test_text_coverage.py` | many | the share of the `structuredContent` values the default text carries, per call, against a floor: a call whose text falls back to a headline fails |

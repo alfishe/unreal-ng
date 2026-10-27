@@ -110,6 +110,12 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "MultiSoundPcm";
         case AudioSourceType::MultiSoundMidi:
             return "MultiSoundMidi";
+        case AudioSourceType::WildSoundXm:
+            return "WildSoundXm";
+        case AudioSourceType::WildSoundAy1:
+            return "WildSoundAy1";
+        case AudioSourceType::WildSoundAy2:
+            return "WildSoundAy2";
         case AudioSourceType::Custom:
             return "Custom";
         default:

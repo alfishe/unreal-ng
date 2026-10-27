@@ -31,7 +31,7 @@ Slot2=NE2000
 ## Two sections, two kinds of card
 
 - **`[ISA]`** says what physical ISA card sits in each slot: `Slot1=` and `Slot2=`, one of `NONE`, `ZXBUS`,
-  `NE2000`, `EL3C509B`, `SPRINTERESP`, `MODEM`, `DUAL16552`. The network and serial cards are complete here.
+  `NE2000`, `EL3C509B`, `SPRINTERESP`, `MODEM`, `DUAL16552`, `WILDSOUND`. The network, serial and Wild Sound cards are complete here.
 - **`[SLOTS]`** says which ZX Spectrum card goes **on** the ZX-bus adapter (`isa.1`), and what is in the AY socket.
 
 So a General Sound needs both: the adapter in `[ISA]` (`Slot1=ZXBUS`) and the card in `[SLOTS]` (`isa.1 = ...`).
@@ -143,6 +143,7 @@ Write I/O bases as `0x300` or `300h`: a `#` starts a comment in the INI file.
 | `SPRINTERESP` | SprinterESP Wi-Fi (I/O `#3E8`, IRQ 3 fixed by the board) | `SlotNPeer` = `AT` (its own ESP) \| `loopback` \| `tcp:host:port` \| `serial:/dev/tty...,115200` \| `none`; `SlotNMac` |
 | `MODEM` | ISA Hayes modem (16550A) | `SlotNBase` = `0x3F8` \| `0x2F8` \| `0x3E8` \| `0x2E8`; `SlotNIrq` = 2 \| 3 \| 4 \| 5 \| 7; `SlotNPeer` = `MODEM` |
 | `DUAL16552` | SprinterSerial: COM1 `#3F8` + COM2 `#2F8` | `SlotNPeer` / `SlotNPeerB` (COM1 / COM2 line); `SlotNIrq` = 3 \| 2 \| 0 (J5); `SlotNIrqB` = 4 \| 2 \| 0 (J6); `SlotNDecode` = `FULL` \| `PARTIAL` |
+| `WILDSOUND` | Robus's Wild Sound: two AY chips and an XM player (I/O `#000` / `#001`, no IRQ) | - |
 
 NE2000 in slot 2 (the shipped setting):
 
@@ -204,6 +205,23 @@ Slot1=NONE
 ```
 
 More on the network cards: [.recipe/machines/sprinter-network.md](../../.recipe/machines/sprinter-network.md).
+
+### Wild Sound
+
+Robus's ISA Wild Sound: an STM32 that answers like two AY-3-8910 at ISA I/O `#000` (register select) and `#001`
+(data), plus an XM player the program uploads a module to. The card plays either its AY chips or the module, as
+the real one does. The XM plays with FastTracker 2 behaviour (the card's 2021 firmware has playback bugs; the
+emulation follows what the modules mean). Its programs probe slot 1 first, then slot 2:
+
+```ini
+[ISA]
+Slot1=WILDSOUND
+```
+
+`DEMOS\WILDSND\PROSIAK.EXE` on the MAME pack's system disk plays its tune on it; more programs (XM, S3M, PT3) are in
+`testdata/sound/wildsound/`. The mixer shows three rows, `WS XM`, `WS AY 1`, `WS AY 2`. Design and protocol:
+[docs/inprogress/2026-10-09-wildsound/](../inprogress/2026-10-09-wildsound/README.md); the recipe:
+[.recipe/machines/sprinter-sound.md](../../.recipe/machines/sprinter-sound.md#wild-sound-isa-card-verified-2026-10-09).
 
 ## At creation, without editing the file
 

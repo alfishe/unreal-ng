@@ -43,6 +43,9 @@ const KeyName kKeys[] = {
     // The ZX Spectrum Next (NextAudio's parts)
     {AudioSourceType::NextAy1, "next_ay1"},       {AudioSourceType::NextAy2, "next_ay2"},
     {AudioSourceType::NextAy3, "next_ay3"},       {AudioSourceType::NextDac, "next_dac"},
+    // Wild Sound (a Sprinter ISA card)
+    {AudioSourceType::WildSoundXm, "ws_xm"}, {AudioSourceType::WildSoundAy1, "ws_ay1"},
+    {AudioSourceType::WildSoundAy2, "ws_ay2"},
 };
 
 std::string Lower(std::string s)

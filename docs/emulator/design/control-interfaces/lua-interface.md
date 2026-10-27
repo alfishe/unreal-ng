@@ -880,7 +880,7 @@ local enabled = emu:feature_get("debugmode")
 ```
 
 > [!NOTE]
-> Memory counters (`memcounters`) and call trace (`calltrace`) are available via CLI and WebAPI. Full Lua bindings for these analysis features are planned.
+> Memory counters and watches: `memory_counters`, `memory_counter`, `memory_watch_*` (see Memory Profiler below). The call trace (`calltrace`) is available via CLI and WebAPI.
 
 ### Opcode Profiler
 
@@ -921,22 +921,26 @@ local trace = profiler_trace(500)
 Track memory access patterns across all physical memory pages (RAM/ROM/Cache).
 
 ```lua
--- Session control
-memory_profiler_start()    -- Enable feature, start capture
-memory_profiler_stop()     -- Stop capture
-memory_profiler_pause()    -- Pause capture (retain data)
-memory_profiler_resume()   -- Resume paused capture
-memory_profiler_clear()    -- Clear all data
+-- Session control (tracecontrol): trace("memory", "start"), also stop / pause / resume / clear / status
+trace("memory", "start")
 
--- Status query
-local status = memory_profiler_status()
--- status.feature_enabled, status.capturing, status.session_state, status.tracking_mode
+-- Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md): a table or nil, error
+local hot = memory_counters{space = "cpu", view = "top", kinds = "x", limit = 16}
+for _, cell in ipairs(hot.cells) do            -- cell = {address, reads, writes, executes}
+    print(string.format("%04X r=%d w=%d x=%d", cell[1], cell[2], cell[3], cell[4]))
+end
+local banks = memory_counters{space = "phys", view = "top", kinds = "w"}   -- cell[1] // 0x4000 = absolute page
+local cells = memory_counters{addresses = "0x5C00,0x5C08,0x8000-0x800F"}  -- or a table of addresses
+local r, w, x = memory_counter(0x5C08)          -- one cell; memory_counter(0x1C08, "ram5")
 
--- Data retrieval
-local pages = memory_profiler_pages(20)      -- Get per-page access summaries
-local counters = memory_profiler_counters(5, "physical")  -- Address-level counters for page
-local regions = memory_profiler_regions()    -- Monitored region statistics
-memory_profiler_save("/path/output", "yaml") -- Save data to file
+-- Watches (MemoryWatch): true or nil, error
+memory_watch_add("sysvars", 0x5C00, 0xC0, {callers = true})
+memory_watch_port("kempston", 0x1F, 0x00FF, {values = true})   -- every port with low byte 0x1F
+for _, watch in ipairs(memory_watches()) do     -- {name, kind, start, length / port, mask, reads, writes, executes, callers, values}
+    print(watch.name, watch.reads, watch.writes)
+end
+memory_watch_remove("sysvars")
+memory_watch_clear()
 ```
 
 ### Call Trace Profiler

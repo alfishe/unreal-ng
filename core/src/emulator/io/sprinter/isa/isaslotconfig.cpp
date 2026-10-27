@@ -31,7 +31,7 @@ struct KindEntry
 constexpr KindEntry kKinds[] = {
     {CardKind::None, "NONE"},           {CardKind::ZxBus, "ZXBUS"},         {CardKind::Ram, "RAM"},
     {CardKind::Ne2000, "NE2000"},       {CardKind::El3c509b, "EL3C509B"},   {CardKind::SprinterEsp, "SPRINTERESP"},
-    {CardKind::Modem, "MODEM"},         {CardKind::Dual16552, "DUAL16552"},
+    {CardKind::Modem, "MODEM"},         {CardKind::Dual16552, "DUAL16552"}, {CardKind::WildSound, "WILDSOUND"},
 };
 }  // namespace
 
@@ -328,6 +328,8 @@ bool KindAvailable(CardKind kind, std::string* why)
         case CardKind::Modem:
         case CardKind::Dual16552:
             break;   // network phase SN4: NetworkManager builds the PcSerialCard, the Sprinter fits it
+        case CardKind::WildSound:
+            break;   // the Sprinter decoder fits the card (docs/inprogress/2026-10-09-wildsound)
     }
     if (why && reason)
         *why = reason;
@@ -369,6 +371,9 @@ std::vector<SlotSummary> SlotSummaries(const CONFIG& config)
                 break;
             case CardKind::Dual16552:
                 slot.name = "SprinterSerial (2 x 16550)";
+                break;
+            case CardKind::WildSound:
+                slot.name = "Wild Sound (Robus)";
                 break;
         }
         slot.details = SlotChipName(isa);
