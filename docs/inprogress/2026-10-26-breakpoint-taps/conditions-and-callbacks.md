@@ -206,6 +206,13 @@ The WebSocket topic `callbacks` carries the state changes (suspended, disabled, 
 (WebAPI, WebSocket, MCP) are always deferred: a hit becomes a topic event, which is the at-most-once, bounded queue of
 R02 §11.
 
+Built 2026-10-27 (list and manage; registration stays with the scripts): CLI `callback list | resume | remove |
+policy`, REST `GET /callbacks`, `POST /callbacks/{cb_id}/resume`, `DELETE /callbacks/{cb_id}`,
+`PUT /callbacks/{cb_id}/policy`, MCP `control_execution` `callbacks`, `callback_resume`, `callback_remove`,
+`callback_policy`. The state changes go out as `callbacks_changed` on `debug.events` (beside `breakpoints_changed`)
+rather than a topic of their own; hits are not pushed to remote clients yet. One report and one text line in core
+(`callbackcontrol.h`, `callbacktext.h`) for every plane.
+
 ## 8. Decisions for the owner
 
 1. **Dialect: decided 2026-10-26, the Unreal order is canonical** (rules.md §5.3, the TUI prototype): comparisons
@@ -252,6 +259,12 @@ what it built.
    16 slots). An `each_write` probe with `if:` keeps the byte of the last write the condition held for as `before`.
 3. **Deferred callbacks** on Lua and Python: the per-script ring, the stats, and the policies without `unpaced`;
    plus `on_game_event`.
+   Built 2026-10-27: `ScriptCallbackManager` per emulator (owned by the debug manager): a tap callback owns a hidden
+   tap, a breakpoint callback hears the stop, a game event callback the frame's fired events; an SPSC ring per
+   callback (16..4096, a full one drops and counts), a register snapshot per hit, a wake on the empty-to-not-empty
+   step; the script's thread drains and reports each call's time; `suspend` / `disable` / `ignore` with the §5 rule.
+   Lua and Python `on_tap`, `on_breakpoint`, `on_game_event`, `callbacks`, `callback_resume` / `_remove` /
+   `_policy`, `callbacks_run`. Public page: [script-callbacks.md](../../features/script-callbacks.md).
 4. **The Lua hook state:** frame and sync modes, the instruction budget, and `unpaced` pacing.
 5. **Logic callbacks** with TTD journaling; the GS read-value hooks.
 

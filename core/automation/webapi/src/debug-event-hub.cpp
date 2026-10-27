@@ -1,7 +1,12 @@
 #include "debug-event-hub.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/statenode_json.h"
+#include "debugger/callbacks/callbackcontrol.h"
+#include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -60,6 +65,10 @@ void DebugEventHub::Start()
     _observers.emplace_back(NC_BREAKPOINTS_CHANGED,
                             messageCenter.AddObserver(NC_BREAKPOINTS_CHANGED,
                                                       [this](int, Message* message) { OnBreakpointsChanged(message); }));
+    _observers.emplace_back(NC_SCRIPT_CALLBACKS_CHANGED,
+                            messageCenter.AddObserver(NC_SCRIPT_CALLBACKS_CHANGED, [this](int, Message* message) {
+                                OnScriptCallbacksChanged(message);
+                            }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -278,6 +287,29 @@ void DebugEventHub::OnBreakpointsChanged(Message* message)
     for (uint16_t id : payload->ids)
         event["ids"].append(id);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnScriptCallbacksChanged(Message* message)
+{
+    auto* payload = message ? dynamic_cast<ScriptCallbacksChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    const std::string emulatorId = payload->emulatorId.toString();
+    Json::Value event;
+    event["event"] = "callbacks_changed";
+    event["id"] = payload->id;
+    // The callback as GET /callbacks shows it now (a registration, a resume, a policy, a suspension), or removed: true
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(emulatorId) : nullptr;
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    ScriptCallbackManager* callbacks =
+        context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
+    CallbackInfo info;
+    if (callbacks && callbacks->Get(payload->id, info))
+        event["callback"] = StateNodeToJson(callback_control::InfoNode(info));
+    else if (callbacks)
+        event["removed"] = true;
+    Publish(emulatorId, kTopicDebug, event);
 }
 
 void DebugEventHub::OnAsmSync(Message* message)

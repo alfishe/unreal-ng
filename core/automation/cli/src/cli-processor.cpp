@@ -146,6 +146,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
                         {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
                         {"bpcond", &CLIProcessor::HandleBPCondition},     // Set a breakpoint's condition
+                        {"callback", &CLIProcessor::HandleCallback},      // The scripts' callbacks: list, resume, remove, policy
+                        {"callbacks", &CLIProcessor::HandleCallback},     // Alias for callback (list by default)
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
@@ -712,6 +714,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
     oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;
     oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
+    oss << "  callback [list|resume <id>|remove <id>|policy <id> <suspend|disable|ignore>] - Script callbacks (Lua / Python on_tap ...)" << NEWLINE;
     oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
     oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
     oss << NEWLINE;

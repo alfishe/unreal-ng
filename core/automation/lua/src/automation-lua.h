@@ -24,6 +24,8 @@ protected:
     std::queue<std::function<void()>> _taskQueue;
     std::mutex _queueMutex;
     std::condition_variable _queueCV;
+    /// A script callback has hits (docs/features/script-callbacks.md): set by the emulation thread under _queueMutex
+    bool _callbacksPending = false;
     
     // Initialization synchronization
     std::mutex _initMutex;

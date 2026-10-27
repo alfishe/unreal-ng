@@ -164,6 +164,7 @@ private:
     void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCallback(const ClientSession& session, const std::vector<std::string>& args);
     /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
     /// group:<name>); false when `text` is not one (the caller answers)
     bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,

@@ -978,6 +978,8 @@ public:
     /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
     /// on from a breakpoint)
     bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
+    void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
     const BreakpointStop& LastDirectStop() const { return _directStop; }
     bool IsDestroying();  // Thread-safe check for destruction state

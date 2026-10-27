@@ -861,6 +861,28 @@ page, a mask on a memory breakpoint, a hit policy without a target. The reply an
 `note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
 on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.
 
+### Script callbacks
+
+A Lua or Python script registers a [callback](../../../features/script-callbacks.md) (`on_tap`, `on_breakpoint`,
+`on_game_event`); a remote client cannot (a function lives in a script), but it lists and manages them, with the
+semantics of Lua's `callbacks()`, `callback_resume`, `callback_remove` and `callback_policy`:
+
+```
+GET    /api/v1/emulator/{id}/callbacks                     {count, callbacks: [...]}: every callback with its statistics
+POST   /api/v1/emulator/{id}/callbacks/{cb_id}/resume      A suspended one active again, fresh statistics (409: disabled)
+DELETE /api/v1/emulator/{id}/callbacks/{cb_id}             Remove it and its tap (the script is not told)
+PUT    /api/v1/emulator/{id}/callbacks/{cb_id}/policy      {policy: suspend | disable | ignore}
+```
+
+A callback has the Lua table's fields: `id, on` (`tap`, `breakpoint`, `game_event`), `owner` (`lua`, `python`),
+`label, target` (`"tap write #5C78 if MDT == 0"`, `"breakpoint 3"`, `"event died"`), `breakpoint`, `event`,
+`policy, state` (`active`, `suspended`, `disabled`), `reason`, `budget_us, ring, pending, hits, dropped, calls,
+errors, overruns, total_us, max_us, p99_us`, `last_overrun_frame` / `last_overrun_us` (after an overrun) and
+`last_error` (after an error); the optional ones are absent until they apply. Resume and policy answer
+`{status, message, callback}`, remove `{status, message, id, removed}`; an unknown callback is 404, a bad id or
+policy 400. Each route is a WebSocket `call`; a change is pushed as `callbacks_changed` on `debug.events`. The
+changing routes pass the automation gate as the breakpoint routes do.
+
 ### Analyzers
 ```
 GET    /api/v1/emulator/{id}/analyzers                       # List all analyzers

@@ -1698,42 +1698,29 @@ disassemble(cpu:get_pc(), 16)
 
 ## Event Callbacks
 
-### Supported Events
+A script is called back on a tap (a memory or port access, with an optional condition; it never stops the machine),
+on a breakpoint's stop, or on a game event of the controller profile. The emulation thread notes each hit with a
+snapshot of the registers; the function runs later on this interpreter's thread (deferred mode). Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
 
 ```lua
--- Frame rendered
-emu:set_frame_callback(function()
-    -- Called every frame
-end)
+-- One of exec, read, write, port_in, port_out names the address; to=, page=, mask=, ["if"]=, dialect=
+id, err = on_tap({write = 0x5C78, ["if"] = "MDT < 5"}, function(hit)
+    print(hit.frame, hit.pc, hit.value, hit.regs.hl)
+end, {label = "lives"})                      -- options: policy (suspend | disable | ignore), budget_us, ring, label
+id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)  -- the breakpoint still stops
+id, err = on_game_event("died", function(hit) print(hit.event, hit.value) end)
 
--- Breakpoint hit
-emu:set_breakpoint_callback(function(bp_id, address)
-    -- Called when breakpoint triggers
-end)
-
--- State changed
-emu:set_state_callback(function(old_state, new_state)
-    print("State: " .. old_state .. " -> " .. new_state)
-end)
-
--- Memory written
-emu:set_memory_write_callback(function(address, value)
-    print(string.format("Write: [0x%04X] = 0x%02X", address, value))
-end)
+for _, cb in ipairs(callbacks()) do          -- id, on, owner, label, target, policy, state, reason, stats
+    print(cb.id, cb.target, cb.state, cb.hits, cb.calls, cb.max_us)
+end
+callback_resume(id)                          -- a suspended callback again, statistics reset
+callback_policy(id, "ignore")
+callback_remove(id)
+callbacks_run()                              -- run the waiting hits now (a script looping without returning)
 ```
 
-### Callback Management
-
-```lua
--- Register callback
-callback_id = emu:register_callback("frame", my_function)
-
--- Unregister callback
-emu:unregister_callback(callback_id)
-
--- Clear all callbacks
-emu:clear_callbacks()
-```
+A registration returns the id, or `-1` and the reason. The callbacks go when the interpreter stops.
 
 ## Lua Standard Library
 

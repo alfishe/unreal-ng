@@ -61,6 +61,9 @@
 #include <debugger/debugmanager.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointcondition.h>
+#include <debugger/callbacks/scriptcallbacks.h>
+#include <set>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/labels/labelmanager.h>
@@ -1176,6 +1179,156 @@ namespace PythonBindings
     }
     /// endregion </Kempston joystick helpers>
 
+    /// Script callbacks of the Python thread (docs/features/script-callbacks.md): the functions by (emulator id, callback
+    /// id). Under the GIL; emptied by PythonForgetCallbacks before the interpreter ends
+    inline std::map<std::pair<std::string, uint32_t>, py::object>& PythonCallbackFunctions()
+    {
+        static auto* functions = new std::map<std::pair<std::string, uint32_t>, py::object>();
+        return *functions;
+    }
+    constexpr const char* kPythonCallbackOwner = "python";
+
+    inline ScriptCallbackManager* PythonCallbacksOf(Emulator* emulator)
+    {
+        EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        return context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
+    }
+
+    inline py::dict PythonCallbackHit(const CallbackHit& hit, const CallbackInfo& info)
+    {
+        py::dict d;
+        d["frame"] = hit.frame;
+        d["t"] = hit.t;
+        d["pc"] = hit.pc;
+        d["address"] = hit.address;
+        d["value"] = hit.value >= 0 ? py::object(py::int_(hit.value)) : py::object(py::none());
+        d["breakpoint"] = hit.breakpointId;
+        d["kind"] = CallbackHitKindName(hit.kind);
+        if (!info.event.empty())
+            d["event"] = info.event;
+        py::dict regs;
+        regs["af"] = hit.af; regs["bc"] = hit.bc; regs["de"] = hit.de; regs["hl"] = hit.hl;
+        regs["af_"] = hit.af2; regs["bc_"] = hit.bc2; regs["de_"] = hit.de2; regs["hl_"] = hit.hl2;
+        regs["ix"] = hit.ix; regs["iy"] = hit.iy; regs["sp"] = hit.sp; regs["pc"] = hit.pc;
+        regs["i"] = hit.i; regs["r"] = hit.r; regs["a"] = hit.af >> 8; regs["f"] = hit.af & 0xFF;
+        d["regs"] = regs;
+        return d;
+    }
+
+    inline py::dict PythonCallbackInfo(const CallbackInfo& info)
+    {
+        py::dict d;
+        d["id"] = info.id;
+        d["on"] = CallbackTriggerName(info.trigger);
+        d["owner"] = info.owner;
+        d["label"] = info.label;
+        d["target"] = info.target;
+        d["breakpoint"] = info.breakpointId;
+        if (!info.event.empty())
+            d["event"] = info.event;
+        d["policy"] = CallbackPolicyName(info.policy);
+        d["state"] = CallbackStateName(info.state);
+        if (!info.reason.empty())
+            d["reason"] = info.reason;
+        d["budget_us"] = info.budgetUs;
+        d["ring"] = info.ring;
+        d["pending"] = info.pending;
+        const CallbackStats& s = info.stats;
+        d["hits"] = s.hits; d["dropped"] = s.dropped; d["calls"] = s.calls; d["errors"] = s.errors;
+        d["overruns"] = s.overruns; d["total_us"] = s.totalUs; d["max_us"] = s.maxUs; d["p99_us"] = s.p99Us;
+        if (s.overruns > 0)
+        {
+            d["last_overrun_frame"] = s.lastOverrunFrame;
+            d["last_overrun_us"] = s.lastOverrunUs;
+        }
+        if (!s.lastError.empty())
+            d["last_error"] = s.lastError;
+        return d;
+    }
+
+    /// on_tap / on_breakpoint / on_game_event: the id; ValueError with the reason when refused
+    inline int PythonRegisterCallback(Emulator& self, CallbackSpec spec, const py::function& fn, const std::string& policy,
+                                      uint32_t budgetUs, uint32_t ring, const std::string& label)
+    {
+        ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
+        if (!callbacks)
+            throw py::value_error("no debugger on this emulator");
+        spec.owner = kPythonCallbackOwner;
+        if (!ParseCallbackPolicy(policy, spec.policy))
+            throw py::value_error("policy must be suspend, disable or ignore, not '" + policy + "'");
+        spec.budgetUs = budgetUs;
+        spec.ring = ring;
+        spec.label = label.empty() ? py::str(py::getattr(fn, "__name__", py::str(""))).cast<std::string>() : label;
+        std::string error;
+        const uint32_t id = callbacks->Register(spec, error);
+        if (id == 0)
+            throw py::value_error(error);
+        PythonCallbackFunctions()[{self.GetId(), id}] = fn;
+        return static_cast<int>(id);
+    }
+
+    /// The Python thread, the GIL held: run every callback with hits waiting and report each call's time
+    /// True when a ring still holds hits (more than one drain takes)
+    inline bool PythonDrainCallbacks()
+    {
+        constexpr size_t kBatch = 64;
+        auto& functions = PythonCallbackFunctions();
+        if (functions.empty())
+            return false;
+        bool more = false;
+        auto* manager = EmulatorManager::GetInstance();
+        std::vector<CallbackHit> hits;
+        for (auto it = functions.begin(); it != functions.end();)
+        {
+            std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(it->first.first) : nullptr;
+            ScriptCallbackManager* callbacks = PythonCallbacksOf(emulator.get());
+            CallbackInfo info;
+            const uint32_t id = it->first.second;
+            if (!callbacks || !callbacks->Get(id, info))
+            {
+                it = functions.erase(it);
+                continue;
+            }
+            hits.clear();
+            more |= callbacks->Drain(id, hits, kBatch) == kBatch;
+            py::object fn = it->second;
+            ++it;
+            for (const CallbackHit& hit : hits)
+            {
+                const auto start = std::chrono::steady_clock::now();
+                bool failed = false;
+                std::string error;
+                try
+                {
+                    fn(PythonCallbackHit(hit, info));
+                }
+                catch (py::error_already_set& raised)
+                {
+                    failed = true;
+                    error = raised.what();
+                }
+                const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+                callbacks->Report(id, static_cast<uint32_t>(std::min<int64_t>(us, 0xFFFF'FFFF)), failed, error);
+            }
+        }
+        return more;
+    }
+
+    /// The interpreter ends: every Python callback on every emulator. The GIL held
+    inline void PythonForgetCallbacks()
+    {
+        auto& functions = PythonCallbackFunctions();
+        auto* manager = EmulatorManager::GetInstance();
+        std::set<std::string> emulators;
+        for (const auto& [key, fn] : functions)
+            emulators.insert(key.first);
+        for (const std::string& id : emulators)
+            if (std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(id) : nullptr)
+                if (ScriptCallbackManager* callbacks = PythonCallbacksOf(emulator.get()))
+                    callbacks->RemoveOwner(kPythonCallbackOwner);
+        functions.clear();
+    }
+
     /// @brief Register all emulator bindings with the Python module
     /// @param m The pybind11 module to register bindings with
     inline void registerEmulatorBindings(py::module_& m)
@@ -1489,9 +1642,89 @@ namespace PythonBindings
         py::register_exception<execution::script::ControlRevoked>(m, "ControlRevoked");
 
         // Emulator class bindings
+        m.def("callbacks_run", []() {
+                  while (PythonDrainCallbacks())
+                  {
+                  }
+              },
+              "Run the callbacks with hits now (a script looping on the Python thread calls it; the idle loop does)");
+
         auto emulatorClass = py::class_<Emulator>(m, "Emulator")
             // Lifecycle control
             .def("start", &Emulator::Start, "Start emulator execution")
+            .def("on_tap", [](Emulator& self, const py::function& fn, const std::string& kind, uint16_t address,
+                              int32_t to, const std::string& page, int32_t mask, const std::string& condition,
+                              const std::string& dialect, const std::string& policy, uint32_t budget_us, uint32_t ring,
+                              const std::string& label) -> int {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Tap;
+                if (kind == "exec") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_EXECUTE; }
+                else if (kind == "read") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_READ; }
+                else if (kind == "write") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_WRITE; }
+                else if (kind == "port_in") { spec.tap.type = BRK_IO; spec.tap.access = BRK_IO_IN; }
+                else if (kind == "port_out") { spec.tap.type = BRK_IO; spec.tap.access = BRK_IO_OUT; }
+                else
+                    throw py::value_error("kind must be exec, read, write, port_in or port_out, not '" + kind + "'");
+                spec.tap.address = address;
+                spec.tap.condition = condition;
+                if (!BreakpointConditionProgram::ParseDialect(dialect, spec.tap.conditionDialect))
+                    throw py::value_error("dialect must be 'unreal' or 'c'");
+                std::string error;
+                if (!BreakpointManager::ApplyScriptOptions(spec.tap, page, to, false, mask, "", error))
+                    throw py::value_error(error);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
+            }, "Call fn(hit) on the Python thread at every access the tap sees (kind exec / read / write / port_in / "
+               "port_out; condition: only when it holds). hit: frame, t, pc, address, value, kind, regs. The id; "
+               "ValueError when refused. docs/features/script-callbacks.md",
+               py::arg("fn"), py::arg("kind"), py::arg("address"), py::arg("to") = -1, py::arg("page") = "",
+               py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
+               py::arg("budget_us") = 1000, py::arg("ring") = 256, py::arg("label") = "")
+            .def("on_breakpoint", [](Emulator& self, const py::function& fn, uint16_t id, const std::string& policy,
+                                     uint32_t budget_us, uint32_t ring, const std::string& label) -> int {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Breakpoint;
+                spec.breakpointId = id;
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
+            }, "Call fn(hit) on the Python thread each time breakpoint id stops the machine (it still stops). The id; "
+               "ValueError when refused",
+               py::arg("fn"), py::arg("id"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
+               py::arg("ring") = 256, py::arg("label") = "")
+            .def("on_game_event", [](Emulator& self, const py::function& fn, const std::string& event,
+                                     const std::string& policy, uint32_t budget_us, uint32_t ring,
+                                     const std::string& label) -> int {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::GameEvent;
+                spec.event = event;
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label);
+            }, "Call fn(hit) on the Python thread on each frame the game event fires (game.events; hit.value: its "
+               "value). The id; ValueError when refused",
+               py::arg("fn"), py::arg("event"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
+               py::arg("ring") = 256, py::arg("label") = "")
+            .def("callbacks", [](Emulator& self) -> py::list {
+                py::list list;
+                if (ScriptCallbackManager* callbacks = PythonCallbacksOf(&self))
+                    for (const CallbackInfo& info : callbacks->List())
+                        list.append(PythonCallbackInfo(info));
+                return list;
+            }, "Every script callback of this emulator with its state and statistics")
+            .def("callback_resume", [](Emulator& self, uint32_t id) -> bool {
+                ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
+                return callbacks && callbacks->Resume(id);
+            }, "Resume a suspended callback (fresh statistics); False for an unknown or disabled one", py::arg("id"))
+            .def("callback_remove", [](Emulator& self, uint32_t id) -> bool {
+                ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
+                if (!callbacks || !callbacks->Remove(id))
+                    return false;
+                PythonCallbackFunctions().erase({self.GetId(), id});
+                return true;
+            }, "Remove a callback (any script's); False for an unknown id", py::arg("id"))
+            .def("callback_policy", [](Emulator& self, uint32_t id, const std::string& policy) -> bool {
+                CallbackPolicy parsed;
+                if (!ParseCallbackPolicy(policy, parsed))
+                    throw py::value_error("policy must be suspend, disable or ignore, not '" + policy + "'");
+                ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
+                return callbacks && callbacks->SetPolicy(id, parsed);
+            }, "Set a callback's over-budget policy; False for an unknown id", py::arg("id"), py::arg("policy"))
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
             .def("pause", [](Emulator& self) -> std::string {

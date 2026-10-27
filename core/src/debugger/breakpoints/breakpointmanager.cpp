@@ -404,6 +404,18 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     if (!spec.owner.empty())
         d->owner = spec.owner;
     d->shared = spec.shared;
+    d->hidden = spec.hidden;
+    if (spec.tapSink != BRK_NO_TAP)
+    {
+        if (spec.type != BRK_MEMORY && spec.type != BRK_IO)
+        {
+            delete d;
+            error = "a tap watches memory or ports";
+            return BRK_INVALID;
+        }
+        d->tapSink = spec.tapSink;
+        d->tapCookie = spec.tapCookie;
+    }
 
     bool adopted = false;
     const uint16_t id = AddBreakpointAdopting(d, adopted);

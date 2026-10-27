@@ -24,6 +24,7 @@
 #include "common/threadhelper.h"
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
@@ -2947,6 +2948,14 @@ void Emulator::CancelPendingStepOver()
     _stepOverHostHold.Release();
 }
 
+void Emulator::NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
+{
+    ScriptCallbackManager* callbacks =
+        _context && _context->pDebugManager ? _context->pDebugManager->GetScriptCallbacks() : nullptr;
+    if (callbacks && callbacks->WantsBreakpointStops())
+        callbacks->OnBreakpointStop(breakpointId, address, static_cast<uint8_t>(kind));
+}
+
 bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
 {
     // Temporary breakpoints of step over / step out, and hidden ones, are not shown to the user
@@ -2985,6 +2994,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
             _stoppedAtExecBreakpoint = true;
             _stoppedAtExecPc = address;
         }
+        NoteBreakpointCallbacks(breakpointId, address, kind);
         MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
                                                    new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
         // Execution: stop before the instruction. Memory and ports: the instruction completes, the run ends
@@ -2998,6 +3008,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         _stoppedAtExecPc = address;
     }
     _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
+    NoteBreakpointCallbacks(breakpointId, address, kind);
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
     _pendingPauseOwner.clear();

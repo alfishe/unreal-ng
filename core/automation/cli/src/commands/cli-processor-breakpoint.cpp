@@ -2,11 +2,14 @@
 // Extracted from cli-processor.cpp - 2026-01-08
 
 #include "cli-processor.h"
+#include "cli-callbacks.h"
 
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
+#include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <emulator/emulator.h>
+#include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
 
@@ -1327,4 +1330,19 @@ void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<
     }
     onBreakpointsChanged();
     session.SendResponse("Breakpoint #" + std::to_string(id) + (note.empty() ? " note cleared" : " note set"));
+}
+
+// HandleCallback: callback list | resume <id> | remove <id> | policy <id> <suspend|disable|ignore> (the scripts' callbacks)
+void CLIProcessor::HandleCallback(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    ScriptCallbackManager* callbacks =
+        context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
+    session.SendResponse(ClientSession::FormatForTerminal(CliCallbacks::Run(callbacks, args)));
 }

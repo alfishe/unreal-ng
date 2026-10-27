@@ -30,6 +30,8 @@
 #include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
+#include "../../../src/debugger/callbacks/callbacktext.h"  // the callback line every plane prints (header only)
+
 #include <algorithm>
 #include <cctype>
 #include <cinttypes>
@@ -1171,6 +1173,43 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 namespace
 {
 
+/// callback_text's reader over the WebAPI's JSON of one callback (GET /callbacks)
+struct CallbackJsonReader
+{
+    const Json::Value& value;
+
+    std::string Text(const char* key) const
+    {
+        return value[key].isString() ? value[key].asString() : std::string();
+    }
+    int64_t Number(const char* key) const
+    {
+        return value[key].isNumeric() ? value[key].asInt64() : 0;
+    }
+    bool Has(const char* key) const
+    {
+        return value.isMember(key);
+    }
+};
+
+std::string FormatCallbackLine(const Json::Value& callback)
+{
+    return callback_text::FormatLine(CallbackJsonReader{callback});
+}
+
+/// "Script callbacks: N" and a line per callback, as the CLI's `callback list`
+std::string FormatCallbackList(const Json::Value& list)
+{
+    const Json::Value& items = list["callbacks"];
+    std::string text = callback_text::ListHeader(items.isArray() ? items.size() : 0);
+    if (items.isArray())
+        for (const Json::Value& callback : items)
+            text += "\n" + FormatCallbackLine(callback);
+    if (!items.isArray() || items.empty())
+        text += " (a Lua or Python script registers them: on_tap, on_breakpoint, on_game_event)";
+    return text;
+}
+
 void RegisterControlExecution(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -1181,6 +1220,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
                                "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
+                               "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -1189,7 +1229,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
         "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
-        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op).";
+        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op). callbacks / "
+        "callback_resume / callback_remove / callback_policy list and manage the Lua / Python script callbacks "
+        "(callback_id, policy); a callback is registered only from a script.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
@@ -1286,6 +1328,16 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["bp_id"]["description"] =
         "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note/bp_condition (bp_reset_hits "
         "without it: all)";
+    schema["properties"]["callback_id"]["type"] = "integer";
+    schema["properties"]["callback_id"]["description"] =
+        "Script callback id for callback_resume / callback_remove / callback_policy (the callbacks list shows them)";
+    schema["properties"]["policy"]["type"] = "string";
+    schema["properties"]["policy"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* policy : {"suspend", "disable", "ignore"})
+        schema["properties"]["policy"]["enum"].append(policy);
+    schema["properties"]["policy"]["description"] =
+        "For callback_policy: what happens over the budget - suspend (default: suspended after 3 calls over it within "
+        "50 frames or one over 10 times it, until callback_resume), disable (its tap removed), ignore (counted only)";
     schema["properties"]["select"]["type"] = "string";
     schema["properties"]["select"]["description"] =
         "Instead of bp_id, for bp_remove/bp_enable/bp_disable/bp_toggle: all, a kind (exec, read, write, mem, port, in, out, "
@@ -1318,6 +1370,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies, conditions and keyboard keys; "
         "bp_remove / bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups "
         "lists the groups, bp_group_set / bp_note / bp_condition change a breakpoint's group / note / condition). "
+        "callbacks lists the script callbacks (Lua on_tap / on_breakpoint / on_game_event, Python emu.on_*) with their "
+        "state and statistics; callback_resume (a suspended one, fresh statistics), callback_remove and "
+        "callback_policy (suspend, disable, ignore) manage one by callback_id. "
         "set_register writes a CPU register (name, "
         "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
@@ -1659,6 +1714,43 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 out << "\n" << group["name"].asString() << ": " << group["active"].asUInt() << " of "
                                     << group["total"].asUInt() << " on";
                             result.text = out.str();
+                        }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "callbacks")
+                {
+                    // One line per callback in the text (an agent may see only the text): state, policy, statistics
+                    ForwardCall("GET", Endpoint(id, "/callbacks"), nullptr, caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                            result.text = FormatCallbackList(result.structured);
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "callback_resume" || action == "callback_remove" || action == "callback_policy")
+                {
+                    if (!args.isMember("callback_id") || (action == "callback_policy" && !args.isMember("policy")))
+                    {
+                        done(ToolResult::Error(action + (action == "callback_policy" ? " requires 'callback_id' and 'policy'"
+                                                                                      : " requires 'callback_id'")));
+                        return;
+                    }
+                    const std::string path = Endpoint(id, "/callbacks/" + args["callback_id"].asString()) +
+                                             (action == "callback_resume" ? "/resume"
+                                              : action == "callback_policy" ? "/policy" : "");
+                    Json::Value body(Json::objectValue);
+                    if (action == "callback_policy")
+                        body["policy"] = args["policy"].asString();
+                    const char* method = action == "callback_resume" ? "POST" : action == "callback_policy" ? "PUT" : "DELETE";
+                    ForwardCall(method, path, action == "callback_remove" ? nullptr : &body, caller, "",
+                                [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            result.text = result.structured["message"].asString();
+                            if (result.structured["callback"].isObject())
+                                result.text += ": " + FormatCallbackLine(result.structured["callback"]);
                         }
                         done(std::move(result));
                     });

@@ -99,16 +99,15 @@ bool AutomationLua::executeCode(const std::string& code, std::string& errorMessa
             sol::function tostring_func = lua["tostring"];
 
             // Override print function to capture output
-            lua["print"] = [&output, tostring_func](sol::object a, sol::object b, sol::object c, sol::object d, sol::object e) {
-                std::vector<sol::object> args = {a, b, c, d, e};
+            // Every argument as Lua's print shows it, nil included
+            lua["print"] = [&output, tostring_func](sol::variadic_args args) {
                 bool first = true;
-                for (auto& arg : args) {
-                    if (arg == sol::lua_nil) break; // Stop at nil arguments
+                for (auto arg : args) {
                     if (!first) {
                         output += "\t"; // Lua's default print separator
                     }
                     first = false;
-                    output += tostring_func(arg);
+                    output += tostring_func(sol::object(arg)).get<std::string>();
                 }
                 output += "\n"; // Lua's default print newline
             };
@@ -228,6 +227,14 @@ void AutomationLua::threadFunc(AutomationLua* lua)
     // causes a SIGSEGV on the first call.
     lua->_luaEmulator->setLuaState(lua->_lua);
     lua->_luaEmulator->registerType(*lua->_lua);
+    // A callback's ring went from empty to not empty: the loop below runs the callbacks
+    lua->_luaEmulator->SetCallbackWake([lua]() {
+        {
+            std::lock_guard<std::mutex> lock(lua->_queueMutex);
+            lua->_callbacksPending = true;
+        }
+        lua->_queueCV.notify_one();
+    });
     
     // Signal that initialization is complete
     {
@@ -247,7 +254,7 @@ void AutomationLua::threadFunc(AutomationLua* lua)
             
             // Wait for tasks or timeout
             lua->_queueCV.wait_for(lock, std::chrono::milliseconds(100), [lua]() {
-                return !lua->_taskQueue.empty() || lua->_stopThread;
+                return !lua->_taskQueue.empty() || lua->_callbacksPending || lua->_stopThread;
             });
             
             // Process all pending tasks
@@ -261,8 +268,20 @@ void AutomationLua::threadFunc(AutomationLua* lua)
                 
                 lock.lock();
             }
+
+            // Script callbacks: the functions run here, between the tasks, never on the emulation thread
+            if (lua->_callbacksPending)
+            {
+                lua->_callbacksPending = false;
+                lock.unlock();
+                const bool more = lua->_luaEmulator->DrainCallbacks();
+                lock.lock();
+                if (more)
+                    lua->_callbacksPending = true;
+            }
         }
     }
 
+    lua->_luaEmulator->ForgetCallbacks();
     lua->onFinish();
 }

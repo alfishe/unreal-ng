@@ -534,6 +534,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::setBreakpointNote, "/api/v1/emulator/{id}/breakpoints/{bp_id}/note", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointCondition, "/api/v1/emulator/{id}/breakpoints/{bp_id}/condition",
                   drogon::Put);
+    // The scripts' callbacks (docs/features/script-callbacks.md): list and manage, never register (callbacks_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getCallbacks, "/api/v1/emulator/{id}/callbacks", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::resumeCallback, "/api/v1/emulator/{id}/callbacks/{cb_id}/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::removeCallback, "/api/v1/emulator/{id}/callbacks/{cb_id}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::setCallbackPolicy, "/api/v1/emulator/{id}/callbacks/{cb_id}/policy", drogon::Put);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -1793,6 +1798,16 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void setBreakpointCondition(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                                 const std::string& bpIdStr) const;
+    // The scripts' callbacks: list, resume, remove, policy (callbacks_api.cpp)
+    void getCallbacks(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void resumeCallback(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& cbId) const;
+    void removeCallback(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& cbId) const;
+    void setCallbackPolicy(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& cbId) const;
 
     // Memory inspection and manipulation
     void getRegisters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

@@ -237,6 +237,42 @@
     schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] =
         "#/components/schemas/BreakpointInfo";
 
+    // Script callbacks (callbacks_api.cpp): the fields of Lua's callbacks()
+    {
+        Json::Value& cb = schemas["ScriptCallback"];
+        cb["type"] = "object";
+        cb["description"] = "A Lua / Python callback and its statistics (absent fields: as in the Lua table)";
+        const char* integers[] = {"id", "breakpoint", "budget_us", "ring", "pending", "hits", "dropped", "calls",
+                                  "errors", "overruns", "total_us", "max_us", "p99_us", "last_overrun_frame",
+                                  "last_overrun_us"};
+        for (const char* name : integers)
+            cb["properties"][name]["type"] = "integer";
+        const char* strings[] = {"on", "owner", "label", "target", "event", "policy", "state", "reason", "last_error"};
+        for (const char* name : strings)
+            cb["properties"][name]["type"] = "string";
+        for (const char* name : {"tap", "breakpoint", "game_event"})
+            cb["properties"]["on"]["enum"].append(name);
+        for (const char* name : {"suspend", "disable", "ignore"})
+            cb["properties"]["policy"]["enum"].append(name);
+        for (const char* name : {"active", "suspended", "disabled"})
+            cb["properties"]["state"]["enum"].append(name);
+        cb["properties"]["target"]["description"] = "What it is called on: \"tap write #5C78 if MDT == 0\", \"breakpoint 3\", \"event died\"";
+        cb["properties"]["reason"]["description"] = "Why it was suspended or disabled";
+        cb["properties"]["breakpoint"]["description"] = "The tap's hidden breakpoint, or the breakpoint whose stops it follows";
+
+        Json::Value& list = schemas["ScriptCallbackList"];
+        list["type"] = "object";
+        list["properties"]["count"]["type"] = "integer";
+        list["properties"]["callbacks"]["type"] = "array";
+        list["properties"]["callbacks"]["items"]["$ref"] = "#/components/schemas/ScriptCallback";
+
+        Json::Value& result = schemas["ScriptCallbackResult"];
+        result["type"] = "object";
+        result["properties"]["status"]["type"] = "string";
+        result["properties"]["message"]["type"] = "string";
+        result["properties"]["callback"]["$ref"] = "#/components/schemas/ScriptCallback";
+    }
+
     // Memory Breakpoint Info
     schemas["MemoryBreakpointInfo"]["type"] = "object";
     schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";

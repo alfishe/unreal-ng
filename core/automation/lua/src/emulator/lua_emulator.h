@@ -75,6 +75,11 @@
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointcondition.h>
+#include <debugger/callbacks/scriptcallbacks.h>
+#include <chrono>
+#include <set>
+#include <tuple>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
@@ -220,6 +225,13 @@ class LuaEmulator
 protected:
     Emulator* _emulator = nullptr;
     sol::state* _lua = nullptr;
+    /// Script callbacks (docs/features/script-callbacks.md): the functions by (emulator id, callback id). Lua thread
+    std::map<std::pair<std::string, uint32_t>, sol::protected_function> _callbacks;
+    /// Wakes the Lua thread when a callback has hits (AutomationLua sets it)
+    std::function<void()> _callbackWake;
+    static constexpr const char* kCallbackOwner = "lua";
+    static constexpr size_t kCallbackDrainBatch = 64;
+
 
     /// Resolve the emulator to operate on: the explicitly bound instance if set,
     /// otherwise the currently selected emulator (same source the REST API uses).
@@ -7673,6 +7685,258 @@ public:
 
         // TS-Conf VDAC2 card (FT812): bus capture
         LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // Script callbacks (docs/features/script-callbacks.md): deferred, on this Lua thread, with a snapshot of the hit.
+        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=}, fn [, options])
+        lua.set_function("on_tap", [this](const sol::table& where, const sol::protected_function& fn,
+                                          sol::optional<sol::table> options) -> std::tuple<int, sol::optional<std::string>> {
+            CallbackSpec spec;
+            spec.trigger = CallbackTrigger::Tap;
+            static const std::pair<const char*, std::pair<BreakpointTypeEnum, uint8_t>> kKinds[] = {
+                {"exec", {BRK_MEMORY, BRK_MEM_EXECUTE}}, {"read", {BRK_MEMORY, BRK_MEM_READ}},
+                {"write", {BRK_MEMORY, BRK_MEM_WRITE}},  {"port_in", {BRK_IO, BRK_IO_IN}},
+                {"port_out", {BRK_IO, BRK_IO_OUT}}};
+            int kinds = 0;
+            for (const auto& [name, kind] : kKinds)
+                if (auto address = where.get<sol::optional<int64_t>>(name))
+                {
+                    kinds++;
+                    spec.tap.type = kind.first;
+                    spec.tap.access = kind.second;
+                    spec.tap.address = static_cast<uint16_t>(*address);
+                }
+            if (kinds != 1)
+                return {-1, std::string("one of exec, read, write, port_in, port_out names the address")};
+            spec.tap.condition = where.get<sol::optional<std::string>>("if").value_or(
+                where.get<sol::optional<std::string>>("condition").value_or(""));
+            if (!BreakpointConditionProgram::ParseDialect(where.get<sol::optional<std::string>>("dialect").value_or(""),
+                                                          spec.tap.conditionDialect))
+                return {-1, std::string("dialect must be 'unreal' or 'c'")};
+            std::string error;
+            if (!BreakpointManager::ApplyScriptOptions(spec.tap, where.get<sol::optional<std::string>>("page").value_or(""),
+                                                       where.get<sol::optional<int32_t>>("to").value_or(-1), false,
+                                                       where.get<sol::optional<int32_t>>("mask").value_or(-1), "", error))
+                return {-1, error};
+            return RegisterCallback(spec, fn, options);
+        });
+        lua.set_function("on_breakpoint", [this](uint16_t id, const sol::protected_function& fn, sol::optional<sol::table> options) {
+            CallbackSpec spec;
+            spec.trigger = CallbackTrigger::Breakpoint;
+            spec.breakpointId = id;
+            return RegisterCallback(spec, fn, options);
+        });
+        lua.set_function("on_game_event", [this](const std::string& event, const sol::protected_function& fn,
+                                                 sol::optional<sol::table> options) {
+            CallbackSpec spec;
+            spec.trigger = CallbackTrigger::GameEvent;
+            spec.event = event;
+            return RegisterCallback(spec, fn, options);
+        });
+        lua.set_function("callbacks", [this](sol::this_state state) -> sol::table {
+            sol::state_view lua(state);
+            sol::table list = lua.create_table();
+            if (ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator()))
+                for (const CallbackInfo& info : callbacks->List())
+                    list.add(CallbackInfoTable(lua, info));
+            return list;
+        });
+        lua.set_function("callback_resume", [this](uint32_t id) -> bool {
+            ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator());
+            return callbacks && callbacks->Resume(id);
+        });
+        lua.set_function("callback_remove", [this](uint32_t id) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            ScriptCallbackManager* callbacks = CallbacksOf(emulator);
+            if (!callbacks || !callbacks->Remove(id))
+                return false;
+            _callbacks.erase({emulator->GetId(), id});
+            return true;
+        });
+        lua.set_function("callback_policy", [this](uint32_t id, const std::string& policy) -> std::tuple<bool, sol::optional<std::string>> {
+            ScriptCallbackManager* callbacks = CallbacksOf(effectiveEmulator());
+            CallbackPolicy parsed;
+            if (!ParseCallbackPolicy(policy, parsed))
+                return {false, "policy must be suspend, disable or ignore, not '" + policy + "'"};
+            if (!callbacks || !callbacks->SetPolicy(id, parsed))
+                return {false, std::string("no callback ") + std::to_string(id)};
+            return {true, sol::nullopt};
+        });
+        // Runs the callbacks with hits now (a script that loops on its own thread calls it; the idle loop does it itself)
+        lua.set_function("callbacks_run", [this]() {
+            while (DrainCallbacks())
+            {
+            }
+        });
+    }
+
+    void SetCallbackWake(std::function<void()> wake)
+    {
+        _callbackWake = std::move(wake);
+    }
+
+    static ScriptCallbackManager* CallbacksOf(Emulator* emulator)
+    {
+        EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        return context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
+    }
+
+    /// The callbacks of emulator @p id (the manager's, else the bound one); @p hold keeps it alive
+    ScriptCallbackManager* CallbacksById(const std::string& id, std::shared_ptr<Emulator>& hold) const
+    {
+        auto* manager = EmulatorManager::GetInstance();
+        hold = manager ? manager->GetEmulator(id) : nullptr;
+        if (hold)
+            return CallbacksOf(hold.get());
+        return _emulator && _emulator->GetId() == id ? CallbacksOf(_emulator) : nullptr;
+    }
+
+    /// The hit as the function gets it
+    static sol::table CallbackHitTable(sol::state_view lua, const CallbackHit& hit, const CallbackInfo* info)
+    {
+        sol::table t = lua.create_table();
+        t["frame"] = hit.frame;
+        t["t"] = hit.t;
+        t["pc"] = hit.pc;
+        t["address"] = hit.address;
+        if (hit.value >= 0)
+            t["value"] = hit.value;
+        t["breakpoint"] = hit.breakpointId;
+        t["kind"] = CallbackHitKindName(hit.kind);
+        if (info != nullptr && !info->event.empty())
+            t["event"] = info->event;
+        sol::table regs = lua.create_table();
+        regs["af"] = hit.af; regs["bc"] = hit.bc; regs["de"] = hit.de; regs["hl"] = hit.hl;
+        regs["af_"] = hit.af2; regs["bc_"] = hit.bc2; regs["de_"] = hit.de2; regs["hl_"] = hit.hl2;
+        regs["ix"] = hit.ix; regs["iy"] = hit.iy; regs["sp"] = hit.sp; regs["pc"] = hit.pc;
+        regs["i"] = hit.i; regs["r"] = hit.r;
+        regs["a"] = hit.af >> 8; regs["f"] = hit.af & 0xFF;
+        t["regs"] = regs;
+        return t;
+    }
+
+    static sol::table CallbackInfoTable(sol::state_view lua, const CallbackInfo& info)
+    {
+        sol::table t = lua.create_table();
+        t["id"] = info.id;
+        t["on"] = CallbackTriggerName(info.trigger);
+        t["owner"] = info.owner;
+        t["label"] = info.label;
+        t["target"] = info.target;
+        t["breakpoint"] = info.breakpointId;
+        if (!info.event.empty())
+            t["event"] = info.event;
+        t["policy"] = CallbackPolicyName(info.policy);
+        t["state"] = CallbackStateName(info.state);
+        if (!info.reason.empty())
+            t["reason"] = info.reason;
+        t["budget_us"] = info.budgetUs;
+        t["ring"] = info.ring;
+        t["pending"] = info.pending;
+        const CallbackStats& s = info.stats;
+        t["hits"] = s.hits; t["dropped"] = s.dropped; t["calls"] = s.calls; t["errors"] = s.errors;
+        t["overruns"] = s.overruns; t["total_us"] = s.totalUs; t["max_us"] = s.maxUs; t["p99_us"] = s.p99Us;
+        if (s.overruns > 0)
+        {
+            t["last_overrun_frame"] = s.lastOverrunFrame;
+            t["last_overrun_us"] = s.lastOverrunUs;
+        }
+        if (!s.lastError.empty())
+            t["last_error"] = s.lastError;
+        return t;
+    }
+
+    /// on_tap / on_breakpoint / on_game_event: `options` {policy=, budget_us=, ring=, label=}. The id; -1 and the reason
+    std::tuple<int, sol::optional<std::string>> RegisterCallback(CallbackSpec spec, const sol::protected_function& fn,
+                                                                 const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        ScriptCallbackManager* callbacks = CallbacksOf(emulator);
+        if (!callbacks)
+            return {-1, std::string("no emulator")};
+        if (!fn.valid())
+            return {-1, std::string("a function expected")};
+        spec.owner = kCallbackOwner;
+        if (options)
+        {
+            const sol::table& t = *options;
+            const std::string policy = t.get<sol::optional<std::string>>("policy").value_or("suspend");
+            if (!ParseCallbackPolicy(policy, spec.policy))
+                return {-1, "policy must be suspend, disable or ignore, not '" + policy + "'"};
+            spec.budgetUs = t.get<sol::optional<uint32_t>>("budget_us").value_or(spec.budgetUs);
+            spec.ring = t.get<sol::optional<uint32_t>>("ring").value_or(spec.ring);
+            spec.label = t.get<sol::optional<std::string>>("label").value_or("");
+        }
+        callbacks->SetWake(kCallbackOwner, _callbackWake);
+        std::string error;
+        const uint32_t id = callbacks->Register(spec, error);
+        if (id == 0)
+            return {-1, error};
+        _callbacks[{emulator->GetId(), id}] = fn;
+        return {static_cast<int>(id), sol::nullopt};
+    }
+
+    /// The Lua thread: run every callback with hits waiting, the oldest first, and report each call's time. True when a
+    /// ring still holds hits (more than one drain takes)
+    bool DrainCallbacks()
+    {
+        if (_callbacks.empty() || _lua == nullptr)
+            return false;
+        bool more = false;
+        std::vector<CallbackHit> hits;
+        for (auto it = _callbacks.begin(); it != _callbacks.end();)
+        {
+            std::shared_ptr<Emulator> emulator;
+            ScriptCallbackManager* callbacks = CallbacksById(it->first.first, emulator);
+            if (!callbacks)
+            {
+                // The emulator went: its callbacks with it
+                it = _callbacks.erase(it);
+                continue;
+            }
+            const uint32_t id = it->first.second;
+            CallbackInfo info;
+            if (!callbacks->Get(id, info))
+            {
+                it = _callbacks.erase(it);
+                continue;
+            }
+            hits.clear();
+            more |= callbacks->Drain(id, hits) == kCallbackDrainBatch;
+            sol::protected_function fn = it->second;
+            ++it;
+            for (const CallbackHit& hit : hits)
+            {
+                const auto start = std::chrono::steady_clock::now();
+                const sol::protected_function_result result = fn(CallbackHitTable(*_lua, hit, &info));
+                const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+                std::string error;
+                if (!result.valid())
+                {
+                    sol::error raised = result;
+                    error = raised.what();
+                }
+                callbacks->Report(id, static_cast<uint32_t>(std::min<int64_t>(us, 0xFFFF'FFFF)), !result.valid(), error);
+            }
+        }
+        return more;
+    }
+
+    /// The Lua state goes (stop, reset): every callback of this script on every emulator
+    void ForgetCallbacks()
+    {
+        std::set<std::string> emulators;
+        for (const auto& [key, fn] : _callbacks)
+            emulators.insert(key.first);
+        for (const std::string& id : emulators)
+        {
+            std::shared_ptr<Emulator> emulator;
+            if (ScriptCallbackManager* callbacks = CallbacksById(id, emulator))
+            {
+                callbacks->RemoveOwner(kCallbackOwner);
+                callbacks->SetWake(kCallbackOwner, nullptr);
+            }
+        }
+        _callbacks.clear();
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

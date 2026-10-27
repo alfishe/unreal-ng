@@ -246,6 +246,7 @@ private:
     std::mutex _holdMutex;                     ///< UpdateHapticHold from the control thread and the frame boundary
     GameEventLog _gameEvents;                  ///< what _hapticFed reports
     bool _gameEventsOn = false;                ///< _hapticFed defined events (emulator thread)
+    std::vector<std::string> _gameEventNames;  ///< their names, for the script callbacks (emulator thread)
     void FeedHaptics(uint64_t frame);
     void AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed);
     void DetachHapticFeed();

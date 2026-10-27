@@ -298,6 +298,9 @@ struct BreakpointSpec
     std::string group;                 // empty: "default"
     std::string owner;                 // empty: interactive
     bool shared = true;                // false: a breakpoint of its own even when an equal plain one exists
+    bool hidden = false;               // internal: not in the lists, no breakpoints_changed
+    uint8_t tapSink = BRK_NO_TAP;      // memory and port: a tap of this sink (RegisterTapSink), never stops
+    uint32_t tapCookie = 0;
 };
 
 /// endregion </Types>

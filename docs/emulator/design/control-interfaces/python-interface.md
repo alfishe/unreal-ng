@@ -69,6 +69,10 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` command) runs in `__main__`: its functions
+and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
+output comes back with the answer.
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -1179,6 +1183,24 @@ emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one;
                                     # with a condition also 'condition', 'match_count', 'condition_error'
+```
+
+### Script Callbacks
+
+Called back on a tap (a memory or port access, with an optional condition; never stops the machine), on a
+breakpoint's stop, or on a game event of the controller profile. The function runs on the Python thread under the
+GIL, from a ring of hits with a register snapshot each (deferred mode). Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
+
+```python
+id = emu.on_tap(lambda hit: print(hit["value"], hit["regs"]["hl"]), "write", 0x5C78, condition="MDT < 5",
+                label="lives")      # kind: exec, read, write, port_in, port_out; to=, page=, mask=, dialect=;
+                                    # policy= (suspend | disable | ignore), budget_us=, ring=; ValueError when refused
+id = emu.on_breakpoint(fn, 3)       # breakpoint 3 still stops
+id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
+emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]
+emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(id)
+ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
 ```
 
 ### DebugManager Class

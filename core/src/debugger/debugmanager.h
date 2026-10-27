@@ -43,6 +43,7 @@ protected:
     std::unique_ptr<class CommandTyper> _commandTyper;
     std::unique_ptr<class PcHistory> _pcHistory;
     std::unique_ptr<class AsmSyncService> _asmSync;
+    std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -70,6 +71,8 @@ public:
     PcHistory* GetPcHistory() { return _pcHistory.get(); }
     /// The asm-synchronizer's watch (debugger/asm/sync/asmsyncservice.h): no thread until a watch starts
     AsmSyncService* GetAsmSyncService() { return _asmSync.get(); }
+    /// Script callbacks (debugger/callbacks/scriptcallbacks.h)
+    ScriptCallbackManager* GetScriptCallbacks() { return _scriptCallbacks.get(); }
 
     /// endregion </Properties>
 

@@ -85,6 +85,8 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return any({"write", "fill", "load"});
     if (command == "registers" || command == "regs" || command == "r")
         return args.size() >= 2;                            // "r pc 8000": a register set
+    if (command == "callback" || command == "callbacks")    // the scripts' callbacks, as breakpoints: `list` reads
+        return !any({"list", "ls", "help"});
     if (command == "pace")                                  // the paced run: `pace` / `pace show` only read
         return !any({"show", "help", "presets"});
     if (command == "tape")

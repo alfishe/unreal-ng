@@ -544,6 +544,21 @@ public:
     virtual ~BreakpointsChangedPayload() = default;
 };
 
+/// Payload of NC_SCRIPT_CALLBACKS_CHANGED (debugger/callbacks/scriptcallbacks.h): callback `id` of this emulator
+/// changed (its state is read with ScriptCallbackManager::Get; gone when it is not found)
+class ScriptCallbacksChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint32_t id = 0;
+
+    ScriptCallbacksChangedPayload(const std::string& emulator, uint32_t callback)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), id(callback)
+    {
+    }
+    virtual ~ScriptCallbacksChangedPayload() = default;
+};
+
 /// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)
 class AsmSyncPayload : public MessagePayload
 {

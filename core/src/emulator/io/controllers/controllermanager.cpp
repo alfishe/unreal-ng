@@ -10,6 +10,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/breakpoints/breakpointcondition.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -726,6 +727,9 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
     const std::vector<GameEventInfo> events = feed->GameEvents();
     _gameEventsOn = !events.empty();
     _gameEvents.Define(events, feed->GameEventsProfile());
+    _gameEventNames.clear();
+    for (const GameEventInfo& event : events)
+        _gameEventNames.push_back(event.name);
     for (size_t index = 0; index < events.size(); index++)
     {
         const GameEventInfo& event = events[index];
@@ -838,7 +842,12 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         GameEventFrame events;
         events.frame = frame;
         if (feed->TakeGameEvents(events))
+        {
             _gameEvents.Record(events);
+            ScriptCallbackManager* callbacks = _context->pDebugManager ? _context->pDebugManager->GetScriptCallbacks() : nullptr;
+            if (callbacks && callbacks->WantsGameEvents())
+                callbacks->OnGameEvents(frame, events.fired, _gameEventNames, events.value.data());
+        }
     }
 }
 
