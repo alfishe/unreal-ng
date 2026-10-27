@@ -59,7 +59,7 @@ target_include_directories(unreal-disk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includ
 target_include_directories(unreal-disk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(unreal-disk PRIVATE ${UNREAL_DISK_WARNINGS})
 
-# Command-line tool: zxdisk, the files of any disk image (volumes, ls, cat, put) through DiskFs
+# Command-line tool: zxdisk, the files of any disk image (volumes, ls, cat, put, rm, mv, mkdir, attrib, label) through DiskFs
 add_executable(zxdisk tools/zxdisk/zxdisk.cpp)
 target_link_libraries(zxdisk PRIVATE unreal-disk)
 target_compile_options(zxdisk PRIVATE ${UNREAL_DISK_WARNINGS})

@@ -140,9 +140,7 @@ IsdosFileSystem::IsdosFileSystem(BlockReader reader) : _reader(std::move(reader)
         return;
     _descriptor = true;
     _boot.chic = std::memcmp(b + 13, "DSK", 3) == 0;
-    // Chic: an 11-byte name, but many Chic-era disks keep an 8-byte name and carry DSK at both +10 and +13
-    const bool longName = _boot.chic && std::memcmp(b + 10, "DSK", 3) != 0;
-    _boot.title = Text(b + 2, longName ? 11 : 8);
+    _boot.title = Text(b + 2, TitleWidth(b));
     _boot.blocks = Word(b + 18);
     _boot.root = Word(b + 20);
     _boot.cylinders = b[22];
@@ -151,6 +149,13 @@ IsdosFileSystem::IsdosFileSystem(BlockReader reader) : _reader(std::move(reader)
     _boot.sectors = b[25];
     _boot.date = Word(b + 30);
     _boot.sectorTable.assign(b + 64, b + 64 + (_boot.sectors < 16 ? _boot.sectors : 16));
+}
+
+size_t IsdosFileSystem::TitleWidth(const uint8_t* b)
+{
+    // Chic: an 11-byte name, but many Chic-era disks keep an 8-byte name and carry DSK at both +10 and +13
+    const bool chic = std::memcmp(b + 13, "DSK", 3) == 0;
+    return chic && std::memcmp(b + 10, "DSK", 3) != 0 ? 11 : 8;
 }
 
 bool IsdosFileSystem::IsDescriptor(const uint8_t* b)
@@ -1397,3 +1402,96 @@ bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions&
 }  // namespace unrealdisk
 
 /// endregion </Writing>
+
+namespace unrealdisk
+{
+template <typename Change>
+bool IsdosFileSystem::EditEntry(const std::string& path, std::string& error, Change change)
+{
+    if (!_writer)
+    {
+        error = "the iS-DOS device is read only";
+        return false;
+    }
+    Slot slot;
+    if (!Locate(path, slot, error))
+        return false;
+    uint8_t* e = slot.catalogue.raw.data() + slot.index * 32;
+    if (Fixed(e))
+    {
+        error = slot.file.path + " is a system file";
+        return false;
+    }
+    change(e);
+    if (slot.file.directory)
+    {
+        CatalogueImage sub;
+        if (!LoadCatalogue(slot.file.first, sub, error))
+            return false;
+        change(sub.raw.data());
+        if (!StoreEntry(sub, 0))
+        {
+            error = "the catalogue's header cannot be written";
+            return false;
+        }
+    }
+    if (!StoreEntry(slot.catalogue, slot.index))
+    {
+        error = "the catalogue cannot be written";
+        return false;
+    }
+    return true;
+}
+
+bool IsdosFileSystem::SetAttributes(const std::string& path, uint8_t attributes, std::string& error)
+{
+    constexpr uint8_t kChangeable = kReadProtect | kWriteProtect | kHide | kDeleteProtect;
+    return EditEntry(path, error, [&](uint8_t* e) { e[11] = static_cast<uint8_t>((e[11] & ~kChangeable) | (attributes & kChangeable)); });
+}
+
+bool IsdosFileSystem::SetTime(const std::string& path, uint16_t date, uint16_t time, std::string& error)
+{
+    return EditEntry(path, error, [&](uint8_t* e) {
+        e[28] = static_cast<uint8_t>(time);
+        e[29] = static_cast<uint8_t>(time >> 8);
+        e[30] = static_cast<uint8_t>(date);
+        e[31] = static_cast<uint8_t>(date >> 8);
+    });
+}
+
+bool IsdosFileSystem::SetTitle(const std::string& title, std::string& error)
+{
+    uint8_t b[kBlock];
+    if (!_writer || !_descriptor || !Block(0, b))
+    {
+        error = _writer ? "no iS-DOS device descriptor in block 0" : "the iS-DOS device is read only";
+        return false;
+    }
+    const size_t width = TitleWidth(b);
+    std::vector<uint8_t> bytes;
+    for (const char32_t c : UnicodeHelper::DecodeUtf8(title))
+    {
+        uint8_t byte = 0;
+        if (c < 0x20 || c == 0x7F || !UnicodeHelper::ToCodePage(CodePage::Cp866, c, byte))
+        {
+            error = "an iS-DOS device name takes printable ASCII and CP866 letters (" + title + ")";
+            return false;
+        }
+        bytes.push_back(byte);
+    }
+    if (bytes.size() > width)
+    {
+        error = "an iS-DOS device name has at most " + std::to_string(width) + " characters on this disk (" + title + ")";
+        return false;
+    }
+    bytes.resize(width, ' ');
+    std::memcpy(b + 2, bytes.data(), width);
+    if (!Put(0, b))
+    {
+        error = "block 0 cannot be written";
+        return false;
+    }
+    _boot.title = Text(b + 2, width);
+    return true;
+}
+}  // namespace unrealdisk

@@ -85,13 +85,15 @@ on a +3) is `unknown-slot`, never drive A.
 | `layers` | slot | a composite's layers (and partitions) |
 | `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image), `write-back` (the guest's file changes into the writable folder layers); `plan` reports and writes nothing |
 | `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
-| `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size and free bytes ([disk file systems](../emulator/design/disk-file-systems.md)) |
+| `volumes` | slot | the file systems on a floppy, hard disk or card: TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 / 16 / 32 (Sprinter DSS, NedoOS, MS-DOS), each MBR partition and each iS-DOS device of a hard disk, with id, label, offset, size, free bytes, `writable` and what it takes: `attributes` (the letters), `times`, `labels` ([disk file systems](../emulator/design/disk-file-systems.md)) |
 | `files` | slot, path? | the entries of a directory (`path` empty: the root) of one volume: path, name, size, start, attributes, time and the fields only that file system has; `recursive` the whole tree. Read only, under the time-travel read tap (nothing journalled) |
 | `read` | slot, path | one file's bytes: base64 `data` up to 16 MiB, or written to `out` (the answer then names `savedPath`) |
 | `write` | slot, path | a file onto the disk in the slot: TR-DOS (`NAME.T`), +3DOS (`NAME.TYP`), iS-DOS / TASiS (`SHELL/new.txt`), FAT on a floppy, hard disk or card (long names); an older file of that name replaced: the bytes as base64 `data` or a host file `in`; `start` the TR-DOS start / +3DOS CODE / iS-DOS load address (`#8000`, `0x8000`, `32768`), `header` false a +3DOS file without its header. Refused on a write-protected or read-only disk. The reply's `access` says where it went: `session` dirty until saved, `writethrough` in the disk's file; a TTD session keeps it as a tool's edit |
 | `delete` | slot, path | a file or an empty iS-DOS / FAT directory off the disk; `recursive` a directory with everything in it (every entry checked first: a protected iS-DOS file or a read-only FAT file anywhere refuses it all); protected iS-DOS system files stay |
 | `rename` | slot, path | the file or directory gets `to`: a bare name stays in its directory, a path from the root (`/GAMES/x.com`) moves it (iS-DOS, FAT); a directory moves with its contents, never into itself; a taken name is refused |
 | `mkdir` | slot, path | a directory on FAT, an iS-DOS catalogue as `mkdir.com` makes it (at most 6 levels below the root); `parents` makes the missing ones on the way; TR-DOS and +3DOS have none (`not-supported`) |
+| `attrib` | slot, path | a file's or directory's attribute letters and time: `attributes` `+R-H` changes these, `RA` sets exactly these (FAT `RHSA`, iS-DOS `RWHD` read-protect / write-protect / hidden / delete-protect, +3DOS `RSA`); `time` `2026-10-26 14:30[:05]`, `now` or seconds of the DOS wall clock (FAT, iS-DOS). The reply has the new `attributes` and `mtime`; TR-DOS has neither (`not-supported`), iS-DOS system files are refused |
+| `label` | slot | the volume's name to `label`: the FAT volume label (`""` removes it), the TR-DOS disk title (8 characters), the iS-DOS device name (8, or 11 on Chic); +3DOS has none (`not-supported`) |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -115,9 +117,12 @@ on a +3) is `unknown-slot`, never drive A.
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
-| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`), a file system (`fat16`) or an index | the first | files, read, write, delete, rename, mkdir |
+| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`), a file system (`fat16`) or an index | the first | files, read, write, delete, rename, mkdir, attrib, label |
 | `recursive` | bool | false | files (the whole tree), delete (a directory with its contents) |
 | `parents` | bool | false | mkdir: the missing directories on the way too, an existing one is no error |
+| `attributes` | `+R-H` (relative) or `RA` (exact), the volume's letters, any case | — | attrib |
+| `time` | `YYYY-MM-DD HH:MM[:SS]` (or `T` between), `now`, or seconds; 1980..2107 | — | attrib: the file's date and time on the DOS clock |
+| `label` | text (`""` clears a FAT label) | — | label |
 | `out` | a host file | — | read: write the bytes there instead of answering them |
 | `vhd` | `fixed`, `dynamic` | `fixed` | save to a path, export, flatten `flat` of a hard disk or card to a `.vhd`: `dynamic` stores only the 2 MiB blocks that hold data (a dynamic VHD in a slot is written in place: a new block goes at the end) |
 | `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
@@ -589,6 +594,8 @@ media delete hd OLD.TXT --volume p1
 media mkdir hd GAMES/NEW --parents
 media rename hd GAMES/NEW /NEW
 media delete hd NEW --recursive
+media attrib hd GAME.COM +R-H --time "2026-10-26 14:30"
+media label hd "WORK DISK"
 media help
 ```
 

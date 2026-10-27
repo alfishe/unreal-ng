@@ -1,5 +1,6 @@
 #include "unrealdisk/trdosfs.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "unrealdisk/diskimage.h"
@@ -12,6 +13,7 @@ constexpr size_t kSector = TrdosCatalog::SECTOR_SIZE;
 constexpr size_t kSectorsPerTrack = TrdosCatalog::SECTORS_PER_TRACK;
 constexpr size_t kInfoSector = 8;
 constexpr size_t kInfoDeletedCount = 0xF4;   // the disk info sector's count of deleted files
+constexpr size_t kInfoTitle = 0xF5;          // its 8-byte disk title
 
 std::string Padded(const std::string& name)
 {
@@ -170,6 +172,31 @@ bool TrdosFileSystem::Rename(const std::string& name, char type, const std::stri
     if (!found)
         error = "no file " + Describe(name, type) + " on the disk";
     return found;
+}
+
+bool TrdosFileSystem::SetTitle(const std::string& title, std::string& error)
+{
+    if (title.size() > 8 || std::any_of(title.begin(), title.end(), [](char c) { return c < ' ' || c > '~'; }))
+    {
+        error = "a TR-DOS disk title has at most 8 printable ASCII characters (" + title + ")";
+        return false;
+    }
+    const uint8_t* info = SectorData(_image, kInfoSector);
+    if (!info || !TrdosCatalog::IsTrdos(_image))
+    {
+        error = "the disk has no TR-DOS file system";
+        return false;
+    }
+    uint8_t sector[kSector];
+    std::memcpy(sector, info, kSector);
+    const std::string padded = Padded(title);
+    std::memcpy(sector + kInfoTitle, padded.data(), 8);
+    if (!WriteSector(_image, kInfoSector, sector))
+    {
+        error = "the info sector cannot be written";
+        return false;
+    }
+    return true;
 }
 
 bool TrdosFileSystem::Write(const std::string& name, char type, const std::vector<uint8_t>& bytes, const WriteOptions& options,

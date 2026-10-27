@@ -52,6 +52,10 @@ public:
     /// there is none, or a live file of the new name and type is there already
     bool Rename(const std::string& name, char type, const std::string& newName, char newType, std::string& error);
 
+    /// The disk title (8 bytes at #F5 of the info sector, track 0 sector 9), padded with blanks: printable ASCII,
+    /// at most 8 characters
+    bool SetTitle(const std::string& title, std::string& error);
+
 private:
     DiskImage& _image;
 };

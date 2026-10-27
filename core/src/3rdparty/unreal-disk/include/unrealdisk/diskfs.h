@@ -38,7 +38,10 @@ struct DiskFsVolume
     uint64_t offset = 0;   ///< block media: the volume's first byte on the disk
     uint64_t bytes = 0;    ///< its size
     int64_t freeBytes = -1;  ///< -1: not known
-    bool writable = false;   ///< Write, Delete and Rename work on it
+    bool writable = false;   ///< Write, Delete, Rename and the Set calls work on it
+    std::string attributes;  ///< the attribute letters SetAttributes takes: FAT "RHSA", iS-DOS "RWHD", +3DOS "RSA"
+    bool times = false;      ///< SetTime works (FAT, iS-DOS)
+    bool labels = false;     ///< SetLabel works (FAT, TR-DOS, iS-DOS)
 };
 
 struct DiskFsEntry
@@ -109,6 +112,15 @@ public:
     /// root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
     /// into itself). False when `to` is there already
     bool Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error);
+    /// The attributes of `path` by the letters of its file system (DiskFsVolume::attributes; FAT R read only, H hidden,
+    /// S system, A archive; iS-DOS R / W read / write protected, H hidden, D delete protected; +3DOS R read only,
+    /// S system, A archive): "+R-H" sets and clears, "RA" leaves exactly these set. Other letters are refused
+    bool SetAttributes(const std::string& volume, const std::string& path, const std::string& attributes, std::string& error);
+    /// The date and time of `path` (FAT, iS-DOS), `mtime` as in DiskFsWriteOptions
+    bool SetTime(const std::string& volume, const std::string& path, int64_t mtime, std::string& error);
+    /// The volume's name: a FAT volume label ("" removes it; `mtime` its entry's time), the TR-DOS disk title, the
+    /// iS-DOS device name
+    bool SetLabel(const std::string& volume, const std::string& label, int64_t mtime, std::string& error);
 
     /// A file system's reader (diskfs.cpp)
     struct Driver;

@@ -164,6 +164,21 @@ struct DiskFs::Driver
     virtual bool MakeDirectory(const std::string&, int64_t, std::string&) { return false; }
     /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
     virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
+    /// The attribute letters SetAttributes takes ("": none)
+    virtual std::string AttributeLetters() const { return {}; }
+    /// The entry's attributes set to exactly `letters` (of AttributeLetters, upper case)
+    virtual bool SetAttributes(const DiskFsEntry&, const std::string&, std::string& error)
+    {
+        error = "the volume has no attributes";
+        return false;
+    }
+    /// False with no reason: the file system keeps no times / no name
+    virtual bool SetTime(const std::string&, int64_t, std::string&) { return false; }
+    virtual bool SetLabel(const std::string&, int64_t, std::string&) { return false; }
+    virtual bool HasTimes() const { return false; }
+    virtual bool HasLabel() const { return false; }
+    /// The name as the volume keeps it after SetLabel ("": as given)
+    virtual std::string Label() const { return {}; }
 
     virtual bool List(const std::string& dir, bool recursive, std::vector<DiskFsEntry>& out, std::vector<std::string>& notes,
                       std::string& error)
@@ -208,6 +223,19 @@ struct DiskFs::Driver
 
 namespace
 {
+/// `letters` (each one of `all`) as bits: the first letter of `all` bit 0
+uint32_t Bits(const std::string& letters, const std::string& all)
+{
+    uint32_t bits = 0;
+    for (const char c : letters)
+    {
+        const size_t at = all.find(c);
+        if (at != std::string::npos)
+            bits |= 1u << at;
+    }
+    return bits;
+}
+
 std::string TrdosName(const TrdosFile& f)
 {
     return Ascii(f.TrimmedName()) + "." + Ascii(std::string(1, f.type));
@@ -316,6 +344,9 @@ struct TrdosDriver : DiskFs::Driver
                fs.Rename(name, type, newName, newType, error);
     }
 
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override { return fs.SetTitle(label, error); }
+    bool HasLabel() const override { return true; }
+
     static bool Parse(const std::string& path, std::string& name, char& type, std::string& error)
     {
         if (ParseTrdosName(path, name, type))
@@ -342,6 +373,9 @@ struct Plus3Driver : DiskFs::Driver
             e.name = e.path = Ascii(f.FullName());
             e.size = f.length;
             e.start = f.header ? f.param1 : 0;
+            static const char letters[] = "RSA";
+            for (int bit = 0; bit < 3; bit++)
+                e.attributes += (f.attributes & (1 << bit)) ? letters[bit] : '.';
             e.fields = {{"user", f.user}, {"onDisk", f.size}, {"header", f.header ? 1 : 0}};
             if (f.header)
             {
@@ -373,6 +407,13 @@ struct Plus3Driver : DiskFs::Driver
     bool Rename(const std::string& path, const std::string& to, std::string& error) override
     {
         return fs.Rename(path, to.substr(to.front() == '/'), error);
+    }
+
+    std::string AttributeLetters() const override { return "RSA"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        return fs.SetAttributes(entry.path, static_cast<uint8_t>(Bits(letters, "RSA")), error);
     }
 
     Plus3FileSystem fs;
@@ -459,6 +500,32 @@ struct IsdosDriver : DiskFs::Driver
     }
 
     bool Deletable(const DiskFsEntry& entry, std::string& error) override { return fs.Deletable(entry.path, error); }
+
+    std::string AttributeLetters() const override { return "RWHD"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        static const uint8_t bits[] = {IsdosFileSystem::kReadProtect, IsdosFileSystem::kWriteProtect, IsdosFileSystem::kHide,
+                                       IsdosFileSystem::kDeleteProtect};
+        const uint32_t chosen = Bits(letters, "RWHD");
+        uint8_t status = 0;
+        for (int k = 0; k < 4; k++)
+            if (chosen & (1u << k))
+                status |= bits[k];
+        return fs.SetAttributes(entry.path, status, error);
+    }
+
+    bool SetTime(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        uint16_t date = 0, time = 0;
+        FatVolumeReader::UnixToDos(mtime, date, time);
+        return fs.SetTime(path, date, time, error);
+    }
+
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override { return fs.SetTitle(label, error); }
+    bool HasTimes() const override { return true; }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return fs.Boot().title; }
 
     IsdosFileSystem fs;
 };
@@ -606,6 +673,47 @@ struct FatDriver : DiskFs::Driver
         });
     }
 
+    std::string AttributeLetters() const override { return "RHSA"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        const uint32_t chosen = Bits(letters, "RHSA");
+        const uint8_t bits = static_cast<uint8_t>((chosen & 7u) | ((chosen & 8u) ? FatNode::kArchive : 0));
+        return Edit(entry.path, error, [&](FatFs& fs) {
+            FatNode node;
+            return fs.Resolve("/" + entry.path, node) && fs.SetAttributes(node, bits);
+        });
+    }
+
+    bool SetTime(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        uint16_t date = 0, time = 0;
+        FatVolumeReader::UnixToDos(mtime, date, time);
+        return Edit(path, error, [&](FatFs& fs) {
+            FatNode node;
+            return fs.Resolve("/" + path, node) && fs.SetTime(node, date, time);
+        });
+    }
+
+    bool SetLabel(const std::string& label, int64_t mtime, std::string& error) override
+    {
+        return Edit("the label", error, [&](FatFs& fs) {
+            uint16_t date = 0, time = 0;
+            FatVolumeReader::UnixToDos(mtime, date, time);
+            fs.SetClock(date, time);
+            if (fs.SetLabel(label))
+                return true;
+            if (fs.LastError() == FatFs::Error::InvalidName)
+                error = "a FAT label has up to 11 characters: letters, digits, blanks (not in front) and ! # $ % & ' ( ) - @ ^ _ ` { } ~ (" +
+                        label + ")";
+            return false;
+        });
+    }
+
+    bool HasTimes() const override { return true; }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return reader.Label(); }
+
     DiskFsEntry Entry(const FatDirEntryInfo& info, const std::string& dir) const
     {
         DiskFsEntry e;
@@ -749,6 +857,9 @@ void DiskFs::Probe()
         return;
     _probed = true;
     auto add = [this](DiskFsVolume volume, std::unique_ptr<Driver> driver) {
+        volume.attributes = driver->AttributeLetters();
+        volume.times = driver->HasTimes();
+        volume.labels = driver->HasLabel();
         _volumes.push_back(std::move(volume));
         _drivers.push_back(std::move(driver));
     };
@@ -1058,6 +1169,111 @@ bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, b
         if (at == std::string::npos)
             return true;
     }
+}
+
+bool DiskFs::SetAttributes(const std::string& volume, const std::string& path, const std::string& attributes, std::string& error)
+{
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
+    Driver* driver = FindWritable(volume, error);
+    if (!driver)
+        return false;
+    const DiskFsVolume& v = _volumes[index];
+    if (v.attributes.empty())
+    {
+        error = "the " + v.system + " volume '" + v.id + "' has no file attributes";
+        return false;
+    }
+    const std::string clean = CleanPath(path);
+    DiskFsEntry entry;
+    if (clean.empty())
+    {
+        error = "name the file";
+        return false;
+    }
+    if (!Stat(volume, clean, entry, error))
+        return false;
+    // The letters set now, then the change: "+R-H" or exactly "RA"
+    std::string set;
+    for (const char c : entry.attributes)
+        if (v.attributes.find(c) != std::string::npos)
+            set += c;
+    const bool relative = !attributes.empty() && (attributes[0] == '+' || attributes[0] == '-');
+    if (!relative)
+        set.clear();
+    char sign = '+';
+    for (const char raw : attributes)
+    {
+        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
+        if (relative && (c == '+' || c == '-'))
+        {
+            sign = c;
+            continue;
+        }
+        if (v.attributes.find(c) == std::string::npos)
+        {
+            error = "attributes '" + attributes + "': the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+            return false;
+        }
+        const size_t at = set.find(c);
+        if (sign == '+' && at == std::string::npos)
+            set += c;
+        else if (sign == '-' && at != std::string::npos)
+            set.erase(at, 1);
+    }
+    if (attributes.empty() || (relative && attributes.find_first_not_of("+-") == std::string::npos))
+    {
+        error = "name the attributes: the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+        return false;
+    }
+    error.clear();
+    return driver->SetAttributes(entry, set, error);
+}
+
+bool DiskFs::SetTime(const std::string& volume, const std::string& path, int64_t mtime, std::string& error)
+{
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
+    Driver* driver = FindWritable(volume, error);
+    if (!driver)
+        return false;
+    const std::string clean = CleanPath(path);
+    if (clean.empty())
+    {
+        error = "name the file";
+        return false;
+    }
+    error.clear();
+    if (driver->SetTime(clean, mtime, error))
+        return true;
+    if (error.empty())
+        error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' keeps no file times";
+    return false;
+}
+
+bool DiskFs::SetLabel(const std::string& volume, const std::string& label, int64_t mtime, std::string& error)
+{
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
+    Driver* driver = FindWritable(volume, error);
+    if (!driver)
+        return false;
+    error.clear();
+    if (driver->SetLabel(label, mtime, error))
+    {
+        std::string trimmed = label;
+        while (!trimmed.empty() && trimmed.back() == ' ')
+            trimmed.pop_back();
+        const std::string kept = driver->Label();
+        _volumes[index].label = kept.empty() ? trimmed : kept;
+        return true;
+    }
+    if (error.empty())
+        error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' has no label";
+    return false;
 }
 
 bool DiskFs::Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error)

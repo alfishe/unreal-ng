@@ -1793,7 +1793,7 @@ public:
         // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
         // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
         // names a host file), media_delete(slot, file [, opts]), media_rename(slot, file, to [, opts]),
-        // media_mkdir(slot, dir [, opts]),
+        // media_mkdir(slot, dir [, opts]), media_attrib(slot, file, opts), media_label(slot, name [, opts]),
         // and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
@@ -2263,6 +2263,22 @@ public:
         lua.set_function("media_mkdir", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
                                                     sol::optional<sol::table> opts) {
             return mediaCall(s, "mkdir", slot, path, opts);
+        });
+        // A file's attributes and time: opts {attributes = "+R-H", time = "2026-10-26 14:30"}
+        lua.set_function("media_attrib", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     sol::optional<sol::table> opts) {
+            return mediaCall(s, "attrib", slot, path, opts);
+        });
+        // The volume's name: FAT label ("" removes it), TR-DOS disk title, iS-DOS device name
+        lua.set_function("media_label", [mediaCall](sol::this_state s, const std::string& slot, const std::string& label,
+                                                    sol::optional<sol::table> opts) {
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["label"] = label;
+            return mediaCall(s, "label", slot, "", all);
         });
         // A bare `to` stays in the file's directory; a path from the root moves it (iS-DOS, FAT)
         lua.set_function("media_rename", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,

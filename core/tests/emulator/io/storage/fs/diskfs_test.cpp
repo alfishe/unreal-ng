@@ -351,6 +351,27 @@ TEST(DiskFs_Test, MediaWriteOnADrive)
     EXPECT_EQ(reply.result.error, MediaError::NotSupported) << reply.result.message;
     EXPECT_NE(reply.result.message.find("no directories"), std::string::npos) << reply.result.message;
 
+    // TR-DOS: a disk title, no attributes or times
+    reply = run("label", "", {{"label", "Games 1"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("label")->s, "Games 1");
+    ASSERT_TRUE(run("write", "A.C", {{"data", "AA=="}}).result.Ok());
+    reply = run("attrib", "A.C", {{"attributes", "+R"}});
+    EXPECT_EQ(reply.result.error, MediaError::NotSupported) << reply.result.message;
+    EXPECT_EQ(run("attrib", "A.C", {{"time", "now"}}).result.error, MediaError::NotSupported);
+
+    // iS-DOS: a file hidden and delete-protected, the device name
+    ASSERT_TRUE(run("insert", TestPathHelper::GetTestDataPath("loaders/isdos/ISDOS50.FDI"), {{"discard", "true"}}).result.Ok());
+    reply = run("attrib", "read_me.txt", {{"attributes", "+HD"}, {"time", "1999-12-31 23:59:58"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("attributes")->s.substr(1), "..HD");
+    EXPECT_EQ(reply.body.find("mtime")->i, 946684798);
+    EXPECT_EQ(run("delete", "read_me.txt").result.error, MediaError::BadRequest) << "delete-protected";
+    EXPECT_EQ(run("attrib", "device.sys", {{"attributes", "+H"}}).result.error, MediaError::BadRequest);  // system file
+    reply = run("label", "", {{"label", "MY_DISK"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("label")->s, "MY_DISK");
+
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
@@ -424,5 +445,30 @@ TEST(DiskFs_Test, MediaEditOnAHardDisk)
     for (const StateNode& entry : reply.body.find("entries")->items)
         names.push_back(entry.find("name")->s);
     EXPECT_EQ(names, (std::vector<std::string>{"AUTOEXEC.BAT", "THROUGH.TXT", "Projects"}));
+
+    // FAT attributes, a file's time, the volume label
+    reply = run("attrib", "THROUGH.TXT", {{"attributes", "+R+H"}, {"time", "2026-10-26 14:30"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("attributes")->s, "RH...A");
+    EXPECT_EQ(reply.body.find("mtime")->i, 1793025000);
+    reply = run("attrib", "THROUGH.TXT", {{"attributes", "-h"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("attributes")->s, "R....A");
+    EXPECT_EQ(run("attrib", "THROUGH.TXT", {{"attributes", "+W"}}).result.error, MediaError::BadRequest);
+    EXPECT_EQ(run("attrib", "THROUGH.TXT").result.error, MediaError::BadRequest);  // nothing to change
+    EXPECT_EQ(run("attrib", "THROUGH.TXT", {{"time", "1975-01-01 00:00"}}).result.error, MediaError::BadRequest);
+    EXPECT_EQ(run("attrib", "NONE.TXT", {{"attributes", "R"}}).result.error, MediaError::UnreadableSource);
+    reply = run("label", "", {{"label", "My Disk"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("label")->s, "MY DISK");
+    EXPECT_EQ(run("label", "", {{"label", "TWELVE CHARS"}}).result.error, MediaError::BadRequest);
+    EXPECT_EQ(run("label", "").result.error, MediaError::BadRequest);  // no 'label'
+    reply = run("volumes", "");
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const StateNode& p1 = reply.body.find("volumes")->items[0];
+    EXPECT_EQ(p1.find("label")->s, "MY DISK");
+    EXPECT_EQ(p1.find("attributes")->s, "RHSA");
+    EXPECT_TRUE(p1.find("times")->b);
+    EXPECT_TRUE(p1.find("labels")->b);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

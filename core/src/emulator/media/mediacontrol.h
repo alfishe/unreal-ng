@@ -122,7 +122,7 @@ private:
     MediaReply Changes(const MediaRequest& request);
     /// volumes, files, read: the file systems on a slot's disk (DiskFs)
     MediaReply Files(const MediaRequest& request, const std::string& verb);
-    /// write, delete, rename, mkdir: the files on a slot's disk (DiskFs: TR-DOS, +3DOS, iS-DOS, FAT on floppies, hard
+    /// write, delete, rename, mkdir, attrib, label: the files on a slot's disk (DiskFs: TR-DOS, +3DOS, iS-DOS, FAT on floppies, hard
     /// disks and cards), a tool's edit at a coherent moment
     MediaReply EditFiles(const MediaRequest& request, const std::string& verb);
 
