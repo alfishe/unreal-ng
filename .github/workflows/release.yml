@@ -634,6 +634,8 @@ jobs:
           codesign --verify --deep --strict UnrealNG.app
           codesign --verify --strict "$studio"
           UnrealNG.app/Contents/MacOS/unreal-streamdeck --help
+          # install-qt-action points these at the runner's Qt; a user's machine has neither
+          unset QT_PLUGIN_PATH QML2_IMPORT_PATH
           # cocoa from UnrealNG.app/Contents/PlugIns (the only platform plugin macdeployqt deploys)
           DYLD_PRINT_LIBRARIES=1 "$studio/Contents/MacOS/unreal-streamdeck-studio" --help \
             2> libs.txt || { cat libs.txt; exit 1; }
