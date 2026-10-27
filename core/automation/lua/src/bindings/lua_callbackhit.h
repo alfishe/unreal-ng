@@ -21,6 +21,7 @@ inline sol::table LuaCallbackHitTable(sol::state_view lua, const CallbackHit& hi
         t["value"] = hit.value;
     t["breakpoint"] = hit.breakpointId;
     t["kind"] = CallbackHitKindName(hit.kind);
+    t["cpu"] = DebugCpuName(static_cast<DebugCpuId>(hit.cpu));
     if (!event.empty())
         t["event"] = event;
     sol::table regs = lua.create_table();

@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testwaithelper.h"
 #include "automation-lua.h"  // its LuaEmulator declares the Automation singleton
 #include "debugger/callbacks/scriptcallbacks.h"
@@ -20,6 +22,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
+#include "emulator/sound/soundmanager.h"
 
 // The Lua bindings call the Automation singleton only for the videowall sync mode; automation.cpp brings every
 // automation module (WebAPI, Drogon) along, so core-tests defines the two members here and no test calls them
@@ -394,4 +398,68 @@ TEST_F(LuaHookHost_Test, OnTapTakesAChunkFromTheScript)
     )", message, output)) << message;
     lua.stop();
     EXPECT_TRUE(_callbacks->List().empty()) << "a script's hooks go with it";
+}
+
+/// The sound card CPU's hooks (gs-debugger design §8A.7): a sync hook on the card's port read hands the card the byte
+/// it returns, an exec hook reads the card's registers, a card event tap sees the firmware's page switches. The
+/// PENTAGON with a classic General Sound: gs105a's POST, then (the host took the reply) its mailbox poll
+/// IN A,(4) at #026E, RRCA at #0270
+TEST(LuaGSCardHook_Test, ACardReadHookReplacesTheByteTheCardSees)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    auto* card = dynamic_cast<SoundChip_GeneralSound*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    ScriptCallbackManager* callbacks = context->pDebugManager->GetScriptCallbacks();
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        pages = on_tap({event = "page"}, [[return function(hit)
+            shared_set("pages", (shared_get("pages") or 0) + 1)
+            shared_set("page_kind", hit.kind .. " " .. hit.event .. " " .. hit.cpu)
+        end]], {mode = "sync"})
+        poll = on_tap({port_in = 4, mask = 0xFF, cpu = "gs"}, [[return function(hit)
+            shared_set("polled", hit.value)
+            return 0x5A
+        end]], {mode = "sync"})
+        rrca = on_tap({exec = 0x0270, cpu = "gs"}, [[return function(hit)
+            if shared_get("a") == nil then shared_set("a", reg("a")) end
+            shared_set("pc", hit.regs.pc)
+            shared_set("code", peek(0x026E))
+        end]], {mode = "sync"})
+        main, why = on_tap({event = "int", cpu = "main"}, function() end)
+        print(pages, poll, rrca, main, why)
+    )", message, output)) << message;
+    EXPECT_EQ(output, "1\t2\t3\t-1\ta tap callback watches memory or ports\n");
+
+    for (int i = 0; i < 200 && card->getActivityCounters().volumeLatchWrites < 4; i++)
+        emulator->RunNFrames(1, false);
+    emulator->RunNFrames(1, false);
+    if (card->readStatus() & 0x80)
+        (void)card->portDeviceInMethod(GeneralSoundCard::PORT_DATA);
+    for (int i = 0; i < 10 && callbacks->SharedGet("a").kind == CallbackValue::Kind::Nil; i++)
+        emulator->RunNFrames(1, false);
+
+    for (const CallbackInfo& info : callbacks->List())
+        EXPECT_EQ(info.stats.errors, 0u) << info.target << ": " << info.stats.lastError;
+    EXPECT_GE(callbacks->SharedGet("pages").i, 1) << "POST maps its pages";
+    EXPECT_EQ(callbacks->SharedGet("page_kind").s, "card_event page gs");
+    EXPECT_EQ(callbacks->SharedGet("polled").kind, CallbackValue::Kind::Integer) << "the card read port 4";
+    EXPECT_EQ(callbacks->SharedGet("a").i, 0x5A) << "IN A,(4) took the hook's byte";
+    EXPECT_EQ(callbacks->SharedGet("pc").i, 0x0270) << "the card's registers in the hit";
+    EXPECT_EQ(callbacks->SharedGet("code").i, 0xDB) << "peek reads the card's memory (IN A,(n))";
+    const std::vector<CallbackInfo> list = callbacks->List();
+    ASSERT_EQ(list.size(), 3u);
+    EXPECT_EQ(list[1].cpu, DebugCpuId::GS);
+    EXPECT_EQ(list[1].target, "tap in #0004 (gs CPU)");
+    lua.stop();
+    EXPECT_TRUE(callbacks->List().empty());
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

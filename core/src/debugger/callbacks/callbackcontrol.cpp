@@ -91,6 +91,7 @@ StateNode InfoNode(const CallbackInfo& info)
     t["owner"] = info.owner;
     t["label"] = info.label;
     t["target"] = info.target;
+    t["cpu"] = DebugCpuName(info.cpu);
     t["breakpoint"] = static_cast<unsigned>(info.breakpointId);
     if (!info.event.empty())
         t["event"] = info.event;

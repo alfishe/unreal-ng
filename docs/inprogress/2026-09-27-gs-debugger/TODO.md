@@ -38,8 +38,15 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 
 ### C. Read-value script callbacks (design §8A.7)
 
-- [ ] Synchronous card memory / port read callbacks returning the value the card CPU sees, on `onMemoryRead` /
-  `onPortIn`.
+- [x] Card taps for script callbacks (`cpu = "gs"`): memory, ports and card events (`event = "int"`, ...), the card's
+  registers in the hit, `peek` / `reg` of the card in a hook; Lua and Python `on_tap`, `cpu` in the lists.
+- [x] A sync hook on a card read or port in returns the byte the card CPU sees (`BreakpointManager::
+  HandleReplaceableRead` / `HandleReplaceablePortIn`); kept while time travel records or browses.
+- [x] Tests: `LuaGSCardHook_Test` (gs105a's `IN A,(4)` takes the hook's byte), live `test_gs_debugger.py` (Python).
+  Docs: [script-callbacks.md](../../features/script-callbacks.md#the-sound-cards-cpu).
+- [ ] Callbacks named after the events (`on_command`, `on_reply`, `on_int`, `on_dac_fetch`, `on_dma_done`,
+  `on_clock_change`; X13): the card event taps cover int / command / reply, DAC fetch, DMA done and clock change have
+  no event yet. The headless runner (`--headless --script --exit-on-script`).
 
 ### Later
 

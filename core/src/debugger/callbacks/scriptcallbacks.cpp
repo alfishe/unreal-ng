@@ -7,6 +7,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/callbacks/scripthookhost.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -14,6 +15,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace
@@ -87,7 +90,9 @@ std::string Hex(unsigned value)
 std::string TapTarget(const BreakpointSpec& tap)
 {
     std::string text;
-    if (tap.type == BRK_IO)
+    if (tap.type == BRK_EVENT)
+        text = std::string("event ") + GSCardEventName(static_cast<GSCardEvent>(tap.address));
+    else if (tap.type == BRK_IO)
         text = std::string(tap.access & BRK_IO_IN ? "in" : "") + (tap.access & BRK_IO_OUT ? "out" : "") + " " + Hex(tap.address);
     else
         text = std::string(tap.access & BRK_MEM_EXECUTE ? "exec" : "") + (tap.access & BRK_MEM_READ ? "read" : "") +
@@ -136,6 +141,7 @@ const char* CallbackHitKindName(uint8_t kind)
         case BRK_TAP_WRITE: return "write";
         case BRK_TAP_PORT_IN: return "port_in";
         case BRK_TAP_PORT_OUT: return "port_out";
+        case BRK_TAP_EVENT: return "card_event";
         case CallbackHit::kKindStop: return "stop";
         case CallbackHit::kKindEvent: return "event";
         default: return "exec";
@@ -227,9 +233,11 @@ ScriptCallbackManager::ScriptCallbackManager(EmulatorContext* context)
 
 ScriptCallbackManager::~ScriptCallbackManager()
 {
-    // Unregistering the sink removes its taps; the breakpoint manager outlives this (DebugManager's order)
-    if (BreakpointManager* breakpoints = Breakpoints(); breakpoints != nullptr && _sink != BRK_NO_TAP)
-        breakpoints->UnregisterTapSink(_sink);
+    // Unregistering the sink removes its taps; the breakpoint managers outlive this (DebugManager's order)
+    for (DebugCpuId cpu : {DebugCpuId::Main, DebugCpuId::GS})
+        if (BreakpointManager* breakpoints = Breakpoints(cpu);
+            breakpoints != nullptr && _sinks[static_cast<size_t>(cpu)] != BRK_NO_TAP)
+            breakpoints->UnregisterTapSink(_sinks[static_cast<size_t>(cpu)]);
     for (auto& slot : _slots)
         slot.reset();
     _frame->hold.Release();
@@ -238,11 +246,11 @@ ScriptCallbackManager::~ScriptCallbackManager()
     _host.reset();
 }
 
-BreakpointManager* ScriptCallbackManager::Breakpoints() const
+BreakpointManager* ScriptCallbackManager::Breakpoints(DebugCpuId cpu) const
 {
     if (_context == nullptr || _context->pDebugManager == nullptr)
         return nullptr;
-    return _context->pDebugManager->GetBreakpointsManager();
+    return _context->pDebugManager->GetBreakpointsManager(cpu);
 }
 
 uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& error)
@@ -274,7 +282,12 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
         return 0;
     }
 
-    BreakpointManager* breakpoints = Breakpoints();
+    const bool card = spec.trigger == CallbackTrigger::Tap && spec.cpu != DebugCpuId::Main;
+    if (!card)
+        entry->spec.cpu = DebugCpuId::Main;
+    BreakpointManager* breakpoints = Breakpoints(card ? spec.cpu : DebugCpuId::Main);
+    if (card && spec.tap.type == BRK_EVENT)
+        entry->spec.event = GSCardEventName(static_cast<GSCardEvent>(spec.tap.address));  // the hit's `event`
     size_t slot = kMaxCallbacks;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -292,9 +305,10 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
         switch (spec.trigger)
         {
             case CallbackTrigger::Tap:
-                if (spec.tap.type != BRK_MEMORY && spec.tap.type != BRK_IO)
+                if (spec.tap.type != BRK_MEMORY && spec.tap.type != BRK_IO && !(card && spec.tap.type == BRK_EVENT))
                 {
-                    error = "a tap callback watches memory or ports";
+                    error = card ? "a card tap callback watches memory, ports or card events"
+                                 : "a tap callback watches memory or ports";
                     return 0;
                 }
                 if (breakpoints == nullptr)
@@ -303,6 +317,8 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
                     return 0;
                 }
                 entry->target = "tap " + TapTarget(spec.tap);
+                if (card)
+                    entry->target += std::string(" (") + DebugCpuName(spec.cpu) + " CPU)";
                 break;
             case CallbackTrigger::Breakpoint:
             {
@@ -348,19 +364,20 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
 
     if (spec.trigger == CallbackTrigger::Tap)
     {
-        if (_sink == BRK_NO_TAP)
-            _sink = breakpoints->RegisterTapSink(this);
+        uint8_t& sink = _sinks[static_cast<size_t>(card ? spec.cpu : DebugCpuId::Main)];
+        if (sink == BRK_NO_TAP)
+            sink = breakpoints->RegisterTapSink(this);
         BreakpointSpec tap = spec.tap;
         tap.owner = kOwnerPrefix + std::to_string(entry->id);
         tap.note = spec.label.empty() ? "script callback" : spec.label;
         tap.hidden = true;
         tap.shared = false;
-        tap.tapSink = _sink;
+        tap.tapSink = sink;
         tap.tapCookie = static_cast<uint32_t>(slot);
-        const uint16_t id = _sink == BRK_NO_TAP ? BRK_INVALID : breakpoints->AddBreakpoint(tap, error);
+        const uint16_t id = sink == BRK_NO_TAP ? BRK_INVALID : breakpoints->AddBreakpoint(tap, error);
         if (id == BRK_INVALID)
         {
-            if (_sink == BRK_NO_TAP)
+            if (sink == BRK_NO_TAP)
                 error = "no tap sink left";
             {
                 std::lock_guard<std::mutex> lock(_mutex);
@@ -391,7 +408,7 @@ void ScriptCallbackManager::Unarm(Entry& entry)
     if (entry.spec.trigger == CallbackTrigger::Tap)
     {
         if (entry.tapId != BRK_INVALID)
-            if (BreakpointManager* breakpoints = Breakpoints())
+            if (BreakpointManager* breakpoints = Breakpoints(entry.spec.cpu))
                 breakpoints->RemoveBreakpointByID(entry.tapId);
         entry.tapId = BRK_INVALID;
     }
@@ -506,6 +523,7 @@ std::vector<CallbackInfo> ScriptCallbackManager::List() const
         info.owner = entry->spec.owner;
         info.label = entry->spec.label;
         info.target = entry->target;
+        info.cpu = entry->spec.trigger == CallbackTrigger::Tap ? entry->spec.cpu : DebugCpuId::Main;
         info.breakpointId = entry->spec.trigger == CallbackTrigger::Tap ? entry->tapId : entry->spec.breakpointId;
         info.event = entry->spec.event;
         info.mode = entry->spec.mode;
@@ -692,14 +710,14 @@ CallbackHookStatus ScriptCallbackManager::HookStatus() const
     return status;
 }
 
-void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit)
+void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit, uint8_t* replace)
 {
     if (entry.state.load(std::memory_order_acquire) != CallbackState::Active || !_host)
         return;
     const bool logic = entry.spec.role == CallbackRole::Logic;
     HookEdits edits;
     const auto start = std::chrono::steady_clock::now();
-    const HookCallResult result =
+    HookCallResult result =
         _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions, logic ? &edits : nullptr);
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
@@ -707,6 +725,22 @@ void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit)
     _frame->hookUs += us;
     if (entry.spec.policy == CallbackPolicy::Unpaced)
         _frame->unpacedUs += us;
+    // A card read's byte: the one the function returned (design §8A.7), not while time travel could not repeat it
+    if (replace != nullptr && result.ok && result.returned >= 0)
+    {
+        if (result.returned > 0xFF)
+        {
+            result.ok = false;
+            result.error = "a card read's callback returns a byte (0..255) or nothing";
+        }
+        else if (const std::string refusal = EditRefusal(_context, CallbackRole::View); !refusal.empty())
+        {
+            result.ok = false;
+            result.error = "the byte a card read sees is not replaced while time travel records or browses";
+        }
+        else
+            *replace = static_cast<uint8_t>(result.returned);
+    }
     // A call that failed leaves no writes: a half-done edit would be worse than none
     if (logic && result.ok && !edits.Empty())
     {
@@ -838,15 +872,41 @@ void ScriptCallbackManager::OnFrameEnd(uint64_t nowUs, uint32_t periodUs)
         SetUnpaced(false);
 }
 
-void ScriptCallbackManager::Fill(CallbackHit& hit) const
+void ScriptCallbackManager::Fill(CallbackHit& hit, DebugCpuId cpu) const
 {
     if (_context == nullptr)
         return;
     hit.frame = _context->emulatorState.frame_counter;
     const Z80* z80 = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    if (z80 != nullptr)
+        hit.t = z80->t;
+    hit.cpu = static_cast<uint8_t>(cpu);
+    if (cpu == DebugCpuId::GS)
+    {
+        // The card's registers at its access (the frame and the T-state stay the machine's)
+        GSCardTarget* target = _context->pDebugManager != nullptr ? _context->pDebugManager->GetGSTarget() : nullptr;
+        GeneralSoundCard* card = target != nullptr ? target->Card() : nullptr;
+        Z80CpuRegisters regs{};
+        if (card == nullptr || !card->cardRegisters(regs))
+            return;
+        hit.af = regs.af;
+        hit.bc = regs.bc;
+        hit.de = regs.de;
+        hit.hl = regs.hl;
+        hit.af2 = regs.afAlt;
+        hit.bc2 = regs.bcAlt;
+        hit.de2 = regs.deAlt;
+        hit.hl2 = regs.hlAlt;
+        hit.ix = regs.ix;
+        hit.iy = regs.iy;
+        hit.sp = regs.sp;
+        hit.pc = regs.pc;
+        hit.i = regs.i;
+        hit.r = regs.r;
+        return;
+    }
     if (z80 == nullptr)
         return;
-    hit.t = z80->t;
     hit.af = z80->af;
     hit.bc = z80->bc;
     hit.de = z80->de;
@@ -901,18 +961,20 @@ void ScriptCallbackManager::OnTap(const BreakpointTapHit& hit)
     if (entry == nullptr)
         return;
     CallbackHit record;
-    Fill(record);
+    const DebugCpuId cpu = entry->spec.cpu;
+    Fill(record, cpu);
     record.address = hit.address;
     record.breakpointId = hit.breakpointID;
     record.kind = static_cast<uint8_t>(hit.kind);
     record.value = hit.value;
-    if (hit.kind == BRK_TAP_WRITE || hit.kind == BRK_TAP_READ)
+    // The card reports the byte of every access; the main CPU's memory holds it
+    if (cpu == DebugCpuId::Main && (hit.kind == BRK_TAP_WRITE || hit.kind == BRK_TAP_READ))
         if (_context != nullptr && _context->pMemory != nullptr)
             record.value = _context->pMemory->DirectReadFromZ80Memory(hit.address);
-    Dispatch(*entry, record, false);
+    Dispatch(*entry, record, false, hit.replace);
 }
 
-void ScriptCallbackManager::Dispatch(Entry& entry, CallbackHit& hit, bool atOnce)
+void ScriptCallbackManager::Dispatch(Entry& entry, CallbackHit& hit, bool atOnce, uint8_t* replace)
 {
     if (entry.spec.mode == CallbackMode::Deferred || (entry.spec.mode == CallbackMode::Frame && !atOnce))
     {
@@ -922,7 +984,7 @@ void ScriptCallbackManager::Dispatch(Entry& entry, CallbackHit& hit, bool atOnce
     if (entry.state.load(std::memory_order_acquire) != CallbackState::Active)
         return;
     entry.hits.fetch_add(1, std::memory_order_relaxed);
-    RunHook(entry, hit);
+    RunHook(entry, hit, entry.spec.mode == CallbackMode::Sync ? replace : nullptr);
 }
 
 void ScriptCallbackManager::OnBreakpointStop(uint16_t breakpointId, uint16_t address, uint8_t accessKind)

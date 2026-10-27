@@ -7727,7 +7727,9 @@ public:
 
         // Script callbacks (docs/features/script-callbacks.md): a function runs deferred, on this Lua thread, with a
         // snapshot of the hit; a string is a chunk for the hook state (frame or sync mode, on the emulation thread).
-        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=}, fn_or_chunk [, options])
+        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=, cpu=} | {event=, cpu=},
+        // fn_or_chunk [, options]). cpu "gs": the sound card CPU's; a sync chunk on its read / port_in may return the byte
+        // the card sees
         lua.set_function("on_tap", [this](const sol::table& where, const sol::object& fn,
                                           sol::optional<sol::table> options) -> std::tuple<int, sol::optional<std::string>> {
             CallbackSpec spec;
@@ -7736,6 +7738,23 @@ public:
                 {"exec", {BRK_MEMORY, BRK_MEM_EXECUTE}}, {"read", {BRK_MEMORY, BRK_MEM_READ}},
                 {"write", {BRK_MEMORY, BRK_MEM_WRITE}},  {"port_in", {BRK_IO, BRK_IO_IN}},
                 {"port_out", {BRK_IO, BRK_IO_OUT}}};
+            const std::string cpu = where.get<sol::optional<std::string>>("cpu").value_or("");
+            if (!DebugManager::ParseCpuName(cpu, spec.cpu))
+                return {-1, std::string("cpu must be 'main' or 'gs'")};
+            // A card event (the sound card's CPU): no address
+            if (auto event = where.get<sol::optional<std::string>>("event"))
+            {
+                GSCardEvent kind = GSCardEvent::Count;
+                if (!ParseGSCardEvent(event->c_str(), kind) || GSCardEventIsHostSide(kind))
+                    return {-1, "event must be a card event (int, nmi, reset, page, card_command, card_data, "
+                                "card_reply), not '" + *event + "'"};
+                if (cpu.empty())
+                    spec.cpu = DebugCpuId::GS;
+                spec.tap.type = BRK_EVENT;
+                spec.tap.access = 0;
+                spec.tap.address = static_cast<uint16_t>(kind);
+                return RegisterCallback(spec, fn, options);
+            }
             int kinds = 0;
             for (const auto& [name, kind] : kKinds)
                 if (auto address = where.get<sol::optional<int64_t>>(name))
@@ -7746,7 +7765,8 @@ public:
                     spec.tap.address = static_cast<uint16_t>(*address);
                 }
             if (kinds != 1)
-                return {-1, std::string("one of exec, read, write, port_in, port_out names the address")};
+                return {-1, std::string("one of exec, read, write, port_in, port_out names the address (or event a "
+                                        "card event)")};
             spec.tap.condition = where.get<sol::optional<std::string>>("if").value_or(
                 where.get<sol::optional<std::string>>("condition").value_or(""));
             if (!BreakpointConditionProgram::ParseDialect(where.get<sol::optional<std::string>>("dialect").value_or(""),
@@ -7874,6 +7894,7 @@ public:
         t["owner"] = info.owner;
         t["label"] = info.label;
         t["target"] = info.target;
+        t["cpu"] = DebugCpuName(info.cpu);
         t["breakpoint"] = info.breakpointId;
         if (!info.event.empty())
             t["event"] = info.event;

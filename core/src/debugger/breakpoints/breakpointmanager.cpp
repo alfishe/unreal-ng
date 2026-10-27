@@ -460,10 +460,11 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     d->hidden = spec.hidden;
     if (spec.tapSink != BRK_NO_TAP)
     {
-        if (spec.type != BRK_MEMORY && spec.type != BRK_IO)
+        // Card events only on the card's CPU: the host's are reported by the main CPU's stop path
+        if (spec.type != BRK_MEMORY && spec.type != BRK_IO && !(spec.type == BRK_EVENT && _target))
         {
             delete d;
-            error = "a tap watches memory or ports";
+            error = _target ? "a tap watches memory, ports or card events" : "a tap watches memory or ports";
             return BRK_INVALID;
         }
         d->tapSink = spec.tapSink;
@@ -2394,7 +2395,24 @@ uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value)
         if (!bp || !bp->active || bp->type != BRK_EVENT || bp->z80address != static_cast<uint16_t>(kind) ||
             (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
             continue;
-        if (HitStops(*bp) && result == BRK_INVALID)
+        if (!HitStops(*bp))
+            continue;
+        // A tap never stops: its sink is told
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+            {
+                BreakpointTapHit hit;
+                hit.cookie = bp->tapCookie;
+                hit.breakpointID = bp->breakpointID;
+                hit.address = static_cast<uint16_t>(kind);
+                hit.value = value;
+                hit.kind = BRK_TAP_EVENT;
+                sink->OnTap(hit);
+            }
+            continue;
+        }
+        if (result == BRK_INVALID)
             result = bp->breakpointID;
     }
     if (result != BRK_INVALID)
@@ -2521,6 +2539,8 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
                     hit.address = address;
                     hit.value = value;
                     hit.kind = kind;
+                    if (kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN)
+                        hit.replace = _replace;
                     sink->OnTap(hit);
                 }
             continue;
@@ -2560,6 +2580,7 @@ bool BreakpointManager::ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKi
             x.access.portOut = address;
             x.access.portValue = known;
             break;
+        case BRK_TAP_EVENT: break;  // events take no condition
     }
     x.hits = bp.hitCount;
     std::string why;
@@ -2867,6 +2888,8 @@ void BreakpointManager::RebuildFilters()
             continue;
         if (bp->tapSink == BRK_NO_TAP)
             demand.stop = true;
+        else if (bp->type != BRK_MEMORY)
+            demand.other = true;
         if (bp->type == BRK_IO)
         {
             for (int d = 0; d < 2; d++)

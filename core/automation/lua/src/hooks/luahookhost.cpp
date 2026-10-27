@@ -1,23 +1,68 @@
 #include "luahookhost.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <stdexcept>
 
 #include "../bindings/lua_callbackhit.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 
 namespace
 {
 LuaHookHost*& HostOf(lua_State* L)
 {
     return *static_cast<LuaHookHost**>(lua_getextraspace(L));
+}
+
+GeneralSoundCard* CardOf(EmulatorContext* context)
+{
+    GSCardTarget* target =
+        context != nullptr && context->pDebugManager != nullptr ? context->pDebugManager->GetGSTarget() : nullptr;
+    return target != nullptr ? target->Card() : nullptr;
+}
+
+uint8_t PeekCard(EmulatorContext* context, uint16_t address)
+{
+    uint8_t value = 0xFF;
+    if (GeneralSoundCard* card = CardOf(context))
+        card->peekCardMemory(address, value);
+    return value;
+}
+
+/// A register of the card's CPU by the debugger's name (any case); false for an unknown one
+bool CardRegister(EmulatorContext* context, std::string name, uint16_t& value)
+{
+    GeneralSoundCard* card = CardOf(context);
+    Z80CpuRegisters r{};
+    if (card == nullptr || !card->cardRegisters(r))
+        return false;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::pair<const char*, uint16_t> table[] = {
+        {"af", r.af}, {"bc", r.bc}, {"de", r.de}, {"hl", r.hl}, {"af'", r.afAlt}, {"bc'", r.bcAlt}, {"de'", r.deAlt},
+        {"hl'", r.hlAlt}, {"ix", r.ix}, {"iy", r.iy}, {"sp", r.sp}, {"pc", r.pc}, {"memptr", r.memptr},
+        {"a", static_cast<uint16_t>(r.af >> 8)}, {"f", static_cast<uint16_t>(r.af & 0xFF)},
+        {"b", static_cast<uint16_t>(r.bc >> 8)}, {"c", static_cast<uint16_t>(r.bc & 0xFF)},
+        {"d", static_cast<uint16_t>(r.de >> 8)}, {"e", static_cast<uint16_t>(r.de & 0xFF)},
+        {"h", static_cast<uint16_t>(r.hl >> 8)}, {"l", static_cast<uint16_t>(r.hl & 0xFF)},
+        {"ixh", static_cast<uint16_t>(r.ix >> 8)}, {"ixl", static_cast<uint16_t>(r.ix & 0xFF)},
+        {"iyh", static_cast<uint16_t>(r.iy >> 8)}, {"iyl", static_cast<uint16_t>(r.iy & 0xFF)},
+        {"i", r.i}, {"r", r.r}, {"im", r.im}, {"iff1", r.iff1}, {"iff2", r.iff2}};
+    for (const auto& [key, v] : table)
+        if (name == key)
+        {
+            value = v;
+            return true;
+        }
+    return false;
 }
 }  // namespace
 
@@ -73,19 +118,25 @@ void LuaHookHost::RegisterApi()
                                                                        : nullptr;
     };
 
-    lua["peek"] = [context](int address) -> int {
+    lua["peek"] = [this, context](int address) -> int {
+        if (_card)
+            return PeekCard(context, static_cast<uint16_t>(address));
         if (context == nullptr || context->pMemory == nullptr)
             return 0;
         return context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(address));
     };
-    lua["peek16"] = [context](int address) -> int {
+    lua["peek16"] = [this, context](int address) -> int {
+        const auto at = static_cast<uint16_t>(address);
+        if (_card)
+            return PeekCard(context, at) | (PeekCard(context, static_cast<uint16_t>(at + 1)) << 8);
         if (context == nullptr || context->pMemory == nullptr)
             return 0;
-        const auto at = static_cast<uint16_t>(address);
         return context->pMemory->DirectReadFromZ80Memory(at) |
                (context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(at + 1)) << 8);
     };
     lua["poke"] = [this, context](int address, int value) {
+        if (_card)
+            throw std::runtime_error("poke: a card hook does not write the card (a read's hook returns the byte)");
         if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("poke: " + refusal);
         if (_edits != nullptr)
@@ -98,8 +149,14 @@ void LuaHookHost::RegisterApi()
         if (context != nullptr && context->pMemory != nullptr)
             context->pMemory->ToolWriteToZ80Memory(static_cast<uint16_t>(address), static_cast<uint8_t>(value));
     };
-    lua["reg"] = [z80](const std::string& name) -> int {
+    lua["reg"] = [this, context, z80](const std::string& name) -> int {
         uint16_t value = 0;
+        if (_card)
+        {
+            if (!CardRegister(context, name, value))
+                throw std::runtime_error("reg: unknown register '" + name + "' of the card CPU");
+            return value;
+        }
         bool wide = false;
         Z80* cpu = z80();
         if (cpu == nullptr || !Z80::GetRegisterValue(cpu, name, value, wide))
@@ -107,6 +164,8 @@ void LuaHookHost::RegisterApi()
         return value;
     };
     lua["set_reg"] = [this, z80](const std::string& name, int value) {
+        if (_card)
+            throw std::runtime_error("set_reg: a card hook does not write the card");
         if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("set_reg: " + refusal);
         if (_edits != nullptr)
@@ -196,6 +255,7 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
     _budget = std::max<uint64_t>(instructionBudget, kInstructionStep);
     _aborted = false;
     _edits = edits;
+    _card = hit.cpu == static_cast<uint8_t>(DebugCpuId::GS);
     lua_State* L = _lua->lua_state();
     lua_sethook(L, &LuaHookHost::CountHook, LUA_MASKCOUNT, kInstructionStep);
     {
@@ -208,9 +268,20 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
             outcome.ok = false;
             outcome.error = raised.what();
         }
+        else if (result.return_count() > 0)
+        {
+            // An integer the function returned (a card read's byte); anything else is no answer
+            sol::object first = result.get<sol::object>(0);
+            if (first.is<lua_Integer>())
+            {
+                const lua_Integer value = first.as<lua_Integer>();
+                outcome.returned = value >= 0 && value <= 0xFF ? static_cast<int32_t>(value) : 0x100;  // 0x100: no byte
+            }
+        }
     }
     lua_sethook(L, nullptr, 0, 0);
     _edits = nullptr;
+    _card = false;
     // A hook's garbage is the hook state's: a step per call keeps it small without a pause anywhere
     lua_gc(L, LUA_GCSTEP, 0);
     return outcome;

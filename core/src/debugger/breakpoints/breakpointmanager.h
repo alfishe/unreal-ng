@@ -190,7 +190,8 @@ enum BreakpointTapKind : uint8_t
     BRK_TAP_READ,
     BRK_TAP_WRITE,
     BRK_TAP_PORT_IN,
-    BRK_TAP_PORT_OUT
+    BRK_TAP_PORT_OUT,
+    BRK_TAP_EVENT  // a General Sound event (BRK_EVENT): `address` the GSCardEvent, `value` its byte
 };
 
 /// One hit of a tap
@@ -201,6 +202,9 @@ struct BreakpointTapHit
     uint16_t address = 0;                 // the CPU address, or the port
     int value = -1;                       // the byte an OUT wrote; -1 for the others (a write's byte is in memory)
     BreakpointTapKind kind = BRK_TAP_EXEC;
+    // A read the CPU has not taken yet (HandleMemoryRead / HandlePortIn with a byte to replace: the sound card CPU's
+    // debug path): the sink may change the byte the CPU sees. Null everywhere else
+    uint8_t* replace = nullptr;
 };
 
 /// Where the hits of a sink's taps go: on the emulation thread, inside the access, so it must only note the hit.
@@ -223,9 +227,11 @@ struct BreakpointTapDemand
     bool read = false;
     bool write = false;
     bool stop = false;
+    bool other = false;  // a port or event tap: no switch of the main CPU, a target CPU's hooks
     bool operator==(const BreakpointTapDemand& other) const
     {
-        return exec == other.exec && read == other.read && write == other.write && stop == other.stop;
+        return exec == other.exec && read == other.read && write == other.write && stop == other.stop &&
+               this->other == other.other;
     }
     bool operator!=(const BreakpointTapDemand& other) const { return !(*this == other); }
 };
@@ -384,6 +390,7 @@ protected:
     // The tap sinks by id (RegisterTapSink; 0 is BRK_NO_TAP) and what their armed taps need of the machine
     std::array<IBreakpointTapSink*, 256> _tapSinks{};
     BreakpointTapDemand _tapDemand;
+    uint8_t* _replace = nullptr;  // the byte of the read being resolved that a tap may replace (BreakpointTapHit::replace)
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -697,6 +704,26 @@ public:
         if (!_hotState.hasPortIn || !_hotState.PortBit(BRK_PORT_IN, portAddress))
             return BRK_INVALID;
         return ResolvePort(BRK_PORT_IN, portAddress);
+    }
+    /// A read whose byte a tap's callback may replace before the CPU takes it (the sound card CPU's debug path): the
+    /// breakpoint that stops, or BRK_INVALID; `value` the byte the CPU sees
+    uint16_t HandleReplaceableRead(uint16_t readAddress, uint8_t& value)
+    {
+        if (!_hotState.hasRead || !_hotState.MemoryBit(BRK_KIND_READ, readAddress))
+            return BRK_INVALID;
+        _replace = &value;
+        const uint16_t id = ResolveMemory(BRK_KIND_READ, readAddress, value);
+        _replace = nullptr;
+        return id;
+    }
+    uint16_t HandleReplaceablePortIn(uint16_t portAddress, uint8_t& value)
+    {
+        if (!_hotState.hasPortIn || !_hotState.PortBit(BRK_PORT_IN, portAddress))
+            return BRK_INVALID;
+        _replace = &value;
+        const uint16_t id = ResolvePort(BRK_PORT_IN, portAddress, value);
+        _replace = nullptr;
+        return id;
     }
     uint16_t HandlePortOut(uint16_t portAddress)
     {

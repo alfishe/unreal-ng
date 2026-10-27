@@ -22,6 +22,7 @@ Task recipe: [.recipe/analysis/script-callbacks.md](../../.recipe/analysis/scrip
 - [Deferred mode](#deferred-mode)
 - [Frame and sync modes: the hook state](#frame-and-sync-modes-the-hook-state)
 - [The hit](#the-hit)
+- [The sound card's CPU](#the-sound-cards-cpu)
 - [Lua](#lua)
 - [Python](#python)
 - [Remote planes: list and manage](#remote-planes-list-and-manage)
@@ -146,12 +147,35 @@ The function gets one argument: the hit, a table (Lua) or a dict (Python).
 | `address` | the memory address or the port; 0 for a game event |
 | `value` | the byte read, written, input or output; a game event's value; absent (Lua) / `None` (Python) at an exec tap or a stop |
 | `breakpoint` | the id of the tap or of the breakpoint |
-| `kind` | `exec`, `read`, `write`, `port_in`, `port_out`, `stop` (a breakpoint stop) or `event` (a game event) |
-| `event` | the game event's name (game event callbacks only) |
+| `kind` | `exec`, `read`, `write`, `port_in`, `port_out`, `card_event` (a sound card event), `stop` (a breakpoint stop) or `event` (a game event) |
+| `event` | the game event's or the card event's name (game event and card event callbacks only) |
+| `cpu` | `main`, or `gs` for a tap of the sound card's CPU (then `pc` and `regs` are the card's) |
 | `regs` | `af bc de hl af_ bc_ de_ hl_ ix iy sp pc i r a f` at the hit |
 
 The hit is a snapshot taken when it happened. Live state read inside the function (`memory`, `get_registers`) is the
 state of the machine now, which is later.
+
+## The sound card's CPU
+
+A tap with `cpu = "gs"` watches the CPU of the General Sound / NeoGS card ([gs-debugger](../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)):
+its memory reads, writes and executions (the card's addresses), its port accesses, and its events (`event`: `int`,
+`nmi`, `reset`, `page`, `card_command`, `card_data`, `card_reply`). The card runs its debug loop while such a tap is
+armed; a condition is refused.
+
+- `pc` and `regs` in the hit are the card's; `frame` and `t` stay the machine's.
+- In a card hook `peek` reads the card's memory and `reg` its registers. A card hook does not write the card:
+  `poke` and `set_reg` raise.
+- **A read's byte (fault injection).** A sync hook on the card's `read` or `port_in` may return a byte (0..255):
+  the card's CPU sees it instead of the one it read. Returning nothing (or a non-integer) keeps the byte. Another
+  number is an error. Frame and deferred callbacks cannot change it. While a time travel session records or is
+  browsed the byte is kept and the call counts an error: a replay could not repeat it.
+
+```lua
+-- The card sees "no command" in its status port while the hook says so
+on_tap({port_in = 4, mask = 0xFF, cpu = "gs"}, [[return function(hit) return hit.value & 0xFE end]], {mode = "sync"})
+-- Count the card's interrupts
+on_tap({event = "int"}, [[return function(hit) shared_set("ints", (shared_get("ints") or 0) + 1) end]], {mode = "sync"})
+```
 
 ## Lua
 
@@ -161,6 +185,8 @@ id, err = on_tap({write = 0x5C78, to = 0x5C79, ["if"] = "MDT < 5"}, function(hit
 id, err = on_tap({port_out = 0xFE, mask = 0x00FF}, fn)       -- any high byte
 id, err = on_tap({exec = 0xC000, page = "ram3"}, fn)         -- page: as for breakpoints (ram<N>, rom<N>, ...)
 id, err = on_tap({read = 0x8000, ["if"] = "a==7", dialect = "c"}, fn)
+id, err = on_tap({read = 0x4000, cpu = "gs"}, fn)              -- the sound card CPU's read of #4000
+id, err = on_tap({event = "card_reply"}, fn)                   -- a card event (cpu "gs" by default)
 
 -- A stop of breakpoint 3 (it still stops), a game event of the profile
 id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)
@@ -196,6 +222,8 @@ import unreal_emulator as ue
 emu = ue.emu_get_selected()
 id = emu.on_tap(lambda hit: print(hit["value"]), "write", 0x5C78, condition="MDT < 5")
 id = emu.on_tap(fn, "port_out", 0xFE, mask=0x00FF)    # kind: exec, read, write, port_in, port_out; to=, page=, dialect=
+id = emu.on_tap(fn, "read", 0x4000, cpu="gs")         # the sound card CPU's read
+id = emu.on_tap(fn, "event", event="int")             # a card event (cpu "gs" by default)
 id = emu.on_breakpoint(fn, 3)
 id = emu.on_game_event(fn, "died")
 id = emu.on_tap(fn, "write", 0x9000, policy="ignore", budget_us=500, ring=1024, label="score")
@@ -308,7 +336,8 @@ id.
 
 ## Limits of this version
 
-- The General Sound card's CPU has no taps yet, so hooks cannot replace the value a card read sees.
+- Only a card read's byte can be replaced; the main CPU's reads cannot.
+- A card tap takes no condition; a card hook does not write the card.
 - One hook state per emulator for every script: two scripts' hooks share its globals.
 - No script manifest yet: callbacks are registered one call at a time.
 - Only Lua and Python register callbacks; CLI, REST, WebSocket and MCP list and manage them

@@ -37,6 +37,7 @@
 
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scripthookhost.h"
+#include "debugger/targets/debugcpuid.h"
 
 class EmulatorContext;
 
@@ -81,7 +82,9 @@ enum class CallbackState : uint8_t
 struct CallbackSpec
 {
     CallbackTrigger trigger = CallbackTrigger::Tap;
-    BreakpointSpec tap;          ///< Tap: memory or port, its condition included (owner and tap fields are set here)
+    BreakpointSpec tap;          ///< Tap: memory or port, its condition included (owner and tap fields are set here);
+                                 ///< on the card CPU also a card event (BRK_EVENT)
+    DebugCpuId cpu = DebugCpuId::Main;  ///< Tap: whose breakpoints (the sound card's: no condition)
     uint16_t breakpointId = 0;   ///< Breakpoint
     std::string event;           ///< GameEvent: the event's name
     std::string owner;           ///< the script: "lua", "python" (its callbacks go when it stops)
@@ -106,6 +109,7 @@ struct CallbackHit
     uint8_t kind = 0;           ///< BreakpointTapKind; kKindStop for a breakpoint stop, kKindEvent for a game event
     uint16_t af = 0, bc = 0, de = 0, hl = 0, af2 = 0, bc2 = 0, de2 = 0, hl2 = 0, ix = 0, iy = 0, sp = 0, pc = 0;
     uint8_t i = 0, r = 0;
+    uint8_t cpu = 0;            ///< DebugCpuId: the registers are this CPU's
 
     static constexpr uint8_t kKindStop = 0x80;
     static constexpr uint8_t kKindEvent = 0x81;
@@ -134,7 +138,8 @@ struct CallbackInfo
     CallbackTrigger trigger = CallbackTrigger::Tap;
     std::string owner;
     std::string label;
-    std::string target;     ///< "tap #12 write #5C3A if …", "breakpoint 3", "event died"
+    std::string target;     ///< "tap #12 write #5C3A if …", "breakpoint 3", "event died"; a card tap ends "(gs CPU)"
+    DebugCpuId cpu = DebugCpuId::Main;
     uint16_t breakpointId = 0;
     std::string event;
     CallbackMode mode = CallbackMode::Deferred;
@@ -178,7 +183,7 @@ struct CallbackValue
 };
 
 const char* CallbackTriggerName(CallbackTrigger trigger);
-/// CallbackHit::kind as the scripts see it: exec, read, write, port_in, port_out, stop, event
+/// CallbackHit::kind as the scripts see it: exec, read, write, port_in, port_out, card_event, stop, event
 const char* CallbackHitKindName(uint8_t kind);
 const char* CallbackModeName(CallbackMode mode);
 bool ParseCallbackMode(const std::string& text, CallbackMode& mode);
@@ -274,18 +279,19 @@ public:
 private:
     struct Entry;
     struct FrameState;
-    BreakpointManager* Breakpoints() const;
+    BreakpointManager* Breakpoints(DebugCpuId cpu = DebugCpuId::Main) const;
     void Push(Entry& entry, CallbackHit& hit);
     /// Emulation thread: a hit to its callback. A deferred one's ring; a frame one's ring, or its call when
     /// @p atOnce (a breakpoint stop, a game event: the frame end is near or the CPU stopped); a sync one's call
-    void Dispatch(Entry& entry, CallbackHit& hit, bool atOnce);
-    /// Emulation thread: a frame or sync callback's call in the hook state
-    void RunHook(Entry& entry, const CallbackHit& hit);
+    void Dispatch(Entry& entry, CallbackHit& hit, bool atOnce, uint8_t* replace = nullptr);
+    /// Emulation thread: a frame or sync callback's call in the hook state. @p replace: a card read's byte the
+    /// function may replace by returning one
+    void RunHook(Entry& entry, const CallbackHit& hit, uint8_t* replace = nullptr);
     /// One call's time and outcome; the policy. @p mayUnarm: false on the emulation thread (a disabled tap stays
     /// armed and silent until it is removed: removing a breakpoint holds the CPU)
     void Account(uint32_t id, uint32_t us, bool failed, const std::string& error, bool aborted, bool mayUnarm);
     void SetUnpaced(bool unpaced);
-    void Fill(CallbackHit& hit) const;
+    void Fill(CallbackHit& hit, DebugCpuId cpu = DebugCpuId::Main) const;
     void Publish(uint32_t id) const;
     void Unarm(Entry& entry);
 
@@ -293,7 +299,7 @@ private:
     mutable std::mutex _mutex;  ///< the slots and every non-hot field
     std::array<std::shared_ptr<Entry>, kMaxCallbacks> _slots{};  ///< by slot; a tap's cookie is its slot
     uint32_t _nextId = 1;
-    uint8_t _sink = BRK_NO_TAP;
+    std::array<uint8_t, 2> _sinks{BRK_NO_TAP, BRK_NO_TAP};  ///< by DebugCpuId: this manager's sink in its breakpoints
     std::atomic<int> _gameEventCallbacks{0};
     std::atomic<int> _breakpointCallbacks{0};
     std::atomic<int> _hookCallbacks{0};  ///< frame and sync callbacks

@@ -25,6 +25,8 @@ struct HookCallResult
     bool ok = true;              ///< false: the function raised (error) or ran out of instructions (aborted)
     bool aborted = false;        ///< stopped by the instruction budget
     uint64_t instructions = 0;   ///< VM instructions the call ran (counted per 1000)
+    int32_t returned = -1;       ///< an integer the function returned: 0..255 (a card read's byte), 0x100 out of
+                                 ///< range, -1 none
     std::string error;
 };
 

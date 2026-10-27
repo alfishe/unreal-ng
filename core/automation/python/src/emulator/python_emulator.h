@@ -1221,6 +1221,7 @@ namespace PythonBindings
         d["value"] = hit.value >= 0 ? py::object(py::int_(hit.value)) : py::object(py::none());
         d["breakpoint"] = hit.breakpointId;
         d["kind"] = CallbackHitKindName(hit.kind);
+        d["cpu"] = DebugCpuName(static_cast<DebugCpuId>(hit.cpu));
         if (!info.event.empty())
             d["event"] = info.event;
         py::dict regs;
@@ -1241,6 +1242,7 @@ namespace PythonBindings
         d["owner"] = info.owner;
         d["label"] = info.label;
         d["target"] = info.target;
+        d["cpu"] = DebugCpuName(info.cpu);
         d["breakpoint"] = info.breakpointId;
         if (!info.event.empty())
             d["event"] = info.event;
@@ -1705,16 +1707,32 @@ namespace PythonBindings
                               int32_t to, const std::string& page, int32_t mask, const std::string& condition,
                               const std::string& dialect, const std::string& policy, uint32_t budget_us, uint32_t ring,
                               const std::string& label, const std::string& mode, uint64_t instructions,
-                              const std::string& role) -> int {
+                              const std::string& role, const std::string& cpu, const std::string& event) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Tap;
+                if (!DebugManager::ParseCpuName(cpu, spec.cpu))
+                    throw py::value_error("cpu must be 'main' or 'gs'");
+                GSCardEvent cardEvent = GSCardEvent::Count;
+                if (kind == "event")
+                {
+                    if (!ParseGSCardEvent(event.c_str(), cardEvent) || GSCardEventIsHostSide(cardEvent))
+                        throw py::value_error("event must be a card event (int, nmi, reset, page, card_command, "
+                                              "card_data, card_reply), not '" + event + "'");
+                    if (cpu.empty())
+                        spec.cpu = DebugCpuId::GS;
+                    spec.tap.type = BRK_EVENT;
+                    spec.tap.access = 0;
+                    spec.tap.address = static_cast<uint16_t>(cardEvent);
+                    return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions,
+                                                  role);
+                }
                 if (kind == "exec") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_EXECUTE; }
                 else if (kind == "read") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_READ; }
                 else if (kind == "write") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_WRITE; }
                 else if (kind == "port_in") { spec.tap.type = BRK_IO; spec.tap.access = BRK_IO_IN; }
                 else if (kind == "port_out") { spec.tap.type = BRK_IO; spec.tap.access = BRK_IO_OUT; }
                 else
-                    throw py::value_error("kind must be exec, read, write, port_in or port_out, not '" + kind + "'");
+                    throw py::value_error("kind must be exec, read, write, port_in, port_out or event, not '" + kind + "'");
                 spec.tap.address = address;
                 spec.tap.condition = condition;
                 if (!BreakpointConditionProgram::ParseDialect(dialect, spec.tap.conditionDialect))
@@ -1726,12 +1744,14 @@ namespace PythonBindings
             }, "Call fn(hit) on the Python thread at every access the tap sees (kind exec / read / write / port_in / "
                "port_out; condition: only when it holds). hit: frame, t, pc, address, value, kind, regs. fn as a str: "
                "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call, role "
-               "view or logic: logic writes are recorded by time travel). "
-               "The id; ValueError when refused. docs/features/script-callbacks.md",
-               py::arg("fn"), py::arg("kind"), py::arg("address"), py::arg("to") = -1, py::arg("page") = "",
+               "view or logic: logic writes are recorded by time travel). cpu 'gs': the sound card CPU's accesses "
+               "(its registers in hit.regs); kind 'event' with event= a card event (int, nmi, reset, page, "
+               "card_command, card_data, card_reply). A sync chunk on a card read or port_in may return a byte: the "
+               "card sees it. The id; ValueError when refused. docs/features/script-callbacks.md",
+               py::arg("fn"), py::arg("kind"), py::arg("address") = 0, py::arg("to") = -1, py::arg("page") = "",
                py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
                py::arg("budget_us") = 1000, py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "",
-               py::arg("instructions") = 0, py::arg("role") = "view")
+               py::arg("instructions") = 0, py::arg("role") = "view", py::arg("cpu") = "", py::arg("event") = "")
             .def("on_breakpoint", [](Emulator& self, const py::object& fn, uint16_t id, const std::string& policy,
                                      uint32_t budget_us, uint32_t ring, const std::string& label,
                                      const std::string& mode, uint64_t instructions,

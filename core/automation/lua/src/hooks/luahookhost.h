@@ -8,6 +8,9 @@
 /// every kInstructionStep VM instructions stops a call over its instruction budget. math.random starts from a fixed
 /// seed (kRandomSeed) and math.randomseed takes an explicit one: no host randomness and no host time in a hook.
 /// A logic callback's poke and set_reg are kept in the call's HookEdits, not made.
+///
+/// A call on a hit of the sound card's CPU (CallbackHit::cpu) reads the card: peek its memory, reg its registers. It
+/// does not write the card; a sync call on a card read hands the card another byte by returning it (0..255).
 
 #include <cstdint>
 #include <map>
@@ -50,4 +53,5 @@ private:
     uint64_t _budget = 0;
     bool _aborted = false;
     HookEdits* _edits = nullptr;  ///< a logic call's writes
+    bool _card = false;           ///< the call is on a hit of the sound card's CPU
 };

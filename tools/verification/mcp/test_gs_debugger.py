@@ -4,6 +4,7 @@ breakpoints (the NeoGS of the PENTAGON), a card stop parks the machine and wait 
 the lists are per CPU, and the card refuses what it has not (NextREG, the host's events)"""
 
 import re
+import time
 
 from mcplib import expect, main
 
@@ -76,6 +77,36 @@ def test_the_card_refuses_what_it_has_not(s):
     expect(r.is_error and 'cpu' in r.text, 'an unknown CPU is refused', r.text)
     r = s.call('control_execution', {'action': 'bp_add', 'type': 'event', 'event': 'host_command'})
     expect(not r.is_error, "the host's event on the main CPU", r.text)
+    clear(s)
+
+
+def test_a_python_tap_on_the_card(s):
+    """A Python callback on the card's port reads (cpu gs): MCP lists it with the CPU, and its hits count"""
+    clear(s)
+    code = ('import unreal_emulator as ue\n'
+            'emu = ue.emu_get_selected()\n'
+            'gs_seen = []\n'
+            'gs_cb = emu.on_tap(lambda hit: gs_seen.append(hit["cpu"]), "port_in", 0, mask=0, cpu="gs", '
+            'label="gs-check")\n'
+            'print(gs_cb)\n')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
+    if 'Python automation is not available' in r.text:
+        print('        no Python in this build (ENABLE_PYTHON_AUTOMATION=OFF): not checked')
+        return
+    expect(not r.is_error, 'registered', r.text)
+    s.call('control_execution', {'action': 'resume'})
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        r = s.call('control_execution', {'action': 'callbacks'})
+        if re.search(r'\(gs CPU\) \(python "gs-check"\) active, policy suspend, hits [1-9]', r.text):
+            break
+        time.sleep(0.1)
+    s.call('control_execution', {'action': 'pause'})
+    expect(re.search(r'#(\d+) tap in #0000 \(gs CPU\) \(python "gs-check"\) active, policy suspend, hits [1-9]',
+                     r.text), 'the card tap on one line, its hits counted', r.text)
+    entry = next(e for e in r.structured['callbacks'] if e['label'] == 'gs-check')
+    expect(entry['cpu'] == 'gs', 'cpu in structuredContent', entry)
+    s.call('control_execution', {'action': 'callback_remove', 'callback_id': entry['id']})
     clear(s)
 
 

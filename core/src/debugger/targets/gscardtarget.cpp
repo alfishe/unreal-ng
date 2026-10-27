@@ -83,7 +83,7 @@ uint32_t GSCardTarget::PageCount(MemoryBankModeEnum kind) const
 void GSCardTarget::OnBreakpointDemand(const BreakpointTapDemand& demand)
 {
     // Every active breakpoint of the card (a stop or a tap) needs the debug loop
-    _wanted = demand.stop || demand.exec || demand.read || demand.write;
+    _wanted = demand.stop || demand.exec || demand.read || demand.write || demand.other;
     Attach();
 }
 
@@ -143,7 +143,8 @@ void GSCardTarget::endRun(uint16_t pc)
 
 uint8_t GSCardTarget::onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value)
 {
-    Note(_breakpoints->HandleMemoryRead(addr, value), addr, value, BreakpointHitKind::MemoryRead, pc);
+    // A read tap's sync callback may hand the card another byte (fault injection, design §8A.7)
+    Note(_breakpoints->HandleReplaceableRead(addr, value), addr, value, BreakpointHitKind::MemoryRead, pc);
     return value;
 }
 
@@ -154,7 +155,7 @@ void GSCardTarget::onMemoryWrite(uint16_t pc, uint16_t addr, uint8_t value)
 
 uint8_t GSCardTarget::onPortIn(uint16_t pc, uint16_t port, uint8_t value)
 {
-    Note(_breakpoints->HandlePortIn(port), port, value, BreakpointHitKind::PortIn, pc);
+    Note(_breakpoints->HandleReplaceablePortIn(port, value), port, value, BreakpointHitKind::PortIn, pc);
     return value;
 }
 
