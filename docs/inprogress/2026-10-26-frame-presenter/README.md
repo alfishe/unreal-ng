@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-26
 **Status:** design; measured in [POC 037](../../../tools/poc/037-frame-presenter/README.md)
-([results](../../../tools/poc/037-frame-presenter/results.md)). VRR on real VRR hardware is not measured yet (section 9).
+([results](../../../tools/poc/037-frame-presenter/results.md)): fixed 60 Hz (Mac), 144 Hz and G-Sync (Windows);
+ProMotion is not measured yet (section 9).
 **Related:** [A/V sync and presentation](../2026-08-14-av-sync-and-presentation/README.md) (the frame-end latch,
 deadline pacing), [audio sync](../2026-08-17-audio-sync/audio-sync-design.md) (the DRC),
 [input latency and Game Mode](../2026-09-24-core-performance/unreal-ng-input-latency-and-game-mode.md) (sections 6
@@ -81,10 +82,11 @@ every refresh (`b-vsync`):
 | Windows, 144 Hz, 50.08 Hz source | `b-vsync` (DXGI, waitable) | 11 | ditto |
 | Windows, 144 Hz, 48.83 Hz source | `b-vsync` (DXGI, waitable) | 43 | ditto |
 
-Today's path is not broken at 60 Hz. At high refresh rates it shows 3-4 times more frames for a wrong number of
+Today's path is not broken at 60 Hz. At high refresh rates it shows 2.4-3.6 times more frames for a wrong number of
 refreshes than a refresh-driven presenter. The cause is that the frame shown is whichever one was latched when Qt got
-around to painting. The bigger gap is elsewhere: today's path cannot use VRR at all, and it has no way to know what
-the screen did.
+around to painting. The bigger gap is elsewhere: today's path cannot use VRR at all. With G-Sync enabled for windows,
+the GL window stayed at 144 Hz, while a native present-at-time in the same kind of window drove the panel at the
+machine's rate. And today's path has no way to know what the screen did.
 
 ## 3. The model: every frame has a time
 
@@ -112,7 +114,8 @@ target(n) = anchor + (emulatedNs(n) - emulatedNs(anchor frame)) / speed + D
   becomes ~0 by construction, not by a frame count that only fits one machine rate.
 
 Why the emulated clock and not `latchNs` alone: the latch time carries the scheduler's jitter (POC: p99 0.9-1.8 ms
-under load on macOS). The emulated time is exact. With the anchor taken from the same deadline `MainLoop` already
+under load on macOS). With latch-based targets, that jitter reaches the screen under VRR: the presents' interval
+error was 1.2 ms p99, against 0.5 ms with targets on the source clock. The emulated time is exact. With the anchor taken from the same deadline `MainLoop` already
 keeps, targets are as smooth as the emulated machine is. The latch time stays in the slot to check the deadline: a
 frame latched after `target - margin` is late, and is counted.
 
@@ -145,7 +148,13 @@ screen for exactly one source period: no beat, no judder, the correct speed, the
   `afterMinimumDuration:` is wrong for this: on 60 Hz it halved the rate to 30 fps.
 - **Windows:** a flip-model swap chain (`FLIP_DISCARD`) created with `ALLOW_TEARING`, `Present(0,
   DXGI_PRESENT_ALLOW_TEARING)` at `target(n)` from a high-resolution waitable timer. That is the documented condition
-  for VRR in a window. G-Sync also has to be enabled for windowed mode in the driver.
+  for VRR in a window. G-Sync also has to be enabled for windowed mode in the driver ("Set up G-SYNC": windowed and
+  full screen); with the default (full screen only) the panel stays at its maximum rate.
+  - Measured with G-Sync on (AW3821DW, RTX 4090): one refresh per frame at 48.9, 49.4, 50.1 and 61.3 Hz from a plain
+    window.
+  - Per-frame error with targets on the source clock: 0.05 ms p50 / 0.5 ms p99 at the present, 0.2-0.55 ms p50 /
+    1.7-3.5 ms p99 on screen as the kernel's vblanks show it.
+  - For comparison, the fixed-rate beat is 6.2-7.8 ms p99 at 144 Hz and 13.4 ms at 60 Hz.
 - **Below the VRR floor** (Pentagon 48.83 Hz on a panel with a 48 Hz floor), the driver's low-framerate compensation
   repeats refreshes. The frame time stays exact.
 - **Detecting VRR:**
@@ -286,7 +295,7 @@ classDiagram
 | OS | Screen time of a present | Refresh times | Clock |
 |---|---|---|---|
 | macOS | `MTLDrawable.presentedTime` (0 = dropped) | the display link's timestamps | `CACurrentMediaTime` = `mach_absolute_time` = `CLOCK_UPTIME_RAW` = `steady_clock` |
-| Windows, independent flip / fullscreen | `GetFrameStatistics`: `PresentCount` -> `SyncQPCTime` | ditto | QPC = `steady_clock` |
+| Windows, independent flip / fullscreen | `GetFrameStatistics`: `PresentCount` -> `SyncQPCTime` on a fixed refresh; under VRR `SyncQPCTime` is the start of the vblank the flip ended (before the present), so the kernel's vblank is used there too | ditto | QPC = `steady_clock` |
 | Windows, composed (DWM) window | none: `GetFrameStatistics` succeeds with all zeros | `D3DKMTWaitForVerticalBlankEvent` on the monitor's adapter, on a thread; the first vblank after the present (a lower bound: DWM may add a refresh) | QPC |
 
 `IDXGIOutput::WaitForVBlank` returns at once in a window. `DwmGetCompositionTimingInfo`'s `qpcVBlank` had gaps of
@@ -319,7 +328,7 @@ Measured in POC 037 unless marked. The POC's frames are 384x288x4 bytes, a littl
 | Presenter CPU, Windows | not resolved: `GetThreadTimes` has a 15.6 ms granularity there; the next runs use `QueryThreadCycleTime` |
 | Threads | one presenter thread per emulator window, waking at the refresh rate (`b`, `d`: 60-144 per second) or the frame rate (`c`: ~50 per second); one vblank-watch thread per window on Windows |
 | Memory | the native swap chain (2-3 back buffers at the window size) replaces the GL default framebuffer; no change in the core's slots |
-| Latency, latch to screen | `c-vrr`: `D` exactly (POC with D = one period: 28 ms on the Mac at 60 Hz, 17.7 ms on Windows at 144 Hz); `b-vsync`: `D` + up to one refresh (Mac `CADisplayLink`: 42-58 ms; Windows DXGI: 10.4 ms); `d-locked` on macOS: 33-66 ms today (the display link's pipeline depth; section 9) |
+| Latency, latch to screen | `c-vrr`: `D` exactly (POC with D = one period: 28 ms on the Mac at 60 Hz; on Windows under G-Sync 27.4-28.8 ms to the end of scan-out, i.e. D + 6.9 ms of scan-out); `b-vsync`: `D` + up to one refresh (Mac `CADisplayLink`: 42-58 ms; Windows DXGI: 10.4 ms); `d-locked` on macOS: 33-66 ms today (the display link's pipeline depth; section 9) |
 | A/V | with `D` = the audio latency, the offset is ~0 for every machine rate, not only 50 Hz |
 | Speed and pitch | unchanged, except `d-locked` (by design, within the lock band) |
 
@@ -343,11 +352,12 @@ Each phase lands on its own with tests and docs.
 
 ## 9. Open items
 
-- **VRR on Windows is not confirmed on the test host.** The app side of the measurement was complete (flip model,
-  tearing supported and requested, present at the frame's time). Yet the kernel's vblanks stayed on a strict 6.944 ms
-  grid (144 Hz) windowed and borderless fullscreen; exclusive fullscreen could not be entered from the scheduled task.
-  The likely cause is the driver setting "G-SYNC: enable for full screen mode" (exclusive only) instead of "windowed and
-  full screen". To be re-measured once the setting is checked.
+- **The on-screen tail under G-Sync** (p99 1.7-3.5 ms against 0.5 ms at the present) is either the kernel's vblank
+  event delivery or the panel. A time-critical measuring thread did not shrink it. An optical measurement (photodiode
+  or a high-speed camera) would separate them. It does not change the design.
+- **G-Sync needs the windowed setting.** Most users have the driver default (full screen only). The app cannot change
+  it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. Then it falls back to `b-vsync` and says so in
+  the stats, with a hint where to enable it.
 - **ProMotion is not measured** (the MacBook Pro was not available to the POC). Apple's documentation for display
   links speaks of frame rates that divide the panel's maximum (120, 60, 40, 30, 24 Hz); whether
   `presentDrawable:atTime:` gets arbitrary intervals (20 ms for 50 Hz) on the built-in panel is exactly what the

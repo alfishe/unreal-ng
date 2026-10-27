@@ -10,7 +10,7 @@
 | Native presenters | `common/presenter_metal.mm`, `common/presenter_dxgi.cpp` | own thread; the variants of the charter; presentation feedback |
 | Shells | `qt/main.cpp`, `sdl/main.cpp` | Qt 6: `QOpenGLWindow` (`a`, `b` as the app does) or a `QWindow` handed to the native presenter; SDL3: `SDL_GPU` (`a`, `b`) or the native presenter on the SDL window |
 | Log | `common/lab.cpp` (`PresentLog`) | one CSV row per present, `# key=value` meta lines (host, display, load, presenter, feedback source) |
-| Analysis | `analyze.py` | the metrics below, one markdown row per run |
+| Analysis | `analyze.py`, `vrr_err.py` | the metrics below, one markdown row per run; `vrr_err.py`: present and on-screen interval errors against the source period (VRR runs) |
 
 ## 2. Clocks
 
@@ -24,8 +24,8 @@ high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`) and spi
 | Source | When | Marked |
 |---|---|---|
 | `MTLDrawable.presentedTime` via `addPresentedHandler` (0 = never shown) | Metal | `presented` |
-| `IDXGISwapChain::GetFrameStatistics`: `PresentCount` -> `SyncQPCTime` | DXGI in independent flip (fullscreen) | `presented` / `vblank` |
-| the first kernel vblank after the present returned (`D3DKMTWaitForVerticalBlankEvent` on a thread); a present followed by another one before that vblank is counted as dropped | Windows, every shell (DXGI's statistics are all zeros for a composed window) | `vblank` |
+| `IDXGISwapChain::GetFrameStatistics`: `PresentCount` -> `SyncQPCTime` | DXGI in independent flip; overridden by the kernel vblank below (under VRR `SyncQPCTime` is the start of the vblank the flip ended, before the present) | — |
+| the first kernel vblank after the present returned (`D3DKMTWaitForVerticalBlankEvent` on a time-critical thread); a present followed by another one before that vblank is counted as dropped. Under VRR the vblank follows the flip by one scan-out (6.94 ms at 144 Hz), so vblank intervals are the frames' times on screen | Windows, every shell (DXGI's statistics are all zeros for a composed window) | `vblank` |
 | the swap's return (`frameSwapped`) / the acquire's return | macOS GL / `SDL_GPU`: no feedback | `proxy:swap`, `proxy:acquire` |
 
 The vblank source is a lower bound for a composed window: DWM may show the frame one refresh later. Windows runs call

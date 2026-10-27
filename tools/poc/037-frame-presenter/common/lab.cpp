@@ -169,6 +169,8 @@ Options ParseOptions(int argc, char** argv)
             o.variant = next();
         else if (a == "--backend")
             o.backend = next();
+        else if (a == "--target")
+            o.target = next();
         else if (a == "--link")
             o.link = next();
         else if (a == "--vrr")
@@ -212,6 +214,8 @@ std::string RunPath(const Options& o, const std::string& shell)
     if (o.backend == "native" && o.link != "metal")
         name += "-" + o.link;
     name += "-" + std::string(rate);
+    if (o.variant == "c" && o.target != "latch")
+        name += "-" + o.target;
     if (!o.tag.empty() && o.tag != rate)
         name += "-" + o.tag;
     return o.out + "/" + name + ".csv";
@@ -469,7 +473,7 @@ void PresentLog::ResolveByVBlanks(const std::vector<int64_t>& vblanks)
     for (size_t i = 0; i < _records.size(); i++)
     {
         PresentRecord& r = _records[i];
-        if (r.presentedNs >= 0 || r.submitNs <= 0)
+        if (r.submitNs <= 0)
             continue;
         const int64_t on = onAfter(r.submitNs);
         const bool replaced = i + 1 < _records.size() && _records[i + 1].submitNs > 0 && onAfter(_records[i + 1].submitNs) == on;
