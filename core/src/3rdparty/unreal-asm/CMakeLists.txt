@@ -256,6 +256,10 @@ function(unrealasm_add_tests)
     target_compile_definitions(unreal-asm-tests PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata"
                                UNREAL_ASM_REPO_TESTDATA_DIR="${UNREAL_ASM_REPO_TESTDATA}")
     target_compile_options(unreal-asm-tests PRIVATE ${UNREAL_ASM_WARNINGS_LIST})
+    if (MINGW)
+        # Runs without the MinGW runtime DLLs on the path, as core-tests does
+        target_link_options(unreal-asm-tests PRIVATE -static)
+    endif()
 endfunction()
 
 if (UNREAL_ASM_TESTS)
