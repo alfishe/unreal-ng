@@ -216,4 +216,4 @@ companion's id) and the surface's `session` is its id, so the REST pin and the G
 `join.target` and the `pin` op take `"follow"`, `{"instance": id or index}` and `{"view": id or number}` (a
 scenario's `{"view": 2}` is `v2`); `target` (welcome, changes, the `pin` answer) is `TargetNode` of the session's
 target; a change is found by comparing instance, view and mode with what was sent last (every `NC_SURFACE_TARGET`,
-instance and selection change). Not done: `welcome.views`.
+instance and selection change); `welcome.views` is the `views` verb's list.

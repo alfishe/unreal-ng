@@ -287,6 +287,12 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
     for (const std::string& scope : automation_gate::CompanionScopeNames(connection.companion->scopes))
         welcome["scopes"].append(scope);
     welcome["target"] = TargetOf(*session);
+    // The host's views in focus order (the `views` verb's: id, name, owner, position, active, index), front first
+    {
+        const actions::surfaces::Reply views = actions::surfaces::Call("views", StateNode::Object());
+        const StateNode* list = views.body.find("views");
+        welcome["views"] = list != nullptr ? StateNodeToJson(*list) : Json::Value(Json::arrayValue);
+    }
     welcome["readouts"] = Json::Value(Json::arrayValue);
     for (const std::string& readout : ReadoutNamesOf(session->instance))
         welcome["readouts"].append(readout);

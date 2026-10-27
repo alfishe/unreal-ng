@@ -162,7 +162,7 @@ surface (`bad_request` with several). Every message of a surface carries its `se
 
 | From the core | |
 |:--|:--|
-| `welcome` | `v`, `session`, `rid` (the join's), `serial`, `instance`, `context`, `scopes[]`, `target`, `readouts[]` (every name the bound instance has), `features[]` (those taken), `catalogue_rev`. |
+| `welcome` | `v`, `session`, `rid` (the join's), `serial`, `instance`, `context`, `scopes[]`, `target`, `views[]` (the host's views front first, as `GET /api/v1/surfaces/views`: `id`, `name`, `owner`, `position`, `active`, `index`), `readouts[]` (every name the bound instance has), `features[]` (those taken), `catalogue_rev`. |
 | `result` | `rid`, `ok`, `error`?, `message`?, `body` (the action's result; `ttd.seek_by` has `marks`). Only for an action with a `rid`; a failure without a `rid` is an `error`. Deltas queued behind a running one merge; every merged `rid` gets the merged result. |
 | `ctx` | `instance`, `context`, `by`: the bound instance's context changed (a `ctx.set` anywhere: `by` names the setter; the default flipping when a TTD history appears or goes: `by` `default`), and after a rebind. |
 | `readout` | `instance`, `values{}`: in full after `subscribe` and after a rebind, then only the values that changed, at most `max_hz`. |

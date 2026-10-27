@@ -329,6 +329,8 @@ TEST_F(WsHub_Test, AWelcomeNamesTheVersionSessionInstanceContextScopesAndTarget)
     EXPECT_EQ(welcome["target"]["mode"].asString(), "instance");
     EXPECT_EQ(welcome["target"]["model"].asString(), "PENTAGON");
     EXPECT_TRUE(welcome["target"]["view"].isNull()) << "headless: no view shows it";
+    ASSERT_TRUE(welcome["views"].isArray()) << "the host's views, front first";
+    EXPECT_EQ(welcome["views"].size(), actions::TargetState::Instance().Views().size());
     EXPECT_EQ(welcome["readouts"].size(), actions::ReadoutNames(*_emulator).size()) << "the whole vocabulary";
     EXPECT_EQ(welcome["serial"].asString(), "A1");
     EXPECT_TRUE(welcome["catalogue_rev"].isIntegral());

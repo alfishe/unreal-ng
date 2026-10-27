@@ -110,6 +110,7 @@ def test_a_join_is_welcomed_with_the_instance_its_context_and_the_scopes(s):
     expect(welcome['instance'] == emu and welcome['target']['instance'] == emu, 'follow: the only instance', welcome)
     expect(welcome['target']['mode'] == 'follow' and welcome['target']['model'] == 'PENTAGON', 'the target', welcome)
     expect(welcome['context'] == 'play', 'no history yet: play', welcome)
+    expect(isinstance(welcome.get('views'), list) and all('id' in v for v in welcome['views']), 'the views', welcome)
     expect({'run', 'rewind', 'debug'} <= set(welcome['scopes']), 'the scopes granted', welcome)
     ws.send({'op': 'join', 'v': 1, 'name': 'x', 'model': 'y', 'target': {'view': 'v1'}})
     ws.close()
