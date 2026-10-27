@@ -4,7 +4,7 @@
 Usage: tools/verification/webapi_stop_under_load.py <unreal-qt binary> [rounds] [port]
 The window is closed by lldb calling QApplication::closeAllWindows() on the main thread (the app has no quit hook).
 """
-import base64, glob, os, socket, subprocess, sys, threading, time
+import base64, glob, os, signal, socket, subprocess, sys, threading, time
 
 binary = sys.argv[1]
 rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 5
@@ -66,6 +66,8 @@ for n in range(rounds):
     subprocess.run(['xcrun', 'lldb', '-b', '-p', str(proc.pid), '-o', 'thread select 1', '-o',
                     'expr -- (void)((void(*)())_ZN12QApplication15closeAllWindowsEv)()', '-o', 'detach'],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+    # lldb's batch detach sometimes leaves the target stopped (state T); that looked like the window not closing
+    os.kill(proc.pid, signal.SIGCONT)
     try:
         rc = proc.wait(timeout=20)
     except subprocess.TimeoutExpired:
