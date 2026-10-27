@@ -53,6 +53,8 @@ public:
         uint16_t pc = 0;          ///< the instruction the access belonged to (execute: the one about to run)
         uint16_t boundaryPc = 0;  ///< where the card stood when it parked (the next instruction)
         int64_t cardTime = 0;     ///< in the card's unit (GeneralSoundCard::cardTime)
+        uint8_t master = 0;       ///< DmaWrite: the bus master (NeoGS DMA module: 0 ZX-DMA, 1 SD)
+        uint8_t page = 0;         ///< DmaWrite: the RAM page written (`address` the offset in it)
     };
     Stop LastStop() const { return _lastStop; }
     /// Stops since creation (tests, diagnosis)
@@ -78,6 +80,7 @@ public:
     uint8_t onPortIn(uint16_t pc, uint16_t port, uint8_t value) override;
     void onPortOut(uint16_t pc, uint16_t port, uint8_t value) override;
     void onEvent(GSCardEvent kind, uint16_t port, uint8_t value) override;
+    void onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value) override;
 
 private:
     /// The hooks on the current card when wanted, off it otherwise

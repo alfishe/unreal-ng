@@ -198,6 +198,7 @@ void NeoGSDma::runSd(int64_t now)
         const uint32_t base = address(SD);
         for (int i = 0; i < BLOCK; i++)
             _mem.ram()[(base + static_cast<uint32_t>(i)) % _mem.ramSize()] = _sdBuffer[i];
+        _host.dmaRamWritten(base, BLOCK);
         advanceAddress(SD, BLOCK);
         _bytesMoved += BLOCK;
         const int64_t burst = static_cast<int64_t>(BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS) * _host.dmaUnitsPerCycle();

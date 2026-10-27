@@ -3528,7 +3528,8 @@ public:
             return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
         });
         // bp_event(kind, {value=, vmask=, hits=, cpu=}) stops on a General Sound / NeoGS protocol event: the card's (int, nmi,
-        // reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done) on the gs CPU, the host's (host_command, host_data, host_reply)
+        // reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0) on the gs
+        // CPU, the host's (host_command, host_data, host_reply)
         // on the main one; cpu defaults to the kind's side. The id; -1 and the reason when refused
         lua.set_function("bp_event", [this](const std::string& kindName, sol::optional<sol::table> options)
                                          -> std::tuple<int, sol::optional<std::string>> {
@@ -7750,7 +7751,7 @@ public:
                 GSCardEvent kind = GSCardEvent::Count;
                 if (!ParseGSCardEvent(event->c_str(), kind) || GSCardEventIsHostSide(kind))
                     return {-1, "event must be a card event (int, nmi, reset, page, card_command, card_data, "
-                                "card_reply, dac_fetch, clock_change, dma_start, dma_done), not '" + *event + "'"};
+                                "card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0), not '" + *event + "'"};
                 if (cpu.empty())
                     spec.cpu = DebugCpuId::GS;
                 spec.tap.type = BRK_EVENT;
@@ -7827,6 +7828,7 @@ public:
         lua.set_function("gs_on_clock_change", cardEvent(GSCardEvent::ClockChange));
         lua.set_function("gs_on_dma_start", cardEvent(GSCardEvent::DmaStart));
         lua.set_function("gs_on_dma_done", cardEvent(GSCardEvent::DmaDone));
+        lua.set_function("gs_on_gscfg0", cardEvent(GSCardEvent::ConfigWrite));
         // A card port (its 8-bit decode): gs_on_port_in(port, fn [, options]), gs_on_port_out
         auto cardPort = [this, cardCpu](uint8_t access) {
             return [this, access, cardCpu](int port, const sol::object& fn, sol::optional<sol::table> options)

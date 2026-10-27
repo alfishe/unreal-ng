@@ -2306,6 +2306,20 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
     return result;
 }
 
+uint16_t BreakpointManager::ResolvePage(int kind, MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    const size_t pageId = (static_cast<size_t>(mode) << 8) | page;
+    if (pageId >= kPageIds || !_pageSlices[kind][pageId])
+        return BRK_INVALID;
+    const uint16_t result = WalkCandidates(_pageSlices[kind][pageId]->heads[offset & 0x3FFF], -1, BRK_INVALID,
+                                           static_cast<BreakpointTapKind>(kind), offset & 0x3FFF, value);
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
 uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bool write)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))

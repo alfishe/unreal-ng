@@ -49,6 +49,8 @@ struct Host : NeoGSDma::Host
     std::vector<std::pair<int, bool>> ended;
     void dmaStarted(NeoGSDma::Module m) override { started.push_back(m); }
     void dmaEnded(NeoGSDma::Module m, bool finished) override { ended.emplace_back(m, finished); }
+    std::vector<std::pair<uint32_t, uint32_t>> written;  // what a debugger's page watchpoints see
+    void dmaRamWritten(uint32_t offset, uint32_t length) override { written.emplace_back(offset, length); }
 };
 
 struct Fixture
@@ -129,6 +131,8 @@ TEST(NeoGSDma, SdBlockToRamWithTokenWaitStallAndInterrupt)
     ASSERT_EQ(f.host.started, std::vector<int>{NeoGSDma::SD});
     ASSERT_EQ(f.host.ended.size(), 1u);
     EXPECT_EQ(f.host.ended[0], std::make_pair(static_cast<int>(NeoGSDma::SD), true)) << "done, with its interrupt";
+    ASSERT_EQ(f.host.written.size(), 1u);
+    EXPECT_EQ(f.host.written[0], std::make_pair(0x012000u, 512u)) << "the block, for the page watchpoints";
 }
 
 TEST(NeoGSDma, SdErrorTokenStopsWithoutWritingButStillInterrupts)

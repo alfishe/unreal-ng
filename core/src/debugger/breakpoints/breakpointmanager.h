@@ -693,6 +693,14 @@ public:
             return BRK_INVALID;
         return ResolveSpace(spacePage, offset, write);
     }
+    /// A write by a bus master other than the CPU (a DMA) to a physical page: only the watchpoints tied to that page
+    /// (`--page`) see it, the CPU's address is not involved. `offset` is in the 16 KB page
+    uint16_t HandlePageWrite(MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value = -1)
+    {
+        if (!_hasPageSlices[BRK_KIND_WRITE])
+            return BRK_INVALID;
+        return ResolvePage(BRK_KIND_WRITE, mode, page, offset, value);
+    }
     /// `value`: the byte written, for the conditions (-1: not known)
     uint16_t HandleMemoryWrite(uint16_t writeAddress, int value = -1)
     {
@@ -798,6 +806,7 @@ protected:
     /// the hit policy (counting), the TTD-replay suppression. The id of the first candidate that stops
     uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
     uint16_t ResolveMemory(int kind, uint16_t address, int value = -1);
+    uint16_t ResolvePage(int kind, MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value);
     uint16_t ResolvePort(int direction, uint16_t port, int value = -1);
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);

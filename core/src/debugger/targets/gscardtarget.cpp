@@ -217,6 +217,19 @@ void GSCardTarget::onEvent(GSCardEvent kind, uint16_t port, uint8_t value)
     Note(id, static_cast<uint16_t>(kind), value, BreakpointHitKind::Event, pc);
 }
 
+void GSCardTarget::onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value)
+{
+    const uint16_t id = _breakpoints->HandlePageWrite(BANK_RAM, ramPage, offset, value);
+    if (id == BRK_INVALID || _pending.hit)
+        return;
+    // The card CPU was off the bus: the instruction it stands at
+    Z80CpuRegisters regs{};
+    const uint16_t pc = _attached && _attached->cardRegisters(regs) ? regs.pc : 0;
+    Note(id, offset, value, BreakpointHitKind::DmaWrite, pc);
+    _pending.master = master;
+    _pending.page = ramPage;
+}
+
 void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;

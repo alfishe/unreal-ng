@@ -921,6 +921,27 @@ void SoundChip_NeoGS::zxLateStart(int64_t units)
                 static_cast<double>(units) / (TICKS_PER_SECOND / 1e6));
 }
 
+void SoundChip_NeoGS::dmaRamWritten(uint32_t offset, uint32_t length)
+{
+    if (!_debugHooks) [[likely]]
+        return;
+    const uint8_t* ram = _mem.ram();
+    const size_t size = _mem.ramSize();
+    for (uint32_t i = 0; i < length; i++)
+    {
+        const uint32_t at = static_cast<uint32_t>((offset + i) % size);
+        _debugHooks->onBusMasterWrite(NeoGSDma::SD, static_cast<uint8_t>(at / NeoGSMemory::PAGE_SIZE),
+                                      static_cast<uint16_t>(at % NeoGSMemory::PAGE_SIZE), ram[at]);
+    }
+}
+
+void SoundChip_NeoGS::zxRamWritten(uint32_t offset, uint8_t value)
+{
+    if (_debugHooks) [[unlikely]]
+        _debugHooks->onBusMasterWrite(NeoGSDma::ZX, static_cast<uint8_t>(offset / NeoGSMemory::PAGE_SIZE),
+                                      static_cast<uint16_t>(offset % NeoGSMemory::PAGE_SIZE), value);
+}
+
 void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value)
 {
     if (!_portTrace.isCapturing())
@@ -1298,6 +1319,9 @@ void SoundChip_NeoGS::cardOut(uint16_t port, uint8_t value)
         }
         case P_GSCFG0:
             writeGscfg0(value);
+            // The card's own write (a reset's GSCFG0 is the reset event)
+            if (_debugHooks) [[unlikely]]
+                _debugHooks->onEvent(GSCardEvent::ConfigWrite, 0, value);
             return;
         case P_SCTRL:
             writeSctrl(value);

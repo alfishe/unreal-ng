@@ -817,11 +817,11 @@ id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction
 id = bp(0x0038, {cpu="gs"})    -- the sound card CPU's (General Sound / NeoGS); bp_remove(id, "gs"), bp_list("gs") ...
                                -- cpu="ms": the MultiSound card's General Sound, the same way
 id, why = bp_event("card_command", {value=0x23})  -- a GS protocol event: int, nmi, reset, page, card_command, card_data,
-                               -- card_reply, dac_fetch, clock_change, dma_start, dma_done (the card's), host_command,
+                               -- card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0 (the card's), host_command,
                                -- host_data, host_reply (the main CPU's); cpu= defaults to the side
 id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its detail); also gs_on_command, gs_on_data,
                                -- gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_clock_change, gs_on_dma_start,
-                               -- gs_on_dma_done, gs_on_port_in(port, fn), gs_on_port_out(port, fn); {cpu="ms"} the
+                               -- gs_on_dma_done, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); {cpu="ms"} the
                                -- MultiSound's
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()

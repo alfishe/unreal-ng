@@ -330,7 +330,8 @@ enum class BreakpointHitKind : uint8_t
     CopperInstruction,
     Magic,
     Keyboard,  // the program read the keyboard and saw the key change (address: the port read)
-    Event      // a General Sound event (BRK_EVENT; address: the event kind)
+    Event,     // a General Sound event (BRK_EVENT; address: the event kind)
+    DmaWrite   // a bus master other than the CPU (a DMA) wrote a watched page (address: the offset in the 16 KB page)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -350,6 +351,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::Magic: return "magic";
         case BreakpointHitKind::Keyboard: return "keyboard";
         case BreakpointHitKind::Event: return "event";
+        case BreakpointHitKind::DmaWrite: return "dma_write";
     }
     return "execute";
 }

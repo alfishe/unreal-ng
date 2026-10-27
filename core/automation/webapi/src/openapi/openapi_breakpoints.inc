@@ -33,7 +33,7 @@
         "with a mask, a hit policy (hits / hit_mode + hit_target). Errors name the field: a range ending before it "
         "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target. "
         "type event: a General Sound protocol breakpoint, 'event' its kind (int, nmi, reset, page, card_command, "
-        "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done on cpu gs; host_command, host_data, "
+        "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0 on cpu gs; host_command, host_data, "
         "host_reply on the main CPU), value / value_mask filter the byte. cpu gs: the card CPU's (execute, memory, "
         "port, event; conditions on its registers and memory).";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";

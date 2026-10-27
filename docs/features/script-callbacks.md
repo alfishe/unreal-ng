@@ -161,7 +161,8 @@ state of the machine now, which is later.
 A tap with `cpu = "gs"` watches the CPU of the General Sound / NeoGS card ([gs-debugger](../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)):
 its memory reads, writes and executions (the card's addresses), its port accesses, and its events (`event`: `int`,
 `nmi`, `reset`, `page`, `card_command`, `card_data`, `card_reply`, `dac_fetch`, `clock_change`, `dma_start`,
-`dma_done`). The card runs its debug loop while such a tap is
+`dma_done`, `gscfg0`). A write tap on a card RAM page (`page`) also hears the NeoGS DMA's writes there (the hit's
+address is the offset in the page). The card runs its debug loop while such a tap is
 armed; a condition is refused.
 
 - `pc` and `regs` in the hit are the card's; `frame` and `t` stay the machine's.
@@ -180,7 +181,7 @@ on_tap({event = "int"}, [[return function(hit) shared_set("ints", (shared_get("i
 ```
 
 The named callbacks are the same taps, one per event: `gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`,
-`gs_on_nmi`, `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done` take
+`gs_on_nmi`, `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0` take
 `(fn [, options])`; `gs_on_port_in(port, fn [, options])` and `gs_on_port_out` watch a card port (its 8-bit decode).
 `cpu = "ms"` in the options (Python: `cpu="ms"`) puts them on the MultiSound card's General Sound.
 Python takes the same keywords as `on_tap` (`policy`, `budget_us`, `ring`, `label`, `mode`, `instructions`, `role`).

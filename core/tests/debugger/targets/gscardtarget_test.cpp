@@ -393,6 +393,61 @@ TEST(GSCardTarget_Test, TheDacFetchAndTheClockChangeAreCardEvents)
     ASSERT_TRUE(neo.runUntilStop(50));
     EXPECT_EQ(neo.target->LastStop().breakpointId, clock);
     EXPECT_EQ(neo.target->LastStop().value, neo.chip->gscfg0()) << "the byte is GSCFG0";
+    neo.target->GetBreakpointManager()->RemoveBreakpointByID(clock);
+
+    // Every GSCFG0 write of the card, a clock change or not (platform-debugging P2)
+    const uint16_t config = neo.add(Event(GSCardEvent::ConfigWrite));
+    ASSERT_TRUE(neo.runUntilStop(50));
+    EXPECT_EQ(neo.target->LastStop().breakpointId, config);
+    EXPECT_EQ(neo.target->LastStop().address, static_cast<uint16_t>(GSCardEvent::ConfigWrite));
+    EXPECT_EQ(neo.target->LastStop().value, neo.chip->gscfg0());
+}
+
+// A NeoGS DMA module's RAM write (platform-debugging P2) reaches a write watchpoint tied to the RAM page, not one on
+// the card CPU's address: the stop is a dma_write with the module, the page and the offset in it
+TEST(GSCardTarget_Test, TheNeoGSDmaWritesHitThePagesWatchpoint)
+{
+    NeoCard card;
+    constexpr uint8_t kPage = 4;
+    constexpr uint16_t kOffset = 0x2005;
+    BreakpointSpec spec;
+    spec.type = BRK_MEMORY;
+    spec.access = BRK_MEM_WRITE;
+    spec.address = kOffset;
+    spec.hasPage = true;
+    spec.pageType = BANK_RAM;
+    spec.page = kPage;
+    const uint16_t id = card.add(spec);
+    ASSERT_TRUE(card.target->HooksAttached());
+    NeoGSZxDma::Host& zx = card.chip->zxHost();
+    NeoGSDma::Host& sd = card.chip->dmaHost();
+    constexpr uint32_t kAt = kPage * NeoGSMemory::PAGE_SIZE + kOffset;
+
+    zx.zxRamWritten(kAt + 1, 0x11);                            // the next byte
+    zx.zxRamWritten((kPage + 1) * NeoGSMemory::PAGE_SIZE + kOffset, 0x22);  // the next page
+    EXPECT_FALSE(card.runUntilStop(1)) << "only the watched byte of the watched page";
+
+    zx.zxRamWritten(kAt, 0x5A);
+    ASSERT_TRUE(card.runUntilStop(1));
+    GSCardTarget::Stop stop = card.target->LastStop();
+    EXPECT_EQ(stop.breakpointId, id);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::DmaWrite);
+    EXPECT_STREQ(BreakpointHitKindName(stop.kind), "dma_write");
+    EXPECT_EQ(stop.master, NeoGSDma::ZX);
+    EXPECT_EQ(stop.page, kPage);
+    EXPECT_EQ(stop.address, kOffset);
+    EXPECT_EQ(stop.value, 0x5A);
+
+    // An SD block over the byte: the byte it left there
+    uint8_t* ram = card.chip->memory().ram();
+    for (uint32_t i = 0; i < 512; i++)
+        ram[kAt - 0x100 + i] = static_cast<uint8_t>(i);
+    sd.dmaRamWritten(kAt - 0x100, 512);
+    ASSERT_TRUE(card.runUntilStop(1));
+    stop = card.target->LastStop();
+    EXPECT_EQ(stop.master, NeoGSDma::SD);
+    EXPECT_EQ(stop.address, kOffset);
+    EXPECT_EQ(stop.value, 0x00) << "byte #100 of the block";
 }
 
 // The card of a whole machine (the PENTAGON's NeoGS): a card breakpoint puts the hooks on the card the machine runs,

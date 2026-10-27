@@ -36,6 +36,7 @@ enum class GSCardEvent : uint8_t
     ClockChange,       ///< the card CPU's clock changed (NeoGS GSCFG0): `port` the new clock in MHz, `value` GSCFG0
     DmaStart,          ///< a NeoGS DMA module started: `value` the module (0 ZX-DMA, 1 SD, 2 MP3)
     DmaDone,           ///< a NeoGS DMA module ended: `value` the module, `port` 1 when it finished (interrupt), 0 aborted
+    ConfigWrite,       ///< the card wrote NeoGS GSCFG0 (every write, a clock change or not): `value` the byte
     Count
 };
 
@@ -64,6 +65,7 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::ClockChange: return "clock_change";
         case GSCardEvent::DmaStart: return "dma_start";
         case GSCardEvent::DmaDone: return "dma_done";
+        case GSCardEvent::ConfigWrite: return "gscfg0";
         case GSCardEvent::Count: break;
     }
     return "unknown";
@@ -102,6 +104,17 @@ public:
 
     /// A card event; reported at the next boundary like a bus hit
     virtual void onEvent(GSCardEvent kind, uint16_t port, uint8_t value) = 0;
+
+    /// A bus master other than the card CPU (a NeoGS DMA module: 0 ZX-DMA, 1 SD) wrote a RAM page of the card:
+    /// `ramPage` the 16 KB page, `offset` in it. Only a watchpoint tied to that page sees it (the CPU's address is
+    /// not involved); reported at the next boundary like a bus hit
+    virtual void onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value)
+    {
+        (void)master;
+        (void)ramPage;
+        (void)offset;
+        (void)value;
+    }
 
 protected:
     ~IGSDebugHooks() = default;

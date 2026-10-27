@@ -154,9 +154,15 @@ both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
   host's command / data byte), `card_reply` (it wrote its reply), and the card's hardware: `dac_fetch` (the player
   fetched a sample; the detail is the DAC channel 0..3), `clock_change` (NeoGS GSCFG0 changed the clock; the detail is
   the clock in MHz, the value GSCFG0), `dma_start` / `dma_done` (a NeoGS DMA module, the value its number; the detail of
-  `dma_done` is 1 for a finished block, 0 for an abort). The host's: `host_command` (#BB), `host_data` (#B3 written),
+  `dma_done` is 1 for a finished block, 0 for an abort), `gscfg0` (every GSCFG0 write of the NeoGS CPU, the value the
+  byte; a reset's GSCFG0 is the `reset` event). The host's: `host_command` (#BB), `host_data` (#B3 written),
   `host_reply` (#B3 read), on the main CPU's manager; each kind on the other CPU is refused. `value` / `vmask` filter
   the byte.
+- **DMA writes.** A NeoGS DMA module's write to the card's RAM (ZX-DMA, a byte the host wrote; SD, a 512-byte block)
+  goes through the write watchpoints tied to that RAM page (`wp 0x2005 --page ram4 --cpu gs`), not through those on a
+  CPU address: the card CPU is off the bus. The stop's access is `dma_write`, its address the offset in the page
+  (`GSCardTarget::Stop` also keeps the module and the page). A flash write is the CPU's own: a write watchpoint on a
+  `romN` page sees it.
 - **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
   instruction boundary, with the PC of the instruction that did it. The machine parks (pause) inside the card's
   catch-up; a direct step of the main CPU ends after its instruction.
@@ -179,6 +185,6 @@ listing takes the CPU too (`GET /breakpoints/groups?cpu=gs`, `bp_groups("gs")`, 
 `bp_groups` with `cpu`) and names it in the answer (`cpu`).
 
 The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
-`gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_port_in(port)`,
+`gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,
 `gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
 ([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).

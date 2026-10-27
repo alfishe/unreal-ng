@@ -577,7 +577,8 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
            << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
            << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
            << "  read the mailbox), card_reply (it wrote the reply), dac_fetch (a #6000-#7FFF read latched a DAC)," << NEWLINE
-           << "  clock_change (NeoGS GSCFG0: the byte), dma_start, dma_done (NeoGS DMA: the module 0 ZX, 1 SD, 2 MP3)" << NEWLINE
+           << "  clock_change (NeoGS GSCFG0: the byte), dma_start, dma_done (NeoGS DMA: the module 0 ZX, 1 SD, 2 MP3)," << NEWLINE
+           << "  gscfg0 (NeoGS: every GSCFG0 write, the byte)" << NEWLINE
            << "Host (the main CPU): host_command (OUT #BB), host_data (OUT #B3), host_reply (IN #B3)" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE

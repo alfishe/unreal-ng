@@ -1719,8 +1719,8 @@ namespace PythonBindings
                 {
                     if (!ParseGSCardEvent(event.c_str(), cardEvent) || GSCardEventIsHostSide(cardEvent))
                         throw py::value_error("event must be a card event (int, nmi, reset, page, card_command, "
-                                              "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done), "
-                                              "not '" + event + "'");
+                                              "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, "
+                                              "gscfg0), not '" + event + "'");
                     if (cpu.empty())
                         spec.cpu = DebugCpuId::GS;
                     spec.tap.type = BRK_EVENT;
@@ -1749,8 +1749,8 @@ namespace PythonBindings
                "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call, role "
                "view or logic: logic writes are recorded by time travel). cpu 'gs': the sound card CPU's accesses "
                "(its registers in hit.regs); kind 'event' with event= a card event (int, nmi, reset, page, "
-               "card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done; hit['arg'] its "
-               "detail). A sync chunk on a card read or port_in may return a byte: the "
+               "card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0; hit['arg'] "
+               "its detail). A sync chunk on a card read or port_in may return a byte: the "
                "card sees it. The id; ValueError when refused. docs/features/script-callbacks.md",
                py::arg("fn"), py::arg("kind"), py::arg("address") = 0, py::arg("to") = -1, py::arg("page") = "",
                py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
@@ -6223,7 +6223,8 @@ namespace PythonBindings
             {"gs_on_reply", GSCardEvent::CardReplyWrite},    {"gs_on_int", GSCardEvent::Int},
             {"gs_on_nmi", GSCardEvent::Nmi},                 {"gs_on_page", GSCardEvent::PageSwitch},
             {"gs_on_dac_fetch", GSCardEvent::DacFetch},      {"gs_on_clock_change", GSCardEvent::ClockChange},
-            {"gs_on_dma_start", GSCardEvent::DmaStart},      {"gs_on_dma_done", GSCardEvent::DmaDone}};
+            {"gs_on_dma_start", GSCardEvent::DmaStart},      {"gs_on_dma_done", GSCardEvent::DmaDone},
+            {"gs_on_gscfg0", GSCardEvent::ConfigWrite}};
         for (const auto& [name, kind] : kCardEventCallbacks)
         {
             const GSCardEvent event = kind;

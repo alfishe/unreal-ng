@@ -231,6 +231,9 @@ public:
     const NeoGSZxDma& zxDma() const { return _zx; }
     NeoGSSpi& spi() { return _spi; }
     NeoGSMemory& memory() { return _mem; }
+    /// What the DMA modules tell the card (tests: a module's RAM write without the module)
+    NeoGSDma::Host& dmaHost() { return *this; }
+    NeoGSZxDma::Host& zxHost() { return *this; }
     const NeoGSMemory& memory() const { return _mem; }
     Flash29F040B& flash() { return _flash; }
     const NeoGSConfig& config() const { return _config; }
@@ -408,6 +411,7 @@ private:
         if (_debugHooks) [[unlikely]]
             _debugHooks->onEvent(GSCardEvent::DmaDone, finished ? 1 : 0, static_cast<uint8_t>(m));
     }
+    void dmaRamWritten(uint32_t offset, uint32_t length) override;
 
     // NeoGSZxDma::Host (neogs-zxdma-design.md §5.5)
     void zxCatchUp() override { flush(); }
@@ -424,6 +428,7 @@ private:
     void zxReschedule() override { reschedule(); }
     void zxLateStart(int64_t units) override;
     void zxTrace(bool write, uint32_t address, uint8_t value) override;
+    void zxRamWritten(uint32_t offset, uint8_t value) override;
 
     // Lazy sync with the host
     void flush();
