@@ -3,9 +3,12 @@
 #include "sdb/runtime.h"
 
 #include <chrono>
+#include <map>
 #include <thread>
+#include <utility>
 
 #include "check.h"
+#include "sdb/reconnect.h"
 #include "sdb/scenariorender.h"
 
 using namespace sdb;
@@ -243,10 +246,93 @@ void TestReadonlyAndUnavailable()
     press(1);
     CHECK(rt.State()["last_actions"].size() == actionsBefore + 1);  // greyed out: no job ran
 }
+// The daemon ends: the keys go dark (V2: "Fill Key with Color" black, a feature report per key) and the strip is
+// written whole with the farewell, so the deck does not stay frozen on a page that no longer answers
+void TestShowStopped()
+{
+    struct Recorder final : Transport
+    {
+        int keyFills = 0, lcdWrites = 0;
+        bool failFeature = false;  // the next feature report times out (the handle is lost)
+        int Write(std::span<const std::uint8_t> r) override
+        {
+            if (r.size() > 1 && r[0] == 0x02 && r[1] != 0x07)  // anything but a key image: the LCD
+                ++lcdWrites;
+            return static_cast<int>(r.size());
+        }
+        int SendFeature(std::span<const std::uint8_t> r) override
+        {
+            if (std::exchange(failFeature, false))
+                return -1;
+            if (r.size() > 1 && r[0] == 0x03 && r[1] == 0x06)
+                ++keyFills;
+            return static_cast<int>(r.size());
+        }
+        int GetFeature(std::span<std::uint8_t> b) override
+        {
+            return static_cast<int>(b.size());
+        }
+        int Read(std::span<std::uint8_t>, int) override
+        {
+            return 0;
+        }
+    };
+    const Model& m = *FindModel(kElgatoVid, 0x00C6);
+    auto t = std::make_unique<Recorder>();
+    Recorder* rec = t.get();
+    Device dev(m, std::move(t), "T");
+    RuntimeOptions opt;
+    opt.syncActions = true;
+    Runtime rt(dev, Load(Doc()), std::make_unique<Host>(), opt);
+    rt.ShowStopped("UNREAL-NG STREAM DECK STOPPED");
+    CHECK(rec->keyFills == m.keys);
+    CHECK(rec->lcdWrites > 0);
+
+    // A write times out on the way: the deck comes back within the wait and gets the stopped picture replayed
+    auto first = std::make_unique<Recorder>();
+    first->failFeature = true;
+    Recorder* back = nullptr;
+    ReconnectOptions ro;
+    ro.retry = std::chrono::milliseconds(0);
+    auto reopen = [&back](bool) {
+        auto again = std::make_unique<Recorder>();
+        back = again.get();
+        return ReconnectingTransport::Probe{std::move(again), {}};
+    };
+    Device lossy(m, std::make_unique<ReconnectingTransport>(std::move(first), m, "T", reopen, ro), "T");
+    Runtime rt2(lossy, Load(Doc()), std::make_unique<Host>(), opt);
+    rt2.ShowStopped("UNREAL-NG STREAM DECK STOPPED");
+    CHECK(lossy.Connected());
+    CHECK(back != nullptr && back->lcdWrites > 0);
+}
+// The strip is drawn again only when what it shows changed: a live machine without a history (its frame moving at
+// 50 Hz) and readouts the strip never draws leave the key alone; a recording's frame moves it
+void TestStripKey()
+{
+    std::map<std::string, json> readouts{
+        {"ttd.position", {{"first", 0}, {"end", 0}, {"frame", 100}, {"history", false}, {"state", "idle"}}},
+        {"host.stats", {{"cpu_percent", 19.8}}}};
+    StripLive live;
+    live.link = StripLive::Link::Live;
+    live.readouts = &readouts;
+    const std::string idle = live.Key();
+    readouts["ttd.position"]["frame"] = 101;
+    readouts["host.stats"]["cpu_percent"] = 20.1;
+    CHECK(live.Key() == idle);
+    readouts["ttd.position"] = {{"first", 0}, {"end", 200}, {"frame", 150}, {"history", true}, {"state", "recording"}};
+    const std::string rec = live.Key();
+    CHECK(rec != idle);
+    readouts["ttd.position"]["frame"] = 151;
+    CHECK(live.Key() != rec);
+    readouts["run.state"] = {{"state", "paused"}};
+    CHECK(live.Key().find("run.state") != std::string::npos);
+}
 }  // namespace
 
 void TestRuntime()
 {
+    TestShowStopped();
+    TestStripKey();
     std::printf("runtime\n");
     const Model& m = *FindModel(kElgatoVid, 0x00C6);
     Device dev(m, std::make_unique<NullTransport>(), "T");
