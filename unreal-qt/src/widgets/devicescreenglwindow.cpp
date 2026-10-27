@@ -29,9 +29,7 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
-#ifdef __APPLE__
-#include "platform/macos/metalpresenter.h"
-#endif
+#include "platform/nativepresenter.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -56,7 +54,7 @@ namespace
 /// The native presenter where the platform has one, unless UNREAL_PRESENTER=gl
 bool UseNativePresenter()
 {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
     return qEnvironmentVariable("UNREAL_PRESENTER").compare(QStringLiteral("gl"), Qt::CaseInsensitive) != 0;
 #else
     return false;
@@ -66,7 +64,12 @@ bool UseNativePresenter()
 
 DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _native(UseNativePresenter())
 {
+#ifdef __APPLE__
     setSurfaceType(_native ? QSurface::MetalSurface : QSurface::OpenGLSurface);
+#else
+    // Windows: the swap chain takes the HWND as it is; a GL surface keeps the fallback to GL open (no interop)
+    setSurfaceType(QSurface::OpenGLSurface);
+#endif
     setupVSync();
     if (_native)
     {
@@ -158,7 +161,6 @@ void DeviceScreenGLWindow::renderGL()
 
 void DeviceScreenGLWindow::renderNative(bool force)
 {
-#ifdef __APPLE__
     if (_isShuttingDown || !isExposed() || !handle() || !prepareContext())
     {
         static bool told = false;
@@ -172,29 +174,41 @@ void DeviceScreenGLWindow::renderNative(bool force)
     }
     force = force || _presentPending;
     _presentPending = false;
-    if (!_metal)
+    if (!_presenter)
     {
-        _metal = MetalPresenter::Create(reinterpret_cast<void*>(winId()));
-        if (!_metal)
+        _presenter = NativePresenter::Create(reinterpret_cast<void*>(winId()));
+        if (!_presenter)
         {
+#ifdef __APPLE__
             qWarning() << "DeviceScreenGLWindow: no Metal presenter for the window";
+#else
+            // The window is a GL surface: present with GL from here on
+            qWarning() << "DeviceScreenGLWindow: no native presenter for the window, presenting with GL";
+            _native = false;
+            _presentTimer->stop();
+            requestUpdate();
+#endif
             return;
         }
-        qInfo() << "DeviceScreenGLWindow: native presenter (Metal, present at the frame's audio time), lead"
-                << presentLeadNs() / 1'000'000 << "ms";
+        qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
+                          << QString::fromStdString(_presenter->Describe());
     }
 
     // The frame due a lead from now: drawn now, shown at its own target
     const int64_t now = SteadyNowNs();
     const uint64_t uploads = _frameSerial;
+    const uint64_t shownSerial = _uploadedSerial;
     const int64_t lead = presentLeadNs();
     updateTexture(now + lead);
-    const bool newFrame = _frameSerial != uploads;
+    // New: another serial (or a source without serials uploaded). refresh() marks the texture on every latch, so the
+    // frame on screen is uploaded again when the wake comes before the next one is due: presenting that again would
+    // start an extra refresh on a VRR display (Windows: 10 % of the frames moved by up to a scan-out)
+    const bool newFrame = _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
     // Occluded: the system would drop every present; the texture keeps up, the GPU rests
-    if ((newFrame || force) && _metal->IsVisible())
+    if ((newFrame || force) && _presenter->IsVisible())
     {
         const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
-        if (_metal->BeginFrame(pixels.width(), pixels.height()) != 0)
+        if (_presenter->BeginFrame(pixels.width(), pixels.height()) != 0)
         {
             if (pixels != _glSize)
             {
@@ -204,7 +218,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
             paintGL();
             // A forced repaint of the frame on screen goes at once; a new frame at its target
             const int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
-            _metal->PresentFrame(at, {_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now});
+            _presenter->PresentFrame(at, {_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now});
         }
     }
 
@@ -215,9 +229,6 @@ void DeviceScreenGLWindow::renderNative(bool force)
         qInfo().noquote() << "DeviceScreenGLWindow:" << presenterStatus();
     }
     scheduleNative();
-#else
-    (void)force;
-#endif
 }
 
 void DeviceScreenGLWindow::scheduleNative()
@@ -247,10 +258,8 @@ void DeviceScreenGLWindow::scheduleNative()
 
 QString DeviceScreenGLWindow::presenterStatus() const
 {
-#ifdef __APPLE__
-    if (_metal)
-        return QString::fromStdString(_metal->Describe());
-#endif
+    if (_presenter)
+        return QString::fromStdString(_presenter->Describe());
     return {};
 }
 
@@ -348,9 +357,7 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     _slangRunner.reset();
     _quadBuffer.destroy();
     _quadVao.destroy();
-#ifdef __APPLE__
-    _metal.reset();  // its GL objects in this context
-#endif
+    _presenter.reset();  // its GL objects in this context
     doneCurrent();
     detach();
 }
@@ -440,7 +447,9 @@ int64_t DeviceScreenGLWindow::refreshPeriodNs() const
 
 int64_t DeviceScreenGLWindow::presentLeadNs() const
 {
-    return _presentLeadNs > 0 ? _presentLeadNs : refreshPeriodNs() + 6'000'000;
+    if (_presentLeadNs > 0)
+        return _presentLeadNs;
+    return _presenter ? _presenter->LeadNs(refreshPeriodNs()) : refreshPeriodNs() + 6'000'000;
 }
 
 int64_t DeviceScreenGLWindow::refreshTargetNs() const

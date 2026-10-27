@@ -30,16 +30,17 @@
 #include "slangpresetrunner.h"
 
 class Emulator;
-class MetalPresenter;
+class NativePresenter;
 class QTimer;
 
 /// GPU renderer of the emulator's screen (CRT composition, beam models, presets, HUD), on a window of its own with
 /// its own GL context. Two ways to the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter):
 /// - GL: the window's GL surface, swapped on vsync; every refresh draws the frame due when it reaches the screen
 ///   (b-vsync, section 4.2). Every platform.
-/// - Native (macOS): the window is a Metal surface. GL draws each frame into an IOSurface, and MetalPresenter shows
-///   it at the frame's audio time (c-vrr, section 4.1): on a VRR display every frame is on screen for its own period.
-///   UNREAL_PRESENTER=gl keeps the GL way.
+/// - Native (macOS, Windows): GL draws each frame into a texture shared with the platform's API, and a
+///   NativePresenter shows it at the frame's audio time (c-vrr, section 4.1): on a VRR display every frame is on screen
+///   for its own period. macOS: the window is a Metal surface, IOSurfaces. Windows: WGL_NV_DX_interop2 and a DXGI
+///   swap chain; without the extension the window falls back to GL. UNREAL_PRESENTER=gl keeps the GL way.
 class DeviceScreenGLWindow : public QWindow, protected QOpenGLFunctions
 {
     Q_OBJECT
@@ -197,11 +198,8 @@ private:
     /// When the refresh being drawn reaches the screen: one refresh after now (the swap waits for the vblank)
     int64_t refreshTargetNs() const;
     int64_t refreshPeriodNs() const;  ///< the display's refresh (60 Hz when it does not say)
-    /// Native way: how long before a frame's target it is drawn and handed over. The window server composes a
-    /// refresh ahead, so a drawable needs about a refresh before its vsync, and the draw (a GL fence wait up to 10 ms
-    /// on a busy GPU) comes on top. Frames latch some 60 ms before their target, so a long lead costs nothing (at
-    /// 60 Hz under load, frames a refresh late: lead 6 ms 65 %, 18 ms 15 %, 23 ms 2 %): a refresh plus 6 ms, unless
-    /// UNREAL_PRESENT_LEAD_MS sets it
+    /// Native way: how long before a frame's target it is drawn and handed over: the presenter's (NativePresenter::
+    /// LeadNs), unless UNREAL_PRESENT_LEAD_MS sets it
     int64_t presentLeadNs() const;
     /// After a swap: the next refresh, while frames are pending
     void onFrameSwapped();
@@ -224,12 +222,12 @@ private:
     uint64_t _uploadedSerial = 0;          ///< its serial in _texture (0: none, or a source without serials)
     int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
 
-    const bool _native;
+    bool _native;  ///< false again when the platform's presenter cannot be made (Windows: no interop)
     std::unique_ptr<QOpenGLContext> _context;
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
     bool _glInitialized = false;
     QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
-    std::unique_ptr<MetalPresenter> _metal;       ///< native way, made on the first paint (needs the NSView)
+    std::unique_ptr<NativePresenter> _presenter;  ///< native way, made on the first paint (needs the window)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks

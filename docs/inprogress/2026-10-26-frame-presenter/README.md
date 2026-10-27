@@ -403,7 +403,8 @@ classDiagram
   - macOS: a ring of three IOSurfaces, each a `GL_TEXTURE_RECTANGLE` framebuffer for GL
     (`CGLTexImageIOSurface2D`) and an `MTLTexture` for Metal. A GL fence (`glClientWaitSync`) before the Metal pass
     reads it; the pass turns the rows over (GL counts from the bottom).
-  - Windows: `WGL_NV_DX_interop2` onto a D3D11 texture (phase 4).
+  - Windows: a ring of three D3D11 textures shared with GL through `WGL_NV_DX_interop2` (a GL texture and a
+    framebuffer each). The interop's unlock is the GL -> D3D synchronisation; the D3D pass turns the rows over.
 
   Every effect works under VRR at once, with one renderer to keep. A full Metal / D3D11 renderer is not ported now;
   once GL plus native works, how much more a native renderer would gain is measured, then decided.
@@ -512,9 +513,31 @@ Each phase lands on its own with tests and docs.
    `AVSyncDelayFrames` goes. Measured on a real device: the audio clock's target interval error (section 9).
 3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`. On the
    branch: `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2); not yet `b-vsync`
-   on a display link and `beginActivity`.
+   on a display link.
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
-   fallback, `ES_DISPLAY_REQUIRED`.
+   fallback, `ES_DISPLAY_REQUIRED`. On the branch (`dxgipresenter.cpp`, behind the `NativePresenter` interface the
+   Metal presenter shares): the interop ring, a presenter thread (waitable object, the copy into the back buffer,
+   `WaitUntilPrecise` to the frame's time, `Present(0, ALLOW_TEARING)`, on a fixed display `Present(0)` without
+   tearing: a frame presented per emulated frame, so `Present(1)` would queue a refresh each and pile up), a vblank thread
+   (`D3DKMTWaitForVerticalBlankEvent`) for the screen times and the VRR check (`UNREAL_PRESENT_POLICY`). No
+   `WGL_NV_DX_interop2` or no D3D11: the window presents with GL.
+   Measured on the Windows host (RTX 4090, AW3821DW with G-Sync on for windows, the console session, Pentagon at
+   48.83 Hz, 1650 frames):
+   - one refresh per frame (vblank interval p50 20.52 ms), 1 frame of 1923 dropped;
+   - present interval error p50 0.26 / p99 0.90 ms, on-screen interval error p50 0.47 / p99 3.57 ms (POC
+     `qt-native-c-at` with latch targets: 0.48 / 3.45 ms); screen time minus the frame's time p50 1.3 / p99 5.1 ms;
+   - G-Sync follows the frames without `ALLOW_TEARING` too (policy `vsync`: vblank interval p50 20.5 ms), so the
+     screen times take the scan-out off by what the panel does, not by the present mode. Re-measured with that rule
+     (no-LTO build, 1430 frames each, 0 dropped): policy `vsync` present interval error p50 0.25 / p99 0.96 ms,
+     on-screen p50 0.51 / p99 3.42 ms, screen time minus the frame's time p50 1.1 / p99 4.4 ms; policy `auto`
+     0.25 / 0.90, 0.48 / 2.85, 1.0 / 4.7 ms;
+   - under RDP (a fixed 32 Hz display) the check turns to `Present(0)` without tearing after 100 frames; a
+     `Present(1)` per frame piled up there (error up to a refresh): a refresh per present.
+   - Found on the way: `refresh()` marks the texture on every latch, and a wake before the next frame was due uploaded
+     the frame on screen again and presented it twice. Under VRR the copy started a refresh of its own, and the next
+     frame came during its scan-out: 10 % of the frames off by up to a scan-out. A frame is new now by its serial.
+   - A display in power save has no vblanks (`D3DKMTWaitForVerticalBlankEvent` returns
+     `STATUS_GRAPHICS_PRESENT_OCCLUDED`, 0xC01E0006): the vblank thread opens the adapter again until it works.
 5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):
    - the CPU reference in `core/` (blend, interpolation, the cadence modes; integer, bit-exact), its tests on the
      POC 038 sequences;

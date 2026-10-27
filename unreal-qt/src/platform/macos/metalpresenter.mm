@@ -249,6 +249,11 @@ std::unique_ptr<MetalPresenter> MetalPresenter::Create(void* nsView)
     return presenter;
 }
 
+std::unique_ptr<NativePresenter> NativePresenter::Create(void* windowHandle)
+{
+    return MetalPresenter::Create(windowHandle);
+}
+
 unsigned MetalPresenter::BeginFrame(int width, int height)
 {
     Impl& p = *_impl;
