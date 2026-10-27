@@ -3,11 +3,13 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QFile>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
@@ -124,6 +126,23 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _gameProfile->setCurrentIndex(std::max(0, _gameProfile->findData(QString::fromStdString(_host->ManualProfile()))));
     connect(_gameProfile, &QComboBox::currentIndexChanged, this,
             [this] { _host->SetManualProfile(_gameProfile->currentData().toString().toStdString()); });
+    // Search as you type: any part of the title or machine, popup list, no new entries from free text
+    _gameProfile->setEditable(true);
+    _gameProfile->setInsertPolicy(QComboBox::NoInsert);
+    _gameProfile->setMinimumWidth(260);
+    if (QCompleter* completer = _gameProfile->completer())
+    {
+        completer->setCompletionMode(QCompleter::PopupCompletion);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+    }
+    _gameProfile->lineEdit()->setPlaceholderText(tr("Search game..."));
+    _gameProfile->lineEdit()->setClearButtonEnabled(true);
+    // Text that names no game goes back to the chosen one
+    connect(_gameProfile->lineEdit(), &QLineEdit::editingFinished, this, [this] {
+        if (_gameProfile->findText(_gameProfile->lineEdit()->text(), Qt::MatchFixedString) < 0)
+            _gameProfile->setEditText(_gameProfile->itemText(_gameProfile->currentIndex()));
+    });
 #endif
     top->addWidget(_gameProfile);
     _advanced = new QCheckBox(tr("Debug layer key"), this);

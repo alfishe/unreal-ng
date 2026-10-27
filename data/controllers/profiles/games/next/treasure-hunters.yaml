@@ -1,0 +1,24 @@
+# Treasure Hunters 1.1 (ZX Next NEX). Bindings only, no haptic events: the game could not be played in the emulator.
+# Controls come from its input routine (the NEX, IM 2 handler calls #646D): the byte it builds is the Kempston port #1F
+# OR'ed with keys. Cursor-style 5 / 6 / 7 / 8 (5 left, 8 right, 6 down) and Q A O P (O left, P right, A down) move; Q
+# and 7 set the up and fire bits together; Space, M and E set three more action bits (#627F bits 6, 5, 7).
+# What the actions do was not seen in play (no menu or level could be reached), so the labels are neutral.
+# Haptics: not found. After the NEX loads from the SD card (NextZXOS, cwd = the game folder, its bin/ data opens fine)
+# the first screen is drawn by a 256 x 251 software blit (#6E86-#6F61) that runs about 143 frames per row at the
+# emulator's pace: ~38000 frames (about 13 minutes of emulation) only reached the main loop, and the screen was still
+# black (layer 2 fading in). No jump / hit / pickup / life-lost routine was ever executed, so no probe was proven.
+# Candidates not proven: none; nothing is left in the profile that was not seen to fire.
+schema: 1
+kind: play
+id: builtin/game/treasure-hunters
+label: Treasure Hunters
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["5bdb22ddd5a31c11c4a18a333e8f2e64b24789f2b0dcaa107bd4ce411ff98d91"]
+layers:
+  play:
+    south: { key: SPACE, label: Action }
+    west:  { key: M, label: Action 2 }
+    east:  { key: E, label: Action 3 }
+    north: { key: "7", label: Up + fire }

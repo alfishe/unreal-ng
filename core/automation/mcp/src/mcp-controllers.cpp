@@ -498,7 +498,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["port_mask"]["description"] = "haptics_probe: the port's decoded bits (0x00FF; all by default)";
     schema["properties"]["play"]["description"] =
         "haptics_probe: the library effect its rule plays (hit by default; tick, knock, thump, explosion, engine, "
-        "heartbeat, life-lost, pickup, shot, rumble-strip)";
+        "heartbeat, impact, life-lost, pickup, shot, rumble-strip)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =

@@ -260,6 +260,7 @@ void Runtime::Step(int timeoutMs)
             _nav.Rebind(_s, ids);
             _toggles.clear();
             _holds.clear();
+            _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // the reloaded page opens anew
             force = true;
             reloaded = true;
             _dev.Note("scenario reloaded: " + _s.name + ", menu " + JoinPath(Layout(_s, _nav, _m).path));

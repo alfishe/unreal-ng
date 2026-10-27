@@ -400,6 +400,17 @@ TEST_F(HostActions_Test, VideoAndDebuggerTogglesAndTheirErrors)
 
 TEST_F(HostActions_Test, TimeTravelVerbsTakeTheirParamsAsOptions)
 {
+    // Without a recorded history the verbs that act on one are not available yet (a deck greys them out)
+    for (const char* id : {"ttd.seek", "ttd.bookmark_delete", "ttd.invalidate", "ttd.dump"})
+    {
+        const ActionResult early = Run(id, Press());
+        EXPECT_EQ(early.error, "not_now") << id;
+        EXPECT_EQ(early.message, "record first") << id;
+    }
+    ASSERT_TRUE(Run("ttd.start", Press()).ok);
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(Run("ttd.stop", Press()).ok);
+
     // The params reach the controller as its options: a missing label and an unknown one are its own answers
     EXPECT_EQ(Run("ttd.bookmark_delete", Press()).error, "Bad Request") << "no label";
     const ActionResult missing = Run("ttd.bookmark_delete", Press({{"label", "no-such-bookmark"}}));

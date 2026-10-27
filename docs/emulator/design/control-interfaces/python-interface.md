@@ -649,11 +649,17 @@ emu.media_eject("B", discard=True, async_=True)          # "async" is a Python k
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
 emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
-emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, FAT partitions
+emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 emu.media_files("A", "SHELL", recursive=True)            # a directory's entries; volume="p1" picks a volume
 emu.media_read("A", "read_me.txt", out="/tmp/r.txt")     # base64 data, or written to out
 data = emu.media_read_bytes("hd", "AUTOEXEC.BAT", volume="p1")  # bytes; RuntimeError when it fails
-emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto a TR-DOS / +3DOS floppy; in_="prog.bin" a host file
+emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file system of the disk; in_="prog.bin" a host file
+emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
+emu.media_delete("hd", "OLD.TXT", volume="p1")
+emu.media_mkdir("hd", "GAMES/NEW", parents=True)          # a FAT directory, an iS-DOS catalogue
+emu.media_delete("hd", "GAMES", recursive=True)           # a directory with its contents
+emu.media_attrib("hd", "GAME.COM", attributes="+R-H", time="2026-10-26 14:30")  # FAT RHSA, iS-DOS RWHD, +3DOS RSA
+emu.media_label("hd", "WORK DISK")                         # FAT label, TR-DOS title, iS-DOS device name
 emu.media(verb, slot, path, **options)                   # any verb
 ```
 

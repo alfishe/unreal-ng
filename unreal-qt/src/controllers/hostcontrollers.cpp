@@ -1068,6 +1068,7 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     if (!ProgramSignatures(path.toStdString(), _program, error))
         qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
+    _keyboardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1115,23 +1116,33 @@ void HostControllers::checkAuto()
     if (!evidence.active)
         return;
     const AutoDecision decision = DecideFromPortReads(evidence);
-    if (decision.decisive || decision.keyboard)
-        applyAuto(decision);
+    if (decision.keyboard)
+    {
+        // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later
+        if (!_keyboardNoticed)
+        {
+            _keyboardNoticed = true;
+            emit notice(tr("This program reads the whole keyboard"));
+        }
+        return;
+    }
+    if (!decision.decisive)
+        return;
+    applyAuto(decision);
 }
 
-void HostControllers::applyAuto(const AutoDecision& decision)
+void HostControllers::applyAuto(const AutoDecision& chosen)
 {
     EmulatorContext* context = _binding->context();
     ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
     if (manager == nullptr)
         return;
+    AutoDecision decision = chosen;
+    // The game's profile knows the keys of its QAOP-style joystick (its fire key may be M)
+    if (decision.device == "keys-joystick" && !_resolved.joystickKeys.empty())
+        decision.optionValue = _resolved.joystickKeys;
     _autoDone = true;
     manager->WatchPortReads(false);
-    if (decision.keyboard)
-    {
-        emit notice(tr("This program reads the whole keyboard"));
-        return;
-    }
     if (decision.device == "kempston-mouse")
     {
         emit notice(tr("This program reads the Kempston mouse (%1)").arg(QString::fromStdString(decision.reason)));

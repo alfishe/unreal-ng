@@ -46,6 +46,11 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
         {"write", {"volume", "in", "data", "start", "header"}},
+        {"delete", {"volume", "recursive"}},
+        {"rename", {"volume", "to"}},
+        {"mkdir", {"volume", "parents"}},
+        {"attrib", {"volume", "attributes", "time"}},
+        {"label", {"volume", "label"}},
     };
     return actions;
 }
@@ -131,6 +136,14 @@ namespace
                     out << ", " << v["freeBytes"].asInt64() << " free";
                 if (v["offset"].asUInt64())
                     out << ", at byte " << v["offset"].asUInt64();
+                if (v.isMember("writable") && !v["writable"].asBool())
+                    out << ", read only";
+                if (!v["attributes"].asString().empty())
+                    out << ", attributes " << v["attributes"].asString();
+                if (v["times"].asBool())
+                    out << ", times";
+                if (v["labels"].asBool())
+                    out << ", label";
             }
             for (const Json::Value& n : reply["notes"])
                 out << "\nnote: " << n.asString();
@@ -171,10 +184,26 @@ namespace
                 out << "\n(too long for the text: the bytes are in structuredContent.data, or give 'out' to write a host file)";
             return out.str();
         }
-        if (action == "write")
-            return "wrote " + reply["path"].asString() + " (" + std::to_string(reply["size"].asUInt64()) + " bytes) on " +
-                   reply["slot"].asString() + " volume " + reply["volume"].asString() + "; unsaved: " +
-                   reply["changes"].asString() + " (save:true on eject, or the save action, keeps them)";
+        if (action == "write" || action == "delete" || action == "rename" || action == "mkdir" || action == "attrib" || action == "label")
+        {
+            std::string changed = "changed " + reply["path"].asString();
+            if (reply.isMember("attributes"))
+                changed += ": attributes " + (reply["attributes"].asString().empty() ? std::string("none") : reply["attributes"].asString());
+            if (reply.isMember("mtime"))
+                changed += ", mtime " + std::to_string(reply["mtime"].asInt64());
+            out << (action == "write"    ? "wrote " + reply["path"].asString() + " (" + std::to_string(reply["size"].asUInt64()) + " bytes)"
+                    : action == "delete" ? "deleted " + reply["path"].asString()
+                    : action == "mkdir"  ? "made " + reply["path"].asString()
+                    : action == "attrib" ? changed
+                    : action == "label"  ? "labelled '" + reply["label"].asString() + "'"
+                                         : "renamed " + reply["path"].asString() + " to " + reply["to"].asString())
+                << " on " << reply["slot"].asString() << " volume " << reply["volume"].asString();
+            if (reply["access"].asString() == "writethrough")
+                out << "; written through to the disk's file";
+            else
+                out << "; unsaved: " << reply["changes"].asString() << " (save:true on eject, or the save action, keeps them)";
+            return out.str();
+        }
         if (action == "formats")
             return "Accepted formats per kind\n" + FlatFields(reply["formats"]);
         if (action == "compose" || action == "layers")
@@ -250,14 +279,15 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["path"]["description"] =
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
         "or folder to place; compose: a *.ucompose.yaml descriptor; files: a directory on the disk (empty: the root); "
-        "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe); write: the file to write (TR-DOS "
-        "NAME.T, +3DOS NAME.TYP)";
+        "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe); write / delete / rename: the file "
+        "(TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS dir/name.ext) or directory; mkdir: the directory to make; attrib: "
+        "the file or directory to change";
     schema["properties"]["descriptor"]["type"] = "object";
     schema["properties"]["descriptor"]["description"] =
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header", "parents"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -317,14 +347,28 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
         "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
     schema["properties"]["volume"]["description"] =
-        "files / read / write: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
-        "iS-DOS devices of an ATM hard disk); left out: the first";
+        "files / read / write / delete / rename / mkdir / attrib / label: the volume id from volumes (trdos, plus3, isdos, cpm, mb02, mdos, fat, p1-p4 MBR partitions, cpm-<cylinder> "
+        "ATM CP/M partitions, isdos-<cylinder> iS-DOS devices of an ATM hard disk and mdos-<slot> MDOS3 virtual disks); left out: the first";
     schema["properties"]["out"]["description"] = "read: write the file's bytes to this host file instead of answering them";
     schema["properties"]["in"]["description"] = "write: the bytes from this host file";
     schema["properties"]["data"]["description"] = "write: the bytes in base64 (instead of 'in')";
     schema["properties"]["start"]["description"] =
-        "write: the TR-DOS start field / the +3DOS CODE load address: 32768, 0x8000 or #8000";
+        "write: the TR-DOS start field / the +3DOS CODE / the iS-DOS load address: 32768, 0x8000 or #8000";
+    schema["properties"]["to"]["description"] =
+        "rename: the new name; a bare name keeps the file in its directory, FAT and iS-DOS take a path from the root "
+        "(/name: the root), moving the file or the directory";
+    schema["properties"]["recursive"]["description"] = "files: the whole tree under the directory; delete: a directory with everything in it";
+    schema["properties"]["parents"]["description"] = "mkdir: make the missing directories on the way too (one there already is no error)";
     schema["properties"]["header"]["description"] = "write: +3DOS: false writes the file without its 128-byte header";
+    schema["properties"]["attributes"]["description"] =
+        "attrib: the letters of the volume's file system (volumes lists them: FAT RHSA read only / hidden / system / "
+        "archive, iS-DOS RWHD read / write protected, hidden, delete protected, +3DOS RSA): '+R-H' sets and clears, 'RA' "
+        "leaves exactly these set";
+    schema["properties"]["time"]["description"] =
+        "attrib: the date and time of the file or directory (FAT, iS-DOS): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
+    schema["properties"]["label"]["description"] =
+        "label: the volume's name - the FAT volume label (empty removes it), the TR-DOS disk title (8), the iS-DOS device "
+        "name (8, 11 on a Chic disk)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk, cdrom or cf (a CompactFlash card on an IDE adapter) - swap the unit's drive first (the unit must be empty)";
@@ -342,10 +386,12 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
-        "NedoOS floppies, hard disks and SD cards), write (a file onto a TR-DOS or +3DOS floppy in a slot: path the "
-        "name, data base64 or in a host file, start, header; an older file of that name is replaced, the disk turns "
-        "dirty until saved). Operations are synchronous (the reply "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS (read only) floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
+        "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
+        "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
+        "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "
+        "a directory, parents:true the missing ones on the way; attrib sets attributes and / or time of a file or "
+        "directory; label names the volume; a session disk turns dirty until saved, a write-through one takes it into its file). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
         "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "

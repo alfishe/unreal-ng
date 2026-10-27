@@ -428,6 +428,13 @@ line.
 Writing a new game profile step by step (finding the game's keys and haptic triggers, the header comment, the index,
 the tests): [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
 
+### 7.5a Keys of the keys-joystick: `joystick_keys`
+
+A play profile may name the keys of the core's keyboard-as-joystick (the QAOP-style `JoystickKeys=` option) for the
+games that read it: `joystick_keys: "up:q,down:a,left:o,right:p,fire:m"`. The most specific play profile wins; while the
+port-read watch decides on the keyboard joystick, the profile's keys replace the option's default, and the pad's d-pad
+needs no key bindings of its own (Exolon: `fire:space`, or `fire:m` for the Exolon-M release).
+
 ### 7.6 Schemes: `extends`
 
 Most games of the 1980s use one of a few control schemes: Kempston, Sinclair 1 or 2, Cursor, QAOP + Space, OPQA + M,

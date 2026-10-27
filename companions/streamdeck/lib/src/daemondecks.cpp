@@ -78,7 +78,15 @@ bool DaemonDecks::LoadStart(std::string* error)
 {
     if (_options.startFile.empty())
     {
-        _start.reset();  // made per deck: the idle screen is laid out for the deck's model
+        _start.reset();  // made per deck: the default for its model, else the idle screen laid out for it
+        _default.reset();
+        if (!_options.defaultFile.empty())
+        {  // a broken default is no reason not to run: the decks get the idle scenario and the log says why
+            std::string e;
+            _default = LoadFile(_options.defaultFile, e, nullptr, log);
+            if (!_default)
+                Say("default scenario " + _options.defaultFile + " not played: " + e);
+        }
         return true;
     }
     std::string e;
@@ -91,7 +99,21 @@ bool DaemonDecks::LoadStart(std::string* error)
 scn::Scenario DaemonDecks::StartScenario(const Model* model) const
 {
     std::lock_guard lock(_mutex);
-    return _start ? *_start : Idle(model);
+    if (_start)
+        return *_start;
+    if (_default && model != nullptr && _default->model == model)
+        return *_default;
+    return Idle(model);
+}
+
+std::string DaemonDecks::StartFileFor(const Model* model) const
+{
+    std::lock_guard lock(_mutex);
+    if (_start)
+        return _options.startFile;
+    if (_default && model != nullptr && _default->model == model)
+        return _options.defaultFile;
+    return {};
 }
 
 std::map<std::string, DaemonDecks::Clock> DaemonDecks::Stamp(const std::vector<std::string>& files)
@@ -114,13 +136,14 @@ void DaemonDecks::Say(const std::string& line) const
 
 void DaemonDecks::Add(const std::string& serial, const Model& model, bool real, scn::Runtime& runtime)
 {
+    const std::string file = StartFileFor(&model);
     std::lock_guard lock(_mutex);
     Entry& e = _decks[serial];
     e.serial = serial;
     e.model = &model;
     e.real = real;
     e.runtime = &runtime;
-    e.file = _options.startFile;
+    e.file = file;
     e.watch = _options.watchStart && !_options.startFile.empty();
     e.start = true;
     e.watched = Stamp(_startFiles);
@@ -229,18 +252,19 @@ bool DaemonDecks::LoadScenario(const std::string& serial, const std::string& fil
             *error = "no deck '" + serial + "'";
         return false;
     }
-    const bool start = file.empty() || file == _options.startFile;
+    const Model* model = nullptr;
+    {
+        std::lock_guard lock(_mutex);
+        if (auto it = _decks.find(target); it != _decks.end())
+            model = it->second.model;
+    }
+    const std::string startFile = StartFileFor(model);
+    const bool start = file.empty() || file == startFile;
     std::optional<scn::Scenario> s;
     std::vector<std::string> files;
     std::string e;
     if (start)
     {  // the start scenario as the daemon loaded it (its file may have changed since: then read it again)
-        const Model* model = nullptr;
-        {
-            std::lock_guard lock(_mutex);
-            if (auto it = _decks.find(target); it != _decks.end())
-                model = it->second.model;
-        }
         s = StartScenario(model);
         files = _startFiles;
     }
@@ -262,7 +286,7 @@ bool DaemonDecks::LoadScenario(const std::string& serial, const std::string& fil
         return false;
     }
     Entry& d = it->second;
-    d.file = start ? _options.startFile : file;
+    d.file = start ? startFile : file;
     d.start = start;
     d.watch = start ? _options.watchStart && !_options.startFile.empty() : watch;
     d.watched = Stamp(files);
@@ -843,6 +867,15 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                      std::lock_guard lock(_mutex);
                      _start = std::move(s);
                      _startFiles = files;
+                 }
+                 else if (file == _options.defaultFile && !file.empty() && _options.startFile.empty())
+                 {  // the default scenario: read it again too (a deck of another model plays idle, not this file)
+                     std::string e;
+                     auto s = LoadFile(file, e, nullptr, log);
+                     if (!s)
+                         return Reply::Error(422, e);
+                     std::lock_guard lock(_mutex);
+                     _default = std::move(s);
                  }
                  std::string err;
                  if (!LoadScenario(serial, file, other ? true : watch, &err))
