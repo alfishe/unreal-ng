@@ -24,13 +24,14 @@ namespace
     /// Options that take a value; every other option is a flag
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
-                                                 "compression", "parent", "volume", "out", "in", "data", "start"};
+                                                 "compression", "parent", "volume", "out", "in", "data", "start", "to"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
         return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
-               verb == "compose" || verb == "files" || verb == "read" || verb == "write";
+               verb == "compose" || verb == "files" || verb == "read" || verb == "write" || verb == "delete" ||
+               verb == "rename" || verb == "mkdir";
     }
 
     /// `media compose` / `media layers`: the layout and one line per layer
@@ -150,6 +151,8 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         request.selector = positional[next++];
     if (TakesPath(verb) && next < positional.size())
         request.path = positional[next++];
+    if (verb == "rename" && !request.options.count("to") && next < positional.size())
+        request.options["to"] = positional[next++];  // media rename A OLD.C NEW.C
     if (next < positional.size())
     {
         session.SendResponse("Error: unexpected argument '" + positional[next] + "'" + NEWLINE +
@@ -303,11 +306,22 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const StateNode& n : body.find("notes")->items)
             out << "  note: " << n.s << NEWLINE;
     }
-    else if (verb == "write")
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir")
     {
-        out << "  wrote " << body.find("path")->s << " (" << body.find("size")->i << " bytes) on slot " << reply.slot
-            << ", volume " << body.find("volume")->s << NEWLINE;
-        out << "  unsaved: " << body.find("changes")->s << " (media save / eject --save keeps them)" << NEWLINE;
+        const std::string& path = body.find("path")->s;
+        if (verb == "write")
+            out << "  wrote " << path << " (" << body.find("size")->i << " bytes)";
+        else if (verb == "delete")
+            out << "  deleted " << path;
+        else if (verb == "mkdir")
+            out << "  made " << path;
+        else
+            out << "  renamed " << path << " to " << body.find("to")->s;
+        out << " on slot " << reply.slot << ", volume " << body.find("volume")->s << NEWLINE;
+        if (body.find("access")->s == "writethrough")
+            out << "  written through to the disk's file" << NEWLINE;
+        else
+            out << "  unsaved: " << body.find("changes")->s << " (media save / eject --save keeps them)" << NEWLINE;
     }
     else if (verb == "read" && !body.find("savedPath"))
     {
@@ -379,9 +393,17 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
     out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
-        << "                               - a file onto a TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy, an older file" << NEWLINE
-        << "                                 of that name replaced; --start: the TR-DOS start / +3DOS CODE address" << NEWLINE
-        << "                                 (#8000, 0x8000, 32768); --header=false: +3DOS without its header" << NEWLINE;
+        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS" << NEWLINE
+        << "                                 dir/name.ext), an older file of that name replaced; --start: the TR-DOS" << NEWLINE
+        << "                                 start / +3DOS CODE / iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
+        << "                                 --header=false: +3DOS without its header" << NEWLINE;
+    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS);" << NEWLINE
+        << "                                 --recursive: a directory with everything in it" << NEWLINE;
+    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT and" << NEWLINE
+        << "                                 iS-DOS take a path from the root (/name: the root), moving the file or" << NEWLINE
+        << "                                 the directory" << NEWLINE;
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue); --parents:" << NEWLINE
+        << "                                 the missing ones on the way too" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE

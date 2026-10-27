@@ -1,6 +1,6 @@
 #pragma once
 
-// The +3DOS file system (the Spectrum +3, CP/M 2.2's layout) on a disk image, both ways: list, read, write, delete.
+// The +3DOS file system (the Spectrum +3, CP/M 2.2's layout) on a disk image, both ways: list, read, write, delete, rename.
 // The disk's geometry comes from the specification in its first sector (track 0, the first sector; byte 0 the format
 // 0-3), else the +3 standard: one side, 40 tracks of nine 512-byte sectors numbered 1-9, one reserved track, 1K blocks,
 // two directory blocks (64 entries). The directory: 32-byte entries (user, name 8, type 3 with the attribute bits,
@@ -67,6 +67,14 @@ public:
 
     /// Every entry of NAME.TYP marked deleted (user #E5)
     bool Delete(const std::string& name, std::string& error);
+
+    /// Every entry of NAME.TYP takes `newName` (the attribute bits stay). False when there is no such file, the new
+    /// name is no CP/M name or a file of that name is there already
+    bool Rename(const std::string& name, const std::string& newName, std::string& error);
+
+    /// `name` is a CP/M file name: 1-8 characters, an optional type of up to 3, printable ASCII without
+    /// < > . , ; : = ? * [ ], no blank in front
+    static bool ValidName(const std::string& name);
 
 private:
     DiskImage& _image;

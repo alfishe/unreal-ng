@@ -7,6 +7,7 @@
 
 #include "unrealdisk/blockdevice.h"
 #include "unrealdisk/diskimage.h"
+#include "unrealdisk/fatfs.h"
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
@@ -92,15 +93,16 @@ std::shared_ptr<BlockDevice> Borrow(BlockDevice& device)
     return std::shared_ptr<BlockDevice>(&device, [](BlockDevice*) {});
 }
 
-/// 256-byte blocks from `offset` bytes into a block device (the last sector read is kept)
-IsdosFileSystem::BlockReader BlockReaderAt(BlockDevice& device, uint64_t offset)
+/// The last sector a block reader read: its writer keeps it current
+struct SectorCache
 {
-    struct Cache
-    {
-        uint64_t lba = UINT64_MAX;
-        uint8_t sector[kSector] = {};
-    };
-    auto cache = std::make_shared<Cache>();
+    uint64_t lba = UINT64_MAX;
+    uint8_t sector[kSector] = {};
+};
+
+/// 256-byte blocks from `offset` bytes into a block device (the last sector read is kept in `cache`)
+IsdosFileSystem::BlockReader BlockReaderAt(BlockDevice& device, uint64_t offset, std::shared_ptr<SectorCache> cache)
+{
     return [&device, offset, cache](uint32_t block, uint8_t* dst) {
         const uint64_t byte = offset + static_cast<uint64_t>(block) * 256;
         const uint64_t lba = byte / kSector;
@@ -115,6 +117,21 @@ IsdosFileSystem::BlockReader BlockReaderAt(BlockDevice& device, uint64_t offset)
         }
         std::memcpy(dst, cache->sector + byte % kSector, 256);
         return true;
+    };
+}
+
+/// 256-byte blocks written into their 512-byte sectors (read, patched, written back)
+IsdosFileSystem::BlockWriter BlockWriterAt(BlockDevice& device, uint64_t offset, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, offset, cache](uint32_t block, const uint8_t* src) {
+        const uint64_t byte = offset + static_cast<uint64_t>(block) * 256;
+        const uint64_t lba = byte / kSector;
+        uint8_t sector[kSector];
+        cache->lba = UINT64_MAX;
+        if (!device.ReadSector(lba, sector))
+            return false;
+        std::memcpy(sector + byte % kSector, src, 256);
+        return device.WriteSector(lba, sector);
     };
 }
 }  // namespace
@@ -133,6 +150,20 @@ struct DiskFs::Driver
         error = "the volume is read only";
         return false;
     }
+    virtual bool Delete(const std::string&, std::string& error)
+    {
+        error = "the volume is read only";
+        return false;
+    }
+    virtual bool Rename(const std::string&, const std::string&, std::string& error)
+    {
+        error = "the volume is read only";
+        return false;
+    }
+    /// A new empty directory; false with no reason: the file system has none
+    virtual bool MakeDirectory(const std::string&, int64_t, std::string&) { return false; }
+    /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
+    virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
 
     virtual bool List(const std::string& dir, bool recursive, std::vector<DiskFsEntry>& out, std::vector<std::string>& notes,
                       std::string& error)
@@ -257,11 +288,8 @@ struct TrdosDriver : DiskFs::Driver
     {
         std::string name;
         char type = 0;
-        if (!ParseTrdosName(path, name, type))
-        {
-            error = "a TR-DOS file is NAME.T: at most 8 characters and the type letter (" + path + ")";
+        if (!Parse(path, name, type, error))
             return false;
-        }
         if (data.size() > 0xFFFF)
         {
             error = "a TR-DOS file holds at most 65535 bytes";
@@ -271,6 +299,29 @@ struct TrdosDriver : DiskFs::Driver
         write.start = options.start;
         write.lengthField = options.lengthField;
         return fs.Write(name, type, data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        std::string name;
+        char type = 0;
+        return Parse(path, name, type, error) && fs.Delete(name, type, error);
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        std::string name, newName;
+        char type = 0, newType = 0;
+        return Parse(path, name, type, error) && Parse(to.substr(to.front() == '/'), newName, newType, error) &&
+               fs.Rename(name, type, newName, newType, error);
+    }
+
+    static bool Parse(const std::string& path, std::string& name, char& type, std::string& error)
+    {
+        if (ParseTrdosName(path, name, type))
+            return true;
+        error = "a TR-DOS file is NAME.T: at most 8 characters and the type letter (" + path + ")";
+        return false;
     }
 
     TrdosFileSystem fs;
@@ -315,6 +366,13 @@ struct Plus3Driver : DiskFs::Driver
         write.header = options.header;
         write.param1 = options.start;
         return fs.Write(path, data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override { return fs.Delete(path, error); }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        return fs.Rename(path, to.substr(to.front() == '/'), error);
     }
 
     Plus3FileSystem fs;
@@ -377,13 +435,176 @@ struct IsdosDriver : DiskFs::Driver
         return fs.Find(path, f, error) && fs.Read(f, data, error);
     }
 
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        IsdosFileSystem::WriteOptions write;
+        write.load = options.start;
+        FatVolumeReader::UnixToDos(options.mtime, write.date, write.time);
+        return fs.Write(path, data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override { return fs.Delete(path, error); }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        return fs.Rename(path, to, error);
+    }
+
+    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        IsdosFileSystem::WriteOptions write;
+        FatVolumeReader::UnixToDos(mtime, write.date, write.time);
+        return fs.MakeCatalogue(path, write, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override { return fs.Deletable(entry.path, error); }
+
     IsdosFileSystem fs;
 };
+
+std::string FatError(FatFs::Error error)
+{
+    switch (error)
+    {
+        case FatFs::Error::NotFound: return "not found";
+        case FatFs::Error::Exists: return "there already";
+        case FatFs::Error::NoSpace: return "the volume (or the root directory) is full";
+        case FatFs::Error::ReadOnly: return "read only (the device, or the entry's read-only attribute)";
+        case FatFs::Error::Io: return "a sector does not read or write";
+        case FatFs::Error::InvalidName: return "not a FAT name";
+        case FatFs::Error::NotEmpty: return "the directory is not empty";
+        case FatFs::Error::NotDirectory: return "not a directory";
+        case FatFs::Error::IsDirectory: return "a directory";
+        case FatFs::Error::Damaged: return "a cluster chain leaves the volume or loops";
+        default: return "failed";
+    }
+}
+
+/// "A/B/C.TXT" -> "A/B", "C.TXT"
+void SplitPath(const std::string& path, std::string& dir, std::string& name)
+{
+    const size_t slash = path.rfind('/');
+    dir = slash == std::string::npos ? std::string() : path.substr(0, slash);
+    name = slash == std::string::npos ? path : path.substr(slash + 1);
+}
 
 struct FatDriver : DiskFs::Driver
 {
     std::shared_ptr<BlockDevice> device;  ///< the volume's device (a floppy view, a partition window, the disk)
+    CodePage page = CodePage::Cp866;
     FatVolumeReader reader;
+
+    /// A FatFs on the device for one change (`change` may set the reason itself); the reader opens again after it
+    /// (its tables are cached)
+    template <typename Change>
+    bool Edit(const std::string& what, std::string& error, Change change)
+    {
+        FatFs fs(*device, page);
+        std::string why;
+        if (!fs.Open(&why))
+        {
+            error = "the FAT volume does not open: " + why;
+            return false;
+        }
+        error.clear();
+        const bool ok = change(fs);
+        if (!ok && error.empty())
+            error = what + ": " + FatError(fs.LastError());
+        reader.Open(*device, page);
+        return ok;
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        if (data.size() > UINT32_MAX)
+        {
+            error = "a FAT file holds less than 4 GiB";
+            return false;
+        }
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        return Edit(path, error, [&](FatFs& fs) {
+            uint16_t date = 0, time = 0;
+            FatVolumeReader::UnixToDos(options.mtime, date, time);
+            fs.SetClock(date, time);
+            FatNode parent, file;
+            if (!fs.Resolve("/" + dir, parent))
+                return false;
+            const bool exists = fs.Find(parent, name, file);
+            if (exists && file.IsDirectory())
+            {
+                error = path + " is a directory";
+                return false;
+            }
+            // Room first: a file replaced gives its clusters back
+            const uint64_t cluster = fs.ClusterBytes();
+            const uint64_t needed = (data.size() + cluster - 1) / cluster;
+            const uint64_t had = exists ? (file.size + cluster - 1) / cluster : 0;
+            if (needed > fs.FreeClusters() + had)
+            {
+                error = path + ": the volume has " + std::to_string((fs.FreeClusters() + had) * cluster) + " bytes free, the file needs " +
+                        std::to_string(data.size());
+                return false;
+            }
+            if (exists ? !fs.Resize(file, 0) : !fs.Create(parent, name, false, file))
+                return false;
+            size_t written = 0;
+            return data.empty() || fs.Write(file, 0, data.data(), data.size(), written);
+        });
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        return Edit(path, error, [&](FatFs& fs) {
+            FatNode node;
+            return fs.Resolve("/" + path, node) && fs.Remove(node);
+        });
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.attributes.empty() || entry.attributes[0] != 'R')
+            return true;
+        error = entry.path + " is read only";
+        return false;
+    }
+
+    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        return Edit(path, error, [&](FatFs& fs) {
+            uint16_t date = 0, time = 0;
+            FatVolumeReader::UnixToDos(mtime, date, time);
+            fs.SetClock(date, time);
+            FatNode parent, made;
+            return fs.Resolve("/" + dir, parent) && fs.Create(parent, name, true, made);
+        });
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        // A bare name stays in the file's directory; a path moves it
+        std::string dir, name, from, ignored;
+        SplitPath(to, dir, name);
+        SplitPath(path, from, ignored);
+        if (to.find('/') == std::string::npos)
+            dir = from;
+        if (!dir.empty() && dir.front() == '/')
+            dir.erase(0, 1);  // "/name": the root
+        // A directory does not go into itself
+        if (dir == path || dir.compare(0, path.size() + 1, path + "/") == 0)
+        {
+            error = "a directory cannot move into itself (" + path + " -> " + to + ")";
+            return false;
+        }
+        return Edit(path + " -> " + to, error, [&](FatFs& fs) {
+            FatNode node, parent, moved;
+            return fs.Resolve("/" + path, node) && fs.Resolve("/" + dir, parent) && fs.Rename(node, parent, name, moved);
+        });
+    }
 
     DiskFsEntry Entry(const FatDirEntryInfo& info, const std::string& dir) const
     {
@@ -482,12 +703,14 @@ std::unique_ptr<FatDriver> OpenFat(std::shared_ptr<BlockDevice> device, CodePage
 {
     auto driver = std::make_unique<FatDriver>();
     driver->device = std::move(device);
+    driver->page = page;
     if (!driver->reader.Open(*driver->device, page))
         return nullptr;
     volume.fs = FatName(driver->reader.Type());
     volume.system = volume.fs == "fat12" ? "FAT12" : volume.fs == "fat16" ? "FAT16" : "FAT32";
     volume.label = driver->reader.Label();
     volume.bytes = static_cast<uint64_t>(driver->reader.VolumeSectors()) * kSector;
+    volume.writable = driver->device->IsWritable();
     std::vector<bool> free;
     if (driver->reader.ScanFree(free))
         volume.freeBytes = static_cast<int64_t>(std::count(free.begin(), free.end(), true)) * driver->reader.SectorsPerCluster() * kSector;
@@ -554,7 +777,8 @@ void DiskFs::Probe()
             add(std::move(v), std::make_unique<TrdosDriver>(*_floppy));
         }
         // FAT before +3DOS: a PC disk has 512-byte sectors too, and its data area may pass for a CP/M directory
-        auto floppy = std::make_shared<FloppyBlockDevice>(*_floppy);
+        // Writable: whether the disk may change is the caller's (a write-protected drive, a read-only medium)
+        auto floppy = std::make_shared<FloppyBlockDevice>(*_floppy, true);
         bool fat = false;
         if (floppy->IsUniform())
         {
@@ -581,6 +805,7 @@ void DiskFs::Probe()
             DiskFsVolume v;
             v.id = "isdos";
             DescribeIsdos(isdos, v);
+            v.writable = true;
             add(std::move(v), std::make_unique<IsdosDriver>(std::move(isdos)));
         }
         return;
@@ -642,13 +867,17 @@ void DiskFs::Probe()
         uint8_t s[kSector];
         if (!device.ReadSector(lba, s) || !IsdosFileSystem::IsDescriptor(s))
             return false;
-        IsdosFileSystem fs(BlockReaderAt(device, lba * kSector));
+        auto cache = std::make_shared<SectorCache>();
+        IsdosFileSystem fs(BlockReaderAt(device, lba * kSector, cache));
         if (!fs.IsIsdos())
             return false;
+        if (device.IsWritable())
+            fs.SetWriter(BlockWriterAt(device, lba * kSector, cache));
         DiskFsVolume v;
         v.id = id;
         v.offset = lba * kSector;
         DescribeIsdos(fs, v);
+        v.writable = device.IsWritable();
         taken.emplace_back(lba, lba + (v.bytes + kSector - 1) / kSector);
         add(std::move(v), std::make_unique<IsdosDriver>(std::move(fs)));
         return true;
@@ -725,19 +954,126 @@ bool DiskFs::Read(const std::string& volume, const std::string& path, std::vecto
     return driver && driver->Read(clean, data, slack, error);
 }
 
-bool DiskFs::Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
-                   const DiskFsWriteOptions& options, std::string& error)
+DiskFs::Driver* DiskFs::FindWritable(const std::string& volume, std::string& error)
 {
     size_t index = 0;
     Driver* driver = Find(volume, error, &index);
-    if (!driver)
-        return false;
-    if (!_volumes[index].writable)
+    if (driver && !_volumes[index].writable)
     {
-        error = "writing to " + _volumes[index].system + " is not supported (read only)";
+        error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' is read only";
+        return nullptr;
+    }
+    return driver;
+}
+
+bool DiskFs::Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
+                   const DiskFsWriteOptions& options, std::string& error)
+{
+    Driver* driver = FindWritable(volume, error);
+    const std::string clean = CleanPath(path);
+    if (driver && clean.empty())
+    {
+        error = "name a file";
         return false;
     }
-    return driver->Write(CleanPath(path), data, options, error);
+    return driver && driver->Write(clean, data, options, error);
+}
+
+bool DiskFs::Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive)
+{
+    Driver* driver = FindWritable(volume, error);
+    const std::string clean = CleanPath(path);
+    if (driver && clean.empty())
+    {
+        error = "name a file";
+        return false;
+    }
+    if (!driver)
+        return false;
+    DiskFsEntry entry;
+    if (!recursive || !Stat(volume, clean, entry, error) || !entry.directory)
+        return driver->Delete(clean, error);
+
+    // Every entry checked before one goes; then the deepest first (a listing puts a directory before its contents)
+    std::vector<DiskFsEntry> entries;
+    if (!List(volume, clean, true, entries, error))
+        return false;
+    entries.insert(entries.begin(), entry);
+    for (const DiskFsEntry& e : entries)
+        if (!driver->Deletable(e, error))
+            return false;
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it)
+        if (!driver->Delete(it->path, error))
+            return false;
+    return true;
+}
+
+bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error)
+{
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
+    Driver* driver = FindWritable(volume, error);
+    const std::string clean = CleanPath(path);
+    if (driver && clean.empty())
+    {
+        error = "name the directory";
+        return false;
+    }
+    if (!driver)
+        return false;
+    auto make = [&](const std::string& dir) {
+        error.clear();
+        if (driver->MakeDirectory(dir, mtime, error))
+            return true;
+        if (error.empty())
+            error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' has no directories";
+        return false;
+    };
+    DiskFsEntry entry;
+    std::string missing;
+    if (!parents)
+    {
+        if (Stat(volume, clean, entry, missing))
+        {
+            error = clean + " is there already";
+            return false;
+        }
+        return make(clean);
+    }
+    // Each directory on the way: there already, or made
+    for (size_t at = clean.find('/');; at = clean.find('/', at + 1))
+    {
+        const std::string step = clean.substr(0, at);
+        if (Stat(volume, step, entry, missing))
+        {
+            if (!entry.directory)
+            {
+                error = step + " is a file";
+                return false;
+            }
+        }
+        else if (!make(step))
+            return false;
+        if (at == std::string::npos)
+            return true;
+    }
+}
+
+bool DiskFs::Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error)
+{
+    Driver* driver = FindWritable(volume, error);
+    const std::string from = CleanPath(path);
+    std::string target = CleanPath(to);
+    if (driver && (from.empty() || target.empty()))
+    {
+        error = "name the file and its new name";
+        return false;
+    }
+    // A leading slash stays: "/name" goes to the root, a bare "name" stays in the file's directory
+    if (to.front() == '/' || to.front() == '\\')
+        target = "/" + target;
+    return driver && driver->Rename(from, target, error);
 }
 
 int64_t DiskFsEntry::Field(const std::string& key, int64_t otherwise) const

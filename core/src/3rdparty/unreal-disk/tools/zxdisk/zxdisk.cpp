@@ -4,9 +4,14 @@
 //   zxdisk ls <image> [dir] [-r] [--volume id]       a directory's entries (-r: the whole tree under it)
 //   zxdisk cat <image> <file> [-o out] [--volume id] a file's bytes (to stdout without -o)
 //   zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]
-//                                                    a host file onto a TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy, an
-//                                                    older file of that name deleted first; the image is written back
-//                                                    (or to -o, its extension picking the format)
+//                                                    a host file onto a floppy (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and
+//                                                    iS-DOS dir/name.ext), an older file of that name replaced
+//   zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]      delete a file or an empty directory (FAT, iS-DOS;
+//                                                    -r: a directory with everything in it)
+//   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id] rename a file (FAT, iS-DOS: move it or a directory)
+//   zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]    a new directory (FAT, iS-DOS; -p: the missing ones
+//                                                    on the way too)
+//   put, rm, mv and mkdir write the image back (or to -o, its extension picking the format)
 //
 // <image>: a floppy in any format unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK, MGT, IMG, HFE, SCP, ...) with
 // TR-DOS, +3DOS, iS-DOS / TASiS or FAT12 (Sprinter DSS); else a raw hard disk or card image (512-byte sectors): MBR or
@@ -19,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -41,6 +47,9 @@ int Usage()
                  "       zxdisk ls <image> [dir] [-r] [--volume id]\n"
                  "       zxdisk cat <image> <file> [-o out] [--volume id]\n"
                  "       zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]\n"
+                 "       zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]\n"
+                 "       zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id]\n"
+                 "       zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]\n"
                  "       (hard disk images: --offset n skips a header)\n";
     return 2;
 }
@@ -163,6 +172,7 @@ int main(int argc, char** argv)
     uint64_t offset = 0;
     uint32_t start = 0;
     bool recursive = false;
+    bool parents = false;
     for (int i = 1; i < argc; i++)
     {
         const std::string a = argv[i];
@@ -175,6 +185,8 @@ int main(int argc, char** argv)
         std::string number;
         if (a == "-r" || a == "--recursive")
             recursive = true;
+        else if (a == "-p" || a == "--parents")
+            parents = true;
         else if (a == "--volume")
         {
             if (!value(volume))
@@ -263,19 +275,27 @@ int main(int argc, char** argv)
         out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
         return out ? 0 : Fail("cannot write " + output);
     }
-    if (verb == "put")
+    if (verb == "put" || verb == "rm" || verb == "mv" || verb == "mkdir")
     {
-        if (args.size() < 3)
+        if (args.size() < (verb == "mv" ? 4u : 3u))
             return Usage();
         if (!image.floppy)
-            return Fail("writing works on TR-DOS and +3DOS floppies only");
-        std::vector<uint8_t> data;
-        if (!ReadHostFile(args[2], data))
-            return Fail("cannot read " + args[2]);
-        DiskFsWriteOptions options;
-        options.start = static_cast<uint16_t>(start);
-        const std::string name = args.size() > 3 ? args[3] : BaseName(args[2]);
-        if (!fs.Write(volume, name, data, options, error))
+            return Fail("put, rm, mv and mkdir change floppy images only");
+        if (verb == "put")
+        {
+            std::vector<uint8_t> data;
+            if (!ReadHostFile(args[2], data))
+                return Fail("cannot read " + args[2]);
+            DiskFsWriteOptions options;
+            options.start = static_cast<uint16_t>(start);
+            options.mtime = static_cast<int64_t>(std::time(nullptr));
+            const std::string name = args.size() > 3 ? args[3] : BaseName(args[2]);
+            if (!fs.Write(volume, name, data, options, error))
+                return Fail(error);
+        }
+        else if (verb == "rm" ? !fs.Delete(volume, args[2], error, recursive)
+                 : verb == "mkdir" ? !fs.MakeDirectory(volume, args[2], parents, static_cast<int64_t>(std::time(nullptr)), error)
+                                   : !fs.Rename(volume, args[2], args[3], error))
             return Fail(error);
         const std::string target = output.empty() ? args[1] : output;
         const FloppySaveResult saved = FloppyFormats::Save({}, *image.floppy, target, false);
