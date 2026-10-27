@@ -32,6 +32,7 @@
 #include "emulator/coordinator/ports.h"
 #include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/blockformats.h"
+#include "emulator/media/guestprogramwatch.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
@@ -447,6 +448,8 @@ private:
     static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
+    /// Names the program file the guest reads from a block medium (NC_GUEST_PROGRAM)
+    GuestProgramWatch _guestProgramWatch{_context};
     std::function<bool()> _applyNowProbe;
     bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
     /// Defined in mediamanager.cpp: an inline one gets a different type per TU under MSVC LTCG (C4744)
