@@ -502,6 +502,10 @@ client gets a `GDBSession` on its own thread.
   TDD §8.3), told once on the console. `monitor ttd stop` in the past comes back to live the same way first.
 - **`monitor bport`** prints the id in decimal, and `bport clear <id>` takes it the same way; it removes only a port
   breakpoint gdb set. `monitor model` names the machine (`Model: Pentagon 128 (PENTAGON), RAM 128 KB`).
+- **`monitor mmu`** shows the eight 8K slots of any machine: the 8K RAM page (the Next's MMU value; elsewhere the
+  16K page's half) or the ROM page and its half, the pages the `MMU0`-`MMU7` condition operands read.
+  **`monitor nextreg <reg>`** reads a ZX Next register (`#57`, `0x57` or decimal): `NR #57 = #21`; another machine
+  answers that it has no NextREG file.
 
 ### Register Serialization
 

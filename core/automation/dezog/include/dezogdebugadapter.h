@@ -51,6 +51,10 @@ public:
 
     // Notification sink (server.notifyPause in production, lambda in tests)
     void setPauseNotifier(PauseNotifier notifier);
+    /// The text of the last stop the notifier was told ("" for DeZog's own breakpoints, a step, a pause): the NTF_PAUSE
+    /// reason string of a stop DeZog has no breakpoint for (a port, NextREG, copper, beam, magic, chip register, DMA,
+    /// keyboard or event breakpoint, or another CPU's)
+    std::string stopText() const;
 
     // --- IDebugInterface ---
     void pause() override;
@@ -73,6 +77,7 @@ public:
     std::vector<uint8_t> getSpritePatterns(uint8_t index, uint8_t count) const override;
     std::vector<uint8_t> getSpritesClipWindowAndControl() const override;
     uint8_t readNextReg(uint8_t reg) const override;
+    uint8_t nextRomSelect() const override;
     void writeNextReg(uint8_t reg, uint8_t value) override;
 
     uint16_t addBreakpoint(uint16_t addr, uint8_t bank = 0, const std::string& condition = "",
@@ -210,7 +215,7 @@ private:
     void editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit);
     void subscribe();
     void unsubscribe();
-    void notify(dzrp::BreakReason reason, uint16_t addr);
+    void notify(dzrp::BreakReason reason, uint16_t addr, const std::string& text = "");
     /// The wire bank (bank + 1, 0 none) of the slot `addr` is in, as NTF_PAUSE carries it
     uint8_t wireBankAt(uint16_t addr) const;
 
@@ -225,6 +230,7 @@ private:
     execution::Requester sessionRequester() const;
     std::shared_ptr<Emulator> _emulator;              // Explicit binding (nullptr = dynamic)
     PauseNotifier _notifier;
+    std::string _stopText;
 
     std::set<uint16_t> _temporaryBreakpoints;         // BreakpointManager IDs
     size_t _maxTemporaryBreakpoints = 0;              // High-water mark (tests)

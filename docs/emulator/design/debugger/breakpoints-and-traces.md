@@ -188,3 +188,35 @@ The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_o
 `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,
 `gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
 ([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).
+
+## 9. Sound chip registers
+
+A chip register breakpoint (`BRK_CHIPREG`, `core/src/debugger/breakpoints/chipregister.h`) stops the main CPU after
+its OUT wrote a sound chip's register: the chip, one unit of it or any, a register or a range, and a value filter
+(`value` / `vmask`, as for NextREG and events). It is the semantic form of a port breakpoint: `ay 7` is "the mixer",
+whatever port pair, latch order or board the program reaches it through.
+
+| Chip | Registers | Where it is reported |
+| :--- | :--- | :--- |
+| `ay` | 0-15 | AY / YM2149: the 128K's and TurboSound's (units 0-1), the Next's three (0-2), the Fuller box; the SSG of a YM2203 (TS-FM, MultiSound) |
+| `fm` | #10-#FF | the FM part of a YM2203 (TS-FM, MultiSound; units 0-1) |
+| `saa` | 0-#1F | SAA1099 (MultiSound) |
+| `opl4` | #000-#1FF | MoonSound OPL4 FM: bank 1 as #100-#1FF |
+| `opl4wave` | 0-#FF | MoonSound OPL4 wave part (while NEW2 is set) |
+| `dac` | 0-3 (the channel) | Covox / SounDrive, the MultiSound's SounDrive; the value is the sample |
+
+- **Cost.** A chip reports only while `EmulatorContext::chipRegisterWatch` is set: the main CPU's breakpoint manager
+  sets it while an active chip register breakpoint exists. Otherwise one predictable branch per OUT to a chip.
+- **What is not a program's write.** A snapshot load, a reset or a tool's access (`toolAccessActive`) writes the
+  registers without the port path and is not reported; nor is a write during a time travel replay.
+- **The stop.** The access is `chip_register`, the address the register (`BreakpointHitKind::ChipRegister`).
+- **Not yet.** The Sprinter's Covox Blaster ring (P7) and taps (script callbacks) on chip registers.
+
+| Plane | Chip register breakpoint |
+| :--- | :--- |
+| CLI | `bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits ...] [note]` |
+| Lua | `bp_chipreg(chip, reg, {to=, unit=, value=, vmask=, hits=})` |
+| Python | `emu.bp_chipreg(chip, reg, end=, unit=, value=, vmask=, hits=)` |
+| MCP | `control_execution` `bp_add` `type` `chipreg`, `chip`, `address`, `address_end`, `unit`, `value`, `value_mask` |
+| REST | `POST /breakpoints {type: "chipreg", chip, address, address_end, unit, value, value_mask}`; the listing has `chip`, `unit` |
+| WebSocket | the REST route as a `call` |

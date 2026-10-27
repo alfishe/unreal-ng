@@ -160,7 +160,9 @@ TEST_F(BreakpointConditional_Test, RefusedAtCreationWithTheReason)
         << "a port-in breakpoint has no written value";
     EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "A ==")).find("column"), std::string::npos);
     EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "NOSUCH == 1")).find("unknown name"), std::string::npos);
-    EXPECT_NE(Refused(Spec(BRK_MAGIC, 0, 0xEDFF, "A == 1")).find("memory and port"), std::string::npos);
+    EXPECT_NE(Refused(Spec(BRK_KEYBOARD, BRK_KEY_PRESS, BRK_KEY_ANY, "A == 1")).find("a condition applies to"),
+              std::string::npos)
+        << "a keyboard breakpoint takes none (a magic one does, platform-debugging P4)";
     EXPECT_TRUE(_bpm->GetAllBreakpoints().empty()) << "nothing was added";
 }
 

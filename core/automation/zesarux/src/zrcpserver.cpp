@@ -166,6 +166,19 @@ bool isUnbankedMachine(dzrp::MachineType type)
     return type == dzrp::MachineType::ZX48K || type == dzrp::MachineType::ZX16K;
 }
 
+constexpr int kNextSlots = 8;
+constexpr uint8_t kNextMmuRom = 0xFF;
+
+// ZEsarUX's page of a Next 8K slot (tbblue.c tbblue_set_rom_page, debug.c 7265): RAM the MMU value, ROM 0x8000 | the
+// ROM's 8K half (16K ROM * 2 + the slot's half). DeZog's ZxNext decoder maps a ROM word to bank 0xFC + (v & 3)
+uint16_t nextMmuWord(int slot, const std::vector<uint8_t>& slots, uint8_t romSelect)
+{
+    const uint8_t v = slot < static_cast<int>(slots.size()) ? slots[slot] : 0;
+    if (v == kNextMmuRom)
+        return static_cast<uint16_t>(0x8000 | ((romSelect & 3) * 2 + (slot & 1)));
+    return v;
+}
+
 // ZRCP MMU word for one 16 KB slot: 0x8000|romPage for ROM, else the RAM bank.
 // DeZog parseSlots maps >= 0x8000 to bank 8+(v&1) (its ROM0/ROM1 encoding).
 uint16_t mmuWordForSlot(int slot, const std::vector<uint8_t>& slots, bool unbanked)
@@ -192,13 +205,16 @@ uint16_t mmuWordForSlot(int slot, const std::vector<uint8_t>& slots, bool unbank
 int zoneDigitForAddr(uint16_t addr, const std::vector<uint8_t>& slots, bool unbanked)
 {
     const uint16_t word = mmuWordForSlot(addr >> 14, slots, unbanked);
-    return word >= 0x8000 ? (word & 1) : word;
+    return word >= 0x8000 ? (word & 1) : (word & 0xF);
 }
 
 std::string machineString(dzrp::MachineType type)
 {
     // DeZog dispatches case-insensitively on "48k"/"128k" substrings. All
     // banked models report 128K (documented approximation for clones).
+    // The Next is ZEsarUX's own name for it (utils.c): DeZog then takes its eight 8K slots
+    if (type == dzrp::MachineType::ZXNEXT)
+        return "ZX Spectrum Next";
     return isUnbankedMachine(type) ? "ZX Spectrum 48K" : "ZX Spectrum 128K";
 }
 
@@ -774,6 +790,20 @@ bool Server::handleCommand(int sock, const std::string& line)
         // e.g. "RO1 RA5 RA2 RA0 " - one token per 16 KB page, each followed by
         // a space (DeZog counts split(' ').length - 1 tokens)
         std::string out;
+        if (m_debug->getMachineType() == dzrp::MachineType::ZXNEXT)
+        {
+            // ZEsarUX's tbblue short names: "O<rom half>" / "A<8K bank>" per 8K slot
+            const uint8_t rom = m_debug->nextRomSelect();
+            for (int slot = 0; slot < kNextSlots; ++slot)
+            {
+                const uint16_t word = nextMmuWord(slot, slots, rom);
+                out += word >= 0x8000 ? "O" : "A";
+                out += std::to_string(word >= 0x8000 ? (word & 0x7F) : word);
+                out += ' ';
+            }
+            sendLine(sock, out);
+            return true;
+        }
         for (int slot = 0; slot < 4; ++slot)
         {
             const uint16_t word = mmuWordForSlot(slot, slots, unbanked);
@@ -1468,6 +1498,17 @@ std::string Server::buildMmuString(const std::vector<uint8_t>& slots)
     std::string out;
     out.reserve(32);
     char buf[8];
+    if (m_debug->getMachineType() == dzrp::MachineType::ZXNEXT)
+    {
+        // Eight 8K slots (ZEsarUX print_registers on tbblue)
+        const uint8_t rom = m_debug->nextRomSelect();
+        for (int slot = 0; slot < kNextSlots; ++slot)
+        {
+            std::snprintf(buf, sizeof(buf), "%04x", nextMmuWord(slot, slots, rom));
+            out += buf;
+        }
+        return out;
+    }
     // First 4 groups = the 16 KB slots (all DeZog parses); groups 5-8 repeat
     // them, contiguous %04x words like print_registers
     for (int rep = 0; rep < 2; ++rep)

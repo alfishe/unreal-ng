@@ -26,6 +26,7 @@ protected:
     Memory* _memory = nullptr;
     Z80Registers _cpu{};
     EmulatorState _state{};
+    const IBreakpointConditionMachine* _machine = nullptr;
 
     void SetUp() override
     {
@@ -50,6 +51,7 @@ protected:
         x.cpu = &_cpu;
         x.memory = _memory;
         x.state = &_state;
+        x.machine = _machine;
         x.access = access;
         return x;
     }
@@ -369,4 +371,77 @@ TEST_F(BreakpointCondition_Test, PrevIsTheValueOfTheEvaluationBefore)
 
     EXPECT_NE(Refused("A@next").find("'@' takes 'prev'"), std::string::npos);
     EXPECT_NE(Refused("A@").find("'@' takes 'prev'"), std::string::npos);
+}
+
+namespace
+{
+/// A machine with a register file, a beam and a copper (the Next's decoder on a real machine)
+struct FakeConditionMachine : IBreakpointConditionMachine
+{
+    uint8_t regs[256] = {};
+    uint16_t line = 0, hc = 0, copperPc = 0;
+    bool NextRegister(uint8_t reg, uint8_t& value) const override
+    {
+        value = regs[reg];
+        return true;
+    }
+    bool Beam(uint16_t& l, uint16_t& h) const override
+    {
+        l = line;
+        h = hc;
+        return true;
+    }
+    bool CopperPc(uint16_t& pc) const override
+    {
+        pc = copperPc;
+        return true;
+    }
+};
+}  // namespace
+
+// platform-debugging P4: the paging latches of the extended machines, the CPU speed, the ROM of every window, the 8K
+// slots; NR(x), the beam and the copper only where the machine answers them
+TEST_F(BreakpointCondition_Test, TheExtendedMachinesLatchesSlotsAndSpeed)
+{
+    _state.p7FFD = 0x10;
+    _state.pDFFD = 0x07;
+    _state.p1FFD = 0x04;
+    _state.pEFF7 = 0x08;
+    _state.pFF77 = 0x41;
+    _state.hw_turbo_ratio = 2;
+    EXPECT_TRUE(Holds("DFFD == 7 && P1FFD == 4 && EFF7 == 8 && FF77 == 41 && CPUSPEED == 2"));
+    EXPECT_TRUE(Holds("PDFFD == DFFD && PEFF7 == EFF7 && PFF77 == FF77 && P7FFD == FD"));
+    _state.hw_turbo_ratio = 0;
+    EXPECT_TRUE(Holds("CPUSPEED == 1")) << "a state without a ratio runs at the base clock";
+    // 48K: ROM in window 0, RAM 5, 2, 0 in 1-3: 8K pages #0A #0B, 4 5, 0 1
+    EXPECT_TRUE(Holds("MMU0 == 0FF && MMU1 == 0FF && MMU2 == 0A && MMU3 == 0B && MMU4 == 4 && MMU5 == 5 && "
+                      "MMU6 == 0 && MMU7 == 1"));
+    EXPECT_TRUE(Holds("ROMPG0 == ROMPG && ROMPG != 0FF && ROMPG1 == 0FF && ROMPG2 == 0FF && ROMPG3 == 0FF"));
+    EXPECT_EQ(Compile("nr(#57) == mmu7 && p1ffd")->Canonical(), "(NR(#57) == MMU7) && P1FFD");
+
+    // No machine: NR(x), the beam and the copper are errors, which the dry run of a compile reports
+    std::string why;
+    EXPECT_EQ(Compile("NR(7) == 0")->Evaluate(Context(), &why), Result::Error);
+    EXPECT_EQ(why, "no NR here");
+    EXPECT_EQ(Compile("HC == 0")->Evaluate(Context(), &why), Result::Error);
+    EXPECT_EQ(why, "no HC here");
+    std::string error;
+    const BreakpointConditionContext dryRun = Context();
+    EXPECT_FALSE(BreakpointConditionProgram::Compile("CPC == 0", BRK_COND_ANY, nullptr, error,
+                                                     BreakpointConditionDialect::Unreal, &dryRun));
+    EXPECT_NE(error.find("no CPC here"), std::string::npos) << error;
+    // Another CPU's breakpoint has none of the machine's
+    EXPECT_NE(Refused("NR(7) == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
+    EXPECT_NE(Refused("DFFD == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
+    EXPECT_NE(Refused("VC == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
+
+    FakeConditionMachine machine;
+    machine.regs[0x57] = 0x21;
+    machine.line = 0x105;
+    machine.hc = 300;
+    machine.copperPc = 17;
+    _machine = &machine;
+    EXPECT_TRUE(Holds("NR(57) == 21 && NR(50 + 7) == 21 && VC == 105 && HC == 300d && CPC == 17d"));
+    EXPECT_EQ(Compile("NR(100) == 0")->Evaluate(Context(), &why), Result::Error);
+    EXPECT_EQ(why, "NR register outside 0..#FF");
 }

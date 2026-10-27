@@ -57,9 +57,11 @@ constexpr uint16_t kReadTarget = 0x9001;
 class GdbSessionProtocol_Test : public ::testing::Test
 {
 protected:
+    virtual const char* ModelName() const { return "PENTAGON"; }
+
     void SetUp() override
     {
-        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("gdb-protocol", "PENTAGON",
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("gdb-protocol", ModelName(),
                                                                             LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
@@ -453,3 +455,38 @@ TEST_F(GdbSessionProtocol_Test, ForwardRunFromThePastGoesLive)
 }
 
 #endif  // _WIN32
+
+/// monitor mmu: the eight 8K slots of a 128K machine (ROM halves, the 16K pages' halves); no NextREG file
+TEST_F(GdbSessionProtocol_Test, MonitorMmuShowsTheEightKSlots)
+{
+    const std::string text = Monitor("mmu");
+    EXPECT_EQ(text.rfind("8K slots:\n", 0), 0u) << text;
+    EXPECT_NE(text.find("  1 2000-3fff: ROM page"), std::string::npos) << text;
+    EXPECT_NE(text.find("  2 4000-5fff: RAM 8K page 0a (16K page 05)"), std::string::npos) << text;
+    EXPECT_NE(text.find("  5 a000-bfff: RAM 8K page 05 (16K page 02)"), std::string::npos) << text;
+    EXPECT_NE(Monitor("nextreg 7").find("no NextREG file"), std::string::npos);
+    EXPECT_NE(Monitor("nextreg").find("Error: monitor nextreg"), std::string::npos);
+    EXPECT_NE(Monitor("nextreg #100").find("Error: monitor nextreg"), std::string::npos);
+}
+
+/// The Next: monitor nextreg reads the board's registers, monitor mmu follows MMU0-7 (platform-debugging P4)
+class GdbSessionProtocolNext_Test : public GdbSessionProtocol_Test
+{
+protected:
+    const char* ModelName() const override { return "NEXT"; }
+};
+
+TEST_F(GdbSessionProtocolNext_Test, MonitorNextregReadsTheBoard)
+{
+    ASSERT_NE(_context->pConditionMachine, nullptr);
+    uint8_t mmu2 = 0;
+    ASSERT_TRUE(_context->pConditionMachine->NextRegister(0x52, mmu2));
+    char expected[32];
+    std::snprintf(expected, sizeof(expected), "NR #52 = #%02X\n", mmu2);
+    EXPECT_EQ(Monitor("nextreg #52"), expected);
+    EXPECT_EQ(Monitor("nextreg 0x52"), expected);
+    EXPECT_EQ(Monitor("nextreg 82"), expected) << "decimal";
+    char slot[48];
+    std::snprintf(slot, sizeof(slot), "  2 4000-5fff: RAM 8K page %02x", mmu2);
+    EXPECT_NE(Monitor("mmu").find(slot), std::string::npos) << slot;
+}

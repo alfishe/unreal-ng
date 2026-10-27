@@ -184,6 +184,17 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
                   : (bp.keyType & BRK_KEY_RELEASE)                               ? "release"
                                                                                  : "press";
     }
+    if (bp.type == BRK_CHIPREG)
+    {
+        j["chip"] = SoundChipKindName(static_cast<SoundChipKind>(bp.chip));
+        if (bp.chipUnit != kSoundChipAnyUnit)
+            j["unit"] = bp.chipUnit;
+        if (bp.nrMask)
+        {
+            j["value"] = bp.nrValue & bp.nrMask;
+            j["value_mask"] = bp.nrMask;
+        }
+    }
     if (bp.type == BRK_EVENT)
     {
         j["event"] = GSCardEventName(static_cast<GSCardEvent>(bp.z80address));
@@ -945,6 +956,9 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_EVENT:
                     bpObj["type"] = "event";
                     break;
+                case BRK_CHIPREG:
+                    bpObj["type"] = "chipreg";
+                    break;
                 default:
                     bpObj["type"] = "unknown";
             }
@@ -1066,9 +1080,32 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_KEYBOARD, spec.access = BRK_KEY_PRESS;
     else if (type == "event")
         spec.type = BRK_EVENT, spec.access = 0;
+    else if (type == "chipreg")
+    {
+        // A sound chip's register write ("chip": ay, fm, saa, opl4, opl4wave, dac; "address" the register,
+        // "address_end" a range, "unit" one chip of the kind; chipregister.h)
+        SoundChipKind chip = SoundChipKind::Count;
+        if (!body["chip"].isString() || !ParseSoundChipKind(body["chip"].asString().c_str(), chip))
+        {
+            badRequest("'chip': ay, fm, saa, opl4, opl4wave or dac");
+            return;
+        }
+        spec.type = BRK_CHIPREG, spec.access = 0;
+        spec.chip = static_cast<uint8_t>(chip);
+        uint32_t unit = 0;
+        if (body.isMember("unit") && !body["unit"].isNull())
+        {
+            if (!ParseJsonUInt(body["unit"], 0xFE, unit))
+            {
+                badRequest("'unit' must be 0..254 (the chip's number on its device)");
+                return;
+            }
+            spec.chipUnit = static_cast<uint8_t>(unit);
+        }
+    }
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01, keyboard, event");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01, keyboard, event, chipreg");
         return;
     }
 

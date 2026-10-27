@@ -94,7 +94,13 @@ the label: `.PC` is the label `PC`, not the register.
 | `FD` | the last value written to `#7FFD` |
 | `DOS` | 1 while TR-DOS is paged in |
 | `PG0 PG1 PG2 PG3` | the RAM page in each 16K slot (`#FF` for ROM) |
-| `ROMPG` | the ROM page in slot 0 (`#FF` for RAM) |
+| `ROMPG` (`ROMPG0`), `ROMPG1 ROMPG2 ROMPG3` | the ROM page in each 16K slot (`#FF` for RAM) |
+| `MMU0`..`MMU7` | the 8K RAM page in each 8K slot: the Next's MMU value as the CPU sees it, elsewhere twice the 16K page plus the half (`#FF` for ROM) |
+| `DFFD`, `P1FFD`, `EFF7`, `FF77` | the last value written to `#DFFD`, `#1FFD`, `#EFF7`, `#FF77` (aliases `PDFFD`, `PEFF7`, `PFF77`; `P7FFD` is `FD`) |
+| `CPUSPEED` | the CPU clock in units of 3.5 MHz: 1, 2 (7 MHz), 4 (14 MHz), 8 (the Next's 28 MHz), 6 (the Sprinter's 21 MHz) |
+| `NR(x)` | ZX Next: the NEXTREG register `x` as a read of `#253B` returns it, without the read's side effects |
+| `VC`, `HC` | ZX Next: the beam's line counter (the copper's, NR #64 applied) and the pixel clock in the row |
+| `CPC` | ZX Next: the copper's instruction index |
 | `x@prev` | the value of `x` at the previous check of this condition (the first check: `x` itself), at most 16 in a condition: `M(#5C3A) < M(#5C3A)@prev` holds when the byte went down. A branch `&&` / `\|\|` skipped does not update its value |
 
 Each access operand exists only on the breakpoint kinds that supply it:
@@ -106,6 +112,13 @@ Each access operand exists only on the breakpoint kinds that supply it:
 | memory write | `WR`, `MDT`/`VAL`, `ADDR` |
 | port in | `IN`, `PORT`, `ADDR` |
 | port out | `OUT`, `PWV`/`VAL`, `PORT`, `ADDR` |
+| NEXTREG write | `OUT`, `PWV`/`VAL` the byte written, `PORT`/`ADDR` the register; `NR(x)` is still the value before the write |
+| NEXTREG read | `IN`, `PORT`, `ADDR` the register |
+| sound chip register (`bchip`) | `OUT`, `PWV`/`VAL` the byte written, `PORT`/`ADDR` the register |
+| copper, beam, magic opcode | none |
+
+`NR(x)`, `VC`, `HC` and `CPC` exist on the Next only; on another machine the condition is refused when it is set ("no NR
+here"). A sound card CPU's breakpoint has none of the machine's operands (`NR`, the latches, the beam, `CPUSPEED`).
 
 A breakpoint on reads and writes (`wp … rw`) supplies both sets. On a given access, the operand of the other kind is
 `FFFFFFFF` (as in Unreal). A port-in breakpoint has no value: the value is not known when the check runs.
@@ -132,7 +145,8 @@ condition is refused with the reason and its column:
 | `RD == 9000` on an execution breakpoint | `RD is not supplied by this breakpoint's trigger` |
 | `VAL == 1` on a port-in breakpoint | the same: the value of an IN is not known when the check runs |
 | `NOSUCH == 1` | `unknown name 'NOSUCH'` (not a register, a variable or a loaded label) |
-| a condition on a keyboard, NextREG, beam, copper or magic breakpoint | `a condition applies to memory and port breakpoints` |
+| a condition on a keyboard or an event breakpoint | `a condition applies to memory, port, NextREG, copper, beam, magic and chip register breakpoints` |
+| `NR(7) == 0` on a machine without NEXTREG | `the condition does not evaluate here: no NR here` |
 
 A refused text leaves the old condition in place. An empty text removes the condition. With a machine present the
 condition is also run once on the current state: an expression that cannot be computed there is refused too.
@@ -210,9 +224,9 @@ the access, any other source at the frame end. See
 
 ## Limits of this version
 
-- Conditions apply to memory and port breakpoints only. Keyboard, NextREG, beam, copper and magic breakpoints, and
-  memory-space pages (`vram1`), come later.
-- Not yet supported: `SHADOW`, `DT` (T-states since the last stop), the beam position, another CPU's operands
+- Conditions apply to memory, port, NextREG, copper, beam, magic and chip register breakpoints. Keyboard and event
+  breakpoints, and memory-space pages (`vram1`), come later.
+- Not yet supported: `SHADOW`, `DT` (T-states since the last stop), the beam position off the Next, another CPU's operands
   (`gs.A` on a main CPU breakpoint), and a check on every memory access of an instruction.
 - Labels are not followed when they change.
 - Script callbacks on a hit (Lua and Python code run on the breakpoint or a tap): [script-callbacks.md](script-callbacks.md).

@@ -61,6 +61,21 @@ struct BreakpointConditionAccess
     uint32_t portValue = kNone;     ///< VAL (port) / PWV
 };
 
+/// The operands only a machine answers (platform-debugging P4): the Next's register file, its beam and its copper.
+/// The main CPU's breakpoints get the machine's (EmulatorContext::pConditionMachine); without one the operand is an
+/// error ("no NR here"), which the dry run of the compile reports
+class IBreakpointConditionMachine
+{
+public:
+    virtual ~IBreakpointConditionMachine() = default;
+    /// NR(x): the register as a program's read through #253B returns it, without the read's side effects
+    virtual bool NextRegister(uint8_t reg, uint8_t& value) const = 0;
+    /// VC / HC: the beam's line counter (the copper's, NR #64 applied) and the pixel clock in the row
+    virtual bool Beam(uint16_t& line, uint16_t& hc) const = 0;
+    /// CPC: the copper's instruction index (0..1023)
+    virtual bool CopperPc(uint16_t& pc) const = 0;
+};
+
 /// What an evaluation reads. The registers and the memory of the breakpoint's CPU; the state for the timing and the
 /// ports. Any pointer may be null in a test: the operands that need it then evaluate to an error
 struct BreakpointConditionContext
@@ -68,7 +83,8 @@ struct BreakpointConditionContext
     const Z80Registers* cpu = nullptr;
     Memory* memory = nullptr;              ///< M(x) / W(x): DirectReadFromZ80Memory, no side effects
     const IDebugTarget* target = nullptr;  ///< another CPU's memory and pages (when `memory` is null): Peek, MapAddress
-    const EmulatorState* state = nullptr;  ///< FRAME, FD, DOS
+    const EmulatorState* state = nullptr;  ///< FRAME, FD, DOS, the paging latches, CPUSPEED
+    const IBreakpointConditionMachine* machine = nullptr;  ///< NR(x), HC, VC, CPC
     BreakpointConditionAccess access;
     uint32_t hits = 0;                     ///< HITS: the condition-true hits before this one
 };
@@ -87,7 +103,7 @@ class BreakpointConditionProgram
 public:
     enum class Op : uint8_t
     {
-        Const, Reg8, Reg16, Var, Mem8, Mem16,
+        Const, Reg8, Reg16, Var, Mem8, Mem16, NextReg,
         Neg, Not, BitNot,
         Mul, Div, Mod, Add, Sub, Shl, Shr,
         Lt, Gt, Le, Ge, Eq, Ne,

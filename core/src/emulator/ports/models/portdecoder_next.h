@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 
+#include "debugger/breakpoints/breakpointcondition.h"
 #include "emulator/bus/bustap.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
@@ -35,7 +36,7 @@ class ScreenNext;
 class BreakpointManager;
 enum class BreakpointHitKind : uint8_t;
 
-class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine
+class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine, public IBreakpointConditionMachine
 {
 public:
     PortDecoder_Next() = delete;
@@ -105,6 +106,11 @@ public:
     void BindDma();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
+
+    /// IBreakpointConditionMachine: NR(x), the copper's beam (VC / HC) and its PC (CPC) in breakpoint conditions
+    bool NextRegister(uint8_t reg, uint8_t& value) const override;
+    bool Beam(uint16_t& line, uint16_t& hc) const override;
+    bool CopperPc(uint16_t& pc) const override;
 
     /// The SPI port pair #E7 (select) / #EB (data): one SD card per select line (NR #0A bit 5 swaps them)
     static constexpr uint16_t kPortSpiSelect = 0x00E7;

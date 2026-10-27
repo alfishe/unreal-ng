@@ -38,11 +38,11 @@ the phases that close them. Each phase is tested and committed on its own.
 | DMA writes and reads do not hit watchpoints | `NextMemory::DmaWrite` (nextmemory.cpp:158) | P5 |
 | No events for DMA start / end, interrupts (line, CTC, ULA), NMI (multiface, DivMMC), DivMMC automap, esxDOS entry | Next devices | P5 |
 | Conditions know four 16K `PG0`-`PG3`: need `MMU0`-`MMU7`, `NR(x)`, `CPC` (copper PC), `HC` / `VC`, `CPUSPEED` | `breakpointcondition.cpp` | P4 |
-| No `--page bank8N` form (8K banks) | breakpoint page parsing | P4 |
+| No `--page bank8kN` form (8K banks) | breakpoint page parsing | P4 |
 | No conditions or taps on NEXTREG, copper, beam, magic breakpoints (refused) | `breakpointmanager.cpp:417`, `:755` | P4 |
 | DivMMC and Multiface RAM have no physical pages a breakpoint can name | Next memory map | P5 |
-| ZRCP MMU string reports four 16K slots, not eight 8K (suspected) | `zrcpserver.cpp:171-196`, `:1465-1480` | P4 |
-| DZRP stop message has no text; GDB `monitor` has no `nextreg` / `mmu` | dezog, gdb | P4 |
+| ZRCP MMU string reports four 16K slots, not eight 8K: confirmed, DeZog takes the Next's model from `get-current-machine` ("ZX Spectrum Next") and we said "ZX Spectrum 128K" | `zrcpserver.cpp:171-196`, `:1465-1480` | P4 |
+| DZRP stop message has no text; GDB `monitor` has no `nextreg` / `mmu`. Worse than no text: on `BREAKPOINT_HIT` with no breakpoint of its own at the PC DeZog runs on (`dzrpremote.ts` `checkPcBreakpoints`), so a port, NextREG, chip or another CPU's stop never showed | dezog, gdb | P4 |
 
 ### Sprinter, TS-Conf, ATM, Profi, Evo
 
@@ -66,14 +66,14 @@ the phases that close them. Each phase is tested and committed on its own.
 | P0 | Headless runner (`unreal-qt --headless --script f.lua --exit-on-script`) | `AutomationLua_Test.RunFile*`, `tools/verification/headless/` | done |
 | P1 | MultiSound GS as a debug target: the `ms` CPU (`DebugCpuId::MultiSoundGS`), `ParseCpuName`, `ICard::DebugGeneralSound`, `SlotManager` tells the target | `GSCardTarget_Test.TheMultiSoundsGeneralSoundIsTheMsCpu` | done |
 | P2 | NeoGS: a `gscfg0` event (every write); DMA writes (SD, ZX-DMA) through the card's page-tied watchpoints. ZX-DMA start / stop are `dma_start` / `dma_done` of module 0 already; a flash write is a write watchpoint on a `romN` page | `GSCardTarget_Test.TheNeoGSDmaWritesHitThePagesWatchpoint`, `NeoGSDma` / `NeoGSZxDma` write reports | done |
-| P3 | `BRK_CHIPREG`: a sound chip's register write (chip, register, value mask), every plane | per chip, a ROM tune writes the register | |
-| P4 | Condition operands for the extended machines (`MMU0-7`, `NR(x)`, `CPC`, `HC`, `VC`, `CPUSPEED`, `DFFD`, `1FFD`, `EFF7`, `FF77`, `ROMPGn`), `--page bank8N`, conditions on NEXTREG / copper / beam / magic; ZRCP MMU fix; DZRP / GDB Next stops | condition compiler tests per variable, Next fixtures | |
+| P3 | `BRK_CHIPREG`: a sound chip's register write (chip, register, value mask), every plane | `ChipRegisterBreakpoint_Test` (the manager; a Pentagon's OUT stops after it) | done |
+| P4 | Condition operands for the extended machines (`MMU0-7`, `NR(x)`, `CPC`, `HC`, `VC`, `CPUSPEED`, `DFFD`, `P1FFD`, `EFF7`, `FF77`, `ROMPG0-3`; the Next answers the machine ones through `IBreakpointConditionMachine`), `--page bank8kN`, conditions on NEXTREG / copper / beam / magic / chip register; ZRCP: the Next is "ZX Spectrum Next" with eight 8K slots; DZRP: a stop DeZog has no breakpoint for is `OTHER` with its text; GDB `monitor mmu` / `monitor nextreg` | `BreakpointCondition_Test.TheExtendedMachinesLatchesSlotsAndSpeed`, `NextRegBreakpointMachine_Test.AConditionReads*`, `BreakpointManager_test.PageSpec_EightKBank`, `DezogZesaruxNextFixture`, `DezogDebugAdapter_test.AStopDeZogHasNo*`, `GdbSessionProtocolNext_Test` | done |
 | P5 | Next: DMA through watchpoints, machine events (DMA, interrupts, NMI, DivMMC automap, esxDOS), DivMMC / Multiface pages | Next DMA and DivMMC fixtures | |
 | P6 | TS-Conf: DMA through watchpoints, FMaps port breakpoints, raster breakpoint, interrupt events | TS-Conf DMA / raster fixtures | |
 | P7 | Sprinter: accelerator through watchpoints, Z84C15 events, journal events, PLD codes | Sprinter accelerator fixtures | |
 | P8 | FDC command events (all WD1793 machines) | TR-DOS boot stops on the first read sector | |
 
-P0-P2 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
+P0-P4 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
 P5, the first phase with machine events; P6-P8 add their kinds to it.
 
 ## Open decision

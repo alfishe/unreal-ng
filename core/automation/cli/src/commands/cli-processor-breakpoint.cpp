@@ -132,6 +132,16 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
                 return false;
             }
         }
+        else if (a == "--unit")
+        {
+            uint16_t unit = 0;
+            if (!hasValue || !ParseAddress(args[++i], unit) || unit > 0xFE)
+            {
+                error = "--unit needs the chip's number on its device (0, 1, ...)";
+                return false;
+            }
+            spec.chipUnit = static_cast<uint8_t>(unit);
+        }
         else if (a == "--value" || a == "--vmask")
         {
             uint16_t number = 0;
@@ -605,6 +615,52 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
     }
     spec.address = static_cast<uint16_t>(kind);
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Event breakpoint"));
+}
+
+// HandleChipRegisterBreakpoint: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits ..] [note]
+void CLIProcessor::HandleChipRegisterBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    SoundChipKind chip = SoundChipKind::Count;
+    if (args.size() < 2 || !ParseSoundChipKind(args[0].c_str(), chip))
+    {
+        std::stringstream ss;
+        ss << "Usage: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits N|>=N|%N] [--group G] [note]"
+           << NEWLINE << "Stops the main CPU after its OUT wrote a sound chip's register (platform-debugging P3)." << NEWLINE
+           << "Chips: ay (AY / YM2149, the SSG of a YM2203: 0-15), fm (YM2203 FM: #10-#FF), saa (SAA1099: 0-#1F)," << NEWLINE
+           << "  opl4 (MoonSound FM: bank 0 #000-#0FF, bank 1 #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive:"
+           << NEWLINE << "  the channel 0-3)" << NEWLINE
+           << "--unit picks one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); default any." << NEWLINE
+           << "--value / --vmask filter the byte written." << NEWLINE << "Examples:" << NEWLINE
+           << "  bchip ay 7 --vmask 0x3F --value 0x3F  - the mixer silences all channels" << NEWLINE
+           << "  bchip ay 0-5 --unit 1                 - a tone period of the second AY" << NEWLINE
+           << "  bchip opl4 0x105                      - the MoonSound NEW2 register";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = BreakpointsOf(*emulator, DebugCpuId::Main);
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_CHIPREG;
+    spec.access = 0;
+    spec.chip = static_cast<uint8_t>(chip);
+    std::vector<std::string> rest(args.begin() + 1, args.end());
+    std::string error;
+    if (!ParseBreakpointArgs(rest, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Chip register breakpoint"));
 }
 
 // HandleBPHits: bphits reset [id]

@@ -164,6 +164,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _context->pMediaManager->RegisterSlot(_sdSlot0);
         _context->pMediaManager->RegisterSlot(_sdSlot1);
     }
+    _context->pConditionMachine = this;
 }
 
 PortDecoder_Next::~PortDecoder_Next()
@@ -202,6 +203,8 @@ PortDecoder_Next::~PortDecoder_Next()
         _context->pCore->GetZ80()->SetInterruptSource(nullptr);
     if (_context->pRst8Trap == _esxDos.get())
         _context->pRst8Trap = nullptr;
+    if (_context->pConditionMachine == this)
+        _context->pConditionMachine = nullptr;
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
@@ -1246,6 +1249,29 @@ bool PortDecoder_Next::OnCopperStep(const NextCopper::Step& step)
     if (found == BRK_INVALID)
         return false;
     FireBreakpoint(found, address, kind);
+    return true;
+}
+
+bool PortDecoder_Next::NextRegister(uint8_t reg, uint8_t& value) const
+{
+    value = _board->Read(reg);
+    return true;
+}
+
+bool PortDecoder_Next::Beam(uint16_t& line, uint16_t& hc) const
+{
+    const NextCopper& copper = _board->Copper();
+    uint64_t now = 0;
+    if (!copper.BeamNow(now))
+        return false;
+    line = static_cast<uint16_t>(copper.BeamLine(now));
+    hc = static_cast<uint16_t>(copper.BeamHc(now));
+    return true;
+}
+
+bool PortDecoder_Next::CopperPc(uint16_t& pc) const
+{
+    pc = _board->Copper().Pc();
     return true;
 }
 

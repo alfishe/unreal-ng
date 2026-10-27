@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -122,6 +123,9 @@ void NextAudio::WriteData(uint8_t value)
     if (_held || (_addr[_selected] & 0x10))
         return;  // ym2149.vhd 123: `addr(4) = '0'`
     _chips[_selected]->writeCurrentRegister(value);
+    if (_context && _context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Ay, static_cast<uint8_t>(_selected), _addr[_selected] & 0x0F,
+                                value);
 }
 
 uint8_t NextAudio::ReadData()

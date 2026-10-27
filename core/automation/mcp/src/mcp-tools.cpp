@@ -1284,7 +1284,19 @@ void RegisterControlExecution(ToolRegistry& registry)
         "stops when the copper completes that instruction), keyboard (key, on: stops on the first keyboard read that sees the key "
         "go down / up), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
         "opcode - a NOP on the hardware, other emulators' debug trap; no address), event (a sound card's protocol "
-        "event, see event; no address)";
+        "event, see event; no address), chipreg (a sound chip's register write by the main CPU: chip, address = the "
+        "register, address_end a range, unit, value / value_mask the byte)";
+    schema["properties"]["chip"]["type"] = "string";
+    schema["properties"]["chip"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* chip : {"ay", "fm", "saa", "opl4", "opl4wave", "dac"})
+        schema["properties"]["chip"]["enum"].append(chip);
+    schema["properties"]["chip"]["description"] =
+        "For bp_add of chipreg: ay (AY / YM2149 and a YM2203's SSG, registers 0-15), fm (YM2203 FM, #10-#FF), saa "
+        "(SAA1099, 0-#1F), opl4 (MoonSound FM, bank 1 as #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive: the "
+        "channel 0-3)";
+    schema["properties"]["unit"]["type"] = "integer";
+    schema["properties"]["unit"]["description"] =
+        "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
         "For bp_*: whose breakpoints, main (default), gs (the CPU of the General Sound / NeoGS card: execution, read, "
@@ -1551,6 +1563,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                                     : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "");
                             if (bp["type"].asString() == "event")
                                 out << "event " << bp["event"].asString();
+                            else if (bp["type"].asString() == "chipreg")
+                                out << "chip " << bp["chip"].asString() << " reg " << Hex16(bp["address"].asUInt());
                             else
                                 out << Hex16(bp["address"].asUInt());
                             out << " "
@@ -1605,7 +1619,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
                                             "note", "group", "doors", "value", "value_mask", "hc", "key", "on",
-                                            "condition", "condition_dialect", "event"})
+                                            "condition", "condition_dialect", "event", "chip", "unit"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:

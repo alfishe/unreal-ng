@@ -62,6 +62,8 @@ public:
     /// The sprites' clip window x left, x right, y top, y bottom, then NR #15 (sprite and layers control)
     virtual std::vector<uint8_t> getSpritesClipWindowAndControl() const { return {}; }
     virtual uint8_t readNextReg(uint8_t /*reg*/) const { return 0; }
+    /// The 16K ROM (0-3) a slot whose MMU value is 0xFF shows (ZX Next)
+    virtual uint8_t nextRomSelect() const { return 0; }
     virtual void writeNextReg(uint8_t /*reg*/, uint8_t /*value*/) {}
 
     // Breakpoints

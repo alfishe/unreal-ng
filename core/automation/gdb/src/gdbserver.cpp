@@ -15,6 +15,7 @@
 #include <emulator/notifications.h>
 #include <base/featuremanager.h>
 #include <debugger/debugmanager.h>
+#include <debugger/breakpoints/breakpointcondition.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/coordinator/machineop.h>
@@ -787,6 +788,8 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor instances - list emulator instances\n";
         response += "  monitor frame     - show frame/tstate info\n";
         response += "  monitor bankinfo  - show memory bank info\n";
+        response += "  monitor mmu       - show the eight 8K slots (the Next's MMU0-7, any machine's halves)\n";
+        response += "  monitor nextreg <reg> - read a ZX Next register (#hex, 0xhex or decimal)\n";
         response += "  monitor regions   - list the device memories (video RAM, sound card RAM, ...)\n";
         response += "  monitor mem <space:offset> [len] - dump any memory (cpu, ram5, rom2, cache0, a region)\n";
         response += "  monitor load <path> - load snap/tape/disk (paused only)\n";
@@ -932,6 +935,58 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         else
         {
             response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "mmu")
+    {
+        if (_context && _context->pMemory)
+        {
+            // The same pages as the MMU0-7 condition operands: the 8K RAM page, or the 16K ROM page and its half
+            std::ostringstream ss;
+            ss << "8K slots:\n" << std::hex << std::setfill('0');
+            for (int slot = 0; slot < 8; ++slot)
+            {
+                const uint16_t start = static_cast<uint16_t>(slot << 13);
+                const MemoryPageDescriptor where = _context->pMemory->MapZ80AddressToPhysicalPage(start);
+                ss << "  " << slot << " " << std::setw(4) << start << "-" << std::setw(4) << (start + 0x1FFF) << ": ";
+                if (where.mode == BANK_RAM)
+                    ss << "RAM 8K page " << std::setw(2) << (where.page * 2 + (where.addressInPage >> 13))
+                       << " (16K page " << std::setw(2) << static_cast<unsigned>(where.page) << ")\n";
+                else if (where.mode == BANK_ROM)
+                    ss << "ROM page " << std::setw(2) << static_cast<unsigned>(where.page) << " half " << (where.addressInPage >> 13) << "\n";
+                else
+                    ss << "unmapped\n";
+            }
+            response = ss.str();
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "nextreg" || cmd.starts_with("nextreg "))
+    {
+        std::string arg = cmd.size() > 8 ? cmd.substr(8) : std::string();
+        int base = 0;
+        if (!arg.empty() && arg[0] == '#')
+        {
+            arg.erase(0, 1);
+            base = 16;
+        }
+        char* end = nullptr;
+        const unsigned long reg = arg.empty() ? 0x100 : std::strtoul(arg.c_str(), &end, base);
+        uint8_t value = 0;
+        if (!_context)
+            response = "No emulator attached\n";
+        else if (arg.empty() || *end != '\0' || reg > 0xFF)
+            response = "Error: monitor nextreg <reg>, a register 0..#FF\n";
+        else if (!_context->pConditionMachine || !_context->pConditionMachine->NextRegister(static_cast<uint8_t>(reg), value))
+            response = "Error: no NextREG file on this machine\n";
+        else
+        {
+            char line[32];
+            std::snprintf(line, sizeof(line), "NR #%02X = #%02X\n", static_cast<unsigned>(reg), value);
+            response = line;
         }
     }
     else if (cmd == "load" || cmd.starts_with("load "))

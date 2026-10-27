@@ -3569,6 +3569,55 @@ public:
                 return {-1, error};
             return {static_cast<int>(id), sol::nullopt};
         });
+        // bp_chipreg(chip, reg, {to=, unit=, value=, vmask=, hits=}) stops the main CPU after its OUT wrote a sound chip's
+        // register: chip ay, fm, saa, opl4, opl4wave or dac (chipregister.h), to= the last register of a range, unit= one
+        // chip of the kind. The id; -1 and the reason when refused
+        lua.set_function("bp_chipreg", [this](const std::string& chipName, int32_t reg, sol::optional<sol::table> options)
+                                           -> std::tuple<int, sol::optional<std::string>> {
+            SoundChipKind chip = SoundChipKind::Count;
+            if (!ParseSoundChipKind(chipName.c_str(), chip))
+                return {-1, std::string("unknown chip '") + chipName + "': ay, fm, saa, opl4, opl4wave or dac"};
+            if (reg < 0 || reg > 0xFFFF)
+                return {-1, std::string("a register is 0..") + std::to_string(SoundChipLastRegister(chip))};
+            BreakpointSpec spec;
+            spec.type = BRK_CHIPREG;
+            spec.access = 0;
+            spec.chip = static_cast<uint8_t>(chip);
+            spec.address = static_cast<uint16_t>(reg);
+            std::string hits;
+            if (options)
+            {
+                const sol::table& t = *options;
+                if (auto to = t.get<sol::optional<int32_t>>("to"))
+                {
+                    spec.hasEnd = true;
+                    spec.addressEnd = static_cast<uint16_t>(*to);
+                }
+                if (auto unit = t.get<sol::optional<int32_t>>("unit"))
+                    spec.chipUnit = static_cast<uint8_t>(*unit);
+                if (auto value = t.get<sol::optional<int32_t>>("value"))
+                {
+                    spec.nrValue = static_cast<uint8_t>(*value);
+                    spec.nrMask = 0xFF;
+                }
+                if (auto vmask = t.get<sol::optional<int32_t>>("vmask"))
+                    spec.nrMask = static_cast<uint8_t>(*vmask);
+                hits = t.get<sol::optional<std::string>>("hits").value_or("");
+                if (hits.empty())
+                    if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                        hits = std::to_string(*n);
+            }
+            BreakpointManager* bpm = ScriptBreakpoints("main");
+            if (!bpm)
+                return {-1, std::string("no emulator")};
+            std::string error;
+            if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                return {-1, error};
+            const uint16_t id = bpm->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID)
+                return {-1, error};
+            return {static_cast<int>(id), sol::nullopt};
+        });
         lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
             return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
         });

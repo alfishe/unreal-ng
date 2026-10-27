@@ -162,6 +162,7 @@ private:
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleEventBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleChipRegisterBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args);

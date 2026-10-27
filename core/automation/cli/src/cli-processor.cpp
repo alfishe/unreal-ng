@@ -145,6 +145,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
                         {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
                         {"bevent", &CLIProcessor::HandleEventBreakpoint}, // General Sound protocol event breakpoint
+                        {"bchip", &CLIProcessor::HandleChipRegisterBreakpoint}, // sound chip register write breakpoint
                         {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
                         {"bpcond", &CLIProcessor::HandleBPCondition},     // Set a breakpoint's condition
                         {"callback", &CLIProcessor::HandleCallback},      // The scripts' callbacks: list, resume, remove, policy
@@ -711,6 +712,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bmagic <edff|dd01>    - Break after the magic opcode ED FF / DD 01 ran (ZX Next)" << NEWLINE;
     oss << "  bcopper <index> - Break when the copper completes a list instruction (ZX Next)" << NEWLINE;
     oss << "  bevent <kind> [--value V] - Break on a General Sound / NeoGS event (card_command, host_data, int, ...)" << NEWLINE;
+    oss << "  bchip <chip> <reg> [--value V] - Break on a sound chip register write (ay, fm, saa, opl4, opl4wave, dac)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
     oss << "  --cpu gs|ms   - On bp / wp / bport / bplist / bpclear / bpon / bpoff / bptoggle / bphits / bpgroup /" << NEWLINE;
     oss << "                  bpnote / bpcond: the sound card CPU's breakpoints, ms the MultiSound's GS (default: main)" << NEWLINE;

@@ -51,6 +51,7 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class IBreakpointConditionMachine;
 class MediaManager;
 class BusManager;
 class EthernetGateway;
@@ -200,6 +201,10 @@ public:
     // RST $08 handler (the Next's esxDOS mode, feature "esxdos"); nullptr while nothing serves it
     IRst8Trap* pRst8Trap = nullptr;
 
+    // The operands of breakpoint conditions only the machine answers (NR(x), HC, VC, CPC: the Next's decoder);
+    // nullptr on a machine without them
+    const IBreakpointConditionMachine* pConditionMachine = nullptr;
+
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
 
@@ -299,6 +304,10 @@ public:
     /// breakpoints do not fire on it. Set only where nothing else drives the machine (a coherent moment), so a
     /// plain bool; checked behind the breakpoint filters, never on a path without breakpoints
     bool toolAccessActive = false;
+
+    /// The sound chips report their register writes (ReportChipRegisterWrite): set by the main CPU's breakpoint manager
+    /// while a chip register breakpoint is active (platform-debugging P3). Read on the chips' OUT paths
+    bool chipRegisterWatch = false;
 
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device

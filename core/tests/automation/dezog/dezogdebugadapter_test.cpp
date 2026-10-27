@@ -1397,3 +1397,33 @@ TEST_F(DezogHistory_test, HistoryEntriesAreServedInTheSpotPrefetchShape)
 }
 
 /// endregion </Instruction history (TTD reverse debugging)>
+
+// A stop DeZog has no breakpoint for (here a port breakpoint another surface set): told as another reason with its
+// text, so DeZog shows it instead of finding no breakpoint at the PC and running on (platform-debugging P4)
+TEST_F(DezogDebugAdapter_test, AStopDeZogHasNoBreakpointForIsToldWithItsText)
+{
+    const std::vector<uint8_t> program = {
+        0xF3,              // DI
+        0x3E, 0x01,        // LD A,1
+        0xD3, 0xFE,        // OUT (#FE),A: port #01FE
+        0xC3, 0x01, 0x80   // JP 8001h
+    };
+    _adapter->writeMemory(PROGRAM_START, program);
+    _adapter->setRegister(dzrp::RegisterId::PC, PROGRAM_START);
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = BRK_IO_OUT;
+    spec.address = 0x00FE;
+    spec.portMask = 0x00FF;
+    std::string error;
+    const uint16_t id = _emulator->GetBreakpointManager()->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+
+    _adapter->resume();
+    PauseEvent ev{};
+    ASSERT_TRUE(waitForEvent(ev));
+    EXPECT_EQ(ev.reason, dzrp::BreakReason::OTHER);
+    EXPECT_EQ(ev.address, PROGRAM_START + 5) << "the PC after the OUT";
+    EXPECT_EQ(_adapter->stopText(), "Breakpoint " + std::to_string(id) + ": port_out #01FE");
+    _emulator->GetBreakpointManager()->RemoveBreakpointByID(id);
+}

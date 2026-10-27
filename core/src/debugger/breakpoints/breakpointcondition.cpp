@@ -28,7 +28,11 @@ enum Reg16 : uint8_t
 enum Var : uint8_t
 {
     V_RD, V_WR, V_MDT, V_IN, V_OUT, V_PORTVAL, V_VAL, V_ADDR, V_PORT,
-    V_T, V_FRAME, V_HITS, V_FD, V_DOS, V_PG0, V_PG1, V_PG2, V_PG3, V_ROMPG
+    V_T, V_FRAME, V_HITS, V_FD, V_DOS, V_PG0, V_PG1, V_PG2, V_PG3, V_ROMPG,
+    // platform-debugging P4: the extended machines' latches, the ROM of every window, the 8K slots, the beam
+    V_DFFD, V_1FFD, V_EFF7, V_FF77, V_ROMPG1, V_ROMPG2, V_ROMPG3,
+    V_MMU0, V_MMU1, V_MMU2, V_MMU3, V_MMU4, V_MMU5, V_MMU6, V_MMU7,
+    V_HC, V_VC, V_CPC, V_CPUSPEED
 };
 
 struct Name
@@ -56,6 +60,11 @@ const Name kVarNames[] = {
     {"RD", V_RD}, {"WR", V_WR}, {"MDT", V_MDT}, {"IN", V_IN}, {"OUT", V_OUT}, {"PWV", V_PORTVAL}, {"VAL", V_VAL},
     {"ADDR", V_ADDR}, {"PORT", V_PORT}, {"T", V_T}, {"FRAME", V_FRAME}, {"HITS", V_HITS}, {"FD", V_FD},
     {"DOS", V_DOS}, {"PG0", V_PG0}, {"PG1", V_PG1}, {"PG2", V_PG2}, {"PG3", V_PG3}, {"ROMPG", V_ROMPG},
+    {"DFFD", V_DFFD}, {"P1FFD", V_1FFD}, {"EFF7", V_EFF7}, {"FF77", V_FF77}, {"ROMPG1", V_ROMPG1},
+    {"ROMPG2", V_ROMPG2}, {"ROMPG3", V_ROMPG3}, {"MMU0", V_MMU0}, {"MMU1", V_MMU1}, {"MMU2", V_MMU2},
+    {"MMU3", V_MMU3}, {"MMU4", V_MMU4}, {"MMU5", V_MMU5}, {"MMU6", V_MMU6}, {"MMU7", V_MMU7}, {"HC", V_HC},
+    {"VC", V_VC}, {"CPC", V_CPC}, {"CPUSPEED", V_CPUSPEED},
+    {"ROMPG0", V_ROMPG}, {"P7FFD", V_FD}, {"PDFFD", V_DFFD}, {"PEFF7", V_EFF7}, {"PFF77", V_FF77},
     {"RADDR", V_RD}, {"WADDR", V_WR}, {"RPORT", V_IN}, {"WPORT", V_OUT}, {"VALUE", V_VAL},
     {"MRA", V_RD}, {"MWA", V_WR}, {"MRV", V_MDT}, {"MWV", V_MDT}, {"PRA", V_IN}, {"PWA", V_OUT}, {"PRV", V_PORTVAL},
 };
@@ -81,7 +90,21 @@ uint8_t TriggersOf(uint8_t var)
 /// The machine's own state: another CPU's breakpoint has none of it (its T is not the frame's T-state)
 bool MachineOnly(uint8_t var)
 {
-    return var == V_T || var == V_FD || var == V_DOS;
+    switch (var)
+    {
+        case V_T:
+        case V_FD:
+        case V_DOS:
+        case V_DFFD:
+        case V_1FFD:
+        case V_EFF7:
+        case V_FF77:
+        case V_HC:
+        case V_VC:
+        case V_CPC:
+        case V_CPUSPEED: return true;
+        default: return false;
+    }
 }
 
 const char* NameOf(const Name* names, size_t count, uint8_t id)
@@ -173,6 +196,20 @@ int64_t TargetPageOf(const IDebugTarget& target, uint8_t bank, MemoryBankModeEnu
     return where.mode == kind ? where.page : 0xFF;
 }
 
+/// The ROM page in window `bank` as the CPU sees it (the Next's slot table too), anything else $FF
+int64_t RomPageOf(Memory& memory, uint8_t bank)
+{
+    const MemoryPageDescriptor where = memory.MapZ80AddressToPhysicalPage(static_cast<uint16_t>(bank << 14));
+    return where.mode == BANK_ROM ? where.page : 0xFF;
+}
+
+/// The 8K RAM page behind 8K slot `slot` (the Next's MMU value; elsewhere twice the 16K page plus the half), $FF for
+/// ROM and anything not RAM
+int64_t Ram8kPageOf(const MemoryPageDescriptor& where)
+{
+    return where.mode == BANK_RAM ? where.page * 2 + (where.addressInPage >> 13) : 0xFF;
+}
+
 /// A byte of the breakpoint CPU's memory; false without one
 inline bool PeekByte(const BreakpointConditionContext& x, uint16_t address, int64_t& v)
 {
@@ -235,13 +272,68 @@ inline bool ReadVar(const BreakpointConditionContext& x, uint8_t var, int64_t& v
                 break;
             return true;
         case V_ROMPG:
+        case V_ROMPG1:
+        case V_ROMPG2:
+        case V_ROMPG3:
+        {
+            const uint8_t bank = var == V_ROMPG ? 0 : static_cast<uint8_t>(var - V_ROMPG1 + 1);
             if (x.memory)
-                v = x.memory->GetMemoryBankMode(0) == BANK_ROM ? x.memory->GetROMPageForBank(0) : 0xFF;
+                v = RomPageOf(*x.memory, bank);
             else if (x.target)
-                v = TargetPageOf(*x.target, 0, BANK_ROM);
+                v = TargetPageOf(*x.target, bank, BANK_ROM);
             else
                 break;
             return true;
+        }
+        case V_MMU0:
+        case V_MMU1:
+        case V_MMU2:
+        case V_MMU3:
+        case V_MMU4:
+        case V_MMU5:
+        case V_MMU6:
+        case V_MMU7:
+        {
+            const uint16_t address = static_cast<uint16_t>((var - V_MMU0) << 13);
+            if (x.memory)
+                v = Ram8kPageOf(x.memory->MapZ80AddressToPhysicalPage(address));
+            else if (x.target)
+                v = Ram8kPageOf(x.target->MapAddress(address));
+            else
+                break;
+            return true;
+        }
+        case V_DFFD:
+        case V_1FFD:
+        case V_EFF7:
+        case V_FF77:
+        case V_CPUSPEED:
+            if (!x.state)
+                break;
+            v = var == V_DFFD   ? x.state->pDFFD
+                : var == V_1FFD ? x.state->p1FFD
+                : var == V_EFF7 ? x.state->pEFF7
+                : var == V_FF77 ? x.state->pFF77
+                                : (x.state->hw_turbo_ratio ? x.state->hw_turbo_ratio : 1);
+            return true;
+        case V_HC:
+        case V_VC:
+        {
+            uint16_t line = 0;
+            uint16_t hc = 0;
+            if (!x.machine || !x.machine->Beam(line, hc))
+                break;
+            v = var == V_HC ? hc : line;
+            return true;
+        }
+        case V_CPC:
+        {
+            uint16_t pc = 0;
+            if (!x.machine || !x.machine->CopperPc(pc))
+                break;
+            v = pc;
+            return true;
+        }
     }
     if (error)
         *error = std::string("no ") + NameOf(kVarNames, std::size(kVarNames), var) + " here";
@@ -403,7 +495,7 @@ private:
 
     struct Node
     {
-        enum Kind { Const, Reg8, Reg16, Var, Mem8, Mem16, Unary, Binary, LogicalAnd, LogicalOr, Prev } kind = Const;
+        enum Kind { Const, Reg8, Reg16, Var, Mem8, Mem16, NextReg, Unary, Binary, LogicalAnd, LogicalOr, Prev } kind = Const;
         Op op = Op::Const;
         uint8_t arg = 0;
         int64_t value = 0;
@@ -704,6 +796,22 @@ private:
             Expect(open);
             return Add(node);
         }
+        // NR(x): a register of the Next's file (the machine's: not another CPU's)
+        if (upper == "NR" && _token.kind == Token::Open)
+        {
+            if (_trigger & BRK_COND_TARGET)
+            {
+                Fail("NR is the machine's, not this CPU's", token.column);
+                return -1;
+            }
+            const size_t open = _token.column;
+            Next();
+            Node node;
+            node.kind = Node::NextReg;
+            node.left = ParseBinary(1);
+            Expect(open);
+            return Add(node);
+        }
         // A leading '.' forces a label over a register of the same name
         if (upper[0] != '.')
         {
@@ -843,6 +951,7 @@ private:
             case Node::Var: return NameOf(kVarNames, std::size(kVarNames), n.arg);
             case Node::Mem8: return "M(" + Print(n.left, true) + ")";
             case Node::Mem16: return "W(" + Print(n.left, true) + ")";
+            case Node::NextReg: return "NR(" + Print(n.left, true) + ")";
             case Node::Prev: return Print(n.left, false) + "@prev";
             case Node::Unary: return std::string(OpText(n.op)) + Print(n.left, false);
             default:
@@ -873,8 +982,10 @@ private:
             case Node::Var: Push(code, {Op::Var, n.arg}, depth, maxDepth, 1); return;
             case Node::Mem8:
             case Node::Mem16:
+            case Node::NextReg:
                 Emit(n.left, code, depth, maxDepth);
-                Push(code, Instruction{n.kind == Node::Mem8 ? Op::Mem8 : Op::Mem16}, depth, maxDepth, 0);
+                Push(code, Instruction{n.kind == Node::Mem8 ? Op::Mem8 : n.kind == Node::Mem16 ? Op::Mem16 : Op::NextReg},
+                     depth, maxDepth, 0);
                 return;
             case Node::Unary:
                 Emit(n.left, code, depth, maxDepth);
@@ -1096,6 +1207,17 @@ BreakpointConditionResult BreakpointConditionProgram::EvaluateCode(const Breakpo
                     v |= high << 8;
                 }
                 stack[sp - 1] = v;
+                break;
+            }
+            case Op::NextReg:
+            {
+                const int64_t reg = stack[sp - 1];
+                if (reg < 0 || reg > 0xFF)
+                    return fail("NR register outside 0..#FF");
+                uint8_t value = 0;
+                if (!x.machine || !x.machine->NextRegister(static_cast<uint8_t>(reg), value))
+                    return fail("no NR here");
+                stack[sp - 1] = value;
                 break;
             }
             case Op::Neg: stack[sp - 1] = -stack[sp - 1]; break;

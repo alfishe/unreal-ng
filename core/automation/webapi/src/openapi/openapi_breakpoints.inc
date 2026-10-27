@@ -34,8 +34,11 @@
         "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target. "
         "type event: a General Sound protocol breakpoint, 'event' its kind (int, nmi, reset, page, card_command, "
         "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0 on cpu gs; host_command, host_data, "
-        "host_reply on the main CPU), value / value_mask filter the byte. cpu gs: the card CPU's (execute, memory, "
-        "port, event; conditions on its registers and memory).";
+        "host_reply on the main CPU), value / value_mask filter the byte. type chipreg: a sound chip's register write, "
+        "'chip' ay, fm, saa, opl4, opl4wave or dac, 'address' the register (address_end a range), 'unit' one chip of "
+        "the kind, value / value_mask the byte. 'condition' applies to memory, port, nextreg, copper, beam, magic and "
+        "chipreg breakpoints. cpu gs: the card CPU's (execute, memory, port, event; conditions on its registers and "
+        "memory).";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["400"]["description"] =
         "Bad address or type, a page on a port breakpoint, a malformed page or one the machine does not have, a range "

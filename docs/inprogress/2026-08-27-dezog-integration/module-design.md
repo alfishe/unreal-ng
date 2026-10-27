@@ -504,7 +504,10 @@ The adapter subscribes (Observer-method, so it can unsubscribe precisely) to
 `BreakpointTriggeredPayload` (nil id = legacy sender, accepted), classifies the
 hit via the `BreakpointDescriptor::memoryType` (execute → `BREAKPOINT`,
 write-only → `WATCHPOINT_WRITE`, otherwise `WATCHPOINT_READ`) and calls the
-notifier. Exactly one NTF_PAUSE is produced per stop:
+notifier. A stop of a kind DeZog has no breakpoint for (a port, NextREG, copper, beam, magic, chip register, keyboard
+or event breakpoint, or another CPU's) goes out as `OTHER` with the text `Breakpoint N: <kind> #XXXX[ on cpu X]` at
+the PC: as `BREAKPOINT_HIT` DeZog finds no breakpoint of its own at the PC and runs on (`dzrpremote.ts`
+`checkPcBreakpoints`), as `OTHER` it stops and shows the text. Exactly one NTF_PAUSE is produced per stop:
 
 - `CMD_PAUSE` → the server defers `pause()` until after the ACK is written, so
   the wire order is always ACK → NTF_PAUSE.

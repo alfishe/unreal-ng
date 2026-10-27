@@ -11,6 +11,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointcondition.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
@@ -38,6 +39,9 @@ enum BreakpointTypeEnum : uint8_t
     BRK_MAGIC,       // ZX Next: the CPU completed a magic opcode (ED FF or DD 01: a NOP on the hardware), address = the opcode word
     BRK_EVENT,       // A General Sound event (GSCardEvent), address = the kind; the value filter is nrValue / nrMask.
                      // Card-side kinds on the card CPU's breakpoints, host-side kinds on the main CPU's
+    BRK_CHIPREG,     // A sound chip's register write (chipregister.h): `chip` the SoundChipKind, `chipUnit` the chip of
+                     // that kind (kSoundChipAnyUnit: any), the register z80address..EndAddress(); the value filter is
+                     // nrValue / nrMask. The main CPU's only
     // BRK_INTERRUPT     // Interrupt event
 };
 
@@ -127,6 +131,10 @@ struct BreakpointDescriptor
     uint8_t nrDoors = BRK_NR_DOOR_ALL;
     uint8_t nrValue = 0;
     uint8_t nrMask = 0;
+
+    // Chip register breakpoint: the SoundChipKind and the unit (kSoundChipAnyUnit: every chip of the kind)
+    uint8_t chip = 0;
+    uint8_t chipUnit = kSoundChipAnyUnit;
 
     // Beam breakpoint: the line is z80address (0..BRK_BEAM_MAX_LINE), the pixel clock in the row is beamHc. A copper breakpoint takes the
     // list index z80address..EndAddress() (0..BRK_COPPER_LIST_MAX)
@@ -270,6 +278,7 @@ struct BreakpointHotState
     uint8_t hasMagic = 0;         // 1 if any active magic-opcode breakpoint exists
     uint8_t hasKeyboard = 0;      // 1 if any active keyboard breakpoint exists
     uint8_t hasEvent = 0;         // 1 if any active General Sound event breakpoint exists
+    uint8_t hasChipReg = 0;       // 1 if any active chip register breakpoint exists (EmulatorContext::chipRegisterWatch)
     // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
     // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
     uint8_t copperWatch = 0;
@@ -303,8 +312,10 @@ struct BreakpointSpec
     uint16_t spacePage = 0xFFFF;       // a page of another memory space ("vram5"); `address` & #3FFF is the offset
     uint16_t portMask = 0xFFFF;        // ports only
     uint8_t nrDoors = BRK_NR_DOOR_ALL; // NextREG only: the doors a write comes through
-    uint8_t nrValue = 0;               // NextREG and event: (value & nrMask) == (nrValue & nrMask)
+    uint8_t nrValue = 0;               // NextREG, event and chip register: (value & nrMask) == (nrValue & nrMask)
     uint8_t nrMask = 0;                //   0: any value
+    uint8_t chip = 0;                  // BRK_CHIPREG only: the SoundChipKind; `address`..`addressEnd` the registers
+    uint8_t chipUnit = kSoundChipAnyUnit;  // BRK_CHIPREG only: one chip of the kind, or any
     uint16_t beamHc = 0;               // BRK_BEAM only: the pixel clock in the row
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
@@ -320,6 +331,9 @@ struct BreakpointSpec
     // Physical only: the offset in the page when it is not `address` & #3FFF (an 8K bank of the Next is half a
     // 16K page; `address` stays the CPU address, so the slot). 0xFFFF: address & #3FFF
     uint16_t pageOffset = 0xFFFF;
+    // Physical only: an 8K RAM bank (--page bank8kN, the Next's MMU unit); AddBreakpoint makes it page N / 2 and the
+    // offset its half plus address & #1FFF. 0xFFFF: none
+    uint16_t bank8k = 0xFFFF;
 };
 
 /// endregion </Types>
@@ -645,7 +659,7 @@ public:
         /// keyboard, nextreg, beam, copper, magic
         uint32_t memory = 0, exec = 0, read = 0, write = 0;
         uint32_t port = 0, portIn = 0, portOut = 0;
-        uint32_t keyboard = 0, nextreg = 0, beam = 0, copper = 0, magic = 0, event = 0;
+        uint32_t keyboard = 0, nextreg = 0, beam = 0, copper = 0, magic = 0, event = 0, chipreg = 0;
         std::vector<Group> groups;  ///< by name
     };
     BreakpointSummary GetSummary() const;
@@ -756,6 +770,11 @@ public:
     {
         return _hotState.hasEvent ? ResolveEvent(kind, value, arg) : BRK_INVALID;
     }
+    /// A sound chip's register write (BRK_CHIPREG): the breakpoint that stops, or BRK_INVALID
+    uint16_t HandleChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value)
+    {
+        return _hotState.hasChipReg ? ResolveChipRegister(kind, unit, reg, value) : BRK_INVALID;
+    }
     uint16_t HandleMagic(uint16_t opcodeWord)
     {
         return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
@@ -812,6 +831,7 @@ protected:
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
     uint16_t ResolveEvent(GSCardEvent kind, uint8_t value, int arg);
+    uint16_t ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value);
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or

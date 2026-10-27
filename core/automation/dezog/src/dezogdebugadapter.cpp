@@ -295,6 +295,23 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     else if (payload->kind == BreakpointHitKind::MemoryWrite)
         reason = dzrp::BreakReason::WATCHPOINT_WRITE;
 
+    // A stop of a kind DeZog has no breakpoint for: as BREAKPOINT_HIT it finds none at the PC and runs on
+    // (dzrpremote.ts checkPcBreakpoints), so it is another reason with the text DeZog shows
+    const bool deZogKind = payload->kind == BreakpointHitKind::Execute || payload->kind == BreakpointHitKind::MemoryRead ||
+                           payload->kind == BreakpointHitKind::MemoryWrite;
+    if (!deZogKind || payload->cpu != "main")
+    {
+        char where[16];
+        std::snprintf(where, sizeof(where), " #%04X", payload->address);
+        std::string text = "Breakpoint " + std::to_string(payload->_payloadNumber) + ": " +
+                           BreakpointHitKindName(payload->kind) + where;
+        if (payload->cpu != "main")
+            text += " on cpu " + payload->cpu;
+        const Z80State* z80 = emulator->GetZ80State();
+        notify(dzrp::BreakReason::OTHER, z80 ? z80->pc : payload->address, text);
+        return;
+    }
+
     // DeZog expects the stop address to be PC for breakpoints
     const Z80State* z80 = emulator->GetZ80State();
     const uint16_t stopAddr = (reason == dzrp::BreakReason::BREAKPOINT && z80) ? z80->pc : address;
@@ -302,12 +319,19 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     notify(reason, stopAddr);
 }
 
-void DezogDebugAdapter::notify(dzrp::BreakReason reason, uint16_t addr)
+std::string DezogDebugAdapter::stopText() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _stopText;
+}
+
+void DezogDebugAdapter::notify(dzrp::BreakReason reason, uint16_t addr, const std::string& text)
 {
     PauseNotifier notifier;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         notifier = _notifier;
+        _stopText = text;
     }
 
     if (notifier)
@@ -611,6 +635,13 @@ std::vector<uint8_t> DezogDebugAdapter::getSlots() const
     slots[2] = static_cast<uint8_t>(memory->GetRAMPageForBank2());
     slots[3] = static_cast<uint8_t>(memory->GetRAMPageForBank3());
     return slots;
+}
+
+uint8_t DezogDebugAdapter::nextRomSelect() const
+{
+    auto emulator = resolveEmulator();
+    NextMemory* next = emulator ? dynamic_cast<NextMemory*>(emulator->GetMemory()) : nullptr;
+    return next ? next->GetRomSelect() : 0;
 }
 
 void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)

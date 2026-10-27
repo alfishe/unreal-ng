@@ -1167,6 +1167,8 @@ id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoG
 id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
                                     # dma_start, dma_done, gscfg0, host_*);
                                     # cpu= defaults to the kind's side; ValueError with the reason when refused
+id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register write by the main CPU (ay, fm, saa,
+                                    # opl4, opl4wave, dac); end= a range end, unit= one chip of the kind
 id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"

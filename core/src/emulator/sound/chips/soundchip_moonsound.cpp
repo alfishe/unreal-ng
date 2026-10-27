@@ -9,6 +9,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -374,6 +375,9 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
             // voices played on. Measured melody-7 traffic: C4->C5 1341,
             // C6->C7 1166, C6->C5 112, C4->C7 0.
             _opl4.WriteFm(chipTimeNow(), _fmBank, _fmLatch[_fmBank], value);
+            if (_context && _context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Opl4, 0,
+                                        static_cast<uint16_t>((_fmBank << 8) | _fmLatch[_fmBank]), value);
             break;
 
         case PORT_FM_ADDR2:
@@ -391,7 +395,11 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
 
         case PORT_WAVE_DATA:
             if (_opl4.New2Mode())
+            {
                 _opl4.WriteWave(chipTimeNow(), _waveLatch, value);
+                if (_context && _context->chipRegisterWatch) [[unlikely]]
+                    ReportChipRegisterWrite(_context, SoundChipKind::Opl4Wave, 0, _waveLatch, value);
+            }
             break;
 
         default:

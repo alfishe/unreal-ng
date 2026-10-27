@@ -3267,6 +3267,47 @@ namespace PythonBindings
                "host_data, host_reply) after the main CPU's access; value / vmask filter the byte; cpu defaults to the "
                "kind's side. Returns the id; ValueError with the reason when refused",
                py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
+            .def("bp_chipreg", [](Emulator& self, const std::string& chipName, int32_t reg, int32_t end, int32_t unit,
+                                  int32_t value, int32_t vmask, const std::string& hits) -> int {
+                SoundChipKind chip = SoundChipKind::Count;
+                if (!ParseSoundChipKind(chipName.c_str(), chip))
+                    throw py::value_error("unknown chip '" + chipName + "': ay, fm, saa, opl4, opl4wave or dac");
+                if (reg < 0 || reg > 0xFFFF || end > 0xFFFF)
+                    throw py::value_error("a register is 0.." + std::to_string(SoundChipLastRegister(chip)));
+                BreakpointManager* bpm = PythonBreakpoints(self, "main");
+                if (!bpm)
+                    return -1;
+                BreakpointSpec spec;
+                spec.type = BRK_CHIPREG;
+                spec.access = 0;
+                spec.chip = static_cast<uint8_t>(chip);
+                spec.address = static_cast<uint16_t>(reg);
+                if (end >= 0)
+                {
+                    spec.hasEnd = true;
+                    spec.addressEnd = static_cast<uint16_t>(end);
+                }
+                if (unit >= 0)
+                    spec.chipUnit = static_cast<uint8_t>(unit);
+                if (value >= 0)
+                {
+                    spec.nrValue = static_cast<uint8_t>(value);
+                    spec.nrMask = 0xFF;
+                }
+                if (vmask >= 0)
+                    spec.nrMask = static_cast<uint8_t>(vmask);
+                std::string error;
+                if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                    throw py::value_error(error);
+                const uint16_t id = bpm->AddBreakpoint(spec, error);
+                if (id == BRK_INVALID)
+                    throw py::value_error(error);
+                return id;
+            }, "Add a sound chip register breakpoint: stops the main CPU after its OUT wrote the register of chip ay, fm, "
+               "saa, opl4, opl4wave or dac (end: the last register of a range; unit: one chip of the kind; value / vmask "
+               "filter the byte). Returns the id; ValueError with the reason when refused",
+               py::arg("chip"), py::arg("reg"), py::arg("end") = -1, py::arg("unit") = -1, py::arg("value") = -1,
+               py::arg("vmask") = -1, py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id, const std::string& cpu) -> bool {
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->RemoveBreakpointByID(id) : false;
