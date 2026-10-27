@@ -1,21 +1,28 @@
-# Frame presenter: smooth video at the machine's own rate, with and without VRR
+# Frame presenter: video timed by the sound, with and without VRR
 
 **Date:** 2026-10-26
 **Status:** design; measured in [POC 037](../../../tools/poc/037-frame-presenter/README.md)
 ([results](../../../tools/poc/037-frame-presenter/results.md)): fixed 60 Hz (Mac), 144 Hz and G-Sync (Windows);
 ProMotion is not measured yet (section 9).
-**Related:** [A/V sync and presentation](../2026-08-14-av-sync-and-presentation/README.md) (the frame-end latch,
-deadline pacing), [audio sync](../2026-08-17-audio-sync/audio-sync-design.md) (the DRC),
+**Owner decisions (2026-10-26):**
+- Sync is held by the sound. The audio device is the master clock; the display never paces the emulation and never
+  changes its speed or the pitch.
+- On a fixed display the default is the frame repeat; frame blending is an option.
+- Smooth motion without judder (blending and motion-compensated interpolation) is built right after the VRR path is
+  stable, not deferred. It is the presenter's own stage: ZX DLSS is for gigascreen and stays separate.
+- The work stays on the `frame-presenter` branch until all phases are done; master gets it in one piece.
+
+**Related:** [audio sync](../2026-08-17-audio-sync/audio-sync-design.md) (the DRC; "the audio device is the only master
+clock"), [A/V sync and presentation](../2026-08-14-av-sync-and-presentation/README.md) (the frame-end latch),
 [input latency and Game Mode](../2026-09-24-core-performance/unreal-ng-input-latency-and-game-mode.md) (sections 6
-and 8: the pacing options, the frontend options), [Steam Deck rendering](../2026-10-08-steamdeck-client/rendering.md)
-(section 4: display-locked and core-clocked on the Deck).
+and 8), [Steam Deck rendering](../2026-10-08-steamdeck-client/rendering.md) (section 4).
 
 ## Contents
 
 1. [The problem](#1-the-problem)
 2. [What reaches the screen today](#2-what-reaches-the-screen-today)
-3. [The model: every frame has a time](#3-the-model-every-frame-has-a-time)
-4. [Three policies, chosen by the display](#4-three-policies-chosen-by-the-display)
+3. [The model: every frame has the time its sound plays](#3-the-model-every-frame-has-the-time-its-sound-plays)
+4. [Two policies, chosen by the display](#4-two-policies-chosen-by-the-display)
 5. [What "exceptionally smooth" takes](#5-what-exceptionally-smooth-takes)
 6. [Architecture](#6-architecture)
 7. [Cost](#7-cost)
@@ -42,36 +49,39 @@ The emulated machines run at their own frame rates. The display runs at its own.
 On a fixed display, the screen can change a frame only at a refresh. When the rates differ, a frame stays on screen
 for a whole number of refreshes, and that number beats. 50.08 Hz on 60 Hz shows 4 frames for one refresh and the fifth
 for two. A scroller moving 4 pixels per frame moves 4, 4, 4, 4, 0 pixels per refresh. The eye sees that as judder.
-It is arithmetic. No presenter removes it on a fixed 60 Hz display. Only three things do:
+It is arithmetic.
 
-- a display that follows the source (VRR);
-- a display mode at the source's rate (50 Hz on a TV, on the Steam Deck);
-- running the machine at the display's rate. This is acceptable only when the two rates are close.
+The sound decides the time (owner decision). So the machine is never sped up or slowed down to fit the display. That
+leaves two cases:
 
-What a presenter can and must do is never make it **worse** than the arithmetic:
+- **The display can follow the sound (VRR).** Every frame is shown when its sound plays, for exactly its period. No
+  judder.
+- **It cannot (a fixed refresh).** The beat stays. The presenter keeps it at the arithmetic minimum, and on request
+  hides it by blending neighbouring frames (section 4.3).
+
+In both cases the presenter never makes it worse than the arithmetic:
 
 - no frame shown for a count outside floor / ceil of the refresh ratio;
 - no frame skipped;
 - no frame shown out of order;
-- a constant delay from emulation to screen.
-
-The delay must be constant because the audio has one, and A/V sync depends on both being constant.
+- every frame on screen at the time its sound plays.
 
 ## 2. What reaches the screen today
 
 The path, from the emulation thread to the display:
 
 1. `MainLoop` paces each frame with an absolute deadline (`TimeHelper::WaitUntilPrecise`).
-2. At frame end, `Screen::LatchFramebuffer` copies the frame into one of 12 present slots.
-3. Video is delayed by `_presentDelayFrames` (default 2, `[VIDEO] AVSyncDelayFrames`) so it lands with the audio.
-4. `NC_VIDEO_FRAME_REFRESH` reaches `DeviceScreenGLWindow` (a `QOpenGLWindow`, swap interval 1), which calls `update()`.
-5. Qt paints at its next opportunity. `paintGL` copies "the presented slot" and swaps.
+2. The DRC keeps the audio ring at 40 ms (`DRC_TARGET_MS`) by trimming the resampler within ±0.5 %.
+3. At frame end, `Screen::LatchFramebuffer` copies the frame into one of 12 present slots.
+4. Video is delayed by `_presentDelayFrames` (default 2, `[VIDEO] AVSyncDelayFrames`) so it lands with the audio.
+5. `NC_VIDEO_FRAME_REFRESH` reaches `DeviceScreenGLWindow` (a `QOpenGLWindow`, swap interval 1), which calls `update()`.
+6. Qt paints at its next opportunity. `paintGL` copies "the presented slot" and swaps.
 
 Nothing ties the choice of frame to the refresh that will show it. The slot is chosen by counting frames, not by time.
-GL gives no feedback on when a swap reached the screen.
+Two frames of delay match the audio only at about 50 Hz. GL gives no feedback on when a swap reached the screen.
 
-What POC 037 measured for this pattern (the `a-signal` variant), against a presenter that picks the newest frame on
-every refresh (`b-vsync`):
+What POC 037 measured for this pattern (`a-signal`) against a presenter that picks the newest frame on every refresh
+(`b-vsync`):
 
 | Host | Pattern | Frames outside the beat pattern per minute | Note |
 |---|---|---|---|
@@ -84,122 +94,166 @@ every refresh (`b-vsync`):
 
 Today's path is not broken at 60 Hz. At high refresh rates it shows 2.4-3.6 times more frames for a wrong number of
 refreshes than a refresh-driven presenter. The cause is that the frame shown is whichever one was latched when Qt got
-around to painting. The bigger gap is elsewhere: today's path cannot use VRR at all. With G-Sync enabled for windows,
-the GL window stayed at 144 Hz, while a native present-at-time in the same kind of window drove the panel at the
-machine's rate. And today's path has no way to know what the screen did.
+around to painting.
 
-## 3. The model: every frame has a time
+The bigger gap is VRR: today's path cannot use it at all. With G-Sync enabled for windows, the GL window stayed at
+144 Hz, while a native present-at-time in the same kind of window drove the panel at the machine's rate. And today's
+path has no way to know what the screen did.
 
-The core change is small. It is the base of everything else.
+## 3. The model: every frame has the time its sound plays
 
-Each present slot carries:
+The sound already has a precise clock: the audio device consumes samples at its crystal's rate, and the DRC keeps the
+ring at its target. The frame's picture should reach the screen when the frame's sound reaches the speaker. So the
+frame's time is read off the audio path, not set by a frame count.
 
-| Field | Meaning |
-|---|---|
-| `serial` | the frame's number; never reset (exists: `_presentSlotSerial`) |
-| `emulatedNs` | the emulated time at frame end (T-states / clock), rebased at a reset, a snapshot load or a speed change |
-| `latchNs` | the host time of the latch (`steady_clock`; the same clock as the presenter's timestamps on every OS, section 6.3) |
+**What the audio path records** (`SoundManager`, `AudioClock`, new):
 
-The presenter computes each frame's **target time**:
+- At each latch, `W(n)`: the total device-rate sample frames written to the ring up to the end of frame n's sound.
+  The emulation thread writes it into the frame's present slot.
+- In each device callback, a pair (total sample frames consumed, the callback's host time). The device's output
+  latency (miniaudio: period size x periods, 11.6 ms today) is added, so the pair says when that sample is heard.
+- A line through these pairs: host time = a + b x consumed. It is a least-squares fit over the last ~2 s, updated per
+  callback. `b` is the device's real sample period in host time, crystal error included. The callback times jitter
+  by milliseconds; the fit's line does not.
+
+**The frame's target time:**
 
 ```
-target(n) = anchor + (emulatedNs(n) - emulatedNs(anchor frame)) / speed + D
+target(n) = a + b x W(n) + offset
 ```
 
-- `anchor` is the host time of a reference latch. It is re-taken when the deadline in `MainLoop` re-anchors (pause,
-  stall, speed change).
-- `D` is the presentation delay, a time, not a frame count. It replaces `_presentDelayFrames`. Its default is the audio
-  path's latency: the DRC ring target plus the device buffer, which today's default of 2 frames approximates. Video and
-  audio then leave the emulator at the same emulated instant and reach the user at the same host instant. A/V offset
-  becomes ~0 by construction, not by a frame count that only fits one machine rate.
+- `offset` is the user's lip-sync trim, 0 by default. There is no configured video delay any more: the delay comes
+  out of the audio path. The ring target (40 ms) and the device buffer (11.6 ms) put video at about latch + 52 ms
+  today, and the same holds at every machine rate.
+- Temporal effects (ZX DLSS, the gigascreen mixer) need their look-ahead before the target. They do not move the
+  target. If an effect needs more time than the audio delay leaves, the audio delay grows by that much (the DRC
+  target).
+- **Without a running audio device** (no device, sound disabled, turbo, a recording without playback) the same formula
+  runs on the emulated clock: `a` = the anchor's host time, `b x W(n)` = the frame's emulated time since the anchor.
+  The anchor is re-taken when `MainLoop`'s deadline re-anchors. Muting through the mixer does not stop the device, so
+  the audio clock stays.
 
-Why the emulated clock and not `latchNs` alone: the latch time carries the scheduler's jitter (POC: p99 0.9-1.8 ms
-under load on macOS). With latch-based targets, that jitter reaches the screen under VRR: the presents' interval
-error was 1.2 ms p99, against 0.5 ms with targets on the source clock. The emulated time is exact. With the anchor taken from the same deadline `MainLoop` already
-keeps, targets are as smooth as the emulated machine is. The latch time stays in the slot to check the deadline: a
-frame latched after `target - margin` is late, and is counted.
+Why this gives smooth targets: consecutive frames differ by their sample count, `b x (W(n+1) - W(n))`. That is the
+machine's frame period, changed by the DRC trim. The trim moves slowly and stays within ±0.5 %, so neighbouring
+frames differ by at most ~0.1 ms. The POC shows what the alternative costs: targets from the latch time carried its
+scheduler jitter to the screen (present interval error 1.2 ms p99), and targets on a steady clock cut it to 0.5 ms.
 
-Two operations then serve all policies:
+Two operations serve all policies:
 
-- `FrameAt(t)`: the newest frame whose target is ≤ t (for a refresh at time t).
+- `FrameAt(t)`: the newest frame whose target is ≤ t, and the next one (for a refresh at time t).
 - `Next()`: the oldest frame not yet presented, with its target (for present-at-time).
 
-## 4. Three policies, chosen by the display
+The latch time stays in the slot to check the deadline: a frame latched later than `target - margin` is late, and is
+counted.
+
+## 4. Two policies, chosen by the display
 
 ```mermaid
 flowchart TD
-    S[start / mode change / refresh change] --> V{VRR display<br/>and source rate within its range?}
-    V -- yes --> C[present at target time<br/>c-vrr]
-    V -- no --> L{"a refresh multiple k with<br/>|k x source / refresh - 1| within the lock band?"}
-    L -- yes --> D[display-locked<br/>d-locked]
-    L -- no --> B[newest frame per refresh<br/>b-vsync]
-    C -- "refresh stays fixed<br/>(feedback: VRR did not engage)" --> B
-    D -- "missed refreshes, occluded,<br/>speed changed" --> B
+    S[start / display change / refresh change] --> V{VRR display<br/>and the frame rate within its range?}
+    V -- yes --> C[present at the frame's audio time<br/>c-vrr]
+    V -- no --> B[the frame of each refresh's audio time<br/>b-vsync]
+    C -- "refresh stays on the fixed grid<br/>(VRR did not engage)" --> B
+    B --> M{Smooth motion}
+    M -- off --> R[repeat: the beat pattern]
+    M -- blend --> BL[blend the two frames around the refresh's time]
+    M -- interpolate --> MC[move each cell to its position at the refresh's time<br/>blend where no motion is found]
 ```
 
-### 4.1 VRR: present each frame at its target time (`c-vrr`)
+### 4.1 VRR: present each frame at its audio time (`c-vrr`)
 
 Each frame is presented once, at `target(n)`. The display starts a refresh when the frame arrives. Every frame is on
-screen for exactly one source period: no beat, no judder, the correct speed, the correct pitch.
+screen for exactly its period, in step with its sound: no judder, no speed or pitch change.
 
-- **macOS:** `[commandBuffer presentDrawable:drawable atTime:target]` on a `CAMetalLayer`. On a fixed 60 Hz display it
-  degrades gracefully. The system shows the frame at the first refresh after `target`, which is the same beat pattern
-  as `b-vsync` at the lowest latency of all measured variants (POC: 28 ms latch to screen, span = one refresh).
-  `afterMinimumDuration:` is wrong for this: on 60 Hz it halved the rate to 30 fps.
-- **Windows:** a flip-model swap chain (`FLIP_DISCARD`) created with `ALLOW_TEARING`, `Present(0,
+- **macOS:** `[commandBuffer presentDrawable:drawable atTime:target]` on a `CAMetalLayer`.
+  - On a fixed 60 Hz display it degrades gracefully. The system shows the frame at the first refresh after `target`.
+    That is the same beat pattern as `b-vsync`, at the lowest latency of all measured variants (POC: 28 ms latch to
+    screen, span = one refresh).
+  - `afterMinimumDuration:` is wrong for this: on 60 Hz it halved the rate to 30 fps.
+- **Windows:** a flip-model swap chain (`FLIP_DISCARD`) created with `ALLOW_TEARING`, then `Present(0,
   DXGI_PRESENT_ALLOW_TEARING)` at `target(n)` from a high-resolution waitable timer. That is the documented condition
-  for VRR in a window. G-Sync also has to be enabled for windowed mode in the driver ("Set up G-SYNC": windowed and
-  full screen); with the default (full screen only) the panel stays at its maximum rate.
+  for VRR in a window.
+  - G-Sync also has to be enabled for windowed mode in the driver ("Set up G-SYNC": windowed and full screen). With
+    the default (full screen only) the panel stays at its maximum rate.
   - Measured with G-Sync on (AW3821DW, RTX 4090): one refresh per frame at 48.9, 49.4, 50.1 and 61.3 Hz from a plain
     window.
-  - Per-frame error with targets on the source clock: 0.05 ms p50 / 0.5 ms p99 at the present, 0.2-0.55 ms p50 /
-    1.7-3.5 ms p99 on screen as the kernel's vblanks show it.
-  - For comparison, the fixed-rate beat is 6.2-7.8 ms p99 at 144 Hz and 13.4 ms at 60 Hz.
+  - Per-frame error with targets on a steady clock: 0.05 ms p50 / 0.5 ms p99 at the present; 0.2-0.55 ms p50 /
+    1.7-3.5 ms p99 on screen as the kernel's vblanks show it. For comparison, the fixed-rate beat is 6.2-7.8 ms p99 at
+    144 Hz and 13.4 ms at 60 Hz.
 - **Below the VRR floor** (Pentagon 48.83 Hz on a panel with a 48 Hz floor), the driver's low-framerate compensation
   repeats refreshes. The frame time stays exact.
 - **Detecting VRR:**
   - macOS reports it: `NSScreen.minimumRefreshInterval` vs `maximumRefreshInterval`.
-  - Windows has no API that says G-Sync is active for a window. The presenter verifies instead. In `c-vrr` it watches
-    the display's refresh times (section 6.3). If they stay on the fixed grid, VRR did not engage, and the presenter
-    falls back to `b-vsync` with a one-time note in the log.
+  - Windows has no API that says G-Sync is active for a window. The presenter verifies instead: in `c-vrr` it watches
+    the display's refresh times (section 6.3). If they stay on the fixed grid, VRR did not engage. The presenter then
+    falls back to `b-vsync` and reports it in the stats.
 
-### 4.2 Fixed display, close rates: display-locked (`d-locked`)
+### 4.2 Fixed display: the frame of each refresh's audio time (`b-vsync`)
 
-When `k x source rate` is within the lock band of the refresh rate (k = 1 for 61.13 Hz on 60; k = 2 for 50.08 Hz on
-100 Hz), the display's refresh drives the emulation. Every k-th refresh ticks `MainLoop` instead of its own deadline.
-Exactly one frame is shown per k refreshes. The cadence is perfect. The machine then runs at the display's rate, not
-its own: Next VGA 2 runs 1.86 % slower on 60 Hz, and VGA 0 3.18 % faster.
-
-Audio follows through the DRC. Its trim range has to cover the rate ratio. Today it is ±0.5 % (`DRC_MAX_TRIM`). In
-this mode it widens to the lock band. Measured with the DRC model over the real display-link ticks:
-
-| Source on 60 Hz | Machine speed | Ring error, trim ±0.5 % | Ring error, trim ±4 % |
-|---|---|---|---|
-| Next VGA 0, 58.15 Hz | +3.18 % | 480 ms (the ring runs away) | 1.4 ms |
-| Next VGA 1, 59.36 Hz | +1.06 % | 102 ms | 6.4 ms |
-| Next VGA 2, 61.13 Hz | -1.86 % | 247 ms | 1.4 ms |
-
-The price is speed and pitch. 1.86 % is a third of a semitone; a trained ear hears it in a sustained tone. So:
-
-- **Default lock band ±0.5 %**, inaudible. This covers 50.08 Hz on a 50 Hz mode (0.16 %) and 48.83 Hz on 49 Hz
-  (0.35 %). It is the Steam Deck rule (rendering.md section 4). No Next 60 Hz timing is within it on a 60 Hz panel.
-- **Opt-in up to ±4 %**, as the "Sync to display" setting. This covers Next 60 Hz on any 60 Hz panel.
-- Leave the mode (back to `b-vsync`) on missed refreshes (more than 2 in 1 s), occlusion, a speed change, turbo, or the
-  debugger stepping. The deadline clock takes over from the last tick without a jump.
-
-### 4.3 Fixed display, other rates: the newest frame per refresh (`b-vsync`)
-
-On every refresh at time `t`, present `FrameAt(t)`. That gives exactly the arithmetic beat pattern and nothing worse.
-It fixes the Windows numbers of section 2, and it is the fallback of both other policies.
+On every refresh, the presenter takes the time `t` the refresh will reach the screen, and presents `FrameAt(t)`. That
+gives exactly the arithmetic beat pattern, and every frame is on screen within one refresh of its sound. It fixes the
+Windows numbers of section 2, and it is the fallback of `c-vrr`.
 
 - **macOS:** a `CADisplayLink` (`[NSScreen displayLinkWithTarget:selector:]`, macOS 14+) and `presentDrawable:atTime:`
   of the link's target timestamp. Do not use `CAMetalDisplayLink` for this: its target was 3 refreshes ahead even with
   `preferredFrameLatency = 1`, 58-75 ms latch to screen against 42-58 ms for `CADisplayLink`.
-- **Windows:** wait on the swap chain's frame-latency waitable object (maximum latency 1), then `Present(1, 0)`. The
-  object is signalled once at the start and then once per present. Consume it only with a frame to present, or it
-  never comes back: the POC lost a whole run to this.
+- **Windows:** wait on the swap chain's frame-latency waitable object (maximum latency 1), then `Present(1, 0)`.
+  - The object is signalled once at the start and then once per present. Consume it only with a frame to present, or
+    it never comes back: the POC lost a whole run to this.
+  - The refresh's time is the next vblank plus the swap chain's depth.
 - **GL fallback** (no native backend on the platform): `QOpenGLWindow` with `requestUpdate()` in a loop instead of
   `update()` on the signal, and `FrameAt(now + one refresh)` in `paintGL`.
+
+On a fixed 120 or 144 Hz display the beat's step is one refresh, 8.3 or 6.9 ms. Few people see it. On 60 Hz it is
+16.7 ms, a visible hitch in every scroller. The real remedies there are a VRR display or a 50 Hz display mode. The
+presenter can name both in a one-time hint when it sees a 60 Hz display and a 50 Hz machine.
+
+### 4.3 Fixed display, optional: blending (`Smooth motion`)
+
+For a refresh at `t` between the targets of frames A and B, the presenter shows a mix of the two:
+
+```
+w = (t - target(A)) / (target(B) - target(A))      # 0..1
+pixel = (1 - w) x A + w x B
+```
+
+The scroller then moves on every refresh, in steps that follow the time. It trades the hitch for softness: during
+motion, pixel art shows a semi-transparent double edge, and a FLASH attribute's swap fades over one refresh instead
+of switching.
+
+- **No extra latency.** Frame B has to exist at time `t`. Targets sit about 52 ms after their latch (the audio delay,
+  section 3), and B's target is less than one period after `t`. So B was latched more than 30 ms before it is needed.
+  Blending works whenever the audio delay is more than one period plus the draw.
+- **Cost:** one more texture (frame B) and a two-texture fragment shader, about the cost of today's draw.
+- **Default off** (owner decision). It is a setting (`SmoothMotion = blend`), mostly useful on 60 Hz displays.
+- Where frames are identical (static screens) the mix changes nothing.
+
+### 4.4 Fixed display, optional: motion-compensated interpolation
+
+Blending shows two positions of a moving object at once. Interpolation instead draws the object at the position it
+has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright copies.
+
+- **Motion from the frames.** ZX graphics move in whole pixels or attribute cells, on a black or flat background,
+  often whole-screen (scrollers) or in a few sprites. A block search between A and B on the 1-bit-per-pixel bitmap
+  (before the palette) finds them cheaply: per 8x8 cell, the offset within ±16 px that matches best, plus a global
+  offset for whole-screen scrolls. Cells with no clean match (new content, colour changes, FLASH) fall back to the
+  blend of section 4.3, so the worst case is the blend, never a wrong picture.
+- **Where it runs.** On the presenter's side, once per emulated frame pair, not per refresh: the vectors of A -> B are
+  computed when B arrives, and each refresh only warps by `w`. The audio delay (section 3) leaves 30+ ms for it.
+- **Not ZX DLSS.** ZX DLSS (`TemporalEffects`) reconstructs gigascreen pictures inside the core's present slots. This
+  stage works on whatever the slots hold, after it, and never writes back.
+- The cost and quality are measured first in a POC on the scroller, sprite and gigascreen content of `testdata/`
+  (section 8).
+
+### 4.5 Rejected: the display drives the emulation
+
+
+
+POC 037 measured a "display-locked" mode: the refresh ticks `MainLoop`, one frame per refresh. Its cadence was perfect
+(|dur - 1/R| ≤ 0.5 ms). But the machine ran 1.9-3.2 % off its own rate (Next 60 Hz on a 60 Hz panel), and the DRC
+needed a ±4 % trim, which shifts the pitch. It contradicts the audio design ("the audio device is the only master
+clock") and the owner's decision, so it is not part of the design. The Steam Deck client's display-locked mode
+(rendering.md section 4) is subject to the same decision and needs revisiting there.
 
 ## 5. What "exceptionally smooth" takes
 
@@ -207,42 +261,47 @@ The policies are half of it. The other half are the conditions that made the POC
 run that was not:
 
 1. **Pick by time, never by count.** A frame-count delay is correct for one rate only. Section 3.
-2. **Present from a thread of its own, not from the GUI thread.** The Qt GUI thread also runs the debugger, the memory
+2. **Targets from a clean clock.** The audio clock's fitted line, not the callback times and not the latch times.
+   Section 3.
+3. **Present from a thread of its own, not from the GUI thread.** The Qt GUI thread also runs the debugger, the memory
    viewer and the menus. Any of them can delay a paint past the refresh. The presenter thread owns the swap chain and
-   wakes per refresh (`b`, `d`) or per frame (`c`). The GUI thread only resizes it.
-3. **Precise sleeps on Windows.** MinGW's `std::this_thread::sleep_for` has a ~15.6 ms granularity. The POC's
+   wakes per refresh (`b`) or per frame (`c`). The GUI thread only resizes it.
+4. **Precise sleeps on Windows.** MinGW's `std::this_thread::sleep_for` has a ~15.6 ms granularity. The POC's
    producer had a 24.6 ms p99 jitter until its sleep used a high-resolution waitable timer, as
    `TimeHelper::WaitUntilPrecise` already does. The presenter's present-at-time wait must use the same timer, and spin
    only the last ~0.5 ms.
-4. **The emulation thread's real-time policy** stays as it is (`ThreadHelper::setRealtimePriority`). Under a load
-   average of 40-90 on the Mac Studio, the producer's latch jitter stayed at 0.9-1.8 ms p99.
-5. **Keep the display awake.**
+5. **The emulation thread's real-time policy** stays as it is (`ThreadHelper::setRealtimePriority`). Under a load
+   average of 40-90 on the Mac Studio, the producer's latch jitter stayed at 0.9-1.8 ms p99. With targets from the
+   audio clock, that jitter no longer reaches the screen. It only has to stay under the audio delay.
+6. **Keep the display awake.**
    - On Windows, a monitor that went to sleep has no vblanks, and DWM then composes on a ~60 Hz timer. Every
      measurement on the 144 Hz host was wrong until the run woke it. The app sets
      `SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED)` while a machine runs unpaused.
    - On macOS the matching call is `beginActivityWithOptions:NSActivityLatencyCritical | NSActivityUserInitiated`, which
      also keeps App Nap away.
-6. **Know when nobody sees the window.** An occluded window's presents are dropped (macOS `presentedTime` = 0; the
-   window's `occlusionState`), and display links slow down. Emulation never paces from presents except in `d-locked`,
-   and `d-locked` leaves on occlusion.
-7. **Measure what the screen did, in production too.** The same feedback that verified the POC counts frames outside
-   the beat pattern, late frames and dropped presents. The counts go to the automation planes (section 6.4), so a
-   regression is visible, not felt.
+7. **Know when nobody sees the window.** An occluded window's presents are dropped (macOS `presentedTime` = 0; the
+   window's `occlusionState`), and display links slow down. Nothing paces from presents, so the emulation and the
+   sound do not notice. The presenter only stops counting dropped presents as errors.
+8. **Measure what the screen did, in production too.** The same feedback that verified the POC counts frames outside
+   the beat pattern, late frames, dropped presents and the screen-to-sound offset. The counts go to the automation
+   planes (section 6.4), so a regression is visible, not felt.
 
 ## 6. Architecture
 
 ### 6.1 Core (`core/`)
 
-- `Screen` present slots gain `emulatedNs` and `latchNs` next to `_presentSlotSerial`. Everything stays under
-  `_presentMutex`, as today. The latch writes two more integers.
-- `FrameClock` (new, `core/src/emulator/video/`): the anchor, the delay `D`, `target(n)`, re-anchoring on `MainLoop`'s
-  events. It has no thread and no OS calls.
+- `SoundManager` gains `AudioClock`: the per-callback (consumed, host time + output latency) pairs from the device
+  callback, the fitted line, `W(n)` at each latch. The callback side is two integers into a lock-free ring. The fit
+  runs on the reader's side.
+- `Screen` present slots gain `audioPos` (`W(n)`), `emulatedNs` and `latchNs` next to `_presentSlotSerial`. Everything
+  stays under `_presentMutex`, as today. The latch writes three more integers.
+- `FrameClock` (new, `core/src/emulator/video/`): `target(n)` from the audio clock's line, or from the emulated clock
+  when no device runs; the lip-sync offset; the switch between the two clocks without a jump. It has no thread and no
+  OS calls.
 - `Screen::CopyFrameAt(t, dst, &info)` and `Screen::CopyNextFrame(dst, &info)` next to `CopyPresentedFramebuffer`.
-  `info` holds the serial, the target and the geometry. They respect the temporal effects' slots (ZX DLSS) exactly as
-  `PresentedSlotLocked` does today: a temporal effect adds its look-ahead to `D`.
-- `MainLoop` gains an external tick source for `d-locked`: `SetFrameTick(callback)`. While one is set, the loop waits
-  for the tick, bounded by the deadline plus a refresh, instead of the deadline alone.
-- `SoundManager`: `DRC_MAX_TRIM` becomes a per-mode limit (±0.5 % default, the lock band in `d-locked`).
+  `info` holds the serial, the target and the geometry. `CopyFrameAt` can also return the following frame and the blend
+  weight. Both respect the temporal effects' slots (ZX DLSS) exactly as `PresentedSlotLocked` does today.
+- Not changed: `MainLoop`'s pacing and the DRC. The emulation and the sound do not know the presenter exists.
 
 ### 6.2 unreal-qt: the presenter
 
@@ -252,7 +311,7 @@ classDiagram
         <<interface>>
         +Start(window, frameSource)
         +Stop()
-        +SetPolicy(policy)
+        +SetPolicy(policy, smoothMotion)
         +Stats() PresentStats
     }
     class MetalPresenter {
@@ -283,10 +342,10 @@ classDiagram
   - Qt therefore stays the shell. SDL3 has nothing to add here: `SDL_GPU` has no present-at-time and no presentation
     feedback, so the native presenter is needed under SDL3 too.
 - The draw is what `DeviceScreenGLWindow::paintGL` does today: the texture upload, the integer or fit scaling, the
-  shaders. It is ported to Metal and D3D11. The GL path stays as the fallback (Linux until a Vulkan presenter exists)
-  and runs the `b-vsync` pick.
+  shaders, plus the blend of section 4.3. It is ported to Metal and D3D11. The GL path stays as the fallback (Linux
+  until a Vulkan presenter exists) and runs the `b-vsync` pick.
 - The overlays now drawn by `DeviceScreenGLWindow` (OSD, HUD) move with it. They are textures composited in the same
-  pass.
+  pass, never blended between frames.
 - Linux: a Vulkan presenter later. `VK_KHR_present_wait` / `VK_GOOGLE_display_timing` where the compositor offers them,
   `wp_presentation` on Wayland. The Steam Deck client has its own presenter (rendering.md) and shares `FrameClock`.
 
@@ -301,17 +360,21 @@ classDiagram
 `IDXGIOutput::WaitForVBlank` returns at once in a window. `DwmGetCompositionTimingInfo`'s `qpcVBlank` had gaps of
 up to 166 ms (p99), and it ran on a ~60 Hz timer while the monitor slept. Neither works for this.
 
+The audio clock and the screen times are on the same host clock, so the presenter measures the screen-to-sound offset
+directly: the screen time minus the frame's target.
+
 ### 6.4 Settings and automation planes
 
-- `[VIDEO] PresentPolicy = auto | vrr | locked | vsync`. `auto` is the flowchart of section 4.
-- `[VIDEO] PresentDelayMs = auto | <ms>`. `auto` = the audio path's latency. It replaces `AVSyncDelayFrames`; the old
-  key is read once and converted.
-- `[VIDEO] DisplayLockBand = 0.5` (percent; up to 4).
+- `[VIDEO] PresentPolicy = auto | vrr | vsync`. `auto` is the flowchart of section 4.
+- `[VIDEO] SmoothMotion = off | blend | interpolate` (sections 4.3, 4.4), default off. A VRR display ignores it:
+  there every frame is shown for its own period.
+- `[VIDEO] LipSyncOffsetMs = 0`. It replaces `AVSyncDelayFrames`, whose job the audio clock now does; the old key is
+  read once and dropped.
 - Per the automation-planes guidelines, every plane gets the same:
-  - CLI, Python, Lua, MCP, REST and WebSocket: read and set the policy and the delay;
-  - read `PresentStats`: the policy in effect, the display's refresh and VRR state, frames shown outside the beat
-    pattern, late, dropped, the latch-to-screen p50 / p99;
-  - WebSocket: a topic for policy changes (VRR fell back, lock entered or left).
+  - CLI, Python, Lua, MCP, REST and WebSocket: read and set the policy, smooth motion and the offset;
+  - read `PresentStats`: the policy in effect, the display's refresh and VRR state, the clock in use (audio or
+    emulated), frames shown outside the beat pattern, late, dropped, the screen-to-sound offset p50 / p99;
+  - WebSocket: a topic for policy changes (VRR fell back, the clock switched).
   - Reads never touch the emulation thread: the presenter publishes `PresentStats` once a second.
 
 ## 7. Cost
@@ -321,34 +384,44 @@ Measured in POC 037 unless marked. The POC's frames are 384x288x4 bytes, a littl
 
 | Item | Cost |
 |---|---|
-| Core, per frame | two more integers per latch under the existing mutex; `FrameClock` math per present: nanoseconds |
-| Copy per present | one frame copy (~40 µs, as `CopyPresentedFramebuffer` today); on a refresh that repeats a frame, nothing (the presenter keeps the uploaded texture and compares serials) |
+| Audio callback | two integers per callback (~170 per second) into a lock-free ring (design, not measured) |
+| Audio clock fit | a running least-squares line over ~2 s of pairs, per callback or per present: microseconds (design) |
+| Core, per frame | three more integers per latch under the existing mutex; `target(n)`: nanoseconds |
+| Copy per present | one frame copy (~40 µs, as `CopyPresentedFramebuffer` today); on a refresh that repeats a frame, nothing (the presenter keeps the uploaded texture and compares serials); with smooth motion, the second frame once per frame, not per refresh |
 | Presenter CPU per present, macOS Metal | 0.15-0.22 ms on the presenter thread (upload, encode, present), Mac Studio M1 Ultra |
 | Today's Qt GL path, for comparison | 0.48-0.52 ms per paint, on the GUI thread |
 | Presenter CPU, Windows | not resolved: `GetThreadTimes` has a 15.6 ms granularity there; the next runs use `QueryThreadCycleTime` |
-| Threads | one presenter thread per emulator window, waking at the refresh rate (`b`, `d`: 60-144 per second) or the frame rate (`c`: ~50 per second); one vblank-watch thread per window on Windows |
+| Smooth motion, blend | one more texture and a two-texture shader: about one more draw per refresh (design, not measured) |
+| Smooth motion, interpolate | a block search per frame pair (1-bit bitmap, 1584 cells of 8x8, ±16 px) on the presenter thread, and a warp per refresh; the POC of phase 5 measures it (design) |
+| Threads | one presenter thread per emulator window, waking at the refresh rate (`b`: 60-144 per second) or the frame rate (`c`: ~50 per second); one vblank-watch thread per window on Windows |
 | Memory | the native swap chain (2-3 back buffers at the window size) replaces the GL default framebuffer; no change in the core's slots |
-| Latency, latch to screen | `c-vrr`: `D` exactly (POC with D = one period: 28 ms on the Mac at 60 Hz; on Windows under G-Sync 27.4-28.8 ms to the end of scan-out, i.e. D + 6.9 ms of scan-out); `b-vsync`: `D` + up to one refresh (Mac `CADisplayLink`: 42-58 ms; Windows DXGI: 10.4 ms); `d-locked` on macOS: 33-66 ms today (the display link's pipeline depth; section 9) |
-| A/V | with `D` = the audio latency, the offset is ~0 for every machine rate, not only 50 Hz |
-| Speed and pitch | unchanged, except `d-locked` (by design, within the lock band) |
+| Latency, latch to screen | the audio delay, as today: ring target + device buffer ≈ 52 ms, the same at every machine rate; `b-vsync` adds up to one refresh. The POC ran with one period of delay to measure the presenters themselves: `c-vrr` 28 ms on the Mac at 60 Hz, 27.4-28.8 ms on Windows under G-Sync to the end of scan-out |
+| A/V | the screen time follows the sound's by construction, for every machine rate; today's 2-frame delay fits 50 Hz only |
+| Speed and pitch | unchanged in every mode |
 
 ## 8. Plan
 
 Each phase lands on its own with tests and docs.
 
-1. **Core timing.** Slot times, `FrameClock`, `CopyFrameAt` / `CopyNextFrame`, `PresentDelayMs` with the
-   `AVSyncDelayFrames` conversion. Unit tests on synthetic latch sequences (rates 48.83-61.13, re-anchor on pause and
-   speed change, ZX DLSS delay). No visible change.
+1. **Audio clock and frame times.** `AudioClock`, slot times, `FrameClock` (audio and emulated clock),
+   `CopyFrameAt` / `CopyNextFrame`, `LipSyncOffsetMs` replacing `AVSyncDelayFrames`. Unit tests on synthetic callback
+   and latch sequences: rates 48.83-61.13 Hz, callback jitter, a crystal 100 ppm off, DRC trim steps, the device
+   stopping and starting (the clock switch), pause and speed change, the ZX DLSS look-ahead. No visible change yet.
 2. **The GL path picks by time.** `GlPresenter` = today's window with `requestUpdate()` and `FrameAt`. This is the
-   first visible gain (Windows high refresh), and it is the fallback for everything after.
+   first visible gain (Windows high refresh, A/V at every rate), and it is the fallback for everything after.
 3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`.
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
    fallback, `ES_DISPLAY_REQUIRED`.
-5. **Display-locked.** `MainLoop` tick source, the DRC per-mode limit, entry and exit rules, the lock band setting.
+5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):
+   - the blend (section 4.3) in all three presenters;
+   - a POC for motion-compensated interpolation (section 4.4): the block search, the fallback, its cost; then the
+     presenters' `interpolate` mode.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines.
-7. Later: Vulkan / Wayland presenter; late input sampling in `c-vrr` and `d-locked` (input-latency doc option B,
-   nearly free once frames have target times).
+7. Later:
+   - a Vulkan / Wayland presenter;
+   - the iOS host (section 9) moves to `FrameClock` and the Metal presenter;
+   - late input sampling in `c-vrr` (input-latency doc option B, nearly free once frames have target times).
 
 ## 9. Open items
 
@@ -356,15 +429,20 @@ Each phase lands on its own with tests and docs.
   event delivery or the panel. A time-critical measuring thread did not shrink it. An optical measurement (photodiode
   or a high-speed camera) would separate them. It does not change the design.
 - **G-Sync needs the windowed setting.** Most users have the driver default (full screen only). The app cannot change
-  it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. Then it falls back to `b-vsync` and says so in
+  it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. It then falls back to `b-vsync` and says so in
   the stats, with a hint where to enable it.
 - **ProMotion is not measured** (the MacBook Pro was not available to the POC). Apple's documentation for display
-  links speaks of frame rates that divide the panel's maximum (120, 60, 40, 30, 24 Hz); whether
+  links speaks of frame rates that divide the panel's maximum (120, 60, 40, 30, 24 Hz). Whether
   `presentDrawable:atTime:` gets arbitrary intervals (20 ms for 50 Hz) on the built-in panel is exactly what the
   measurement has to show. If it does not, `c-vrr` there behaves like `b-vsync` at 120 Hz (a frame for 2 or 3
   refreshes: 16.7 / 25 ms against 20 ms). That is still smoother than 60 Hz.
-- **`d-locked` latency on macOS** is 2-4 refreshes through both display links. The frame ticked at refresh N is
-  presented for N + 2 or later. Presenting at the link's own target timestamp with a shorter drawable queue
-  (`maximumDrawableCount = 2`) is the next thing to try.
-- **The owner's call:** whether `d-locked` beyond ±0.5 % is offered at all (speed and pitch change), and whether
-  `auto` may enter it by itself.
+- **iOS / iPadOS.** The iOS host (ios-host-design.md, section 6.3) uses `CAMetalLayer` and `CADisplayLink`, the
+  same APIs as the macOS presenter, so it shares that presenter. ProMotion iPhones and iPads (10-120 Hz) are adaptive,
+  not free-running VRR: an app asks `CADisplayLink.preferredFrameRateRange`, and the system picks one of the panel's
+  rates, which divide 120 (120, 60, 40, 30, 24 Hz...). 50 Hz is not among them. So the expectation is the 120 Hz beat
+  (a frame for 2 or 3 refreshes), plus smooth motion on top; `presentDrawable:atTime:` with exact times has to be
+  measured on a device, as for the MacBook. Fixed 60 Hz iPhones and iPads get `b-vsync` and smooth motion. External
+  displays on iPad have no VRR.
+- **The audio clock is designed, not measured.** The POC timed frames on a steady clock. Phase 1 has to show that the
+  fitted line of a real device (miniaudio on CoreAudio and WASAPI) is as smooth: target interval error under 0.1 ms
+  beyond the DRC trim.

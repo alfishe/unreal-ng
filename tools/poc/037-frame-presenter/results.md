@@ -173,5 +173,7 @@ Decision rules of the charter:
   quarter of the fixed 60 Hz beat and half of the 144 Hz one. Proposed as the VRR default; an optical measurement
   would settle the tail.
 - `d` as an option: the jitter rule (< 0.5 ms) is met for VGA 0 and VGA 2, not for VGA 1 (1.14 ms, one run); the DRC
-  rule is met with the limit widened to ±4 % in that mode. Proposed as an opt-in, VGA 1 to be re-measured.
+  rule is met with the limit widened to ±4 % in that mode. Rejected by the owner (2026-10-26): the sound is the master
+  clock, the display never paces the emulation or shifts the pitch. Fixed displays get the beat, with blending or
+  motion-compensated interpolation as options (the feature design, sections 4.3-4.5).
 - Shell: Qt.
