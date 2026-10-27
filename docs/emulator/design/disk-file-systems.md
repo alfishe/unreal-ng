@@ -34,7 +34,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
 | Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from the first sector in its first 4096 that starts with `SDOS` (an `.md3` file, slot files copied first onto a FAT16 card); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `isdos`, `isdos-<cylinder>` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from the first sector in its first 4096 that starts with `SDOS` (an `.md3` file, slot files copied first onto a FAT16 card); BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>` |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -114,7 +114,7 @@ sectors, 160 tracks of 16, 2 KB blocks, 128 entries, 2 boot tracks), and its `cp
 
 ## MB-02 layout
 
-BS-DOS 199..308 (`mb02fs.h`; the raw `.mb2` / `.mbd` image: [MB-02 image](../../file-formats/disk-images/mb02.md)).
+BS-DOS 199..309 (`mb02fs.h`; the raw `.mb2` / `.mbd` image: [MB-02 image](../../file-formats/disk-images/mb02.md)).
 1024-byte sectors 1..SPT on two sides, addressed by LSN `2 * SPT * track + SPT * side + (sector - 1)`, one sector a
 cluster.
 
@@ -145,6 +145,13 @@ name in the directory is written over in its entry; a full directory grows by a 
 free DIRS slot (1..255) and writes the new directory's sector with its header; a directory is deleted only empty,
 moved or renamed with its DIRS XOR, never into itself. The images were checked by an independent parser
 (free sectors, chains, both FATs), not by BS-DOS.
+
+**BS-DOS 309 on a hard disk** (divIDE, `bsdos309-hdd_bios.a80` of the BS-DOS collection): the first primary MBR
+partition of type #47 holds the floppies @1..@255 back to back, 2 MiB (4096 disk sectors) each, as many as the
+partition holds. BS-DOS turns an LSN into track, side and sector by the boot sector's SPT; the BIOS puts that sector
+at `((track * 2 + side) * 11 + sector - 1) * 2` of the floppy, 11 sectors a track whatever the boot sector says
+(93 x 2 x 11 fill the 2 MiB; a floppy of 11 sectors a track is the `.mb2` image as it is). Each floppy that opens
+is a volume `mb02-<n>`; one never formatted (FF17 formats them one by one) is left out.
 
 ## MDOS layout
 
@@ -291,10 +298,10 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 - iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
 - iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
-- ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is found only when the configuration record or a `.CDS` file on a
-  partition found names it.
-- MB-02: floppies only; files are written as CODE (type 3) with a tape header, no attributes. The BS-DOS 309 hard disk (a #47 partition of virtual discs) is not read: no
-  image to check its layout. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
+- ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is
+  found only when the configuration record or a `.CDS` file on a partition found names it.
+- MB-02: files are written as CODE (type 3) with a tape header, no attributes. The BS-DOS 309 hard disk layout
+  comes from its BIOS source, not from an image of a real disk. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
 - MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
   is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk.
 - Not read: other file systems of a hard disk.

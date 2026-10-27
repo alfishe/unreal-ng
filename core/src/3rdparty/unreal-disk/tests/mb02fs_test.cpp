@@ -1,5 +1,6 @@
 // MB-02: the BS-DOS 308 system disk (its directory tree, every body against the tape copies of the same archive), the
-// raw image told from MGT by its boot sector, a FAT chain that loops; files and directories written
+// raw image told from MGT by its boot sector, a FAT chain that loops; files and directories written; the BS-DOS 309
+// virtual floppies of a #47 hard disk partition
 
 #include "unrealdisk/mb02fs.h"
 
@@ -11,6 +12,7 @@
 #include <iterator>
 
 #include "testdata.h"
+#include "unrealdisk/blockdevice.h"
 #include "unrealdisk/diskfs.h"
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/loaders/loader_mb02.h"
@@ -91,6 +93,50 @@ std::vector<uint8_t> DdDisk()
         disk[8 * 1024 + k] = static_cast<uint8_t>(k * 7);
     return disk;
 }
+
+class MemoryDevice : public BlockDevice
+{
+public:
+    explicit MemoryDevice(std::vector<uint8_t> bytes, bool writable) : _bytes(std::move(bytes)), _writable(writable) {}
+    uint64_t SectorCount() const override
+    {
+        return _bytes.size() / kSectorSize;
+    }
+    bool ReadSector(uint64_t lba, uint8_t* dst) override
+    {
+        if (lba >= SectorCount())
+            return false;
+        std::memcpy(dst, _bytes.data() + lba * kSectorSize, kSectorSize);
+        return true;
+    }
+    bool WriteSector(uint64_t lba, const uint8_t* src) override
+    {
+        if (!_writable || lba >= SectorCount())
+            return false;
+        std::memcpy(_bytes.data() + lba * kSectorSize, src, kSectorSize);
+        return true;
+    }
+    bool IsWritable() const override
+    {
+        return _writable;
+    }
+    std::string Describe() const override
+    {
+        return "memory";
+    }
+    uint64_t ContentId() const override
+    {
+        return 0;
+    }
+    const std::vector<uint8_t>& Data() const
+    {
+        return _bytes;
+    }
+
+private:
+    std::vector<uint8_t> _bytes;
+    bool _writable = false;
+};
 
 std::unique_ptr<DiskImage> Parse(const std::vector<uint8_t>& bytes, const std::string& name, std::string& format)
 {
@@ -342,4 +388,71 @@ TEST(Mb02Fs, FilesAndDirectoriesWritten)
     std::vector<DiskFsEntry> all;
     ASSERT_TRUE(reread.List("", "", true, all, error)) << error;
     EXPECT_EQ(all.size(), 29u + 22u + 8u + 2u);
+}
+
+TEST(Mb02Fs, Bsdos309FloppiesOfTheHardDiskPartition)
+{
+    // A #47 partition at LBA 64 of three 2 MiB floppies and a bit: @1 SYS308.MB2 (11 sectors a track, as it is),
+    // @2 the DD disk of 5 sectors a track placed as the BIOS places it (11 a track), @3 never formatted
+    constexpr size_t kDisc = 4096 * 512;
+    const std::vector<uint8_t> sys = Bytes("loaders/mb02/SYS308.MB2");
+    ASSERT_EQ(sys.size(), 1847296u);
+    std::vector<uint8_t> disk((64 + 3 * 4096 + 100) * 512, 0);
+    disk[510] = 0x55;
+    disk[511] = 0xAA;
+    uint8_t* entry = disk.data() + 446 + 16;  // the second slot: the BIOS takes the first #47 one
+    entry[4] = 0x47;
+    entry[8] = 64;
+    const uint32_t count = 3 * 4096 + 100;
+    entry[12] = static_cast<uint8_t>(count);
+    entry[13] = static_cast<uint8_t>(count >> 8);
+    const size_t base = 64 * 512;
+    std::memcpy(disk.data() + base, sys.data(), sys.size());
+    const std::vector<uint8_t> dd = DdDisk();
+    for (uint32_t lsn = 0; lsn < 800; lsn++)
+    {
+        const uint32_t track = lsn / 10, side = lsn / 5 % 2, sector = lsn % 5;
+        std::memcpy(disk.data() + base + kDisc + ((track * 2 + side) * 11 + sector) * 1024, dd.data() + lsn * 1024,
+                    1024);
+    }
+
+    MemoryDevice hdd(disk, true);
+    std::string error;
+    {
+        DiskFs fs(hdd);
+        ASSERT_EQ(fs.Volumes().size(), 2u);
+        EXPECT_EQ(fs.Volumes()[0].id, "mb02-1");
+        EXPECT_EQ(fs.Volumes()[0].label, "System 308");
+        EXPECT_EQ(fs.Volumes()[0].offset, base);
+        EXPECT_EQ(fs.Volumes()[0].freeBytes, 1586 * 1024);
+        EXPECT_TRUE(fs.Volumes()[0].writable);
+        EXPECT_EQ(fs.Volumes()[1].id, "mb02-2");
+        EXPECT_EQ(fs.Volumes()[1].label, "Tiny");
+        EXPECT_EQ(fs.Volumes()[1].offset, base + kDisc);
+        std::vector<uint8_t> data;
+        ASSERT_TRUE(fs.Read("mb02-2", "two", data, error)) << error;
+        ASSERT_EQ(data.size(), 1500u);
+        EXPECT_EQ(data[1499], static_cast<uint8_t>(1499 * 7));
+        ASSERT_TRUE(fs.Read("mb02-1", "Small demo/cdebusy", data, error)) << error;
+        EXPECT_EQ(data.size(), 768u);
+        ASSERT_TRUE(fs.Write("mb02-2", "three", std::vector<uint8_t>(3000, 0x33), {}, error)) << error;
+    }
+    // Written into @2 only, at the BIOS's places
+    DiskFs fs(hdd);
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(fs.Read("mb02-2", "three", data, error)) << error;
+    EXPECT_EQ(data, std::vector<uint8_t>(3000, 0x33));
+    EXPECT_TRUE(std::equal(disk.begin(), disk.begin() + base + kDisc, hdd.Data().begin()));
+    EXPECT_TRUE(std::equal(disk.begin() + base + 2 * kDisc, disk.end(), hdd.Data().begin() + base + 2 * kDisc));
+
+    // Not writable on a device that takes no writes; no floppies without the #47 partition
+    MemoryDevice locked(disk, false);
+    DiskFs readOnly(locked);
+    ASSERT_EQ(readOnly.Volumes().size(), 2u);
+    EXPECT_FALSE(readOnly.Volumes()[0].writable);
+    entry[4] = 0x0B;
+    MemoryDevice other(disk, false);
+    DiskFs none(other);
+    for (const DiskFsVolume& v : none.Volumes())
+        EXPECT_NE(v.fs, "mb02");
 }

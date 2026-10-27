@@ -31,6 +31,8 @@ constexpr uint64_t kDefaultSectors = 63;
 constexpr uint64_t kMaxCylinderScan = 4096;
 /// Without a #49 partition the first MDOS3 slot is looked for in this many sectors from LBA 0 (2 MiB)
 constexpr uint64_t kMdos3Search = 4096;
+/// A BS-DOS 309 virtual floppy on its #47 partition: 2 MiB
+constexpr uint64_t kBsdosDisc = 4096;
 
 std::string Lower(std::string text)
 {
@@ -1838,6 +1840,62 @@ void DiskFs::Probe()
             }
         }
     }
+
+    // BS-DOS 309 (the divIDE HDD BIOS, bsdos309-hdd_bios.a80): the first primary MBR partition of type #47 holds the
+    // virtual floppies @1..@255 back to back, 2 MiB each. The BIOS places a floppy's track, side and sector (as
+    // BS-DOS computes them from the LSN with the boot sector's SPT) at ((track * 2 + side) * 11 + sector - 1) * 2:
+    // 11 sectors a track whatever the boot says, a 1024-byte sector two disk sectors
+    if (s0[510] == 0x55 && s0[511] == 0xAA)
+        for (uint32_t number = 0; number < 4; number++)
+        {
+            const uint8_t* entry = s0 + 446 + number * 16;
+            const uint64_t first = entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+            uint64_t count = entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+            if (entry[4] != 0x47 || count == 0 || first >= device.SectorCount())
+                continue;
+            count = std::min(count, device.SectorCount() - first);
+            const uint64_t discs = std::min<uint64_t>(255, count / kBsdosDisc);
+            for (uint64_t n = 1; n <= discs; n++)
+            {
+                const uint64_t base = first + (n - 1) * kBsdosDisc;
+                uint8_t boot[kSector];
+                if (!device.ReadSector(base, boot))
+                    continue;
+                const uint32_t spt = boot[6] | boot[7] << 8;
+                if (spt == 0)
+                    continue;
+                auto lbaOf = [base, spt](uint32_t lsn, uint64_t& lba) {
+                    const uint64_t track = lsn / (2 * spt), side = lsn / spt % 2, sector = lsn % spt;
+                    const uint64_t physical = (track * 2 + side) * 11 + sector;
+                    lba = base + physical * 2;
+                    return physical * 2 + 1 < kBsdosDisc;
+                };
+                Mb02FileSystem fs([&device, lbaOf](uint32_t lsn, uint8_t* dst) {
+                    uint64_t lba = 0;
+                    return lbaOf(lsn, lba) && device.ReadSector(lba, dst) && device.ReadSector(lba + 1, dst + kSector);
+                });
+                if (!fs.Open())
+                    continue;
+                if (device.IsWritable())
+                    fs.SetWriter([&device, lbaOf](uint32_t lsn, const uint8_t* src) {
+                        uint64_t lba = 0;
+                        return lbaOf(lsn, lba) && device.WriteSector(lba, src) &&
+                               device.WriteSector(lba + 1, src + kSector);
+                    });
+                DiskFsVolume v;
+                v.id = "mb02-" + std::to_string(n);
+                v.fs = "mb02";
+                v.system = "MB-02 BS-DOS";
+                v.label = Ascii(fs.Boot().name);
+                v.offset = base * kSector;
+                v.bytes = static_cast<uint64_t>(fs.Boot().Sectors()) * Mb02FileSystem::kSector;
+                v.freeBytes = static_cast<int64_t>(fs.FreeSectors()) * Mb02FileSystem::kSector;
+                v.writable = device.IsWritable();
+                add(std::move(v), std::make_unique<Mb02Driver>(std::move(fs)));
+            }
+            taken.emplace_back(first, first + count);
+            break;
+        }
 
     // iS-DOS: the whole disk is one device, or devices start at cylinder boundaries (the ATM-Turbo HDD driver)
     auto isdosAt = [&](uint64_t lba, const std::string& id) {

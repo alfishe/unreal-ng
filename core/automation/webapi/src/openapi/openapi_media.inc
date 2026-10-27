@@ -68,7 +68,7 @@
         files["description"] =
             "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS floppies, "
             "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
-            "the ATM CP/M partitions and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks of a divIDE one. "
+            "the ATM CP/M partitions and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks and BS-DOS 309 floppies (a #47 partition) of a divIDE one. "
             "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
             "files?path=<dir>[&volume=<id>][&recursive=true]: field 'entries' (path, name, directory, size, start, "
             "attributes, mtime, error, and the file system's own fields), 'notes' (loops cut, stale entries). "

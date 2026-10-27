@@ -6,9 +6,9 @@
 /// MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy
 /// (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS
 /// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
-/// out (a descriptor at a cylinder boundary), and the virtual disks of an MDOS3 partition (MBR type #49, or the whole
-/// device from its first "SDOS" sector). Reading everywhere; writing, deleting and renaming files on every one of them
-/// (a block device that takes writes).
+/// out (a descriptor at a cylinder boundary), the BS-DOS 309 floppies of a #47 partition, and the virtual disks of an
+/// MDOS3 partition (MBR type #49, or the whole device from its first "SDOS" sector). Reading everywhere; writing,
+/// deleting and renaming files on every one of them (a block device that takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and
@@ -35,7 +35,8 @@ struct DiskFsVolume
     std::string id;  ///< the name to pick it: "trdos", "plus3", "isdos", "fat" (a floppy, a superfloppy), "p1".."p4"
                      ///< (an MBR partition), "cpm" (an ATM CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
                      ///< hard disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk), "mdos-<slot>"
-                     ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more)
+                     ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more), "mb02-<n>"
+                     ///< (the BS-DOS 309 floppy @n of a #47 partition)
     std::string fs;        ///< trdos, plus3, isdos, cpm, fat12, fat16, fat32
     std::string system;    ///< what it reads as: "TR-DOS", "+3DOS", "iS-DOS Chic", "iS-DOS Classic", "FAT16"
     std::string label;     ///< the disk title or volume label
