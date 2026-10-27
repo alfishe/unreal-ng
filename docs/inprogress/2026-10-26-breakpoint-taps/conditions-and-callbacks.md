@@ -278,6 +278,14 @@ what it built.
    frame hooks at the frame end (not on TTD replay); writes refused while TTD is not idle. `unpaced` holds the host
    audio (`HostHoldReason::Unpaced`) after 3 long frames, releases after 50 calm ones; `hooks` status on every plane.
 5. **Logic callbacks** with TTD journaling; the GS read-value hooks.
+   Built 2026-10-27 (logic callbacks): `CallbackRole` `view` / `logic` per frame or sync callback (`role =`
+   on Lua and Python, `role` on every list). A logic call's writes are kept (`HookEdits`) and made at the next
+   instruction boundary (step-work bit `kStepWorkScriptEdits`), so live and replay agree. The engine records them as
+   a `DebuggerEdit` with a lean payload (kind 9: bytes through the CPU's view; the CPU when registers were set), which
+   the replay applies without running the hook. TTD v1 refuses them. The hook state has no host randomness
+   (`math.random` from a fixed seed; `math.randomseed` needs a seed). A failed or aborted call writes nothing.
+   **The GS read-value hooks wait:** the card CPU has no taps or debug bus callbacks yet (gs-debugger design §4, "No
+   code" in its TODO), so there is no card read to hang a value override on.
 
 ### 9.1 Documentation per phase
 

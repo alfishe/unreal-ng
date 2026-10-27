@@ -247,8 +247,8 @@
                                   "last_overrun_us", "aborted", "instructions"};
         for (const char* name : integers)
             cb["properties"][name]["type"] = "integer";
-        const char* strings[] = {"on", "mode", "owner", "label", "target", "event", "policy", "state", "reason",
-                                 "last_error"};
+        const char* strings[] = {"on", "mode", "role", "owner", "label", "target", "event", "policy", "state",
+                                 "reason", "last_error"};
         for (const char* name : strings)
             cb["properties"][name]["type"] = "string";
         for (const char* name : {"tap", "breakpoint", "game_event"})
@@ -261,6 +261,11 @@
             cb["properties"]["mode"]["enum"].append(name);
         cb["properties"]["mode"]["description"] = "deferred: the script's thread; frame / sync: the hook state on the "
                                                   "emulation thread, at the frame end / inside the access";
+        for (const char* name : {"view", "logic"})
+            cb["properties"]["role"]["enum"].append(name);
+        cb["properties"]["role"]["description"] = "Frame and sync: view (writes only with no time travel session) or "
+                                                  "logic (writes at the next instruction boundary, recorded by time "
+                                                  "travel and replayed without the call)";
         cb["properties"]["aborted"]["description"] = "Frame and sync: calls stopped by the instruction budget";
         cb["properties"]["instructions"]["description"] = "Frame and sync: the instruction budget of a call";
         cb["properties"]["target"]["description"] = "What it is called on: \"tap write #5C78 if MDT == 0\", \"breakpoint 3\", \"event died\"";

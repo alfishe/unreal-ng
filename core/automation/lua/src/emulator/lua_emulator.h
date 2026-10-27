@@ -7854,6 +7854,7 @@ public:
         {
             t["aborted"] = s.aborted;
             t["instructions"] = info.instructions;
+            t["role"] = CallbackRoleName(info.role);
         }
         if (s.overruns > 0)
         {
@@ -7865,7 +7866,8 @@ public:
         return t;
     }
 
-    /// on_tap / on_breakpoint / on_game_event: `options` {mode=, policy=, budget_us=, instructions=, ring=, label=}.
+    /// on_tap / on_breakpoint / on_game_event: `options` {mode=, role=, policy=, budget_us=, instructions=, ring=,
+    /// label=}.
     /// A function runs deferred; a string is a chunk for the hook state (mode frame, the default, or sync). The id; -1
     /// and the reason
     std::tuple<int, sol::optional<std::string>> RegisterCallback(CallbackSpec spec, const sol::object& fn,
@@ -7896,6 +7898,9 @@ public:
             const std::string policy = t.get<sol::optional<std::string>>("policy").value_or("suspend");
             if (!ParseCallbackPolicy(policy, spec.policy))
                 return {-1, "policy must be suspend, disable, ignore or unpaced, not '" + policy + "'"};
+            const std::string role = t.get<sol::optional<std::string>>("role").value_or("view");
+            if (!ParseCallbackRole(role, spec.role))
+                return {-1, "role must be view or logic, not '" + role + "'"};
             spec.budgetUs = t.get<sol::optional<uint32_t>>("budget_us").value_or(spec.budgetUs);
             spec.instructions = t.get<sol::optional<uint64_t>>("instructions").value_or(0);
             spec.ring = t.get<sol::optional<uint32_t>>("ring").value_or(spec.ring);

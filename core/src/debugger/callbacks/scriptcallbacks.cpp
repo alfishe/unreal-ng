@@ -7,6 +7,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/callbacks/scripthookhost.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -165,6 +166,22 @@ bool ParseCallbackMode(const std::string& text, CallbackMode& mode)
     return true;
 }
 
+const char* CallbackRoleName(CallbackRole role)
+{
+    return role == CallbackRole::Logic ? "logic" : "view";
+}
+
+bool ParseCallbackRole(const std::string& text, CallbackRole& role)
+{
+    if (text == "view")
+        role = CallbackRole::View;
+    else if (text == "logic")
+        role = CallbackRole::Logic;
+    else
+        return false;
+    return true;
+}
+
 const char* CallbackPolicyName(CallbackPolicy policy)
 {
     switch (policy)
@@ -216,6 +233,8 @@ ScriptCallbackManager::~ScriptCallbackManager()
     for (auto& slot : _slots)
         slot.reset();
     _frame->hold.Release();
+    if (_context != nullptr)
+        _context->SetStepWork(EmulatorContext::kStepWorkScriptEdits, false);
     _host.reset();
 }
 
@@ -242,6 +261,11 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
     if (!hook && spec.policy == CallbackPolicy::Unpaced)
     {
         error = "the unpaced policy is for frame and sync callbacks";
+        return 0;
+    }
+    if (!hook && spec.role == CallbackRole::Logic)
+    {
+        error = "the logic role is for frame and sync callbacks (a deferred callback's writes are tool edits)";
         return 0;
     }
     if (hook && spec.chunk.empty())
@@ -490,6 +514,7 @@ std::vector<CallbackInfo> ScriptCallbackManager::List() const
         info.reason = entry->reason;
         info.budgetUs = entry->spec.budgetUs;
         info.instructions = entry->spec.mode != CallbackMode::Deferred ? entry->spec.instructions : 0;
+        info.role = entry->spec.role;
         info.ring = entry->spec.ring;
         info.pending = entry->head.load(std::memory_order_acquire) - entry->tail.load(std::memory_order_acquire);
         info.stats = entry->stats;
@@ -671,15 +696,69 @@ void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit)
 {
     if (entry.state.load(std::memory_order_acquire) != CallbackState::Active || !_host)
         return;
+    const bool logic = entry.spec.role == CallbackRole::Logic;
+    HookEdits edits;
     const auto start = std::chrono::steady_clock::now();
-    const HookCallResult result = _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions);
+    const HookCallResult result =
+        _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions, logic ? &edits : nullptr);
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
     const auto us = static_cast<uint32_t>(std::clamp<int64_t>(elapsed, 0, 0xFFFF'FFFF));
     _frame->hookUs += us;
     if (entry.spec.policy == CallbackPolicy::Unpaced)
         _frame->unpacedUs += us;
+    // A call that failed leaves no writes: a half-done edit would be worse than none
+    if (logic && result.ok && !edits.Empty())
+    {
+        _edits.emplace_back(entry.id, std::move(edits));
+        if (_context != nullptr)
+            _context->SetStepWork(EmulatorContext::kStepWorkScriptEdits, true);
+    }
     Account(entry.id, us, !result.ok, result.error, result.aborted, false);
+}
+
+std::string ScriptCallbackManager::EditRefusal(const EmulatorContext* context, CallbackRole role)
+{
+    const ttd::ITimeTravelHooks* ttd = context != nullptr ? context->pTimeTravelHooks : nullptr;
+    if (ttd == nullptr || ttd->GetState() == ttd::TTDSessionState::Idle)
+        return {};
+    if (role == CallbackRole::View)
+        return "a view callback does not change the machine while time travel records or browses (role logic does)";
+    if (ttd->GetState() != ttd::TTDSessionState::Recording)
+        return "a logic callback does not change the machine while time travel browses";
+    if (!ttd->RecordsScriptEdits())
+        return "this time travel backend does not record a logic callback's writes";
+    return {};
+}
+
+void ScriptCallbackManager::ApplyEdits()
+{
+    if (_context != nullptr)
+        _context->SetStepWork(EmulatorContext::kStepWorkScriptEdits, false);
+    std::vector<std::pair<uint32_t, HookEdits>> edits;
+    edits.swap(_edits);
+    if (_context == nullptr || edits.empty())
+        return;
+    ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+    // A replay applies what the recording kept; a session that opened since the call takes no new writes
+    if ((ttd != nullptr && ttd->IsReplayActive()) || !EditRefusal(_context, CallbackRole::Logic).empty())
+        return;
+    const bool record = ttd != nullptr && ttd->IsRecording();
+    Z80* z80 = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    for (const auto& [id, edit] : edits)
+    {
+        if (_context->pMemory != nullptr)
+            for (const auto& [address, value] : edit.pokes)
+                _context->pMemory->ToolWriteToZ80Memory(address, value);
+        if (z80 != nullptr)
+            for (const auto& [name, value] : edit.regs)
+                Z80::SetRegisterValue(z80, name, value);
+        if (record)
+        {
+            const std::string source = "callback " + std::to_string(id);
+            ttd->RecordScriptEdit(source.c_str(), edit.pokes, !edit.regs.empty());
+        }
+    }
 }
 
 void ScriptCallbackManager::SetUnpaced(bool unpaced)

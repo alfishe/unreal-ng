@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
@@ -197,7 +198,7 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
 
-    uint32_t SyncTap(const std::string& chunk, uint64_t instructions = 0)
+    uint32_t SyncTap(const std::string& chunk, uint64_t instructions = 0, CallbackRole role = CallbackRole::View)
     {
         CallbackSpec spec;
         spec.trigger = CallbackTrigger::Tap;
@@ -209,6 +210,7 @@ protected:
         spec.mode = CallbackMode::Sync;
         spec.chunk = chunk;
         spec.instructions = instructions;
+        spec.role = role;
         std::string error;
         const uint32_t id = _callbacks->Register(spec, error);
         EXPECT_NE(id, 0u) << error;
@@ -301,6 +303,67 @@ TEST_F(LuaHookHost_Test, AHookDoesNotChangeTheMachineWhileTimeTravelRecords)
     EXPECT_NE(info.stats.lastError.find("time travel"), std::string::npos) << info.stats.lastError;
     EXPECT_EQ(_callbacks->SharedGet("seen").i, 4) << "reading is fine";
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9100), 0);
+}
+
+/// §6: a logic callback writes while TTD records; its writes land at the boundary and are an edit the replay applies
+/// without running the callback again
+TEST_F(LuaHookHost_Test, ALogicHookIsRecordedAndReplayedWithoutRunningIt)
+{
+    _controller = std::make_unique<ttd::TimeTravelController>(_context);
+    _context->pTimeTravelHooks = _controller.get();
+    _context->ttdWriteSink = _controller.get();
+    _context->pTimeTravelController = _controller.get();
+    ASSERT_TRUE(ttd::TTDControl(_context).Execute({"start", {}}).Ok());
+
+    const uint32_t id = SyncTap(R"(return function(hit)
+        local n = peek(0x9100) + 1
+        poke(0x9100, n)
+        poke(0x9101, math.random(0, 255))
+        set_reg("de", 0x4000 + n)
+        shared_set("unchanged", peek(0x9100) == n - 1)
+    end)", 0, CallbackRole::Logic);
+    _emulator->RunNFrames(6, true);
+    Z80* z80 = _context->pCore->GetZ80();
+    const CallbackInfo info = Info(id);
+    ASSERT_GE(info.stats.calls, 4u);
+    EXPECT_EQ(info.stats.errors, 0u) << info.stats.lastError;
+    EXPECT_TRUE(_callbacks->SharedGet("unchanged").b) << "the writes wait for the boundary";
+    const uint8_t count = _context->pMemory->DirectReadFromZ80Memory(0x9100);
+    const uint8_t random = _context->pMemory->DirectReadFromZ80Memory(0x9101);
+    EXPECT_EQ(count, info.stats.calls);
+    EXPECT_EQ(z80->de, 0x4000 + count);
+    const ttd::TTDTimePoint end = _controller->CurrentPosition();
+    _controller->StopRecording();
+
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(1)->time.frame, 0}, nullptr));
+    const uint8_t early = _context->pMemory->DirectReadFromZ80Memory(0x9100);
+    EXPECT_LT(early, count);
+    ASSERT_TRUE(_controller->SeekTo(end, nullptr));
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9100), count) << "the recorded writes, replayed";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9101), random);
+    EXPECT_EQ(z80->de, 0x4000 + count) << "and the register";
+    EXPECT_EQ(Info(id).stats.calls, info.stats.calls) << "the callback does not run on replay";
+}
+
+TEST_F(LuaHookHost_Test, AHookHasNoHostRandomness)
+{
+    const std::string chunk = R"(return function() shared_set("r", math.random(0, 1 << 30)) end)";
+    std::vector<int64_t> values;
+    for (int run = 0; run < 2; run++)
+    {
+        LuaHookHost host(_context);
+        std::string error;
+        ASSERT_TRUE(host.Compile(1, chunk, error)) << error;
+        const HookCallResult result = host.Call(1, CallbackHit{}, "", 100000, nullptr);
+        ASSERT_TRUE(result.ok) << result.error;
+        values.push_back(_callbacks->SharedGet("r").i);
+    }
+    EXPECT_EQ(values[0], values[1]) << "a fixed seed";
+    LuaHookHost host(_context);
+    std::string error;
+    ASSERT_TRUE(host.Compile(1, "return function() math.randomseed() end", error)) << error;
+    const HookCallResult result = host.Call(1, CallbackHit{}, "", 100000, nullptr);
+    EXPECT_FALSE(result.ok) << "a reseed names its seed";
 }
 
 TEST_F(LuaHookHost_Test, OnTapTakesAChunkFromTheScript)

@@ -32,6 +32,15 @@ LuaHookHost::LuaHookHost(EmulatorContext* context) : _context(context)
                              "getmetatable"})
         (*_lua)[name] = sol::lua_nil;
     HostOf(_lua->lua_state()) = this;
+    // The same numbers on every run and every host; a reseed names its seed
+    sol::table math = (*_lua)["math"];
+    sol::protected_function seed = math["randomseed"];
+    seed(kRandomSeed);
+    math["randomseed"] = [seed](sol::optional<lua_Integer> value) {
+        if (!value)
+            throw std::runtime_error("math.randomseed: a hook names its seed (no host randomness)");
+        seed(*value);
+    };
     RegisterApi();
 }
 
@@ -47,12 +56,9 @@ std::unique_ptr<IScriptHookHost> LuaHookHost::Create(EmulatorContext* context)
     return std::make_unique<LuaHookHost>(context);
 }
 
-std::string LuaHookHost::MutationRefusal() const
+std::string LuaHookHost::EditRefusal() const
 {
-    if (_context != nullptr && _context->pTimeTravelHooks != nullptr &&
-        _context->pTimeTravelHooks->GetState() != ttd::TTDSessionState::Idle)
-        return "a hook does not change the machine while time travel records or browses";
-    return {};
+    return ScriptCallbackManager::EditRefusal(_context, _edits != nullptr ? CallbackRole::Logic : CallbackRole::View);
 }
 
 void LuaHookHost::RegisterApi()
@@ -80,8 +86,15 @@ void LuaHookHost::RegisterApi()
                (context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(at + 1)) << 8);
     };
     lua["poke"] = [this, context](int address, int value) {
-        if (const std::string refusal = MutationRefusal(); !refusal.empty())
+        if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("poke: " + refusal);
+        if (_edits != nullptr)
+        {
+            if (_edits->pokes.size() >= HookEdits::kMaxPokes)
+                throw std::runtime_error("poke: at most " + std::to_string(HookEdits::kMaxPokes) + " writes per call");
+            _edits->pokes.emplace_back(static_cast<uint16_t>(address), static_cast<uint8_t>(value));
+            return;
+        }
         if (context != nullptr && context->pMemory != nullptr)
             context->pMemory->ToolWriteToZ80Memory(static_cast<uint16_t>(address), static_cast<uint8_t>(value));
     };
@@ -94,8 +107,16 @@ void LuaHookHost::RegisterApi()
         return value;
     };
     lua["set_reg"] = [this, z80](const std::string& name, int value) {
-        if (const std::string refusal = MutationRefusal(); !refusal.empty())
+        if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("set_reg: " + refusal);
+        if (_edits != nullptr)
+        {
+            const Z80::RegisterInfo* info = Z80::FindRegister(name);
+            if (info == nullptr || (info->maxValue != 0 && static_cast<unsigned>(value) > info->maxValue))
+                throw std::runtime_error("set_reg: unknown register '" + name + "' or a value out of its range");
+            _edits->regs.emplace_back(name, static_cast<uint16_t>(value));
+            return;
+        }
         Z80* cpu = z80();
         if (cpu == nullptr || !Z80::SetRegisterValue(cpu, name, static_cast<uint16_t>(value)))
             throw std::runtime_error("set_reg: unknown register '" + name + "'");
@@ -160,7 +181,7 @@ bool LuaHookHost::Compile(uint32_t id, const std::string& chunk, std::string& er
 }
 
 HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std::string& event,
-                                 uint64_t instructionBudget)
+                                 uint64_t instructionBudget, HookEdits* edits)
 {
     HookCallResult outcome;
     std::lock_guard<std::mutex> lock(_mutex);
@@ -174,6 +195,7 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
     _instructions = 0;
     _budget = std::max<uint64_t>(instructionBudget, kInstructionStep);
     _aborted = false;
+    _edits = edits;
     lua_State* L = _lua->lua_state();
     lua_sethook(L, &LuaHookHost::CountHook, LUA_MASKCOUNT, kInstructionStep);
     {
@@ -188,6 +210,7 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
         }
     }
     lua_sethook(L, nullptr, 0, 0);
+    _edits = nullptr;
     // A hook's garbage is the hook state's: a step per call keeps it small without a pause anywhere
     lua_gc(L, LUA_GCSTEP, 0);
     return outcome;

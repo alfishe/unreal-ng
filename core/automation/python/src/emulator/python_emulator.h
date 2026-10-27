@@ -1252,6 +1252,7 @@ namespace PythonBindings
         {
             d["aborted"] = s.aborted;
             d["instructions"] = info.instructions;
+            d["role"] = CallbackRoleName(info.role);
         }
         if (!s.lastError.empty())
             d["last_error"] = s.lastError;
@@ -1263,7 +1264,7 @@ namespace PythonBindings
     /// sync; docs/features/script-callbacks.md "Hook state")
     inline int PythonRegisterCallback(Emulator& self, CallbackSpec spec, const py::object& fn, const std::string& policy,
                                       uint32_t budgetUs, uint32_t ring, const std::string& label,
-                                      const std::string& mode, uint64_t instructions)
+                                      const std::string& mode, uint64_t instructions, const std::string& role)
     {
         ScriptCallbackManager* callbacks = PythonCallbacksOf(&self);
         if (!callbacks)
@@ -1288,6 +1289,8 @@ namespace PythonBindings
         spec.budgetUs = budgetUs;
         spec.ring = ring;
         spec.instructions = instructions;
+        if (!ParseCallbackRole(role, spec.role))
+            throw py::value_error("role must be view or logic, not '" + role + "'");
         spec.label = label.empty() && !chunk ? py::str(py::getattr(fn, "__name__", py::str(""))).cast<std::string>()
                                              : label;
         std::string error;
@@ -1690,7 +1693,8 @@ namespace PythonBindings
             .def("on_tap", [](Emulator& self, const py::object& fn, const std::string& kind, uint16_t address,
                               int32_t to, const std::string& page, int32_t mask, const std::string& condition,
                               const std::string& dialect, const std::string& policy, uint32_t budget_us, uint32_t ring,
-                              const std::string& label, const std::string& mode, uint64_t instructions) -> int {
+                              const std::string& label, const std::string& mode, uint64_t instructions,
+                              const std::string& role) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Tap;
                 if (kind == "exec") { spec.tap.type = BRK_MEMORY; spec.tap.access = BRK_MEM_EXECUTE; }
@@ -1707,37 +1711,42 @@ namespace PythonBindings
                 std::string error;
                 if (!BreakpointManager::ApplyScriptOptions(spec.tap, page, to, false, mask, "", error))
                     throw py::value_error(error);
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions, role);
             }, "Call fn(hit) on the Python thread at every access the tap sees (kind exec / read / write / port_in / "
                "port_out; condition: only when it holds). hit: frame, t, pc, address, value, kind, regs. fn as a str: "
-               "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call). "
+               "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call, role "
+               "view or logic: logic writes are recorded by time travel). "
                "The id; ValueError when refused. docs/features/script-callbacks.md",
                py::arg("fn"), py::arg("kind"), py::arg("address"), py::arg("to") = -1, py::arg("page") = "",
                py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
                py::arg("budget_us") = 1000, py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "",
-               py::arg("instructions") = 0)
+               py::arg("instructions") = 0, py::arg("role") = "view")
             .def("on_breakpoint", [](Emulator& self, const py::object& fn, uint16_t id, const std::string& policy,
                                      uint32_t budget_us, uint32_t ring, const std::string& label,
-                                     const std::string& mode, uint64_t instructions) -> int {
+                                     const std::string& mode, uint64_t instructions,
+                              const std::string& role) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Breakpoint;
                 spec.breakpointId = id;
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions, role);
             }, "Call fn(hit) on the Python thread each time breakpoint id stops the machine (it still stops); a str: "
                "a chunk for the hook state. The id; ValueError when refused",
                py::arg("fn"), py::arg("id"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
-               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0)
+               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0,
+               py::arg("role") = "view")
             .def("on_game_event", [](Emulator& self, const py::object& fn, const std::string& event,
                                      const std::string& policy, uint32_t budget_us, uint32_t ring,
-                                     const std::string& label, const std::string& mode, uint64_t instructions) -> int {
+                                     const std::string& label, const std::string& mode, uint64_t instructions,
+                              const std::string& role) -> int {
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::GameEvent;
                 spec.event = event;
-                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions, role);
             }, "Call fn(hit) on the Python thread on each frame the game event fires (game.events; hit.value: its "
                "value); a str: a chunk for the hook state. The id; ValueError when refused",
                py::arg("fn"), py::arg("event"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
-               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0)
+               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0,
+               py::arg("role") = "view")
             .def("callbacks", [](Emulator& self) -> py::list {
                 py::list list;
                 if (ScriptCallbackManager* callbacks = PythonCallbacksOf(&self))

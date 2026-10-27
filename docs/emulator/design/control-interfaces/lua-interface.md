@@ -1725,6 +1725,8 @@ callbacks_run()                              -- run the waiting hits now (a scri
 -- The hook state: peek, peek16, poke, reg, set_reg, frame, tstate, shared_get, shared_set
 id, err = on_tap({write = 0x5C78}, [[return function(hit) shared_set("lives", hit.value) end]],
                  {mode = "sync", instructions = 5000})  -- policy may also be "unpaced"
+-- role "logic": the writes land at the next instruction boundary and TTD records them (a replay applies them)
+id, err = on_tap({write = 0x5C78}, [[return function(hit) poke(0x5C78, 5) end]], {mode = "sync", role = "logic"})
 print(shared_get("lives"))                   -- values shared with the hooks: nil, boolean, number, string
 callback_hooks()                             -- {unpaced, unpaced_spans, last_frame_us, max_frame_us, frames_over_share}
 ```

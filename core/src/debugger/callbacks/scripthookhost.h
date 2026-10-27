@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 class EmulatorContext;
 struct CallbackHit;
@@ -26,6 +28,16 @@ struct HookCallResult
     std::string error;
 };
 
+/// A logic callback's writes of one call (CallbackRole::Logic): kept, not made, so they land at the next instruction
+/// boundary and a TTD recording keeps them as an edit there
+struct HookEdits
+{
+    static constexpr size_t kMaxPokes = 65536;
+    std::vector<std::pair<uint16_t, uint8_t>> pokes;      ///< in order
+    std::vector<std::pair<std::string, uint16_t>> regs;   ///< register name, value, in order
+    bool Empty() const { return pokes.empty() && regs.empty(); }
+};
+
 class IScriptHookHost
 {
 public:
@@ -34,9 +46,9 @@ public:
     /// Compiles @p chunk for callback @p id: the chunk returns the function. False with the reason. Any thread
     virtual bool Compile(uint32_t id, const std::string& chunk, std::string& error) = 0;
     /// Emulation thread: runs callback @p id on @p hit (a game event's name in @p event); @p instructionBudget VM
-    /// instructions at most
+    /// instructions at most. @p edits: a logic callback's call, its writes go there instead of the machine
     virtual HookCallResult Call(uint32_t id, const CallbackHit& hit, const std::string& event,
-                                uint64_t instructionBudget) = 0;
+                                uint64_t instructionBudget, HookEdits* edits) = 0;
     /// The callback went: its function with it. Any thread
     virtual void Forget(uint32_t id) = 0;
 };

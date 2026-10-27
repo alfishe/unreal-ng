@@ -17,7 +17,8 @@ namespace callback_text
 /// "#3 tap write #5C78 if MDT == 0 (lua "lives") active, policy suspend, hits 6, dropped 0, pending 0, calls 6,
 /// errors 0, overruns 0, max 60 us, p99 63 us, total 300 us, budget 1000 us, ring 256[, last overrun ...][; reason:
 /// ...][; last error: ...]". A frame or sync callback says its mode after the state and its aborted calls and
-/// instruction budget after the ring: "... active, sync, policy unpaced, ..., ring 256, aborted 0, instructions 100000"
+/// instruction budget after the ring: "... active, sync, policy unpaced, ..., ring 256, aborted 0, instructions 100000";
+/// a logic one says so after its mode ("active, sync, logic, policy ...")
 template <class Reader>
 std::string FormatLine(const Reader& r)
 {
@@ -37,6 +38,8 @@ std::string FormatLine(const Reader& r)
     out << " " << r.Text("state");
     if (hook)
         out << ", " << mode;
+    if (hook && r.Text("role") == "logic")
+        out << ", logic";
     out << ", policy " << r.Text("policy") << ", hits " << r.Number("hits") << ", dropped "
         << r.Number("dropped") << ", pending " << r.Number("pending") << ", calls " << r.Number("calls") << ", errors "
         << r.Number("errors") << ", overruns " << r.Number("overruns") << ", max " << r.Number("max_us") << " us, p99 "

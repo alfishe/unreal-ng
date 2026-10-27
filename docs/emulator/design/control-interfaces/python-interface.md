@@ -1203,6 +1203,8 @@ emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(
 ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
 # A str instead of fn: Lua source for the emulator's hook state (mode="frame" by default, or "sync"; instructions=)
 id = emu.on_tap("return function(hit) shared_set('lives', hit.value) end", "write", 0x5C78, mode="sync")
+# role="logic": the hook's poke / set_reg land at the next instruction boundary, recorded by TTD and replayed
+id = emu.on_tap("return function(hit) poke(0x5C78, 5) end", "write", 0x5C78, mode="sync", role="logic")
 emu.shared_get("lives"); emu.shared_set("limit", 3); emu.callback_hooks()
 ```
 

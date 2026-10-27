@@ -5,7 +5,9 @@
 /// a sol::state of its own, separate from the script's, that runs the frame and sync callbacks on the emulation
 /// thread. It has no io, os or package library; it reads and writes the machine through a small API (peek, poke,
 /// reg, set_reg, frame, tstate) and shares values with the scripts through shared_get / shared_set. A count hook
-/// every kInstructionStep VM instructions stops a call over its instruction budget.
+/// every kInstructionStep VM instructions stops a call over its instruction budget. math.random starts from a fixed
+/// seed (kRandomSeed) and math.randomseed takes an explicit one: no host randomness and no host time in a hook.
+/// A logic callback's poke and set_reg are kept in the call's HookEdits, not made.
 
 #include <cstdint>
 #include <map>
@@ -21,21 +23,22 @@ class LuaHookHost : public IScriptHookHost
 {
 public:
     static constexpr int kInstructionStep = 1000;
+    static constexpr lua_Integer kRandomSeed = 0x554E5245;  // "UNRE"
 
     explicit LuaHookHost(EmulatorContext* context);
     ~LuaHookHost() override;
 
     bool Compile(uint32_t id, const std::string& chunk, std::string& error) override;
     HookCallResult Call(uint32_t id, const CallbackHit& hit, const std::string& event,
-                        uint64_t instructionBudget) override;
+                        uint64_t instructionBudget, HookEdits* edits) override;
     void Forget(uint32_t id) override;
 
     static std::unique_ptr<IScriptHookHost> Create(EmulatorContext* context);
 
 private:
     void RegisterApi();
-    /// Why the machine may not be changed now (a TTD session records or is browsed); empty: it may
-    std::string MutationRefusal() const;
+    /// Why the running call may not change the machine now ("": it may)
+    std::string EditRefusal() const;
     static void CountHook(lua_State* L, lua_Debug* debug);
 
     EmulatorContext* _context = nullptr;
@@ -46,4 +49,5 @@ private:
     uint64_t _instructions = 0;
     uint64_t _budget = 0;
     bool _aborted = false;
+    HookEdits* _edits = nullptr;  ///< a logic call's writes
 };

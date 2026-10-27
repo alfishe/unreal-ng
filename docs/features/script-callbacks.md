@@ -95,9 +95,27 @@ function (`string.rep`, a pattern match) counts as one instruction.
 **The time budget** (`budget_us`) and its [policy](#over-budget-the-policy) apply as for deferred callbacks, measured
 on the emulation thread. Each call holds the machine for its time.
 
-**Changing the machine under time travel.** While a TTD session records or is browsed, `poke` and `set_reg` raise
-(`a hook does not change the machine while time travel records or browses`); reading is fine. Changes that TTD
-journals come with the `logic` callbacks.
+**Roles: view and logic.** A hook is a `view` (the default) or a `logic` callback (`role = "logic"`).
+
+| Role | `poke`, `set_reg` | Under time travel |
+|:--|:--|:--|
+| `view` | at once: the next instruction sees it | refused while a TTD session records or is browsed (`a view callback does not change the machine while time travel records or browses (role logic does)`); reading is fine |
+| `logic` | kept, made at the **next instruction boundary**: after the instruction whose access ran the hook (an `exec` hit: after that instruction); a frame hook's at the first instruction of the next frame | allowed while TTD records: the writes are an edit at that boundary in the recording, and a replay or seek applies them there **without running the hook**; refused while a session is browsed |
+
+```lua
+-- Infinite lives that TTD records: the hook runs live, the replay repeats its write
+on_tap({write = 0x5C78, ["if"] = "MDT < MDT@prev"}, [[return function(hit) poke(0x5C78, 5) end]],
+       {mode = "sync", role = "logic"})
+```
+
+- In a logic call, `peek` and `reg` still read the machine as it is: the call's own writes are not there yet.
+- A logic call that raises or runs out of instructions makes none of its writes. At most 65536 `poke`s per call.
+- A replay never runs a hook, so a logic hook's own state (its upvalues, `shared_set`) is not rewound by a seek.
+- No host randomness or time: `math.random` starts from a fixed seed in every hook state, and `math.randomseed` takes
+  an explicit seed (with none it raises). There is no `os`.
+- TTD v1 (`UNREAL_TTD_BACKEND=v1`, the fallback recorder) does not record these edits: a logic write while it records is refused.
+- Deferred callbacks have no role: their writes go through the scripts' memory and register calls, which TTD records
+  as tool edits already.
 
 **The `unpaced` policy** is for hooks that may need more than a frame's time. Calls over the budget are counted, and
 the callback stays active. When frames run longer than 120 % of their period for 3 frames in a row while unpaced
@@ -148,9 +166,10 @@ id, err = on_tap({read = 0x8000, ["if"] = "a==7", dialect = "c"}, fn)
 id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)
 id, err = on_game_event("died", function(hit) print("died, value", hit.value) end)
 
--- The options (every registration): policy, budget_us, ring, label; a chunk also mode, instructions
+-- The options (every registration): policy, budget_us, ring, label; a chunk also mode, instructions, role
 id = on_tap({write = 0x9000}, fn, {policy = "ignore", budget_us = 500, ring = 1024, label = "score"})
 id = on_tap({write = 0x9000}, "return function(hit) end", {mode = "sync", instructions = 5000, policy = "unpaced"})
+id = on_tap({write = 0x9000}, "return function(hit) poke(0x9001, 0) end", {mode = "sync", role = "logic"})
 
 callbacks()                -- every callback of the emulator: id, on, owner, label, target, policy, state, stats
 callback_resume(id)        -- a suspended one again, with fresh statistics
@@ -289,7 +308,7 @@ id.
 
 ## Limits of this version
 
-- Hooks do not change the machine while TTD records; callbacks whose changes TTD journals (`logic`) come in phase 5.
+- The General Sound card's CPU has no taps yet, so hooks cannot replace the value a card read sees.
 - One hook state per emulator for every script: two scripts' hooks share its globals.
 - No script manifest yet: callbacks are registered one call at a time.
 - Only Lua and Python register callbacks; CLI, REST, WebSocket and MCP list and manage them

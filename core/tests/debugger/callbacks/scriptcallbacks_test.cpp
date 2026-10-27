@@ -9,6 +9,7 @@
 #include <chrono>
 #include <memory>
 #include <set>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,8 @@ public:
     uint32_t busyUs = 0;
     bool abort = false;
     EmulatorContext* context = nullptr;
+    std::vector<std::pair<std::string, uint16_t>> setRegs;  ///< a logic call's registers
+    std::vector<bool> logicCalls;
 
     bool Compile(uint32_t id, const std::string& chunk, std::string& error) override
     {
@@ -72,9 +75,13 @@ public:
         compiled.insert(id);
         return true;
     }
-    HookCallResult Call(uint32_t /*id*/, const CallbackHit& hit, const std::string& /*event*/, uint64_t budget) override
+    HookCallResult Call(uint32_t /*id*/, const CallbackHit& hit, const std::string& /*event*/, uint64_t budget,
+                        HookEdits* edits) override
     {
         hits.push_back(hit);
+        logicCalls.push_back(edits != nullptr);
+        if (edits != nullptr)
+            edits->regs = setRegs;
         callFrames.push_back(context->emulatorState.frame_counter);
         const auto end = std::chrono::steady_clock::now() + std::chrono::microseconds(busyUs);
         while (std::chrono::steady_clock::now() < end)
@@ -387,6 +394,41 @@ TEST_F(ScriptCallbacks_Test, ASyncHookRunsInsideTheAccess)
     EXPECT_EQ(info.stats.calls, host.hits.size());
     EXPECT_EQ(info.stats.hits, host.hits.size());
     EXPECT_EQ(info.pending, 0u) << "no ring on the way";
+}
+
+/// A logic callback's writes land at the next instruction boundary: PC set at the DEC's write skips the INC and its
+/// write, so the byte goes down a life a frame
+TEST_F(ScriptCallbacks_Test, ALogicHookWritesAtTheNextBoundary)
+{
+    SetScriptHookHostFactory(&MakeFakeHookHost);
+    CallbackSpec spec;
+    spec.trigger = CallbackTrigger::Tap;
+    spec.tap.type = BRK_MEMORY;
+    spec.tap.access = BRK_MEM_WRITE;
+    spec.tap.address = kByte;
+    spec.tap.condition = "MDT < 5";
+    spec.owner = "test";
+    spec.mode = CallbackMode::Sync;
+    spec.chunk = "return function(hit) set_reg('pc', 0x8014) end";
+    spec.role = CallbackRole::Logic;
+    std::string error;
+    const uint32_t id = _callbacks->Register(spec, error);
+    ASSERT_NE(id, 0u) << error;
+    FakeHookHost& host = *FakeHookHost::last;
+    host.setRegs = {{"pc", 0x8014}};
+    _emulator->RunNFrames(3, false);
+    ASSERT_GE(host.hits.size(), 2u);
+    EXPECT_TRUE(host.logicCalls[0]) << "the call gets the edits to fill";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(kByte), kLives - host.hits.size());
+    EXPECT_FALSE(_context->HasStepWork(EmulatorContext::kStepWorkScriptEdits)) << "applied and cleared";
+    CallbackInfo info;
+    ASSERT_TRUE(_callbacks->Get(id, info));
+    EXPECT_EQ(info.role, CallbackRole::Logic);
+
+    spec.mode = CallbackMode::Deferred;
+    spec.chunk.clear();
+    EXPECT_EQ(_callbacks->Register(spec, error), 0u);
+    EXPECT_NE(error.find("logic role"), std::string::npos) << error;
 }
 
 TEST_F(ScriptCallbacks_Test, AFrameHookRunsAtTheFrameEnd)

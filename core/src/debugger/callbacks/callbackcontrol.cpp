@@ -114,6 +114,7 @@ StateNode InfoNode(const CallbackInfo& info)
     {
         t["aborted"] = s.aborted;
         t["instructions"] = info.instructions;
+        t["role"] = CallbackRoleName(info.role);
     }
     if (s.overruns > 0)
     {

@@ -117,6 +117,24 @@ print(bad, why)                    --  -1  hook: chunk:1: <name> or '...' expect
   `max_frame_us`: an 8M-iteration loop on `exec = 0x0038` gave `unpaced true 1`, `last_frame_us` ~286000.
 - Python: pass the chunk as a `str`, `emu.on_tap("return function(hit) ... end", "write", 0x5C78, mode="sync")`.
 
+### A logic hook under TTD recording
+
+A view hook (the default) cannot write while TTD records. Give it `role = "logic"`: its writes land at the next
+instruction boundary, the recording keeps them, and a seek or replay applies them without calling the hook.
+
+```lua
+ttd_start()   -- or POST /emulator/$EMU/ttd/start
+lives = on_tap({write = 0x5C78, ["if"] = "MDT < MDT@prev"}, [[return function(hit) poke(0x5C78, 5) end]],
+               {mode = "sync", role = "logic", label = "infinite-lives"})
+-- ... play, then seek back and forward: the byte is 5 again where the hook wrote it, and the hook's calls
+-- (callbacks()[i].calls) did not grow during the seek
+```
+
+- `peek` inside the same call still sees the old byte: the write is not made yet.
+- `callbacks()` shows `role = "logic"`; the CLI line says `sync, logic`.
+- A view hook's `poke` while recording raises `... (role logic does)`; TTD v1 (`UNREAL_TTD_BACKEND=v1`) refuses
+  logic writes too.
+
 ## From outside the script: REST, CLI, MCP, WebSocket
 
 Only a script registers a callback, but any client lists them and resumes, removes or re-policies one (same fields

@@ -15,6 +15,10 @@
 /// event runs a frame or sync callback at once. The unpaced policy lets such a callback slow the emulator down: the
 /// host audio output is held while the hooks keep frames over their period, so the sound does not break up.
 ///
+/// A frame or sync callback is a view (the default) or logic (§6). A view callback reads the machine and may write it
+/// only while no TTD session is open, at once. A logic callback's writes wait for the next instruction boundary
+/// (ApplyEdits) and a TTD recording keeps them there as an edit, so a replay repeats them without running it.
+///
 /// The manager keeps the statistics and applies the over-budget policy.
 ///
 /// Threads: Register / Remove / Resume / SetPolicy / List / SharedGet / SharedSet from any thread; OnTap,
@@ -32,6 +36,7 @@
 #include <vector>
 
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/callbacks/scripthookhost.h"
 
 class EmulatorContext;
 
@@ -48,6 +53,13 @@ enum class CallbackMode : uint8_t
     Deferred,  ///< the script's thread, after the hit (a function of the script)
     Frame,     ///< the hook state, at the end of the hit's frame (a chunk)
     Sync       ///< the hook state, inside the access (a chunk)
+};
+
+/// What a frame or sync callback may do to the machine (§6)
+enum class CallbackRole : uint8_t
+{
+    View,  ///< reads; writes at once, refused while a TTD session is open
+    Logic  ///< writes at the next instruction boundary, recorded by TTD as an edit
 };
 
 enum class CallbackPolicy : uint8_t
@@ -80,6 +92,7 @@ struct CallbackSpec
     CallbackMode mode = CallbackMode::Deferred;
     std::string chunk;           ///< Frame, Sync: Lua source that returns the function
     uint64_t instructions = 0;   ///< Frame, Sync: VM instructions per call (0: kDefaultInstructions)
+    CallbackRole role = CallbackRole::View;  ///< Frame, Sync
 };
 
 /// One hit as the callback sees it: a snapshot, never live state
@@ -130,6 +143,7 @@ struct CallbackInfo
     std::string reason;     ///< why suspended or disabled
     uint32_t budgetUs = 0;
     uint64_t instructions = 0;  ///< Frame, Sync
+    CallbackRole role = CallbackRole::View;
     uint32_t ring = 0;
     uint32_t pending = 0;   ///< hits in the ring
     CallbackStats stats;
@@ -168,11 +182,12 @@ const char* CallbackTriggerName(CallbackTrigger trigger);
 const char* CallbackHitKindName(uint8_t kind);
 const char* CallbackModeName(CallbackMode mode);
 bool ParseCallbackMode(const std::string& text, CallbackMode& mode);
+const char* CallbackRoleName(CallbackRole role);
+bool ParseCallbackRole(const std::string& text, CallbackRole& role);
 const char* CallbackPolicyName(CallbackPolicy policy);
 const char* CallbackStateName(CallbackState state);
 bool ParseCallbackPolicy(const std::string& text, CallbackPolicy& policy);
 
-class IScriptHookHost;
 
 class ScriptCallbackManager : public IBreakpointTapSink
 {
@@ -249,6 +264,12 @@ public:
     {
         return _hookCallbacks.load(std::memory_order_acquire) > 0 || _unpaced.load(std::memory_order_acquire);
     }
+    /// Emulation thread, at an instruction boundary (Z80, EmulatorContext::kStepWorkScriptEdits): the logic
+    /// callbacks' writes since the last one, made and recorded (a TTD replay drops them: it applies the recorded ones)
+    void ApplyEdits();
+    /// Why a hook's write is refused now ("": allowed). A view callback writes only with no TTD session open; a logic
+    /// one also while the engine records
+    static std::string EditRefusal(const EmulatorContext* context, CallbackRole role);
 
 private:
     struct Entry;
@@ -280,6 +301,7 @@ private:
     std::vector<std::pair<std::string, std::function<void()>>> _wakes;
     std::unique_ptr<IScriptHookHost> _host;  ///< made with the first frame or sync callback, then kept
     std::unique_ptr<FrameState> _frame;      ///< the emulation thread's
+    std::vector<std::pair<uint32_t, HookEdits>> _edits;  ///< the emulation thread's: logic writes by callback id
     CallbackHookStatus _status;              ///< under _mutex
     mutable std::mutex _sharedMutex;
     std::map<std::string, CallbackValue> _shared;
