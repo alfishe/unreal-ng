@@ -9,6 +9,7 @@
 #include "unrealdisk/loaders/loader_hfe.h"
 #include "unrealdisk/loaders/loader_hobeta.h"
 #include "unrealdisk/loaders/loader_mb02.h"
+#include "unrealdisk/loaders/loader_mdos.h"
 #include "unrealdisk/loaders/loader_mgt.h"
 #include "unrealdisk/loaders/loader_rawpc.h"
 #include "unrealdisk/loaders/loader_scl.h"
@@ -122,6 +123,11 @@ namespace
             LoaderMB02 loader(options, path);
             return WriteWith(loader, disk, warnings);
         }
+        if (ext == "d40" || ext == "d80")
+        {
+            LoaderMDOS loader(options, path);
+            return WriteWith(loader, disk, warnings);
+        }
         if (ext == "scl")
         {
             LoaderSCL loader(options, path);
@@ -144,8 +150,8 @@ namespace
 
 std::vector<std::string> FloppyFormats::Extensions()
 {
-    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img", "ima",
-            "mb2", "mbd", "hfe", "scp", "$b",  "$c",  "$d",  "$#"};
+    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img", "ima", "mb2",
+            "mbd", "d40", "d80", "hfe", "scp", "$b",  "$c",  "$d",  "$#"};
 }
 
 std::string FloppyFormats::Probe(const std::string& path)
@@ -182,6 +188,10 @@ std::string FloppyFormats::ProbeHead(const uint8_t* data, size_t length, uint64_
     // TD0's two-letter mark is weak: only with its own extension or nothing better
     if (LoaderTD0::detect(data, length) && (ext == "td0" || ext.empty()))
         return "td0";
+
+    // An MDOS boot sector ("SDOS" at 204) whose geometry matches the size: a D80 disk is as large as a 720 KB PC dump
+    if (LoaderMDOS::detect(data, length, size))
+        return "mdos";
 
     // No signature. A raw PC floppy is recognized by its size alone (720 KB, 1.44 MB): neither is a TR-DOS
     // image size (a TRD is at most 655 360 bytes) nor an MGT one, and a PC boot sector or FAT may well carry
@@ -313,6 +323,11 @@ FormatResult FloppyFormats::LoadData(const LoaderOptions& options, const uint8_t
         LoaderMB02 loader(options, name);
         result = ParseWith(loader, data, size, "MB-02", disk);
     }
+    else if (format == "mdos")
+    {
+        LoaderMDOS loader(options, name);
+        result = ParseWith(loader, data, size, "MDOS", disk);
+    }
     else if (format == "hfe")
     {
         LoaderHFE loader(options, name);
@@ -389,6 +404,11 @@ FormatResult FloppyFormats::LoadAny(const LoaderOptions& options, const std::str
     {
         LoaderMB02 loader(options, path);
         return LoadWith(loader, "MB-02", disk);
+    }
+    if (format == "mdos")
+    {
+        LoaderMDOS loader(options, path);
+        return LoadWith(loader, "MDOS", disk);
     }
     if (format == "hobeta")
     {

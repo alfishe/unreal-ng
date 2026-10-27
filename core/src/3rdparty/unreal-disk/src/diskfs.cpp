@@ -13,6 +13,7 @@
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
 #include "unrealdisk/mb02fs.h"
+#include "unrealdisk/mdosfs.h"
 #include "unrealdisk/plus3fs.h"
 #include "unrealdisk/subrangedevice.h"
 #include "unrealdisk/trdoscatalog.h"
@@ -1058,6 +1059,80 @@ struct Mb02Driver : DiskFs::Driver
     Mb02FileSystem fs;
 };
 
+struct MdosDriver : DiskFs::Driver
+{
+    explicit MdosDriver(MdosFileSystem fs) : fs(std::move(fs)) {}
+
+    /// "name.T" as TR-DOS names go: the type letter after the dot, the path separators as \\xNN too
+    static std::string PathOf(const MdosFile& f)
+    {
+        std::string out;
+        for (const char c : f.name + "." + std::string(1, f.type))
+            out += c == '/' ? "\\x2f" : c == '\\' ? "\\x5c" : Ascii(std::string(1, c));
+        return out;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        std::set<std::string> names;
+        for (const MdosFile& f : files)
+        {
+            DiskFsEntry e;
+            e.name = e.path = PathOf(f);
+            // A later file of a name already there: ~<slot> before the type
+            if (!names.insert(Lower(e.path)).second)
+            {
+                MdosFile renamed = f;
+                renamed.name += "~" + std::to_string(f.slot);
+                e.name = e.path = PathOf(renamed);
+                names.insert(Lower(e.path));
+            }
+            e.size = f.length;
+            e.start = f.start;
+            static const char letters[] = "HSPARWED";
+            for (int bit = 7; bit >= 0; bit--)
+                e.attributes += (f.attributes & (1 << bit)) ? letters[7 - bit] : '.';
+            e.fields = {{"type", static_cast<uint8_t>(f.type)},
+                        {"param2", f.param2},
+                        {"sector", f.first},
+                        {"slot", f.slot},
+                        {"extra", f.extra}};
+            out.push_back(std::move(e));
+        }
+        return true;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (const MdosFile& f : files)
+            if (f.slot == entry.Field("slot"))
+                return fs.Read(f, data, error);
+        error = "no " + path + " on the MDOS volume";
+        return false;
+    }
+
+    MdosFileSystem fs;
+};
+
+void DescribeMdos(const MdosFileSystem& fs, DiskFsVolume& volume)
+{
+    volume.fs = "mdos";
+    volume.system = "MDOS";
+    volume.label = Ascii(fs.Boot().name);
+    volume.bytes = static_cast<uint64_t>(fs.Boot().Sectors()) * MdosFileSystem::kSector;
+    volume.freeBytes = static_cast<int64_t>(fs.FreeSectors()) * MdosFileSystem::kSector;
+}
+
 void DescribeIsdos(const IsdosFileSystem& fs, DiskFsVolume& volume)
 {
     volume.fs = "isdos";
@@ -1132,6 +1207,16 @@ void DiskFs::Probe()
             }
             v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
             add(std::move(v), std::make_unique<TrdosDriver>(*_floppy));
+        }
+        // MDOS before FAT and +3DOS: its 512-byte sectors carry no BPB, and its data may pass for a CP/M directory
+        MdosFileSystem mdos = MdosFileSystem::OnDisk(*_floppy);
+        if (mdos.Open())
+        {
+            DiskFsVolume v;
+            v.id = "mdos";
+            DescribeMdos(mdos, v);
+            add(std::move(v), std::make_unique<MdosDriver>(std::move(mdos)));
+            return;
         }
         // FAT before +3DOS: a PC disk has 512-byte sectors too, and its data area may pass for a CP/M directory
         // Writable: whether the disk may change is the caller's (a write-protected drive, a read-only medium)
@@ -1285,6 +1370,50 @@ void DiskFs::Probe()
             v.bytes = static_cast<uint64_t>(c.records) * 128;
             taken.emplace_back(first, end);
             add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
+        }
+    }
+
+    // MDOS3 (divIDE): MBR partitions of type #31 (49), else the whole disk when it starts with a slot (an .md3 file);
+    // a partition is slots of 1693 sectors, an info sector ("SDOS", the slot's name) and a virtual disk
+    {
+        std::vector<std::pair<uint64_t, uint64_t>> partitions;
+        if (s0[510] == 0x55 && s0[511] == 0xAA && std::memcmp(s0, "SDOS", 4) != 0)
+        {
+            for (uint32_t number = 0; number < 4; number++)
+            {
+                const uint8_t* entry = s0 + 446 + number * 16;
+                const uint64_t first =
+                    entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+                const uint64_t count =
+                    entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+                if (entry[4] == 0x31 && count && first < device.SectorCount())
+                    partitions.emplace_back(first, std::min(count, device.SectorCount() - first));
+            }
+        }
+        else if (std::memcmp(s0, "SDOS", 4) == 0)
+            partitions.emplace_back(0, device.SectorCount());
+        for (const auto& [base, count] : partitions)
+        {
+            auto read = [&device, base = base](uint64_t lba, uint8_t* dst) {
+                return device.ReadSector(base + lba, dst);
+            };
+            for (const Mdos3Slot& slot : MdosFileSystem::Slots(read, count))
+            {
+                const uint64_t first = base + slot.firstSector;
+                MdosFileSystem fs([&device, first](uint32_t lsn, uint8_t* dst) {
+                    return lsn < MdosFileSystem::kSlotSectors - 1 && device.ReadSector(first + lsn, dst);
+                });
+                if (!fs.Open())
+                    continue;
+                DiskFsVolume v;
+                v.id = "mdos-" + std::to_string(slot.index);
+                DescribeMdos(fs, v);
+                if (!slot.name.empty())
+                    v.label = Ascii(slot.name);
+                v.offset = first * kSector;
+                taken.emplace_back(first - 1, first - 1 + MdosFileSystem::kSlotSectors);
+                add(std::move(v), std::make_unique<MdosDriver>(std::move(fs)));
+            }
         }
     }
 

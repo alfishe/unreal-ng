@@ -29,6 +29,8 @@ PatternCategoryMap FileManager::_extensions =
     { "ima", SupportedFileCategoriesEnum::FileDisk },
     { "mb2", SupportedFileCategoriesEnum::FileDisk },
     { "mbd", SupportedFileCategoriesEnum::FileDisk },
+    { "d40", SupportedFileCategoriesEnum::FileDisk },
+    { "d80", SupportedFileCategoriesEnum::FileDisk },
 
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },

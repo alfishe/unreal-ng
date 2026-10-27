@@ -185,7 +185,7 @@ media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
 media_targets("/discs/dna_nemo.iso")                    -- where a file can go: file, targets, default, refusal
 media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
-media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, FAT partitions
+media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 media_files("A", "SHELL", {recursive = true})           -- a directory's entries; {volume = "p1"} picks a volume
 media_read("A", "read_me.txt", {out = "/tmp/r.txt"})    -- base64 data, or written to out
 local bytes, why = media_read_bytes("hd", "AUTOEXEC.BAT", "p1")  -- the bytes as a string, or nil and the reason

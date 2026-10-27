@@ -667,7 +667,7 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, FAT): unreal-disk's DiskFs, as `media files`
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, MDOS, FAT): unreal-disk's DiskFs, as `media files`
     DiskFs fs(*diskImage);
     std::vector<DiskFsEntry> entries;
     std::string error;

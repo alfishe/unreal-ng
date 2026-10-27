@@ -1,6 +1,6 @@
 # unreal-disk - ZX Spectrum disks: the floppy track and sector model, the format drivers (TRD, SCL, FDI, UDI, TD0,
-# DSK / EDSK, MGT, raw PC, MB-02, HFE, SCP, hobeta), the block device seam of hard disks and cards, and the file systems
-# (TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, FAT) behind one interface, DiskFs. Standard C++ only: the emulator's media manager
+# DSK / EDSK, MGT, raw PC, MB-02, MDOS, HFE, SCP, hobeta), the block device seam of hard disks and cards, and the file systems
+# (TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT) behind one interface, DiskFs. Standard C++ only: the emulator's media manager
 # and the standalone tools (zxdisk, zxasm, symconv) all build on it.
 # Design: docs/inprogress/2026-10-10-unreal-disk/ (in the unreal-ng repository).
 #
@@ -36,6 +36,7 @@ add_library(unreal-disk STATIC
     src/isdosfs.cpp
     src/cpmfs.cpp
     src/mb02fs.cpp
+    src/mdosfs.cpp
     src/unicode.cpp
     src/subrangedevice.cpp
     src/fatvolumereader.cpp
@@ -50,6 +51,7 @@ add_library(unreal-disk STATIC
     src/loaders/loader_hfe.cpp
     src/loaders/loader_hobeta.cpp
     src/loaders/loader_mb02.cpp
+    src/loaders/loader_mdos.cpp
     src/loaders/loader_mgt.cpp
     src/loaders/loader_rawpc.cpp
     src/loaders/loader_scl.cpp

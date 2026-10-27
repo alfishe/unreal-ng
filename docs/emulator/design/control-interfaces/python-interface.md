@@ -649,7 +649,7 @@ emu.media_eject("B", discard=True, async_=True)          # "async" is a Python k
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
 emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
-emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, FAT partitions
+emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 emu.media_files("A", "SHELL", recursive=True)            # a directory's entries; volume="p1" picks a volume
 emu.media_read("A", "read_me.txt", out="/tmp/r.txt")     # base64 data, or written to out
 data = emu.media_read_bytes("hd", "AUTOEXEC.BAT", volume="p1")  # bytes; RuntimeError when it fails

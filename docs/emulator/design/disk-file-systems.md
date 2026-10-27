@@ -2,7 +2,7 @@
 
 The files on any disk, read the same way for every file system and from every surface: the volumes of a disk, a
 directory's entries, a file's bytes. Floppies and hard disks, SD and CF cards. Reading, writing, deleting and renaming
-files on every file system the probe finds (ATM CP/M and MB-02 are read only); making, moving and deleting directories on FAT and
+files on every file system the probe finds (ATM CP/M, MB-02 and MDOS are read only); making, moving and deleting directories on FAT and
 iS-DOS.
 
 It all lives in **unreal-disk** (`core/src/3rdparty/unreal-disk`), the standard C++ library of disks: the emulator,
@@ -10,7 +10,7 @@ the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's cor
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader, MB-02 over a 1024-byte sector reader (both read only), FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader, MB-02 over a 1024-byte and MDOS over a 512-byte sector reader (all three read only), FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -33,8 +33,8 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
-| Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `fat`, `plus3`, `mb02`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `isdos`, `isdos-<cylinder>` |
+| Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `isdos` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each MBR partition of type #31, or of the whole device when sector 0 is a slot's info sector (an `.md3` file); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `isdos`, `isdos-<cylinder>` |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -50,18 +50,19 @@ case first. TR-DOS names are `NAME.T` (the type letter; the last entry of a name
 names are `NAME.TYP`: user 0 at the root, users 1-15 in the directories `USER1`..`USER15`. MB-02 names are the
 tape header's 10 characters without trailing blanks (no type: it is the `type` field); a later file of a name already
 in the directory gets `~<entry>` (`tma~10`), a file without a header is `~<entry>`, a directory that clashes
-`~D<number>`; `/` and `\` in a name are `\x2f`, `\x5c`. iS-DOS
+`~D<number>`; `/` and `\` in a name are `\x2f`, `\x5c`. MDOS names are `name.T` like TR-DOS (the type letter, the
+10 characters without trailing zeroes; blanks inside stay), a later file of a name gets `~<slot>` before the type. iS-DOS
 and FAT short names are decoded from CP866 (FAT: the medium's code page) to UTF-8.
 
 | Field | Meaning |
 |---|---|
 | `path`, `name` | from the root; the last part |
 | `directory`, `size` | the file's bytes (TR-DOS: the length field; +3DOS: past its header) |
-| `start` | the load address: TR-DOS start, iS-DOS load, +3DOS CODE param 1, MB-02 param 1 (as the BS-DOS listing) |
-| `attributes` | iS-DOS: the XiSD letters (`S` segmented, `R`, `W`, `H` hidden, `D` directory); FAT: `RHSVDA` |
+| `start` | the load address: TR-DOS start, iS-DOS load, +3DOS CODE param 1, MB-02 param 1 (as the BS-DOS listing), MDOS +13 (a program's autostart line) |
+| `attributes` | iS-DOS: the XiSD letters (`S` segmented, `R`, `W`, `H` hidden, `D` directory); MDOS: `HSPARWED`, `.` for a clear bit; FAT: `RHSVDA` |
 | `mtime` | UTC seconds, 0 when the file system keeps none |
 | `error` | a directory that did not open |
-| `fields` | only this file system's: TR-DOS `sectors`, `track`, `sector`, `slot`; +3DOS `user`, `onDisk`, `header`, `basicType`, `param2`; iS-DOS `status`, `first`, `special`, `system`; ATM CP/M `user`, `extents`, `block` (the first); MB-02 `type` (0 BASIC, 3 CODE), `param2`, `address` (the body's), `entry`, `sector` (the first), `flags`, `attributes`, a directory `dir` (its number); FAT `cluster`, `attributes` |
+| `fields` | only this file system's: TR-DOS `sectors`, `track`, `sector`, `slot`; +3DOS `user`, `onDisk`, `header`, `basicType`, `param2`; iS-DOS `status`, `first`, `special`, `system`; ATM CP/M `user`, `extents`, `block` (the first); MB-02 `type` (0 BASIC, 3 CODE), `param2`, `address` (the body's), `entry`, `sector` (the first), `flags`, `attributes`, a directory `dir` (its number); MDOS `type` (the letter's code), `param2`, `sector` (the first), `slot` (the entry), `extra` (+19); FAT `cluster`, `attributes` |
 
 `recursive` lists the whole tree below the directory, each directory right before its contents. `Notes()` carries
 what the probe and the last listing found: loops cut, cross-linked or stale entries, a partition that did not read.
@@ -128,6 +129,31 @@ cluster.
 A volume is taken when the boot marks read, the FAT covers the disk and reserves LSN 1, and the DIRS sector holds
 the root. On `SYS308.MB2` (`testdata/loaders/mb02/`) the reader gives Busy's listing `SYS308.LST` (3 directories,
 59 files, 1586 free sectors) and every body of the tapes `SYSDIR.TAP` and `MBDEMO.TAP` of the same archive.
+
+## MDOS layout
+
+Didaktik D40 / D80, MDOS 1 / 2 and the MDOS3 virtual disks of divIDE (`mdosfs.h`; the raw `.d40` / `.d80` image:
+[MDOS image](../../file-formats/disk-images/mdos.md)). 512-byte sectors 1..SPT, addressed by LSN
+`(cylinder * sides + side) * SPT + (sector - 1)`, one sector a cluster.
+
+- **Boot** (LSN 0): `SDOS` at 204, sides (2 when bit 4 is set) at #B1, cylinders at #B2, SPT at #B3, the disk name
+  at 192 (10 characters, the volume's `label`).
+- **FAT** (LSN 1-5): a 12-bit word a sector, 341 a FAT sector, two in three bytes (even `b0 | (b1 >> 4) << 8`, odd
+  `(b1 & #0F) << 8 | b2`). #000 free, #DDD reserved (LSN 0-13), #DFF bad, #C00 an empty file, #E00 + n the last
+  sector with n bytes (#E00: all 512), else the next LSN.
+- **Directory** (LSN 6-13): 128 entries of 32 bytes. #00 the type letter (`P` program, `B` bytes, `N` / `C` arrays,
+  `S` snapshot, `Q` sequential; #00 and #E5 a free entry), #01 the name (10), #0B the length (24 bits with #15), #0D
+  the start, #0F the second parameter (a program's length without its variables), #11 the first LSN, #13 an
+  undocumented byte, #14 the attributes `HSPARWED` (bit 7 to bit 0). Data from LSN 14 on.
+- **MDOS3**: a partition (MBR type #31) is slots of 1693 sectors: an info sector (`SDOS`, the slot's 32-character
+  name at 4: the volume's `label`) and a 94 x 2 x 9 disk (MDOS3 enlarges the 80 cylinders of a D80). An `.md3` file
+  is such a partition alone; a slot whose info sector has no `SDOS` is empty.
+
+A volume is taken when the boot sector has the mark and a geometry of 1..94 cylinders and 1..18 sectors a track, and
+the FAT reserves LSN 0-13. A chain that loops, leaves the disk or holds fewer bytes than the length does not read. On
+`mdos3-discs1.md3` (the MDOS3 distribution, 99 slots) the 19 disks give their 860 files; two on slot 13 have short
+chains in the image itself (`TOOLS_3_27.P`, `zdrojak.B`). `testdata/loaders/mdos/` keeps its boot disk as a D80 and
+its first 3 slots.
 
 ## Surfaces
 
@@ -213,6 +239,7 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 | iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
 | ATM CP/M (read only) | none | `RSA` (bit 7 of t1', t2', t3') | none | none (`label`: the drive `D:` or the `.CDS` file) |
 | MB-02 (read only) | none | none (the byte is the `attributes` field) | none (`mtime`: the entry's date) | none (`label`: the disk name) |
+| MDOS (read only) | none | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete | none | none (`label`: the disk name, an MDOS3 slot's name) |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
 
@@ -241,5 +268,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
   partition found names it.
 - MB-02 is read only; floppies only. The BS-DOS 309 hard disk (a #47 partition of virtual discs) is not read: no
   image to check its layout. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
-- Not read: MDOS, other file systems of a hard disk.
+- MDOS is read only. An MDOS3 partition is found by its MBR type #31 (the MDOS3 documentation's); no real hard disk
+  image to check it, only the `.md3` container. The info sector's bytes past the name are not read.
+- Not read: other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.

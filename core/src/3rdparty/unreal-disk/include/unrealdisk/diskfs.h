@@ -2,12 +2,13 @@
 
 /// @file diskfs.h
 /// @brief The files on any disk, one way for every file system: the volumes of a disk, a directory's entries, a
-/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, FAT12 (Sprinter DSS, MS-DOS 720K
-/// / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy (Estex DSS,
-/// NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS descriptors),
-/// and iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them out (a
-/// descriptor at a cylinder boundary). Reading everywhere; writing, deleting and renaming files on
-/// TR-DOS, +3DOS, iS-DOS and FAT (a block device that takes writes); ATM CP/M and MB-02 are read only.
+/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT12 (Sprinter DSS,
+/// MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy
+/// (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS
+/// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
+/// out (a descriptor at a cylinder boundary), and the virtual disks of an MDOS3 partition (MBR type #31, or the whole
+/// device). Reading everywhere; writing, deleting and renaming files on TR-DOS, +3DOS, iS-DOS and FAT (a block device
+/// that takes writes); ATM CP/M, MB-02 and MDOS are read only.
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and
@@ -32,8 +33,9 @@ class DiskImage;
 struct DiskFsVolume
 {
     std::string id;  ///< the name to pick it: "trdos", "plus3", "isdos", "fat" (a floppy, a superfloppy), "p1".."p4"
-                     ///< (an MBR partition), "cpm" (an ATM CP/M floppy), "mb02", "cpm-<cylinder>" (an ATM CP/M hard
-                     ///< disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk)
+                     ///< (an MBR partition), "cpm" (an ATM CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
+                     ///< hard disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk), "mdos-<slot>"
+                     ///< (an MDOS3 virtual disk)
     std::string fs;        ///< trdos, plus3, isdos, cpm, fat12, fat16, fat32
     std::string system;    ///< what it reads as: "TR-DOS", "+3DOS", "iS-DOS Chic", "iS-DOS Classic", "FAT16"
     std::string label;     ///< the disk title or volume label
@@ -58,7 +60,8 @@ struct DiskFsEntry
     std::string error;     ///< a directory that did not open
     /// What only this file system has: TR-DOS type / sectors / track / sector / slot, iS-DOS status / first /
     /// special, +3DOS user / basicType / param2, ATM CP/M user / extents / block, MB-02
-    /// type / param2 / address / entry / sector / flags / attributes, FAT cluster / attributes
+    /// type / param2 / address / entry / sector / flags / attributes, MDOS type / param2 / sector / slot / extra, FAT
+    /// cluster / attributes
     std::vector<std::pair<std::string, int64_t>> fields;
 
     /// The value of field `key`, `otherwise` when the entry has none

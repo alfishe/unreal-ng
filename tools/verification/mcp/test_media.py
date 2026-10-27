@@ -14,6 +14,7 @@ SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
 ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
 ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
 MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
+MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
 
 
 def test_slots_listed(s):
@@ -194,6 +195,23 @@ def test_disk_mb02(s):
     data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
     expect(len(base64.b64decode(data)) == 768, 'the bytes in the text', r.text[:200])
     r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW', 'data': 'AA=='}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mdos: MDOS' in r.text and 'bootdisk' in r.text and 'read only' in r.text,
+           'the MDOS volume, its name, read only, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('run.P 94 bytes' in r.text and 'H...RWED' in r.text, 'the files and their attributes in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'bootconf.B'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 512, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'new.B', 'data': 'AA=='}, ok=False)
     expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
