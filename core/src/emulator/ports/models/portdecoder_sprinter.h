@@ -413,6 +413,13 @@ private:
     void StallCpuOnIsa(int slot);
     /// The ZX-bus adapters of [ISA] (phase I2), fitted when the decoder is built (before SoundManager attaches the GS)
     void FitZxBusAdapters();
+    void FitWildSoundCards();
+
+public:
+    void BeforeRelease() override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override;
+
+private:
     /// The slots' IRQ / DRQ lines into PIO port B (only a change reaches the PIO: its bit-mode edge), the journal
     /// and counters of the edges and the requests they cause; then the next deadline
     void PushIsaLines();

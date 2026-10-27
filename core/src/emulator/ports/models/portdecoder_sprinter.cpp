@@ -8,6 +8,7 @@
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
 #include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
+#include "emulator/io/sprinter/isa/cards/isawildsoundcard.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <array>
@@ -138,6 +139,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
             MLOGWARNING("PortDecoder_Sprinter: %s", warning.c_str());
     }
     FitZxBusAdapters();
+    FitWildSoundCards();
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);
     });
@@ -1826,6 +1828,36 @@ void PortDecoder_Sprinter::FitZxBusAdapters()
         _isaBus.Fit(n, std::make_unique<sprinterisa::IsaZxBusAdapter>(_context, this, carriesGs, why));
         if (carriesGs)
             _zxBusSlot = n;
+    }
+}
+
+void PortDecoder_Sprinter::CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out)
+{
+    // A Wild Sound's upload store (its card state rides in the SprinterIsa blob)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+        if (auto* card = dynamic_cast<sprinterisa::IsaWildSoundCard*>(_isaBus.Card(n)))
+        {
+            card->SetRegionInstance("isa." + std::to_string(n + 1));
+            out.push_back(card);
+        }
+}
+
+void PortDecoder_Sprinter::BeforeRelease()
+{
+    // A Wild Sound's rows leave the mixer while SoundManager exists (it goes before the decoder)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+        if (auto* card = dynamic_cast<sprinterisa::IsaWildSoundCard*>(_isaBus.Card(n)))
+            card->DetachAudio();
+}
+
+void PortDecoder_Sprinter::FitWildSoundCards()
+{
+    // Robus's ISA Wild Sound (docs/inprogress/2026-10-09-wildsound): one per configured slot, always at I/O #000 (what
+    // prosiak.exe uses; the board's address decoding is undocumented, so the slot's Base is not used)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        if (static_cast<sprinterisa::CardKind>(_isaBus.Configured(n).kind) == sprinterisa::CardKind::WildSound)
+            _isaBus.Fit(n, std::make_unique<sprinterisa::IsaWildSoundCard>(_context, 0));
     }
 }
 

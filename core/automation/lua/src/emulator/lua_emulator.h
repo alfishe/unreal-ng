@@ -5283,6 +5283,11 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::MultiSound(ctx));
         });
+        // The Sprinter's ISA Wild Sound (DeviceState::WildSound); unavailable without the card
+        lua.set_function("wildsound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::WildSound(ctx));
+        });
         lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Midi(ctx));
