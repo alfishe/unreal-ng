@@ -1,6 +1,36 @@
 # Vradark's Revenge (ZX Next, Sanchez Crew). Its Settings screen: W A S D move, Enter fires, Space casts, F / C drink
 # life / mana, 1 / 2 the next bullets / spell, R autofire, M map, P pause; the Kempston mouse aims and its left
 # button fires. The NEX needs the SD card's bin/: started from NextZXOS, it is chosen in Controllers > Game
+# Haptics (haptics.md H5). Three releases share every address below: 1.3 full (fff14b05...), the 1.3 demo (32ad0b5f...)
+# and the older ZXNext build (a6c64de2...). Their NEX files carry the same four banks (0, 5, 6, 7) and the bytes around
+# each probe address sit at the same file offset in all three (checked with a 32-byte pattern per address); only the
+# full 1.3 was played. Found by per-frame coverage diffs against an idle / walking / firing baseline (key press, fire,
+# spell, potions, a fight with the first slimes, dying), then the code around each hit and its callers; each address
+# was then armed as an exec probe on a running Next (game.events, real time) and compared with the screen:
+#   shot    #7318 spawns the player's bullet (object type #FB; its five callers #8DFE... are the weapon patterns): once
+#           per Enter tap and per mouse click, every 20 frames while Enter is held (autofire), never in between;
+#   hurt    #8400 is the "player hit and still alive" branch of the damage routine #8337 (HP byte #6D04, #80 full, the
+#           slime takes 9): one hit = one fire; in a frame-by-frame run 5 hurts and the death hit were exactly the 6
+#           frames where #6D04 dropped (nothing in between), in real time every fire came with a drop of the red bar;
+#   died    #8365 is the same routine when #6D04 reaches 0 (then the Game over screen): three deaths, one fire each,
+#           and the respawn after Enter fires nothing;
+#   killed  #8427 is the enemy-dies branch of the enemy damage routine #8409 (HP at IY+#26 reaches 0): 4 kills = 4 fires;
+#   coin    #A376 is the loot pickup (coins added to #6D29, effect #0A02, the item removed), 3 frames after the kill:
+#           4 coins = 4 fires, the "x N" counter changes right after;
+#   spell   #8F9C starts a cast (Space: a lightning dome on the cursor, mana bar -8): one fire per tap, also when
+#           Space is held for seconds, 3 of 3 casts;
+#   lifePotion #8D2C and manaPotion #8D4F: F / C drink while a flask is left (HP back to #80, mana full): one fire per
+#           press, none when the flasks are gone (the press does nothing then).
+# Paging: the slots #8000-#FFFF stay on banks 6 / 7 for the whole run (MMU #0C-#0F, sampled 60 times in play), so the
+# addresses need no page ("page:6:0x0400" fired together with "0x8400" for hurt, spell and mana). Slot #6000-#7FFF is
+# page #0B, but the slot #4000-#5FFF flips between banks 9 and 10 and the probe's page follows it: a "page:5" or
+# "page:9" qualification on #7318 misses half of the time, so the shot is unqualified.
+# Left out: #8409 (a bullet or spell hits an enemy, kept as the event foeHit without a rule: it follows the shots
+# at the same rate); #8531 (enemy hurt but alive); #8337 (the damage routine's entry, it also runs while the hero is
+# invulnerable or dead); a `write` watch of #6D04 (works too, but one hit twice in a frame would count once);
+# #7182 (the 64-slot object allocator, every spawn passes it); #81A7 (redraws the coin text); #B52D (the effect
+# spawner, many sounds); #6D05 (the bar's animation counter). Not reached by play: opening a chest (the first one is
+# behind trees), the boss, the level exit and the minigame after a boss death.
 schema: 1
 kind: play
 id: builtin/game/vradarks-revenge
@@ -8,7 +38,10 @@ label: Vradark's Revenge
 extends: [scheme/wasd, scheme/kempston-mouse]
 match:
   machines: [NEXT]
-  file_sha256: ["32ad0b5fa7cbb749841ecf26bdd6fce7563d8ffbcc736c15689b1fa4abcbcd9e"]
+  file_sha256:
+    - "fff14b0542ad597985b452875ce11b80601f06075b17692a4cf6840bccb74057"   # 1.3 full
+    - "32ad0b5fa7cbb749841ecf26bdd6fce7563d8ffbcc736c15689b1fa4abcbcd9e"   # 1.3 demo
+    - "a6c64de2ee72f8c8ab37097cc8afbd1743d39adb2c6b21fe7052011028c4e530"   # older ZXNext build
 layers:
   play:
     south:        { key: ENTER, label: Fire }
@@ -21,3 +54,23 @@ layers:
     rstick.click: { key: R, label: Autofire }
     view:         { key: M, label: Map }
     menu:         { key: P, label: Pause }
+events:
+  shot:       { probe: exec, address: "0x7318" }
+  hurt:       { probe: exec, address: "0x8400" }
+  died:       { probe: exec, address: "0x8365" }
+  killed:     { probe: exec, address: "0x8427" }
+  coin:       { probe: exec, address: "0xA376" }
+  spell:      { probe: exec, address: "0x8F9C" }
+  lifePotion: { probe: exec, address: "0x8D2C" }
+  manaPotion: { probe: exec, address: "0x8D4F" }
+  foeHit:     { probe: exec, address: "0x8409" }
+haptics:
+  rules:
+    - { on: shot, play: shot, target: "trigger.right|handle.high" }
+    - { on: hurt, play: hit }
+    - { on: died, play: life-lost }
+    - { on: killed, play: thump }
+    - { on: coin, play: pickup, scale: 1.7 }
+    - { on: spell, play: thump }
+    - { on: lifePotion, play: pickup, scale: 1.7 }
+    - { on: manaPotion, play: pickup, scale: 1.7 }
