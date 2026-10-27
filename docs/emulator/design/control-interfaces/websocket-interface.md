@@ -110,6 +110,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 | `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
 | `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
+| `debug.watches` | per instance the memory watches' totals `{available, session, revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}]}` (`GET /api/v1/monitor/debug.watches`); published at every frame's end and on every watch change; the callers and values are in `GET .../profiler/memory/watches` | none | implemented |
 | `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
 - `subscribe` takes names or prefixes (`ttd.*`, `*`) and adds to what the connection has; `unsubscribe` removes.

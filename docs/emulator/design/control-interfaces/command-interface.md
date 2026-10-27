@@ -1503,8 +1503,25 @@ The memory profiler tracks memory access patterns (reads/writes) across all 64KB
 | `profiler memory resume` | | Resume paused tracking | ✅ Implemented |
 | `profiler memory clear` | | Reset all counters | ✅ Implemented |
 | `profiler memory status` | | Show tracking status | ✅ Implemented |
+| `profiler memory counters` | `[space=cpu\|phys\|ram\|ram5] [start=N] [length=N\|end=N] [addresses=A,B,C-D] [view=top\|sparse\|dense] [kinds=rwx] [min=N] [limit=N]` | Per-address read / write / execute counters (`MemoryCounters`): the CPU's 64K, the whole physical array (every page, the cell's page named), all RAM or one page; a window, a list of cells, the touched cells or the heaviest ones. Default: the top 32 of `cpu`. All planes | ✅ Implemented |
+| `profiler memory cell` | `<address> [space]` | One cell's counters | ✅ Implemented |
+| `profiler memory watch add` | `<name> <start> <length> [callers] [values]` | Watch CPU addresses (`MemoryWatch`): reads, writes, executes, the PCs and the values. Counts while the session captures | ✅ Implemented |
+| `profiler memory watch port` | `<name> <port> [mask] [callers] [values]` | Watch a partially decoded port: `mask` selects the address lines compared (`0x00FF`: the low byte; `0x1F` Kempston, `0xFE` keyboard) | ✅ Implemented |
+| `profiler memory watch remove` / `clear` / `list` | `<name>` / - / - | Remove one, remove all, list with counts (`profiler memory watches` = list). Topic `debug.watches` pushes the totals | ✅ Implemented |
 
 **Alias**: `profiler mem` is equivalent to `profiler memory`.
+
+Every plane reaches the counters and the watches; the module page is
+[memory-counters.md](../debugger/memory-counters.md):
+
+| Plane | Counters | Watches |
+| :--- | :--- | :--- |
+| CLI | `profiler memory counters ...`, `profiler memory cell` | `profiler memory watch add\|port\|remove\|clear\|list` |
+| Python | `memory_counters(space, start, length, addresses, view, kinds, min, limit)`, `memory_counter(address, space)` | `memory_watch_add`, `memory_watch_port`, `memory_watch_remove`, `memory_watch_clear`, `memory_watches()` |
+| Lua | `memory_counters{...}`, `memory_counter(address [, space])` | the same names as Python |
+| MCP | `analyze_performance` `memory_counters` | `analyze_performance` `memory_watch` (op add / remove / clear / list) |
+| REST | `GET /profiler/memory/counters?space=&start=&length=&addresses=&format=top\|sparse\|dense\|binary&kinds=&min=&limit=` | `GET\|POST\|DELETE /profiler/memory/watches`, `DELETE /profiler/memory/watches/{name}` |
+| WebSocket | `call` of the same routes | `call` of the same routes; topic `debug.watches` |
 
 #### 5.3 Call Trace Profiler Commands
 

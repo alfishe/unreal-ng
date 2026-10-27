@@ -1321,11 +1321,25 @@ emu.memory_profiler_clear()    # Clear all data
 status = emu.memory_profiler_status()
 # Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 'tracking_mode': 'physical'}
 
-# Data retrieval
-pages = emu.memory_profiler_pages(limit=20)   # Get per-page access summaries
-counters = emu.memory_profiler_counters(page=5, mode='physical')  # Address-level counters
-regions = emu.memory_profiler_regions()       # Monitored region statistics
-emu.memory_profiler_save('/path/output', format='yaml')  # Save data to file
+# Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md)
+hot = emu.memory_counters(space="cpu", view="top", kinds="x", limit=16)   # hot code, heaviest first
+for address, reads, writes, executes in hot["cells"]:
+    print(f"{address:04X} r={reads} w={writes} x={executes}")
+banks = emu.memory_counters(space="phys", view="top", kinds="w")          # cell // 0x4000 = absolute page
+touched = emu.memory_counters(space="ram5", view="sparse", min=1)         # every touched cell of RAM 5
+cells = emu.memory_counters(addresses="0x5C00,0x5C08,0x8000-0x800F")      # exactly these cells
+r, w, x = emu.memory_counter(0x5C08)                                      # one cell (space="cpu")
+# Window: start=, length= (0: to the end); view="dense" gives every cell; ValueError with the reason
+
+# Watches (MemoryWatch): regions of CPU addresses and partially decoded ports, with callers / values
+emu.memory_watch_add("sysvars", 0x5C00, 0xC0, callers=True)
+emu.memory_watch_port("kempston", 0x1F, 0x00FF, values=True)   # every port with low byte 0x1F
+emu.memory_watch_port("keys", 0xFE, 0x00FF, callers=True)
+for watch in emu.memory_watches():   # [{name, kind, start/length or port/mask, reads, writes, executes, callers, values}]
+    print(watch["name"], watch["reads"], watch["writes"], watch["callers"])
+emu.memory_watch_remove("sysvars")
+emu.memory_watch_clear()
+# Session control on every plane: emu.trace("memory", "start") (also stop / pause / resume / clear / status)
 ```
 
 ### Call Trace Profiler
