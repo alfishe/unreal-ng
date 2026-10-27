@@ -133,8 +133,11 @@ void UploadHelper::ensureUploadDir()
 
     if (_writableRoot.empty())
     {
-        // Fallback to executable path + "uploads"
-        _writableRoot = FileHelper::GetExecutablePath();
+        // The system temp folder: staged uploads are temporary, and the executable's folder is a signed bundle or
+        // a read-only install (a package once shipped the build tree's leftovers from there)
+        std::error_code tempError;
+        const fs::path temp = fs::temp_directory_path(tempError);
+        _writableRoot = tempError ? FileHelper::GetWritablePath() : (temp / "unreal-ng").string();
     }
 
     _uploadDir = _writableRoot + "/uploads/" + _sessionId + "/";
