@@ -3286,8 +3286,8 @@ namespace PythonBindings
                 return bpm ? bpm->SetBreakpointNote(id, note) : false;
             }, "Set a breakpoint's note (empty clears it); False for an unknown id", py::arg("id"), py::arg("note"))
             .def("bp_condition", [](Emulator& self, uint16_t id, const std::string& condition,
-                                    const std::string& dialect) -> bool {
-                BreakpointManager* bpm = self.GetBreakpointManager();
+                                    const std::string& dialect, const std::string& cpu) -> bool {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 if (!bpm || !bpm->GetBreakpointById(id))
                     return false;
                 BreakpointConditionDialect d = BreakpointConditionDialect::Unreal;
@@ -3298,8 +3298,8 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return true;
             }, "Set a breakpoint's condition (empty clears it); ValueError with the reason when it does not compile "
-               "(the old condition stays); False for an unknown id",
-               py::arg("id"), py::arg("condition"), py::arg("dialect") = "")
+               "(the old condition stays); False for an unknown id (cpu 'gs': the sound card CPU's)",
+               py::arg("id"), py::arg("condition"), py::arg("dialect") = "", py::arg("cpu") = "")
             .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;

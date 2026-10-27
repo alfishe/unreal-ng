@@ -1,7 +1,7 @@
 # Conditions and script callbacks on breakpoints and taps
 
 **Status:** 2026-10-26: design, measured in [POC 038](../../../tools/poc/038-condition-engine-callbacks/README.md);
-the decisions in §8 are taken. Phase 1 (F1 core, §9) is built: [conditional breakpoints](../../features/conditional-breakpoints.md). It covers phase 5 of the [taps](README.md) and the condition engine F1 of
+the decisions in §8 are taken. 2026-10-27: phases 1-5 (§9) are built, the GS read-value hooks included. Phase 1 (F1 core): [conditional breakpoints](../../features/conditional-breakpoints.md). It covers phase 5 of the [taps](README.md) and the condition engine F1 of
 [conditional breakpoints](../2026-08-17-conditional-breakpoints/design.md).
 
 ## 1. What the numbers say
@@ -284,8 +284,12 @@ what it built.
    a `DebuggerEdit` with a lean payload (kind 9: bytes through the CPU's view; the CPU when registers were set), which
    the replay applies without running the hook. TTD v1 refuses them. The hook state has no host randomness
    (`math.random` from a fixed seed; `math.randomseed` needs a seed). A failed or aborted call writes nothing.
-   **The GS read-value hooks wait:** the card CPU has no taps or debug bus callbacks yet (gs-debugger design §4, "No
-   code" in its TODO), so there is no card read to hang a value override on.
+   Built 2026-10-27 (the GS read-value hooks, after gs-debugger design §4 gave the card CPU its debug loop and
+   taps): `on_tap` with `cpu = "gs"` on the card's memory, ports and card events, the card's registers in the hit,
+   `peek` / `reg` of the card in a hook. A sync hook on a card read or port in may return the byte the card CPU sees
+   (`BreakpointManager::HandleReplaceableRead` / `HandleReplaceablePortIn`); while TTD records or is browsed the byte
+   is kept and the call counts an error. A card hook does not write the card (`poke` / `set_reg` raise). Public page:
+   [script-callbacks.md](../../features/script-callbacks.md#the-sound-cards-cpu).
 
 ### 9.1 Documentation per phase
 

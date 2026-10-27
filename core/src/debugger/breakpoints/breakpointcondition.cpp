@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "debugger/labels/labelmanager.h"
+#include "debugger/targets/debugtarget.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 
@@ -75,6 +76,12 @@ uint8_t TriggersOf(uint8_t var)
         case V_PORT: return BRK_COND_PORT_IN | BRK_COND_PORT_OUT;
         default: return 0;
     }
+}
+
+/// The machine's own state: another CPU's breakpoint has none of it (its T is not the frame's T-state)
+bool MachineOnly(uint8_t var)
+{
+    return var == V_T || var == V_FD || var == V_DOS;
 }
 
 const char* NameOf(const Name* names, size_t count, uint8_t id)
@@ -159,6 +166,28 @@ int64_t RamPageOf(Memory& memory, uint8_t bank)
     return memory.GetRAMPageForBank(bank);
 }
 
+/// The page in another CPU's window `bank` of a kind, anything else $FF
+int64_t TargetPageOf(const IDebugTarget& target, uint8_t bank, MemoryBankModeEnum kind)
+{
+    const MemoryPageDescriptor where = target.MapAddress(static_cast<uint16_t>(bank << 14));
+    return where.mode == kind ? where.page : 0xFF;
+}
+
+/// A byte of the breakpoint CPU's memory; false without one
+inline bool PeekByte(const BreakpointConditionContext& x, uint16_t address, int64_t& v)
+{
+    if (x.memory)
+    {
+        v = x.memory->DirectReadFromZ80Memory(address);
+        return true;
+    }
+    uint8_t byte = 0;
+    if (!x.target || !x.target->Peek(address, byte))
+        return false;
+    v = byte;
+    return true;
+}
+
 /// One variable; false (with the reason) when the context lacks what it needs
 inline bool ReadVar(const BreakpointConditionContext& x, uint8_t var, int64_t& v, std::string* error)
 {
@@ -198,14 +227,20 @@ inline bool ReadVar(const BreakpointConditionContext& x, uint8_t var, int64_t& v
         case V_PG1:
         case V_PG2:
         case V_PG3:
-            if (!x.memory)
+            if (x.memory)
+                v = RamPageOf(*x.memory, static_cast<uint8_t>(var - V_PG0));
+            else if (x.target)
+                v = TargetPageOf(*x.target, static_cast<uint8_t>(var - V_PG0), BANK_RAM);
+            else
                 break;
-            v = RamPageOf(*x.memory, static_cast<uint8_t>(var - V_PG0));
             return true;
         case V_ROMPG:
-            if (!x.memory)
+            if (x.memory)
+                v = x.memory->GetMemoryBankMode(0) == BANK_ROM ? x.memory->GetROMPageForBank(0) : 0xFF;
+            else if (x.target)
+                v = TargetPageOf(*x.target, 0, BANK_ROM);
+            else
                 break;
-            v = x.memory->GetMemoryBankMode(0) == BANK_ROM ? x.memory->GetROMPageForBank(0) : 0xFF;
             return true;
     }
     if (error)
@@ -684,6 +719,11 @@ private:
                     Fail(token.text + " is not supplied by this breakpoint's trigger", token.column);
                     return -1;
                 }
+                if ((_trigger & BRK_COND_TARGET) && MachineOnly(id))
+                {
+                    Fail(token.text + " is the machine's, not this CPU's", token.column);
+                    return -1;
+                }
                 return Add(Leaf(Node::Var, id));
             }
             // Flag mnemonics (design.md §4.2): C stays the register, CY is the carry
@@ -1043,13 +1083,18 @@ BreakpointConditionResult BreakpointConditionProgram::EvaluateCode(const Breakpo
             case Op::Mem8:
             case Op::Mem16:
             {
-                if (!x.memory)
-                    return fail("no memory");
                 // A CPU address: it wraps at 64K as the Z80's own does
                 const uint16_t address = static_cast<uint16_t>(stack[sp - 1]);
-                int64_t v = x.memory->DirectReadFromZ80Memory(address);
+                int64_t v = 0;
+                if (!PeekByte(x, address, v))
+                    return fail("no memory");
                 if (in.op == Op::Mem16)
-                    v |= static_cast<int64_t>(x.memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + 1))) << 8;
+                {
+                    int64_t high = 0;
+                    if (!PeekByte(x, static_cast<uint16_t>(address + 1), high))
+                        return fail("no memory");
+                    v |= high << 8;
+                }
                 stack[sp - 1] = v;
                 break;
             }

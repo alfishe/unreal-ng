@@ -8,6 +8,7 @@
 
 #include "emulator/cpu/z80.h"
 
+class IDebugTarget;
 class LabelManager;
 class Memory;
 struct EmulatorState;
@@ -42,7 +43,10 @@ enum BreakpointConditionTrigger : uint8_t
     BRK_COND_WRITE = 0x04,
     BRK_COND_PORT_IN = 0x08,
     BRK_COND_PORT_OUT = 0x10,
-    BRK_COND_ANY = 0x1F  ///< no checks (a tool evaluating an expression on its own)
+    BRK_COND_ANY = 0x1F,  ///< no checks (a tool evaluating an expression on its own)
+    /// Not a trigger: the breakpoint is another CPU's (a debug target). The machine's FD, DOS and T are refused,
+    /// the pages are the CPU's own
+    BRK_COND_TARGET = 0x20
 };
 
 /// The access that triggered the evaluation. kNone where the access has no such part (Unreal: FFFFFFFF)
@@ -63,6 +67,7 @@ struct BreakpointConditionContext
 {
     const Z80Registers* cpu = nullptr;
     Memory* memory = nullptr;              ///< M(x) / W(x): DirectReadFromZ80Memory, no side effects
+    const IDebugTarget* target = nullptr;  ///< another CPU's memory and pages (when `memory` is null): Peek, MapAddress
     const EmulatorState* state = nullptr;  ///< FRAME, FD, DOS
     BreakpointConditionAccess access;
     uint32_t hits = 0;                     ///< HITS: the condition-true hits before this one

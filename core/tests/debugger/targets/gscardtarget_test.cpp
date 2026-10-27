@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <memory>
 
 #include "_helpers/emulatortesthelper.h"
@@ -245,11 +246,6 @@ TEST(GSCardTarget_Test, TheCardTakesItsOwnKindsOnly)
 {
     Card card;
     std::string error;
-    BreakpointSpec spec = Exec(0);
-    spec.condition = "A == 1";
-    EXPECT_EQ(card.bp().AddBreakpoint(spec, error), BRK_INVALID);
-    EXPECT_NE(error.find("not supported"), std::string::npos) << error;
-
     BreakpointSpec magic;
     magic.type = BRK_MAGIC;
     magic.address = BRK_MAGIC_ED_FF;
@@ -258,6 +254,63 @@ TEST(GSCardTarget_Test, TheCardTakesItsOwnKindsOnly)
     EXPECT_EQ(card.bp().AddBreakpoint(Event(GSCardEvent::HostCommandWrite), error), BRK_INVALID)
         << "the host side is the main CPU's";
     EXPECT_FALSE(card.target->HooksAttached());
+}
+
+TEST(GSCardTarget_Test, AConditionReadsTheCardsRegistersAndMemory)
+{
+    Card card;
+    card.boot();
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(card.chip->cardRegisters(regs));
+    char text[96];
+    // The poll loop's IN A,(4) at #026E (DB 04) in ROM page 0, the card's own stack
+    std::snprintf(text, sizeof(text), "SP == #%04X && M(#%04X) == #DB && W(#%04X) == #04DB && ROMPG == 0", regs.sp,
+                  kIdleLoop, kIdleLoop);
+    BreakpointSpec spec = Exec(kIdleLoop);
+    spec.condition = text;
+    const uint16_t id = card.add(spec);
+    ASSERT_TRUE(card.runUntilStop(2));
+    EXPECT_EQ(card.target->LastStop().breakpointId, id);
+    const BreakpointSnapshot held = card.bp().GetBreakpointById(id);
+    ASSERT_TRUE(held);
+    EXPECT_EQ(held->conditionError[0], '\0') << held->conditionError;
+    EXPECT_GT(held->hitCount, 0u);
+}
+
+TEST(GSCardTarget_Test, AFalseConditionCountsMatchesWithoutStopping)
+{
+    Card card;
+    card.boot();
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = BRK_IO_IN;
+    spec.address = 0x04;
+    spec.portMask = 0x00FF;
+    spec.condition = "IN == 4 && M(026E) == 00";  // the ROM holds DB there
+    const uint16_t id = card.add(spec);
+    EXPECT_FALSE(card.runUntilStop(1));
+    const BreakpointSnapshot held = card.bp().GetBreakpointById(id);
+    ASSERT_TRUE(held);
+    EXPECT_GT(held->matchCount, 0u) << "the poll reads port 4";
+    EXPECT_EQ(held->hitCount, 0u);
+    EXPECT_EQ(held->conditionError[0], '\0') << held->conditionError;
+}
+
+TEST(GSCardTarget_Test, AConditionRefusesTheMachinesState)
+{
+    Card card;
+    for (const char* text : {"FD == 10", "DOS == 1", "T > 100"})
+    {
+        std::string error;
+        BreakpointSpec spec = Exec(kIdleLoop);
+        spec.condition = text;
+        EXPECT_EQ(card.bp().AddBreakpoint(spec, error), BRK_INVALID) << text;
+        EXPECT_NE(error.find("the machine's, not this CPU's"), std::string::npos) << error;
+    }
+    std::string error;
+    BreakpointSpec spec = Exec(kIdleLoop);
+    spec.condition = "FRAME >= 0 && PG1 == 0";  // the machine's frame; the card's RAM page 0 at #4000
+    EXPECT_NE(card.bp().AddBreakpoint(spec, error), BRK_INVALID) << error;
 }
 
 namespace

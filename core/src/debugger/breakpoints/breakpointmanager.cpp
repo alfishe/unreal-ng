@@ -700,11 +700,22 @@ BreakpointConditionPtr BreakpointManager::CompileCondition(BreakpointTypeEnum ty
                                                            const std::string& text, BreakpointConditionDialect dialect,
                                                            std::string& error) const
 {
-    // The condition engine reads the main CPU's registers and memory (BreakpointConditionContext)
     if (_target)
     {
-        error = std::string("condition: conditions on the ") + _target->Name() + " CPU are not supported yet";
-        return nullptr;
+        // Another CPU: its registers and memory, the machine's frame; no labels (they name the main CPU's
+        // addresses). The dry run needs the CPU: without one now the text and the trigger are checked only
+        BreakpointConditionContext dryRun;
+        Z80Registers registers{};
+        const bool cpu = _target->Registers(registers);
+        dryRun.cpu = &registers;
+        dryRun.target = _target;
+        dryRun.state = _context ? &_context->emulatorState : nullptr;
+        BreakpointConditionPtr program =
+            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, nullptr,
+                                                error, dialect, cpu ? &dryRun : nullptr);
+        if (!program)
+            error = "condition: " + error;
+        return program;
     }
     const LabelManager* labels =
         _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager() : nullptr;
@@ -2557,7 +2568,16 @@ bool BreakpointManager::ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKi
         return false;
     ++bp.matchCount;
     BreakpointConditionContext x;
-    if (_context)
+    Z80Registers target{};
+    if (_target)
+    {
+        // Another CPU's breakpoint (rare, in that CPU's debug loop): its registers copied per evaluation
+        if (_target->Registers(target))
+            x.cpu = &target;
+        x.target = _target;
+        x.state = _context ? &_context->emulatorState : nullptr;
+    }
+    else if (_context)
     {
         x.cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
         x.memory = _context->pMemory;

@@ -50,4 +50,6 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 
 ### Later
 
-- [ ] Card breakpoint conditions (the condition engine is tied to the main Z80 registers and memory).
+- [x] Card breakpoint conditions (2026-10-27): the card's registers, memory and pages through `IDebugTarget::Registers`
+  / `Peek` / `MapAddress`; `T`, `FD`, `DOS` and labels refused; `cpu` on `bp_condition` (Lua, Python). Tests:
+  `GSCardTarget_Test.ACondition*`, `AFalseConditionCountsMatchesWithoutStopping`, live `test_gs_debugger.py`.

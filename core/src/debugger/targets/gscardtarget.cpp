@@ -80,6 +80,42 @@ uint32_t GSCardTarget::PageCount(MemoryBankModeEnum kind) const
     return card->cardPageCount(static_cast<GeneralSoundCard::CardPage::Kind>(kind));
 }
 
+bool GSCardTarget::Registers(Z80Registers& out) const
+{
+    GeneralSoundCard* card = Card();
+    Z80CpuRegisters regs{};
+    if (!card || !card->cardRegisters(regs))
+        return false;
+    out = Z80Registers{};
+    out.af = regs.af;
+    out.bc = regs.bc;
+    out.de = regs.de;
+    out.hl = regs.hl;
+    out.alt.af = regs.afAlt;
+    out.alt.bc = regs.bcAlt;
+    out.alt.de = regs.deAlt;
+    out.alt.hl = regs.hlAlt;
+    out.ix = regs.ix;
+    out.iy = regs.iy;
+    out.pc = regs.pc;
+    out.sp = regs.sp;
+    out.memptr = regs.memptr;
+    out.i = regs.i;
+    out.r_low = regs.r & 0x7F;
+    out.r_hi = regs.r & 0x80;
+    out.im = regs.im;
+    out.iff1 = regs.iff1;
+    out.iff2 = regs.iff2;
+    out.halted = regs.halted;
+    return true;
+}
+
+bool GSCardTarget::Peek(uint16_t address, uint8_t& out) const
+{
+    GeneralSoundCard* card = Card();
+    return card && card->peekCardMemory(address, out);
+}
+
 void GSCardTarget::OnBreakpointDemand(const BreakpointTapDemand& demand)
 {
     // Every active breakpoint of the card (a stop or a tap) needs the debug loop

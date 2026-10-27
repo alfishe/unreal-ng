@@ -3601,13 +3601,15 @@ public:
         });
 
         // The condition of a memory or port breakpoint ("" clears it): true; false and the reason when it does not
-        // compile (the old condition stays) or there is no such breakpoint
-        lua.set_function("bp_condition", [this](uint16_t id, const std::string& condition, sol::optional<std::string> dialect)
+        // compile (the old condition stays) or there is no such breakpoint. `cpu` "gs": the sound card CPU's
+        lua.set_function("bp_condition", [this](uint16_t id, const std::string& condition, sol::optional<std::string> dialect,
+                                                sol::optional<std::string> cpu)
                                              -> std::tuple<bool, sol::optional<std::string>> {
-            Emulator* emulator = effectiveEmulator();
-            BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
-            if (!bpm)
+            if (!effectiveEmulator())
                 return {false, std::string("no emulator")};
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
+            if (!bpm)
+                return {false, std::string("cpu must be 'main' or 'gs'")};
             BreakpointConditionDialect d = BreakpointConditionDialect::Unreal;
             if (!BreakpointConditionProgram::ParseDialect(dialect.value_or(""), d))
                 return {false, std::string("dialect must be 'unreal' or 'c'")};

@@ -80,6 +80,40 @@ def test_the_card_refuses_what_it_has_not(s):
     clear(s)
 
 
+def test_a_card_condition(s):
+    """A condition on a card breakpoint reads the card's registers; bp_condition with cpu gs changes it, and the
+    machine's own state (FD) is refused there"""
+    clear(s)
+    pc = card_pc(s)
+    r = s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs', 'condition': 'PC != #%04X' % pc})
+    expect(' if ' in r.text, 'the text names the condition', r.text)
+    never = int(re.search(r'#(\d+)', r.text).group(1))
+    s.call('control_execution', {'action': 'resume'})
+    deadline = time.time() + 5
+    listing = ''
+    while time.time() < deadline:
+        listing = s.call('control_execution', {'action': 'bp_list', 'cpu': 'gs'}).text
+        if re.search(r'hits 0 matched [1-9]', listing):
+            break
+        time.sleep(0.05)
+    s.call('control_execution', {'action': 'pause'})
+    expect(re.search(r'hits 0 matched [1-9]', listing), 'a false condition matches without a hit', listing)
+
+    r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': never, 'cpu': 'gs', 'condition': 'FD == 10'},
+               ok=False)
+    expect(r.is_error and "the machine's" in r.text, "the machine's FD is refused on the card", r.text)
+    pc = card_pc(s)
+    r = s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs',
+                                     'condition': 'PC == #%04X && M(#%04X) == M(#%04X)' % (pc, pc, pc)})
+    held = int(re.search(r'#(\d+)', r.text).group(1))
+    expect(held != never, 'a conditional breakpoint is never shared', r.text)
+    text, pause = stop_of(s)
+    expect(pause.get('cpu') == 'gs' and pause.get('cpu_pc') == pc, 'parked by the condition that holds', pause)
+    r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': never, 'cpu': 'gs', 'condition': ''})
+    expect(not r.is_error, 'cleared on the card', r.text)
+    clear(s)
+
+
 def test_a_python_tap_on_the_card(s):
     """A Python callback on the card's port reads (cpu gs): MCP lists it with the CPU, and its hits count"""
     clear(s)

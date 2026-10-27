@@ -19,6 +19,7 @@ Task recipe: [.recipe/analysis/conditional-breakpoints.md](../../.recipe/analysi
 - [A condition that fails at run time](#a-condition-that-fails-at-run-time)
 - [Every plane](#every-plane)
 - [Debugger protocols](#debugger-protocols)
+- [The sound card's CPU](#the-sound-cards-cpu)
 - [Game events and haptics](#game-events-and-haptics)
 - [Limits of this version](#limits-of-this-version)
 
@@ -153,11 +154,11 @@ With the checks above, this happens only when the state a condition needs is mis
 
 | Plane | Set with the breakpoint | Change later | Shown |
 |:--|:--|:--|:--|
-| CLI | `bp 0x8000 if A == 7`, `wp 0x4000-0x57FF w if VAL != 0`, `bport 0xFE o --mask 0xFF if (VAL & 7) == 2`; `--dialect c` before `if` (the CLI reads a plain address as decimal, the condition reads plain numbers as hex) | `bpcond <id> [--dialect c] [condition]` (none: clear) | `bplist`: `if …`, `(matched Nx)`, `[condition failed: …]` |
-| Lua | `bp(0x8000, {condition = "A == 7", dialect = "c"})`, also `bp_read`, `bp_write`, `bp_port_in`, `bp_port_out`; `-1, reason` when refused | `bp_condition(id, text [, dialect])`: `true` or `false, reason` | `bp_status()`: `condition`, `match_count`, `condition_error` |
-| Python | `emu.bp(0x8000, condition="A == 7", dialect="c")`, the same kinds; `ValueError` with the reason when the condition does not compile | `emu.bp_condition(id, text, dialect="")`: `True`, `False` for an unknown id, `ValueError` for a bad text | `emu.bp_status()`: the same keys |
-| MCP | `control_execution` `bp_add` with `condition`, `condition_dialect`; the text answers `#id if <canonical>` | `bp_condition` with `bp_id`, `condition` (`''` clears) | `bp_list`: `hits N matched M if …` |
-| REST | `POST /breakpoints {…, "condition": "A == 7", "condition_dialect": "c"}` (400 with the reason) | `PUT /breakpoints/{bp_id}/condition {"condition", "dialect"}` | `condition`, `match_count`, `condition_error` in every breakpoint object |
+| CLI | `bp 0x8000 if A == 7`, `wp 0x4000-0x57FF w if VAL != 0`, `bport 0xFE o --mask 0xFF if (VAL & 7) == 2`; `--dialect c` before `if` (the CLI reads a plain address as decimal, the condition reads plain numbers as hex) | `bpcond <id> [--dialect c] [--cpu gs] [condition]` (none: clear) | `bplist`: `if …`, `(matched Nx)`, `[condition failed: …]` |
+| Lua | `bp(0x8000, {condition = "A == 7", dialect = "c"})`, also `bp_read`, `bp_write`, `bp_port_in`, `bp_port_out`; `-1, reason` when refused | `bp_condition(id, text [, dialect [, cpu]])`: `true` or `false, reason` | `bp_status()`: `condition`, `match_count`, `condition_error` |
+| Python | `emu.bp(0x8000, condition="A == 7", dialect="c")`, the same kinds; `ValueError` with the reason when the condition does not compile | `emu.bp_condition(id, text, dialect="", cpu="")`: `True`, `False` for an unknown id, `ValueError` for a bad text | `emu.bp_status()`: the same keys |
+| MCP | `control_execution` `bp_add` with `condition`, `condition_dialect`; the text answers `#id if <canonical>` | `bp_condition` with `bp_id`, `condition` (`''` clears), `cpu` | `bp_list`: `hits N matched M if …` |
+| REST | `POST /breakpoints {…, "condition": "A == 7", "condition_dialect": "c"}` (400 with the reason) | `PUT /breakpoints/{bp_id}/condition {"condition", "dialect"}` (`?cpu=gs`) | `condition`, `match_count`, `condition_error` in every breakpoint object |
 | WebSocket | the REST routes as `call`s | the same | changes pushed as `breakpoints_changed` |
 | Catalogue | `dbg.bp_add` with `condition`, `dialect` | - | - |
 
@@ -178,6 +179,29 @@ every hit and the client decides, as before. The server logs the reason.
 The server advertises `ConditionalBreakpoints+` in its `qSupported` reply, so gdb sends the condition with the
 breakpoint by itself (`set breakpoint condition-evaluation auto`).
 
+## The sound card's CPU
+
+A breakpoint of the General Sound / NeoGS card's Z80 (`cpu` `gs`,
+[breakpoints-and-traces.md §8](../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)) takes a
+condition in the same language, on every plane, at creation or later (`--cpu gs`, `cpu = "gs"`, `?cpu=gs`). The
+operands are the card's:
+
+- the registers and flags are the card CPU's at the access;
+- `M(x)` / `W(x)` read the card's memory as its CPU sees it now, without side effects;
+- `PG0`..`PG3` are the card's RAM page in each 16K window (`#FF` for ROM or flash), `ROMPG` its ROM / flash page at
+  `#0000`;
+- `FRAME` and `HITS` are as on the machine (`FRAME` is the machine's frame counter);
+- `T`, `FD` and `DOS` are the machine's state and are refused ("FD is the machine's, not this CPU's");
+- labels name the main CPU's addresses and do not resolve.
+
+```
+bp 0x0270 --cpu gs if (A & 1) == 0 && M(#026E) == #DB
+wp 0x4000-0x7FFF w --cpu gs if PG1 == 0 && VAL == #FF
+```
+
+Card events (`bevent`) take no condition. A condition never reaches across CPUs: a main CPU breakpoint cannot test
+the card's registers (`gs.A`), nor the reverse.
+
 ## Game events and haptics
 
 A game profile's sources (`events:`, `haptics.sources`) take `if:` in this language: a breakpoint probe checks it at
@@ -188,9 +212,8 @@ the access, any other source at the frame end. See
 
 - Conditions apply to memory and port breakpoints only. Keyboard, NextREG, beam, copper and magic breakpoints, and
   memory-space pages (`vram1`), come later.
-- Not yet supported: `SHADOW`, `DT` (T-states since the last stop), the beam position, other CPUs (`gs.A`), and a
-  check on every memory access of an instruction.
+- Not yet supported: `SHADOW`, `DT` (T-states since the last stop), the beam position, another CPU's operands
+  (`gs.A` on a main CPU breakpoint), and a check on every memory access of an instruction.
 - Labels are not followed when they change.
-- Script callbacks on a hit (Lua and Python code run on the breakpoint) are the next phase, with budgets and policies:
-  [conditions-and-callbacks.md §3-§5](../inprogress/2026-10-26-breakpoint-taps/conditions-and-callbacks.md).
+- Script callbacks on a hit (Lua and Python code run on the breakpoint or a tap): [script-callbacks.md](script-callbacks.md).
 - The Qt breakpoint editor does not have a condition field yet.

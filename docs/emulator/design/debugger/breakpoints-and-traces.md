@@ -141,8 +141,12 @@ on [gs-debugger §4](../../../inprogress/2026-09-27-gs-debugger/design.md)). `De
 picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs`) the card's.
 
 - **Kinds.** Execute, memory read / write (addresses of the card's CPU, `--page romN` / `ramN` its flash / ROM and RAM
-  pages), port in / out, and the protocol events (`BRK_EVENT`). The card refuses the rest (NextREG, beam, keyboard)
-  and conditions.
+  pages), port in / out, and the protocol events (`BRK_EVENT`). The card refuses the rest (NextREG, beam, keyboard).
+- **Conditions.** A memory or port breakpoint of the card takes a condition (§7) on the card's registers, memory and
+  pages: `IDebugTarget::Registers` (the card's register file in the `Z80Registers` layout, copied per evaluation),
+  `Peek` and `MapAddress` behind `BreakpointConditionContext::target`. The compiler gets `BRK_COND_TARGET` and refuses
+  the machine's `T`, `FD` and `DOS`; labels are not passed. See
+  [conditional-breakpoints.md](../../../features/conditional-breakpoints.md#the-sound-cards-cpu).
 - **Events.** The card's: `int`, `nmi`, `reset`, `page` (a page switch), `card_command`, `card_data` (the card read the
   host's command / data byte), `card_reply` (it wrote its reply). The host's: `host_command` (#BB), `host_data` (#B3 written),
   `host_reply` (#B3 read), on the main CPU's manager; each kind on the other CPU is refused. `value` / `vmask` filter

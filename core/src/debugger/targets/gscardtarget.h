@@ -64,6 +64,8 @@ public:
     bool Available() const override { return Card() != nullptr; }
     MemoryPageDescriptor MapAddress(uint16_t address) const override;
     uint32_t PageCount(MemoryBankModeEnum kind) const override;
+    bool Registers(Z80Registers& out) const override;
+    bool Peek(uint16_t address, uint8_t& out) const override;
     void OnBreakpointDemand(const BreakpointTapDemand& demand) override;
 
     // IGSDebugHooks (the emulation thread, inside the card's run)
